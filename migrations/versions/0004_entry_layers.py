@@ -25,7 +25,7 @@ scope only, and to service accounts only - so silver/gold writes remain
 service-account-only, which is the real invariant the role model enforces.
 """
 
-from alembic import op
+from migrations._ddl import execute_sql
 
 revision = "0004_entry_layers"
 down_revision = "0003_layer_paths"
@@ -69,11 +69,11 @@ UPDATE roles
 
 
 def upgrade() -> None:
-    op.execute(DDL)
+    execute_sql(DDL)
 
 
 def downgrade() -> None:
-    op.execute("""
+    execute_sql("""
     UPDATE roles
        SET description = 'The only role that writes silver and gold. Service accounts only.'
      WHERE code = 'pipeline';

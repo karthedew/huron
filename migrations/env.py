@@ -37,20 +37,29 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _do_run_migrations(connection) -> None:  # type: ignore[no-untyped-def]
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 async def run_async_migrations() -> None:
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    # One connection, configured and migrated in the same `run_sync` call:
+    # `context.run_migrations()` executes against whatever connection was
+    # last passed to `context.configure()`, not whatever connection happens
+    # to be open around the call site. A previous version of this function
+    # configured the context on one connection but ran migrations (and
+    # opened its transaction) on a second, separate one from the pool -
+    # every statement executed there against the *first*, never-committed
+    # connection, so `alembic upgrade head` logged success and committed
+    # nothing.
     async with connectable.connect() as connection:
-        await connection.run_sync(
-            lambda sync_connection: context.configure(
-                connection=sync_connection, target_metadata=target_metadata
-            )
-        )
-        async with connectable.begin() as connection:
-            await connection.run_sync(lambda _connection: context.run_migrations())
+        await connection.run_sync(_do_run_migrations)
     await connectable.dispose()
 
 

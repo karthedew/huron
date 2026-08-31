@@ -1,6 +1,6 @@
 """P1 foundations plus registries required by later phases."""
 
-from alembic import op
+from migrations._ddl import execute_sql
 
 revision = "0001_foundations"
 down_revision = None
@@ -320,11 +320,11 @@ CREATE TABLE reconciliation_findings (
 
 
 def upgrade() -> None:
-    op.execute(DDL)
+    execute_sql(DDL)
 
 
 def downgrade() -> None:
-    op.execute("""
+    execute_sql("""
     DROP TABLE IF EXISTS reconciliation_findings, lineage_edges, product_versions, products,
       snapshots, jobs, retention_holds, purge_records, science_profiles, idempotency_records,
       outbox_events, audit_events, api_keys, role_bindings, ingest_files, ingest_sessions,
