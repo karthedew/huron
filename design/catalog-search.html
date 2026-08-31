@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huron — Catalog & Search</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1f2933; --muted:#5f6b76; --line:#e3e0da;
+  --accent:#0b6e6e; --accent2:#8a5a00; --code-bg:#f0eeea; --card:#ffffff;
+  --warn-bg:#fdf3e3; --warn-line:#e0b45c; --note-bg:#e9f2f2; --note-line:#7fb5b5;
+  --del:#a63d3d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#14181c; --fg:#dce3e8; --muted:#94a1ab; --line:#2b3239;
+    --accent:#5cc8c8; --accent2:#d9a441; --code-bg:#1d2329; --card:#191f24;
+    --warn-bg:#2a2315; --warn-line:#8a6d2a; --note-bg:#15262a; --note-line:#2b5c5c;
+    --del:#e08080;}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.6 "Segoe UI",system-ui,-apple-system,sans-serif;}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:.55rem 1rem;font-size:.85rem;z-index:5;display:flex;flex-wrap:wrap;
+  gap:.2rem .85rem;align-items:baseline}
+nav a{color:var(--muted);text-decoration:none;white-space:nowrap}
+nav a:hover{color:var(--accent)}
+nav a.here{color:var(--accent);font-weight:600}
+nav .brand{font-weight:700;color:var(--fg);margin-right:.4rem}
+main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 5rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.5rem 0 .2rem}
+.sub{color:var(--muted);margin:0 0 2rem}
+h2{font-size:1.35rem;margin-top:2.6rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.06rem;margin-top:1.8rem}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--code-bg)}
+.note,.warn{border-left:4px solid var(--note-line);background:var(--note-bg);
+  padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1.2rem 0}
+.warn{border-left-color:var(--warn-line);background:var(--warn-bg)}
+.k{font-weight:600}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;
+  padding:.05rem .5rem;border-radius:99px;border:1px solid var(--line);color:var(--muted);
+  text-transform:uppercase;vertical-align:middle}
+.inv{color:var(--accent2);font-weight:700}
+.superseded{color:var(--del);text-decoration:line-through}
+figure{margin:1.4rem 0}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.9rem;margin:1.2rem 0}
+.card{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:.9rem 1rem}
+.card h3{margin:.1rem 0 .35rem;font-size:1rem}
+.card p{margin:0;font-size:.88rem;color:var(--muted)}
+.card a{text-decoration:none}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Huron</span>
+  <a href="index.html">Overview</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="layer-raw.html">Raw</a>
+  <a href="layer-bronze.html">Bronze</a>
+  <a href="layer-silver.html">Silver</a>
+  <a href="layer-gold.html">Gold</a>
+  <a href="catalog-search.html" class="here">Catalog</a>
+  <a href="polaris.html">Polaris</a>
+  <a href="rbac.html">RBAC</a>
+  <a href="auth.html">Auth</a>
+  <a href="api.html">API</a>
+  <a href="python-client.html">Client</a>
+  <a href="frontend.html">Frontend</a>
+  <a href="roadmap.html">Roadmap</a>
+</nav>
+<main>
+<h1>Catalog &amp; Search</h1>
+<p class="sub">PostgreSQL for structure, LanceDB for matching across all four layers, lineage as
+first-class structural data. One store per capability, one index for the whole lake.</p>
+
+<h2 id="split">1. The split, restated</h2>
+
+<table>
+<tr><th>Question</th><th>Served by</th></tr>
+<tr><td>List orgs / projects / datasets / revisions / release tags / snapshots / products</td><td>PostgreSQL (read-your-writes)</td></tr>
+<tr><td>Resolve any resource by ID or slug path</td><td>PostgreSQL → storage sidecars</td></tr>
+<tr><td>Effective metadata of a revision (base + amendments)</td><td>NFS sidecars</td></tr>
+<tr><td>What snapshots exist for dataset X, layer Y; which is latest published</td><td>PostgreSQL</td></tr>
+<tr><td>What does product version P depend on; what depends on snapshot S</td><td>PostgreSQL (lineage edges — structural graph traversal)</td></tr>
+<tr><td>Free-text / tag / faceted search across <em>all four layers</em> — datasets, revisions, snapshots, products</td><td>LanceDB (eventually consistent, lag reported)</td></tr>
+<tr><td>Semantic similarity (later)</td><td>LanceDB</td></tr>
+</table>
+
+<p class="warn"><span class="k">Standing bans, still standing.</span> No
+<code>tsvector</code>/GIN/<code>pg_trgm</code> anywhere. No <code>q=</code> or <code>ILIKE</code>
+on browse endpoints. No fallback from LanceDB to PostgreSQL: LanceDB down ⇒ <code>/search</code>
+returns <code>503 PROJECTION_UNAVAILABLE</code>, browse keeps working. Lineage traversal is a
+structural query and therefore PostgreSQL — asking "similar products" is matching and therefore
+LanceDB. Classify every new query before writing it; never serve one question from two stores.</p>
+
+<h3>One index, all four layers</h3>
+<p>Layer is a <strong>facet, not a system boundary</strong>. A scientist searching "absorbed dose"
+does not know whether the answer is a raw revision or a published Gold product, and must not have
+to. Splitting the index by layer would mean two rankings, two authorization models, two consistency
+stories, and a merge step that can never be justified. One LanceDB projection covers raw, Bronze,
+Silver and Gold, with <code>layer</code> as a filterable column.</p>
+
+<p class="warn"><span class="k">OpenMetadata: considered, rejected.</span> It was evaluated as the
+catalog for the raw layer and as a possible source of RBAC. Both fail, the second decisively:
+<strong>OpenMetadata policies govern operations inside OpenMetadata</strong> — who may
+<code>ViewAll</code> or <code>EditTags</code> on assets in its own catalog — and have no mechanism
+to authorize a read of bytes on NFS or a prefix-scoped grant against RGW. Adopting it would mean
+building Huron's data-plane authorization anyway and then running a second RBAC system that must
+agree with the first, whose failure mode is silent over-permission. As a catalog it also mismatches:
+its <code>Container</code> entity models buckets and folders on S3/GCS/Azure, its versioning tracks
+metadata edits rather than data revisions, and its real value — connectors to a hundred sources you
+do not control — buys nothing for a system that produces every byte it holds.</p>
+
+<p class="note"><span class="k">If it is ever wanted, it is Polaris-shaped.</span> The same posture
+as <a href="polaris.html">Polaris</a>: a one-way mirror fed from the outbox for discovery
+<em>outside</em> Huron, never authoritative, never in the authorization path, never consulted by
+Huron's own <code>/search</code>, failing in a way that degrades external consumers only. A late
+phase if the demand appears — never the critical path, and never the RBAC.</p>
+
+<h2 id="postgres">2. PostgreSQL schema (delta)</h2>
+
+<p>Skeleton — the Alembic migrations are the source of truth. Conventions: UUIDv7 generated in
+the application, <code>timestamptz</code> everywhere, CHECK-enforced slugs, optimistic
+<code>version</code> columns:</p>
+
+<pre>
+-- hierarchy
+organizations(id PK, slug UNIQUE CHECK no '--', title, lifecycle_state, generation, version, …)
+projects(id PK, organization_id FK, slug, title, classification_default,
+         raw_retention_policy jsonb, quota_bytes, lifecycle_state, …,
+         UNIQUE (organization_id, slug))
+datasets(id PK, project_id FK, slug, title, owner_group, profile_name, profile_version,
+         lifecycle_state CHECK IN ('DRAFT','ACTIVE','RETIRED','SUPERSEDED'), …,
+         UNIQUE (project_id, slug))
+dataset_revisions(id PK, dataset_id FK, revision_number,
+         state CHECK IN ('COMMITTED','EXPIRED_PARTIAL','EXPIRED','PURGED','DEGRADED'),
+         manifest_sha256, metadata_sha256, revision_path, file_count, total_bytes,
+         committed_by, committed_at, …,
+         UNIQUE (dataset_id, revision_number), UNIQUE (dataset_id, manifest_sha256))
+-- a release is a named immutable pointer at one revision (an Icechunk tag, for raw)
+releases(id PK, dataset_id FK, tag, revision_id FK, title, purpose, campaign,
+         created_by, created_at, withdrawn_at NULL, withdrawn_reason NULL,
+         UNIQUE (dataset_id, tag))   -- rows are never UPDATEd except to withdraw
+revision_amendments(id PK, revision_id FK, sequence, changed_keys text[], reclassified bool,
+         issued_by, issued_at, UNIQUE (revision_id, sequence))
+
+-- ingest
+ingest_sessions(…, dataset_id FK, …)         -- partial unique index: one open per dataset
+ingest_files(ingest_id FK, file_id PK, path, size, expected_sha256,
+         action CHECK IN ('upload','hardlink'), state, observed_sha256,
+         completed_parts jsonb, UNIQUE (ingest_id, path))
+
+-- derived-layer registry
+-- Bronze and Silver are both per-dataset. Gold is per product, attached to its
+-- source dataset when single-source and to the project when it fuses several.
+layer_repos(id PK, layer CHECK IN ('bronze','silver','gold'),
+            dataset_id FK NULL,                        -- bronze, silver, single-source gold
+            project_id FK NULL,                        -- fused gold
+            product_id FK NULL,                        -- gold
+            bucket, prefix,
+            UNIQUE (dataset_id, layer),
+            UNIQUE (project_id, profile_name, contract_version, layer))
+snapshots(id PK, repo_id FK, icechunk_snapshot_id, tag,
+          state CHECK IN ('CANDIDATE','PUBLISHED','SUPERSEDED','FAILED'),
+          source_revision_id FK NULL,          -- bronze: the raw revision
+          contract_version NULL,               -- silver
+          validation_evidence jsonb, built_by_job FK, published_at, …)
+products(id PK, project_id FK, slug, title, shape CHECK IN ('array','tabular'),
+         lifecycle_state, …, UNIQUE (project_id, slug))
+product_versions(id PK, product_id FK, semver,
+         status CHECK IN ('CANDIDATE','PUBLISHED','STALE','SUPERSEDED','WITHDRAWN'),
+         derivation jsonb NOT NULL,            -- the full record from Gold §3
+         snapshot_id FK, iceberg_ref NULL, polaris_synced_at NULL,
+         UNIQUE (product_id, semver))
+lineage_edges(id PK, from_kind, from_id, to_kind, to_id, region jsonb NULL,
+              created_at, UNIQUE (from_kind, from_id, to_kind, to_id))
+              -- e.g. (silver_snapshot S119) ─derives_from→ (bronze_snapshot B187) region run-0042
+
+-- pipeline
+jobs(id PK, kind CHECK IN ('bronze_build','canonicalize','product_run','validate',
+     'polaris_sync','retention','reconcile'),
+     subject_kind, subject_id, state, attempts, claimed_by, claimed_at,
+     container_digest, failure jsonb, …)      -- claimed FOR UPDATE SKIP LOCKED, like the outbox
+
+-- auth (see RBAC doc)
+role_bindings(id PK, principal_type, principal_name, role,
+              scope CHECK IN ('SYSTEM','ORGANIZATION','PROJECT','DATASET'),
+              organization_id NULL, project_id NULL, dataset_id NULL,
+              effect CHECK IN ('ALLOW','DENY'), conditions jsonb, expires_at NULL, …)
+api_keys(id PK, principal_subject, key_id UNIQUE, secret_hash, name,
+         scopes text[], project_ids uuid[] NULL, expires_at, last_used_at,
+         revoked_at NULL, created_at)
+retention_holds(id PK, scope_kind, scope_id, kind CHECK IN ('PIN','LEGAL_HOLD'),
+                reason, placed_by, placed_at, released_at NULL)
+
+-- plumbing
+idempotency_records(principal_subject, operation, key, request_sha256,
+         response_status, response_body, PK (principal_subject, operation, key))
+audit_events(… range-partitioned by month; partitions pre-created ahead of time
+         plus a monitored DEFAULT backstop)
+outbox_events(… claimed FOR UPDATE SKIP LOCKED by the projection worker)
+purge_records(… approved_by <> requested_by enforced by CHECK)
+science_profiles / extension_schemas(namespace, version, document, state,
+         PK (namespace|name, version))          -- published versions are immutable
+</pre>
+
+<p class="note">Conventions pinned now because they are contracts: UUIDv7 is generated in the
+application (implemented per RFC 9562 on the Python 3.12 floor). Pagination cursors are versioned
+base64url keyset tuples matching the sort index — offset pagination is unsafe under an
+authorization predicate. Optimistic concurrency is <code>SET version = version + 1 … WHERE
+version = :expected</code> with <code>rowcount 0 → 412</code>, never a trigger. The domain layer
+imports only allowlisted pure libraries (<code>rfc8785</code>, <code>jsonschema</code>): no I/O,
+no global state, no foreign types in entity fields — enforced by import-linter in CI.</p>
+
+<h2 id="lineage">3. Lineage</h2>
+
+<p>Lineage is written transactionally at publication time (never reconstructed), with typed nodes
+(<code>raw_revision</code>, <code>bronze_snapshot</code>, <code>silver_snapshot</code>,
+<code>gold_version</code>) and optional region qualifiers for per-run precision. Two traversals are
+the workhorses, both plain recursive CTEs at the scale Huron targets:</p>
+
+<ul>
+<li><strong>Provenance (upstream):</strong> product version → every input snapshot → bronze →
+raw revisions, rendered as the lineage panel and exported as a JSON provenance document with the
+product.</li>
+<li><strong>Impact (downstream):</strong> superseded snapshot → affected silver regions → dependent
+gold versions, driving staleness marking and recompute scheduling.</li>
+</ul>
+
+<p>Authorization filters lineage rendering per node: nodes the caller cannot discover are collapsed
+into "N restricted upstream datasets" (invariant L).</p>
+
+<h2 id="lancedb">4. LanceDB projection</h2>
+
+<p>Topology: tables in <code>{prefix}-index</code> on RGW, <strong>exactly one
+writer</strong> (the projection worker, single replica, Recreate), API replicas read-only, outbox
+consumption, idempotent upserts, atomic pointer-flip rebuild, v1 is Tantivy FTS + scalar filters
+with the <code>embedding</code> column reserved and null.</p>
+
+<table>
+<tr><th>Table</th><th>Row per</th><th>Notable columns</th></tr>
+<tr><td class="k">datasets</td><td>dataset</td>
+<td>org/project/dataset slugs + ids, title, description (FTS), tags, classification, profile +
+contract version, owner, layer availability flags (has_bronze/has_silver), latest silver snapshot,
+latest revision number, release tags (FTS), extension_text (FTS), created/updated,
+embedding (null)</td></tr>
+<tr><td class="k">revisions</td><td>raw revision</td>
+<td>ids + slugs up the chain, revision number, release tags pointing at it, title, purpose,
+campaign (FTS), extracted-parameter text (e.g. <code>shield_thickness=30 material=concrete-b
+mcnp=6.3.1</code>), quality state, state (COMMITTED/EXPIRED/PURGED), file count, total bytes</td></tr>
+<tr><td class="k">snapshots</td><td>published Bronze/Silver snapshot</td>
+<td>ids + slugs up the chain, layer, contract version, variable names (FTS), dimension names,
+source revision, validation summary, published_at</td></tr>
+<tr><td class="k">products</td><td>product</td>
+<td>ids + slugs, title, description (FTS), tags, shape, latest published semver, staleness flag,
+variable names, derivation summary text (FTS), classification</td></tr>
+</table>
+
+<p>Every table carries a <code>layer</code> column
+(<code>raw</code>/<code>bronze</code>/<code>silver</code>/<code>gold</code>) and the same
+<code>project_id</code> authorization column, so a single query spans the lake and the caller
+filters by layer only if they want to.</p>
+
+<p>Search authorization is unchanged and doubled-up by design: resolve
+<code>visible_project_ids</code> from PostgreSQL, push as a hard pre-ranking filter into LanceDB,
+then re-authorize returned IDs against PostgreSQL before serialization (invariant H). Responses
+carry <code>projection_lag_seconds</code> + <code>projection_watermark</code>.</p>
+
+<h2 id="rebuild">5. Rebuild and reconciliation</h2>
+
+<ul>
+<li><code>lakectl projection rebuild</code> — walks NFS (datasets, revisions, release tags, effective metadata)
+and PostgreSQL (snapshot/product registry), writes fresh tables under a new prefix, verifies row
+counts, flips the pointer. Routine, not exceptional.</li>
+<li><code>lakectl rebuild --from-storage</code> — reconstructs PostgreSQL structural rows from NFS
+generation documents and <code>COMMITTED</code> markers, then the layer registry from Icechunk repo
+metadata on RGW (each snapshot's provenance block names its sources), then lineage from derivation
+records, then the projection. RBAC, audit, idempotency, and API keys come from PostgreSQL backups
+only.</li>
+<li>The reconciler (see <a href="layer-raw.html#sweeper">Raw §9</a>) also cross-checks the layer
+registry: every PUBLISHED snapshot row must resolve to a live Icechunk ref, and every repo main
+branch must be recorded — disagreement is <code>DEGRADED</code> + alert, never silent repair.</li>
+</ul>
+
+</main>
+</body>
+</html>

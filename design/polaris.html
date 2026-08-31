@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huron — Apache Polaris Integration</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1f2933; --muted:#5f6b76; --line:#e3e0da;
+  --accent:#0b6e6e; --accent2:#8a5a00; --code-bg:#f0eeea; --card:#ffffff;
+  --warn-bg:#fdf3e3; --warn-line:#e0b45c; --note-bg:#e9f2f2; --note-line:#7fb5b5;
+  --del:#a63d3d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#14181c; --fg:#dce3e8; --muted:#94a1ab; --line:#2b3239;
+    --accent:#5cc8c8; --accent2:#d9a441; --code-bg:#1d2329; --card:#191f24;
+    --warn-bg:#2a2315; --warn-line:#8a6d2a; --note-bg:#15262a; --note-line:#2b5c5c;
+    --del:#e08080;}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.6 "Segoe UI",system-ui,-apple-system,sans-serif;}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:.55rem 1rem;font-size:.85rem;z-index:5;display:flex;flex-wrap:wrap;
+  gap:.2rem .85rem;align-items:baseline}
+nav a{color:var(--muted);text-decoration:none;white-space:nowrap}
+nav a:hover{color:var(--accent)}
+nav a.here{color:var(--accent);font-weight:600}
+nav .brand{font-weight:700;color:var(--fg);margin-right:.4rem}
+main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 5rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.5rem 0 .2rem}
+.sub{color:var(--muted);margin:0 0 2rem}
+h2{font-size:1.35rem;margin-top:2.6rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.06rem;margin-top:1.8rem}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--code-bg)}
+.note,.warn{border-left:4px solid var(--note-line);background:var(--note-bg);
+  padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1.2rem 0}
+.warn{border-left-color:var(--warn-line);background:var(--warn-bg)}
+.k{font-weight:600}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;
+  padding:.05rem .5rem;border-radius:99px;border:1px solid var(--line);color:var(--muted);
+  text-transform:uppercase;vertical-align:middle}
+.inv{color:var(--accent2);font-weight:700}
+.superseded{color:var(--del);text-decoration:line-through}
+figure{margin:1.4rem 0}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.9rem;margin:1.2rem 0}
+.card{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:.9rem 1rem}
+.card h3{margin:.1rem 0 .35rem;font-size:1rem}
+.card p{margin:0;font-size:.88rem;color:var(--muted)}
+.card a{text-decoration:none}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Huron</span>
+  <a href="index.html">Overview</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="layer-raw.html">Raw</a>
+  <a href="layer-bronze.html">Bronze</a>
+  <a href="layer-silver.html">Silver</a>
+  <a href="layer-gold.html">Gold</a>
+  <a href="catalog-search.html">Catalog</a>
+  <a href="polaris.html" class="here">Polaris</a>
+  <a href="rbac.html">RBAC</a>
+  <a href="auth.html">Auth</a>
+  <a href="api.html">API</a>
+  <a href="python-client.html">Client</a>
+  <a href="frontend.html">Frontend</a>
+  <a href="roadmap.html">Roadmap</a>
+</nav>
+<main>
+<h1>Apache Polaris Integration</h1>
+<p class="sub">Targeted, honest, one-way: Polaris catalogs Iceberg-format Gold products for
+external engines and vends the credentials to read them. Nothing else.</p>
+
+<h2 id="fit">1. Fit analysis</h2>
+
+<p>Apache Polaris is an open-source <strong>Iceberg REST catalog</strong>: namespaces, Iceberg
+table metadata, its own RBAC (catalog/namespace/table grants to principals and principal roles),
+and <strong>credential vending</strong> — an engine asks Polaris for a table and receives scoped,
+short-lived object-storage credentials for exactly that table's data location.</p>
+
+<table>
+<tr><th>Huron asset</th><th>Polaris fit</th><th>Verdict</th></tr>
+<tr><td>Tabular Gold products (Iceberg)</td>
+<td>Native. Spark/Trino/DuckDB/PyIceberg connect to Polaris and query directly.</td>
+<td class="k">Register (the integration)</td></tr>
+<tr><td>Bronze/Silver/array-Gold (Zarr + Icechunk)</td>
+<td>Not an Iceberg format. A generic-table entry would be a name external engines cannot read,
+duplicating Huron's catalog with none of its semantics (snapshots, validation, lineage).</td>
+<td class="k">Stay out</td></tr>
+<tr><td>Raw envelopes (NFS)</td>
+<td>Polaris has no concept of POSIX file trees, and raw access must stay API-mediated for RBAC
+anyway.</td>
+<td class="k">Stay out</td></tr>
+<tr><td>Catalog of record / search / lineage</td>
+<td>Would make Polaris a second authority that drifts from PostgreSQL + LanceDB — exactly the
+two-systems-answer-one-question pattern Huron bans.</td>
+<td class="k">Stay out</td></tr>
+</table>
+
+<p class="note"><span class="k">Revisit trigger, recorded now.</span> If the ecosystem shifts —
+Polaris generic tables gain real multi-engine read semantics, or Icechunk grows an Iceberg-REST-ish
+catalog protocol that Polaris federates — the "stay out" rows get re-evaluated. Until an external
+engine can actually <em>read</em> the entry, cataloging it in Polaris is decoration with a drift
+cost.</p>
+
+<h2 id="architecture">2. Integration architecture</h2>
+
+<pre>
+Huron catalog (authoritative)                       Polaris (mirror, Iceberg only)
+────────────────────────────                        ─────────────────────────────
+product_versions row:                               catalog:   huron
+  status = PUBLISHED,  shape = tabular    ─sync─▶   namespace: {org_slug}.{project_slug}
+  iceberg_ref = s3://…/iceberg/…                    table:     {product_slug}__v{major}
+                                                    grants:    derived from Huron RBAC
+       ▲                                                     │ credential vending
+       │ one-way; Huron never reads state back               ▼
+   Svelte / Python client / API                      Spark · Trino · DuckDB · PyIceberg
+</pre>
+
+<ul>
+<li><strong>Sync worker</strong> (single replica) consumes outbox events for tabular publications:
+creates the namespace if absent, registers/updates the table pointing at the Iceberg metadata
+location under the product's Gold prefix, applies grants, records
+<code>polaris_synced_at</code>. Idempotent; a nightly sweep re-converges drift (Huron wins).</li>
+<li><strong>Version mapping:</strong> the table tracks the latest published version per major
+(<code>__v1</code>, <code>__v2</code>…); minor/patch updates append Iceberg snapshots to the same
+table, so engine users get history via Iceberg time travel while breaking changes are separate
+tables. <code>WITHDRAWN</code> versions are rolled back; <code>RETIRED</code> products are
+dropped from Polaris (the authoritative Icechunk data remains in Huron).</li>
+<li><strong>Deployment:</strong> Polaris runs beside Huron in the namespace, backed by its own
+PostgreSQL database, exposed only to engine networks; bootstrap and principal management are
+Terraform/lakectl-driven, not hand-edited.</li>
+</ul>
+
+<h2 id="authz">3. Authorization mapping</h2>
+
+<p>Huron RBAC remains the source of truth; Polaris grants are a projection of it, maintained by the
+sync worker:</p>
+
+<table>
+<tr><th>Huron</th><th>Polaris projection</th></tr>
+<tr><td>Project role <code>viewer</code>/<code>scientist</code> (may read published Gold)</td>
+<td>Principal role <code>huron-{project_slug}-readers</code> with <code>TABLE_READ_DATA</code> on
+the project's namespace</td></tr>
+<tr><td>Classification gate on a product</td>
+<td>Products above a project-configured classification ceiling are <strong>not synced at all</strong> —
+engine-side enforcement is coarser than Huron's, so sensitive tables simply never appear there</td></tr>
+<tr><td>Human/engine identity</td>
+<td>Users obtain Polaris engine credentials through Huron
+(<code>POST /polaris/credentials</code>), which checks Huron RBAC and returns short-lived Polaris
+principal credentials mapped to the right principal roles — one front door, one audit trail</td></tr>
+<tr><td>Huron service identities</td>
+<td>A single sync principal with catalog-admin on the <code>huron</code> catalog; no human holds
+Polaris admin</td></tr>
+</table>
+
+<p class="warn"><span class="k">The rule that keeps this safe:</span> access granted via Polaris
+must never exceed access the same principal has in Huron. The sync worker enforces it
+constructively (grants are only ever derived from Huron bindings), and the nightly converge job
+alerts on any grant it did not derive.</p>
+
+<h2 id="vending">4. Credential vending — division of labor</h2>
+
+<table>
+<tr><th>Path</th><th>Vendor</th><th>Scope</th></tr>
+<tr><td>External engine → tabular Gold (Iceberg)</td><td>Polaris</td>
+<td>Per-table storage credentials, engine-native flow</td></tr>
+<tr><td>Python client / Aether → any Icechunk layer</td><td>Huron API (see
+<a href="api.html#grants">API — access grants</a>)</td>
+<td>Per-repo-prefix STS credentials, read-only, short TTL</td></tr>
+</table>
+
+<p>Two vending doors, deliberately: they serve different protocols and clients, both derive from
+the same RBAC, and neither hands out anything broader than one repo/table prefix. Consolidating on
+Polaris for Icechunk grants would put a non-Iceberg concept inside an Iceberg catalog; consolidating
+on Huron for engines would mean re-implementing the Iceberg REST spec. Skip both consolidations.</p>
+
+<h2 id="failure">5. Failure posture</h2>
+
+<p>Polaris down ⇒ external engine access to tabular Gold degrades; nothing else in Huron notices —
+no Huron read path, publication path, or search path touches Polaris synchronously. Sync events
+queue in the outbox and converge on recovery. Polaris state is fully reconstructable from the Huron
+catalog (<code>lakectl polaris resync</code>).</p>
+
+</main>
+</body>
+</html>

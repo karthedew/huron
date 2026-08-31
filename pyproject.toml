@@ -1,0 +1,187 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "huron"
+version = "0.1.0"
+description = "Control plane for a raw-data-first scientific lakehouse"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "sqlalchemy>=2",
+    "asyncpg",
+    "alembic",
+    "aiobotocore",
+    "rfc8785",
+    "jsonschema",
+    "pyyaml",
+    "httpx",
+    "structlog",
+    "prometheus-client",
+    "pyjwt[crypto]>=2.13.0",
+    "argon2-cffi>=25.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/huron"]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "mypy",
+    "import-linter",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "hypothesis",
+    "testcontainers[postgres]",
+    "respx",
+    # mypy --strict reads huron.schema, which imports jsonschema; without these
+    # stubs the type check fails on a clean checkout.
+    "types-jsonschema",
+    "ty>=0.0.75",
+    "radon>=6.0.1",
+    "complexipy>=7.0.1",
+    "pyscn>=1.30.0 ; platform_machine == 'x86_64' or sys_platform == 'darwin'",
+]
+# Documentation toolchain. Install with:  uv sync --group docs
+#
+# Zensical is the Material for MkDocs team's successor to MkDocs + Material,
+# both of which are now in maintenance mode. It reads the native zensical.toml
+# at the repository root (it would also read a legacy mkdocs.yml; this project
+# does not keep one). It brings its own markdown and pymdown-extensions, so
+# they are not pinned separately here.
+#
+# Pinned exactly: Zensical is pre-1.0 and its config surface is still moving.
+docs = [
+    "zensical==0.0.57",
+]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["*.md"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Stable public error names intentionally mirror their API codes.
+"src/huron/pkg/auth/errors.py" = ["N818"]
+"src/huron/pkg/auth/password.py" = ["N818"]
+"src/huron/pkg/auth/principals.py" = ["N818"]
+"src/huron/pkg/auth/sessions.py" = ["N818"]
+"src/huron/pkg/catalog/errors.py" = ["N818"]
+"src/huron/pkg/catalog/layers.py" = ["N818"]
+# The role/rbac error names intentionally mirror their stable API codes.
+"src/huron/pkg/rbac/roles.py" = ["N818"]
+"src/huron/service/api/authorization.py" = ["N818"]
+"src/huron/service/api/repository.py" = ["N818"]
+# FastAPI resolves annotations at runtime; type-checking-only imports break
+# dependency injection in these modules.
+"src/huron/service/api/**" = ["TC001", "TC002", "TC003"]
+
+[tool.mypy]
+strict = true
+# The pkg tier and the shared schema floor are strict from day one. Services are
+# composition roots full of third-party wiring; add them here once the frameworks
+# they compose have settled.
+files = ["src/huron/pkg", "src/huron/schema"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "unit: fast, no I/O",
+    "contract: exercises a port against a real or fake adapter",
+    "integration: exercises the composed application against real services",
+    "acceptance: exercises a full phase gate end to end",
+]
+addopts = "-m unit --strict-markers"
+
+[tool.importlinter]
+root_package = "huron"
+include_external_packages = true
+
+# The layout rule, mechanically. src/huron/ has exactly three surfaces and the
+# dependency between them runs one way: service -> pkg -> schema. A package that
+# imports a service, or a schema that imports a package, fails CI.
+[[tool.importlinter.contracts]]
+name = "service depends on pkg depends on schema, never the reverse"
+type = "layers"
+layers = ["huron.service", "huron.pkg", "huron.schema"]
+
+# Packages are libraries, not a dependency graph. A package that needs another's
+# capability declares a Protocol for it (see huron/pkg/catalog/ports.py) and
+# receives a conforming object from a service. Structural typing means the
+# implementing package never imports the declaring one either.
+[[tool.importlinter.contracts]]
+name = "Packages are independent of one another"
+type = "independence"
+modules = [
+    "huron.pkg.auth", "huron.pkg.catalog", "huron.pkg.rawstore", "huron.pkg.rbac",
+]
+
+# All glue lives inside one service. Two services that want the same behavior
+# share a package, not an import of each other. Only one service (api) exists
+# today; re-add each deployable here as it gains real code.
+[[tool.importlinter.contracts]]
+name = "Services are independent of one another"
+type = "independence"
+modules = [
+    "huron.service.api",
+]
+
+# The two decision-making packages hold rules, not I/O. Web frameworks, storage
+# SDKs and database drivers reach them only as an injected Protocol. Data-modeling
+# and validation libraries are deliberately absent from this list: huron.schema is
+# definitionally built on them, and catalog validates against it.
+[[tool.importlinter.contracts]]
+name = "catalog and rbac are framework-free"
+type = "forbidden"
+source_modules = ["huron.pkg.catalog", "huron.pkg.rbac"]
+forbidden_modules = [
+    "fastapi",
+    "uvicorn",
+    "starlette",
+    "sqlalchemy",
+    "asyncpg",
+    "alembic",
+    "aiobotocore",
+    "boto3",
+    "botocore",
+    "lancedb",
+    "icechunk",
+    "zarr",
+    "httpx",
+    "structlog",
+    "prometheus_client",
+]
+
+# AuthN sits in the same "no web framework, no DB driver" tier as catalog and
+# rbac, but it is deliberately not folded into the contract above: it makes
+# real outbound HTTP calls to an IdP's token/JWKS endpoints and hashes
+# credentials, so httpx, pyjwt, and argon2-cffi are allowed here on purpose.
+[[tool.importlinter.contracts]]
+name = "auth is web-framework-free"
+type = "forbidden"
+source_modules = ["huron.pkg.auth"]
+forbidden_modules = [
+    "fastapi", "starlette", "uvicorn", "sqlalchemy", "asyncpg", "alembic",
+]
+
+[tool.ty.src]
+# Typing policy: the pkg tier and the shared schema floor are strictly typed
+# (mypy --strict above); ty mirrors that scope. Services are composition roots
+# full of third-party wiring and join once their frameworks settle.
+include = ["src/huron/pkg", "src/huron/schema"]
+
+[tool.coverage.report]
+# Ratchet floor set at the measured baseline (2026-08-30). Never lower it;
+# raise it as coverage climbs. New or touched files are covered in full.
+fail_under = 75

@@ -1,0 +1,94 @@
+{
+  "realm": "huron",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "platform-admins",
+        "description": "Dev-only realm role, surfaced in ID/access tokens as the 'groups' claim by the realm-role protocol mapper on the 'huron-web' client below. It grants no Huron capability by itself: HURON_BOOTSTRAP_PLATFORM_OWNER=karl (docker-compose.yml) is what actually seeds karl's platform_owner RBAC binding at startup. This role exists so the OIDC groups-claim plumbing has something real to carry end-to-end."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "huron-web",
+      "name": "Huron web app (dev)",
+      "description": "Confidential client for the browser login code flow (/auth/oidc/start, /auth/oidc/callback). Dev-only secret, valid only for the Keycloak instance docker-compose.yml runs locally.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "dev-only-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/auth/oidc/callback",
+        "http://keycloak:8081/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm-roles-as-groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "claim.name": "groups",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "karl",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Karl",
+      "email": "karl@huron.dev.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "karl-dev-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "platform-admins"
+      ]
+    },
+    {
+      "username": "sam",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Sam",
+      "email": "sam@huron.dev.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "sam-dev-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": []
+    }
+  ]
+}

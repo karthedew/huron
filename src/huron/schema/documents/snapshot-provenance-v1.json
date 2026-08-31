@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:huron:snapshot-provenance:1",
+  "title": "Snapshot provenance",
+  "description": "Where a published Bronze, Silver or Gold snapshot came from. Invariant N: every snapshot states one of these three origins, and a snapshot with none is refused. 'promotion' descends from a lower layer in this lake; 'external' enters directly from a source Huron does not hold (bronze and silver only); 'derivation' is a Gold product version's record, which is the only origin gold accepts.",
+  "type": "object",
+  "required": ["schema", "kind"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "schema": {"const": "urn:huron:snapshot-provenance:1"},
+    "kind": {"enum": ["promotion", "external", "derivation"]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "promotion"}}, "required": ["kind"]},
+      "then": {"$ref": "#/$defs/promotion"}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "external"}}, "required": ["kind"]},
+      "then": {"$ref": "#/$defs/external"}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "derivation"}}, "required": ["kind"]},
+      "then": {"$ref": "#/$defs/derivation"}
+    }
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "input": {
+      "type": "object",
+      "required": ["dataset", "layer", "snapshot_id"],
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {"type": "string", "minLength": 1},
+        "layer": {"enum": ["bronze", "silver", "gold"]},
+        "snapshot_id": {"type": "string", "minLength": 1},
+        "external": {
+          "type": "boolean",
+          "description": "True when the named input is itself a direct-entry snapshot, so a re-execution depends on a source outside Huron's custody.",
+          "default": false
+        }
+      }
+    },
+    "promotion": {
+      "required": ["source_layer", "container_digest", "built_at"],
+      "properties": {
+        "source_layer": {"enum": ["raw", "bronze", "silver"]},
+        "source_dataset": {"type": "string", "minLength": 1},
+        "source_revision_id": {"type": "string", "format": "uuid"},
+        "source_revision_number": {"type": "integer", "minimum": 1, "maximum": 999999},
+        "source_snapshot_id": {"type": "string", "minLength": 1},
+        "source_files": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/digest"}
+        },
+        "profile": {"type": "string", "minLength": 1},
+        "contract": {"type": "string", "minLength": 1},
+        "container_digest": {"$ref": "#/$defs/digest"},
+        "built_at": {"type": "string", "format": "date-time"}
+      },
+      "oneOf": [
+        {"required": ["source_revision_id"]},
+        {"required": ["source_snapshot_id"]}
+      ]
+    },
+    "external": {
+      "description": "A lineage root at bronze or silver. The source is outside Huron's custody, so the snapshot is not re-derivable; this block records that rather than concealing it.",
+      "required": ["source_system", "profile", "ingested_by", "ingested_at", "container_digest"],
+      "properties": {
+        "source_system": {"type": "string", "minLength": 1},
+        "source_uri": {"type": "string", "format": "uri"},
+        "source_digest": {"$ref": "#/$defs/digest"},
+        "window": {
+          "type": "object",
+          "description": "The slice of a continuous source this snapshot covers; streaming feeds publish one snapshot per window.",
+          "required": ["start", "end"],
+          "additionalProperties": false,
+          "properties": {
+            "start": {"type": "string", "format": "date-time"},
+            "end": {"type": "string", "format": "date-time"}
+          }
+        },
+        "profile": {"type": "string", "minLength": 1},
+        "contract": {"type": "string", "minLength": 1},
+        "ingested_by": {"type": "string", "pattern": "^sa:"},
+        "ingested_at": {"type": "string", "format": "date-time"},
+        "container_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "derivation": {
+      "description": "Invariant K: sufficient to re-execute without consulting anything mutable.",
+      "required": ["inputs", "transformation", "produced_snapshot", "published_by", "published_at"],
+      "properties": {
+        "product": {"type": "string", "minLength": 1},
+        "product_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "inputs": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/input"}},
+        "transformation": {
+          "type": "object",
+          "required": ["name", "container_digest", "entrypoint"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "container_digest": {"$ref": "#/$defs/digest"},
+            "entrypoint": {"type": "string", "minLength": 1},
+            "parameters": {"type": "object"}
+          }
+        },
+        "validation": {
+          "type": "object",
+          "required": ["suite", "passed_at"],
+          "additionalProperties": true,
+          "properties": {
+            "suite": {"type": "string", "minLength": 1},
+            "evidence_ref": {"type": "string"},
+            "passed_at": {"type": "string", "format": "date-time"}
+          }
+        },
+        "produced_snapshot": {"type": "string", "minLength": 1},
+        "published_by": {"type": "string", "minLength": 1},
+        "published_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

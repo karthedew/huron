@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huron — Huron Design Record</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1f2933; --muted:#5f6b76; --line:#e3e0da;
+  --accent:#0b6e6e; --accent2:#8a5a00; --code-bg:#f0eeea; --card:#ffffff;
+  --warn-bg:#fdf3e3; --warn-line:#e0b45c; --note-bg:#e9f2f2; --note-line:#7fb5b5;
+  --del:#a63d3d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#14181c; --fg:#dce3e8; --muted:#94a1ab; --line:#2b3239;
+    --accent:#5cc8c8; --accent2:#d9a441; --code-bg:#1d2329; --card:#191f24;
+    --warn-bg:#2a2315; --warn-line:#8a6d2a; --note-bg:#15262a; --note-line:#2b5c5c;
+    --del:#e08080;}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.6 "Segoe UI",system-ui,-apple-system,sans-serif;}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:.55rem 1rem;font-size:.85rem;z-index:5;display:flex;flex-wrap:wrap;
+  gap:.2rem .85rem;align-items:baseline}
+nav a{color:var(--muted);text-decoration:none;white-space:nowrap}
+nav a:hover{color:var(--accent)}
+nav a.here{color:var(--accent);font-weight:600}
+nav .brand{font-weight:700;color:var(--fg);margin-right:.4rem}
+main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 5rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.5rem 0 .2rem}
+.sub{color:var(--muted);margin:0 0 2rem}
+h2{font-size:1.35rem;margin-top:2.6rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.06rem;margin-top:1.8rem}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--code-bg)}
+.note,.warn{border-left:4px solid var(--note-line);background:var(--note-bg);
+  padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1.2rem 0}
+.warn{border-left-color:var(--warn-line);background:var(--warn-bg)}
+.k{font-weight:600}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;
+  padding:.05rem .5rem;border-radius:99px;border:1px solid var(--line);color:var(--muted);
+  text-transform:uppercase;vertical-align:middle}
+.inv{color:var(--accent2);font-weight:700}
+.superseded{color:var(--del);text-decoration:line-through}
+figure{margin:1.4rem 0}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.9rem;margin:1.2rem 0}
+.card{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:.9rem 1rem}
+.card h3{margin:.1rem 0 .35rem;font-size:1rem}
+.card p{margin:0;font-size:.88rem;color:var(--muted)}
+.card a{text-decoration:none}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Huron</span>
+  <a href="index.html" class="here">Overview</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="layer-raw.html">Raw</a>
+  <a href="layer-bronze.html">Bronze</a>
+  <a href="layer-silver.html">Silver</a>
+  <a href="layer-gold.html">Gold</a>
+  <a href="catalog-search.html">Catalog</a>
+  <a href="polaris.html">Polaris</a>
+  <a href="rbac.html">RBAC</a>
+  <a href="auth.html">Auth</a>
+  <a href="api.html">API</a>
+  <a href="python-client.html">Client</a>
+  <a href="frontend.html">Frontend</a>
+  <a href="roadmap.html">Roadmap</a>
+</nav>
+<main>
+<h1>Huron Design Record</h1>
+<p class="sub">A datalake for scientific projects — immutable raw evidence on NFS, analysis-ready
+Zarr&nbsp;+&nbsp;Icechunk layers on object storage, one catalog, one authorization model.
+Version 2026-08-23. This is a <strong>greenfield design</strong>: it is the complete record, it
+stands on its own, and it owes nothing to any earlier prototype, plan, or codebase.</p>
+
+<h2 id="what">1. What Huron is</h2>
+
+<p>Huron ingests complete scientific artifacts — MCNP runs, RELAP outputs, instrument captures,
+simulation ensembles — as immutable <em>Raw</em> revisions, converts them automatically into
+source-faithful <em>Bronze</em> arrays, canonicalizes those into standardized <em>Silver</em>
+datasets that scientists analyze through Xarray without ever parsing native formats, and publishes
+scientist-derived results as versioned, fully lineage-pinned <em>Gold</em> products.</p>
+
+<table>
+<tr><th>Layer</th><th>Meaning</th><th>Storage</th><th>Written by</th></tr>
+<tr><td class="k">Raw</td><td>Original submitted files, byte-exact, immutable</td>
+    <td>NFS (POSIX)</td><td>Contributors, through the API</td></tr>
+<tr><td class="k">Bronze</td><td>Source-faithful Zarr representation of the same values</td>
+    <td>Object storage (Zarr&nbsp;+&nbsp;Icechunk)</td><td>Huron pipeline services only</td></tr>
+<tr><td class="k">Silver</td><td>Canonical, validated representation; standard names, units, coordinates</td>
+    <td>Object storage (Zarr&nbsp;+&nbsp;Icechunk)</td><td>Huron pipeline services only</td></tr>
+<tr><td class="k">Gold</td><td>Scientifically derived, validated, published data product</td>
+    <td>Object storage (Zarr&nbsp;+&nbsp;Icechunk; optional Iceberg for tabular products)</td>
+    <td>Huron pipeline services, on behalf of publishers</td></tr>
+</table>
+
+<p>Silver standardizes <em>existing</em> scientific meaning; Gold creates and publishes <em>new</em>
+scientific meaning. Layer names describe Huron's product status. Scientific processing levels
+(L1/L2/L3 or a domain's own scheme) are orthogonal metadata carried on the dataset or product.</p>
+
+<h2 id="hierarchy">2. Resource hierarchy</h2>
+
+<pre>
+Huron platform
+└── Organization                 tenancy and administration boundary
+    └── Project                  the data pond: quota, retention, classification, membership
+                                 a programme of work (e.g. modeling-simulation)
+        └── Dataset              one body of data in that programme: one run, one
+                                 acquisition, one contributor's deposit (e.g. run-0042)
+            └── Revision         one immutable commit to that dataset (1..N, gap-free)
+
+            Release              a named, immutable tag on one revision (v1.0) — a
+                                 pointer, not a level
+</pre>
+
+<p><strong>Three entity levels and one version axis.</strong> A dataset has a single linear history
+of revisions, exactly as an Icechunk repo has a linear history of snapshots; a release is a named
+pointer into that history, exactly as an Icechunk tag is. The versioning model is therefore
+identical in all four layers, and <code>dataset@v1.0</code> means the same thing whether it resolves
+to raw bytes or a Silver array.</p>
+
+<p>A new <em>dataset</em> means a new run or acquisition — the scientific inputs are different
+(different thickness, material, seed, geometry). A new <em>revision</em> means correcting or
+extending the same body of data (truncated output, missing file, corrupted packaging). A
+<em>release</em> means "this is the version to cite", and because citations must not move, tags are
+immutable once written.</p>
+
+<p>Raw, Bronze and Silver all attach to the <strong>dataset</strong>, one repo each, so the four
+layers share a single hierarchy and the layer is the leaf of the path. Gold attaches to the
+<strong>dataset</strong> when a product derives from exactly one, and to the <strong>project</strong>
+when it fuses several; either way it pins the exact snapshots it was derived from. A canonical
+contract still decides which runs are comparable — it is what makes their Silver repos
+concatenable — but it no longer decides where they are stored. Every resource carries an immutable,
+URL-safe <code>slug</code> fixed at creation and a mutable display <code>title</code>; renames touch
+titles only, and no one — not an organization admin, not the platform owner — can move a slug, so
+storage paths never move.</p>
+
+<h2 id="decisions">3. Core decisions</h2>
+
+<p>Each decision names the live alternative it was chosen over, so a future reader knows the choice
+was considered, not defaulted into.</p>
+
+<table>
+<tr><th>#</th><th>Decision</th><th>Instead of</th><th>Why</th></tr>
+<tr><td>1</td>
+<td><strong>Greenfield build.</strong> Huron is designed and built from scratch: no API
+compatibility with, data migration from, or design deference to any earlier prototype. Anything
+reused must re-justify itself against this record.</td>
+<td>Evolving prior work incrementally</td>
+<td>Compatibility constraints shape architectures more than requirements do. Starting clean lets
+every mechanism earn its place.</td></tr>
+<tr><td>2</td>
+<td><strong>Raw lives on NFS; POSIX is the authoritative raw store.</strong> Commit = staging
+directory + atomic <code>rename(2)</code>; dedup = hardlinks; immutability = sealing. Details in
+<a href="layer-raw.html">Raw Layer</a>.</td>
+<td>Object storage for raw too</td>
+<td>HPC runs are born on NFS; committing in place avoids copying up to 1&nbsp;TiB per run.
+POSIX rename publishes a complete envelope atomically — a stronger primitive than any
+marker-object protocol.</td></tr>
+<tr><td>3</td>
+<td><strong>Hierarchy: Organization → Project → Dataset, with linear revisions and releases
+as immutable tags.</strong></td>
+<td>A separate Release level between dataset and revision</td>
+<td>The old Release level conflated two different ideas — "one instance of a study" and "a version
+worth citing". Making the dataset the instance and the release a tag gives one counter instead of
+two and makes raw versioning identical to Icechunk's, so scientists learn the model once.</td></tr>
+<tr><td>4</td>
+<td><strong>Bronze, Silver, and Gold are Zarr&nbsp;+&nbsp;Icechunk repositories on Ceph RGW.</strong>
+One Bronze repo per dataset; one Silver repo per dataset; one Gold repo per product, stored under
+its source dataset when single-source and under the project when fused. Humans never write them;
+every publication is a validated Icechunk snapshot.</td>
+<td>Derived data as files beside raw on NFS</td>
+<td>Icechunk gives transactional snapshots and time travel on object storage; concurrent
+scientific reads scale on RGW; the raw filesystem stays reserved for evidence.</td></tr>
+<tr><td>5</td>
+<td><strong>Three catalog stores, one job each — and one search index for all four layers.</strong>
+PostgreSQL holds structural state only (identity, sequencing, locks, registry, RBAC, audit, outbox).
+LanceDB owns <em>all</em> text, tag, and semantic matching across raw, Bronze, Silver and Gold, with
+<code>layer</code> as a facet rather than a system boundary. Storage sidecars remain the
+authoritative metadata content. No PostgreSQL full-text search, ever; no search fallback — LanceDB
+down means <code>/search</code> is 503 while browse keeps working.</td>
+<td>A separate catalog per layer; OpenMetadata for the raw layer and for RBAC</td>
+<td>Two implementations of one capability drift, and the rarely-exercised one is broken when needed.
+A scientist searching "absorbed dose" does not know which layer holds the answer. OpenMetadata was
+evaluated and rejected: its policies govern operations inside its own catalog and cannot authorize a
+read on NFS or a scoped grant on RGW, so it would add a second RBAC system to keep in agreement with
+the first — see <a href="catalog-search.html#split">Catalog &amp; Search</a>.</td></tr>
+<tr><td>6</td>
+<td><strong>Full logical copy per revision.</strong> Every revision directory is complete and
+offline-readable; unchanged bytes are shared via hardlinks, not deltas.</td>
+<td>Delta chains or content-addressed pools</td>
+<td>Evidence must remain understandable with <code>ls</code> and <code>jq</code> if the platform
+is lost. Also: no lakeFS, no git-like indirection — corrections are naturally new immutable
+revisions.</td></tr>
+<tr><td>7</td>
+<td><strong>Apache Polaris is used <em>targeted</em>:</strong> it catalogs Iceberg-format tabular
+Gold products and vends credentials for external engines. Huron's catalog stays authoritative for
+everything; a one-way sync mirrors published tabular Gold into Polaris.</td>
+<td>Polaris as the central catalog for all layers</td>
+<td>Polaris is an Iceberg REST catalog. Entries for Zarr/Icechunk repos or NFS trees would be
+names no engine can read and a second catalog that drifts. See
+<a href="polaris.html">Polaris</a> for the fit analysis and revisit trigger.</td></tr>
+<tr><td>8</td>
+<td><strong>Programmatic access requires user-created API keys; the web UI uses OIDC
+sessions.</strong> Both resolve to the same principal; keys are scoped, expiring, hashed at rest,
+and never exceed their owner's live permissions.</td>
+<td>Ambient site credentials or shared tokens</td>
+<td>The Python client must work from HPC login nodes and laptops with an auditable, revocable
+identity per caller.</td></tr>
+<tr><td>9</td>
+<td><strong>Scientists read Bronze/Silver/Gold directly from object storage via short-lived,
+prefix-scoped credentials vended by the API.</strong> The control plane authorizes and pins the
+snapshot; the data plane is RGW.</td>
+<td>Proxying array bytes through the API</td>
+<td>Array reads are bulk and parallel; a proxy makes the control plane the bandwidth bottleneck.
+RBAC is enforced at grant issuance and on every renewal.</td></tr>
+<tr><td>10</td>
+<td><strong>Raw payload expires on a per-category TTL after Bronze+Silver are verified;
+reproducibility-essential inputs are retained by default.</strong> Expiration writes an
+<code>EXPIRED</code> marker and never touches sidecars, checksums, or metadata.</td>
+<td>All-or-nothing raw retention</td>
+<td>MCNP <code>runtpe</code>/<code>ptrac</code> files are huge and reasonably expirable; input
+decks are tiny and essential. The scientist sees the consequence before choosing the policy.</td></tr>
+<tr><td>11</td>
+<td><strong>Only Huron services write published representations.</strong> Nobody overwrites
+committed raw files; pipeline identities alone hold write credentials to derived repos; every
+publication carries validation evidence.</td>
+<td>Trusting roles with direct storage access</td>
+<td>The integrity of every layer reduces to a small set of auditable service code paths instead of
+the discipline of every user.</td></tr>
+<tr><td>12</td>
+<td><strong>Stack: FastAPI + Python backend, Svelte frontend, Python client for Aether, Go-free
+v1.</strong> Derived layers are built and read through <strong>Xarray + Dask</strong> over
+Zarr&nbsp;+&nbsp;Icechunk, so pipeline code and scientist code use one array API. OpenAPI is the
+published contract and generates the TypeScript and Python client cores; a breaking change fails
+CI.</td>
+<td>Polyglot services; a bespoke chunk-processing layer</td>
+<td>One backend language, one contract artifact, generated clients — the smallest surface that
+serves scientists on day one. Dask means the canonicalizer and the scientist's notebook parallelize
+the same way over the same objects.</td></tr>
+<tr><td>13</td>
+<td><strong>Every layer is scoped by the dataset; a canonical contract decides comparability, not
+storage.</strong> One Silver repo per dataset, exactly as Bronze. The datasets in a project
+declaring the same <code>(profile, contract_version)</code> are combined by concatenating their
+repos along <code>run</code> at read time, or published as a fused Gold product.</td>
+<td>One shared Silver repo per <code>(project, profile, contract_version)</code>, appended along a
+<code>run</code> dimension — the design this replaces</td>
+<td>A shared repo had no prefix a dataset-scoped RBAC binding could name, so any credential minted
+for one granted more than the binding allowed; purging one dataset meant region-deleting a slab
+other datasets were reading; and every dataset under a contract serialized on one Icechunk branch.
+Comparability is still a property of the declared contract — it now decides which repos may be
+concatenated rather than which runs share bytes.</td></tr>
+<tr><td>14</td>
+<td><strong>Releases are immutable tags, not a hierarchy level.</strong> A dataset has one linear
+revision history; a release names one revision and is never repointed.</td>
+<td>Releases containing revisions (two counters), or no named versions at all</td>
+<td>Citation requires that <code>dataset@v1.0</code> resolve to the same bytes forever. Modelling
+raw versioning as commits-plus-tags makes it identical to Icechunk's, so the versioning story is the
+same in all four layers and scientists learn it once.</td></tr>
+<tr><td>15</td>
+<td><strong>A dataset declares an entry layer; Gold stays derivation-defined.</strong> Raw, Bronze
+and Silver each accept data that arrives already in that form from outside the lake — a streaming
+feed, an instrument, published reference data — carrying an
+<a href="layer-silver.html#direct-entry">external-provenance block</a> in place of the lower-layer
+references, and rooting lineage where it enters. Gold accepts no direct entry: every product
+version carries a derivation record (invariant K). "Trusted" and "shippable" are properties
+expressed by contract validation, release tags, classification and read grants — never by
+promoting bytes into a higher layer.</td>
+<td>Silver defined as "whatever Bronze canonicalizes into"; Gold redefined as the pool of trusted
+datasets shipped to external consumers</td>
+<td>Requiring descent would force a fictitious Raw and Bronze for data Huron never received in
+those forms, and the retention clock has nothing to count for them. Defining Gold by trust rather
+than derivation would mean copying validated Silver through an identity transform — storage paid
+twice, staleness tracked on a copy that adds no meaning, and the word "gold" no longer describing
+what was done to the data.</td></tr>
+</table>
+
+<h2 id="docmap">4. Document map</h2>
+
+<div class="cards">
+<div class="card"><h3><a href="architecture.html">System Architecture</a></h3>
+<p>The stores, the services, the data flow from HPC run to published product, and the deployment
+picture.</p></div>
+<div class="card"><h3><a href="layer-raw.html">Raw Layer — NFS Store</a></h3>
+<p>Directory layout, the POSIX commit protocol, ingest sessions, hardlink dedup, sealing,
+TTL expiration, purge.</p></div>
+<div class="card"><h3><a href="layer-bronze.html">Bronze Layer</a></h3>
+<p>Source-faithful Zarr, science profiles and extractors, Icechunk snapshot model, validation
+gates.</p></div>
+<div class="card"><h3><a href="layer-silver.html">Silver Layer</a></h3>
+<p>Canonicalization contracts, the multi-run array space, corrections and region replacement.</p></div>
+<div class="card"><h3><a href="layer-gold.html">Gold Layer</a></h3>
+<p>Products, versions, candidate → validated → published, lineage pinning, staleness, tabular
+products.</p></div>
+<div class="card"><h3><a href="catalog-search.html">Catalog &amp; Search</a></h3>
+<p>The PostgreSQL structural schema, the LanceDB projection, lineage edges, rebuild.</p></div>
+<div class="card"><h3><a href="polaris.html">Apache Polaris</a></h3>
+<p>Fit analysis, the targeted integration, namespace mapping, credential vending, what stays out.</p></div>
+<div class="card"><h3><a href="rbac.html">RBAC</a></h3>
+<p>Roles at platform/organization/project scope, capabilities, layer permission matrices, API keys,
+data-plane enforcement.</p></div>
+<div class="card"><h3><a href="auth.html">Authentication</a></h3>
+<p>The four credential kinds and the one <code>Principal</code> they resolve to, the session model,
+CSRF, admin-provisioned passwords, and the local OIDC topology.</p></div>
+<div class="card"><h3><a href="api.html">REST API</a></h3>
+<p>The FastAPI surface: hierarchy CRUD, ingest, layers and snapshots, products, search, access
+grants, key management.</p></div>
+<div class="card"><h3><a href="python-client.html">Python Client &amp; Aether</a></h3>
+<p><code>huron.open_dataset(...)</code> → Xarray, the grant flow, uploads, product publishing,
+reproducibility pinning.</p></div>
+<div class="card"><h3><a href="frontend.html">Svelte Frontend</a></h3>
+<p>Pages, flows, and the admin surfaces; OIDC sessions; generated TypeScript client.</p></div>
+<div class="card"><h3><a href="roadmap.html">Roadmap</a></h3>
+<p>The greenfield build: phases, mechanical gates, and sequencing rationale.</p></div>
+</div>
+
+<h2 id="scenario">5. The MCNP thread</h2>
+
+<p>One worked example runs through every document: the <em>Reactor Shielding Parameter Sweep</em>
+dataset in the <em>Huron Shielding Study</em> project of the <em>Nuclear Engineering</em>
+organization. A scientist uploads <code>run-0042</code> (input deck, <code>outp</code>,
+<code>meshtal</code>, <code>runtpe</code>, scheduler log); Huron commits Raw revision 1, builds
+Bronze snapshot <code>B182</code>, canonicalizes Silver snapshot <code>S117</code> exposing
+<code>particle_flux(run, energy, x, y, z)</code>; the scientist derives an absorbed-dose product
+with ICRP-116 coefficients and publishes Gold <code>shielding-dose-response@1.0.0</code> as
+snapshot <code>G021</code>. The lineage graph is:</p>
+
+<pre>
+Raw  run-0042 / revision 1          (NFS, immutable, checksummed)
+        │  source parsing (mcnp-run profile extractor, container digest pinned)
+        ▼
+Bronze snapshot B182                (Icechunk, source-faithful: tally_4, mesh_104, …)
+        │  canonicalization (mcnp canonicalizer, science contract v1)
+        ▼
+Silver snapshot S117                (Icechunk, canonical: particle_flux, standard axes/units)
+        │  flux-to-dose derivation (scientist's transform, parameters pinned)
+        ▼
+Gold  shielding-dose-response 1.0.0 = snapshot G021   (validated, published, discoverable)
+</pre>
+
+<h2 id="glossary">6. Glossary</h2>
+
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td>Organization</td><td>Top-level tenancy unit; owns projects, members, delegated roles.</td></tr>
+<tr><td>Project</td><td>The data pond and primary authorization/quota/retention boundary.</td></tr>
+<tr><td>Dataset</td><td>One body of data within a project — a run, an acquisition, a contributor's deposit (<code>run-0042</code>).</td></tr>
+<tr><td>Revision</td><td>One immutable, checksummed commit to a dataset; corrections append revisions (1..N, gap-free).</td></tr>
+<tr><td>Release</td><td>A named immutable tag on one revision (<code>v1.0</code>) — the citable version. The raw analogue of an Icechunk tag.</td></tr>
+<tr><td>Canonical contract</td><td>The versioned Silver shape a dataset declares; datasets sharing one are the members of one array space.</td></tr>
+<tr><td>Envelope</td><td>A revision's directory: <code>metadata.json</code>, <code>manifest.json</code>, <code>COMMITTED</code>, <code>amendments/</code>, <code>payload/</code>.</td></tr>
+<tr><td>Science profile</td><td>Versioned, installable definition of a data kind (<code>mcnp-run@1.0</code>): expected files, extractor, Bronze mapping, canonical Silver contract, validations.</td></tr>
+<tr><td>Icechunk snapshot</td><td>An immutable, transactionally committed version of a Zarr repository on object storage.</td></tr>
+<tr><td>Product</td><td>A named, versioned Gold deliverable with pinned inputs, transform digest, and validation evidence.</td></tr>
+<tr><td>Access grant</td><td>Short-lived, prefix-scoped object-storage credentials plus a snapshot pointer, issued by the API after authorization.</td></tr>
+<tr><td>Aether</td><td>The compute/analysis framework scientists use; consumes Huron's Xarray-compatible open paths and runs transformations.</td></tr>
+<tr><td>Amendment</td><td>Steward-only, append-only metadata correction on a committed revision.</td></tr>
+<tr><td>Projection</td><td>Rebuildable derived state (LanceDB search tables); never authoritative.</td></tr>
+<tr><td>Sealing</td><td>Removing write permission from a committed revision's files (<code>0444</code>/<code>0555</code>).</td></tr>
+</table>
+
+<p class="note"><span class="k">Reading order.</span> New readers:
+<a href="architecture.html">Architecture</a> → <a href="layer-raw.html">Raw</a> →
+<a href="layer-bronze.html">Bronze</a>/<a href="layer-silver.html">Silver</a>/<a href="layer-gold.html">Gold</a> →
+<a href="rbac.html">RBAC</a> → <a href="auth.html">Authentication</a>. Implementers should then read
+<a href="catalog-search.html">Catalog</a>, <a href="api.html">API</a>, and the
+<a href="roadmap.html">Roadmap</a>. This directory is the entire design record — where any earlier
+document disagrees with it, this record wins.</p>
+
+</main>
+</body>
+</html>

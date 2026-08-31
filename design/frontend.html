@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huron — Svelte Frontend</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1f2933; --muted:#5f6b76; --line:#e3e0da;
+  --accent:#0b6e6e; --accent2:#8a5a00; --code-bg:#f0eeea; --card:#ffffff;
+  --warn-bg:#fdf3e3; --warn-line:#e0b45c; --note-bg:#e9f2f2; --note-line:#7fb5b5;
+  --del:#a63d3d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#14181c; --fg:#dce3e8; --muted:#94a1ab; --line:#2b3239;
+    --accent:#5cc8c8; --accent2:#d9a441; --code-bg:#1d2329; --card:#191f24;
+    --warn-bg:#2a2315; --warn-line:#8a6d2a; --note-bg:#15262a; --note-line:#2b5c5c;
+    --del:#e08080;}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.6 "Segoe UI",system-ui,-apple-system,sans-serif;}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:.55rem 1rem;font-size:.85rem;z-index:5;display:flex;flex-wrap:wrap;
+  gap:.2rem .85rem;align-items:baseline}
+nav a{color:var(--muted);text-decoration:none;white-space:nowrap}
+nav a:hover{color:var(--accent)}
+nav a.here{color:var(--accent);font-weight:600}
+nav .brand{font-weight:700;color:var(--fg);margin-right:.4rem}
+main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 5rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.5rem 0 .2rem}
+.sub{color:var(--muted);margin:0 0 2rem}
+h2{font-size:1.35rem;margin-top:2.6rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.06rem;margin-top:1.8rem}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--code-bg)}
+.note,.warn{border-left:4px solid var(--note-line);background:var(--note-bg);
+  padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1.2rem 0}
+.warn{border-left-color:var(--warn-line);background:var(--warn-bg)}
+.k{font-weight:600}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;
+  padding:.05rem .5rem;border-radius:99px;border:1px solid var(--line);color:var(--muted);
+  text-transform:uppercase;vertical-align:middle}
+.inv{color:var(--accent2);font-weight:700}
+.superseded{color:var(--del);text-decoration:line-through}
+figure{margin:1.4rem 0}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.9rem;margin:1.2rem 0}
+.card{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:.9rem 1rem}
+.card h3{margin:.1rem 0 .35rem;font-size:1rem}
+.card p{margin:0;font-size:.88rem;color:var(--muted)}
+.card a{text-decoration:none}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Huron</span>
+  <a href="index.html">Overview</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="layer-raw.html">Raw</a>
+  <a href="layer-bronze.html">Bronze</a>
+  <a href="layer-silver.html">Silver</a>
+  <a href="layer-gold.html">Gold</a>
+  <a href="catalog-search.html">Catalog</a>
+  <a href="polaris.html">Polaris</a>
+  <a href="rbac.html">RBAC</a>
+  <a href="auth.html">Auth</a>
+  <a href="api.html">API</a>
+  <a href="python-client.html">Client</a>
+  <a href="frontend.html" class="here">Frontend</a>
+  <a href="roadmap.html">Roadmap</a>
+</nav>
+<main>
+<h1>Svelte Frontend</h1>
+<p class="sub">SvelteKit application: the browse, search, governance, and publication surface,
+shaped like a workspace rather than an admin console. Everything it shows comes through the REST
+API with the user's own OIDC session — the UI holds no privileged credentials and can render
+nothing the API would not serve that user.</p>
+
+<h2 id="stack">1. Stack and principles</h2>
+
+<ul>
+<li><strong>SvelteKit + TypeScript</strong>, API client generated from <code>openapi/v1.json</code>
+(compile break on contract drift).</li>
+<li><strong>OIDC</strong> against the site IdP; session cookie; no tokens in
+<code>localStorage</code>. The UI never uses API keys; it <em>manages</em> them.</li>
+<li><strong>Server-side rendering</strong> for browse/search pages (shareable deep links like
+<code>/nuclear-engineering/modeling-simulation/run-0042@v1.0</code> — slug paths are stable
+because slugs are immutable, and <code>@tag</code> resolves to one revision forever).</li>
+<li><strong>Honest staleness:</strong> every search view shows the projection watermark
+("index 12 s behind"); every stale product wears its badge with the reason; candidate vs published
+is always visually distinct.</li>
+<li><strong>404-not-403</strong> rendering mirrors the API: resources the user cannot discover
+simply do not exist in the UI.</li>
+<li><strong>Workspace shape, deliberately Databricks-like.</strong> A persistent left rail
+(Search · Catalog · Jobs · Admin) beside a three-pane catalog explorer — organization → project →
+dataset in a navigable tree, detail on the right — because that layout is what scientists arriving
+from Databricks already know how to drive. Layer badges take the place of table/view icons.</li>
+<li><strong>Permissions edited like Grafana's.</strong> Each org, project and dataset has a
+Permissions tab: one row per binding (principal → role), an "Add permission" row that resolves
+users, groups and service principals, and an explicit indicator of what is <em>inherited</em> from
+the level above versus set here. Roles are the fixed vocabulary in
+<a href="rbac.html">RBAC</a> — the UI never invents a permission the API cannot express.</li>
+<li><strong>Notebooks are out of scope for v1.</strong> A "Workspace" area is reserved in the rail
+for <a href="https://marimo.io">marimo</a> notebooks and deliberately not built yet: nothing in the
+API, the grant model, or the page inventory assumes it, and nothing blocks on it.</li>
+</ul>
+
+<h2 id="pages">2. Page inventory</h2>
+
+<table>
+<tr><th>Area</th><th>Pages and what they show</th></tr>
+<tr><td class="k">Home / Search</td>
+<td>Global search across all four layers (datasets, revisions, snapshots, products) with facets:
+layer, org, project, tags, classification, profile, quality state. Result cards show layer badges
+(<code>raw · bronze · silver · gold</code>) and staleness. Structural browse fallback is a separate
+"browse" tree — never a degraded search.</td></tr>
+<tr><td class="k">Organization</td>
+<td>Projects list (visibility-filtered), members and delegated roles (org_admin), science-profile
+registry (steward): published versions, immutability notice, install-to-project.</td></tr>
+<tr><td class="k">Project dashboard</td>
+<td>Datasets with lifecycle chips (DRAFT/ACTIVE/RETIRED); storage quota burn-down (NFS raw vs
+object-storage layers); retention policy panel with the expiry consequence text; members/roles
+(owner); pending steward actions (draft activations, publication approvals) as a work queue.</td></tr>
+<tr><td class="k">Dataset</td>
+<td>Revision history with per-revision materialization state
+(<code>raw ✓ · bronze ✓ · silver S118 · —</code>); release tags shown as pinned labels against the
+revisions they point at; canonical contract (variables, dims, units) with
+version history; a "open in Python" snippet with the pinned latest snapshot; validation history
+sparkline; retention/holds panel.</td></tr>
+<tr><td class="k">Revision</td>
+<td>Revisions with reasons ("rev 2: original meshtal truncated"); manifest viewer (paths, sizes,
+checksums, per-file retention category and expiry date); extracted parameters; effective metadata
+with amendment history; per-file download (capability-gated); expiry/purge markers rendered
+plainly.</td></tr>
+<tr><td class="k">Snapshot</td>
+<td>Provenance block, validation evidence (structured pass/fail with details), lineage
+mini-graph, open-in-Python snippet pinned to this snapshot.</td></tr>
+<tr><td class="k">Product</td>
+<td>Versions with status; the full derivation record (inputs, transform digest, parameters);
+interactive lineage graph (upstream/downstream, redacted nodes rendered as locked); validation
+evidence; publish/withdraw actions for publishers; staleness banner with recompute action.</td></tr>
+<tr><td class="k">Publication queue</td>
+<td>For publishers/stewards: candidates awaiting review, evidence side-by-side with the contract,
+one-click publish with audit note.</td></tr>
+<tr><td class="k">Account</td>
+<td>API keys: create (scopes, project restriction, expiry) with the show-once secret flow, list
+with last-used, revoke. Effective roles per scope ("why can I see this?" — <code>GET /auth/session</code>).</td></tr>
+<tr><td class="k">Admin</td>
+<td>Role bindings editor (scoped to the admin's own authority); classification vocabulary
+(read-only view of deployment config); reconciliation reports with dry-run plans and DEGRADED
+findings; purge request/approve (two-person flow made visible); audit stream with filters;
+retention holds; job queue health (bronze/silver/gold backlogs, projection lag).</td></tr>
+</table>
+
+<h2 id="flows">3. Flows worth specifying</h2>
+
+<ul>
+<li><strong>Steward activation:</strong> DRAFT dataset → checklist (identity, kind, ownership,
+contract, retention, classification, duplication) → activate; every unchecked item links to the
+place it gets fixed.</li>
+<li><strong>Retention choice with consequences:</strong> selecting a TTL policy shows the generated
+consequence text ("native MCNP replay unavailable after 90 days; earliest retained representation:
+Bronze") before saving — the retention design makes this a UI requirement.</li>
+<li><strong>Correction:</strong> "upload corrected revision" on a dataset pre-fills the CLI
+command (corrections are CLI/client operations; the UI explains and hands off), then shows the
+downstream impact as it propagates: new bronze → silver region replace → stale products.</li>
+<li><strong>Grant visibility:</strong> "who can read this?" panel on datasets/products for owners
+and auditors — resolved from bindings, rendered per layer.</li>
+</ul>
+
+<h2 id="nonfunctional">4. Non-functional</h2>
+
+<ul>
+<li>Big-table virtualization for manifests (10k files) and audit streams; keyset pagination
+end-to-end (the versioned keyset cursor contract).</li>
+<li>Lineage graph rendered client-side from the <code>/lineage</code> API (typed nodes/edges);
+depth-limited with expand-on-demand.</li>
+<li>No embedded array visualization in v1 — the open-in-Python snippet is the deliberate
+hand-off. (A later phase may add thumbnail plots rendered by a service, never in-browser Zarr
+reads, which would require broad storage credentials in the browser.)</li>
+<li>Accessibility and dark mode from the start; the design system mirrors these documents'
+palette.</li>
+</ul>
+
+</main>
+</body>
+</html>

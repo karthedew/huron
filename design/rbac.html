@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huron — RBAC & Authentication</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1f2933; --muted:#5f6b76; --line:#e3e0da;
+  --accent:#0b6e6e; --accent2:#8a5a00; --code-bg:#f0eeea; --card:#ffffff;
+  --warn-bg:#fdf3e3; --warn-line:#e0b45c; --note-bg:#e9f2f2; --note-line:#7fb5b5;
+  --del:#a63d3d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#14181c; --fg:#dce3e8; --muted:#94a1ab; --line:#2b3239;
+    --accent:#5cc8c8; --accent2:#d9a441; --code-bg:#1d2329; --card:#191f24;
+    --warn-bg:#2a2315; --warn-line:#8a6d2a; --note-bg:#15262a; --note-line:#2b5c5c;
+    --del:#e08080;}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.6 "Segoe UI",system-ui,-apple-system,sans-serif;}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:.55rem 1rem;font-size:.85rem;z-index:5;display:flex;flex-wrap:wrap;
+  gap:.2rem .85rem;align-items:baseline}
+nav a{color:var(--muted);text-decoration:none;white-space:nowrap}
+nav a:hover{color:var(--accent)}
+nav a.here{color:var(--accent);font-weight:600}
+nav .brand{font-weight:700;color:var(--fg);margin-right:.4rem}
+main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 5rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.5rem 0 .2rem}
+.sub{color:var(--muted);margin:0 0 2rem}
+h2{font-size:1.35rem;margin-top:2.6rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.06rem;margin-top:1.8rem}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--code-bg)}
+.note,.warn{border-left:4px solid var(--note-line);background:var(--note-bg);
+  padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1.2rem 0}
+.warn{border-left-color:var(--warn-line);background:var(--warn-bg)}
+.k{font-weight:600}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;
+  padding:.05rem .5rem;border-radius:99px;border:1px solid var(--line);color:var(--muted);
+  text-transform:uppercase;vertical-align:middle}
+.inv{color:var(--accent2);font-weight:700}
+.superseded{color:var(--del);text-decoration:line-through}
+figure{margin:1.4rem 0}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.9rem;margin:1.2rem 0}
+.card{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:.9rem 1rem}
+.card h3{margin:.1rem 0 .35rem;font-size:1rem}
+.card p{margin:0;font-size:.88rem;color:var(--muted)}
+.card a{text-decoration:none}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Huron</span>
+  <a href="index.html">Overview</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="layer-raw.html">Raw</a>
+  <a href="layer-bronze.html">Bronze</a>
+  <a href="layer-silver.html">Silver</a>
+  <a href="layer-gold.html">Gold</a>
+  <a href="catalog-search.html">Catalog</a>
+  <a href="polaris.html">Polaris</a>
+  <a href="rbac.html" class="here">RBAC</a>
+  <a href="auth.html">Auth</a>
+  <a href="api.html">API</a>
+  <a href="python-client.html">Client</a>
+  <a href="frontend.html">Frontend</a>
+  <a href="roadmap.html">Roadmap</a>
+</nav>
+<main>
+<h1>RBAC &amp; Authentication</h1>
+<p class="sub">Projects are the data pond and the primary authorization boundary. Roles bind
+identity-provider groups at stable scopes; roles expand to capabilities; layers add their own
+restrictions on top.</p>
+
+<h2 id="principles">1. Principles</h2>
+
+<ul>
+<li><strong>The project is the pond.</strong> Membership, quota, retention defaults, classification,
+compute limits, cost attribution, and incident blast radius all bound at the project. No per-user
+storage allocations, no per-dataset authorization domains by default, no global shared raw
+directory.</li>
+<li><strong>Organization membership grants discovery of org-public projects — nothing more.</strong>
+Project membership never follows automatically from org membership.</li>
+<li><strong>Ordinary org members cannot create projects.</strong> Org admins create/approve them,
+or delegate a <code>project_creator</code> role for template-governed self-service.</li>
+<li><strong>Operational access ≠ data access.</strong> A platform operator does not automatically
+read scientific data.</li>
+<li><strong>Uploading ≠ reading forever.</strong> A producer identity can be write-only; raw
+payload read is its own capability.</li>
+<li><strong>Lineage does not grant access</strong> (invariant L); restricted upstreams render
+redacted.</li>
+<li><strong>Prefer IdP groups over direct user bindings.</strong> Thousands of user rows are a
+smell; bind <code>group:mcnp-analysts</code> once.</li>
+</ul>
+
+<h2 id="roles">2. Roles</h2>
+
+<p class="warn"><strong>This section predates the implemented role model and is pending rewrite.</strong>
+The taxonomy below was the design's first cut. What is built and enforced — in
+<code>src/huron/pkg/rbac/roles.py</code>, mirrored by the migration seed and a contract test that
+diffs the two — is a smaller set of eight roles: <code>reader</code>, <code>developer</code>,
+<code>data_steward</code>, <code>project_admin</code>, <code>organization_admin</code>,
+<code>platform_owner</code>, and two service-account-only pipeline roles, <code>pipeline</code>
+and <code>ingest_pipeline</code>. Capability names differ too (the built vocabulary is
+<code>organization.*</code>, <code>project.*</code>, <code>dataset.*</code>,
+<code>release.create</code>, <code>rbac.binding_manage</code>, <code>service_account.manage</code>,
+plus layer-scoped <code>data.read</code>/<code>data.write</code>). Two rules stated below are
+<em>not</em> yet built and remain the design intent: raw payload read as a capability stricter than
+dataset read, and classification-gated discovery. Treat the responsibilities and the
+<a href="#layers">layer matrices</a> as intent; treat <code>roles.py</code> as the current fact.</p>
+
+<p><strong><code>ingest_pipeline</code></strong> is the one role that may both create datasets and
+write derived layers. It exists for pipelines whose data originates outside the lake — a streaming
+feed or an external service — which must mint the dataset they are about to fill; see
+<a href="layer-silver.html#direct-entry">Silver §4</a>. It is bindable only at project scope and
+only to service accounts, so a feed can create datasets in exactly the project it was granted and
+nowhere else. Plain <code>pipeline</code> deliberately keeps no <code>dataset.create</code>:
+dataset creation is a governance act (classification, retention, declared contract), so the default
+remains that a human creates and configures the dataset and the pipeline only writes snapshots into
+it. Granting <code>ingest_pipeline</code> instead of <code>pipeline</code> is the opt-in.</p>
+
+<h3>Platform scope</h3>
+<table>
+<tr><th>Role</th><th>Responsibilities</th></tr>
+<tr><td><code>platform_admin</code></td><td>Huron configuration, organizations, extension/profile registries, purge approval</td></tr>
+<tr><td><code>platform_operator</code></td><td>Storage, jobs, reconciliation, recovery — without scientific data read</td></tr>
+<tr><td><code>platform_auditor</code></td><td>Read platform audit and governance records</td></tr>
+<tr><td><code>retention_operator</code></td><td>Execute approved lifecycle deletion (the only identity that deletes under <code>revisions/</code>)</td></tr>
+<tr><td><code>compute_service</code></td><td>Pipeline identities: read authorized inputs, write candidate representations</td></tr>
+</table>
+
+<h3>Organization scope</h3>
+<table>
+<tr><th>Role</th><th>Responsibilities</th></tr>
+<tr><td><code>org_admin</code></td><td>Org settings, members, delegated roles, project approval</td></tr>
+<tr><td><code>project_creator</code></td><td>Create projects from approved templates within quota</td></tr>
+<tr><td><code>org_steward</code></td><td>Org-wide metadata vocabulary and science profiles</td></tr>
+<tr><td><code>org_auditor</code></td><td>Review org activity read-only</td></tr>
+<tr><td><code>org_member</code></td><td>Discover org-public projects only</td></tr>
+</table>
+
+<h3>Project scope</h3>
+<table>
+<tr><th>Role</th><th>Responsibilities</th></tr>
+<tr><td><code>project_owner</code></td><td>Members, quota, classification, retention policy</td></tr>
+<tr><td><code>data_steward</code></td><td>Create/activate datasets, approve canonical contracts, amend metadata, approve publication</td></tr>
+<tr><td><code>contributor</code></td><td>Upload revisions and corrections; draft datasets where policy allows</td></tr>
+<tr><td><code>scientist</code></td><td>Read Bronze/Silver/Gold; request transforms; create candidate products</td></tr>
+<tr><td><code>product_publisher</code></td><td>Publish validated Gold product versions</td></tr>
+<tr><td><code>viewer</code></td><td>Discover and read permitted representations</td></tr>
+<tr><td><code>project_auditor</code></td><td>Metadata, lineage, audit — no payload</td></tr>
+</table>
+
+<p>Roles stack (<code>Karl: contributor + scientist + product_publisher</code>). Project creation
+requests carry: name, owner group, purpose, classification, default raw TTL, quota, expected data
+kinds, support contact; Huron then provisions the project UUID, NFS allocation + quota, retention
+defaults, catalog namespace, audit stream, owner binding, and service identities automatically.</p>
+
+<h2 id="datasets">3. Dataset creation and lifecycle</h2>
+
+<pre>
+dataset_creation:
+  mode: steward_only | contributor_draft      # per-project policy
+  activation_requires: data_steward           # for contributor_draft
+</pre>
+
+<p><code>contributor_draft</code> (the default for ordinary internal projects): contributors create
+<code>DRAFT</code> datasets that accept initial uploads but cannot publish Silver or Gold until a
+steward confirms identity, data kind, ownership, metadata contract, retention, classification, and
+non-duplication — then <code>DRAFT → ACTIVE</code>. Lifecycle: <code>DRAFT → ACTIVE → RETIRED</code>
+(plus <code>SUPERSEDED</code> for slug mistakes).</p>
+
+<h2 id="layers">4. Layer capability matrices</h2>
+
+<p>A role never implies identical access to every layer. Raw is the most restrictive because it
+holds the most sensitive material (input decks, facility names, paths, usernames, scheduler logs,
+export-controlled geometry).</p>
+
+<h3>Raw</h3>
+<table>
+<tr><th>Action</th><th>Allowed</th></tr>
+<tr><td>Upload revision / correction</td><td>contributor, steward, owner</td></tr>
+<tr><td>Create / withdraw a release tag</td><td>steward, owner</td></tr>
+<tr><td>Read raw <em>metadata</em></td><td>viewer, scientist, contributor, +</td></tr>
+<tr><td>Read raw <em>payload</em></td><td>explicit <code>raw_reader</code> grant, steward, owner</td></tr>
+<tr><td>Change TTL / pin</td><td>owner, retention authority</td></tr>
+<tr><td>Legal hold</td><td>owner or governance authority</td></tr>
+<tr><td>Delete committed payload</td><td>retention service only (TTL/purge paths)</td></tr>
+<tr><td>Overwrite committed files</td><td class="k">nobody</td></tr>
+</table>
+
+<h3>Bronze</h3>
+<table>
+<tr><th>Action</th><th>Allowed</th></tr>
+<tr><td>Request (re)build</td><td>contributor, steward</td></tr>
+<tr><td>Read</td><td>scientist, steward, authorized viewer</td></tr>
+<tr><td>Write candidate / publish snapshot</td><td>Huron pipeline services only</td></tr>
+</table>
+
+<h3>Silver</h3>
+<table>
+<tr><th>Action</th><th>Allowed</th></tr>
+<tr><td>Read</td><td>scientist, viewer, steward</td></tr>
+<tr><td>Request canonicalization</td><td>scientist, steward</td></tr>
+<tr><td>Approve canonical contract</td><td>data_steward</td></tr>
+<tr><td>Write candidate / publish snapshot</td><td>Huron pipeline services only</td></tr>
+</table>
+
+<h3>Gold</h3>
+<table>
+<tr><th>Action</th><th>Allowed</th></tr>
+<tr><td>Read published</td><td>viewer, scientist</td></tr>
+<tr><td>Create candidate product version</td><td>scientist</td></tr>
+<tr><td>Validate</td><td>validator service / science reviewer</td></tr>
+<tr><td>Publish / deprecate / withdraw</td><td>product_publisher, steward</td></tr>
+<tr><td>Change product contract</td><td>steward / product owner</td></tr>
+</table>
+
+<h2 id="capabilities">5. Capabilities and bindings</h2>
+
+<p>Roles expand internally into capabilities, so role definitions can change without rewriting the
+authorizer:</p>
+
+<pre>
+organization.create_project   organization.manage_members
+project.manage                project.create_dataset       project.manage_members
+project.change_retention      dataset.discover              dataset.read_metadata
+dataset.update_metadata       release.tag                   revision.create
+release.withdraw
+dataset.read_raw              dataset.read_bronze           dataset.read_silver
+dataset.read_gold             dataset.request_transform     product.create_candidate
+product.publish               product.deprecate             dataset.retire
+metadata.reclassify           retention.pin                 retention.legal_hold
+retention.purge.request       retention.purge.approve       audit.read
+apikey.manage_own             polaris.credentials
+</pre>
+
+<p>Bindings live in <code>role_bindings</code> (scope <code>SYSTEM | ORGANIZATION | PROJECT |
+DATASET</code>) with conditions and expiry:</p>
+
+<pre>
+{"principal": "group:mcnp-analysts", "role": "scientist",
+ "scope_type": "project", "scope_id": "project-41", "effect": "allow",
+ "conditions": {"maximum_classification": "internal",
+                "expires_at": "2027-01-01T00:00:00Z"}}
+</pre>
+
+<p><strong>Resolution order:</strong> explicit deny → dataset binding → project binding →
+organization binding → platform default (deny). Inheritance flows downward; dataset-level bindings
+and layer restrictions only ever narrow. Listing is authorization: <code>visible_project_ids</code>
+is applied in SQL before pagination, never as a post-filter; where existence is sensitive the API
+returns 404, not 403. Role bindings are never cached beyond the request.</p>
+
+<h3>Classification gating</h3>
+<p>Classification always gates <em>data access</em> (payload, arrays). Whether it also gates
+<em>discovery</em> is per-code deployment configuration:</p>
+
+<pre>
+classification:
+  values:
+    - {code: internal,     order: 10, discoverable: true}
+    - {code: confidential, order: 20, discoverable: true}    # metadata visible, data gated
+    - {code: restricted,   order: 30, discoverable: false}   # existence itself is gated
+</pre>
+
+<p>Non-discoverable classifications are excluded from browse, search, counts, and lineage rendering
+for principals without clearance — enforced in the same <code>visible_project_ids</code>-style
+predicate, so it composes with pagination correctly. This is written into the authorizer from
+day one, because retrofitting discovery gating is an authorization-model change, not a filter.</p>
+
+<h2 id="authn">6. Authentication</h2>
+
+<table>
+<tr><th>Client</th><th>Mechanism</th><th>Resolver</th></tr>
+<tr><td>Svelte UI</td><td>OIDC (site IdP), session cookie</td><td><code>OidcResolver</code> — validates the IdP JWT, maps groups</td></tr>
+<tr><td>Python client / CLI / Aether</td><td><strong>API key (required)</strong>, <code>Authorization: Bearer hk_…</code></td><td><code>ApiKeyResolver</code></td></tr>
+<tr><td>In-cluster services</td><td>Service-account token</td><td><code>TokenReviewResolver</code></td></tr>
+<tr><td>Local dev</td><td>Trusted headers</td><td><code>DevHeaderResolver</code> — refuses to construct unless <code>ENV=development</code></td></tr>
+</table>
+
+<h3>API keys</h3>
+<ul>
+<li>Format <code>hk_{key_id}_{secret}</code>; only <code>sha256(secret)</code> stored; the secret
+is shown once at creation. Lookup by <code>key_id</code>, constant-time compare.</li>
+<li>Self-service: any user creates/lists/revokes their own keys (<code>apikey.manage_own</code>)
+via UI or API; owners and admins can revoke within their scope; all lifecycle events audited.</li>
+<li><strong>A key is a subset of its owner:</strong> scopes (capability groups such as
+<code>read</code>, <code>ingest</code>, <code>publish</code>) and optional project restriction
+narrow the owner's live permissions; a key never outlives or exceeds them, and revoking the user
+kills the keys.</li>
+<li>Expiry required: default 90 days, maximum 400; <code>last_used_at</code> tracked; unused-key
+reports for owners.</li>
+<li>Service accounts are first-class principals owned by a project (e.g. an automated producer
+that is <em>write-only</em> into one dataset), with keys managed by the project owner.</li>
+</ul>
+
+<h2 id="dataplane">7. Data-plane enforcement</h2>
+
+<p>Catalog RBAC is ineffective if the storage underneath is world-browsable. Preferred design:
+users submit dataset IDs, not paths — <em>user → API → authorization → scoped access</em> — and the
+storage layers enforce defense in depth:</p>
+
+<table>
+<tr><th>Plane</th><th>Enforcement</th></tr>
+<tr><td class="k">NFS (raw)</td>
+<td>The raw filesystem is mounted by Huron services only and is <strong>not exported to user
+machines</strong>. Raw payload reaches users exclusively through audited API download capabilities
+(issued per file, re-authorized at issue time — discovery ≠ download). If site operations require
+direct mounts anyway: per-project POSIX groups, separate roots per security domain, no
+world-readable parents, read-only exports of published trees, writes only into API-managed landing
+locations. Sealing (0444/0555) backstops immutability either way.</td></tr>
+<tr><td class="k">Object storage (derived)</td>
+<td>No standing user credentials. Reads happen via short-lived, prefix-scoped STS credentials from
+the grant flow (<a href="api.html#grants">API §5</a>); TTL ≤ 1 h, renewable while authorization
+still holds; scope is exactly one repo prefix, read-only. Pipeline writes use per-job credentials
+scoped to the repo being built. Bucket policy denies everything else; only the projection worker
+writes <code>{prefix}-index</code>.</td></tr>
+<tr><td class="k">Polaris</td>
+<td>Grants derived one-way from Huron bindings; non-discoverable/high-classification products never
+sync (see <a href="polaris.html#authz">Polaris §3</a>).</td></tr>
+</table>
+
+<h2 id="recommended">8. Recommended default policy</h2>
+
+<pre>
+platform_admin      → creates organizations
+org_admin           → appoints project creators; approves projects
+project_owner       → manages membership and policy
+data_steward        → activates datasets, approves contracts and publication
+contributor         → uploads raw revisions and corrections
+scientist           → reads Bronze/Silver, creates candidate products
+product_publisher   → publishes validated Gold
+viewer              → reads approved Silver/Gold
+</pre>
+
+<p>The load-bearing defaults: org members don't create projects; project membership is explicit;
+contributors may draft datasets, stewards activate them; nobody overwrites committed raw; only
+services write published Bronze/Silver/Gold; raw payload read is stricter than dataset read; the
+project is the pond.</p>
+
+</main>
+</body>
+</html>

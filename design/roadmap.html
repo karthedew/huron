@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huron — Roadmap</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1f2933; --muted:#5f6b76; --line:#e3e0da;
+  --accent:#0b6e6e; --accent2:#8a5a00; --code-bg:#f0eeea; --card:#ffffff;
+  --warn-bg:#fdf3e3; --warn-line:#e0b45c; --note-bg:#e9f2f2; --note-line:#7fb5b5;
+  --del:#a63d3d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#14181c; --fg:#dce3e8; --muted:#94a1ab; --line:#2b3239;
+    --accent:#5cc8c8; --accent2:#d9a441; --code-bg:#1d2329; --card:#191f24;
+    --warn-bg:#2a2315; --warn-line:#8a6d2a; --note-bg:#15262a; --note-line:#2b5c5c;
+    --del:#e08080;}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.6 "Segoe UI",system-ui,-apple-system,sans-serif;}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:.55rem 1rem;font-size:.85rem;z-index:5;display:flex;flex-wrap:wrap;
+  gap:.2rem .85rem;align-items:baseline}
+nav a{color:var(--muted);text-decoration:none;white-space:nowrap}
+nav a:hover{color:var(--accent)}
+nav a.here{color:var(--accent);font-weight:600}
+nav .brand{font-weight:700;color:var(--fg);margin-right:.4rem}
+main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 5rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.5rem 0 .2rem}
+.sub{color:var(--muted);margin:0 0 2rem}
+h2{font-size:1.35rem;margin-top:2.6rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.06rem;margin-top:1.8rem}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--code-bg)}
+.note,.warn{border-left:4px solid var(--note-line);background:var(--note-bg);
+  padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1.2rem 0}
+.warn{border-left-color:var(--warn-line);background:var(--warn-bg)}
+.k{font-weight:600}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;
+  padding:.05rem .5rem;border-radius:99px;border:1px solid var(--line);color:var(--muted);
+  text-transform:uppercase;vertical-align:middle}
+.inv{color:var(--accent2);font-weight:700}
+.superseded{color:var(--del);text-decoration:line-through}
+figure{margin:1.4rem 0}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.9rem;margin:1.2rem 0}
+.card{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:.9rem 1rem}
+.card h3{margin:.1rem 0 .35rem;font-size:1rem}
+.card p{margin:0;font-size:.88rem;color:var(--muted)}
+.card a{text-decoration:none}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Huron</span>
+  <a href="index.html">Overview</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="layer-raw.html">Raw</a>
+  <a href="layer-bronze.html">Bronze</a>
+  <a href="layer-silver.html">Silver</a>
+  <a href="layer-gold.html">Gold</a>
+  <a href="catalog-search.html">Catalog</a>
+  <a href="polaris.html">Polaris</a>
+  <a href="rbac.html">RBAC</a>
+  <a href="auth.html">Auth</a>
+  <a href="api.html">API</a>
+  <a href="python-client.html">Client</a>
+  <a href="frontend.html">Frontend</a>
+  <a href="roadmap.html" class="here">Roadmap</a>
+</nav>
+<main>
+<h1>Roadmap</h1>
+<p class="sub">The greenfield build: phases with mechanical gates, sequenced so every phase ships
+something a scientist or operator can use. Nothing here amends or extends any earlier plan —
+this is the plan.</p>
+
+<h2 id="stance">1. Greenfield stance</h2>
+
+<p>Huron starts clean. No API compatibility with any earlier prototype, no data migration, no
+inherited schema, no deference to prior decisions. Existing code and documents are reference
+material at most; any idea reused from them must re-justify itself against this design record.
+Practically:</p>
+
+<ul>
+<li>A fresh domain model, fresh migrations from revision zero, and a fresh OpenAPI contract —
+nothing is shaped to accommodate what already exists.</li>
+<li>Prototype endpoints, schemas, and plans are retired outright. No dual-running, no
+compatibility shims, no migration tooling.</li>
+<li>Repository hygiene from day one: the three-surface layout below, with import-linter
+enforcing every boundary in it — no package imports a sibling package, no service imports a
+sibling service, and <code>catalog/</code> and <code>rbac/</code> know nothing of FastAPI,
+SQLAlchemy, storage SDKs, or LanceDB; a task is done when its gate passes in CI, not when the
+code is written; any change to a decision or invariant updates this design directory in the
+same PR.</li>
+</ul>
+
+<pre>
+src/huron/
+  service/    one package per deployable in <a href="architecture.html#services">architecture §2</a>,
+              plus the operator CLI. A service is a composition root: it reads settings,
+              constructs the concrete stores, and injects them into the packages that
+              declare Protocols for them. All glue lives here.
+
+              api · prepare · bronze_builder · canonicalizer · product_runner · validator
+              projection · polaris_sync · sweeper · reconciler · retention · lakectl
+              (the scientist-facing `huron` CLI ships with the client package, not here)
+
+              api's own routes split by version: routes/v1/ (the versioned resource
+              API, mounted at /api/v1, with routes/v1/schema/ - one schema file per
+              endpoints module) and routes/auth/ (login, OIDC and session routes,
+              mounted unversioned at /auth - see <a href="auth.html">Authentication</a>)
+
+  pkg/        the coding logic, as libraries. Every package is independent of every other.
+
+              catalog/       the manifest, the hierarchy, the Raw/Bronze/Silver/Gold
+                             interaction logic, the invariants — and, in ports.py, the
+                             Protocols it depends on: RawStore, ObjectRepoStore, Metastore,
+                             SearchProjection, CredentialVendor, JobDispatcher,
+                             PrincipalResolver, Clock
+              rbac/          role-binding evaluation and discovery gating — pure
+              rawstore/      NFS/POSIX: staging, hashing, hardlink dedup, atomic rename, sealing
+              objectstore/   Ceph RGW (S3) and Icechunk repository handles
+              metastore/     PostgreSQL structural state and the outbox
+              searchindex/   LanceDB tables and pointer-flip rebuild
+              auth/          all AuthN resolves to the principal.py Principal:
+                             apikeys.py, oidc.py and dev.py are the API-key,
+                             OIDC-bearer and dev-header resolvers; password.py and
+                             sessions.py add admin-provisioned password accounts and
+                             server-side browser sessions; principals.py is the
+                             provisioning seam both login paths share (OIDC
+                             upsert-on-login, admin-created password users); errors.py
+                             holds AuthError and its subclasses
+              credentials/   STS vending of prefix-scoped, expiring grants
+              jobrunner/     digest-pinned container dispatch (Kubernetes Jobs in v1)
+              polaris/       Polaris namespace, table and grant operations
+              telemetry/     structlog and Prometheus wiring
+
+  schema/     contracts shared across services: the canonical JSON Schema documents
+              (revision metadata, manifests, science profiles, generation documents) under
+              documents/, with their loaders, validators, and Python types. The dependency
+              floor — anything may import it, it imports nothing.
+</pre>
+
+<p><strong>The dependency rule is one-way and mechanical: service → pkg → schema.</strong>
+Never the reverse and never sideways. A package that needs another package's capability does
+not import it — it declares a <code>typing.Protocol</code> describing what it needs, and a
+service passes in a conforming object. Because Protocol conformance is structural, the
+implementing package does not import the declaring one either, which is what lets
+<code>pkg/*</code> be genuinely independent rather than merely tidy. mypy checks conformance at
+the wiring site, where the concrete object meets the Protocol.</p>
+
+<p>Four import-linter contracts hold this in place, and all four are checked in CI:
+a <em>layers</em> contract for service → pkg → schema; an <em>independence</em> contract across
+the eleven packages; an <em>independence</em> contract across the twelve services; and a
+<em>forbidden</em> contract keeping web frameworks, database drivers and storage SDKs out of
+<code>catalog/</code> and <code>rbac/</code>. Data-modeling and validation libraries are
+deliberately not on that forbidden list: <code>schema/</code> is built on them, and
+<code>catalog/</code> validates against <code>schema/</code> rather than restating formats.</p>
+
+<p>Two consequences worth stating, because they are the ones that bite in review. Cross-cutting
+concerns do not get a shared import: a package that wants to log uses the standard library, and
+the service configures <code>telemetry/</code> to capture it. And behavior two services both
+want becomes a package — never an import of the sibling that happens to have it already.</p>
+
+<h2 id="phases">2. Phases</h2>
+
+<pre>
+P0 ── P1 ── P2 ── P3 ─────────── P5 ── P6 ── P7 ─────── P9
+       │            \                   │      \
+       └── P4 (search) ── UI-α          └── P8 (client GA + grants) ── UI-β ── P10 (Polaris)
+</pre>
+
+<table>
+<tr><th>Phase</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
+
+<tr><td class="k">P0 — Bootstrap</td>
+<td>Repository skeleton and dependency groups; tooling (ruff, mypy strict across <code>pkg/</code> and
+<code>schema/</code>, import-linter, pytest markers); compose stack (PostgreSQL, MinIO for derived layers, a local
+volume standing in for NFS); settings module whose startup refusals are tested (dev-auth outside
+development, invalid classification vocabulary); CI with lint → unit → contract → integration
+stages.</td>
+<td>Green CI on the empty tree; a deliberately added <code>import fastapi</code> in
+<code>pkg/catalog/</code>, an import of one package from another, and an import of one service
+from another each fail their contract; the compose stack boots and bootstraps buckets and
+volumes from a clean checkout.</td></tr>
+
+<tr><td class="k">P1 — Foundations</td>
+<td>Domain model for the five-level hierarchy in <code>pkg/catalog/</code>;
+<code>catalog/paths.py</code> (construction + parsing, per-resource slug limits); manifest/JCS
+module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
+<code>pkg/rawstore/</code>; migrations (hierarchy, role_bindings, api_keys, audit with pre-created
+partitions, outbox); <code>RoleBindingAuthorizer</code> with discovery gating; API-key + OIDC
+resolvers; org/project/dataset CRUD with generation documents; release tags; browse with keyset
+pagination; OpenAPI published, TS + Python client cores generated.</td>
+<td>Create org → project → dataset via HTTP; generation docs and <code>CURRENT.json</code>
+at the exact documented paths; a release tag resolves to one revision and a second write of the
+same tag is <code>409 TAG_EXISTS</code>; slug-change attempts 409; API-key auth round-trip; a principal
+scoped to project A gets full-size pages with zero rows from B and no evidence of B in counts or
+cursors; import-linter green.</td></tr>
+
+<tr><td class="k">P2 — Raw ingest &amp; commit</td>
+<td>Session state machine (dataset-scoped lock), upload plan with hardlink dedup, streaming
+in-flight hashing, the POSIX commit protocol (staging → fsync → atomic rename), sealing, download
+capabilities, <code>INDEX.json</code>.</td>
+<td>Round trip: a tree with NFC/NFD pairs, a zero-byte file, 8-level nesting, and a 9 GiB file
+ingests and downloads byte-identically. Crash matrix: kill after every protocol step; staging
+crashes invisible and swept; post-rename crash imported as an orphan with no duplicate on retry.
+Resume re-sends only incomplete files. Two racing <code>BeginIngest</code> calls: exactly one wins;
+100 sequential ingests number 1..100 gap-free. Replayed commit returns the same revision. Dedup:
+1 changed file of 500 uploads exactly 1; the other 499 hardlink; the new revision is independently
+complete. Every path-rejection rule produces its documented error code.</td></tr>
+
+<tr><td class="k">P3 — Integrity services</td>
+<td>Staging-only sweeper with fraction guard and dry-run; reconciler implementing the findings
+table plus seal/hardlink verification; <code>lakectl rebuild --from-storage</code>.</td>
+<td>Drop the database, apply migrations, rebuild from the filesystem alone: identical inventory of
+orgs, projects, datasets, revisions, release tags, amendments — with a purged and an expired revision
+present and reported lawful, not <code>DEGRADED</code>.</td></tr>
+
+<tr><td class="k">P4 — Search projection</td>
+<td>Outbox consumer (single writer), LanceDB datasets + revisions + snapshots + products tables
+covering all four layers (Tantivy FTS, scalar filters, embedding column reserved),
+<code>/search</code> with pre-ranking authorization filter and PostgreSQL re-check, lag reporting,
+pointer-flip rebuild.</td>
+<td>A user with access only to project A searching a term matching only project B gets zero
+results, correct pagination, no leaked facets. Stop the worker and delete the tables: browse,
+ingest, and commit all work; <code>/search</code> returns 503; rebuild restores it.</td></tr>
+
+<tr><td class="k">P5 — Governance</td>
+<td>Steward amendments with the field allow-list and single fold implementation; reclassification
+as its own audited permission; two-person purge; retention: per-category TTL, pins, legal holds,
+<code>EXPIRED</code> markers; science-profile registry (immutable published versions, mirrored to
+storage); quota enforcement at <code>BeginIngest</code>.</td>
+<td>Every forbidden amendment field rejected; fold correct across 3 chained amendments; two-person
+purge enforced by the database, idempotent on re-run, reported lawful by the reconciler; expiry
+removes only TTL-category files, only after Silver exists, writes the marker, honors holds; the
+consequence text appears in the API response that sets the policy.</td></tr>
+
+<tr><td class="k">P6 — Bronze</td>
+<td>Jobs table + runners, the MCNP extractor as the reference profile, Icechunk repos on RGW,
+candidate → validated → published snapshot flow, validation evidence, catalog registry, LanceDB
+layer flags.</td>
+<td>Upload run-0042 ⇒ a published Bronze snapshot whose provenance names the exact revision and
+extractor digest; a corrupted output ⇒ FAILED with structured findings and nothing published;
+rebuilding the same revision is idempotent.</td></tr>
+
+<tr><td class="k">P7 — Silver</td>
+<td>Canonical contracts, the MCNP canonicalizer, the per-dataset Silver repo, contract-driven
+concatenation resolved through the catalog, per-run lineage, silver validations.</td>
+<td>Three datasets declaring one contract concatenate along <code>run</code> into a single
+<code>particle_flux(run, energy, x, y, z)</code> view; a fourth declaring a <em>different</em>
+contract version is excluded from that set by the catalog; a corrected revision of run-0042
+republishes only run-0042's repo and leaves the other three repos byte-identical; every prior
+snapshot still opens identically after all of it.</td></tr>
+
+<tr><td class="k">P8 — Client GA &amp; grants</td>
+<td>Grant endpoints with STS vending (+ proxy fallback), the <code>huron</code> package
+(open/upload/search), credential renewal loop, typed errors, the scientist CLI.</td>
+<td><code>open_dataset</code> on an HPC login node with only an API key reaches first bytes in
+&lt; 5 s; a revoked role stops reads within one credential TTL; grant-scope escape attempts fail
+at the store (policy test, not application test); a pinned snapshot reproduces byte-identically
+after a subsequent append.</td></tr>
+
+<tr><td class="k">UI-α / UI-β</td>
+<td>α (after P4): the Databricks-shaped shell (left rail + catalog explorer), browse, search,
+dataset/revision pages, Grafana-shaped permissions tabs, API-key management, read-only admin. β (after P8): validation evidence, lineage graph, retention panels, steward queues, the
+publication flow.</td>
+<td>The generated TypeScript client compiles in CI against every API change; E2E smoke against the
+compose stack.</td></tr>
+
+<tr><td class="k">P9 — Gold</td>
+<td>Products, versions, pinned derivation records, product runner, validation gating, publication,
+staleness propagation, cross-project inputs with redacted lineage, Iceberg materialization for
+tabular products.</td>
+<td>The MCNP thread end-to-end: flux → dose published with lineage
+<code>G021 ← S117+S031 ← B182 ← rev-1</code>; an upstream correction marks it STALE with the
+reason; recompute produces 1.0.1 pinned to the successors; the derivation record alone re-executes
+to a bit-identical G021 (invariant K).</td></tr>
+
+<tr><td class="k">P10 — Polaris</td>
+<td>Polaris deployment, sync worker, namespace/table mapping, grant projection,
+<code>/polaris/credentials</code>, nightly converge.</td>
+<td>A published tabular product is queryable from Spark and DuckDB via Polaris within one sync
+cycle; a WITHDRAWN version disappears; a grant not derivable from Huron bindings is detected and
+alerted; Polaris wiped ⇒ <code>lakectl polaris resync</code> reconverges from the catalog.</td></tr>
+</table>
+
+<h2 id="ordering">3. Sequencing rationale</h2>
+
+<ul>
+<li><strong>P2 before everything derived:</strong> the evidence tier must be trustworthy (crash
+matrix, rebuild) before any pipeline consumes it. P3 follows immediately because the reconciler is
+what makes P2's crash-consistency gate fully checkable.</li>
+<li><strong>P4 early:</strong> search makes the lake usable to humans before derived layers exist,
+and the outbox/projection machinery it builds is the same event backbone P6–P9 consume.</li>
+<li><strong>P8 immediately after P7:</strong> the first Silver snapshot with no ergonomic way to
+open it would stall adoption; the grant flow is the product moment.</li>
+<li><strong>P10 last:</strong> Polaris mirrors published tabular Gold — there is nothing to mirror
+before P9, and nothing blocks on it (its failure posture is "degrade external engines only").</li>
+<li><strong>Cross-cutting, never a phase:</strong> FIPS smoke and the OpenAPI-contract check run
+from P0 onward; instrumentation (unchanged-byte ratio, layer sizes per project, ingest durations,
+projection lag, grant issuance rates) ships with the code that emits it, because the
+full-copy-vs-delta and TTL-length decisions get revisited with data, not opinion.</li>
+</ul>
+
+<h2 id="first">4. First moves</h2>
+
+<ol>
+<li>Stand up the fresh repository per §1 — layout, tooling, compose, CI (P0).</li>
+<li>Build the pure core first: <code>pkg/catalog/ids.py</code>,
+<code>pkg/catalog/paths.py</code>, <code>pkg/catalog/manifest.py</code> with their property
+tests — everything else leans on them.</li>
+<li>Prototype in parallel, throwaway-labeled: an Icechunk repo on MinIO exercised through
+<code>xarray.open_zarr</code> on a read-only session, and an RGW STS
+<code>AssumeRole</code>-with-session-policy probe. These are the two external assumptions P6 and
+P8 lean on hardest; confirm the deployed Ceph's STS behavior before P8 planning, and the proxy
+fallback covers the worst case.</li>
+<li>Write the MCNP science profile alongside P1, not after P5 — it is the reference case every
+layer document uses, and drafting it early keeps the profile schema honest.</li>
+</ol>
+
+</main>
+</body>
+</html>

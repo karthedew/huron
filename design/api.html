@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huron — REST API</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1f2933; --muted:#5f6b76; --line:#e3e0da;
+  --accent:#0b6e6e; --accent2:#8a5a00; --code-bg:#f0eeea; --card:#ffffff;
+  --warn-bg:#fdf3e3; --warn-line:#e0b45c; --note-bg:#e9f2f2; --note-line:#7fb5b5;
+  --del:#a63d3d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#14181c; --fg:#dce3e8; --muted:#94a1ab; --line:#2b3239;
+    --accent:#5cc8c8; --accent2:#d9a441; --code-bg:#1d2329; --card:#191f24;
+    --warn-bg:#2a2315; --warn-line:#8a6d2a; --note-bg:#15262a; --note-line:#2b5c5c;
+    --del:#e08080;}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.6 "Segoe UI",system-ui,-apple-system,sans-serif;}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:.55rem 1rem;font-size:.85rem;z-index:5;display:flex;flex-wrap:wrap;
+  gap:.2rem .85rem;align-items:baseline}
+nav a{color:var(--muted);text-decoration:none;white-space:nowrap}
+nav a:hover{color:var(--accent)}
+nav a.here{color:var(--accent);font-weight:600}
+nav .brand{font-weight:700;color:var(--fg);margin-right:.4rem}
+main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 5rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.5rem 0 .2rem}
+.sub{color:var(--muted);margin:0 0 2rem}
+h2{font-size:1.35rem;margin-top:2.6rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.06rem;margin-top:1.8rem}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--code-bg)}
+.note,.warn{border-left:4px solid var(--note-line);background:var(--note-bg);
+  padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1.2rem 0}
+.warn{border-left-color:var(--warn-line);background:var(--warn-bg)}
+.k{font-weight:600}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;
+  padding:.05rem .5rem;border-radius:99px;border:1px solid var(--line);color:var(--muted);
+  text-transform:uppercase;vertical-align:middle}
+.inv{color:var(--accent2);font-weight:700}
+.superseded{color:var(--del);text-decoration:line-through}
+figure{margin:1.4rem 0}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.9rem;margin:1.2rem 0}
+.card{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:.9rem 1rem}
+.card h3{margin:.1rem 0 .35rem;font-size:1rem}
+.card p{margin:0;font-size:.88rem;color:var(--muted)}
+.card a{text-decoration:none}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Huron</span>
+  <a href="index.html">Overview</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="layer-raw.html">Raw</a>
+  <a href="layer-bronze.html">Bronze</a>
+  <a href="layer-silver.html">Silver</a>
+  <a href="layer-gold.html">Gold</a>
+  <a href="catalog-search.html">Catalog</a>
+  <a href="polaris.html">Polaris</a>
+  <a href="rbac.html">RBAC</a>
+  <a href="auth.html">Auth</a>
+  <a href="api.html" class="here">API</a>
+  <a href="python-client.html">Client</a>
+  <a href="frontend.html">Frontend</a>
+  <a href="roadmap.html">Roadmap</a>
+</nav>
+<main>
+<h1>REST API</h1>
+<p class="sub">FastAPI, <code>/api/v1</code>. Conventions, uniform across the surface: UUIDv7 IDs,
+RFC 3339 timestamps, versioned keyset cursors, <code>application/problem+json</code> errors with
+stable codes, <code>If-Match</code> ETags, <code>Idempotency-Key</code> on mutating posts. OpenAPI
+is the published contract and generates the TypeScript and Python client cores; breaking changes
+fail CI.</p>
+
+<h2 id="auth">1. Authentication surface</h2>
+
+<table>
+<tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+<tr><td>POST</td><td><code>/api/v1/auth/api-keys</code></td><td>Create key (name, scopes, optional project restriction, expiry) → secret shown once (versioned: a key is a resource — see <a href="auth.html#routes">Authentication §5</a>)</td></tr>
+<tr><td>GET</td><td><code>/api/v1/auth/api-keys</code></td><td>List own keys: id, name, scopes, expiry, last_used_at</td></tr>
+<tr><td>POST</td><td><code>/api/v1/auth/api-keys/{id}:revoke</code></td><td>Owner, project owner (project-scoped keys), or admin</td></tr>
+<tr><td>GET</td><td><code>/auth/session</code></td><td>Principal, groups, effective roles per scope, session expiry and CSRF token — the client's sanity check (unversioned: a login concern, not a v1 resource — see <a href="auth.html#routes">Authentication §5</a>)</td></tr>
+<tr><td>POST</td><td><code>/polaris/credentials</code></td><td>Short-lived Polaris engine credentials mapped from Huron RBAC (<a href="polaris.html#authz">Polaris §3</a>)</td></tr>
+</table>
+
+<h2 id="hierarchy">2. Hierarchy</h2>
+
+<table>
+<tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+<tr><td>POST/GET</td><td><code>/organizations</code></td><td>platform_admin creates; slug immutable</td></tr>
+<tr><td>GET/PATCH</td><td><code>/organizations/{id}</code></td><td>PATCH: title/description; new generation; <code>If-Match</code></td></tr>
+<tr><td>POST/GET</td><td><code>/organizations/{id}/projects</code></td><td>org_admin or project_creator; template-governed</td></tr>
+<tr><td>GET/PATCH</td><td><code>/projects/{id}</code></td><td>settings incl. retention policy, quota, dataset_creation mode</td></tr>
+<tr><td>POST/GET</td><td><code>/projects/{id}/datasets</code></td><td><code>Idempotency-Key</code>; profile required; DRAFT per policy</td></tr>
+<tr><td>GET/PATCH</td><td><code>/datasets/{id}</code></td><td>slug immutable → <code>409 SLUG_IMMUTABLE</code></td></tr>
+<tr><td>POST</td><td><code>/datasets/{id}:activate</code> / <code>:retire</code></td><td>steward</td></tr>
+<tr><td>POST/GET</td><td><code>/datasets/{id}/releases</code></td><td>tag a revision: body <code>{tag, revision_number, title}</code>; audited; never implicit at ingest</td></tr>
+<tr><td>GET</td><td><code>/datasets/{id}/releases/{tag}</code></td><td>resolves to exactly one revision, forever</td></tr>
+<tr><td>POST</td><td><code>/datasets/{id}/releases/{tag}:withdraw</code></td><td>steward; tombstone with reason. Tags are never repointed</td></tr>
+</table>
+
+<p>Browse endpoints are PostgreSQL-only, filterable by structural columns, cursor-paginated, with
+the authorization predicate ahead of <code>LIMIT</code>. No free-text parameters — that is
+<code>/search</code>.</p>
+
+<h2 id="ingest">3. Raw ingest and revisions</h2>
+
+<table>
+<tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+<tr><td>POST</td><td><code>/ingest-sessions</code></td><td>body: dataset ref (or new dataset slug), metadata draft, manifest → <code>UploadPlan</code> (actions <code>upload | hardlink</code>); locks the dataset</td></tr>
+<tr><td>GET</td><td><code>/ingest-sessions/{id}</code></td><td>state, per-file progress, ETag</td></tr>
+<tr><td>POST</td><td><code>/ingest-sessions/{id}:heartbeat</code></td><td>extends TTL</td></tr>
+<tr><td>PUT</td><td><code>/transfer/uploads/{file_id}/parts/{n}</code></td><td>streamed, hashed in flight; resumable</td></tr>
+<tr><td>POST</td><td><code>/transfer/uploads/{file_id}:complete</code></td><td></td></tr>
+<tr><td>POST</td><td><code>/ingest-sessions/{id}:verify</code> / <code>:commit</code> / <code>:abort</code></td><td>commit: <code>If-Match</code> + <code>Idempotency-Key</code> → 201 Revision</td></tr>
+<tr><td>GET</td><td><code>/datasets/{id}/revisions</code>, <code>/revisions/{id}</code></td><td>revision detail includes effective metadata (base + folded amendments), the tags pointing at it, and materialization states</td></tr>
+<tr><td>GET</td><td><code>/revisions/{id}/manifest</code></td><td>streamed from NFS</td></tr>
+<tr><td>GET</td><td><code>/revisions/{id}/files/{path}</code></td><td>issues a short-lived download capability; re-authorized per file (<code>dataset.read_raw</code>)</td></tr>
+<tr><td>POST</td><td><code>/revisions/{id}:amend</code></td><td>steward+; field allow-list; reclassification separately permissioned</td></tr>
+</table>
+
+<h2 id="layers">4. Layers, snapshots, products</h2>
+
+<table>
+<tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+<tr><td>GET</td><td><code>/datasets/{id}/layers</code></td><td>bronze/silver state: repo, latest published snapshot, per-revision materialization</td></tr>
+<tr><td>GET</td><td><code>/datasets/{id}/layers/{layer}/snapshots</code></td><td>registry, newest first; includes validation summary</td></tr>
+<tr><td>GET</td><td><code>/snapshots/{id}</code></td><td>provenance block, validation evidence, lineage links</td></tr>
+<tr><td>POST</td><td><code>/datasets/{id}/layers/bronze:rebuild</code></td><td>contributor/steward; enqueues job</td></tr>
+<tr><td>GET/POST</td><td><code>/projects/{id}/products</code></td><td>create declares slug, shape, contract</td></tr>
+<tr><td>GET</td><td><code>/products/{id}</code> · <code>/products/{id}/versions</code></td><td>status incl. staleness + reason</td></tr>
+<tr><td>POST</td><td><code>/products/{id}/versions</code></td><td>submit derivation: inputs (dataset@layer or explicit snapshot), transform digest, params, validation suite → pins snapshots, runs job → CANDIDATE</td></tr>
+<tr><td>POST</td><td><code>/product-versions/{id}:publish</code> / <code>:withdraw</code></td><td>publisher/steward; publish requires passing validation evidence</td></tr>
+<tr><td>GET</td><td><code>/lineage/{kind}/{id}?direction=up|down&amp;depth=…</code></td><td>authorized, redacted rendering of the PG lineage graph</td></tr>
+</table>
+
+<h2 id="grants">5. Data-access grants</h2>
+
+<p>The endpoint family the Python client is built on. The API authorizes, resolves the snapshot,
+and vends scoped storage credentials; array bytes never transit FastAPI.</p>
+
+<pre>
+POST /data-access/grants
+{"dataset": "nuclear-engineering/huron-shielding-study/reactor-shielding-sweep",
+ "layer": "silver"}                        # or {"snapshot_id": "S117"}
+                                           # or {"product": "…", "version": "1.0.0"}
+
+201 →
+{"grant_id": "01993a…",
+ "repo": {"kind": "icechunk",
+          "uri": "s3://huron-silver/orgs/nuclear-engineering--…/…/repo/",
+          "endpoint": "https://rgw.site.example"},
+ "snapshot_id": "S117",                    # resolved & pinned at issue time
+ "tag": "silver/S117",
+ "credentials": {"access_key_id": "…", "secret_access_key": "…",
+                 "session_token": "…", "expires_at": "2026-08-23T20:12:00Z"},
+ "mode": "read-only"}
+
+POST /data-access/grants/{id}:renew        # re-authorizes, returns fresh credentials
+GET  /data-access/grants                   # own active grants (audit/debug)
+</pre>
+
+<ul>
+<li>Authorization is checked at issue <em>and</em> at every renewal — revoking a role strands the
+reader within one credential TTL (≤ 1 h).</li>
+<li><code>layer: "silver"</code> resolves to the latest <em>published</em> snapshot and returns
+its ID, so even "give me latest" is reproducible after the fact.</li>
+<li>Credentials come from RGW STS (<code>AssumeRole</code> with an inline session policy scoped to
+the one repo prefix, read-only). The vending backend is a port; a deployment without STS falls back
+to API-proxied chunk reads (<code>GET /data-access/proxy/…</code>) at reduced throughput — same
+client code path, degraded transport.</li>
+<li>Every grant is audited: who, which snapshot, which prefix, when, from where.</li>
+</ul>
+
+<h2 id="search">6. Search and admin</h2>
+
+<table>
+<tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+<tr><td>GET</td><td><code>/search</code></td><td>LanceDB; <code>q</code>, <code>layer=raw|bronze|silver|gold</code>, <code>kind=dataset|revision|snapshot|product</code>, tags, facets; carries <code>projection_lag_seconds</code>; 503 when projection down — never a PG fallback</td></tr>
+<tr><td>POST/GET</td><td><code>/admin/science-profiles</code></td><td>publish immutable <code>(name, version)</code>; org stewards</td></tr>
+<tr><td>POST</td><td><code>/admin/extension-schemas</code></td><td>publish an immutable metadata-extension schema version</td></tr>
+<tr><td>POST</td><td><code>/admin/revisions/{id}:request-purge</code> · <code>/admin/purges/{id}:approve</code></td><td>two-person, different subjects</td></tr>
+<tr><td>POST/DELETE</td><td><code>/retention/holds</code></td><td>pins and legal holds; audited</td></tr>
+<tr><td>GET</td><td><code>/admin/reconciliation/report</code> · <code>:plan</code> / <code>:apply</code></td><td>dry-run first</td></tr>
+<tr><td>GET/POST</td><td><code>/admin/role-bindings</code></td><td>binding administration (scoped: org admins within their org, owners within their project)</td></tr>
+<tr><td>GET</td><td><code>/audit</code></td><td>filterable audit stream for auditors</td></tr>
+<tr><td>GET</td><td><code>/healthz</code> · <code>/readyz</code> · <code>/metrics</code></td><td><code>/readyz</code> checks PG + NFS + RGW, never LanceDB or Polaris</td></tr>
+</table>
+
+<h2 id="errors">7. Error codes</h2>
+
+<p>Stable codes clients use for control flow:</p>
+
+<pre>
+DATASET_LOCKED           SESSION_EXPIRED          MANIFEST_MISMATCH
+TAG_EXISTS               TAG_WITHDRAWN
+DUPLICATE_CONTENT        PATH_COLLISION           EMPTY_REVISION
+FILE_TOO_LARGE           TOO_MANY_FILES           REVISION_TOO_LARGE
+IDEMPOTENCY_KEY_REUSED   PRECONDITION_FAILED      SLUG_IMMUTABLE
+AMENDMENT_FIELD_FORBIDDEN PROJECTION_UNAVAILABLE  GRANT_EXPIRED
+GRANT_SCOPE_EXCEEDED
+LAYER_NOT_MATERIALIZED   SNAPSHOT_NOT_PUBLISHED   PRODUCT_VERSION_EXISTS
+VALIDATION_REQUIRED      VALIDATION_FAILED        INPUT_NOT_READABLE
+CLASSIFICATION_EXCEEDED  PRODUCT_STALE_INPUT      DATASET_DRAFT
+APIKEY_EXPIRED           APIKEY_REVOKED           QUOTA_EXCEEDED
+RETENTION_HOLD_PRESENT   PROFILE_UNKNOWN          CONTRACT_MISMATCH
+</pre>
+
+<p class="note">Every code gets a <code>DomainError</code> subclass and a row in the error-table
+doc, enforced by the existing bijection test — the mechanism that keeps the table honest carries
+forward unchanged.</p>
+
+</main>
+</body>
+</html>

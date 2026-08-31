@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:huron:manifest:1",
+  "type": "object",
+  "required": ["schema", "hash_algorithm", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "urn:huron:manifest:1"},
+    "hash_algorithm": {"const": "sha256"},
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "required": ["path", "size", "sha256", "media_type"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "maxLength": 1024, "pattern": "^payload/"},
+          "size": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "media_type": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

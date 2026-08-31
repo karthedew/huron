@@ -1,0 +1,135 @@
+name: huron
+
+services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: huron
+      POSTGRES_PASSWORD: huron
+      POSTGRES_DB: huron
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U huron -d huron"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    command: ["start-dev", "--import-realm", "--http-port=8081"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # One issuer string, valid everywhere: KC_HOSTNAME fixes Keycloak's
+      # discovery document (issuer, authorization_endpoint, token_endpoint,
+      # jwks_uri) to http://keycloak:8081/... no matter which URL a client
+      # used to reach discovery - a request from localhost:8081 gets the same
+      # keycloak:8081 URLs back. So EVERY consumer of this realm - the
+      # browser, and the API's own outbound OIDC calls, whether the API runs
+      # in this compose network (`make stack`) or on the host (`make api`) -
+      # needs "keycloak" to resolve, which `make hosts` provides on the host
+      # (adds "127.0.0.1 keycloak" to /etc/hosts) for free inside the network.
+      # There is no host-mode variant that can skip it.
+      KC_HOSTNAME: http://keycloak:8081
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
+      # Exposes /health/ready on the management port (9000, container-internal
+      # only - not published to the host) so the healthcheck below can wait
+      # for realm import to finish, not just for the HTTP port to accept
+      # connections.
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8081:8081"
+    volumes:
+      # scripts/keycloak/huron-realm.json is hand-authored (not exported from
+      # a live instance) against Keycloak 26.x's realm-import schema. Every
+      # credential in it - the huron-web client secret, karl's and sam's
+      # passwords - is a dev-only literal for this local instance; regenerate
+      # by hand if they ever need to change.
+      - ./scripts/keycloak/huron-realm.json:/opt/keycloak/data/import/huron-realm.json:ro
+    healthcheck:
+      # A raw HTTP/1.1 GET over /dev/tcp (no curl/wget in this image), against
+      # /health/ready on the management port (9000) - true readiness, not
+      # just liveness: a failed realm import leaves this DOWN, so `--wait`
+      # won't go green on a broken import the way a bare port check would.
+      # Written as a YAML block scalar (not a quoted flow string) so the
+      # \r\n printf needs stay literal two-character escapes for printf
+      # itself to interpret, with no YAML-level string-escaping to fight.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          cat <&3 | grep -q '"status": "UP"'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Everything below is behind the "app" profile: `make up` (infra only) never
+  # starts these; `make stack` does (docker/podman compose --profile app ...).
+  # Dev-only secrets below (client secret, flow secret) are literals for a
+  # local Keycloak/Postgres nobody else can reach - never real credentials.
+  migrate:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      HURON_DATABASE_URL: postgresql://huron:huron@postgres:5432/huron
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Containerfile
+    ports:
+      - "8080:8080"
+    environment:
+      HURON_ENV: development
+      HURON_AUTH_MODE: oidc
+      HURON_DATABASE_URL: postgresql://huron:huron@postgres:5432/huron
+      HURON_STORE_BACKEND: postgres
+      HURON_OIDC__ISSUER: http://keycloak:8081/realms/huron
+      HURON_OIDC__CLIENT_ID: huron-web
+      HURON_OIDC__CLIENT_SECRET: dev-only-secret
+      HURON_OIDC__REDIRECT_URL: http://localhost:8080/auth/oidc/callback
+      HURON_LOGIN_FLOW_SECRET: dev-only-flow-secret
+      HURON_WEB_APP_URL: http://localhost:5173
+      HURON_BOOTSTRAP_PLATFORM_OWNER: karl
+      HURON_CLASSIFICATION_VOCABULARY: '[{"code":"internal","order":0,"discoverable":true}]'
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
+  minio-data:
+
+networks:
+  default:
+    name: huron

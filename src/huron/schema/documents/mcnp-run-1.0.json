@@ -1,0 +1,17 @@
+{
+  "schema": "urn:huron:science-profile:1",
+  "name": "mcnp-run",
+  "version": "1.0",
+  "files": [
+    {"pattern": "*.i", "retention_category": "essential_input", "required": true},
+    {"pattern": "outp", "retention_category": "primary_output", "required": true},
+    {"pattern": "meshtal", "retention_category": "primary_output", "required": false},
+    {"pattern": "runtpe", "retention_category": "bulk_intermediate", "required": false},
+    {"pattern": "*.log", "retention_category": "scratch", "required": false}
+  ],
+  "canonical_contract": {
+    "version": "1.0",
+    "dimensions": ["run", "energy", "x", "y", "z"],
+    "variables": ["particle_flux"]
+  }
+}

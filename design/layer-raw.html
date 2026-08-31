@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huron — Raw Layer — NFS Store</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1f2933; --muted:#5f6b76; --line:#e3e0da;
+  --accent:#0b6e6e; --accent2:#8a5a00; --code-bg:#f0eeea; --card:#ffffff;
+  --warn-bg:#fdf3e3; --warn-line:#e0b45c; --note-bg:#e9f2f2; --note-line:#7fb5b5;
+  --del:#a63d3d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#14181c; --fg:#dce3e8; --muted:#94a1ab; --line:#2b3239;
+    --accent:#5cc8c8; --accent2:#d9a441; --code-bg:#1d2329; --card:#191f24;
+    --warn-bg:#2a2315; --warn-line:#8a6d2a; --note-bg:#15262a; --note-line:#2b5c5c;
+    --del:#e08080;}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.6 "Segoe UI",system-ui,-apple-system,sans-serif;}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:.55rem 1rem;font-size:.85rem;z-index:5;display:flex;flex-wrap:wrap;
+  gap:.2rem .85rem;align-items:baseline}
+nav a{color:var(--muted);text-decoration:none;white-space:nowrap}
+nav a:hover{color:var(--accent)}
+nav a.here{color:var(--accent);font-weight:600}
+nav .brand{font-weight:700;color:var(--fg);margin-right:.4rem}
+main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 5rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.5rem 0 .2rem}
+.sub{color:var(--muted);margin:0 0 2rem}
+h2{font-size:1.35rem;margin-top:2.6rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.06rem;margin-top:1.8rem}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--code-bg)}
+.note,.warn{border-left:4px solid var(--note-line);background:var(--note-bg);
+  padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1.2rem 0}
+.warn{border-left-color:var(--warn-line);background:var(--warn-bg)}
+.k{font-weight:600}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;
+  padding:.05rem .5rem;border-radius:99px;border:1px solid var(--line);color:var(--muted);
+  text-transform:uppercase;vertical-align:middle}
+.inv{color:var(--accent2);font-weight:700}
+.superseded{color:var(--del);text-decoration:line-through}
+figure{margin:1.4rem 0}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.9rem;margin:1.2rem 0}
+.card{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:.9rem 1rem}
+.card h3{margin:.1rem 0 .35rem;font-size:1rem}
+.card p{margin:0;font-size:.88rem;color:var(--muted)}
+.card a{text-decoration:none}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Huron</span>
+  <a href="index.html">Overview</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="layer-raw.html" class="here">Raw</a>
+  <a href="layer-bronze.html">Bronze</a>
+  <a href="layer-silver.html">Silver</a>
+  <a href="layer-gold.html">Gold</a>
+  <a href="catalog-search.html">Catalog</a>
+  <a href="polaris.html">Polaris</a>
+  <a href="rbac.html">RBAC</a>
+  <a href="auth.html">Auth</a>
+  <a href="api.html">API</a>
+  <a href="python-client.html">Client</a>
+  <a href="frontend.html">Frontend</a>
+  <a href="roadmap.html">Roadmap</a>
+</nav>
+<main>
+<h1>Raw Layer — NFS Store</h1>
+<p class="sub">Immutable scientific evidence on a POSIX filesystem: envelopes, manifests, the
+atomic commit protocol, retention, and the machinery that keeps all of it honest.</p>
+
+<h2 id="why-nfs">1. Why NFS for raw</h2>
+
+<p>Raw's job is to be the evidence tier: byte-exact, immutable, navigable by a human with
+<code>ls</code> and <code>jq</code> even if every Huron service is gone. Two backends were
+considered:</p>
+
+<table>
+<tr><th></th><th>NFS / POSIX (chosen)</th><th>Object storage (rejected for raw)</th></tr>
+<tr><td class="k">Ingest cost</td>
+<td>HPC runs are born on NFS; commit is a same-filesystem move, and register-in-place (v2) makes
+multi-TB ingest O(metadata).</td>
+<td>Every run — up to 1 TiB — copied through the API into the store.</td></tr>
+<tr><td class="k">Publish atomicity</td>
+<td><code>rename(2)</code> is atomic within a filesystem: the whole envelope appears at once,
+marker included.</td>
+<td>Objects appear one by one; a marker-written-last protocol and reader discipline are needed to
+fake atomicity.</td></tr>
+<tr><td class="k">Dedup</td>
+<td>Hardlinks: free, instant, same inode. Requires sealing discipline (§6).</td>
+<td>Server-side copy: no shared inodes, but a real copy per revision.</td></tr>
+<tr><td class="k">Direct access</td>
+<td>None — all raw byte access is API-mediated, which is the RBAC posture we want anyway
+(<a href="rbac.html#dataplane">RBAC</a>).</td>
+<td>Presigned URLs possible.</td></tr>
+<tr><td class="k">Consistency caveats</td>
+<td>Close-to-open cache consistency; contained by the single-writer service model and fsync
+discipline (§5).</td>
+<td>Strong read-after-write.</td></tr>
+<tr><td class="k">Capacity</td>
+<td>Filesystem quotas per project; site NFS scaling limits apply.</td>
+<td>Effectively unbounded.</td></tr>
+</table>
+
+<p class="note">The deciding facts: the data is <em>already on NFS</em> when it is born; raw access
+should be API-mediated regardless of backend; and rename gives a strictly simpler commit protocol.
+What is given up — presigned downloads and object-store capacity economics — is acceptable for the
+evidence tier, because Bronze onward lives on object storage and carries the read traffic.</p>
+
+<h2 id="layout">2. Filesystem layout</h2>
+
+<pre>
+/data/
+  .staging/                                      sweeper's territory; never scanned by readers
+    {ingest_id}/                                 one per open ingest session
+  organization/{org_slug}--{org_id}/
+    CURRENT.json + generations/000001.json       descriptive documents (numbered generations)
+    project/{project_slug}--{project_id}/
+      CURRENT.json + generations/
+      product/{product_slug}--{product_id}/      fused Gold products (layer-gold §2)
+      dataset/{dataset_slug}--{dataset_id}/
+        CURRENT.json + generations/
+        releases/                                named tags; immutable once written (§3)
+          v1.0.json                              {revision_number, revision_id, created_by, …}
+        raw/
+          revision/
+            INDEX.json                           derived navigation aid, regenerated on commit
+            000042--{revision_id}/
+              metadata.json                      IMMUTABLE snapshot (JCS)
+              manifest.json                      IMMUTABLE inventory (JCS)
+              COMMITTED                          commit marker (§5)
+              amendments/0001.json               append-only
+              EXPIRED                            present only after TTL expiration (§8)
+              payload/
+                shielding.i  outp  meshtal  runtpe  slurm-881247.log
+        bronze/  silver/  gold/                  Icechunk repos on RGW, same spine (§2 of each)
+</pre>
+
+<p class="note"><span class="k">One spine, four layers.</span> The
+<code>organization/…/project/…/dataset/…</code> hierarchy is identical for every layer, and the
+layer is the <em>leaf</em>: a dataset's raw, Bronze, Silver and Gold all hang off the same
+dataset directory, so "everything about run-0042" is one prefix. The substrates still differ —
+raw is files on NFS rooted at <code>/data/</code>, while Bronze/Silver/Gold are Zarr + Icechunk
+repositories on Ceph RGW rooted at the bucket prefix — but the path <em>shape</em> below the
+root is the same in both, which is what lets one RBAC scope name one storage prefix
+(<a href="rbac.html">RBAC</a>). The single exception is a Gold product fusing several datasets:
+it has no one dataset to sit under, so it lives at <code>project/…/product/…</code> instead
+(<a href="layer-gold.html#model">Gold §2</a>).</p>
+
+<ul>
+<li><strong>Three entity levels, one version axis.</strong> Organization → Project → Dataset,
+and beneath a dataset a single linear history of revisions. A <em>project</em> is a programme of
+work (<code>modeling-simulation</code>); a <em>dataset</em> is one body of data belonging to it,
+typically one run or one contributor's deposit (<code>run-0042</code>); a <em>revision</em> is one
+immutable commit to that dataset.</li>
+<li>IDs are UUIDv7, lowercase hex without dashes in paths, with dashes in JSON. Slugs match
+<code>^[a-z0-9][a-z0-9-]{1,N}$</code> (N=62; datasets N=80), never contain <code>--</code>, so
+<code>slug--id</code> splits unambiguously. Revision numbers are zero-padded to six digits so
+lexicographic order equals numeric order.</li>
+<li>Release tags match <code>^[a-z0-9][a-z0-9._-]{1,62}$</code> — dots allowed, because these are
+version labels (<code>v1.0</code>, <code>2026-q3</code>) rather than path components.</li>
+<li>The single <code>.staging/</code> at <code>/data/</code> guarantees staging and every
+dataset's <code>raw/</code> prefix are on the same filesystem, which is what makes
+<code>rename(2)</code> atomic. Where classification demands physical separation, a security domain
+becomes <em>its own root</em> (<code>/data-restricted/</code>) with its own staging directory;
+nothing ever links or renames across roots.</li>
+<li><code>pkg/catalog/paths.py</code> is the single source of path construction <em>and
+parsing</em>; the reconciler and sweeper recover
+<code>(org, project, dataset, revision_number, revision_id)</code> from any prefix.</li>
+</ul>
+
+<h2 id="contracts">3. Core contracts</h2>
+
+<h3>Metadata</h3>
+<p><code>metadata.json</code> is a complete revision-time snapshot, never a pointer to current
+state: schema identifier, the full org/project/dataset reference chain (slug + id each), the
+revision number,
+title, creators, <code>committed_by</code>/<code>committed_at</code> (system-generated — a
+client-supplied value is a 400), classification, tags, source, coverage, manifest digest, and
+namespaced <code>extensions</code> per science profile (e.g. <code>org.example.mcnp/1.0</code>
+carrying code version, input-deck path, parameter axes). The core envelope schema is versioned in
+the repository; extension schemas are published by stewards into a registry whose rows are
+immutable per <code>(namespace, version)</code> and mirrored to storage so recovery never depends
+on the database. Unknown extension namespaces are stored, not rejected; readers must preserve
+unknown keys round-trip.</p>
+
+<h3>Manifest</h3>
+<p><code>manifest.json</code> lists every payload file with size, SHA-256, and media type, sorted
+by path. The document is canonicalized per RFC&nbsp;8785 (JCS) and its SHA-256 is the revision's
+content identity; the stored file <em>is</em> the JCS form, so a recovering reader rehashes stored
+bytes directly. Integers in canonicalized documents are asserted below 2<sup>53</sup> so a future
+size-cap raise fails loudly instead of corrupting digests. Path rules, applied identically
+client-side and server-side (mismatch is a 400): relative, forward-slash, <code>payload/</code>
+prefix, Unicode NFC normalization (macOS emits NFD), no <code>.</code>/<code>..</code>/control
+characters/trailing slashes, ≤1024 bytes; only regular files; NFC- or case-colliding paths are
+<code>409 PATH_COLLISION</code>; zero-byte files legal; empty revisions rejected; a manifest whose
+digest already exists on another revision of the same dataset is
+<code>409 DUPLICATE_CONTENT</code>.</p>
+
+<h3>Releases</h3>
+<p>A release is a <strong>named, immutable pointer at one revision</strong> — the same relationship
+an Icechunk tag has to a snapshot, so the versioning model is identical in all four layers. Nothing
+lives underneath a release: <code>releases/v1.0.json</code> records
+<code>{revision_number, revision_id, title, created_by, created_at}</code> and is written once with
+<code>O_EXCL</code>. Creating one is a separate, audited operation after commit
+(<code>POST /datasets/{id}/releases</code>), never a side effect of ingest.</p>
+<p>Tags are immutable because their purpose is citation: a paper that cites
+<code>dataset@v1.0</code> must resolve to the same bytes forever. A tag that could be moved would
+make the citation meaningless. Retagging means issuing a new tag; a wrong tag is withdrawn (an
+audited tombstone), not repointed.</p>
+
+<h3>Amendments</h3>
+<p>Post-commit metadata correction is steward-only and append-only: numbered
+<code>amendments/NNNN.json</code> documents, each a whole-key replacement over an allow-list
+(title, description, tags, coverage, source system, extension documents — plus
+<code>data_classification</code>, which requires a separate permission and emits its own audit
+event). IDs, numbers, creators, timestamps, and the manifest digest can never be amended.
+Effective metadata = base folded with amendments in sequence; the fold is implemented once, in
+<code>pkg/catalog</code>. Contributors who want different metadata commit a new revision.</p>
+
+<h3>Limits and concurrency</h3>
+<p>Defaults: 10 GiB/file, 10,000 files/revision, 1 TiB/revision (oversized single artifacts are
+pointed at the Zarr/Icechunk path in the error detail). <code>Idempotency-Key</code> is required on
+every mutating POST and replayed requests return the stored result; <code>If-Match</code> ETags
+guard every descriptive-document mutation; no database transaction is ever held across file I/O or
+hashing.</p>
+
+<h2 id="ingest">4. Ingest session and locking</h2>
+
+<p>Sessions run a strict state machine —
+<code>PREPARING → UPLOADING → VERIFYING → COMMITTING → COMMITTED</code>, with
+<code>ABORTED</code>/<code>FAILED</code> terminal and every illegal transition raising.</p>
+
+<ul>
+<li><strong>The lock is per-dataset:</strong> one open ingest session per dataset (partial unique
+index in PostgreSQL), so <code>run-0042</code> and <code>run-0043</code> upload concurrently while
+successive commits to the same dataset serialize. The revision number is allocated at
+<code>BeginIngest</code> as <code>max(committed)+1</code> under the lock — gap-free per dataset
+(invariant E), and the final path is known before any byte is written.</li>
+<li><strong>Dataset-scoped locking is the cost of collapsing the hierarchy.</strong> Two people
+depositing into one dataset queue behind each other. This is the right trade while a dataset is one
+run or one deposit; if datasets grow coarse enough that concurrent contributors are normal, the
+answer is finer-grained datasets, not a re-introduced level.</li>
+<li><strong>Creating a dataset</strong> is implicit in the first <code>BeginIngest</code> naming a
+new dataset slug (subject to <code>dataset.create</code>), or explicit via
+<code>POST /projects/{id}/datasets</code>.</li>
+<li><strong>The upload plan</strong> assigns every file <code>action: upload</code> or
+<code>action: hardlink</code>. Hardlink sources are resolved from the parent revision's
+<code>manifest.json</code> read from the filesystem — storage is consulted as the authority on
+every ingest, not only during recovery. Hardlinked files inherit the parent's verified SHA-256 and
+are not rehashed.</li>
+<li><strong>Session TTL</strong> 2 h, refreshed by heartbeat and by any successful part upload; a
+crashed client releases the dataset lock within the TTL; a project admin can force-abort (audited).
+Interrupted transfers resume via <code>completed_parts</code>.</li>
+</ul>
+
+<h2 id="commit">5. The commit protocol</h2>
+
+<pre>
+CommitIngest(ingest_id, manifest_sha256, If-Match, Idempotency-Key)
+
+ 1. Idempotency replay check.                                        [PG]
+ 2. Lock session row; assert VERIFYING, ETag, manifest digest.       [PG]
+ 3. Assert every file accounted for, every digest matched.           [PG]
+ 4. In .staging/{ingest_id}/: write manifest.json, metadata.json,
+    COMMITTED (all JCS; fsync each file, then fsync the dir).        [NFS]
+ 5. Seal: chmod payload files 0444, dirs 0555.                       [NFS]
+ 6. rename(.staging/{ingest_id},
+           …/revisions/{nnnnnn}--{revision_id})   ◀── durability point [NFS]
+ 7. ONE short PG transaction: revision row, session → COMMITTED,
+    audit event, outbox event, idempotency record.                   [PG]
+ 8. Best-effort: regenerate INDEX.json (reconciler owns it).         [NFS]
+</pre>
+
+<table>
+<tr><th>Crash after step</th><th>Storage state</th><th>Resolution</th></tr>
+<tr><td>4–5</td><td>Complete-looking envelope, still under <code>.staging/</code></td>
+<td>Invisible (readers never scan staging). Session expires → sweeper deletes the staging dir.</td></tr>
+<tr><td>6</td><td>Envelope published under <code>revisions/</code>, no PG row</td>
+<td><strong>Orphan commit.</strong> Reconciler imports the row from <code>COMMITTED</code>.
+A retry of step 6 finds staging gone and the target present → treats the rename as done
+(idempotent).</td></tr>
+<tr><td>7</td><td>Complete</td><td>Normal; step 8 retried by the reconciler.</td></tr>
+</table>
+
+<p>There is no distributed transaction between the filesystem and PostgreSQL, and the design does
+not pretend otherwise: ordering is chosen so every crash window is a state the reconciler can name.
+<strong>Storage leads; the catalog follows</strong> (invariant G) — a revision row is never
+published before the rename is durable.</p>
+
+<p class="note"><span class="k">Why keep a marker when rename is atomic?</span> Because the
+envelope is complete by construction (invariant C), the <code>COMMITTED</code> file is not needed
+for visibility. It exists as the reconciler's catalog-reconstruction record — digests, counts,
+committer, timestamp in one small JSON — as the object site replication tools can key on, and as
+defense in depth if a partial copy ever lands under <code>revisions/</code> by operator error.</p>
+
+<h3>NFS-specific discipline</h3>
+<ul>
+<li><strong>Single-writer model:</strong> only Huron service identities write the filesystem. All
+API pods and workers mount the same export; close-to-open consistency suffices because no node
+reads a file until after the writer closed it <em>and</em> the rename published it.</li>
+<li><strong>fsync before rename</strong> on every file and the staging directory; fsync the
+rename target's parent after. NFS servers may otherwise acknowledge writes before stable
+storage.</li>
+<li><strong>No advisory locks on NFS.</strong> All coordination (sessions, dataset locks,
+generation numbering) lives in PostgreSQL. The filesystem is never used as a lock service.</li>
+<li><strong>Atomicity boundary checked at startup:</strong> staging and final trees must share a
+filesystem per raw root (<code>st_dev</code> compared); cross-device rename is a
+deploy-time error, not a runtime surprise.</li>
+</ul>
+
+<h2 id="dedup">6. Hardlink dedup and sealing</h2>
+
+<p>Unchanged files between successive revisions of a dataset are materialized by hardlinking the parent
+revision's payload into the staging payload (prepare worker, concurrent with client uploads). The
+new revision remains a <em>full logical copy</em> — every revision directory lists every file —
+while unchanged bytes are stored once.</p>
+
+<p class="warn"><span class="k">The hardlink hazard, and its containment.</span> Hardlinks share an
+inode: a write through any link would corrupt every revision sharing it. Containment is layered:
+(1) sealing — committed payload is <code>0444</code>, directories <code>0555</code>; (2) identity —
+only the Huron service user owns these files, and no user-facing code path opens payload for write,
+ever; (3) audit — a quarterly scrubber re-hashes a sample of payload files against manifests and
+raises <code>DEGRADED</code> on mismatch. Where site policy forbids hardlinks or trees cross
+devices, the prepare worker falls back to <code>copy_file_range()</code> (reflink where supported)
+behind the same <code>action: hardlink</code> plan entry.</p>
+
+<h2 id="generations">7. Descriptive documents</h2>
+
+<p>Mutable descriptive state — org, project, dataset — is stored as immutable numbered
+generations plus a small pointer: write <code>generations/{n+1:06d}.json</code> with
+<code>O_EXCL</code> (never overwritten), then atomically replace <code>CURRENT.json</code> via
+write-temp + fsync + rename. Generation numbers are allocated under a PostgreSQL row lock, so two
+concurrent edits cannot pick the same <code>n</code>. Recovery: if the pointer is missing or
+points at a nonexistent generation, the highest existing generation wins.</p>
+
+<h2 id="retention">8. Retention: TTL expiration, holds, purge</h2>
+
+<h3>Per-category TTL</h3>
+<p>The science profile classifies each expected file into a retention category; the project sets
+the policy:</p>
+
+<pre>
+retention:
+  categories:
+    essential_input:      retain          # input decks, includes, environment specs
+    primary_output:       retain          # outp — small, scientifically primary
+    bulk_intermediate:    ttl_days: 90    # runtpe, ptrac, large logs
+    scratch:              ttl_days: 30
+  starts: after_silver_published          # clock starts only once Bronze+Silver are verified
+</pre>
+
+<p>The retention worker expires payload files whose category TTL has elapsed <em>and</em> whose
+revision has a published Bronze and Silver materialization. It writes an <code>EXPIRED</code>
+marker listing exactly which manifest entries were removed and why, flips the PG revision state to
+<code>EXPIRED_PARTIAL</code> (or <code>EXPIRED</code> if all payload went), and emits audit +
+outbox events. Everything else survives: filenames, sizes, checksums, extracted parameters,
+manifest hash, sidecars, lineage. The upload confirmation and the dataset page both show the
+consequence before the fact:</p>
+
+<pre>
+Raw bulk files expire: 90 days after Silver publication
+Native MCNP replay after expiration: unavailable (inputs retained; outputs regenerable by re-run)
+Earliest retained representation: Bronze Icechunk snapshot
+</pre>
+
+<h3>Pins and legal holds</h3>
+<p><code>retention.pin</code> (project owner) exempts a revision from TTL;
+<code>retention.legal_hold</code> (governance authority) freezes TTL <em>and</em> purge for its
+scope. Holds are first-class rows, audited, and checked by the retention worker before every
+deletion.</p>
+
+<h3>Purge</h3>
+<p>Purge is two-person, audited, and deliberately inconvenient: one platform admin requests with a
+reason, a <em>different</em> one approves (enforced by a database CHECK constraint, not
+convention). Execution destroys payload and <code>manifest.json</code> — filenames and per-file
+digests are frequently the sensitive material — and retains <code>metadata.json</code>,
+amendments, <code>COMMITTED</code>, a <code>PURGED</code> marker, and the audit trail. Idempotent
+and resumable. Invariant I: a committed envelope without payload is valid <em>only</em> with a
+<code>PURGED</code> or <code>EXPIRED</code> marker; anything else is data loss and is raised as
+<code>DEGRADED</code>.</p>
+
+<h2 id="sweeper">9. Sweeper and reconciler</h2>
+
+<ul>
+<li><strong>Sweeper</strong> (15 min): deletes <code>.staging/{ingest_id}</code> directories whose
+session is terminal or expired, and staging dirs with no session row older than 24 h. It
+<em>never</em> descends into <code>orgs/</code> — its deletion scope is staging, full stop. A
+fraction guard refuses to run if it would delete more than a configured share of staging in one
+pass, and every run supports <code>--dry-run</code>.</li>
+<li><strong>Reconciler</strong> (nightly + on demand): walks <code>revisions/</code> and compares
+with PostgreSQL. Orphan envelope → import the row from <code>COMMITTED</code>. Row without an
+envelope → <code>DEGRADED</code>, alert, never delete the row. Digest mismatch →
+<code>DEGRADED</code>. Payload missing without <code>PURGED</code>/<code>EXPIRED</code> →
+<code>DEGRADED</code>. Stale <code>INDEX.json</code> → regenerate. Torn <code>CURRENT.json</code>
+→ repoint at the highest generation. It also verifies seal permissions and hardlink counts. The
+reconciler never silently rewrites catalog history — disagreements become findings, alerts, and
+report entries.</li>
+<li><strong><code>lakectl rebuild --from-storage</code></strong> reconstructs PostgreSQL structural
+rows from the NFS tree alone (orgs → datasets from generation documents, revisions from
+<code>COMMITTED</code> markers, release tags from <code>releases/*.json</code>), then the derived-layer registry from RGW snapshot metadata, then
+the LanceDB projection. RBAC, audit, idempotency records, and API keys are recoverable only from
+PostgreSQL backups — stated plainly so nobody assumes otherwise.</li>
+</ul>
+
+<h2 id="upload-modes">10. Upload modes</h2>
+
+<table>
+<tr><th>Mode</th><th>v</th><th>Mechanics</th></tr>
+<tr><td class="k">API streaming</td><td>v1</td>
+<td>Client streams file parts through the API; SHA-256 computed in flight (thread pool, never on
+the event loop); parts land in staging; resume via <code>completed_parts</code>.</td></tr>
+<tr><td class="k">Register-in-place</td><td>v2</td>
+<td>For data already on the raw filesystem (HPC jobs writing to a Huron-managed landing directory):
+the CLI requests a landing allocation inside <code>.staging/</code>, the job writes there directly
+(or the CLI moves files in), then ingest proceeds hash-verify → commit without a second copy.
+Requires same-filesystem, group-writable landing dirs; the API re-hashes everything it did not
+stream. The <code>mode</code> field in the upload plan is the seam this slots into.</td></tr>
+</table>
+
+<p class="note"><span class="k">What the scientist sees.</span> None of this. They run
+<code>huron upload ./run-0042 --project modeling-simulation --dataset run-0042 --infer
+--confirm</code>, confirm the handful of human-owned assertions the extractor could not infer
+(campaign, run purpose, quality state), and get back a committed, checksummed, immutable revision
+with its Bronze build already queued. When that revision is the one they want cited, they tag it:
+<code>huron release create --dataset run-0042 --revision 1 --tag v1.0</code>.</p>
+
+</main>
+</body>
+</html>

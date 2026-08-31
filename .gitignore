@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# MkDocs build output
+site/
+
+# Test and type-checking artifacts
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.import_linter_cache/
+.coverage
+htmlcov/
+
+# macOS
+.DS_Store
+
+# Parked by the src/huron restructure (2026-08-23) — safe to delete manually,
+# the sandbox that did the move can't unlink files itself.
+_to_delete/
