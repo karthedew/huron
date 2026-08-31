@@ -24,7 +24,7 @@ create and administer password users - provisioning humans is a platform
 act, distinct from an organization admin's service-account authority.
 """
 
-from alembic import op
+from migrations._ddl import execute_sql
 
 revision = "0005_auth"
 down_revision = "0004_entry_layers"
@@ -87,11 +87,11 @@ INSERT INTO role_capabilities (role_code, capability_code, layers) VALUES
 
 
 def upgrade() -> None:
-    op.execute(DDL)
+    execute_sql(DDL)
 
 
 def downgrade() -> None:
-    op.execute("""
+    execute_sql("""
     DELETE FROM role_capabilities
      WHERE role_code = 'platform_owner' AND capability_code = 'user.manage';
     DELETE FROM capabilities WHERE code = 'user.manage';

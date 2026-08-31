@@ -1,7 +1,12 @@
-.PHONY: up down stack hosts bootstrap migrate api test lint docs docs-serve
+.PHONY: help up down stack hosts bootstrap migrate api test lint docs docs-serve
+
+.DEFAULT_GOAL := help
 
 # Prefers Docker Compose; falls back to Podman Compose when Docker is absent.
 COMPOSE := $(shell command -v docker >/dev/null 2>&1 && echo "docker compose" || echo "podman-compose")
+
+help: ## List available commands.
+	@grep -E '^[a-zA-Z_-]+:.*## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 up: ## Start PostgreSQL, MinIO, and Keycloak (infra only), waiting for all to report healthy.
 	$(COMPOSE) up -d --wait postgres minio keycloak
@@ -18,10 +23,10 @@ down: ## Stop the stack and remove its containers.
 bootstrap: ## Create and configure the raw, staging, and index buckets.
 	./scripts/bootstrap-buckets.sh
 
-migrate:
+migrate: ## Run pending Alembic migrations against the database.
 	uv run alembic upgrade head
 
-api:
+api: ## Run the API on the host with autoreload, against infra started by "make up".
 	uv run uvicorn huron.service.api.app:app --reload --port 8080
 
 test: ## Run the fast unit suite.

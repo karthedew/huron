@@ -15,7 +15,7 @@ Silver is per-dataset now too, so every bronze or silver snapshot must name
 a dataset; only gold may float free of one.
 """
 
-from alembic import op
+from migrations._ddl import execute_sql
 
 revision = "0003_layer_paths"
 down_revision = "0002_rbac"
@@ -38,11 +38,11 @@ ALTER TABLE snapshots
 
 
 def upgrade() -> None:
-    op.execute(DDL)
+    execute_sql(DDL)
 
 
 def downgrade() -> None:
-    op.execute("""
+    execute_sql("""
     ALTER TABLE snapshots DROP CONSTRAINT IF EXISTS snapshots_dataset_required_below_gold;
     ALTER TABLE products
         DROP CONSTRAINT IF EXISTS products_dataset_project_fk,

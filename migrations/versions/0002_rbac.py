@@ -13,7 +13,7 @@ database rules, not application code:
   ``service_account`` (``service_account_kind_guard``).
 """
 
-from alembic import op
+from migrations._ddl import execute_sql
 
 revision = "0002_rbac"
 down_revision = "0001_foundations"
@@ -267,11 +267,11 @@ INSERT INTO role_capabilities (role_code, capability_code, layers) VALUES
 
 
 def upgrade() -> None:
-    op.execute(DDL)
+    execute_sql(DDL)
 
 
 def downgrade() -> None:
-    op.execute("""
+    execute_sql("""
     DROP TRIGGER IF EXISTS role_bindings_guard ON role_bindings;
     DROP FUNCTION IF EXISTS role_binding_guard();
     DROP TRIGGER IF EXISTS service_accounts_kind_guard ON service_accounts;
