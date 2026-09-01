@@ -122,6 +122,10 @@ src/huron/
               mounted unversioned at /auth - see <a href="auth.html">Authentication</a>)
 
   pkg/        the coding logic, as libraries. Every package is independent of every other.
+              This tree is the <em>intended</em> layout, not an inventory of this checkout:
+              four packages exist today - catalog/, rawstore/, rbac/ and auth/. The other
+              seven, telemetry/ included, are unbuilt; only metastore/ once said so, and
+              that selective annotation is what made this block read as an inventory.
 
               catalog/       the manifest, the hierarchy, the Raw/Bronze/Silver/Gold
                              interaction logic, the invariants — and, in ports.py, the
@@ -212,8 +216,18 @@ volumes from a clean checkout.</td></tr>
 module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
 <code>pkg/rawstore/</code>; migrations (hierarchy, role_bindings, api_keys, audit, outbox);
 <code>RoleBindingAuthorizer</code> with discovery gating; API-key + OIDC
-resolvers; org/project/dataset CRUD with generation documents; release tags; browse with keyset
-pagination; OpenAPI published, TS + Python client cores generated.
+resolvers.
+Per-item status for this row's HTTP deliverables, because the <span class="tag">partial</span> tag
+alone cannot be audited: org/project/dataset CRUD with generation documents <span class="tag">done</span>; release
+tags <span class="tag">done</span> — both verified route by route against the built route table and
+against <a href="api.html">API</a> §2. Browse with keyset pagination <span class="tag">todo</span>:
+the collections page, but <code>page()</code> in <code>routes/v1/common.py</code> returns
+<code>next_cursor: null</code> unconditionally, so no cursor is ever issued and the
+filter-then-paginate rule belongs to milestone 3. OpenAPI published, TS + Python client cores
+generated <span class="tag">todo</span>: the app emits a live schema, but
+<code>openapi/v1.json</code> is not a committed artifact and neither client core exists — T0
+milestone 1 owns both and marks them <span class="tag">todo</span> independently. Where this row
+and the code disagree, the code wins.
 Withdrawn: the audit table was delivered without the pre-created partitions this row once
 claimed — <code>audit_events</code> shipped declared <code>PARTITION BY RANGE (created_at)</code>
 with a single DEFAULT child and nothing that creates bounded ones, so every row lands in the
@@ -253,6 +267,43 @@ referential action and trigger the revision adds is pinned by a write that must 
 that must succeed, in the contract suites against a live <code>postgres:16</code>; upgrade →
 downgrade → upgrade round-trips on a clean database; <code>make lint</code> fails when the schema
 map's <code>Reflects:</code> stamp does not match the Alembic head.</td></tr>
+
+<tr id="api-sweep"><td class="k">API tier clean sweep<br><span class="tag">todo</span></td>
+<td>A cross-cutting rework of <code>src/huron/service/api</code> — no new product surface, no
+migration, no frontend. It brings the tier P1 shipped up to the standard the rest of this roadmap
+assumes: blocking work off the event loop under one stated rule; a typed composition root with
+declared dependencies instead of <code>Request</code>-threading; <code>repository.py</code>
+decomposed so storage adapters stop importing the application service; a router tree where prefix,
+tags and authentication are declared once and <strong>the whole versioned surface is closed to
+anonymous callers</strong>; a declared response type and a real pagination envelope on every
+operation; one uniform <code>application/problem+json</code> contract with a mechanically checked
+code table; and the binding surface completed. Target design:
+<code>API_DESIGN.md</code>, § "Design 1" through § "Design 8", with the ten findings its
+§ "Roadmap Drift" records against this page, <a href="api.html">API</a>,
+<a href="auth.html">Authentication</a> and the two shipped plans. Execution order:
+<code>API_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M1–M10, 23 tasks).
+<strong>Nothing here has been implemented — every task is <code>Status: pending</code>.</strong>
+Unlike <code>0008</code> above, this work is <strong>gated</strong>: § "2. Human decision register"
+holds sixteen decisions <code>D-1</code>–<code>D-16</code> awaiting an owner's answer, and no gated
+task may start until its decision is recorded there. Six of them (<code>D-3</code>,
+<code>D-4</code>, <code>D-6</code>, <code>D-7</code>, <code>D-12</code>, <code>D-16</code>) are
+visible contract breaks intended to ship as one grouped release. Sequencing: it precedes T0
+milestone 1, whose committed <code>openapi/v1.json</code> and generated TypeScript client would
+otherwise be generated from the envelope and error shapes this sweep replaces; it does not block
+any backend phase.</td>
+<td>Per <code>API_IMPLEMENTATION_PLAN.md</code> § "5. Definition of done": the full validation gate
+green after every task; every <code>/api/v1</code> operation answers <code>401
+application/problem+json</code> without a credential and the requirement is declared on one router;
+every response with status ≥ 400 is <code>application/problem+json</code> with a code that is a row
+in <a href="api.html#errors">API §7</a>, FastAPI's own 404/405/422 included, with
+<code>tests/unit/test_error_contract.py</code> failing loudly in both directions when the code set
+and the table diverge; a cursor walk at <code>limit=1</code> enumerates every collection exactly
+once, ending at <code>next_cursor: null</code>; <code>/readyz</code> answers <code>503</code> when a
+dependency is unavailable, never <code>4xx</code>; all four binding scope roots support create, list
+and revoke and no update verb exists at any scope; no file under <code>migrations/</code> or
+<code>src/huron/schema</code> modified in the whole run; and all sixteen decisions recorded with the
+owner's answer — an unanswered decision means its milestone is not done regardless of gate
+state.</td></tr>
 
 <tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">partial</span></td>
 <td>Session state machine (dataset-scoped lock), upload plan with hardlink dedup, streaming
@@ -537,8 +588,16 @@ page tracks a running job's progress with no fixture data.</td></tr>
 <tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
 <tr><td class="k">12 — Organization users &amp; teams<br><span class="tag">todo</span></td>
-<td>Built: admin-provisioned users (<code>user.manage</code>, platform-owner only), bindings
-CRUD at all scopes, OIDC upsert-on-login, the Keycloak groups mapper. Adds: user/group listing
+<td>Built: admin-provisioned users (<code>user.manage</code>, platform-owner only), binding
+creation at all four scopes and binding listing at the organization and project scopes, with a flat
+<code>DELETE /bindings/{id}</code> that re-derives the binding's scope — binding create, list and
+revoke, no update verb, and <strong>not</strong> "CRUD at all scopes": <code>GET /bindings</code>
+and <code>GET /datasets/{id}/bindings</code> answer 405 today, so a SYSTEM- or dataset-scoped
+binding can be created and never enumerated (receipts: <code>API_DESIGN.md</code> § "Roadmap
+Drift" → "Drift 4"). Completing the surface is the
+<a href="#api-sweep">API tier clean sweep</a>'s M9 and is gated on decisions D-12 and D-13, so the
+inherited-vs-direct binding view this milestone adds cannot be built at two of its four scopes
+until that lands. Also built: OIDC upsert-on-login, the Keycloak groups mapper. Adds: user/group listing
 with invitation state and last activity; invitations with email delivery — the platform's first
 outbound email, a path chosen once and shared with milestone 18; OIDC group synchronization
 resolving IdP groups to principals and teams; binding management showing inherited-vs-direct;
@@ -701,6 +760,13 @@ before P9, and nothing blocks on it (its failure posture is "degrade external en
 from P0 onward; instrumentation (unchanged-byte ratio, layer sizes per project, ingest durations,
 projection lag, grant issuance rates) ships with the code that emits it, because the
 full-copy-vs-delta and TTL-length decisions get revisited with data, not opinion.</li>
+<li><strong>The <a href="#api-sweep">API tier clean sweep</a> before T0 milestone 1:</strong> that
+milestone commits <code>openapi/v1.json</code> and generates the TypeScript client from it, and the
+sweep is what replaces the pagination envelope, the response models and the error contract that
+document would otherwise pin. Generating a client first means regenerating it, and deleting
+<code>types.ts</code> against a contract that is about to break. The sweep blocks no backend phase;
+it is gated instead on the sixteen decisions in <code>API_IMPLEMENTATION_PLAN.md</code> § "2. Human
+decision register", six of which are visible contract breaks that ship as one grouped release.</li>
 <li><strong>T0 in strict order (contract → session → visibility):</strong> the generated client
 first, then the browser session, then the visibility layer, so every later listing endpoint is
 born authorization-filtered rather than retrofitted.</li>

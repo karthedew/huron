@@ -4,14 +4,19 @@ Scope: interactive login for the control plane — an OIDC authorization-code fl
 admin-provisioned username/password option, server-side sessions for the browser, the
 database migration behind them, and a compose stack that runs the whole application locally
 under Podman or Docker. Companion to [`RBAC_IMPLEMENTATION_PLAN.md`](RBAC_IMPLEMENTATION_PLAN.md)
-(authorization; R1–R9 shipped) — this plan supplies the authentication half and **subsumes R10**
+(authorization; R1–R9 shipped, except R6's binding surface — see that step) — this plan supplies the authentication half and **subsumes R10**
 ("real JWT verification for the UI path" and the principals-upsert-on-login it called for).
 `design/` remains authoritative; decisions made here that design/ is silent on get recorded
 there in the same PR that ships them (A13).
 
-Nothing here is implemented yet. Steps A1–A13 are ordered so every step leaves the tree green
-(all four static gates + unit suite); code blocks are the intended implementation, written
-against the tree as of 2026-08-30, and may be lifted verbatim.
+**Status: implemented.** Steps A1–A13 have landed and the tree contains the artifact each one
+names — A1–A5 and A7–A13 verified item by item in `API_DESIGN.md` § "Roadmap Drift" → "Drift 2",
+and A6's `rbac_backend` → `store_backend` rename with its OIDC and session-cookie settings present
+in `src/huron/service/api/settings.py`. Steps A1–A13 were ordered so every step leaves the tree
+green (all four static gates + unit suite); the code blocks below were the intended
+implementation, written against the tree as of 2026-08-30, and are kept as the record of intent
+rather than as work still to be done. **This file is not a status source for the tree**
+— `design/roadmap.html` § 2 is.
 
 ---
 

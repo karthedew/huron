@@ -4,7 +4,8 @@
 
 | | |
 |---|---|
-| Status | Ratified design, ready to implement |
+| Status | **RETIRED — reference only. Do not implement, do not extract claims from this document.** |
+| Retired by | `design/roadmap.html` § 1 (Greenfield stance): "Prototype endpoints, schemas, and plans are retired outright. No dual-running, no compatibility shims." The authoritative REST specification is `design/api.html`; `design/` decides. |
 | Date | 2026-08-16 |
 | Scope | Raw control plane only |
 | Supersedes | The zip-and-store prototype endpoints (discarded, no data migration) |

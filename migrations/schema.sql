@@ -1,16 +1,30 @@
 -- ============================================================================
 -- Huron metastore: table architecture summary
 -- ============================================================================
--- GENERATED DOCUMENTATION, NOT EXECUTED. The Alembic migrations under
--- migrations/versions/ are the authoritative DDL (0001_foundations,
--- 0002_rbac, 0003_layer_paths, 0004_entry_layers, 0005_auth,
--- 0006_role_simplification, 0007_roleless_service_accounts); regenerate
--- against a migrated database with
---     pg_dump --schema-only --no-owner huron
--- Types/constraints below are condensed; CHECKs are shown where they carry a
--- design rule. PostgreSQL structural state only - no metadata mirrors, no
--- text search (invariant A: LanceDB owns matching; sidecars authoritative).
+-- HAND-MAINTAINED DOCUMENTATION. Not executed, and not generated: this is a
+-- condensed map of what the Alembic revisions under migrations/versions/ build,
+-- and the authoritative DDL is those revisions, never this file. The map exists
+-- to carry what a schema dump cannot - the trigger annotations, the vocabularies,
+-- and the invariant each rule serves. Do not replace it with pg_dump output.
 --
+-- Reflects: 0008_schema_conformance
+--
+-- Every revision that changes the schema updates this file in the same commit
+-- and moves the Reflects line to the new head. scripts/check_schema_map.py
+-- fails when that line is not the Alembic head; it runs in `make lint` and as a
+-- pre-commit hook.
+--
+-- Scope: every table and column appears, with types condensed. A constraint
+-- appears where it carries a design rule; indexes and triggers appear as
+-- `-- index ...` / `-- trigger ...` annotations inside the table block they
+-- serve, never as standalone DDL.
+-- A comment that states a property carries the marker design/catalog-search.html
+-- §2 defines: [db] with the object that refuses the violating write, [app] with
+-- the module that maintains it, [spec] where nothing does and no writer exists.
+-- A bare adjective is not a marking.
+-- PostgreSQL structural state only - no
+-- metadata mirrors, no text search (invariant A: LanceDB owns matching;
+-- sidecars authoritative).
 -- ============================================================================
 -- 1. Hierarchy: Organization -> Project -> Dataset -> revisions + release tags
 -- ============================================================================
@@ -21,8 +35,10 @@ CREATE TABLE organizations (
     title text NOT NULL,
     description text NOT NULL DEFAULT '',
     lifecycle_state text NOT NULL DEFAULT 'ACTIVE',
-    generation integer NOT NULL,        -- filesystem generation doc counter
-    version integer NOT NULL,           -- optimistic-concurrency counter (ETag)
+    -- [db] organizations_lifecycle_state_vocabulary CHECK IN ('ACTIVE'):
+    -- today's only reachable value; no transition is built or documented
+    generation integer NOT NULL DEFAULT 1,  -- filesystem generation doc counter
+    version integer NOT NULL DEFAULT 1,     -- optimistic-concurrency counter (ETag)
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL
 );
@@ -35,9 +51,12 @@ CREATE TABLE projects (
     description text NOT NULL DEFAULT '',
     classification_default text NOT NULL,
     raw_retention_policy jsonb NOT NULL DEFAULT '{}',
+    -- [db] projects_raw_retention_policy_is_an_object CHECK: object shape
     quota_bytes bigint,                 -- NULL = unlimited
     lifecycle_state text NOT NULL DEFAULT 'ACTIVE',
-    generation integer NOT NULL, version integer NOT NULL,
+    -- [db] projects_lifecycle_state_vocabulary CHECK IN ('ACTIVE'):
+    -- today's only reachable value; no transition is built or documented
+    generation integer NOT NULL DEFAULT 1, version integer NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
 );
 
@@ -57,11 +76,17 @@ CREATE TABLE datasets (
                                         -- Gold excluded: products need a derivation record.
     data_classification text NOT NULL,
     lifecycle_state text NOT NULL DEFAULT 'ACTIVE',
-    generation integer NOT NULL, version integer NOT NULL,
+    -- [db] datasets_lifecycle_state_vocabulary CHECK IN ('ACTIVE','RETIRED','SUPERSEDED'):
+    -- RETIRED ends a dataset's working life; SUPERSEDED names a slug mistake
+    -- replaced by another dataset
+    generation integer NOT NULL DEFAULT 1, version integer NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
 );
 
-CREATE TABLE dataset_revisions (      -- linear, gap-free, immutable
+CREATE TABLE dataset_revisions (
+    -- [spec] linear, gap-free, immutable (invariant E) - allocated under the
+    -- per-dataset ingest lock by a writer that does not exist yet. No constraint
+    -- or trigger holds any of the three; contrast releases_immutable below.
     id uuid PRIMARY KEY,
     dataset_id uuid NOT NULL REFERENCES datasets,
     revision_number integer NOT NULL,   -- 1..999999; UNIQUE (dataset_id, revision_number)
@@ -71,24 +96,33 @@ CREATE TABLE dataset_revisions (      -- linear, gap-free, immutable
     file_count integer NOT NULL, total_bytes bigint NOT NULL,
     state text NOT NULL DEFAULT 'COMMITTED',
     committed_by text NOT NULL, committed_at timestamptz NOT NULL
+    -- [db] UNIQUE (id, dataset_id) dataset_revisions_id_dataset_id_unique: the
+    -- composite FK target for releases_revision_dataset_fk below
+    -- [db] dataset_revisions_state_vocabulary CHECK IN ('COMMITTED',
+    -- 'EXPIRED_PARTIAL','EXPIRED','PURGED','DEGRADED'): COMMITTED is ingest's
+    -- only output; retention, purge and the reconciler write the rest
 );
 
 CREATE TABLE releases (               -- immutable tags on one revision (invariant M)
     id uuid PRIMARY KEY,
     dataset_id uuid NOT NULL REFERENCES datasets,
     tag text NOT NULL,                  UNIQUE (dataset_id, tag),
-    revision_id uuid NOT NULL REFERENCES dataset_revisions,
+    revision_id uuid NOT NULL,
     title text, created_by text NOT NULL, created_at timestamptz NOT NULL,
     withdrawn_at timestamptz, withdrawn_reason text
-    -- trigger releases_immutable: every column except withdrawal is frozen;
+    -- [db] trigger releases_immutable: every column except withdrawal is frozen;
     -- a wrong tag is withdrawn (tombstone), never repointed.
+    -- [db] FOREIGN KEY (revision_id, dataset_id) REFERENCES dataset_revisions (id, dataset_id)
+    -- releases_revision_dataset_fk: a release cites a revision of its own dataset only
 );
+-- [db] index releases_revision (revision_id, dataset_id)
 
 CREATE TABLE revision_amendments (    -- project-admin metadata amendments, append-only
     id uuid PRIMARY KEY,
     revision_id uuid NOT NULL REFERENCES dataset_revisions,
     sequence integer NOT NULL,          UNIQUE (revision_id, sequence),
     changed_keys text[] NOT NULL, document jsonb NOT NULL,
+    -- [db] revision_amendments_document_is_an_object CHECK: object shape
     reclassified boolean NOT NULL DEFAULT false,
     created_by text NOT NULL, created_at timestamptz NOT NULL
 );
@@ -103,11 +137,18 @@ CREATE TABLE ingest_sessions (
     revision_id uuid UNIQUE NOT NULL, revision_number integer NOT NULL,
     manifest_sha256 text NOT NULL,
     state text NOT NULL,  -- PREPARING|UPLOADING|VERIFYING|COMMITTING|COMMITTED|ABORTED|FAILED
-    etag integer NOT NULL,
+    etag integer NOT NULL DEFAULT 1,
     expires_at timestamptz NOT NULL,
     created_by text NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
+    -- [db] trigger ingest_sessions_revision_guard: a session may claim
+    -- COMMITTED only about the revision it reserved - same id, dataset,
+    -- revision_number and manifest_sha256 - checked FOR KEY SHARE
 );
--- partial unique index: at most ONE open ingest per dataset (per-dataset lock)
+-- [db] one_open_ingest_per_dataset: partial unique index, at most ONE open
+-- ingest per dataset (per-dataset lock)
+-- [db] one_claim_per_revision_number: partial unique index on
+-- (dataset_id, revision_number) excluding ABORTED/FAILED - a dead session's
+-- number is freed for retry, a COMMITTED one stays spent forever
 
 CREATE TABLE ingest_files (
     file_id uuid PRIMARY KEY,
@@ -116,7 +157,13 @@ CREATE TABLE ingest_files (
     size bigint NOT NULL, expected_sha256 text NOT NULL,
     action text NOT NULL,               -- upload | hardlink (dedup from parent)
     state text NOT NULL DEFAULT 'PENDING',
+    -- [spec] vocabulary undecided: overlaps completed_parts, the documented
+    -- resume authority, and action; no CHECK until the upload-plane design
+    -- says whether per-file progress is derived or stored
     completed_parts jsonb NOT NULL DEFAULT '[]'
+    -- [db] ingest_files_completed_parts_is_an_array CHECK: array shape -
+    -- the resume ledger for a multipart upload, the one jsonb column that
+    -- is not an object
 );
 
 -- ============================================================================
@@ -148,7 +195,7 @@ CREATE TABLE service_accounts (        -- owned by an organization; roleless (00
     organization_id uuid NOT NULL REFERENCES organizations,
     name text NOT NULL,                 UNIQUE (organization_id, name),
     created_by text NOT NULL, created_at timestamptz NOT NULL
-    -- trigger service_accounts_kind_guard: principal must be kind service_account
+    -- [db] trigger service_accounts_kind_guard: principal must be kind service_account
 );
 
 CREATE TABLE roles (                   -- seeded from huron.pkg.rbac.roles.ROLES
@@ -163,12 +210,17 @@ CREATE TABLE roles (                   -- seeded from huron.pkg.rbac.roles.ROLES
 );
 
 CREATE TABLE capabilities (
-    code text PRIMARY KEY               -- e.g. organization.update, data.write
+    code text PRIMARY KEY,               -- e.g. organization.update, data.write
+    description text NOT NULL DEFAULT ''
 );
 
 CREATE TABLE role_capabilities (
     role_code text NOT NULL REFERENCES roles ON DELETE CASCADE,
+    -- [db] role_capabilities_role_code_fkey ON DELETE CASCADE: a role's
+    -- capability rows are its own contents and go with it, not a citation
     capability_code text NOT NULL REFERENCES capabilities,
+    -- [db] role_capabilities_capability_code_fkey ON DELETE NO ACTION:
+    -- deleting a capability must not silently narrow every role that grants it
     layers text[],                      -- NULL = all layers; e.g. {raw,bronze}
     PRIMARY KEY (role_code, capability_code)
 );
@@ -177,16 +229,23 @@ CREATE TABLE role_bindings (           -- (principal, role, scope): the grant
     id uuid PRIMARY KEY,
     principal text NOT NULL,            -- user:{subject} | group:{name} | sa:{subject}
     role_code text NOT NULL REFERENCES roles,
+    -- [db] role_bindings_role_fk ON DELETE NO ACTION: deleting a role
+    -- must not silently revoke a live grant
     scope_type text NOT NULL,           -- SYSTEM | ORGANIZATION | PROJECT | DATASET
     scope_id uuid,                      -- NULL iff SYSTEM (CHECK)
     effect text NOT NULL,               -- ALLOW | DENY (DENY wins at decision time)
     conditions jsonb NOT NULL DEFAULT '{}',
+    -- [db] role_bindings_conditions_is_an_object CHECK: object shape
     expires_at timestamptz,
     created_by text NOT NULL, created_at timestamptz NOT NULL,
     UNIQUE NULLS NOT DISTINCT (principal, role_code, scope_type, scope_id)
-    -- trigger role_bindings_guard: principal kind and scope level must be
+    -- [db] trigger role_bindings_guard: principal kind and scope level must be
     -- allowed by the role (the database half of the RBAC invariants)
 );
+-- [db] index role_bindings_role (role_code)
+-- [db] index role_bindings_scope (scope_type, scope_id) - bindings_at's
+-- scope listing; the old scope index is dropped as a strict subset of
+-- role_bindings_no_duplicates, which already leads with the same column
 
 CREATE TABLE api_keys (
     id uuid PRIMARY KEY,
@@ -200,6 +259,7 @@ CREATE TABLE api_keys (
     expires_at timestamptz NOT NULL,    -- keys always expire
     last_used_at timestamptz, revoked_at timestamptz, created_at timestamptz NOT NULL
 );
+-- [db] index api_keys_project (project_id)
 
 -- Password + session login (0005). local_credentials is admin-provisioned,
 -- users only (trigger local_credentials_kind_guard); sessions is the
@@ -220,9 +280,9 @@ CREATE TABLE sessions (
     created_at timestamptz NOT NULL, last_seen_at timestamptz NOT NULL,
     idle_expires_at timestamptz NOT NULL, absolute_expires_at timestamptz NOT NULL,
     revoked_at timestamptz
-    -- CHECK (idle_expires_at <= absolute_expires_at)
+    -- [db] CHECK (idle_expires_at <= absolute_expires_at)
 );
--- partial index sessions_subject_active (subject) WHERE revoked_at IS NULL
+-- [db] partial index sessions_subject_active (subject) WHERE revoked_at IS NULL
 
 -- ============================================================================
 -- 4. Governance: policies, purge, retention, profiles
@@ -233,6 +293,8 @@ CREATE TABLE policies (
     policy_type text NOT NULL,          -- retention | layer_standard | access | ...
     name text NOT NULL,
     spec jsonb NOT NULL,                -- shape varies by policy_type
+    -- [db] policies_spec_is_an_object CHECK: object shape - the whole of
+    -- what the database can assert about an open, per-policy_type interior
     created_by text NOT NULL, created_at timestamptz NOT NULL
 );
 
@@ -243,6 +305,8 @@ CREATE TABLE policy_attachments (      -- attach requires {org,project,dataset}.
     attached_by text NOT NULL, attached_at timestamptz NOT NULL,
     PRIMARY KEY (policy_id, scope_type, scope_id)
 );
+-- [db] policy_attachments_scope: index on (scope_type, scope_id) - the same
+-- scope-listing access path role_bindings_scope serves on the sibling table
 
 CREATE TABLE purge_records (           -- two-person purge: approver <> requester (CHECK)
     id uuid PRIMARY KEY,
@@ -251,7 +315,10 @@ CREATE TABLE purge_records (           -- two-person purge: approver <> requeste
     requested_by text NOT NULL, requested_at timestamptz NOT NULL,
     approved_by text, approved_at timestamptz, executed_at timestamptz,
     state text NOT NULL DEFAULT 'REQUESTED'
+    -- [db] purge_records_state_vocabulary CHECK IN ('REQUESTED','APPROVED',
+    -- 'EXECUTED'): one member per timestamp column above
 );
+-- [db] index purge_records_revision (revision_id)
 
 CREATE TABLE retention_holds (
     id uuid PRIMARY KEY,
@@ -265,6 +332,9 @@ CREATE TABLE retention_holds (
 CREATE TABLE science_profiles (        -- published (name, version) immutable
     name text NOT NULL, version text NOT NULL,  PRIMARY KEY (name, version),
     document jsonb NOT NULL, document_sha256 text NOT NULL,
+    -- [db] science_profiles_document_is_an_object CHECK: object shape
+    -- [db] science_profiles_document_sha256_format: ^[0-9a-f]{64}$,
+    -- the format every other *_sha256 column in the schema already carries
     published_by text NOT NULL, published_at timestamptz NOT NULL
 );
 
@@ -279,39 +349,65 @@ CREATE TABLE snapshots (               -- one row per published Icechunk snapsho
     repo_uri text NOT NULL, snapshot_id text NOT NULL,  UNIQUE (repo_uri, snapshot_id),
     state text NOT NULL, provenance jsonb NOT NULL,   -- urn:huron:snapshot-provenance:1
     validation_evidence jsonb, published_at timestamptz
-    -- CHECK (layer = 'gold' OR dataset_id IS NOT NULL)
-    -- CHECK (provenance->>'kind' IS NOT NULL AND provenance->>'kind' IN
+    -- [db] snapshots_state_vocabulary CHECK IN ('CANDIDATE','PUBLISHED',
+    -- 'SUPERSEDED','FAILED')
+    -- [db] CHECK (layer = 'gold' OR dataset_id IS NOT NULL)
+    -- [db] CHECK (provenance->>'kind' IS NOT NULL AND provenance->>'kind' IN
     --        ('promotion','external','derivation'))   -- invariant N; NULL-safe on purpose
-    -- CHECK (layer <> 'gold' OR provenance->>'kind' IS NOT DISTINCT FROM 'derivation')
+    -- [db] CHECK (layer <> 'gold' OR provenance->>'kind' IS NOT DISTINCT FROM 'derivation')
+    -- [db] snapshots_provenance_is_an_object CHECK: object shape, beside
+    -- the two invariant-N CHECKs above, which 0008 does not touch
+    -- [db] snapshots_validation_evidence_is_an_object CHECK: NULL (not
+    -- yet validated) or object - never the JSON null literal
 );
+-- [db] index snapshots_dataset (dataset_id)
 
 CREATE TABLE products (                -- gold products per project
     id uuid PRIMARY KEY,
     project_id uuid NOT NULL REFERENCES projects,
-    dataset_id uuid REFERENCES datasets,   -- set: single-source (lives under the dataset);
-                                            -- NULL: fused (lives under the project)
+    dataset_id uuid,                    -- set: single-source (lives under the dataset);
+                                        -- NULL: fused (lives under the project)
     slug text NOT NULL,                 UNIQUE (project_id, slug),
     title text NOT NULL, shape text NOT NULL,   -- array | tabular
     lifecycle_state text NOT NULL DEFAULT 'ACTIVE', created_at timestamptz NOT NULL
-    -- FOREIGN KEY (dataset_id, project_id) REFERENCES datasets (id, project_id):
+    -- [db] products_lifecycle_state_vocabulary CHECK IN ('ACTIVE',
+    -- 'DEPRECATED','RETIRED'): a distinct vocabulary from datasets' - a
+    -- deprecated product is still the product, discouraged, not a slug mistake
+    -- [db] FOREIGN KEY (dataset_id, project_id) REFERENCES datasets (id, project_id):
     -- a single-source product's dataset must belong to its own project
+    -- [db] products_dataset_id_fkey dropped: strictly subsumed by the
+    -- composite FK above - a row satisfying (dataset_id, project_id) against
+    -- datasets (id, project_id) necessarily satisfies dataset_id alone
 );
+-- [db] index products_dataset_project (dataset_id, project_id)
 
 CREATE TABLE product_versions (
     id uuid PRIMARY KEY,
     product_id uuid NOT NULL REFERENCES products,
     semver text NOT NULL,               UNIQUE (product_id, semver),
     state text NOT NULL,
+    -- [db] product_versions_state_vocabulary CHECK IN ('CANDIDATE',
+    -- 'PUBLISHED','STALE','SUPERSEDED','WITHDRAWN'); the CHECK does not
+    -- require stale_reason/withdrawn_at to agree with state
     snapshot_id uuid REFERENCES snapshots,
     derivation_record jsonb NOT NULL, stale_reason text,
+    -- [db] product_versions_derivation_record_is_an_object CHECK: object shape
     published_at timestamptz, withdrawn_at timestamptz
 );
+-- [db] index product_versions_snapshot (snapshot_id)
 
 CREATE TABLE lineage_edges (
     id uuid PRIMARY KEY,
     upstream_kind text NOT NULL, upstream_id uuid NOT NULL,
     downstream_kind text NOT NULL, downstream_id uuid NOT NULL,
+    -- [db] lineage_edges_upstream_kind_vocabulary and
+    -- lineage_edges_downstream_kind_vocabulary, both CHECK IN ('raw_revision',
+    -- 'bronze_snapshot','silver_snapshot','gold_version'): one node kind per
+    -- table an id lives in; both columns draw on the full set - a recomputed
+    -- product version's supersession edge is gold_version on both ends at once
     region jsonb, created_at timestamptz NOT NULL,
+    -- [db] lineage_edges_region_is_an_object CHECK: NULL (the whole
+    -- upstream contributes) or object naming the named selectors that narrow it
     UNIQUE (upstream_kind, upstream_id, downstream_kind, downstream_id)
 );
 
@@ -319,34 +415,61 @@ CREATE TABLE lineage_edges (
 -- 6. Operational plumbing
 -- ============================================================================
 
-CREATE TABLE audit_events (            -- partitioned by created_at range
-    id uuid NOT NULL, kind text NOT NULL, actor text NOT NULL,
-    subject_kind text NOT NULL, subject_id uuid,
-    payload jsonb NOT NULL, created_at timestamptz NOT NULL,
-    PRIMARY KEY (id, created_at)
+CREATE TABLE audit_events (
+    id uuid PRIMARY KEY, kind text NOT NULL,
+    -- [db] audit_events_kind_format CHECK: lowercase dotted-or-flat
+    -- snake-case name, length 2-63. Open on purpose, not enumerated: one entry
+    -- per mutating route and per denied operation, so refusing an unforeseen
+    -- kind would abort the transaction being recorded
+    actor text NOT NULL, subject_kind text NOT NULL, subject_id uuid,
+    payload jsonb NOT NULL,
+    -- [db] audit_events_payload_is_an_object CHECK: object shape
+    created_at timestamptz NOT NULL
 );
+-- [db] index audit_events_created_at (created_at, id)
 
 CREATE TABLE outbox_events (           -- transactional outbox -> search projection etc.
     id uuid PRIMARY KEY, kind text NOT NULL, subject_id uuid NOT NULL,
+    -- [db] outbox_events_kind_format CHECK: lowercase dotted-or-flat
+    -- snake-case name, length 2-63. Open on purpose, not enumerated: the
+    -- consumer set grows a phase at a time and refusing an unforeseen kind
+    -- inside the catalog-commit transaction is worse than recording it
     payload jsonb NOT NULL, created_at timestamptz NOT NULL, processed_at timestamptz
+    -- [db] outbox_events_payload_is_an_object CHECK: object shape
 );
+-- [db] outbox_unprocessed: partial index on (created_at, id) WHERE
+-- processed_at IS NULL - the claim access path, FOR UPDATE SKIP LOCKED
 
 CREATE TABLE idempotency_records (
     principal text NOT NULL, key text NOT NULL,  PRIMARY KEY (principal, key),
     request_sha256 text NOT NULL, status_code integer NOT NULL, response jsonb NOT NULL,
+    -- [db] idempotency_records_response_is_an_object CHECK: object shape
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL
 );
 
 CREATE TABLE jobs (
     id uuid PRIMARY KEY, kind text NOT NULL, subject_id uuid NOT NULL,
+    -- [db] jobs_kind_vocabulary CHECK IN ('bronze_build','canonicalize',
+    -- 'product_run','validate','polaris_sync','retention','reconcile'): one
+    -- kind per documented job runner; a kind no runner claims is a work
+    -- order that sits QUEUED forever rather than failing
     image_digest text NOT NULL, state text NOT NULL DEFAULT 'QUEUED',
+    -- [spec] vocabulary undecided: only QUEUED is evidenced; whether state is
+    -- the truth or a denormalization of claimed_at/completed_at/attempts is
+    -- unresolved, so constraining it now would freeze the wrong answer
     payload jsonb NOT NULL DEFAULT '{}', attempts integer NOT NULL DEFAULT 0,
+    -- [db] jobs_payload_is_an_object CHECK: object shape
     available_at timestamptz NOT NULL, claimed_at timestamptz, completed_at timestamptz,
     created_at timestamptz NOT NULL
 );
+-- [db] jobs_claim: partial index on (available_at, id) WHERE state = 'QUEUED' -
+-- the claim access path, FOR UPDATE SKIP LOCKED
 
 CREATE TABLE reconciliation_findings (
     id uuid PRIMARY KEY, code text NOT NULL, severity text NOT NULL,
+    -- [spec] vocabulary undecided: no severity vocabulary exists in the design
+    -- record yet; code already carries the finding type
     path text, subject_id uuid, detail jsonb NOT NULL,
+    -- [db] reconciliation_findings_detail_is_an_object CHECK: object shape
     found_at timestamptz NOT NULL, resolved_at timestamptz
 );

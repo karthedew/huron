@@ -37,6 +37,7 @@ lint: ## Run every static check CI enforces.
 	uv run ruff format --check .
 	uv run mypy
 	uv run lint-imports
+	uv run python scripts/check_schema_map.py
 
 docs: ## Build the documentation site, failing on broken internal links.
 	uv run --group docs zensical build --strict

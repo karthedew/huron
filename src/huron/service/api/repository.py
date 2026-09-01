@@ -37,6 +37,7 @@ from huron.pkg.catalog.errors import (
 )
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.layers import Layer, parse_entry_layer
+from huron.pkg.catalog.lifecycle import DatasetLifecycle
 from huron.pkg.catalog.manifest import canonical_bytes
 from huron.pkg.catalog.models import EntityRef
 from huron.pkg.catalog.paths import (
@@ -94,7 +95,7 @@ class Dataset:
     #: silver. Above raw means the lake is not the origin of these bytes, so
     #: there is no raw revision and no Bronze snapshot to wait for.
     entry_layer: str
-    lifecycle_state: str
+    lifecycle_state: DatasetLifecycle
     generation: int
     version: int
     created_at: datetime
@@ -556,7 +557,7 @@ class HierarchyRepository:
                 profile_name,
                 profile_version,
                 entry.value,
-                "ACTIVE",
+                DatasetLifecycle.ACTIVE,
                 1,
                 1,
                 datetime.now(UTC),

@@ -82,7 +82,8 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 <h1>REST API</h1>
 <p class="sub">FastAPI, <code>/api/v1</code>. Conventions, uniform across the surface: UUIDv7 IDs,
 RFC 3339 timestamps, versioned keyset cursors, <code>application/problem+json</code> errors with
-stable codes, <code>If-Match</code> ETags, <code>Idempotency-Key</code> on mutating posts. OpenAPI
+stable codes, <code>If-Match</code> preconditions on the resource <code>version</code>,
+<code>Idempotency-Key</code> on mutating posts. OpenAPI
 is the published contract and generates the TypeScript and Python client cores; breaking changes
 fail CI.</p>
 
@@ -193,6 +194,7 @@ client code path, degraded transport.</li>
 
 <table>
 <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+<tr><td>GET/POST/DELETE</td><td><code>/bindings</code> · <code>/organizations/{id}/bindings</code> · <code>/projects/{id}/bindings</code> · <code>/datasets/{id}/bindings</code></td><td>binding administration, rooted at the scope granted; <code>rbac.binding_manage</code> at that scope, inherited from above (org admins within their org, project admins within their project, platform owners at <code>/bindings</code>). <code>DELETE .../bindings/{binding_id}</code> under the same root revokes; a binding named from the wrong root is a 404. No update verb — a binding is revoked and re-granted. <em>Target shape: <a href="roadmap.html#api-sweep">API tier clean sweep</a>. Today <code>GET</code> exists at the organization and project roots only and <code>DELETE</code> only at the flat <code>/bindings/{binding_id}</code>; completion is <code>API_IMPLEMENTATION_PLAN.md</code> § "M9 — Binding surface completion", gated on decisions D-12 and D-13.</em></td></tr>
 <tr><td>GET</td><td><code>/search</code></td><td>LanceDB; <code>q</code>, <code>layer=raw|bronze|silver|gold</code>, <code>kind=dataset|revision|snapshot|product</code>, tags, facets; carries <code>projection_lag_seconds</code>; 503 when projection down — never a PG fallback</td></tr>
 <tr><td>POST/GET</td><td><code>/schemas</code></td><td>the <a href="catalog-search.html#schema-registry">schema registry</a>: publish/list schemas — envelope, extension, manifest, provenance, science-profile, contract kinds; scope <code>PLATFORM | ORGANIZATION | PROJECT</code>; org/project admins; published <code>(namespace, name, semver)</code> immutable</td></tr>
 <tr><td>GET</td><td><code>/schemas/{namespace}/{name}/{semver}</code> · <code>?effective_for=project:{id}</code></td><td>fetch one schema, or the <em>effective</em> composed schema (org base + project enrichment) a client pre-validates against</td></tr>
@@ -200,9 +202,8 @@ client code path, degraded transport.</li>
 <tr><td>POST</td><td><code>/admin/revisions/{id}:request-purge</code> · <code>/admin/purges/{id}:approve</code></td><td>two-person, different subjects</td></tr>
 <tr><td>POST/DELETE</td><td><code>/retention/holds</code></td><td>pins and legal holds; audited</td></tr>
 <tr><td>GET</td><td><code>/admin/reconciliation/report</code> · <code>:plan</code> / <code>:apply</code></td><td>dry-run first</td></tr>
-<tr><td>GET/POST</td><td><code>/admin/role-bindings</code></td><td>binding administration (scoped: org admins within their org, owners within their project)</td></tr>
 <tr><td>GET</td><td><code>/audit</code></td><td>filterable audit stream for auditors</td></tr>
-<tr><td>GET</td><td><code>/healthz</code> · <code>/readyz</code> · <code>/metrics</code></td><td><code>/readyz</code> checks PG + NFS + object store, never LanceDB or Polaris</td></tr>
+<tr><td>GET</td><td><code>/healthz</code> · <code>/readyz</code> · <code>/metrics</code> <em>(planned — <code>/metrics</code> answers 404 and <code>pkg/telemetry/</code> does not exist)</em></td><td><code>/readyz</code> checks PostgreSQL and the raw store, never LanceDB or Polaris; the object store is not a dependency of this service</td></tr>
 </table>
 
 <h2 id="errors">7. Error codes</h2>
@@ -224,9 +225,19 @@ APIKEY_EXPIRED           APIKEY_REVOKED           QUOTA_EXCEEDED
 RETENTION_HOLD_PRESENT   PROFILE_UNKNOWN          CONTRACT_MISMATCH
 </pre>
 
-<p class="note">Every code gets a <code>DomainError</code> subclass and a row in the error-table
-doc, enforced by the existing bijection test — the mechanism that keeps the table honest carries
-forward unchanged.</p>
+<p class="note"><strong>There is no bijection test and no error-table document today.</strong> This
+list is hand-maintained and is already behind the code — 32 codes here against 34
+<code>DomainError</code> subclasses, with <code>ILLEGAL_INGEST_TRANSITION</code> and
+<code>PATH_RULE_VIOLATION</code> missing (receipts: <code>API_DESIGN.md</code> § "Roadmap Drift" →
+"Drift 5"). The intent is unchanged — every code has exactly one exception class and every
+exception class the service can raise has exactly one row — and the mechanism that will enforce it
+is designed in <code>API_DESIGN.md</code> § "Design 6 — Error contract and <code>problem+json</code>
+coverage": this list becomes a four-column <code>&lt;table id="error-codes"&gt;</code> (code, HTTP
+status, live/reserved, meaning) that <code>tests/unit/test_error_contract.py</code> parses and
+asserts in both directions. Until <code>API_IMPLEMENTATION_PLAN.md</code> § "Task M8.3 — The
+<code>design/api.html</code> §7 table and the bijection test" lands — gated on decision D-11, which
+also renames the <code>SESSION_EXPIRED</code> entry listed above — nothing keeps this list honest, so read
+it as intent, not as a checked contract.</p>
 
 </main>
 </body>
