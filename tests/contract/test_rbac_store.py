@@ -25,11 +25,20 @@ The organization/project hierarchy has no Postgres-backed store of its own
 yet, so the rows ``service_accounts.organization_id`` and
 ``api_keys.project_id`` foreign-key against are inserted directly with SQL
 in this module's fixtures rather than through the (still in-memory) catalog.
+
+Two more ``CHECK`` constraints pin ``policies.spec`` and
+``role_bindings.conditions`` to their own top-level jsonb type - the two of
+the fourteen ``0008`` columns whose tables live in this module's fixture
+set rather than ``tests/contract/test_catalog_store.py``'s. Both get the
+generic refuse-a-bare-scalar-or-array/accept-an-object pairing; neither is
+one of the four columns that carries a design decision of its own.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -89,6 +98,10 @@ async def _assert_against(dsn: str) -> None:
         await _assert_trigger_rejects_a_malformed_principal_prefix(pool)
         await _assert_trigger_rejects_an_exact_duplicate_system_binding(pool)
         await _assert_trigger_rejects_a_service_account_row_over_a_user_principal(pool)
+        await _assert_role_delete_is_refused_while_a_binding_still_names_it(pool)
+        await _assert_capability_delete_is_refused_while_a_role_still_grants_it(pool)
+        await _assert_role_delete_cascades_its_capability_rows_once_its_bindings_are_gone(pool)
+        await _assert_policies_and_role_bindings_jsonb_shape(pool)
     finally:
         await pool.close()
 
@@ -423,6 +436,113 @@ async def _assert_trigger_rejects_an_exact_duplicate_system_binding(pool: asyncp
         await pool.execute(insert, uuid7())
 
 
+async def _insert_role(
+    pool: asyncpg.Pool, *, code: str, bindable_scopes: list[str] | None = None
+) -> None:
+    await pool.execute(
+        """
+        INSERT INTO roles (code, title, allowed_principal_kinds, bindable_scopes)
+        VALUES ($1, $1, ARRAY['user'], $2)
+        """,
+        code,
+        bindable_scopes or ["SYSTEM"],
+    )
+
+
+async def _insert_capability(pool: asyncpg.Pool, *, code: str) -> None:
+    await pool.execute("INSERT INTO capabilities (code) VALUES ($1)", code)
+
+
+# -- referential actions on the role catalog: the one place a parent key is --
+# -- natural text and parent rows are really deleted -------------------------
+
+
+async def _assert_role_delete_is_refused_while_a_binding_still_names_it(
+    pool: asyncpg.Pool,
+) -> None:
+    role_code = "contract_test_role_bound"
+    await _insert_role(pool, code=role_code)
+    await pool.execute(
+        """
+        INSERT INTO role_bindings
+            (id, principal, role_code, scope_type, scope_id, effect, created_by, created_at)
+        VALUES ($1, 'user:role-delete-fk', $2, 'SYSTEM', NULL, 'ALLOW', 'contract-test', now())
+        """,
+        uuid7(),
+        role_code,
+    )
+    with pytest.raises(asyncpg.exceptions.ForeignKeyViolationError):
+        await pool.execute("DELETE FROM roles WHERE code = $1", role_code)
+
+    # The refused delete leaves both rows in place - remove them so this
+    # helper's fixture data cannot influence assertions that run after it.
+    await pool.execute("DELETE FROM role_bindings WHERE role_code = $1", role_code)
+    await pool.execute("DELETE FROM roles WHERE code = $1", role_code)
+
+
+async def _assert_capability_delete_is_refused_while_a_role_still_grants_it(
+    pool: asyncpg.Pool,
+) -> None:
+    role_code = "contract_test_role_granting"
+    capability_code = "contract_test.capability_granted"
+    await _insert_role(pool, code=role_code)
+    await _insert_capability(pool, code=capability_code)
+    await pool.execute(
+        "INSERT INTO role_capabilities (role_code, capability_code) VALUES ($1, $2)",
+        role_code,
+        capability_code,
+    )
+    with pytest.raises(asyncpg.exceptions.ForeignKeyViolationError):
+        await pool.execute("DELETE FROM capabilities WHERE code = $1", capability_code)
+
+    # The refused delete leaves all three rows in place - remove them so this
+    # helper's fixture data cannot influence assertions that run after it.
+    await pool.execute(
+        "DELETE FROM role_capabilities WHERE role_code = $1 AND capability_code = $2",
+        role_code,
+        capability_code,
+    )
+    await pool.execute("DELETE FROM roles WHERE code = $1", role_code)
+    await pool.execute("DELETE FROM capabilities WHERE code = $1", capability_code)
+
+
+async def _assert_role_delete_cascades_its_capability_rows_once_its_bindings_are_gone(
+    pool: asyncpg.Pool,
+) -> None:
+    role_code = "contract_test_role_retired"
+    capability_code = "contract_test.capability_retired"
+    binding_id = uuid7()
+    await _insert_role(pool, code=role_code)
+    await _insert_capability(pool, code=capability_code)
+    await pool.execute(
+        "INSERT INTO role_capabilities (role_code, capability_code) VALUES ($1, $2)",
+        role_code,
+        capability_code,
+    )
+    await pool.execute(
+        """
+        INSERT INTO role_bindings
+            (id, principal, role_code, scope_type, scope_id, effect, created_by, created_at)
+        VALUES ($1, 'user:role-delete-cascade', $2, 'SYSTEM', NULL, 'ALLOW',
+                'contract-test', now())
+        """,
+        binding_id,
+        role_code,
+    )
+
+    # 0004, 0006 and 0007 each retire a role the same way: delete its bindings
+    # first, deliberately, then the role - which is the positive control that
+    # proves role_capabilities_role_code_fkey's ON DELETE CASCADE is real
+    # rather than the delete merely having failed silently for lack of rows.
+    await pool.execute("DELETE FROM role_bindings WHERE id = $1", binding_id)
+    await pool.execute("DELETE FROM roles WHERE code = $1", role_code)
+
+    remaining = await pool.fetchval(
+        "SELECT count(*) FROM role_capabilities WHERE role_code = $1", role_code
+    )
+    assert remaining == 0
+
+
 async def _assert_trigger_rejects_a_service_account_row_over_a_user_principal(
     pool: asyncpg.Pool,
 ) -> None:
@@ -445,3 +565,84 @@ async def _assert_trigger_rejects_a_service_account_row_over_a_user_principal(
             principal_id,
             organization_id,
         )
+
+
+# -- jsonb top-level type constraints: policies.spec, role_bindings.conditions ---
+
+_BAD_OBJECT_LITERALS = ('"just a string"', "42", "true", "[]", "null")
+
+
+@dataclass(frozen=True)
+class _JsonbShapeColumn:
+    """One jsonb column's refused/permitted pair, checked by ``UPDATE`` against
+    a fixture row already holding a legal value - `where`/`key` locate that
+    row, with `key` bound starting at `$2`."""
+
+    table: str
+    column: str
+    where: str
+    key: tuple[object, ...]
+    accepted: str = "{}"
+    accepted_populated: str = '{"contract_test_key": "contract_test_value"}'
+    bad: tuple[str, ...] = _BAD_OBJECT_LITERALS
+
+
+async def _insert_policy_for_jsonb_shape(pool: asyncpg.Pool) -> UUID:
+    policy_id = uuid7()
+    await pool.execute(
+        """
+        INSERT INTO policies (id, policy_type, name, spec, created_by, created_at)
+        VALUES ($1, 'jsonb_shape', 'jsonb-shape-policy', $2::jsonb, 'contract-test', now())
+        """,
+        policy_id,
+        json.dumps({}),
+    )
+    return policy_id
+
+
+async def _insert_role_binding_for_jsonb_shape(pool: asyncpg.Pool) -> UUID:
+    role_code = "contract_test_role_jsonb_shape"
+    await _insert_role(pool, code=role_code)
+    binding_id = uuid7()
+    await pool.execute(
+        """
+        INSERT INTO role_bindings
+            (id, principal, role_code, scope_type, scope_id, effect, conditions, created_by,
+             created_at)
+        VALUES ($1, 'user:jsonb-shape', $2, 'SYSTEM', NULL, 'ALLOW', $3::jsonb,
+                'contract-test', now())
+        """,
+        binding_id,
+        role_code,
+        json.dumps({}),
+    )
+    return binding_id
+
+
+async def _assert_policies_and_role_bindings_jsonb_shape(pool: asyncpg.Pool) -> None:
+    """``policies.spec`` and ``role_bindings.conditions`` each refuse a bare
+    string, number, boolean, array and JSON ``null``, and accept both an
+    empty and a populated object - the same pairing
+    ``tests/contract/test_catalog_store.py`` applies to its own twelve jsonb
+    columns."""
+    cases = (
+        _JsonbShapeColumn(
+            table="policies",
+            column="spec",
+            where="id = $2",
+            key=(await _insert_policy_for_jsonb_shape(pool),),
+        ),
+        _JsonbShapeColumn(
+            table="role_bindings",
+            column="conditions",
+            where="id = $2",
+            key=(await _insert_role_binding_for_jsonb_shape(pool),),
+        ),
+    )
+    for case in cases:
+        update = f"UPDATE {case.table} SET {case.column} = $1::jsonb WHERE {case.where}"
+        for literal in case.bad:
+            with pytest.raises(asyncpg.exceptions.CheckViolationError):
+                await pool.execute(update, literal, *case.key)
+        await pool.execute(update, case.accepted, *case.key)
+        await pool.execute(update, case.accepted_populated, *case.key)

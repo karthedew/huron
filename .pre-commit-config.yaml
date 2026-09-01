@@ -26,3 +26,10 @@ repos:
         language: system
         types_or: [python, toml]
         pass_filenames: false
+
+      - id: schema-map-current
+        name: schema map current
+        entry: uv run python scripts/check_schema_map.py
+        language: system
+        pass_filenames: false
+        files: ^migrations/
