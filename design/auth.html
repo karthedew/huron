@@ -231,8 +231,19 @@ manages, so it lives there rather than being carved out with login.</p>
 
 <p><code>/auth/login</code>, <code>/auth/oidc/start</code>, <code>/auth/oidc/callback</code>, and
 <code>/auth/providers</code> (which the login page reads to know what to render, before any
-credential exists) are the only unauthenticated routes in the service besides
-<code>/healthz</code> and <code>/readyz</code>.</p>
+credential exists) are the only unauthenticated routes this document intends, besides
+<code>/healthz</code> and <code>/readyz</code>. <strong>The running service does not match that
+enumeration today.</strong> Two <code>/api/v1</code> routes answer with no credential at all:
+<code>GET /api/v1/roles</code> returns 200 with the full role catalog, and
+<code>GET /api/v1/search</code> returns 503 — neither declares a guard (receipts:
+<code>API_DESIGN.md</code> § "Roadmap Drift" → "Drift 1"). Closing the versioned surface is designed
+in that document's § "Design 4 — Router composition and the authenticated surface", which puts the
+credential requirement on the <code>/api/v1</code> router itself, and is sequenced as
+<code>API_IMPLEMENTATION_PLAN.md</code> § "Task M5.1 — Rebuild the router tree and close the
+versioned surface". Because it is a visible contract break on both routes, it is gated on decisions
+<strong>D-3</strong> and <strong>D-4</strong>, neither of which has been recorded. Until they are
+answered, read the list above as the intended unauthenticated set, not as the live one — see the
+<a href="roadmap.html#api-sweep">API tier clean sweep</a> row on the roadmap.</p>
 
 <h2 id="dev-topology">6. Local development: one issuer, one URL</h2>
 

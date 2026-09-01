@@ -10,7 +10,9 @@ in the same PR that ships it.
 
 Steps R1–R8 are **implemented and verified** (all four static gates plus the unit suite are
 green; both migrations were applied to a clean PostgreSQL 16 and the binding-guard trigger
-was exercised negative-case by negative-case). R9–R13 are the remaining work, in order.
+was exercised negative-case by negative-case) — **with one exception: R6's binding surface is
+partial**, and R6 states what is missing and what completes it. R9–R13 are the remaining work,
+in order.
 
 ---
 
@@ -198,17 +200,30 @@ async def create_dataset(
 - `dataset_layer_writer` — the data-plane guard: `parse_layer` → `ensure_layer_writable`
   (kind rule) → `check(..., layer=...)` (binding rule). Two independent gates.
 
-## R6 — Route modules under `routes/v1/`  ✅ implemented
+## R6 — Route modules under `routes/v1/`  ⚠️ partially implemented
 
 `schemas.py` (request bodies; `CreateRoleBinding.principal` is regex-validated to the three
 prefixes), `common.py` (pagination, If-Match parsing), and six endpoint modules. The RBAC
-surface: `GET /roles`; `POST+GET /{scope}/bindings` at all four scope levels, each guarded by
-`rbac.binding_manage` *at that scope*; `DELETE /bindings/{id}` re-derives the binding's own
-scope and checks there (a project admin cannot revoke an org binding); service accounts and
+surface: `GET /roles`; `POST /{scope}/bindings` at all four scope levels, each guarded by
+`rbac.binding_manage` *at that scope*, and `GET /{scope}/bindings` at the **organization and
+project levels only** — `GET /bindings` and `GET /datasets/{id}/bindings` answer 405, so this
+plan's earlier claim of "`POST`+`GET` at all four scope levels" was never true (receipts:
+`API_DESIGN.md` § "Roadmap Drift" → "Drift 4"). No binding path carries an update verb on any
+backend, so the shipped shape is binding **create, list and revoke — no update verb**, not CRUD.
+`DELETE /bindings/{id}` re-derives the binding's own scope and checks there (a project admin
+cannot revoke an org binding); service accounts and
 their keys under `/organizations/{id}/service-accounts...`, guarded by
 `service_account.manage`; policy attach routes guarded by the per-resource
 `*.policy_attach`. `POST /auth/api-keys` issues only for the caller — keys inherit subject
 and kind, so they can never escalate.
+
+**Completion is designed, not shipped.** `API_DESIGN.md` § "Design 7 — Binding surface completion"
+adopts the scope-rooted shape as the target: the two missing `GET` collections, and `DELETE` moved
+under each scope root so `DELETE /bindings/{binding_id}` revokes a SYSTEM binding only. It is
+sequenced as `API_IMPLEMENTATION_PLAN.md` § "M9 — Binding surface completion" (tasks M9.1 and
+M9.2), both `Status: pending` and both gated on a human decision — **D-12** (the `DELETE` narrowing
+is a contract break) and **D-13** (whether the collections list lapsed grants). This heading
+becomes `✅ implemented` when M9 lands, not before.
 
 ## R7 — `app.py` as pure composition root  ✅ implemented
 
