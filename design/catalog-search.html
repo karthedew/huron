@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -113,7 +114,7 @@ Silver and Gold, with <code>layer</code> as a filterable column.</p>
 catalog for the raw layer and as a possible source of RBAC. Both fail, the second decisively:
 <strong>OpenMetadata policies govern operations inside OpenMetadata</strong> — who may
 <code>ViewAll</code> or <code>EditTags</code> on assets in its own catalog — and have no mechanism
-to authorize a read of bytes on NFS or a prefix-scoped grant against RGW. Adopting it would mean
+to authorize a read of bytes on NFS or a prefix-scoped grant against the object store. Adopting it would mean
 building Huron's data-plane authorization anyway and then running a second RBAC system that must
 agree with the first, whose failure mode is silent over-permission. As a catalog it also mismatches:
 its <code>Container</code> entity models buckets and folders on S3/GCS/Azure, its versioning tracks
@@ -134,84 +135,290 @@ the application, <code>timestamptz</code> everywhere, CHECK-enforced slugs, opti
 
 <pre>
 -- hierarchy
-organizations(id PK, slug UNIQUE CHECK no '--', title, lifecycle_state, generation, version, …)
+organizations(id PK, slug UNIQUE [db] CHECK no '--', title, lifecycle_state, generation, version, …)
 projects(id PK, organization_id FK, slug, title, classification_default,
          raw_retention_policy jsonb, quota_bytes, lifecycle_state, …,
          UNIQUE (organization_id, slug))
 datasets(id PK, project_id FK, slug, title, owner_group, profile_name, profile_version,
-         lifecycle_state CHECK IN ('DRAFT','ACTIVE','RETIRED','SUPERSEDED'), …,
-         UNIQUE (project_id, slug))
+         lifecycle_state CHECK IN ('ACTIVE','RETIRED','SUPERSEDED'),   -- [db 0008] (S2)
+         …, UNIQUE (project_id, slug))
 dataset_revisions(id PK, dataset_id FK, revision_number,
-         state CHECK IN ('COMMITTED','EXPIRED_PARTIAL','EXPIRED','PURGED','DEGRADED'),
+         state CHECK IN ('COMMITTED','EXPIRED_PARTIAL','EXPIRED','PURGED','DEGRADED'),  -- [db 0008] (S2)
          manifest_sha256, metadata_sha256, revision_path, file_count, total_bytes,
          committed_by, committed_at, …,
          UNIQUE (dataset_id, revision_number), UNIQUE (dataset_id, manifest_sha256))
 -- a release is a named immutable pointer at one revision (an Icechunk tag, for raw)
 releases(id PK, dataset_id FK, tag, revision_id FK, title, purpose, campaign,
          created_by, created_at, withdrawn_at NULL, withdrawn_reason NULL,
-         UNIQUE (dataset_id, tag))   -- rows are never UPDATEd except to withdraw
+         UNIQUE (dataset_id, tag))   -- [db] rows are never UPDATEd except to withdraw:
+                                     -- trigger releases_immutable freezes every other column
 revision_amendments(id PK, revision_id FK, sequence, changed_keys text[], reclassified bool,
          issued_by, issued_at, UNIQUE (revision_id, sequence))
 
 -- ingest
-ingest_sessions(…, dataset_id FK, …)         -- partial unique index: one open per dataset
+ingest_sessions(…, dataset_id FK, …)         -- [db] one_open_ingest_per_dataset:
+                                             -- partial unique index, one open per dataset
 ingest_files(ingest_id FK, file_id PK, path, size, expected_sha256,
-         action CHECK IN ('upload','hardlink'), state, observed_sha256,
-         completed_parts jsonb, UNIQUE (ingest_id, path))
+         action CHECK IN ('upload','hardlink'),   -- [db]
+         state, completed_parts jsonb, UNIQUE (ingest_id, path))
+         -- [db] expected_sha256 ~ '^[0-9a-f]{64}$'
 
--- derived-layer registry
+-- derived layers
 -- Bronze and Silver are both per-dataset. Gold is per product, attached to its
 -- source dataset when single-source and to the project when it fuses several.
-layer_repos(id PK, layer CHECK IN ('bronze','silver','gold'),
-            dataset_id FK NULL,                        -- bronze, silver, single-source gold
-            project_id FK NULL,                        -- fused gold
-            product_id FK NULL,                        -- gold
-            bucket, prefix,
-            UNIQUE (dataset_id, layer),
-            UNIQUE (project_id, profile_name, contract_version, layer))
-snapshots(id PK, repo_id FK, icechunk_snapshot_id, tag,
-          state CHECK IN ('CANDIDATE','PUBLISHED','SUPERSEDED','FAILED'),
-          source_revision_id FK NULL,          -- bronze: the raw revision
-          contract_version NULL,               -- silver
-          validation_evidence jsonb, built_by_job FK, published_at, …)
-products(id PK, project_id FK, slug, title, shape CHECK IN ('array','tabular'),
+-- There is no repository registry table: a snapshot names its repository inline in
+-- repo_uri, and the raw revision, contract version and building job it came from are
+-- fields of the provenance document rather than columns.
+snapshots(id PK, dataset_id FK NULL, layer CHECK IN ('bronze','silver','gold'),   -- [db]
+          repo_uri, snapshot_id, UNIQUE (repo_uri, snapshot_id),
+          state CHECK IN ('CANDIDATE','PUBLISHED','SUPERSEDED','FAILED'),  -- [db 0008] (S2)
+          provenance jsonb NOT NULL,           -- [db] snapshots_provenance_states_an_origin:
+                                               -- 'promotion', 'external' or 'derivation', and
+                                               -- never NULL (invariant N)
+          validation_evidence jsonb, published_at)
+          -- [db] snapshots_dataset_required_below_gold: bronze and silver name their dataset
+          -- [db] snapshots_gold_is_never_an_entry_layer: a gold snapshot's provenance kind
+          --      is 'derivation'
+products(id PK, project_id FK, slug, title, shape CHECK IN ('array','tabular'),   -- [db]
          lifecycle_state, …, UNIQUE (project_id, slug))
 product_versions(id PK, product_id FK, semver,
-         status CHECK IN ('CANDIDATE','PUBLISHED','STALE','SUPERSEDED','WITHDRAWN'),
-         derivation jsonb NOT NULL,            -- the full record from Gold §3
+         state CHECK IN ('CANDIDATE','PUBLISHED','STALE','SUPERSEDED','WITHDRAWN'),  -- [db 0008] (S2)
+         derivation_record jsonb NOT NULL,     -- [db 0008] a jsonb object (S5); that the object
+                                               -- is the full record from Gold §3 is [spec]
          snapshot_id FK, iceberg_ref NULL, polaris_synced_at NULL,
          UNIQUE (product_id, semver))
-lineage_edges(id PK, from_kind, from_id, to_kind, to_id, region jsonb NULL,
-              created_at, UNIQUE (from_kind, from_id, to_kind, to_id))
-              -- e.g. (silver_snapshot S119) ─derives_from→ (bronze_snapshot B187) region run-0042
+lineage_edges(id PK, upstream_kind, upstream_id, downstream_kind, downstream_id,
+              region jsonb NULL, created_at,
+              UNIQUE (upstream_kind, upstream_id, downstream_kind, downstream_id))
+              -- e.g. upstream (bronze_snapshot B187) → downstream (silver_snapshot S119),
+              -- region run-0042
 
 -- pipeline
 jobs(id PK, kind CHECK IN ('bronze_build','canonicalize','product_run','validate',
-     'polaris_sync','retention','reconcile'),
-     subject_kind, subject_id, state, attempts, claimed_by, claimed_at,
-     container_digest, failure jsonb, …)      -- claimed FOR UPDATE SKIP LOCKED, like the outbox
+     'polaris_sync','retention','reconcile'),        -- [db 0008] (S3)
+     subject_id, image_digest, state, payload jsonb, attempts,
+     available_at, claimed_at, completed_at, created_at)
+     -- [db] jobs_claim: partial index on (available_at, id) WHERE state = 'QUEUED'
+     -- [spec] claimed FOR UPDATE SKIP LOCKED, like the outbox — no worker exists yet
 
 -- auth (see RBAC doc)
-role_bindings(id PK, principal_type, principal_name, role,
-              scope CHECK IN ('SYSTEM','ORGANIZATION','PROJECT','DATASET'),
-              organization_id NULL, project_id NULL, dataset_id NULL,
-              effect CHECK IN ('ALLOW','DENY'), conditions jsonb, expires_at NULL, …)
-api_keys(id PK, principal_subject, key_id UNIQUE, secret_hash, name,
-         scopes text[], project_ids uuid[] NULL, expires_at, last_used_at,
-         revoked_at NULL, created_at)
-retention_holds(id PK, scope_kind, scope_id, kind CHECK IN ('PIN','LEGAL_HOLD'),
-                reason, placed_by, placed_at, released_at NULL)
+role_bindings(id PK, principal, role_code FK,
+              scope_type CHECK IN ('SYSTEM','ORGANIZATION','PROJECT','DATASET'),   -- [db]
+              scope_id NULL,          -- one polymorphic scope column, not three
+              effect CHECK IN ('ALLOW','DENY'),                                    -- [db]
+              conditions jsonb, expires_at NULL, created_by, created_at)
+              -- [db] scope_id IS NULL exactly when scope_type = 'SYSTEM'
+              -- [db] role_bindings_principal_format: 'user:', 'group:' or 'sa:' prefixed
+              -- [db] role_bindings_guard: refuses a role bound outside roles.bindable_scopes,
+              --      or held by a principal kind roles.allowed_principal_kinds excludes
+              -- [db] role_bindings_no_duplicates: UNIQUE NULLS NOT DISTINCT
+              --      (principal, role_code, scope_type, scope_id)
+api_keys(id PK, key_id UNIQUE, owner_subject, owner_kind, name, secret_sha256,
+         scopes text[], project_id FK NULL,   -- one project, not an array
+         expires_at, last_used_at, revoked_at NULL, created_at)
+         -- [db] secret_sha256 ~ '^[0-9a-f]{64}$'
+         -- [db] owner_kind CHECK IN ('user','service_account')
+retention_holds(id PK, scope_kind CHECK IN ('PROJECT','DATASET','REVISION'),   -- [db]
+                scope_id, kind CHECK IN ('PIN','LEGAL_HOLD'),                  -- [db]
+                reason, created_by, created_at, released_at NULL)
 
 -- plumbing
-idempotency_records(principal_subject, operation, key, request_sha256,
-         response_status, response_body, PK (principal_subject, operation, key))
-audit_events(… range-partitioned by month; partitions pre-created ahead of time
-         plus a monitored DEFAULT backstop)
-outbox_events(… claimed FOR UPDATE SKIP LOCKED by the projection worker)
-purge_records(… approved_by <> requested_by enforced by CHECK)
-science_profiles / extension_schemas(namespace, version, document, state,
-         PK (namespace|name, version))          -- published versions are immutable
+idempotency_records(principal, key, request_sha256, status_code, response jsonb,
+         created_at, expires_at, PK (principal, key))
+         -- [db] request_sha256 ~ '^[0-9a-f]{64}$'
+audit_events(… [db 0008] a plain append-only table: PRIMARY KEY (id), one btree on
+         (created_at, id) serving both the time-range filter and the keyset cursor.
+         The PARTITION BY RANGE (created_at) shell 0001 shipped had a DEFAULT
+         child and nothing else; 0008 drops it — see roadmap §2, P1)
+outbox_events(… [db] outbox_unprocessed: partial index on (created_at, id)
+         WHERE processed_at IS NULL; [spec] claimed FOR UPDATE SKIP LOCKED by a
+         projection worker that does not exist yet)
+purge_records(… [db] approved_by <> requested_by, purge_records_check)
+-- science profiles, until the registry below absorbs them
+science_profiles(name, version, document jsonb, document_sha256, published_by,
+         published_at, PK (name, version))
+         -- [db 0008] science_profiles_document_sha256_format: hex-64 (S5)
+
+-- schema registry (see below)
+schema_registry(id PK, scope CHECK IN ('PLATFORM','ORGANIZATION','PROJECT'),  -- [db P5]
+         organization_id FK NULL, project_id FK NULL,
+         kind CHECK IN ('envelope','extension','manifest','provenance',   -- [db P5]
+                        'science_profile','contract'),
+         namespace, name, semver,
+         extends_id FK NULL REFERENCES schema_registry(id),   -- project enrichment over org base
+         document jsonb NOT NULL,               -- JSON Schema (or profile/contract YAML-as-JSON)
+         state CHECK IN ('DRAFT','PUBLISHED','DEPRECATED','WITHDRAWN'),   -- [db P5]
+         published_by, published_at NULL,
+         UNIQUE (namespace, name, semver),
+         -- the three scope CHECKs below are [db P5]
+         CHECK ((scope='PLATFORM')      = (organization_id IS NULL AND project_id IS NULL)),
+         CHECK ((scope='ORGANIZATION')  = (organization_id IS NOT NULL AND project_id IS NULL)),
+         CHECK ((scope='PROJECT')       = (project_id IS NOT NULL)))
+         -- [db P5] PUBLISHED rows are immutable: fixes are new semvers; a trigger refuses
+         -- UPDATE of document/namespace/name/semver once state='PUBLISHED'
 </pre>
+
+<h3 id="enforcement">What the database enforces</h3>
+
+<p>The skeleton above states rules. Some are installed in PostgreSQL today, some are committed to
+a named migration, and some are held by nothing at all — and until this notation existed all three
+were written identically, which is how five <code>CHECK IN (…)</code> vocabularies sat here
+across seven migrations with not one of the five installed. <strong>Every line above that states a rule carries
+a marker naming who refuses the violating write.</strong> A rule with no marker is a defect in
+this section, not a fact about the database. Plain column lists are not rules and carry nothing.</p>
+
+<table>
+<tr><th>Marker</th><th>Means</th><th>A reader may conclude</th><th>A reader may <em>not</em> conclude</th></tr>
+<tr><td><span class="inv">[db]</span></td>
+<td>A named database object refuses the violating write, and it is installed at the revision
+<code>migrations/schema.sql</code>'s <code>Reflects:</code> line names.</td>
+<td>Every client is refused — API, worker, migration, <code>psql</code> alike. The named object
+exists in <code>migrations/versions/</code>.</td>
+<td>That the rule is <em>sufficient</em> for the invariant it serves. For a trigger, that it fires
+on operations its annotation does not name — <code>releases_immutable</code> is
+<code>BEFORE UPDATE</code> and never sees an INSERT.</td></tr>
+<tr><td><span class="inv">[app: <em>module</em>]</span></td>
+<td>No database rule. The named module under <code>src/huron/</code> is the only thing that
+maintains the property, and the marker says in one clause why the database does not.</td>
+<td>A hand-written <code>UPDATE</code> breaks it silently; reconciliation, not the engine, is the
+recovery path.</td>
+<td>That a test covers it. That the module is the <em>only</em> writer, unless the marker says
+so.</td></tr>
+<tr><td><span class="inv">[spec]</span></td>
+<td>Nothing enforces it and no writer exists. The property is a requirement on whoever builds the
+writer.</td>
+<td>Nothing today prevents a violation and there is no code to blame. This is a specification, not
+a status report.</td>
+<td>That the property is aspirational or negotiable — it binds the future author exactly as a
+signature does.</td></tr>
+</table>
+
+<p><strong>The mechanism is named, never categorised.</strong> A <code>[db]</code> marker must
+carry its mechanism: either the DDL spelled inline, as in the skeleton, or the object named, as in
+<code>migrations/schema.sql</code> and the table below. A <code>[db]</code> marker with neither is
+not a legal marking. Naming the object beats naming a mechanism class — CHECK, trigger, partial
+unique index — because the reader can then go and read it.</p>
+
+<p><strong>The landing point.</strong> This document leads the schema and wins where the two
+disagree, so §2 will always state rules the database does not have yet. That is the design record
+working, provided it says so. Two qualifiers cover it: <span class="inv">[db 0008]</span>,
+committed to a named Alembic revision and not yet installed, legal while
+<code>migrations/versions/0008_*.py</code> is the revision being written; and
+<span class="inv">[db P5]</span>, scheduled with no revision written, where the qualifier is a
+phase id from <a href="roadmap.html#phases">roadmap §2</a>. When a revision lands, every marker
+carrying its number drops the qualifier — here, in the residue table below, and in
+<code>migrations/schema.sql</code>. Nothing mechanical catches a stranded one.</p>
+
+<p class="note"><strong>Currency.</strong> §2 leads the schema; it states what must be true. It is
+<strong>not</strong> stamped to an Alembic head and is not expected to track migrations. Its
+obligation is different: every rule it states carries a marker naming who refuses a violation
+today, and every landing point names a revision under <code>migrations/versions/</code> or a phase
+in the roadmap. Stamping this section to the current head would turn the design record's
+legitimate lead over the schema into a build failure, inverting "where code and design disagree,
+the design wins".</p>
+
+<p><strong>The record claims enforcement, not correctness.</strong> <code>[db]</code> says a
+violating write is refused. It does not say the rule is the right rule, that it is sufficient for
+the invariant it serves, or that its vocabulary is complete:
+<code>snapshots_provenance_states_an_origin</code> refuses a provenance document that states no
+origin, and does not check that anything it references exists. Nor does a marker claim a test —
+the set of unqualified <code>[db]</code> markers is exactly the set of properties for which a
+"prove it with a write that must fail" contract test <em>can</em> be written, and is where new
+ones belong.</p>
+
+<p><strong>Properties with no line to hang on.</strong> The skeleton can only mark rules that
+have a line in it. These are asserted elsewhere in the design record, are about the database, and
+have no column to sit beside.</p>
+
+<table>
+<tr><th>Property</th><th>Asserted in</th><th>Marker</th><th>Mechanism, or what it would be</th></tr>
+<tr><td>Committed revision numbers within a dataset are contiguous <code>1..N</code> (invariant E)</td>
+<td><a href="architecture.html#invariants">Architecture §5</a> E;
+<a href="layer-raw.html#ingest">Raw §4</a></td>
+<td><span class="inv">[spec]</span></td>
+<td>None. <code>one_open_ingest_per_dataset</code> <span class="inv">[db]</span> serializes
+allocation, but nothing checks contiguity and <code>dataset_revisions</code> has no writer. A gap
+is representable, and was inserted.</td></tr>
+<tr><td>A committed revision is immutable</td>
+<td><code>migrations/schema.sql</code> §1;
+<a href="architecture.html#invariants">Architecture §5</a> D</td>
+<td><span class="inv">[spec]</span></td>
+<td>None. <code>releases_immutable</code> is the shape it would take; the schema has exactly four
+trigger guards and none is on this table. An <code>UPDATE</code> rewrote a committed digest and
+revision number.</td></tr>
+<tr><td>A catalog row is never published before its storage state is durable (invariant G)</td>
+<td><a href="architecture.html#invariants">Architecture §5</a> G;
+<a href="layer-raw.html#commit">Raw §5</a></td>
+<td><span class="inv">[spec]</span></td>
+<td>Not expressible as a constraint: an ordering between a filesystem rename and a later, separate
+transaction. The reconciler is a detection path, not a guard.</td></tr>
+<tr><td>A Gold version resolves to exact input snapshot ids, a container digest and parameters
+(invariant K)</td>
+<td><a href="architecture.html#invariants">Architecture §5</a> K;
+<a href="layer-gold.html#lineage">Gold §3</a></td>
+<td><span class="inv">[spec]</span>, with
+<span class="inv">[db 0008]</span> <code>product_versions_derivation_record_is_an_object</code></td>
+<td><code>0008</code> checks the column holds a jsonb object. Nothing checks that the object names
+its inputs.</td></tr>
+<tr><td>An ingest session that reaches <code>COMMITTED</code> claims the revision that was
+created</td>
+<td><code>schema_audit.md</code> F8</td>
+<td><span class="inv">[db 0008]</span> <code>ingest_sessions_revision_guard</code></td>
+<td>Today a session commits against a dangling UUID; a plain foreign key is not representable
+because <code>revision_id</code> is minted hours earlier, in <code>PREPARING</code>.</td></tr>
+<tr><td>A release cites a revision of its own dataset</td>
+<td><code>schema_audit.md</code> F1</td>
+<td><span class="inv">[db 0008]</span> <code>releases_revision_dataset_fk</code></td>
+<td>Today the two foreign keys are independent and a cross-dataset citation inserts cleanly —
+permanently, since releases are withdrawn, never repointed.</td></tr>
+<tr><td>Every role is user-only, and no role carries <code>data.write</code> at silver or gold</td>
+<td><a href="rbac.html#roles">RBAC §2</a>, <a href="rbac.html#authn">§6</a></td>
+<td><span class="inv">[app: <code>src/huron/pkg/rbac/roles.py</code>]</span></td>
+<td>Seed rows, not constraints. <code>role_binding_guard</code> <span class="inv">[db]</span>
+refuses <code>sa:</code> principals, but the seed's own shape is held by the module and pinned by
+<code>tests/contract/test_rbac_store.py</code>.</td></tr>
+</table>
+
+<p>Seven rows, bounded by provenance: each is a property some artifact in the design record or the
+schema audit already asserts. This is not a sweep of every property the system has.</p>
+
+<h3 id="schema-registry">The schema registry</h3>
+
+<p>Every structured document Huron writes or accepts — the metadata envelope, the manifest, the
+snapshot provenance block, extension metadata, science profiles, canonical contracts — is
+validated against a schema, and <strong>every one of those schemas is a row in one registry</strong>.
+One table, one lifecycle, one recovery story, rather than a core schema "versioned in the
+repository" plus a separate extension registry plus profile rows: the repository copy of the core
+schemas becomes the <em>seed</em> the platform registers at bootstrap, not a second authority.</p>
+
+<ul>
+<li><strong>Three scopes, layered.</strong> <code>PLATFORM</code> rows are the envelope, manifest,
+and provenance schemas every deployment shares. <code>ORGANIZATION</code> rows are an org's
+metadata standards — the fields every dataset in the org must carry
+(<code>org.example.core/2.0</code>). <code>PROJECT</code> rows enrich an org schema for one
+programme of work: a project schema names the org schema it builds on via <code>extends_id</code>,
+and the <em>effective</em> schema at ingest is the composition
+(<code>allOf: [org base, project enrichment]</code>) resolved by walking the
+<code>extends</code> chain. A project schema may only extend a schema of its own organization
+(enforced by a composite FK), and chains are short by construction — platform schemas extend
+nothing, org schemas extend nothing, a project schema extends at most one org schema.</li>
+<li><strong>Published rows are immutable</strong> per <code>(namespace, name, semver)</code> —
+fixes are new versions, exactly the science-profile rule generalized. A revision's envelope
+records the schema references it validated against, so re-validation years later resolves the
+identical documents.</li>
+<li><strong>Deprecation, not deletion.</strong> <code>DEPRECATED</code> stops new ingests from
+declaring the version; existing documents keep resolving it forever. <code>WITHDRAWN</code> is
+the audited tombstone for a schema published in error, mirroring release-tag withdrawal.</li>
+<li><strong>Governance:</strong> organization admins publish organization schemas (and science
+profiles); project admins publish project enrichments; platform schemas ship with releases and
+are registered by migration. All writes go through the admin API and are audited.</li>
+<li><strong>Mirrored to storage.</strong> Rows are mirrored to
+<code>_platform/schemas/{namespace}/{name}/{semver}.json</code> on object storage (the
+science-profile mirroring rule, applied uniformly), so document validation is reconstructible
+without a PostgreSQL restore. Unknown extension namespaces remain stored-not-rejected
+(<a href="layer-raw.html#contracts">Raw §3</a>); the registry governs what is <em>validated</em>,
+never what is <em>preserved</em>.</li>
+</ul>
 
 <p class="note">Conventions pinned now because they are contracts: UUIDv7 is generated in the
 application (implemented per RFC 9562 on the Python 3.12 floor). Pagination cursors are versioned
@@ -241,7 +448,7 @@ into "N restricted upstream datasets" (invariant L).</p>
 
 <h2 id="lancedb">4. LanceDB projection</h2>
 
-<p>Topology: tables in <code>{prefix}-index</code> on RGW, <strong>exactly one
+<p>Topology: tables in <code>{prefix}-index</code> on the object store, <strong>exactly one
 writer</strong> (the projection worker, single replica, Recreate), API replicas read-only, outbox
 consumption, idempotent upserts, atomic pointer-flip rebuild, v1 is Tantivy FTS + scalar filters
 with the <code>embedding</code> column reserved and null.</p>
@@ -283,7 +490,7 @@ and PostgreSQL (snapshot/product registry), writes fresh tables under a new pref
 counts, flips the pointer. Routine, not exceptional.</li>
 <li><code>lakectl rebuild --from-storage</code> — reconstructs PostgreSQL structural rows from NFS
 generation documents and <code>COMMITTED</code> markers, then the layer registry from Icechunk repo
-metadata on RGW (each snapshot's provenance block names its sources), then lineage from derivation
+metadata on the object store (each snapshot's provenance block names its sources), then lineage from derivation
 records, then the projection. RBAC, audit, idempotency, and API keys come from PostgreSQL backups
 only.</li>
 <li>The reconciler (see <a href="layer-raw.html#sweeper">Raw §9</a>) also cross-checks the layer

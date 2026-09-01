@@ -52,6 +52,7 @@ def _service_account_from_row(row: asyncpg.Record) -> ServiceAccount:
         subject=row["subject"],
         created_by=row["created_by"],
         created_at=row["created_at"],
+        disabled_at=row["disabled_at"],
     )
 
 
@@ -276,7 +277,7 @@ class PostgresRbacStore:
         row = await self._pool.fetchrow(
             """
             SELECT sa.principal_id, sa.organization_id, sa.name, p.subject,
-                   sa.created_by, sa.created_at
+                   sa.created_by, sa.created_at, p.disabled_at
             FROM service_accounts sa JOIN principals p ON p.id = sa.principal_id
             WHERE sa.principal_id = $1
             """,
@@ -286,11 +287,25 @@ class PostgresRbacStore:
             raise ResourceNotFound(f"service account does not exist: {principal_id}")
         return _service_account_from_row(row)
 
+    async def service_account_by_subject(self, subject: str) -> ServiceAccount:
+        row = await self._pool.fetchrow(
+            """
+            SELECT sa.principal_id, sa.organization_id, sa.name, p.subject,
+                   sa.created_by, sa.created_at, p.disabled_at
+            FROM service_accounts sa JOIN principals p ON p.id = sa.principal_id
+            WHERE p.subject = $1
+            """,
+            subject,
+        )
+        if row is None:
+            raise ResourceNotFound(f"service account does not exist: {subject}")
+        return _service_account_from_row(row)
+
     async def list_service_accounts(self, organization_id: UUID) -> list[ServiceAccount]:
         rows = await self._pool.fetch(
             """
             SELECT sa.principal_id, sa.organization_id, sa.name, p.subject,
-                   sa.created_by, sa.created_at
+                   sa.created_by, sa.created_at, p.disabled_at
             FROM service_accounts sa JOIN principals p ON p.id = sa.principal_id
             WHERE sa.organization_id = $1
             ORDER BY sa.name
@@ -298,6 +313,23 @@ class PostgresRbacStore:
             organization_id,
         )
         return [_service_account_from_row(row) for row in rows]
+
+    async def disable_service_account(
+        self, principal_id: UUID, *, disabled_at: datetime
+    ) -> ServiceAccount:
+        row = await self._pool.fetchrow(
+            """
+            UPDATE principals
+            SET disabled_at = $2
+            WHERE id = $1 AND kind = 'service_account'
+            RETURNING id
+            """,
+            principal_id,
+            disabled_at,
+        )
+        if row is None:
+            raise ResourceNotFound(f"service account does not exist: {principal_id}")
+        return await self.get_service_account(principal_id)
 
     async def create_policy(
         self, *, policy_type: str, name: str, spec: dict[str, object], created_by: str
@@ -402,6 +434,20 @@ class PostgresApiKeyStore:
         await self._pool.execute(
             "UPDATE api_keys SET last_used_at = now() WHERE key_id = $1", key_id
         )
+
+    async def revoke_all_for(self, subject: str, revoked_at: datetime) -> int:
+        tag = await self._pool.execute(
+            """
+            UPDATE api_keys
+            SET revoked_at = $2
+            WHERE owner_subject = $1
+              AND owner_kind = 'service_account'
+              AND revoked_at IS NULL
+            """,
+            subject,
+            revoked_at,
+        )
+        return int(tag.rsplit(" ", 1)[-1])
 
 
 def _api_key_record_from_row(row: asyncpg.Record) -> ApiKeyRecord:

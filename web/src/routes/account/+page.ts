@@ -8,7 +8,6 @@ export const load: PageLoad = async ({ url }) => {
 		keys: (await listApiKeys()).items,
 		initialTab: ['profile', 'preferences', 'api-keys', 'access'].includes(requestedTab ?? '')
 			? requestedTab
-			: 'profile',
-		signedOut: url.searchParams.get('status') === 'signed-out'
+			: 'profile'
 	};
 };

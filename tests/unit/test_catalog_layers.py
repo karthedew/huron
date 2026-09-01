@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from huron.pkg.catalog.layers import (
-    LAYER_ORDER,
     Layer,
     LayerAction,
     LayerWorkflowError,
@@ -29,10 +28,13 @@ def test_humans_write_raw_and_bronze_only() -> None:
     for layer in (Layer.SILVER, Layer.GOLD):
         with pytest.raises(LayerWriteForbidden):
             ensure_layer_writable(layer, "user")
-    for layer in LAYER_ORDER:
+    for layer in (Layer.SILVER, Layer.GOLD):
         ensure_layer_writable(layer, "service_account")
+    for layer in (Layer.RAW, Layer.BRONZE):
+        with pytest.raises(LayerWriteForbidden):
+            ensure_layer_writable(layer, "service_account")
     assert writable_layers_for_kind("user") == (Layer.RAW, Layer.BRONZE)
-    assert writable_layers_for_kind("service_account") == LAYER_ORDER
+    assert writable_layers_for_kind("service_account") == (Layer.SILVER, Layer.GOLD)
 
 
 def test_promotions_follow_the_workflow() -> None:

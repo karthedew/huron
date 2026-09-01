@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -212,15 +213,15 @@ Validator — product suite:
    ✓ reference-case agreement               ✓ uncertainty propagation present
    ✓ product metadata contract complete
    ▼
-product_publisher (or steward) reviews evidence → PUBLISH
+project_admin reviews evidence → PUBLISH
    ▼
 status PUBLISHED · lineage edges committed · LanceDB indexed ·
 tabular products → Iceberg materialization → Polaris sync
 </pre>
 
 <ul>
-<li><strong>Separation of experiment and publication:</strong> any project scientist can create
-candidates; only <code>product_publisher</code>/steward can publish (see
+<li><strong>Separation of experiment and publication:</strong> any project developer can create
+candidates; only the <code>project_admin</code> can publish (see
 <a href="rbac.html#layers">RBAC</a>). Candidates are visible to the project, never to
 search-wide discovery.</li>
 <li><strong>Versioning:</strong> new inputs or parameters ⇒ new version. Republishing the same
@@ -248,8 +249,8 @@ points at both its inputs and the version it supersedes.</p>
 <p>A Gold product may combine Silver inputs from multiple projects (simulation + experimental
 measurements → validation product). Requirements, enforced at submission: read access to every
 input snapshot, product-creation permission in the destination project, and classification
-compatibility (the product's classification is at least the maximum of its inputs unless a steward
-explicitly downgrades with justification, which is audited). <strong>Lineage does not grant
+compatibility (the product's classification is at least the maximum of its inputs unless a
+project admin explicitly downgrades with justification, which is audited). <strong>Lineage does not grant
 access</strong>: a reader of the product sees redacted lineage
 ("derived from 2 restricted upstream datasets") unless they can discover the inputs
 (invariant L).</p>

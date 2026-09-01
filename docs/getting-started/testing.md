@@ -27,8 +27,8 @@ new markers in `pyproject.toml`. `asyncio_mode = "auto"`, so `async def` tests n
 Where most of the effort belongs. `pkg/` has no I/O, so its tests need no fixtures — that is the
 payoff of the [import boundaries](conventions.md#import-boundaries).
 
-High-value targets: the RBAC role matrix invariants (silver and gold writable only by the
-`pipeline` role, held only by service accounts; administrative roles hold no `data.write` at all),
+High-value targets: the RBAC role matrix invariants (service accounts alone have silver and gold
+write authority; administrative roles hold no `data.write` at all),
 the layer promotion graph, path construction **and** the `parse(construct(x)) == x` round trip,
 JCS canonicalisation stability, and the amendment fold.
 

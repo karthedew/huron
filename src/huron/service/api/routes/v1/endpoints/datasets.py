@@ -19,7 +19,7 @@ from huron.service.api.authorization import (
     CurrentPrincipal,
     LayerWrite,
     as_rbac_principal,
-    cached_bindings_for,
+    bindings_for_principal,
     dataset_layer_writer,
     dataset_scope,
     get_repository,
@@ -146,7 +146,7 @@ async def list_layers(
     dataset = repository.get_dataset(dataset_id)
     scope = dataset_scope(repository, dataset_id)
     rbac_actor = as_rbac_principal(actor)
-    bindings = await cached_bindings_for(request, repository, rbac_actor.identifiers)
+    bindings = await bindings_for_principal(request, repository, rbac_actor)
     items: list[dict[str, object]] = []
     for layer in LAYER_ORDER:
         spec = LAYER_SPECS[layer]

@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html" class="here">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -91,6 +92,8 @@ huron/
   client.py        HuronClient: auth, retries, idempotency keys, pagination
   open.py          open_dataset / open_snapshot / open_product  → xarray
   ingest.py        revision upload: manifest build, streaming, resume
+  layers.py        manual bronze/silver intake: `huron bronze upload` — NetCDF/HDF5/
+                   zipped-Zarr in, provenance assertion (raw link | external), job watch
   releases.py      tag / resolve / withdraw release tags
   products.py      publish, versions, staleness queries
   search.py        search() with typed filters
@@ -141,7 +144,7 @@ open_dataset(path, layer)
        STS credentials for the one repo prefix, TTL ≤ 1 h
   3. open:    icechunk.Repository(uri, credentials) → readonly_session(snapshot=S117)
   4. wrap:    xarray.open_zarr(session.store, …)    → lazy dataset; chunk reads
-              go client → RGW directly, never through FastAPI
+              go client → object store directly, never through FastAPI
   5. renew:   a background refresher calls grants/{id}:renew before expiry and
               swaps credentials in place; renewal re-authorizes, so a revoked
               role stops reads within one TTL
@@ -155,7 +158,7 @@ the exact view forever, and the recommended pattern in papers/notebooks is the s
 <li><strong>Staleness surfacing:</strong> opening a <code>STALE</code> product version warns with
 the reason and the successor version; opening a non-latest Silver snapshot notes the newer one.
 Warnings, never refusals — reproducibility outranks tidiness.</li>
-<li><strong>Restricted transport fallback:</strong> where compute nodes cannot reach RGW, the grant
+<li><strong>Restricted transport fallback:</strong> where compute nodes cannot reach the object store, the grant
 response returns <code>mode: proxy</code> and the same code path reads chunks through the API at
 reduced throughput. Client code does not change.</li>
 </ul>
@@ -171,6 +174,9 @@ publication pins whatever the platform resolved — inputs smuggled in from loca
 validation's coverage checks.</p>
 
 <h2 id="ingest">4. Upload path</h2>
+
+<p>(Step-by-step journey context, including the manual bronze intake this section's verbs serve:
+<a href="workflows.html">Scientist Workflows</a>.)</p>
 
 <pre>
 huron upload ./run-0042 \
@@ -214,7 +220,7 @@ version = client.products.submit_version(
                         parameters={"conversion_coefficients": "icrp-116"}),
     validation="dose-product-v1")
 version.wait()                      # CANDIDATE → validated
-client.products.publish(version)    # requires product_publisher
+client.products.publish(version)    # requires project_admin
 </pre>
 
 <p>The client's role ends at submission — the platform pins snapshots, runs the container, and

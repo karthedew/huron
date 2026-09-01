@@ -14,7 +14,8 @@ design tokens, light and dark modes, catalog search and structural browsing, a g
 ingestion flow, organization membership and Grafana-style role bindings, project settings,
 retention consequences, admin health, keyboard/screen-reader affordances, and tests.
 
-What does not exist: real data, authentication, or write operations. Mutating flows stop at the
+What does not exist: real data, production authentication, or write operations. The preview
+login creates a signed local session only; mutating flows stop at the
 API seam and say so in the interface; they do not pretend that a fixture-backed action persisted.
 
 ## Run
@@ -40,7 +41,7 @@ npm run build        # production build via adapter-node
 
 Organization slugs sit at the root of the URL space so that deep links look like
 `/{org}/{project}/{dataset}/{release}`. That means an organization slugged `admin`, `browse`,
-`ingestion`, `settings`, `account`, `queue`, `product`, or `snapshot` would be shadowed by this app's own routes and be
+`ingestion`, `settings`, `account`, `queue`, `product`, `snapshot`, `login`, `logout`, or `signup` would be shadowed by this app's own routes and be
 permanently unreachable. `src/lib/reserved-slugs.ts` records the list and a test fails if a new
 root route is added without reserving it — but the actual enforcement belongs in slug validation
 at organization creation (P1). Until the API refuses these names, this is a latent trap.

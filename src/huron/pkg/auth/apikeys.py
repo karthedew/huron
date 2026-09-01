@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
@@ -51,6 +51,14 @@ class MemoryApiKeyStore:
 
     async def touch_last_used(self, key_id: str) -> None:
         self.touched.append(key_id)
+
+    async def revoke_all_for(self, subject: str, revoked_at: datetime) -> int:
+        count = 0
+        for key_id, record in self.records.items():
+            if record.subject == subject and record.revoked_at is None:
+                self.records[key_id] = replace(record, revoked_at=revoked_at)
+                count += 1
+        return count
 
 
 def create_api_key(

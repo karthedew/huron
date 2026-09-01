@@ -12,7 +12,7 @@ The write rule, as an invariant rather than convention:
 - ``raw`` and ``bronze`` accept commits from human principals (scientists and
   engineers working through the ingest API).
 - ``silver`` and ``gold`` are written **only by service accounts** running
-  pipelines. Humans - data stewards included - shape those layers by
+  pipelines. Humans - admins included - shape those layers by
   configuring the pipeline, never by holding the write themselves.
 
 The entry rule is separate from, and orthogonal to, the write rule. A layer's
@@ -135,15 +135,17 @@ def required_capability(action: LayerAction, layer: Layer) -> tuple[str, str]:
 def writable_layers_for_kind(principal_kind: str) -> tuple[Layer, ...]:
     """Layers a principal of this kind may ever hold a write on."""
     if principal_kind == "service_account":
-        return LAYER_ORDER
+        return (Layer.SILVER, Layer.GOLD)
     return tuple(layer for layer in LAYER_ORDER if LAYER_SPECS[layer].principal_writable)
 
 
 def ensure_layer_writable(layer: Layer, principal_kind: str) -> None:
-    """Refuse a human write to a pipeline-only layer, whatever the bindings say."""
-    if LAYER_SPECS[layer].principal_writable or principal_kind == "service_account":
+    """Refuse writes outside a principal kind's allowed layer surface."""
+    if principal_kind == "service_account" and layer in (Layer.SILVER, Layer.GOLD):
         return
-    raise LayerWriteForbidden(f"layer {layer.value} is written only by pipeline service accounts")
+    if LAYER_SPECS[layer].principal_writable and principal_kind != "service_account":
+        return
+    raise LayerWriteForbidden(f"{principal_kind} principals may not write the {layer.value} layer")
 
 
 def entry_layers() -> tuple[Layer, ...]:

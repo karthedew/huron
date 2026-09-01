@@ -48,7 +48,7 @@
 
 <h2>Science-profile registry</h2>
 <p class="muted">
-	Published profile versions, immutability notice, install-to-project — steward only. Not built
+	Published profile versions, immutability notice, install-to-project — org admin only. Not built
 	(P5).
 </p>
 

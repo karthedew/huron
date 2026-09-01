@@ -10,7 +10,7 @@
  * See ./README.md.
  */
 
-export type Lifecycle = 'DRAFT' | 'ACTIVE' | 'RETIRED';
+export type Lifecycle = 'ACTIVE' | 'RETIRED';
 
 export type Layer = 'raw' | 'bronze' | 'silver' | 'gold';
 
@@ -150,15 +150,8 @@ export interface PermissionGrant {
 	id: string;
 	principal: string;
 	displayName: string;
-	principalKind: 'user' | 'group' | 'service_account';
-	role:
-		| 'reader'
-		| 'developer'
-		| 'data_steward'
-		| 'project_admin'
-		| 'organization_admin'
-		| 'platform_owner'
-		| 'pipeline';
+	principalKind: 'user' | 'group';
+	role: 'reader' | 'developer' | 'project_admin' | 'organization_admin' | 'platform_owner';
 	scope: string;
 	inherited: boolean;
 	inheritedFrom?: string;

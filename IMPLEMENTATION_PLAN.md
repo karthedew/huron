@@ -478,7 +478,7 @@ free hardening, and Keycloak supports it out of the box.
 
 ---
 
-## A5 — Migration `0004_auth` + `migrations/schema.sql`
+## A5 — Migration `0005_auth` + `migrations/schema.sql`
 
 Follows the raw-DDL style of 0001/0002, with the same trigger-enforced kind guards. The
 existing `principals` table (0002) already carries `idp_subject text UNIQUE` and the
@@ -781,7 +781,7 @@ routes/v1/schema/users.py        CreateUser, SetPassword
 
 - `user.manage` is added to `pkg/rbac/roles.py` first (source of truth), on
   **`platform_owner` only** — admin-provisioning is a platform act; org admins manage
-  service accounts, not humans. The 0004 seed (A5) mirrors it; the roles unit test's
+  service accounts, not humans. The 0005 seed (A5) mirrors it; the roles unit test's
   invariants pick it up automatically.
 - `POST /users {username, display_name, password}` → `principals` row
   (`kind='user'`, `subject=username`, no `idp_subject`) + `local_credentials` row, both via
@@ -1053,7 +1053,7 @@ against `make stack` + the seeded Keycloak realm — noted in the ledger as futu
 
 - [ ] `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`
 - [ ] `grep -rn "pkg.identity\|IdentityError" src tests migrations pyproject.toml` → zero
-- [ ] `0004_auth` applied to a clean PG16; both triggers exercised negative-case
+- [ ] `0005_auth` applied to a clean PG16; both triggers exercised negative-case
 - [ ] unit + contract suites green
 - [ ] `make up` → password + OIDC login both succeed against host-run `make api`
 - [ ] `make hosts && make stack` → full containerized flow: browser → Keycloak (`karl`) →

@@ -2,9 +2,8 @@
 
 Bindings are granted where they live: a project binding through the project
 route by someone holding ``rbac.binding_manage`` there, and so on up to
-SYSTEM. Service accounts - the only principals the ``pipeline`` role accepts
-- are created only by holders of ``service_account.manage`` on the owning
-organization.
+ SYSTEM. Service accounts are roleless identities created only by holders of
+ ``service_account.manage`` on the owning organization.
 """
 
 from __future__ import annotations
@@ -218,6 +217,8 @@ async def issue_service_account_key(
     account = await repository.get_service_account(principal_id)
     if account.organization_id != organization_id:
         raise Forbidden("service account belongs to a different organization")
+    if account.disabled_at is not None:
+        raise Forbidden("service account is disabled")
     record, token = create_api_key(
         account.subject,
         name=body.name,
@@ -233,3 +234,22 @@ async def issue_service_account_key(
         "secret": token,
         "expires_at": record.expires_at,
     }
+
+
+@router.post(
+    "/organizations/{organization_id}/service-accounts/{principal_id}/disable",
+)
+async def disable_service_account(
+    request: Request,
+    organization_id: UUID,
+    principal_id: UUID,
+    _actor: Annotated[Principal, Depends(require_organization("service_account.manage"))],
+) -> dict[str, object]:
+    repository = get_repository(request)
+    account = await repository.get_service_account(principal_id)
+    if account.organization_id != organization_id:
+        raise Forbidden("service account belongs to a different organization")
+    disabled_at = datetime.now(UTC)
+    account = await repository.disable_service_account(principal_id, disabled_at=disabled_at)
+    await repository.api_keys.revoke_all_for(account.subject, disabled_at)
+    return jsonable(account)

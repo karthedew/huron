@@ -75,13 +75,15 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html" class="here">Roadmap</a>
 </nav>
 <main>
 <h1>Roadmap</h1>
 <p class="sub">The greenfield build: phases with mechanical gates, sequenced so every phase ships
 something a scientist or operator can use. Nothing here amends or extends any earlier plan —
-this is the plan.</p>
+this is the plan. Two threads: the backend build phases (P0–P10, §2) and the
+frontend-integration tiers (T0–T6, §3), each row carrying its build status.</p>
 
 <h2 id="stance">1. Greenfield stance</h2>
 
@@ -128,8 +130,11 @@ src/huron/
                              PrincipalResolver, Clock
               rbac/          role-binding evaluation and discovery gating — pure
               rawstore/      NFS/POSIX: staging, hashing, hardlink dedup, atomic rename, sealing
-              objectstore/   Ceph RGW (S3) and Icechunk repository handles
-              metastore/     PostgreSQL structural state and the outbox
+              objectstore/   S3-compatible object store + Icechunk repository handles
+              metastore/     PostgreSQL structural state and the outbox — planned, not built:
+                             the SQL that exists today lives in the api service tier
+                             (service/api/postgres_rbac.py, postgres_auth.py), and the
+                             Metastore Protocol in catalog/ports.py has no implementation
               searchindex/   LanceDB tables and pointer-flip rebuild
               auth/          all AuthN resolves to the principal.py Principal:
                              apikeys.py, oidc.py and dev.py are the API-key,
@@ -158,11 +163,13 @@ implementing package does not import the declaring one either, which is what let
 <code>pkg/*</code> be genuinely independent rather than merely tidy. mypy checks conformance at
 the wiring site, where the concrete object meets the Protocol.</p>
 
-<p>Four import-linter contracts hold this in place, and all four are checked in CI:
+<p>Five import-linter contracts hold this in place, and all five are checked in CI:
 a <em>layers</em> contract for service → pkg → schema; an <em>independence</em> contract across
-the eleven packages; an <em>independence</em> contract across the twelve services; and a
+the eleven packages; an <em>independence</em> contract across the twelve services; a
 <em>forbidden</em> contract keeping web frameworks, database drivers and storage SDKs out of
-<code>catalog/</code> and <code>rbac/</code>. Data-modeling and validation libraries are
+<code>catalog/</code> and <code>rbac/</code>; and a narrower <em>forbidden</em> contract
+keeping web frameworks and database drivers out of <code>auth/</code> — an IO package that
+legitimately uses HTTP, JWT and password-hashing libraries. Data-modeling and validation libraries are
 deliberately not on that forbidden list: <code>schema/</code> is built on them, and
 <code>catalog/</code> validates against <code>schema/</code> rather than restating formats.</p>
 
@@ -173,6 +180,12 @@ want becomes a package — never an import of the sibling that happens to have i
 
 <h2 id="phases">2. Phases</h2>
 
+<p>Each phase and milestone carries a status tag — <span class="tag">done</span>,
+<span class="tag">partial</span>, or <span class="tag">todo</span> — describing this checkout.
+Status is tracked here, on the plan itself: landing work updates its tag in the same change,
+and <code>docs/backend-design.md</code> defers to this page rather than keeping a second
+copy.</p>
+
 <pre>
 P0 ── P1 ── P2 ── P3 ─────────── P5 ── P6 ── P7 ─────── P9
        │            \                   │      \
@@ -182,7 +195,7 @@ P0 ── P1 ── P2 ── P3 ─────────── P5 ── P6 
 <table>
 <tr><th>Phase</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
-<tr><td class="k">P0 — Bootstrap</td>
+<tr><td class="k">P0 — Bootstrap<br><span class="tag">done</span></td>
 <td>Repository skeleton and dependency groups; tooling (ruff, mypy strict across <code>pkg/</code> and
 <code>schema/</code>, import-linter, pytest markers); compose stack (PostgreSQL, MinIO for derived layers, a local
 volume standing in for NFS); settings module whose startup refusals are tested (dev-auth outside
@@ -193,24 +206,61 @@ stages.</td>
 from another each fail their contract; the compose stack boots and bootstraps buckets and
 volumes from a clean checkout.</td></tr>
 
-<tr><td class="k">P1 — Foundations</td>
-<td>Domain model for the five-level hierarchy in <code>pkg/catalog/</code>;
+<tr><td class="k">P1 — Foundations<br><span class="tag">partial</span></td>
+<td>Domain model for the three-level hierarchy in <code>pkg/catalog/</code>;
 <code>catalog/paths.py</code> (construction + parsing, per-resource slug limits); manifest/JCS
 module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
-<code>pkg/rawstore/</code>; migrations (hierarchy, role_bindings, api_keys, audit with pre-created
-partitions, outbox); <code>RoleBindingAuthorizer</code> with discovery gating; API-key + OIDC
+<code>pkg/rawstore/</code>; migrations (hierarchy, role_bindings, api_keys, audit, outbox);
+<code>RoleBindingAuthorizer</code> with discovery gating; API-key + OIDC
 resolvers; org/project/dataset CRUD with generation documents; release tags; browse with keyset
-pagination; OpenAPI published, TS + Python client cores generated.</td>
+pagination; OpenAPI published, TS + Python client cores generated.
+Withdrawn: the audit table was delivered without the pre-created partitions this row once
+claimed — <code>audit_events</code> shipped declared <code>PARTITION BY RANGE (created_at)</code>
+with a single DEFAULT child and nothing that creates bounded ones, so every row lands in the
+default child and there is nothing for the planner to prune. That deliverable is now withdrawn
+rather than completed: the partitioning is <strong>dropped</strong>, decided 2026-08-31.
+<code>0008</code> rebuilds <code>audit_events</code> as a plain table with
+<code>PRIMARY KEY (id)</code> — a uniqueness guarantee the partitioned shape cannot express — and
+one btree on <code>(created_at, id)</code>, the first index <code>created_at</code> has ever had.
+Reasoning, rejected alternative and live-database proof:
+<code>SCHEMA_DESIGN.md</code> § "S6 — <code>audit_events</code> partitioning (design)".</td>
 <td>Create org → project → dataset via HTTP; generation docs and <code>CURRENT.json</code>
 at the exact documented paths; a release tag resolves to one revision and a second write of the
 same tag is <code>409 TAG_EXISTS</code>; slug-change attempts 409; API-key auth round-trip; a principal
 scoped to project A gets full-size pages with zero rows from B and no evidence of B in counts or
 cursors; import-linter green.</td></tr>
 
-<tr><td class="k">P2 — Raw ingest &amp; commit</td>
+<tr><td class="k">Schema conformance — <code>0008</code><br><span class="tag">todo</span></td>
+<td>One Alembic revision, <code>0008_schema_conformance</code>, bringing the P1 metastore into
+conformance with the PostgreSQL table-design skill: cross-parent referential integrity,
+foreign-key access paths and referential actions, closed state and event-<code>kind</code>
+vocabularies, jsonb shape constraints, the ingest-session-to-revision correspondence, the
+de-partitioning of <code>audit_events</code> described in P1 above, and the abort/retry semantics
+of a revision-number reservation — a session ending <code>ABORTED</code> or <code>FAILED</code>
+frees the number it reserved and keeps its row, so a retry re-takes the same number rather than
+colliding with the dead one. That is what makes P2's gap-free numbering gate reachable at all;
+under the total unique constraint <code>0001</code> shipped, the retry was refused outright. It
+also
+converts <code>migrations/schema.sql</code> from a "regenerate with <code>pg_dump</code>" claim it
+cannot support into a hand-maintained architecture map carrying a <code>Reflects:</code> stamp
+that <code>make lint</code> checks. Target design: <code>SCHEMA_DESIGN.md</code>, design records
+S1–S8 plus S7a. Execution order: <code>SCHEMA_IMPLEMENTATION_PLAN.md</code> § "4. Milestone sequence"
+(M1–M10). No milestone is gated: the two decisions the plan waited on — the
+<code>audit_events</code> partitioning and the reservation semantics above — were both settled
+2026-08-31, per that plan's § "2. Gates".</td>
+<td>Per <code>SCHEMA_IMPLEMENTATION_PLAN.md</code> § "7. Definition of done": every constraint,
+referential action and trigger the revision adds is pinned by a write that must fail and a write
+that must succeed, in the contract suites against a live <code>postgres:16</code>; upgrade →
+downgrade → upgrade round-trips on a clean database; <code>make lint</code> fails when the schema
+map's <code>Reflects:</code> stamp does not match the Alembic head.</td></tr>
+
+<tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">partial</span></td>
 <td>Session state machine (dataset-scoped lock), upload plan with hardlink dedup, streaming
 in-flight hashing, the POSIX commit protocol (staging → fsync → atomic rename), sealing, download
-capabilities, <code>INDEX.json</code>.</td>
+capabilities, <code>INDEX.json</code>.
+Domain logic and the commit primitives are implemented and unit-tested
+(<code>pkg/catalog/ingest.py</code>, <code>pkg/rawstore/</code>); the HTTP surface is
+milestone 8 in §3.</td>
 <td>Round trip: a tree with NFC/NFD pairs, a zero-byte file, 8-level nesting, and a 9 GiB file
 ingests and downloads byte-identically. Crash matrix: kill after every protocol step; staging
 crashes invisible and swept; post-rename crash imported as an orphan with no duplicate on retry.
@@ -219,14 +269,14 @@ Resume re-sends only incomplete files. Two racing <code>BeginIngest</code> calls
 1 changed file of 500 uploads exactly 1; the other 499 hardlink; the new revision is independently
 complete. Every path-rejection rule produces its documented error code.</td></tr>
 
-<tr><td class="k">P3 — Integrity services</td>
+<tr><td class="k">P3 — Integrity services<br><span class="tag">todo</span></td>
 <td>Staging-only sweeper with fraction guard and dry-run; reconciler implementing the findings
 table plus seal/hardlink verification; <code>lakectl rebuild --from-storage</code>.</td>
 <td>Drop the database, apply migrations, rebuild from the filesystem alone: identical inventory of
 orgs, projects, datasets, revisions, release tags, amendments — with a purged and an expired revision
 present and reported lawful, not <code>DEGRADED</code>.</td></tr>
 
-<tr><td class="k">P4 — Search projection</td>
+<tr><td class="k">P4 — Search projection<br><span class="tag">todo</span></td>
 <td>Outbox consumer (single writer), LanceDB datasets + revisions + snapshots + products tables
 covering all four layers (Tantivy FTS, scalar filters, embedding column reserved),
 <code>/search</code> with pre-ranking authorization filter and PostgreSQL re-check, lag reporting,
@@ -235,25 +285,36 @@ pointer-flip rebuild.</td>
 results, correct pagination, no leaked facets. Stop the worker and delete the tables: browse,
 ingest, and commit all work; <code>/search</code> returns 503; rebuild restores it.</td></tr>
 
-<tr><td class="k">P5 — Governance</td>
-<td>Steward amendments with the field allow-list and single fold implementation; reclassification
+<tr><td class="k">P5 — Governance<br><span class="tag">partial</span></td>
+<td>Project-admin amendments with the field allow-list and single fold implementation; reclassification
 as its own audited permission; two-person purge; retention: per-category TTL, pins, legal holds,
-<code>EXPIRED</code> markers; science-profile registry (immutable published versions, mirrored to
-storage); quota enforcement at <code>BeginIngest</code>.</td>
+<code>EXPIRED</code> markers; the unified <a href="catalog-search.html#schema-registry">schema
+registry</a> (decision 16): platform/org/project scopes, project-enrichment composition, immutable
+published versions mirrored to storage — science profiles and extension schemas as registry kinds,
+envelope validation against the effective schema at ingest; quota enforcement at
+<code>BeginIngest</code>.
+The amendment fold and field allow-list are implemented
+(<code>pkg/catalog/amendments.py</code>); the rest is not started.</td>
 <td>Every forbidden amendment field rejected; fold correct across 3 chained amendments; two-person
 purge enforced by the database, idempotent on re-run, reported lawful by the reconciler; expiry
 removes only TTL-category files, only after Silver exists, writes the marker, honors holds; the
 consequence text appears in the API response that sets the policy.</td></tr>
 
-<tr><td class="k">P6 — Bronze</td>
-<td>Jobs table + runners, the MCNP extractor as the reference profile, Icechunk repos on RGW,
-candidate → validated → published snapshot flow, validation evidence, catalog registry, LanceDB
-layer flags.</td>
-<td>Upload run-0042 ⇒ a published Bronze snapshot whose provenance names the exact revision and
-extractor digest; a corrupted output ⇒ FAILED with structured findings and nothing published;
-rebuilding the same revision is idempotent.</td></tr>
+<tr><td class="k">P6 — Bronze<br><span class="tag">todo</span></td>
+<td>Jobs table + runners, Icechunk repos on the object store, candidate → validated → published snapshot flow,
+validation evidence, catalog registry, LanceDB layer flags — driven by
+<a href="layer-bronze.html#manual-intake">manual intake</a>: layer intake sessions
+(NetCDF/HDF5/zipped-Zarr in, xarray open, profile validation, service-written snapshot) with the
+one-of-two provenance assertion (same-dataset raw link ⇒ <code>promotion</code>/<code>upload</code>,
+or external block). The per-profile extractor auto-builder is
+<a href="layer-bronze.html#auto-builder">deferred</a> — the outbox/jobs seam ships, the MCNP
+extractor image does not.</td>
+<td>Upload arrays with <code>--link-raw-revision 1</code> ⇒ a published Bronze snapshot whose
+provenance names that exact revision and the uploaded files' digests; the same upload with no raw
+link and no external source (or both) is refused; a payload violating the profile layout ⇒ FAILED
+with structured findings and nothing published; re-running the same intake is idempotent.</td></tr>
 
-<tr><td class="k">P7 — Silver</td>
+<tr><td class="k">P7 — Silver<br><span class="tag">todo</span></td>
 <td>Canonical contracts, the MCNP canonicalizer, the per-dataset Silver repo, contract-driven
 concatenation resolved through the catalog, per-run lineage, silver validations.</td>
 <td>Three datasets declaring one contract concatenate along <code>run</code> into a single
@@ -262,7 +323,7 @@ contract version is excluded from that set by the catalog; a corrected revision 
 republishes only run-0042's repo and leaves the other three repos byte-identical; every prior
 snapshot still opens identically after all of it.</td></tr>
 
-<tr><td class="k">P8 — Client GA &amp; grants</td>
+<tr><td class="k">P8 — Client GA &amp; grants<br><span class="tag">todo</span></td>
 <td>Grant endpoints with STS vending (+ proxy fallback), the <code>huron</code> package
 (open/upload/search), credential renewal loop, typed errors, the scientist CLI.</td>
 <td><code>open_dataset</code> on an HPC login node with only an API key reaches first bytes in
@@ -270,14 +331,16 @@ snapshot still opens identically after all of it.</td></tr>
 at the store (policy test, not application test); a pinned snapshot reproduces byte-identically
 after a subsequent append.</td></tr>
 
-<tr><td class="k">UI-α / UI-β</td>
+<tr><td class="k">UI-α / UI-β<br><span class="tag">partial</span></td>
 <td>α (after P4): the Databricks-shaped shell (left rail + catalog explorer), browse, search,
-dataset/revision pages, Grafana-shaped permissions tabs, API-key management, read-only admin. β (after P8): validation evidence, lineage graph, retention panels, steward queues, the
-publication flow.</td>
+dataset/revision pages, Grafana-shaped permissions tabs, API-key management, read-only admin. β (after P8): validation evidence, lineage graph, retention panels, admin queues, the
+publication flow.
+Built so far: the SvelteKit shell and design tokens, all pages fixture-backed; the α/β
+surfaces are elaborated milestone-by-milestone in §3.</td>
 <td>The generated TypeScript client compiles in CI against every API change; E2E smoke against the
 compose stack.</td></tr>
 
-<tr><td class="k">P9 — Gold</td>
+<tr><td class="k">P9 — Gold<br><span class="tag">todo</span></td>
 <td>Products, versions, pinned derivation records, product runner, validation gating, publication,
 staleness propagation, cross-project inputs with redacted lineage, Iceberg materialization for
 tabular products.</td>
@@ -286,7 +349,7 @@ tabular products.</td>
 reason; recompute produces 1.0.1 pinned to the successors; the derivation record alone re-executes
 to a bit-identical G021 (invariant K).</td></tr>
 
-<tr><td class="k">P10 — Polaris</td>
+<tr><td class="k">P10 — Polaris<br><span class="tag">todo</span></td>
 <td>Polaris deployment, sync worker, namespace/table mapping, grant projection,
 <code>/polaris/credentials</code>, nightly converge.</td>
 <td>A published tabular product is queryable from Spark and DuckDB via Polaris within one sync
@@ -294,7 +357,335 @@ cycle; a WITHDRAWN version disappears; a grant not derivable from Huron bindings
 alerted; Polaris wiped ⇒ <code>lakectl polaris resync</code> reconverges from the catalog.</td></tr>
 </table>
 
-<h2 id="ordering">3. Sequencing rationale</h2>
+<h2 id="integration">3. Integration tiers</h2>
+
+<p>The frontend thread: connecting the <a href="frontend.html">frontend</a> to real backend
+functionality, planned as 25 gated milestones in seven priority tiers
+<span class="k">T0–T6</span> (distilled from the curated frontend feature inventory,
+2026-08-31). The tiers carry their own prefix deliberately, so they can never be confused with
+the backend phases in §2; where a milestone rides on a backend phase, its row says so. Each
+milestone names what already exists in this checkout, what it adds, and a mechanical gate.
+Every listing rides milestone 3's visibility layer; every mutation writes an audit row and
+honors <code>If-Match</code>; frontend data access stays behind <code>web/src/lib/api/</code> —
+a milestone that forces data-shape edits outside that seam has leaked and gets fixed at the
+seam.</p>
+
+<h3 id="t0">T0 — Required integration foundation</h3>
+
+<p>Strictly ordered: the contract, then the session, then visibility — so every later listing
+endpoint is born authorization-filtered rather than retrofitted.</p>
+
+<table>
+<tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
+
+<tr><td class="k">1 — OpenAPI contract &amp; generated TS client<br><span class="tag">todo</span></td>
+<td>Built: the app emits a live schema; hierarchy CRUD already returns generation documents; the
+frontend's only hand-written shapes sit behind <code>web/src/lib/api/</code>. Adds:
+<code>openapi/v1.json</code> as a committed artifact with a CI drift check; the
+<a href="api.html">API</a> conventions on every existing route before generation — structured
+error envelope, opaque keyset cursors, <code>ETag</code> from generation documents,
+<code>If-Match</code> on mutations (412 on mismatch), <code>Idempotency-Key</code> on creating
+POSTs; a generated TypeScript client replacing <code>types.ts</code> and
+<code>fixtures.ts</code>, with pagination, error, and ETag handling as shared interceptors.</td>
+<td><code>web/</code> builds green with <code>types.ts</code> and <code>fixtures.ts</code>
+deleted and zero edits outside <code>src/lib/api/</code>; CI fails when the live schema and
+<code>openapi/v1.json</code> diverge.</td></tr>
+
+<tr><td class="k">2 — Authentication &amp; browser sessions<br><span class="tag">todo</span></td>
+<td>Built: the full <a href="auth.html">auth</a> stack — <code>/auth</code> login, logout, OIDC
+start/callback, <code>GET /auth/session</code>, providers; opaque session cookie (12&nbsp;h idle
+sliding, 7&nbsp;d absolute); CSRF echo on cookie-authed mutations. Adds: session bootstrap in the
+root layout from <code>GET /auth/session</code>; account menu, sign-in/out, and return-to
+redirects; 401 handling distinct from permission denial; CSRF header injection in the client;
+authorization-aware navigation driven by the session's effective-access summary; the two open
+items in auth §7 — a purpose-built login-CSRF defense, and re-login revoking the prior
+session.</td>
+<td>A Playwright round-trip against <code>make stack</code>: sign in through Keycloak, load a
+catalog page, mutate with CSRF, sign out, confirm the session is dead. This gate also exercises
+the compose stack and Keycloak realm import for the first time.</td></tr>
+
+<tr><td class="k">3 — Authorization &amp; discoverability<br><span class="tag">todo</span></td>
+<td>Built: the <code>pkg/rbac</code> engine (exactly the five roles of
+<a href="rbac.html">RBAC</a>, deny-overrides, scope walk, layer restrictions),
+request-cached <code>check()</code>; silver/gold writes are service-account-free by
+construction rather than by trigger — no role in the vocabulary carries silver/gold
+<code>data.write</code>, and <code>0007</code>'s <code>role_binding_guard()</code> refuses
+any <code>sa:</code> principal outright. Adds: one reusable visibility layer — every list, count, facet, and cursor
+computed after restricting to discoverable resources, filter-then-paginate, never the reverse;
+404 for undiscoverable on direct fetch, 403 only for discoverable-but-forbidden, as one
+contract-tested helper; direct-vs-inherited grants distinguished in binding responses; an audit
+row for every mutation and every denied operation (actor, capability, scope, outcome, request
+id).</td>
+<td>Contract tests prove an unauthorized principal cannot detect existence through any list,
+count, facet, cursor, or error-shape difference; every mutating route writes an audit row,
+asserted generically over the route table.</td></tr>
+</table>
+
+<h3 id="t1">T1 — Catalog and search</h3>
+
+<table>
+<tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
+
+<tr><td class="k">4 — Hierarchy lifecycle &amp; real fields<br><span class="tag">todo</span></td>
+<td>Built: CRUD for all three levels with generation documents; immutable slugs (409
+<code>SLUG_IMMUTABLE</code>); <code>entry_layer</code> at dataset creation; reserved-slug refusal
+at organization creation. Adds: datasets ACTIVE on creation; retire / archive as bare, permission-checked
+transitions (policy inheritance is milestone 19); project archive and delete-when-empty;
+organization lifecycle; real classification, profile, tag, layer, quota, and count data on
+list/detail payloads — persisted columns or honest nulls, never fixtures; the user's persisted
+default organization; <code>RESERVED_ROOT_SLUGS</code> reconciled with the actual
+<code>web/src/routes</code> top level (<code>ingestion</code> and <code>settings</code> are
+routable today but unreserved) plus a diff test so the two can never drift again.</td>
+<td>Every field the catalog pages render is served from PostgreSQL; lifecycle transitions are
+audited and permission-checked; the reserved-slug diff test is green.</td></tr>
+
+<tr><td class="k">5 — Structural catalog browsing<br><span class="tag">todo</span></td>
+<td>Organization-scoped project and dataset listings with server-side filters for lifecycle,
+classification, profile, layer, and tags; keyset pagination sized for hundreds-to-thousands of
+datasets with stable sort keys; visibility-safe aggregate counts computed over the discoverable
+subset only; the three-pane catalog explorer wired to these endpoints.</td>
+<td>A seeded catalog of ≥1,000 datasets pages correctly under a restricted principal, with
+counts matching the visible set exactly.</td></tr>
+
+<tr><td class="k">6 — Catalog search<br><span class="tag">todo</span><br>backend P4</td>
+<td>Backend P4 pulled forward — search is the front door of the UI. The projection service:
+outbox consumer building the LanceDB tables, one index across all four layers with
+<code>layer</code> as a facet; no interim PostgreSQL <code>ILIKE</code> fallback — a stopgap
+search would become load-bearing. <code>/search</code> with full text across datasets,
+revisions, snapshots, and products; facets for type, layer, organization, project,
+classification, profile, tags, and quality; authorization filtering before ranking via
+milestone 3; a projection watermark on every response with explicit unavailable/degraded states
+the UI renders; real "last ingest" and catalog-health metrics.</td>
+<td>Results and facet counts for a restricted principal never include an undiscoverable
+resource; killing the projection service yields the degraded state, not a 200-with-nothing;
+the watermark visibly lags and recovers.</td></tr>
+
+<tr><td class="k">7 — Releases, revisions &amp; manifests<br><span class="tag">todo</span></td>
+<td>Built: release-tag create/resolve; the amendment fold and field allow-list; the manifest
+model. Adds: release withdrawal as an audited tombstone (<span class="inv">invariant M</span> —
+a tag is never repointed); revision history with per-layer materialization state; manifests
+paginated or streamed, never one JSON body; effective metadata (base + folded amendments) with
+its amendment history; short-lived authorized raw-file downloads, API-streamed — STS-vended
+credentials remain milestone 23.</td>
+<td>A 100k-entry manifest pages in constant memory; a withdrawn tag resolves to an audited
+tombstone and re-tagging the same name is refused.</td></tr>
+</table>
+
+<h3 id="t2">T2 — Ingestion and jobs</h3>
+
+<table>
+<tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
+
+<tr><td class="k">8 — Raw ingestion<br><span class="tag">todo</span><br>backend P2</td>
+<td>The HTTP surface over backend P2's shipped domain logic (session state machine, upload
+planning, hashing/dedup, staging + atomic-rename commit, all unit-tested).
+Adds: <code>/ingest-sessions</code> routes — create (reserving the dataset lock), metadata and
+manifest submission, heartbeat, verify, commit, abort, and an expiry sweep; dataset-creation-at-
+intake for authorized principals (humans with <code>dataset.create</code>, or an organization
+service account, whose dataset-CRUD authority is intrinsic) so intake never dead-ends; resumable multipart upload with
+per-part progress feeding the dedup/hardlink plan; idempotent retries via
+<code>Idempotency-Key</code>; commit persists the revision and emits the audit and outbox events
+milestones 6 and 18 consume; the ingestion flow wired end-to-end with progress and failure
+recovery.</td>
+<td>An interrupted multi-GB upload resumes without re-sending completed parts; two sessions
+racing one dataset serialize on the lock; a committed revision appears in the catalog, the
+search projection, and the audit stream.</td></tr>
+
+<tr><td class="k">9 — Automatic bronze builds<br><span class="tag">deferred</span><br>backend P6</td>
+<td><em>Deferred with the auto-builder (<a href="layer-bronze.html#auto-builder">Bronze
+§4b</a>): requires per-profile extractor images — custom code per data kind that v1 does not ask
+of projects. Milestone 10 carries bronze materialization until then.</em>
+Committed raw revisions listed as build candidates; transform resolution with immutable
+digests; science-profile and canonical-contract compatibility validated at enqueue, not at
+failure; the bronze builder consuming milestone 11's jobs — extraction into Zarr + Icechunk on
+the object store, validation evidence stored, immutable snapshot published; provenance recorded raw revision
+→ bronze snapshot as a <code>promotion</code> block
+(<span class="inv">invariant N</span>).</td>
+<td>A raw revision builds to a published bronze snapshot whose provenance names the exact
+revision and transform digest; a contract-incompatible request is refused at enqueue.</td></tr>
+
+<tr><td class="k">10 — Manual bronze intake<br><span class="tag">todo</span><br>backend P6</td>
+<td>Built: <code>entry_layer</code> with the invariant-N checks, entry validation, the external
+provenance schema, and entry validation in <code>pkg/catalog/layers.py</code>. Adds: the
+<a href="layer-bronze.html#manual-intake">manual intake path</a> — scientist/engineer uploads of
+NetCDF/HDF5/zipped-Zarr through UI wizard and <code>huron bronze upload</code>, never requiring
+raw to exist; the one-of-two provenance assertion — a raw revision of the same dataset
+(<code>promotion</code>, method <code>upload</code>, <code>user:</code> ingested-by, uploaded-file
+digests) or an external-provenance record (source system, URI/digest, streaming window) as the
+snapshot's lineage root; plus a registration path for an existing bronze object-store location;
+validation before publish — structure against the declared profile, schema, checksums.</td>
+<td>A bronze-entry dataset publishes a snapshot whose provenance is a valid
+<code>external</code> block, and a raw-holding dataset one whose <code>promotion</code> block pins
+the linked revision; an upload asserting neither or both is refused; a checksum mismatch or
+profile violation is refused with structured findings.</td></tr>
+
+<tr><td class="k">11 — Jobs &amp; queue<br><span class="tag">todo</span></td>
+<td><code>pkg/jobrunner</code>, created in the PR that gives it code and joining the
+independence contract in that PR: persistent jobs table with queued / running / succeeded /
+failed states, progress, timestamps, structured failure detail, and validation-result
+attachment; organization-scoped <code>/jobs</code> listing and detail behind the visibility
+layer; live updates by ETag-friendly polling first, upgrading the busiest views to SSE only if
+polling proves inadequate — WebSockets are not reached for first; accurate active-job,
+recent-job, and queue-health summaries.</td>
+<td>A killed worker leaves a job in a truthful failed state with its detail preserved; the queue
+page tracks a running job's progress with no fixture data.</td></tr>
+</table>
+
+<h3 id="t3">T3 — Identity and administration</h3>
+
+<table>
+<tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
+
+<tr><td class="k">12 — Organization users &amp; teams<br><span class="tag">todo</span></td>
+<td>Built: admin-provisioned users (<code>user.manage</code>, platform-owner only), bindings
+CRUD at all scopes, OIDC upsert-on-login, the Keycloak groups mapper. Adds: user/group listing
+with invitation state and last activity; invitations with email delivery — the platform's first
+outbound email, a path chosen once and shared with milestone 18; OIDC group synchronization
+resolving IdP groups to principals and teams; binding management showing inherited-vs-direct;
+grant-the-granter enforcement server-side (<code>organization_admin</code> manages service
+accounts, never people).</td>
+<td>An invited user completes OIDC sign-in and appears with the invited role; a project admin
+attempting an org-level grant is refused and audited.</td></tr>
+
+<tr><td class="k">13 — Service accounts<br><span class="tag">todo</span></td>
+<td>Built: service-account and per-SA API-key routes; trigger-enforced service-account-only
+pipeline roles. Adds: show-once credential return on create and rotate, hash-at-rest — secret
+material never retrievable again; rotation with overlap windows; revocation; status,
+last-activity, and effective-role listing; the admin management pages.</td>
+<td>A rotated credential's predecessor stops authenticating at the stated deadline; the secret
+appears in exactly one response ever.</td></tr>
+
+<tr><td class="k">14 — Organization settings<br><span class="tag">todo</span></td>
+<td>Display name, description, and lifecycle editing (the slug stays immutable — the 409 is
+correct behavior, surfaced properly); real project / user / service-account counts;
+identity-provider and group-sync health from milestone 12's machinery; organization creation
+from the workspace switcher, permission-checked, with reserved-slug refusal in the form
+itself.</td>
+<td>The settings page round-trips every editable field with <code>If-Match</code> concurrency; a
+slug edit attempt renders the immutability explanation, not a form error.</td></tr>
+
+<tr><td class="k">15 — Project settings<br><span class="tag">todo</span></td>
+<td>Name, description, lifecycle, owner, and default-classification editing; project
+role-binding add / update / remove; raw and derived storage usage and quotas — honest nulls
+until sidecar measurement lands, never fixture numbers; retention-policy editing with
+server-generated consequence text; archive, and delete only eligible empty projects;
+generations and ETags on every mutation.</td>
+<td>Concurrent edits from two sessions produce one 412 and zero lost updates; consequence text
+is generated server-side from the stored policy.</td></tr>
+</table>
+
+<h3 id="t4">T4 — User account and notifications</h3>
+
+<table>
+<tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
+
+<tr><td class="k">16 — User profile &amp; preferences<br><span class="tag">todo</span></td>
+<td>A preferences store keyed by principal: display name, time zone, default organization
+(shared with milestone 4), notification preferences (consumed by milestone 18); the
+editable-vs-IdP-owned field split served by the API, so IdP-managed fields render read-only with
+provenance.</td>
+<td>Preferences survive sign-out/sign-in and a different browser; an IdP-owned field edit is
+refused server-side, not merely disabled client-side.</td></tr>
+
+<tr><td class="k">17 — API keys<br><span class="tag">todo</span></td>
+<td>Built: <code>/api/v1/auth/api-keys</code> for the calling principal. Adds: scopes and
+project restrictions enforced in the resolver at request time; coarse last-use tracking;
+expiration; revocation; show-once secret at creation; the account-page management UI.</td>
+<td>A project-restricted key is refused outside its project; a revoked key fails closed
+immediately; last-use updates within its stated coarseness window.</td></tr>
+
+<tr><td class="k">18 — Notifications<br><span class="tag">todo</span></td>
+<td>A notification fan-out consumer on the outbox: ingest completion, failures, permission
+changes, publication work items; a per-user feed with the unread count for the toolbar
+indicator; read/dismiss operations; delivery-preference routing — in-app always, email per
+milestone 16's preferences over milestone 12's mail path.</td>
+<td>Committing an ingest produces exactly one notification per subscribed principal, idempotent
+under consumer restart; the unread count matches the feed.</td></tr>
+</table>
+
+<h3 id="t5">T5 — Governance and advanced catalog pages</h3>
+
+<table>
+<tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
+
+<tr><td class="k">19 — Policy inheritance<br><span class="tag">todo</span></td>
+<td>The organization → project → dataset policy chain (<a href="rbac.html#policies">RBAC §3</a>):
+policy documents attached via the <code>*.policy_attach</code> capabilities,
+generation-versioned and audited; effective-policy resolution (nearest-scope-wins per key,
+schema requirements composing through the registry's extends chain); the policy editors with the
+inherited-versus-set-here view; dataset creation validating against the effective policy. Any
+finer capabilities this tier needs (retention, classification-gated discovery, audit read) enter
+<code>pkg/rbac/roles.py</code> with a seed migration in the same change.</td>
+<td>A retention policy attached at the organization governs a dataset created afterward in any
+project with no project-level action; a project override wins over the org value; the dataset
+page shows which scope every effective value came from.</td></tr>
+
+<tr><td class="k">20 — Science profiles &amp; contracts<br><span class="tag">todo</span><br>backend P5–P7</td>
+<td>The immutable science-profile registry with per-project installation; canonical contract
+definitions with version history — variables, dimensions, units; a compatibility validation
+service shared by milestones 9, 10, and 22. The contract decides comparability — which
+per-dataset Silver repos may be concatenated — never storage layout.</td>
+<td>A profile or contract version, once referenced by any snapshot, cannot be mutated — only
+superseded by a new version.</td></tr>
+
+<tr><td class="k">21 — Validation, retention &amp; amendments<br><span class="tag">todo</span><br>backend P5</td>
+<td>Built: the amendment fold and field allow-list. Adds: structured validation findings with
+history on revisions and snapshots; retention categories, TTLs, pins, and legal holds —
+including the start condition for entry-above-raw datasets, which have no Silver publication to
+count from; amendment submission routes with effective metadata everywhere the catalog renders
+metadata; extracted-parameter storage and display; the two-person purge — request, independent
+approval, execution, tombstone.</td>
+<td>A purge cannot be requested and approved by the same principal (contract test); a legal hold
+blocks TTL expiry until released.</td></tr>
+
+<tr><td class="k">22 — Publication queue<br><span class="tag">todo</span></td>
+<td>The project admin's work queue of product/snapshot candidates awaiting review;
+the evidence-versus-contract review view; publish/withdraw actions with mandatory audit
+notes.</td>
+<td>Every publish/withdraw is attributable with its note in the audit stream; a candidate cannot
+pass a failing contract check into publication without an explicit, audited override.</td></tr>
+</table>
+
+<h3 id="t6">T6 — Snapshots, products, and operations</h3>
+
+<table>
+<tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
+
+<tr><td class="k">23 — Snapshots &amp; data access<br><span class="tag">todo</span><br>backend P8</td>
+<td>Built: the write-intent authorization stub on
+<code>/datasets/{id}/layers/{layer}/write-intents</code>. Adds: the snapshot registry surface —
+provenance, validation, layer state; "latest published" always resolving to a pinned snapshot
+id, never a floating reference; STS-vended short-lived prefix-scoped credentials — read grants
+for clients, write credentials minted only from write-intents; per-dataset Silver repos exist
+precisely so a dataset-scoped binding has a prefix to name, and a grant never spans wider than
+the binding; renewal with a full audit trail; the Python client's
+<code>huron.open_dataset(...)</code> flow.</td>
+<td>A vended credential cannot list or read outside its prefix, exercised against real
+S3-compatible storage (MinIO locally, the cluster gateway in staging); every grant and renewal is audited with principal, snapshot, and scope.</td></tr>
+
+<tr><td class="k">24 — Products &amp; lineage<br><span class="tag">todo</span><br>backend P9</td>
+<td>Product and product-version CRUD honoring placement by provenance scope — single-source
+under the dataset, fused under the project (<code>products.dataset_id</code> NULL ⇔ fused, with
+the composite FK enforcing the single-source case); derivation records on every version — pinned
+snapshot inputs, transform digest, parameters (<span class="inv">invariant K</span>);
+candidate / published / withdrawn status; staleness propagation with recompute jobs through
+milestone 11; upstream/downstream lineage with authorization-aware redacted nodes, consistent
+with milestone 3's discoverability rules.</td>
+<td>Publishing a product version without a complete derivation record is impossible at the
+schema level; revising an input marks every downstream product stale within one projection
+cycle.</td></tr>
+
+<tr><td class="k">25 — Administration dashboard<br><span class="tag">todo</span></td>
+<td>Real member, binding, job, and platform-health metrics; a filterable, paginated audit
+stream over milestone 3's audit rows, behind the audit-read capability; the backend-P3
+integrity services surfaced — reconciliation reports, dry-run plans, apply operations;
+projection, storage, database, and pipeline health panels; purge approvals, retention holds,
+the science-profile registry, and extension-schema administration.</td>
+<td>The dashboard renders zero fixture values; a deliberately orphaned storage object appears in
+the next reconciliation report, and its dry-run plan applies cleanly.</td></tr>
+</table>
+
+<h2 id="ordering">4. Sequencing rationale</h2>
 
 <ul>
 <li><strong>P2 before everything derived:</strong> the evidence tier must be trustworthy (crash
@@ -310,9 +701,16 @@ before P9, and nothing blocks on it (its failure posture is "degrade external en
 from P0 onward; instrumentation (unchanged-byte ratio, layer sizes per project, ingest durations,
 projection lag, grant issuance rates) ships with the code that emits it, because the
 full-copy-vs-delta and TTL-length decisions get revisited with data, not opinion.</li>
+<li><strong>T0 in strict order (contract → session → visibility):</strong> the generated client
+first, then the browser session, then the visibility layer, so every later listing endpoint is
+born authorization-filtered rather than retrofitted.</li>
+<li><strong>Integration long poles start early:</strong> the search projection (milestone 6),
+the job runner (11), and the outbound-email path (12) each unlock several later milestones. The
+explicit cross-tier dependencies: 9→11; 18→8, 11, 12, 16; 19→20, 21; 22→11, 19, 20, 21, 24;
+23→9; 24→11, 20, 23.</li>
 </ul>
 
-<h2 id="first">4. First moves</h2>
+<h2 id="first">5. First moves</h2>
 
 <ol>
 <li>Stand up the fresh repository per §1 — layout, tooling, compose, CI (P0).</li>
@@ -320,10 +718,11 @@ full-copy-vs-delta and TTL-length decisions get revisited with data, not opinion
 <code>pkg/catalog/paths.py</code>, <code>pkg/catalog/manifest.py</code> with their property
 tests — everything else leans on them.</li>
 <li>Prototype in parallel, throwaway-labeled: an Icechunk repo on MinIO exercised through
-<code>xarray.open_zarr</code> on a read-only session, and an RGW STS
-<code>AssumeRole</code>-with-session-policy probe. These are the two external assumptions P6 and
-P8 lean on hardest; confirm the deployed Ceph's STS behavior before P8 planning, and the proxy
-fallback covers the worst case.</li>
+<code>xarray.open_zarr</code> on a read-only session, and an STS
+<code>AssumeRole</code>-with-session-policy probe against the deployment's actual gateway. These
+are the two external assumptions P6 and P8 lean on hardest; STS is gateway-conditional
+(<a href="architecture.html#s3-portability">portability boundary</a>) — confirm the deployed
+gateway's behavior before P8 planning, and the proxy fallback covers the worst case.</li>
 <li>Write the MCNP science profile alongside P1, not after P5 — it is the reference case every
 layer document uses, and drafting it early keeps the profile schema honest.</li>
 </ol>

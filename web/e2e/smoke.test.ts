@@ -1,10 +1,76 @@
+import { createHmac } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+
+const PREVIEW_SESSION_SECRET = 'e2e-preview-session-secret';
+
+function previewCookieValue(nonce: string): string {
+	const signature = createHmac('sha256', PREVIEW_SESSION_SECRET).update(nonce).digest('base64url');
+	return `${nonce}.${signature}`;
+}
 
 /**
  * The UI gate named in design/roadmap.html: "E2E smoke against the compose stack".
  * Until the API exists this smoke runs against fixtures — it proves the shell renders
  * and routes resolve, not that any data is real.
  */
+
+test.beforeEach(async ({ context }) => {
+	await context.addCookies([
+		{
+			name: 'huron_preview_session',
+			value: previewCookieValue('e2e-preview-session'),
+			url: 'http://localhost:4173'
+		}
+	]);
+});
+
+test('unauthenticated visitors sign in and return to their requested page', async ({
+	page,
+	context
+}) => {
+	await context.clearCookies();
+	await page.goto('/ingestion');
+	await expect(page).toHaveURL(/\/login\?returnTo=%2Fingestion$/);
+	await expect(page.getByRole('heading', { name: 'Sign in to Huron' })).toBeVisible();
+	await expect(page.getByRole('complementary', { name: 'Application sidebar' })).toHaveCount(0);
+
+	await page.getByLabel('Email address').fill('karl.schmidt@example.org');
+	await page.getByLabel('Password', { exact: true }).fill('preview-password');
+	await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+
+	await expect(page).toHaveURL('/ingestion');
+	await expect(page.getByRole('heading', { name: 'Ingest a dataset' })).toBeVisible();
+});
+
+test('signup creates a preview session and preserves the requested destination', async ({
+	page,
+	context
+}) => {
+	await context.clearCookies();
+	await page.goto('/signup?returnTo=/browse');
+	await page.getByLabel('Display name').fill('Ada Lovelace');
+	await page.getByLabel('Email address').fill('ada@example.org');
+	await page.getByLabel('Password', { exact: true }).fill('preview-password');
+	await page.getByLabel('Confirm password').fill('preview-password');
+	await page.getByLabel(/I agree to/).check();
+	await page.getByRole('button', { name: 'Create account', exact: true }).click();
+
+	await expect(page).toHaveURL('/browse');
+	await expect(page.getByRole('heading', { name: 'Browse the lakehouse' })).toBeVisible();
+});
+
+test('unsigned preview cookies do not authenticate a visitor', async ({ page, context }) => {
+	await context.clearCookies();
+	await context.addCookies([
+		{
+			name: 'huron_preview_session',
+			value: 'forged-preview-session',
+			url: 'http://localhost:4173'
+		}
+	]);
+	await page.goto('/browse');
+	await expect(page).toHaveURL(/\/login\?returnTo=%2Fbrowse$/);
+});
 
 test('search page renders', async ({ page }) => {
 	await page.goto('/');
@@ -70,9 +136,9 @@ test('browse stays within the toolbar organization and closes its switcher outsi
 
 test('browse filters enumerated dataset metadata', async ({ page }) => {
 	await page.goto('/browse');
-	await page.getByRole('combobox', { name: 'Filter by lifecycle' }).selectOption('DRAFT');
+	await page.getByRole('combobox', { name: 'Filter by lifecycle' }).selectOption('ACTIVE');
 	await expect(page.getByRole('link', { name: /Draft Dataset/ })).toBeVisible();
-	await expect(page.getByRole('link', { name: /Example Sweep/ })).toBeHidden();
+	await expect(page.getByRole('link', { name: /Example Sweep/ })).toBeVisible();
 
 	await page.getByRole('combobox', { name: 'Filter by lifecycle' }).selectOption('all');
 	await page.getByRole('combobox', { name: 'Filter by materialized layer' }).selectOption('gold');
@@ -149,7 +215,12 @@ test('account menu opens user settings and supports logout', async ({ page }) =>
 	await page.getByRole('button', { name: 'Log out', exact: true }).click();
 	const logout = page.getByRole('dialog', { name: 'Log out of Huron?' });
 	await logout.getByRole('button', { name: 'Log out', exact: true }).click();
-	await expect(page.getByRole('heading', { name: 'You’re signed out' })).toBeVisible();
+	await expect(page).toHaveURL('/login?status=signed-out');
+	await expect(page.getByRole('heading', { name: 'Sign in to Huron' })).toBeVisible();
+	await expect(page.getByText('You’ve been signed out successfully.')).toBeVisible();
+
+	await page.goto('/browse');
+	await expect(page).toHaveURL(/\/login\?returnTo=%2Fbrowse$/);
 });
 
 test('ingestion branches from raw uploads to bronze materialization', async ({ page }) => {
@@ -215,16 +286,15 @@ test('service accounts are managed separately from users', async ({ page }) => {
 	await page.goto('/settings/organization');
 	await page.getByRole('button', { name: 'Service Accounts', exact: true }).click();
 	await expect(page.getByText('Bronze Pipeline')).toBeVisible();
-	await expect(page.getByLabel('Role for Bronze Pipeline')).toHaveValue('pipeline');
+	await expect(page.getByText('Silver + gold · intrinsic')).toBeVisible();
 	await expect(page.getByText('Karl Schmidt', { exact: true })).toBeHidden();
 
 	await page.getByRole('button', { name: 'Create service account' }).click();
 	const dialog = page.getByRole('dialog');
 	await dialog.getByPlaceholder('Silver refresh pipeline').fill('Silver refresh pipeline');
-	await dialog.getByLabel('Organization role').selectOption('developer');
 	await dialog.getByRole('button', { name: 'Create service account' }).click();
 	await expect(page.getByText('sa:silver-refresh-pipeline')).toBeVisible();
-	await expect(page.getByLabel('Role for Silver refresh pipeline')).toHaveValue('developer');
+	await expect(page.getByText('Silver + gold · intrinsic')).toHaveCount(2);
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
 		true
 	);

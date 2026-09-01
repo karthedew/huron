@@ -10,53 +10,72 @@ from huron.pkg.rbac import Decision, Principal, Scope, ScopeType, decide
 from huron.pkg.rbac.roles import (
     CAPABILITIES,
     ROLES,
+    SERVICE_ACCOUNT_CAPABILITIES,
+    SERVICE_ACCOUNT_LAYERS,
     PrincipalKindNotAllowed,
     ScopeNotBindable,
     compile_binding,
     roles_granting_write,
+    service_account_bindings,
     validate_binding,
 )
 
 pytestmark = pytest.mark.unit
 
 
-def test_silver_and_gold_writes_are_service_account_only() -> None:
-    """The invariant is the principal kind, not one privileged role name.
+def test_no_role_writes_silver_or_gold_and_all_roles_are_human_only() -> None:
+    """Silver/gold writers are service accounts by construction.
 
-    Two roles write silver and gold - ``pipeline`` and ``ingest_pipeline`` -
-    and what makes that safe is that neither can be bound to a human, so no
-    human path to those layers exists whatever bindings are seeded.
+    No role in the vocabulary carries silver/gold ``data.write`` and every
+    role is holdable by users only, so no binding - however seeded - can
+    put those writes in human hands. The only path to them is the intrinsic
+    service-account authority below.
     """
     for layer in ("silver", "gold"):
-        writers = roles_granting_write(layer)
-        assert {role.code for role in writers} == {"pipeline", "ingest_pipeline"}, layer
-        for role in writers:
-            assert role.allowed_principal_kinds == frozenset({"service_account"}), role.code
-    assert {role.code for role in roles_granting_write("raw")} == {"developer", "data_steward"}
-    assert {role.code for role in roles_granting_write("bronze")} == {
-        "developer",
-        "data_steward",
-        "pipeline",
-        "ingest_pipeline",
-    }
+        assert roles_granting_write(layer) == (), layer
+    assert {role.code for role in roles_granting_write("raw")} == {"developer"}
+    assert {role.code for role in roles_granting_write("bronze")} == {"developer"}
+    for role in ROLES.values():
+        assert role.allowed_principal_kinds == frozenset({"user"}), role.code
 
 
-def test_pipeline_roles_are_service_account_only() -> None:
-    for code in ("pipeline", "ingest_pipeline"):
-        assert ROLES[code].allowed_principal_kinds == frozenset({"service_account"}), code
+def test_service_accounts_hold_no_roles() -> None:
+    for code in ROLES:
         with pytest.raises(PrincipalKindNotAllowed):
-            validate_binding(code, "user", ScopeType.PROJECT)
+            validate_binding(code, "service_account", ScopeType.ORGANIZATION)
 
 
-def test_only_the_ingest_pipeline_creates_datasets_and_only_per_project() -> None:
-    """Dataset creation is a governance act; plain pipeline stays out of it."""
-    assert "dataset.create" not in ROLES["pipeline"].capabilities
-    assert "dataset.create" in ROLES["ingest_pipeline"].capabilities
-    assert ROLES["ingest_pipeline"].bindable_scopes == frozenset({ScopeType.PROJECT})
-    validate_binding("ingest_pipeline", "service_account", ScopeType.PROJECT)
-    for scope in (ScopeType.SYSTEM, ScopeType.ORGANIZATION, ScopeType.DATASET):
-        with pytest.raises(ScopeNotBindable):
-            validate_binding("ingest_pipeline", "service_account", scope)
+def test_service_account_authority_is_org_scoped_silver_gold_crud() -> None:
+    """An SA's whole authority: dataset CRUD + silver/gold read/write, its org only."""
+    organization_id, project_id, dataset_id = uuid4(), uuid4(), uuid4()
+    bindings = list(service_account_bindings("sa:org/loader", organization_id))
+    feed = Principal("org/loader", kind="service_account")
+    scope = Scope(
+        ScopeType.DATASET,
+        dataset_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        dataset_id=dataset_id,
+    )
+    for capability in SERVICE_ACCOUNT_CAPABILITIES:
+        assert decide(bindings, feed, capability, scope) is Decision.ALLOW, capability
+    for layer in SERVICE_ACCOUNT_LAYERS:
+        assert decide(bindings, feed, "data.write", scope, layer=layer) is Decision.ALLOW, layer
+        assert decide(bindings, feed, "data.read", scope, layer=layer) is Decision.ALLOW, layer
+    for layer in ("raw", "bronze"):
+        assert decide(bindings, feed, "data.write", scope, layer=layer) is Decision.DENY, layer
+        assert decide(bindings, feed, "data.read", scope, layer=layer) is Decision.DENY, layer
+    assert decide(bindings, feed, "rbac.binding_manage", scope) is Decision.DENY
+    assert decide(bindings, feed, "release.create", scope) is Decision.DENY
+    foreign_scope = Scope(
+        ScopeType.DATASET,
+        dataset_id,
+        organization_id=uuid4(),
+        project_id=project_id,
+        dataset_id=dataset_id,
+    )
+    assert decide(bindings, feed, "data.write", foreign_scope, layer="silver") is Decision.DENY
+    assert decide(bindings, feed, "dataset.create", foreign_scope) is Decision.DENY
 
 
 def test_admin_roles_carry_no_data_write() -> None:

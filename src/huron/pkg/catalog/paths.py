@@ -18,7 +18,22 @@ ORG_PROJECT_SLUG_MAX = 62
 DATASET_SLUG_MAX = 80
 
 RESERVED_ROOT_SLUGS = frozenset(
-    {"admin", "browse", "account", "queue", "product", "snapshot", "search", "api", "auth", "login"}
+    {
+        "admin",
+        "browse",
+        "account",
+        "queue",
+        "product",
+        "snapshot",
+        "search",
+        "api",
+        "auth",
+        "login",
+        "logout",
+        "signup",
+        "settings",
+        "ingestion",
+    }
 )
 
 

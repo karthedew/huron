@@ -222,10 +222,9 @@ def test_staging_dir_sits_at_the_data_root() -> None:
     assert staging_dir(ROOT, ingest_id) == ROOT / ".staging" / ingest_id.hex
 
 
-@pytest.mark.parametrize("slug", ["auth", "login"])
-def test_validate_org_slug_reserves_the_unversioned_auth_and_login_routes(slug: str) -> None:
-    """``/auth/...`` and the web login page's ``/login`` both sit at the URL
-    root, so an organization slugged either would be unreachable."""
+@pytest.mark.parametrize("slug", ["auth", "login", "logout", "signup", "settings", "ingestion"])
+def test_validate_org_slug_reserves_root_routes(slug: str) -> None:
+    """An organization slugged like an application route would be unreachable."""
     with pytest.raises(PathRuleViolation):
         validate_org_slug(slug)
 

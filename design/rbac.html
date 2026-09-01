@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -92,8 +93,8 @@ storage allocations, no per-dataset authorization domains by default, no global 
 directory.</li>
 <li><strong>Organization membership grants discovery of org-public projects — nothing more.</strong>
 Project membership never follows automatically from org membership.</li>
-<li><strong>Ordinary org members cannot create projects.</strong> Org admins create/approve them,
-or delegate a <code>project_creator</code> role for template-governed self-service.</li>
+<li><strong>Ordinary org members cannot create projects.</strong> <code>project.create</code>
+belongs to the organization admin (and platform owner); there is no separate creator role.</li>
 <li><strong>Operational access ≠ data access.</strong> A platform operator does not automatically
 read scientific data.</li>
 <li><strong>Uploading ≠ reading forever.</strong> A producer identity can be write-only; raw
@@ -106,80 +107,149 @@ smell; bind <code>group:mcnp-analysts</code> once.</li>
 
 <h2 id="roles">2. Roles</h2>
 
-<p class="warn"><strong>This section predates the implemented role model and is pending rewrite.</strong>
-The taxonomy below was the design's first cut. What is built and enforced — in
-<code>src/huron/pkg/rbac/roles.py</code>, mirrored by the migration seed and a contract test that
-diffs the two — is a smaller set of eight roles: <code>reader</code>, <code>developer</code>,
-<code>data_steward</code>, <code>project_admin</code>, <code>organization_admin</code>,
-<code>platform_owner</code>, and two service-account-only pipeline roles, <code>pipeline</code>
-and <code>ingest_pipeline</code>. Capability names differ too (the built vocabulary is
-<code>organization.*</code>, <code>project.*</code>, <code>dataset.*</code>,
-<code>release.create</code>, <code>rbac.binding_manage</code>, <code>service_account.manage</code>,
-plus layer-scoped <code>data.read</code>/<code>data.write</code>). Two rules stated below are
-<em>not</em> yet built and remain the design intent: raw payload read as a capability stricter than
-dataset read, and classification-gated discovery. Treat the responsibilities and the
-<a href="#layers">layer matrices</a> as intent; treat <code>roles.py</code> as the current fact.</p>
+<p>Huron has <strong>five human roles — and no others</strong>: the complete vocabulary,
+matching <code>src/huron/pkg/rbac/roles.py</code>, the migration seed, and the contract test that
+diffs the two. There is deliberately no "no role" entry anywhere in the taxonomy or the UI: a
+principal without a binding is simply unbound — it holds nothing, sees nothing (the 404-not-403
+rule), and appears in no role picker. Every picker lists exactly the five roles and nothing
+else. Service accounts are not part of the role system at all — their single authority is
+intrinsic (<a href="#service-accounts">below</a>).</p>
 
-<p><strong><code>ingest_pipeline</code></strong> is the one role that may both create datasets and
-write derived layers. It exists for pipelines whose data originates outside the lake — a streaming
-feed or an external service — which must mint the dataset they are about to fill; see
-<a href="layer-silver.html#direct-entry">Silver §4</a>. It is bindable only at project scope and
-only to service accounts, so a feed can create datasets in exactly the project it was granted and
-nowhere else. Plain <code>pipeline</code> deliberately keeps no <code>dataset.create</code>:
-dataset creation is a governance act (classification, retention, declared contract), so the default
-remains that a human creates and configures the dataset and the pipeline only writes snapshots into
-it. Granting <code>ingest_pipeline</code> instead of <code>pipeline</code> is the opt-in.</p>
+<h3>Human roles</h3>
 
-<h3>Platform scope</h3>
 <table>
-<tr><th>Role</th><th>Responsibilities</th></tr>
-<tr><td><code>platform_admin</code></td><td>Huron configuration, organizations, extension/profile registries, purge approval</td></tr>
-<tr><td><code>platform_operator</code></td><td>Storage, jobs, reconciliation, recovery — without scientific data read</td></tr>
-<tr><td><code>platform_auditor</code></td><td>Read platform audit and governance records</td></tr>
-<tr><td><code>retention_operator</code></td><td>Execute approved lifecycle deletion (the only identity that deletes under <code>revisions/</code>)</td></tr>
-<tr><td><code>compute_service</code></td><td>Pipeline identities: read authorized inputs, write candidate representations</td></tr>
+<tr><th>Role</th><th>Binds at</th><th>Control plane</th><th>Data plane</th></tr>
+<tr><td><code>reader</code></td><td>org · project · dataset</td>
+<td><code>dataset.discover</code></td>
+<td>read, every layer</td></tr>
+<tr><td><code>developer</code></td><td>org · project · dataset</td>
+<td>discover; <code>dataset.create</code>, <code>dataset.update</code>,
+<code>release.create</code></td>
+<td>read, every layer; <strong>write raw + bronze</strong> — the scientist/engineer role:
+create datasets, commit raw revisions, run <a href="layer-bronze.html#manual-intake">manual
+bronze intake</a>, tag releases</td></tr>
+<tr><td><code>project_admin</code></td><td>org · project</td>
+<td>everything a developer has on datasets, plus <code>project.update</code>,
+<code>project.policy_attach</code>, <code>dataset.policy_attach</code>,
+<code>rbac.binding_manage</code></td>
+<td>read only — administration and data production are separate concerns</td></tr>
+<tr><td><code>organization_admin</code></td><td>org</td>
+<td><code>organization.update</code>, <code>organization.policy_attach</code>,
+<code>project.create</code>/<code>update</code>/<code>policy_attach</code>,
+<code>dataset.policy_attach</code>, <code>service_account.manage</code>,
+<code>rbac.binding_manage</code>, discover</td>
+<td>read only</td></tr>
+<tr><td><code>platform_owner</code></td><td>system</td>
+<td>all of the above plus <code>organization.create</code>/<code>delete</code> and
+<code>user.manage</code></td>
+<td>read only — deliberately no <code>data.write</code></td></tr>
 </table>
 
-<h3>Organization scope</h3>
+<p><strong>The data-steward role was removed</strong> (2026-08-31, deliberate simplification).
+Any developer creates datasets and commits revisions — dataset creation is no longer a
+governance act gated on a dedicated role. The governance the steward carried moved to the admins
+by scope: the <em>project admin</em> owns project-scope acts (metadata amendments, Gold
+publication approval, project schema enrichments, project policies) and the <em>organization
+admin</em> owns org-scope acts (organization metadata schemas, science profiles, organization
+policies). What keeps this safe is not a human gate but the <a href="#policies">inherited
+policies</a> every dataset is created under, plus validation-gated publication.</p>
+
+<h3 id="service-accounts">Service accounts: no roles, one intrinsic authority</h3>
+
+<p><strong>Service accounts hold no roles at all</strong> (2026-08-31 — this replaced the earlier
+<code>pipeline</code>/<code>ingest_pipeline</code> role pair). An SA is a single-purpose
+identity: it exists to let an external pipeline authenticate and perform CRUD against datasets of
+its organization at the silver and gold layers. That authority is <em>intrinsic to being a
+service account</em> — conferred in whole when an organization admin creates it
+(<code>service_account.manage</code>), revoked in whole when the SA or its keys are revoked —
+never granted, shaped, or widened through role bindings. Role bindings are for humans; the
+database refuses a binding whose principal is a service account.</p>
+
+<p>What every service account can do, org-wide and nothing else:</p>
+
 <table>
-<tr><th>Role</th><th>Responsibilities</th></tr>
-<tr><td><code>org_admin</code></td><td>Org settings, members, delegated roles, project approval</td></tr>
-<tr><td><code>project_creator</code></td><td>Create projects from approved templates within quota</td></tr>
-<tr><td><code>org_steward</code></td><td>Org-wide metadata vocabulary and science profiles</td></tr>
-<tr><td><code>org_auditor</code></td><td>Review org activity read-only</td></tr>
-<tr><td><code>org_member</code></td><td>Discover org-public projects only</td></tr>
+<tr><th>Authority</th><th>Scope</th></tr>
+<tr><td><code>dataset.create</code> / <code>dataset.update</code> /
+<code>dataset.discover</code></td>
+<td rowspan="2">every dataset of the owning organization — a feed entering at silver mints the
+dataset it fills (<a href="layer-silver.html#direct-entry">direct entry</a>), under the same
+inherited policies as any human creation</td></tr>
+<tr><td><code>data.read</code> + <code>data.write</code> on <strong>silver and gold
+only</strong></td></tr>
 </table>
 
-<h3>Project scope</h3>
-<table>
-<tr><th>Role</th><th>Responsibilities</th></tr>
-<tr><td><code>project_owner</code></td><td>Members, quota, classification, retention policy</td></tr>
-<tr><td><code>data_steward</code></td><td>Create/activate datasets, approve canonical contracts, amend metadata, approve publication</td></tr>
-<tr><td><code>contributor</code></td><td>Upload revisions and corrections; draft datasets where policy allows</td></tr>
-<tr><td><code>scientist</code></td><td>Read Bronze/Silver/Gold; request transforms; create candidate products</td></tr>
-<tr><td><code>product_publisher</code></td><td>Publish validated Gold product versions</td></tr>
-<tr><td><code>viewer</code></td><td>Discover and read permitted representations</td></tr>
-<tr><td><code>project_auditor</code></td><td>Metadata, lineage, audit — no payload</td></tr>
-</table>
+<p>No raw, no bronze, in either direction: raw and bronze are the human contribution surface
+(developers), and the most sensitive material lives in raw. "Delete" in CRUD means the snapshot
+lifecycle — replacing working branches, region replacement, superseding — never destroying
+history: purge stays the two-person human flow, and release tags stay immutable.</p>
 
-<p>Roles stack (<code>Karl: contributor + scientist + product_publisher</code>). Project creation
-requests carry: name, owner group, purpose, classification, default raw TTL, quota, expected data
-kinds, support contact; Huron then provisions the project UUID, NFS allocation + quota, retention
-defaults, catalog namespace, audit stream, owner binding, and service identities automatically.</p>
+<p><strong>The load-bearing invariant is the principal kind:</strong> silver/gold
+<code>data.write</code> is held by service-account principals exclusively, and now by
+<em>construction</em> — no role in the vocabulary carries it, so no binding can leak it to a
+human (invariant J). Humans — admins included — never hold those writes; a human
+<em>initiates</em> manual intake and a service writes.</p>
 
-<h2 id="datasets">3. Dataset creation and lifecycle</h2>
+<p class="note"><span class="k">Org-wide authority, prefix-narrow credentials.</span> An SA's
+<em>authorization ceiling</em> is its organization, but the storage credentials it actually
+receives stay narrow: every write mints a short-lived credential scoped to the one repo prefix
+of the write-intent (<a href="#dataplane">§7</a>), so a compromised job credential still cannot
+roam the org. Distinct from all of this are <strong>Huron's own platform services</strong> — the
+layer intake service, the deferred bronze builder, the canonicalizer, product runner, retention
+worker — which run under internal deployment identities, not organization service accounts, and
+are how bronze gets written despite SAs having no bronze access.</p>
+
+<p class="note"><span class="k">Design intent not yet built</span> (unchanged by the
+simplification): raw <em>payload</em> read as a capability stricter than dataset read — today
+<code>reader</code>'s <code>data.read</code> spans all four layers including raw payload — and
+classification-gated discovery (§5). Both remain intended; neither has capabilities in the built
+vocabulary yet.</p>
+
+<h2 id="datasets">3. Dataset lifecycle and policy inheritance</h2>
+
+<p><strong>Datasets are ACTIVE on creation.</strong> A developer creates a dataset and ingests
+into it immediately; there is no approval gate and no steward checklist. The old
+<code>DRAFT → ACTIVE</code> activation flow is removed with the steward role — lifecycle is
+<code>ACTIVE → RETIRED</code> (plus <code>SUPERSEDED</code> for slug mistakes). What replaced the
+human gate is structural:</p>
+
+<ul>
+<li><strong>Creation happens under inherited policy</strong> (below): classification default,
+retention, and required metadata schemas apply from the first revision — the form or client call
+cannot complete without satisfying the effective schema.</li>
+<li><strong>Publication is validation-gated</strong>, not approval-gated: bronze/silver snapshots
+publish only when the profile's checks pass; Gold additionally needs the project admin's
+publication approval.</li>
+</ul>
+
+<h3 id="policies">Policy inheritance: organization → project → dataset</h3>
+
+<p>Policies are governed documents attached at a scope with the corresponding capability —
+<code>organization.policy_attach</code> (organization admin), <code>project.policy_attach</code>
+(project admin), <code>dataset.policy_attach</code> (admins only, for the rare per-dataset
+exception). <strong>Every dataset inherits its project's policies, and every project inherits its
+organization's</strong> — attaching a policy at a scope is how an admin governs everything below
+it without touching each dataset:</p>
 
 <pre>
-dataset_creation:
-  mode: steward_only | contributor_draft      # per-project policy
-  activation_requires: data_steward           # for contributor_draft
+effective(dataset) = organization policy
+                   ⊕ project policy          # nearer scope refines farther
+                   ⊕ dataset policy          # rare, admin-attached exception
+
+policy keys and their merge rule:
+  classification_default      nearest scope wins
+  retention                   nearest scope wins (per category)
+  quota                       nearest scope wins; a nearer scope may only tighten
+  required_metadata_schemas   COMPOSE — org base + project enrichment, exactly the
+                              schema registry's extends chain (catalog-search)
+  entry_layers_allowed        nearest scope wins; e.g. an org may forbid silver entry
 </pre>
 
-<p><code>contributor_draft</code> (the default for ordinary internal projects): contributors create
-<code>DRAFT</code> datasets that accept initial uploads but cannot publish Silver or Gold until a
-steward confirms identity, data kind, ownership, metadata contract, retention, classification, and
-non-duplication — then <code>DRAFT → ACTIVE</code>. Lifecycle: <code>DRAFT → ACTIVE → RETIRED</code>
-(plus <code>SUPERSEDED</code> for slug mistakes).</p>
+<p>Composition mirrors the <a href="catalog-search.html#schema-registry">schema registry</a>:
+where a policy carries schema requirements, the effective schema is the org base composed with
+the project enrichment, and ingest validates against the composition. Policy attachments are
+generation-versioned documents like every other descriptive document
+(<a href="layer-raw.html#generations">Raw §7</a>), audited, and resolved at decision time — a
+policy change applies to the next act, never retroactively to committed revisions.</p>
 
 <h2 id="layers">4. Layer capability matrices</h2>
 
@@ -190,12 +260,12 @@ export-controlled geometry).</p>
 <h3>Raw</h3>
 <table>
 <tr><th>Action</th><th>Allowed</th></tr>
-<tr><td>Upload revision / correction</td><td>contributor, steward, owner</td></tr>
-<tr><td>Create / withdraw a release tag</td><td>steward, owner</td></tr>
-<tr><td>Read raw <em>metadata</em></td><td>viewer, scientist, contributor, +</td></tr>
-<tr><td>Read raw <em>payload</em></td><td>explicit <code>raw_reader</code> grant, steward, owner</td></tr>
-<tr><td>Change TTL / pin</td><td>owner, retention authority</td></tr>
-<tr><td>Legal hold</td><td>owner or governance authority</td></tr>
+<tr><td>Upload revision / correction</td><td>developer</td></tr>
+<tr><td>Create / withdraw a release tag</td><td>developer, project_admin</td></tr>
+<tr><td>Read raw <em>metadata</em></td><td>reader and above</td></tr>
+<tr><td>Read raw <em>payload</em></td><td>reader today; intended: an explicit stricter grant (§2 note)</td></tr>
+<tr><td>Amend metadata post-commit</td><td>project_admin (append-only, allow-listed fields)</td></tr>
+<tr><td>Change TTL / pin / legal hold</td><td>project_admin (policy), governance authority (hold)</td></tr>
 <tr><td>Delete committed payload</td><td>retention service only (TTL/purge paths)</td></tr>
 <tr><td>Overwrite committed files</td><td class="k">nobody</td></tr>
 </table>
@@ -203,28 +273,29 @@ export-controlled geometry).</p>
 <h3>Bronze</h3>
 <table>
 <tr><th>Action</th><th>Allowed</th></tr>
-<tr><td>Request (re)build</td><td>contributor, steward</td></tr>
-<tr><td>Read</td><td>scientist, steward, authorized viewer</td></tr>
+<tr><td>Manual intake (upload arrays)</td><td>developer</td></tr>
+<tr><td>Request (re)build — auto-builder profiles</td><td>developer, project_admin</td></tr>
+<tr><td>Read</td><td>reader and above</td></tr>
 <tr><td>Write candidate / publish snapshot</td><td>Huron pipeline services only</td></tr>
 </table>
 
 <h3>Silver</h3>
 <table>
 <tr><th>Action</th><th>Allowed</th></tr>
-<tr><td>Read</td><td>scientist, viewer, steward</td></tr>
-<tr><td>Request canonicalization</td><td>scientist, steward</td></tr>
-<tr><td>Approve canonical contract</td><td>data_steward</td></tr>
+<tr><td>Read</td><td>reader and above</td></tr>
+<tr><td>Request canonicalization</td><td>developer</td></tr>
+<tr><td>Approve canonical contract</td><td>project_admin</td></tr>
 <tr><td>Write candidate / publish snapshot</td><td>Huron pipeline services only</td></tr>
 </table>
 
 <h3>Gold</h3>
 <table>
 <tr><th>Action</th><th>Allowed</th></tr>
-<tr><td>Read published</td><td>viewer, scientist</td></tr>
-<tr><td>Create candidate product version</td><td>scientist</td></tr>
-<tr><td>Validate</td><td>validator service / science reviewer</td></tr>
-<tr><td>Publish / deprecate / withdraw</td><td>product_publisher, steward</td></tr>
-<tr><td>Change product contract</td><td>steward / product owner</td></tr>
+<tr><td>Read published</td><td>reader and above</td></tr>
+<tr><td>Create candidate product version</td><td>developer</td></tr>
+<tr><td>Validate</td><td>validator service</td></tr>
+<tr><td>Publish / deprecate / withdraw</td><td>project_admin</td></tr>
+<tr><td>Change product contract</td><td>project_admin</td></tr>
 </table>
 
 <h2 id="capabilities">5. Capabilities and bindings</h2>
@@ -233,27 +304,28 @@ export-controlled geometry).</p>
 authorizer:</p>
 
 <pre>
-organization.create_project   organization.manage_members
-project.manage                project.create_dataset       project.manage_members
-project.change_retention      dataset.discover              dataset.read_metadata
-dataset.update_metadata       release.tag                   revision.create
-release.withdraw
-dataset.read_raw              dataset.read_bronze           dataset.read_silver
-dataset.read_gold             dataset.request_transform     product.create_candidate
-product.publish               product.deprecate             dataset.retire
-metadata.reclassify           retention.pin                 retention.legal_hold
-retention.purge.request       retention.purge.approve       audit.read
-apikey.manage_own             polaris.credentials
+organization.create      organization.update      organization.delete
+organization.policy_attach
+project.create           project.update           project.policy_attach
+dataset.create           dataset.update           dataset.policy_attach
+dataset.discover         release.create
+rbac.binding_manage      service_account.manage   user.manage
+data.read {layer…}       data.write {layer…}      # the two layer-scoped capabilities
 </pre>
+
+<p>Seventeen capabilities total; <code>data.read</code>/<code>data.write</code> carry the layer
+dimension as <code>Binding.layers</code> and everything else is control-plane. Retention, purge,
+amendment and audit acts are guarded by the admin capabilities on their scope today; splitting
+them into finer capabilities is a future refinement, not a v1 need.</p>
 
 <p>Bindings live in <code>role_bindings</code> (scope <code>SYSTEM | ORGANIZATION | PROJECT |
 DATASET</code>) with conditions and expiry:</p>
 
 <pre>
-{"principal": "group:mcnp-analysts", "role": "scientist",
- "scope_type": "project", "scope_id": "project-41", "effect": "allow",
- "conditions": {"maximum_classification": "internal",
-                "expires_at": "2027-01-01T00:00:00Z"}}
+{"principal": "group:mcnp-analysts", "role_code": "developer",
+ "scope_type": "PROJECT", "scope_id": "0191f0c3-7c2a-7f31-9a4e-2b6d5c1e4a70",
+ "effect": "ALLOW", "expires_at": "2027-01-01T00:00:00Z",
+ "conditions": {"maximum_classification": "internal"}}
 </pre>
 
 <p><strong>Resolution order:</strong> explicit deny → dataset binding → project binding →
@@ -283,11 +355,14 @@ day one, because retrofitting discovery gating is an authorization-model change,
 
 <table>
 <tr><th>Client</th><th>Mechanism</th><th>Resolver</th></tr>
-<tr><td>Svelte UI</td><td>OIDC (site IdP), session cookie</td><td><code>OidcResolver</code> — validates the IdP JWT, maps groups</td></tr>
+<tr><td>Svelte UI</td><td>OIDC login (site IdP) or password → <strong>server-side session, cookie</strong></td><td><code>SessionResolver</code></td></tr>
+<tr><td>Confidential services</td><td>OIDC bearer token</td><td><code>OidcResolver</code> — validates the JWT against the IdP's JWKS</td></tr>
 <tr><td>Python client / CLI / Aether</td><td><strong>API key (required)</strong>, <code>Authorization: Bearer hk_…</code></td><td><code>ApiKeyResolver</code></td></tr>
-<tr><td>In-cluster services</td><td>Service-account token</td><td><code>TokenReviewResolver</code></td></tr>
 <tr><td>Local dev</td><td>Trusted headers</td><td><code>DevHeaderResolver</code> — refuses to construct unless <code>ENV=development</code></td></tr>
 </table>
+
+<p class="note">All four resolvers produce the same <code>Principal</code>; see
+<a href="auth.html">Auth</a> for the session and login-flow detail.</p>
 
 <h3>API keys</h3>
 <ul>
@@ -301,8 +376,9 @@ narrow the owner's live permissions; a key never outlives or exceeds them, and r
 kills the keys.</li>
 <li>Expiry required: default 90 days, maximum 400; <code>last_used_at</code> tracked; unused-key
 reports for owners.</li>
-<li>Service accounts are first-class principals owned by a project (e.g. an automated producer
-that is <em>write-only</em> into one dataset), with keys managed by the project owner.</li>
+<li>Service accounts are first-class principals owned by an <strong>organization</strong>
+(created and revoked by its org admin), roleless by design (<a href="#service-accounts">§2</a>);
+their keys are managed by the org admin and carry the SA's intrinsic scope, never more.</li>
 </ul>
 
 <h2 id="dataplane">7. Data-plane enforcement</h2>
@@ -334,20 +410,23 @@ sync (see <a href="polaris.html#authz">Polaris §3</a>).</td></tr>
 <h2 id="recommended">8. Recommended default policy</h2>
 
 <pre>
-platform_admin      → creates organizations
-org_admin           → appoints project creators; approves projects
-project_owner       → manages membership and policy
-data_steward        → activates datasets, approves contracts and publication
-contributor         → uploads raw revisions and corrections
-scientist           → reads Bronze/Silver, creates candidate products
-product_publisher   → publishes validated Gold
-viewer              → reads approved Silver/Gold
+platform_owner        → creates organizations; provisions users
+organization_admin    → creates projects; org policies (schemas, retention defaults,
+                        classification); service accounts
+project_admin         → membership and bindings; project policies (enrichment schemas,
+                        retention, quota); amendments; Gold publication approval
+developer             → creates datasets (ACTIVE immediately); commits raw revisions;
+                        manual bronze intake; tags releases; submits candidate products
+reader                → discovers and reads what its scope allows
+service accounts (roleless, org-scoped)       → the only silver/gold writers; dataset CRUD
+platform service identities (internal)        → bronze builds/intake, retention, projection
 </pre>
 
 <p>The load-bearing defaults: org members don't create projects; project membership is explicit;
-contributors may draft datasets, stewards activate them; nobody overwrites committed raw; only
-services write published Bronze/Silver/Gold; raw payload read is stricter than dataset read; the
-project is the pond.</p>
+datasets are created under inherited policy and are active immediately; nobody overwrites
+committed raw; only services write published Bronze/Silver/Gold; the project is the pond.
+Roles stack — a person can hold <code>developer</code> on one project and
+<code>project_admin</code> on another; bind IdP groups, not individuals, wherever possible.</p>
 
 </main>
 </body>

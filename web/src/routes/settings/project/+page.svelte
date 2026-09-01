@@ -98,7 +98,7 @@
 		<PermissionEditor
 			grants={data.permissions}
 			scopeLabel="example-org/example-study"
-			availableRoles={['reader', 'developer', 'data_steward', 'project_admin', 'pipeline']}
+			availableRoles={['reader', 'developer', 'project_admin']}
 		/>
 	</section>
 {:else if active === 'general'}

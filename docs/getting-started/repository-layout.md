@@ -2,7 +2,7 @@
 
 ```text
 huron/
-├── design/                  THE authoritative design record (13 cross-linked HTML documents)
+├── design/                  THE authoritative design record (15 cross-linked HTML documents)
 ├── IMPLEMENTATION_PLAN.md   build order and code-level mechanics, P0–P10
 ├── RBAC_IMPLEMENTATION_PLAN.md
 ├── docs/                    this site — how to work on the repository

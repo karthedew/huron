@@ -28,7 +28,6 @@
 	let inviteEmail = $state('');
 	let inviteRole = $state<PermissionGrant['role']>('reader');
 	let serviceName = $state('');
-	let serviceRole = $state<PermissionGrant['role']>('pipeline');
 	let userQuery = $state('');
 	let serviceQuery = $state('');
 	let saved = $state(false);
@@ -42,19 +41,15 @@
 	const userRoles: PermissionGrant['role'][] = [
 		'reader',
 		'developer',
-		'data_steward',
 		'project_admin',
 		'organization_admin'
 	];
-	const serviceRoles: PermissionGrant['role'][] = ['pipeline', 'reader', 'developer'];
 	const roleNames: Record<PermissionGrant['role'], string> = {
 		reader: 'Reader',
 		developer: 'Developer',
-		data_steward: 'Data steward',
 		project_admin: 'Project admin',
 		organization_admin: 'Organization admin',
-		platform_owner: 'Platform owner',
-		pipeline: 'Pipeline'
+		platform_owner: 'Platform owner'
 	};
 
 	interface PrincipalRow {
@@ -165,29 +160,12 @@
 			lastActiveAt: null
 		};
 		members = [...members, member];
-		permissions = [
-			...permissions,
-			{
-				id: `grant-${member.id}`,
-				principal: member.email,
-				displayName,
-				principalKind: 'service_account',
-				role: serviceRole,
-				scope: data.organization.slug,
-				inherited: false
-			}
-		];
 		serviceName = '';
-		serviceRole = 'pipeline';
 		serviceDialog.close();
 	}
 
-	function setRole(row: PrincipalRow, value: PermissionGrant['role'] | 'none') {
+	function setRole(row: PrincipalRow, value: PermissionGrant['role']) {
 		if (row.grant?.inherited) return;
-		if (value === 'none') {
-			permissions = permissions.filter((permission) => permission.id !== row.grant?.id);
-			return;
-		}
 		if (row.grant) {
 			row.grant.role = value;
 			return;
@@ -198,7 +176,7 @@
 				id: `grant-${Date.now()}`,
 				principal: row.principal,
 				displayName: row.displayName,
-				principalKind: row.kind,
+				principalKind: row.kind === 'group' ? 'group' : 'user',
 				role: value,
 				scope: data.organization.slug,
 				inherited: false
@@ -402,13 +380,13 @@
 						</div>
 					{:else}
 						<select
-							value={row.grant?.role ?? 'none'}
+							value={row.grant?.role ?? 'unbound'}
 							onchange={(event) =>
-								setRole(row, event.currentTarget.value as PermissionGrant['role'] | 'none')}
+								setRole(row, event.currentTarget.value as PermissionGrant['role'])}
 							aria-label={`Role for ${row.displayName}`}
 							class="h-9 w-full rounded-md border border-app-line bg-app-bg px-2.5 text-xs font-medium outline-none focus:border-brand-strong"
 						>
-							<option value="none">No role</option>
+							<option value="unbound" disabled hidden>Unbound</option>
 							{#each userRoles as role}<option value={role}>{roleNames[role]}</option>{/each}
 						</select>
 					{/if}
@@ -466,7 +444,7 @@
 			<div
 				class="hidden grid-cols-[minmax(240px,1fr)_120px_150px_180px_44px] gap-3 border-b border-app-line bg-app-bg px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-app-muted md:grid"
 			>
-				<span>Service account</span><span>Status</span><span>Last active</span><span>Role</span
+				<span>Service account</span><span>Status</span><span>Last active</span><span>Authority</span
 				><span></span>
 			</div>
 			{#each filteredServiceRows as row (row.id)}
@@ -487,16 +465,12 @@
 						<span class="size-1.5 rounded-full bg-app-success"></span>{row.status}
 					</p>
 					<p class="text-xs text-app-muted">{formattedActivity(row.lastActiveAt)}</p>
-					<select
-						value={row.grant?.role ?? 'none'}
-						onchange={(event) =>
-							setRole(row, event.currentTarget.value as PermissionGrant['role'] | 'none')}
-						aria-label={`Role for ${row.displayName}`}
-						class="h-9 w-full rounded-md border border-app-line bg-app-bg px-2.5 text-xs font-medium outline-none focus:border-brand-strong"
+					<p
+						class="inline-flex w-fit items-center rounded-md border border-app-line bg-app-bg px-2.5 py-1.5 text-xs font-medium text-app-muted"
+						title="A service account's authority is intrinsic: CRUD on this organization's datasets at the silver and gold layers."
 					>
-						<option value="none">No role</option>
-						{#each serviceRoles as role}<option value={role}>{roleNames[role]}</option>{/each}
-					</select>
+						Silver + gold · intrinsic
+					</p>
 					<button
 						type="button"
 						class="grid size-8 place-items-center rounded-md text-app-muted hover:bg-app-sidebar-hover"
@@ -512,7 +486,7 @@
 		</div>
 		<p class="mt-3 text-xs text-app-muted">
 			Service accounts are non-human identities for automated jobs. Rotate their credentials and
-			grant only the role each pipeline needs.
+			keep each account scoped to its intended organization.
 		</p>
 	</section>
 {:else}
@@ -632,7 +606,8 @@
 				>
 			</div>
 			<p class="mt-1 text-sm text-app-muted">
-				Create a machine identity with an organization-scoped role.
+				A machine identity for pipelines. No role to pick: every service account can CRUD this
+				organization's datasets at the silver and gold layers — nothing else.
 			</p>
 		</div>
 		<div class="grid gap-4 p-5">
@@ -643,14 +618,6 @@
 					placeholder="Silver refresh pipeline"
 					class="h-10 rounded-md border border-app-line bg-app-bg px-3 text-sm font-normal text-app-fg"
 				/></label
-			>
-			<label class="grid gap-1.5 text-xs font-semibold text-app-muted"
-				>Organization role<select
-					bind:value={serviceRole}
-					class="h-10 rounded-md border border-app-line bg-app-bg px-3 text-sm font-normal text-app-fg"
-					>{#each serviceRoles as role}<option value={role}>{roleNames[role]}</option
-						>{/each}</select
-				></label
 			>
 			<div class="rounded-md border border-app-line bg-app-bg p-3 text-xs text-app-muted">
 				Credentials are shown once after creation. Store them in your organization secret manager.

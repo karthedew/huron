@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html" class="here">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -104,12 +105,12 @@ fail CI.</p>
 <tr><td>GET/PATCH</td><td><code>/organizations/{id}</code></td><td>PATCH: title/description; new generation; <code>If-Match</code></td></tr>
 <tr><td>POST/GET</td><td><code>/organizations/{id}/projects</code></td><td>org_admin or project_creator; template-governed</td></tr>
 <tr><td>GET/PATCH</td><td><code>/projects/{id}</code></td><td>settings incl. retention policy, quota, dataset_creation mode</td></tr>
-<tr><td>POST/GET</td><td><code>/projects/{id}/datasets</code></td><td><code>Idempotency-Key</code>; profile required; DRAFT per policy</td></tr>
+<tr><td>POST/GET</td><td><code>/projects/{id}/datasets</code></td><td><code>Idempotency-Key</code>; profile required; ACTIVE on creation, under inherited policy</td></tr>
 <tr><td>GET/PATCH</td><td><code>/datasets/{id}</code></td><td>slug immutable → <code>409 SLUG_IMMUTABLE</code></td></tr>
-<tr><td>POST</td><td><code>/datasets/{id}:activate</code> / <code>:retire</code></td><td>steward</td></tr>
+<tr><td>POST</td><td><code>/datasets/{id}:retire</code></td><td>project_admin</td></tr>
 <tr><td>POST/GET</td><td><code>/datasets/{id}/releases</code></td><td>tag a revision: body <code>{tag, revision_number, title}</code>; audited; never implicit at ingest</td></tr>
 <tr><td>GET</td><td><code>/datasets/{id}/releases/{tag}</code></td><td>resolves to exactly one revision, forever</td></tr>
-<tr><td>POST</td><td><code>/datasets/{id}/releases/{tag}:withdraw</code></td><td>steward; tombstone with reason. Tags are never repointed</td></tr>
+<tr><td>POST</td><td><code>/datasets/{id}/releases/{tag}:withdraw</code></td><td>project_admin; tombstone with reason. Tags are never repointed</td></tr>
 </table>
 
 <p>Browse endpoints are PostgreSQL-only, filterable by structural columns, cursor-paginated, with
@@ -129,7 +130,7 @@ the authorization predicate ahead of <code>LIMIT</code>. No free-text parameters
 <tr><td>GET</td><td><code>/datasets/{id}/revisions</code>, <code>/revisions/{id}</code></td><td>revision detail includes effective metadata (base + folded amendments), the tags pointing at it, and materialization states</td></tr>
 <tr><td>GET</td><td><code>/revisions/{id}/manifest</code></td><td>streamed from NFS</td></tr>
 <tr><td>GET</td><td><code>/revisions/{id}/files/{path}</code></td><td>issues a short-lived download capability; re-authorized per file (<code>dataset.read_raw</code>)</td></tr>
-<tr><td>POST</td><td><code>/revisions/{id}:amend</code></td><td>steward+; field allow-list; reclassification separately permissioned</td></tr>
+<tr><td>POST</td><td><code>/revisions/{id}:amend</code></td><td>project_admin; field allow-list; reclassification separately permissioned</td></tr>
 </table>
 
 <h2 id="layers">4. Layers, snapshots, products</h2>
@@ -139,11 +140,13 @@ the authorization predicate ahead of <code>LIMIT</code>. No free-text parameters
 <tr><td>GET</td><td><code>/datasets/{id}/layers</code></td><td>bronze/silver state: repo, latest published snapshot, per-revision materialization</td></tr>
 <tr><td>GET</td><td><code>/datasets/{id}/layers/{layer}/snapshots</code></td><td>registry, newest first; includes validation summary</td></tr>
 <tr><td>GET</td><td><code>/snapshots/{id}</code></td><td>provenance block, validation evidence, lineage links</td></tr>
-<tr><td>POST</td><td><code>/datasets/{id}/layers/bronze:rebuild</code></td><td>contributor/steward; enqueues job</td></tr>
+<tr><td>POST</td><td><code>/datasets/{id}/layers/bronze:rebuild</code></td><td>developer/project_admin; enqueues job (auto-builder profiles only — <a href="layer-bronze.html#auto-builder">deferred</a>)</td></tr>
+<tr><td>POST</td><td><code>/datasets/{id}/layers/{layer}/intake-sessions</code></td><td>manual intake for <code>bronze | silver</code> (<a href="layer-bronze.html#manual-intake">Bronze §4a</a>): body declares files (NetCDF/HDF5/zipped-Zarr), metadata envelope, and exactly one provenance assertion — <code>raw_revision_number</code> (same dataset) <em>or</em> <code>external_source</code> — refused with neither or both; developer role; reuses the <code>/transfer</code> surface</td></tr>
+<tr><td>GET/POST</td><td><code>/layer-intake-sessions/{id}</code> · <code>:verify</code> / <code>:commit</code> / <code>:abort</code></td><td>same session shape as raw ingest; <code>:commit</code> enqueues the intake job → snapshot CANDIDATE → validated → PUBLISHED (or FAILED with structured findings)</td></tr>
 <tr><td>GET/POST</td><td><code>/projects/{id}/products</code></td><td>create declares slug, shape, contract</td></tr>
 <tr><td>GET</td><td><code>/products/{id}</code> · <code>/products/{id}/versions</code></td><td>status incl. staleness + reason</td></tr>
 <tr><td>POST</td><td><code>/products/{id}/versions</code></td><td>submit derivation: inputs (dataset@layer or explicit snapshot), transform digest, params, validation suite → pins snapshots, runs job → CANDIDATE</td></tr>
-<tr><td>POST</td><td><code>/product-versions/{id}:publish</code> / <code>:withdraw</code></td><td>publisher/steward; publish requires passing validation evidence</td></tr>
+<tr><td>POST</td><td><code>/product-versions/{id}:publish</code> / <code>:withdraw</code></td><td>project_admin; publish requires passing validation evidence</td></tr>
 <tr><td>GET</td><td><code>/lineage/{kind}/{id}?direction=up|down&amp;depth=…</code></td><td>authorized, redacted rendering of the PG lineage graph</td></tr>
 </table>
 
@@ -178,8 +181,9 @@ GET  /data-access/grants                   # own active grants (audit/debug)
 reader within one credential TTL (≤ 1 h).</li>
 <li><code>layer: "silver"</code> resolves to the latest <em>published</em> snapshot and returns
 its ID, so even "give me latest" is reproducible after the fact.</li>
-<li>Credentials come from RGW STS (<code>AssumeRole</code> with an inline session policy scoped to
-the one repo prefix, read-only). The vending backend is a port; a deployment without STS falls back
+<li>Credentials come from the gateway's STS endpoint (<code>AssumeRole</code> with an inline session policy scoped to
+the one repo prefix, read-only) — gateway-conditional per the
+<a href="architecture.html#s3-portability">S3-portability boundary</a>. The vending backend is a port; a deployment without STS falls back
 to API-proxied chunk reads (<code>GET /data-access/proxy/…</code>) at reduced throughput — same
 client code path, degraded transport.</li>
 <li>Every grant is audited: who, which snapshot, which prefix, when, from where.</li>
@@ -190,14 +194,15 @@ client code path, degraded transport.</li>
 <table>
 <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
 <tr><td>GET</td><td><code>/search</code></td><td>LanceDB; <code>q</code>, <code>layer=raw|bronze|silver|gold</code>, <code>kind=dataset|revision|snapshot|product</code>, tags, facets; carries <code>projection_lag_seconds</code>; 503 when projection down — never a PG fallback</td></tr>
-<tr><td>POST/GET</td><td><code>/admin/science-profiles</code></td><td>publish immutable <code>(name, version)</code>; org stewards</td></tr>
-<tr><td>POST</td><td><code>/admin/extension-schemas</code></td><td>publish an immutable metadata-extension schema version</td></tr>
+<tr><td>POST/GET</td><td><code>/schemas</code></td><td>the <a href="catalog-search.html#schema-registry">schema registry</a>: publish/list schemas — envelope, extension, manifest, provenance, science-profile, contract kinds; scope <code>PLATFORM | ORGANIZATION | PROJECT</code>; org/project admins; published <code>(namespace, name, semver)</code> immutable</td></tr>
+<tr><td>GET</td><td><code>/schemas/{namespace}/{name}/{semver}</code> · <code>?effective_for=project:{id}</code></td><td>fetch one schema, or the <em>effective</em> composed schema (org base + project enrichment) a client pre-validates against</td></tr>
+<tr><td>POST</td><td><code>/schemas/{namespace}/{name}/{semver}:deprecate</code> / <code>:withdraw</code></td><td>deprecation stops new declarations; withdrawal is the audited tombstone</td></tr>
 <tr><td>POST</td><td><code>/admin/revisions/{id}:request-purge</code> · <code>/admin/purges/{id}:approve</code></td><td>two-person, different subjects</td></tr>
 <tr><td>POST/DELETE</td><td><code>/retention/holds</code></td><td>pins and legal holds; audited</td></tr>
 <tr><td>GET</td><td><code>/admin/reconciliation/report</code> · <code>:plan</code> / <code>:apply</code></td><td>dry-run first</td></tr>
 <tr><td>GET/POST</td><td><code>/admin/role-bindings</code></td><td>binding administration (scoped: org admins within their org, owners within their project)</td></tr>
 <tr><td>GET</td><td><code>/audit</code></td><td>filterable audit stream for auditors</td></tr>
-<tr><td>GET</td><td><code>/healthz</code> · <code>/readyz</code> · <code>/metrics</code></td><td><code>/readyz</code> checks PG + NFS + RGW, never LanceDB or Polaris</td></tr>
+<tr><td>GET</td><td><code>/healthz</code> · <code>/readyz</code> · <code>/metrics</code></td><td><code>/readyz</code> checks PG + NFS + object store, never LanceDB or Polaris</td></tr>
 </table>
 
 <h2 id="errors">7. Error codes</h2>
@@ -214,7 +219,7 @@ AMENDMENT_FIELD_FORBIDDEN PROJECTION_UNAVAILABLE  GRANT_EXPIRED
 GRANT_SCOPE_EXCEEDED
 LAYER_NOT_MATERIALIZED   SNAPSHOT_NOT_PUBLISHED   PRODUCT_VERSION_EXISTS
 VALIDATION_REQUIRED      VALIDATION_FAILED        INPUT_NOT_READABLE
-CLASSIFICATION_EXCEEDED  PRODUCT_STALE_INPUT      DATASET_DRAFT
+CLASSIFICATION_EXCEEDED  PRODUCT_STALE_INPUT
 APIKEY_EXPIRED           APIKEY_REVOKED           QUOTA_EXCEEDED
 RETENTION_HOLD_PRESENT   PROFILE_UNKNOWN          CONTRACT_MISMATCH
 </pre>

@@ -84,7 +84,7 @@ async def _assert_against(dsn: str) -> None:
         await _assert_policy_round_trip(pool)
         await _assert_api_key_round_trip(pool)
         await _assert_api_key_add_reports_a_missing_project(pool)
-        await _assert_trigger_rejects_pipeline_for_a_user_principal(pool)
+        await _assert_trigger_rejects_any_service_account_binding(pool)
         await _assert_trigger_rejects_platform_owner_at_organization_scope(pool)
         await _assert_trigger_rejects_a_malformed_principal_prefix(pool)
         await _assert_trigger_rejects_an_exact_duplicate_system_binding(pool)
@@ -186,8 +186,8 @@ async def _assert_grant_role_validates_before_touching_the_database(pool: asyncp
     store = PostgresRbacStore(pool)
     with pytest.raises(PrincipalKindNotAllowed):
         await store.grant_role(
-            principal="user:eve",
-            role_code="pipeline",
+            principal="sa:astro/feed",
+            role_code="reader",
             scope_type=ScopeType.PROJECT,
             scope_id=uuid4(),
             created_by="contract-test",
@@ -368,13 +368,13 @@ async def _assert_api_key_add_reports_a_missing_project(pool: asyncpg.Pool) -> N
 # -- triggers: the backstop for rows a store never wrote ----------------------
 
 
-async def _assert_trigger_rejects_pipeline_for_a_user_principal(pool: asyncpg.Pool) -> None:
+async def _assert_trigger_rejects_any_service_account_binding(pool: asyncpg.Pool) -> None:
     with pytest.raises(asyncpg.exceptions.RaiseError):
         await pool.execute(
             """
             INSERT INTO role_bindings
                 (id, principal, role_code, scope_type, scope_id, effect, created_by, created_at)
-            VALUES ($1, 'user:eve', 'pipeline', 'PROJECT', $2, 'ALLOW', 'trigger-test', now())
+            VALUES ($1, 'sa:astro/feed', 'reader', 'PROJECT', $2, 'ALLOW', 'trigger-test', now())
             """,
             uuid7(),
             uuid4(),

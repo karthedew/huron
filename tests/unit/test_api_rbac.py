@@ -134,16 +134,6 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
         == 403
     )
 
-    # The pipeline role refuses human principals outright.
-    assert (
-        client.post(
-            f"/api/v1/projects/{project_id}/bindings",
-            json={"principal": "user:bob", "role": "pipeline"},
-            headers=_headers("alice"),
-        ).status_code
-        == 422
-    )
-
     # alice creates the pipeline service account and mints its key.
     account = client.post(
         f"/api/v1/organizations/{organization_id}/service-accounts",
@@ -151,8 +141,8 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
         headers=_headers("alice"),
     )
     assert account.status_code == 201
-    principal_id = account.json()["principal_id"]
     subject = account.json()["subject"]
+    principal_id = account.json()["principal_id"]
     key = client.post(
         f"/api/v1/organizations/{organization_id}/service-accounts/{principal_id}/api-keys",
         json={"name": "ci"},
@@ -161,38 +151,52 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
     assert key.status_code == 201
     token = key.json()["secret"]
 
-    # Bind pipeline to the service account at project scope.
-    pipeline_binding = client.post(
-        f"/api/v1/projects/{project_id}/bindings",
-        json={"principal": f"sa:{subject}", "role": "pipeline"},
-        headers=_headers("alice"),
+    # Service accounts hold no roles: binding one is refused outright.
+    assert (
+        client.post(
+            f"/api/v1/projects/{project_id}/bindings",
+            json={"principal": f"sa:{subject}", "role": "reader"},
+            headers=_headers("alice"),
+        ).status_code
+        == 422
     )
-    assert pipeline_binding.status_code == 201
-    binding_id = pipeline_binding.json()["id"]
 
-    # The service account writes silver and gold - and not raw.
+    # Its authority is intrinsic - no binding step. Silver and gold only:
+    # raw and bronze are the human contribution surface.
     service_headers = {"Authorization": f"Bearer {token}"}
     session_info = client.get("/auth/session", headers=service_headers)
     assert session_info.json()["kind"] == "service_account"
-    for layer, expected in (("silver", 201), ("gold", 201), ("bronze", 201), ("raw", 403)):
+    for layer, expected in (("silver", 201), ("gold", 201), ("bronze", 403), ("raw", 403)):
         response = client.post(
             f"/api/v1/datasets/{dataset_id}/layers/{layer}/write-intents",
             headers=service_headers,
         )
         assert response.status_code == expected, layer
 
-    # Revoking the binding removes the access.
-    assert (
-        client.delete(f"/api/v1/bindings/{binding_id}", headers=_headers("alice")).status_code
-        == 204
-    )
+    # Dataset CRUD is part of that intrinsic authority (direct entry mints
+    # the dataset a feed is about to fill) - org-wide, so this project too.
     assert (
         client.post(
-            f"/api/v1/datasets/{dataset_id}/layers/silver/write-intents",
-            headers=service_headers,
+            f"/api/v1/projects/{project_id}/datasets",
+            json={
+                "slug": "feed-0001",
+                "title": "Feed 1",
+                "profile_name": "neutron-monitor",
+                "profile_version": "2.1",
+                "entry_layer": "silver",
+            },
+            headers={**service_headers, "Idempotency-Key": str(uuid4())},
         ).status_code
-        == 403
+        == 201
     )
+
+    disabled = client.post(
+        f"/api/v1/organizations/{organization_id}/service-accounts/{principal_id}/disable",
+        headers=_headers("alice"),
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["disabled_at"] is not None
+    assert client.get("/auth/session", headers=service_headers).status_code == 401
 
 
 def test_policy_attachment_requires_the_scoped_capability(client: TestClient) -> None:

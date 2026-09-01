@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -146,7 +147,7 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
               EXPIRED                            present only after TTL expiration (§8)
               payload/
                 shielding.i  outp  meshtal  runtpe  slurm-881247.log
-        bronze/  silver/  gold/                  Icechunk repos on RGW, same spine (§2 of each)
+        bronze/  silver/  gold/                  Icechunk repos on the object store, same spine (§2 of each)
 </pre>
 
 <p class="note"><span class="k">One spine, four layers.</span> The
@@ -154,7 +155,7 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
 layer is the <em>leaf</em>: a dataset's raw, Bronze, Silver and Gold all hang off the same
 dataset directory, so "everything about run-0042" is one prefix. The substrates still differ —
 raw is files on NFS rooted at <code>/data/</code>, while Bronze/Silver/Gold are Zarr + Icechunk
-repositories on Ceph RGW rooted at the bucket prefix — but the path <em>shape</em> below the
+repositories on S3-compatible object storage rooted at the bucket prefix — but the path <em>shape</em> below the
 root is the same in both, which is what lets one RBAC scope name one storage prefix
 (<a href="rbac.html">RBAC</a>). The single exception is a Gold product fusing several datasets:
 it has no one dataset to sit under, so it lives at <code>project/…/product/…</code> instead
@@ -191,10 +192,14 @@ revision number,
 title, creators, <code>committed_by</code>/<code>committed_at</code> (system-generated — a
 client-supplied value is a 400), classification, tags, source, coverage, manifest digest, and
 namespaced <code>extensions</code> per science profile (e.g. <code>org.example.mcnp/1.0</code>
-carrying code version, input-deck path, parameter axes). The core envelope schema is versioned in
-the repository; extension schemas are published by stewards into a registry whose rows are
-immutable per <code>(namespace, version)</code> and mirrored to storage so recovery never depends
-on the database. Unknown extension namespaces are stored, not rejected; readers must preserve
+carrying code version, input-deck path, parameter axes). Every schema involved — the
+core envelope (registered at platform scope from the repository seed at bootstrap), organization
+metadata standards, and per-project enrichments over them — lives in the
+<a href="catalog-search.html#schema-registry">schema registry</a>: rows immutable per
+<code>(namespace, name, semver)</code> and mirrored to storage so recovery never depends on the
+database. At ingest, the envelope is validated against the <em>effective</em> schema — the org
+base composed with the project's enrichment — and records the exact schema references it
+validated against. Unknown extension namespaces are stored, not rejected; readers must preserve
 unknown keys round-trip.</p>
 
 <h3>Manifest</h3>
@@ -223,7 +228,7 @@ make the citation meaningless. Retagging means issuing a new tag; a wrong tag is
 audited tombstone), not repointed.</p>
 
 <h3>Amendments</h3>
-<p>Post-commit metadata correction is steward-only and append-only: numbered
+<p>Post-commit metadata correction is project-admin-only and append-only: numbered
 <code>amendments/NNNN.json</code> documents, each a whole-key replacement over an allow-list
 (title, description, tags, coverage, source system, extension documents — plus
 <code>data_classification</code>, which requires a separate permission and emits its own audit
@@ -411,7 +416,7 @@ reconciler never silently rewrites catalog history — disagreements become find
 report entries.</li>
 <li><strong><code>lakectl rebuild --from-storage</code></strong> reconstructs PostgreSQL structural
 rows from the NFS tree alone (orgs → datasets from generation documents, revisions from
-<code>COMMITTED</code> markers, release tags from <code>releases/*.json</code>), then the derived-layer registry from RGW snapshot metadata, then
+<code>COMMITTED</code> markers, release tags from <code>releases/*.json</code>), then the derived-layer registry from object-store snapshot metadata, then
 the LanceDB projection. RBAC, audit, idempotency records, and API keys are recoverable only from
 PostgreSQL backups — stated plainly so nobody assumes otherwise.</li>
 </ul>
@@ -434,8 +439,11 @@ stream. The <code>mode</code> field in the upload plan is the seam this slots in
 <p class="note"><span class="k">What the scientist sees.</span> None of this. They run
 <code>huron upload ./run-0042 --project modeling-simulation --dataset run-0042 --infer
 --confirm</code>, confirm the handful of human-owned assertions the extractor could not infer
-(campaign, run purpose, quality state), and get back a committed, checksummed, immutable revision
-with its Bronze build already queued. When that revision is the one they want cited, they tag it:
+(campaign, run purpose, quality state), and get back a committed, checksummed, immutable revision.
+Bronze follows by <a href="layer-bronze.html#manual-intake">manual intake</a> when they want
+arrays — or automatically, once their profile opts into an extractor
+(<a href="layer-bronze.html#auto-builder">deferred</a>). When that revision is the one they want
+cited, they tag it:
 <code>huron release create --dataset run-0042 --revision 1 --tag v1.0</code>.</p>
 
 </main>

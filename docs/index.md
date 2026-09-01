@@ -3,7 +3,7 @@
 This site covers **working on Huron**: setting up an environment, running the stack, the checks
 CI enforces, and how the repository is laid out.
 
-It does not describe the architecture. That lives in **`design/`** — fourteen cross-linked
+It does not describe the architecture. That lives in **`design/`** — fifteen cross-linked
 documents in the repository root that are the complete and only authoritative record of what
 Huron is and why. Open `design/index.html` in a browser; it is deliberately not part of this
 site, so there is exactly one copy of it.

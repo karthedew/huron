@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -174,7 +175,7 @@ combination is worth publishing, validating and citing, it is promoted to a
 <h2 id="contract">3. The canonical contract</h2>
 
 <p>Per science profile, a versioned <em>canonical contract</em> defines the Silver shape. It is the
-steward-approved agreement that makes cross-run analysis possible — the contract is what
+admin-approved agreement that makes cross-run analysis possible — the contract is what
 <em>decides which runs are comparable</em>, and therefore which repos may be concatenated:</p>
 
 <pre>
@@ -200,8 +201,8 @@ attrs:
 
 <ul>
 <li><strong>Naming</strong> follows a per-domain canonical vocabulary (CF-style where CF applies;
-a registry table where it does not). New variable names require steward approval — that is the
-"approve canonical contract" capability in <a href="rbac.html#layers">RBAC</a>.</li>
+a registry table where it does not). New variable names require project-admin approval — that is the
+"approve canonical contract" act in <a href="rbac.html#layers">RBAC</a>.</li>
 <li><strong>Units</strong> are canonical expressions validated with a units library; Bronze→Silver
 conversion factors are recorded in the snapshot provenance.</li>
 <li><strong>Sweep parameters become coordinates.</strong> Values confirmed at ingest
@@ -245,12 +246,17 @@ from S118. That is what lets Gold staleness be computed precisely — a product 
 these bytes: no ingest session, no manifest, no Bronze extraction, and the retention clock
 (<a href="layer-raw.html#retention">Raw §8</a>, <code>starts: after_silver_published</code>) has
 nothing to count. The publication path is otherwise identical — candidate on a working branch,
-the same validator, fast-forward and tag — because the contract check is the same check:</p>
+the same validator, fast-forward and tag — because the contract check is the same check.
+Direct entry has two intake forms: <strong>manual upload</strong> by a scientist or engineer —
+the v1 path, specified with Bronze's mechanics in
+<a href="layer-bronze.html#manual-intake">Bronze §4a</a> and applying at Silver with the contract
+check swapped in as the validator — and an <strong>automated feed</strong> run by a pipeline
+service account, shown here:</p>
 
 <pre>
 external source (streaming feed, instrument, published reference data)
    ▼
-Ingest pipeline service account (digest-pinned container; <a href="rbac.html#roles">ingest_pipeline</a> role)
+Organization service account (digest-pinned container; roleless — <a href="rbac.html#service-accounts">intrinsic silver/gold authority</a>)
    ▼  candidate snapshot on branch build/{batch_id}
 Validator — the same silver checks, with one substitution:
    ✓ contract-required variables present, dims/units exact
@@ -263,7 +269,11 @@ publish: fast-forward main, tag silver/{Snnn}, catalog row, lineage <em>root</em
 </pre>
 
 <p>The external-provenance block is what makes such a snapshot auditable, and it is required —
-a Silver snapshot with neither a Bronze reference nor an external source is refused:</p>
+a Silver snapshot with neither a Bronze reference nor an external source is refused. (On manual
+intake, <code>ingested_by</code> names the human who initiated the upload and owns its assertions
+— <code>user:…</code> rather than <code>sa:…</code> — and <code>uploaded_files</code> carries the
+digests of what they sent; the storage writer is still the intake service account, so invariant J
+is untouched.)</p>
 
 <pre>
 {
@@ -299,7 +309,7 @@ ds_pinned = huron.open_snapshot("S117")            # exact reproducibility
 
 <p>The returned object is a lazy Xarray dataset over Icechunk/Zarr — chunked reads go straight to
 object storage under a scoped read grant (<a href="python-client.html">client doc</a>). Scientists
-request canonicalization parameters and contract changes through stewards; they never write Silver
+request canonicalization parameters and contract changes through the project admin; they never write Silver
 storage (invariant J).</p>
 
 <p class="note"><span class="k">Consistency stance.</span> Silver is eventually consistent with Raw

@@ -40,14 +40,6 @@
 	{#each data.dataset.tags as tag}<Badge>{tag}</Badge>{/each}
 </p>
 
-{#if data.dataset.lifecycle === 'DRAFT'}
-	<Callout kind="warn">
-		This dataset is a <strong>DRAFT</strong>. A steward must complete the activation checklist —
-		identity, kind, ownership, contract, retention, classification, duplication — before it accepts
-		ingest. The checklist UI is P5 work.
-	</Callout>
-{/if}
-
 <h2>Releases</h2>
 {#if data.releases.length === 0}
 	<EmptyState title="No releases" detail="Nothing has been ingested into this dataset yet." />

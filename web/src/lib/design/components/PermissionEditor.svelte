@@ -7,8 +7,7 @@
 		Shield,
 		Trash2,
 		UserRound,
-		UsersRound,
-		Workflow
+		UsersRound
 	} from '@lucide/svelte';
 	import { untrack } from 'svelte';
 	import type { PermissionGrant } from '$api/types';
@@ -22,7 +21,7 @@
 	let {
 		grants,
 		scopeLabel,
-		availableRoles = ['reader', 'developer', 'data_steward', 'project_admin']
+		availableRoles = ['reader', 'developer', 'project_admin']
 	}: Props = $props();
 	let rows = $state(untrack(() => [...grants]));
 	let dialog: HTMLDialogElement;
@@ -34,11 +33,9 @@
 	const roleNames: Record<PermissionGrant['role'], string> = {
 		reader: 'Reader',
 		developer: 'Developer',
-		data_steward: 'Data steward',
 		project_admin: 'Project admin',
 		organization_admin: 'Organization admin',
-		platform_owner: 'Platform owner',
-		pipeline: 'Pipeline'
+		platform_owner: 'Platform owner'
 	};
 
 	const visibleRows = $derived(
@@ -50,7 +47,7 @@
 	);
 
 	function iconFor(kind: PermissionGrant['principalKind']) {
-		return kind === 'group' ? UsersRound : kind === 'service_account' ? Workflow : UserRound;
+		return kind === 'group' ? UsersRound : UserRound;
 	}
 
 	function addGrant() {
@@ -60,7 +57,7 @@
 			...rows,
 			{
 				id: `grant-${Date.now()}`,
-				principal: `${principalKind === 'service_account' ? 'sa' : principalKind}:${value}`,
+				principal: `${principalKind}:${value}`,
 				displayName: value.includes('@') ? value.split('@')[0].replace(/[._-]/g, ' ') : value,
 				principalKind,
 				role,
@@ -198,17 +195,11 @@
 				>Principal type<select
 					bind:value={principalKind}
 					class="h-10 rounded-md border border-app-line bg-app-bg px-3 text-sm font-normal text-app-fg"
-					><option value="user">User</option><option value="group">Team / group</option><option
-						value="service_account">Service account</option
-					></select
+					><option value="user">User</option><option value="group">Team / group</option></select
 				></label
 			>
 			<label class="grid gap-1.5 text-xs font-semibold text-app-muted"
-				>{principalKind === 'user'
-					? 'Email or subject'
-					: principalKind === 'group'
-						? 'Group name'
-						: 'Service-account name'}<input
+				>{principalKind === 'user' ? 'Email or subject' : 'Group name'}<input
 					bind:value={principal}
 					required
 					placeholder={principalKind === 'user' ? 'name@example.org' : 'science-data'}

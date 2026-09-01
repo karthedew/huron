@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -87,8 +88,9 @@ stands on its own, and it owes nothing to any earlier prototype, plan, or codeba
 <h2 id="what">1. What Huron is</h2>
 
 <p>Huron ingests complete scientific artifacts — MCNP runs, RELAP outputs, instrument captures,
-simulation ensembles — as immutable <em>Raw</em> revisions, converts them automatically into
-source-faithful <em>Bronze</em> arrays, canonicalizes those into standardized <em>Silver</em>
+simulation ensembles — as immutable <em>Raw</em> revisions, converts them into
+source-faithful <em>Bronze</em> arrays — by manual intake in v1, by automated builds where a
+project later adds an extractor, canonicalizes those into standardized <em>Silver</em>
 datasets that scientists analyze through Xarray without ever parsing native formats, and publishes
 scientist-derived results as versioned, fully lineage-pinned <em>Gold</em> products.</p>
 
@@ -176,13 +178,16 @@ as immutable tags.</strong></td>
 worth citing". Making the dataset the instance and the release a tag gives one counter instead of
 two and makes raw versioning identical to Icechunk's, so scientists learn the model once.</td></tr>
 <tr><td>4</td>
-<td><strong>Bronze, Silver, and Gold are Zarr&nbsp;+&nbsp;Icechunk repositories on Ceph RGW.</strong>
+<td><strong>Bronze, Silver, and Gold are Zarr&nbsp;+&nbsp;Icechunk repositories on S3-compatible object storage.</strong>
 One Bronze repo per dataset; one Silver repo per dataset; one Gold repo per product, stored under
 its source dataset when single-source and under the project when fused. Humans never write them;
 every publication is a validated Icechunk snapshot.</td>
 <td>Derived data as files beside raw on NFS</td>
 <td>Icechunk gives transactional snapshots and time travel on object storage; concurrent
-scientific reads scale on RGW; the raw filesystem stays reserved for evidence.</td></tr>
+scientific reads scale on the object store; the raw filesystem stays reserved for evidence. The
+deployment target is Red&nbsp;Hat OpenShift with cluster-supplied object storage, so Huron assumes
+only the portable S3 core — never a vendor extension
+(<a href="architecture.html#s3-portability">the portability boundary</a>).</td></tr>
 <tr><td>5</td>
 <td><strong>Three catalog stores, one job each — and one search index for all four layers.</strong>
 PostgreSQL holds structural state only (identity, sequencing, locks, registry, RBAC, audit, outbox).
@@ -194,7 +199,7 @@ down means <code>/search</code> is 503 while browse keeps working.</td>
 <td>Two implementations of one capability drift, and the rarely-exercised one is broken when needed.
 A scientist searching "absorbed dose" does not know which layer holds the answer. OpenMetadata was
 evaluated and rejected: its policies govern operations inside its own catalog and cannot authorize a
-read on NFS or a scoped grant on RGW, so it would add a second RBAC system to keep in agreement with
+read on NFS or a scoped grant on the object store, so it would add a second RBAC system to keep in agreement with
 the first — see <a href="catalog-search.html#split">Catalog &amp; Search</a>.</td></tr>
 <tr><td>6</td>
 <td><strong>Full logical copy per revision.</strong> Every revision directory is complete and
@@ -221,7 +226,7 @@ identity per caller.</td></tr>
 <tr><td>9</td>
 <td><strong>Scientists read Bronze/Silver/Gold directly from object storage via short-lived,
 prefix-scoped credentials vended by the API.</strong> The control plane authorizes and pins the
-snapshot; the data plane is RGW.</td>
+snapshot; the data plane is the object store.</td>
 <td>Proxying array bytes through the API</td>
 <td>Array reads are bulk and parallel; a proxy makes the control plane the bandwidth bottleneck.
 RBAC is enforced at grant issuance and on every renewal.</td></tr>
@@ -273,7 +278,11 @@ same in all four layers and scientists learn it once.</td></tr>
 and Silver each accept data that arrives already in that form from outside the lake — a streaming
 feed, an instrument, published reference data — carrying an
 <a href="layer-silver.html#direct-entry">external-provenance block</a> in place of the lower-layer
-references, and rooting lineage where it enters. Gold accepts no direct entry: every product
+references, and rooting lineage where it enters. Raw is never a prerequisite for Bronze: the v1
+intake path is a <a href="layer-bronze.html#manual-intake">manual upload</a> by a scientist —
+linked to a raw revision of the same dataset when one exists, external-provenance when none does —
+and the automatic raw&rarr;bronze builder is deferred, since a per-profile extractor is custom
+code Huron does not require of projects at this stage. Gold accepts no direct entry: every product
 version carries a derivation record (invariant K). "Trusted" and "shippable" are properties
 expressed by contract validation, release tags, classification and read grants — never by
 promoting bytes into a higher layer.</td>
@@ -284,6 +293,37 @@ those forms, and the retention clock has nothing to count for them. Defining Gol
 than derivation would mean copying validated Silver through an identity transform — storage paid
 twice, staleness tracked on a copy that adds no meaning, and the word "gold" no longer describing
 what was done to the data.</td></tr>
+<tr><td>16</td>
+<td><strong>One schema registry governs every structured document.</strong> Envelope, manifest,
+provenance, extension metadata, science profiles and canonical contracts are all rows in a single
+PostgreSQL <a href="catalog-search.html#schema-registry">schema registry</a> — immutable once
+published per <code>(namespace, name, semver)</code>, mirrored to object storage, and scoped
+<code>PLATFORM</code> / <code>ORGANIZATION</code> / <code>PROJECT</code>, where a project schema
+<em>enriches</em> the organization base it extends and ingest validates against the composed
+effective schema.</td>
+<td>Core schemas versioned only in the repository, plus a separate extension registry, plus
+profile rows — three lifecycles for one kind of thing</td>
+<td>Organizations need org-wide metadata standards and projects need to enrich them without
+forking them; one registry gives every schema the same immutability, governance, deprecation and
+recovery story, and a revision can name exactly which schema versions it validated against —
+forever resolvable even after a database rebuild.</td></tr>
+<tr><td>17</td>
+<td><strong>Five human roles, roleless service accounts, governance by inherited policy.</strong>
+<code>reader</code>, <code>developer</code>, <code>project_admin</code>,
+<code>organization_admin</code>, <code>platform_owner</code> are the whole role vocabulary — no
+steward role, no "no role" entry, and no roles for service accounts: an SA is a single-purpose,
+organization-owned identity whose authority is intrinsic — authenticate and CRUD its org's
+datasets at the silver and gold layers (<a href="rbac.html#service-accounts">RBAC §2</a>). Any
+developer creates datasets and commits revisions; datasets are ACTIVE on creation; admins govern
+through <a href="rbac.html#policies">policies attached at their scope</a> that everything below
+inherits (org → project → dataset), and through publication approval.</td>
+<td>A dedicated data-steward role gating dataset creation and a DRAFT → ACTIVE
+activation checklist</td>
+<td>The steward's only capability delta over a developer was policy attachment, which admins
+already held — a whole role for one act taxed every project with a second governance seat and a
+human gate before ingest. Inherited policy applies the same governance automatically, at the
+scope where authority actually lives, and validation-gated publication keeps the quality
+bar.</td></tr>
 </table>
 
 <h2 id="docmap">4. Document map</h2>
@@ -296,8 +336,8 @@ picture.</p></div>
 <p>Directory layout, the POSIX commit protocol, ingest sessions, hardlink dedup, sealing,
 TTL expiration, purge.</p></div>
 <div class="card"><h3><a href="layer-bronze.html">Bronze Layer</a></h3>
-<p>Source-faithful Zarr, science profiles and extractors, Icechunk snapshot model, validation
-gates.</p></div>
+<p>Source-faithful Zarr, science profiles, manual intake (v1) and the deferred auto-builder,
+Icechunk snapshot model, validation gates.</p></div>
 <div class="card"><h3><a href="layer-silver.html">Silver Layer</a></h3>
 <p>Canonicalization contracts, the multi-run array space, corrections and region replacement.</p></div>
 <div class="card"><h3><a href="layer-gold.html">Gold Layer</a></h3>
@@ -321,6 +361,9 @@ grants, key management.</p></div>
 reproducibility pinning.</p></div>
 <div class="card"><h3><a href="frontend.html">Svelte Frontend</a></h3>
 <p>Pages, flows, and the admin surfaces; OIDC sessions; generated TypeScript client.</p></div>
+<div class="card"><h3><a href="workflows.html">Scientist Workflows</a></h3>
+<p>The end-to-end journey — create dataset, declare entry layer, ingest raw or bronze, publish,
+tag, open — in web-UI and Python-client form.</p></div>
 <div class="card"><h3><a href="roadmap.html">Roadmap</a></h3>
 <p>The greenfield build: phases, mechanical gates, and sequencing rationale.</p></div>
 </div>
@@ -365,7 +408,7 @@ Gold  shielding-dose-response 1.0.0 = snapshot G021   (validated, published, dis
 <tr><td>Product</td><td>A named, versioned Gold deliverable with pinned inputs, transform digest, and validation evidence.</td></tr>
 <tr><td>Access grant</td><td>Short-lived, prefix-scoped object-storage credentials plus a snapshot pointer, issued by the API after authorization.</td></tr>
 <tr><td>Aether</td><td>The compute/analysis framework scientists use; consumes Huron's Xarray-compatible open paths and runs transformations.</td></tr>
-<tr><td>Amendment</td><td>Steward-only, append-only metadata correction on a committed revision.</td></tr>
+<tr><td>Amendment</td><td>Project-admin-only, append-only metadata correction on a committed revision.</td></tr>
 <tr><td>Projection</td><td>Rebuildable derived state (LanceDB search tables); never authoritative.</td></tr>
 <tr><td>Sealing</td><td>Removing write permission from a committed revision's files (<code>0444</code>/<code>0555</code>).</td></tr>
 </table>

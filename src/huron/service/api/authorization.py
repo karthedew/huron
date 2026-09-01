@@ -45,6 +45,7 @@ from huron.pkg.catalog.layers import (
 )
 from huron.pkg.rbac import Binding, Decision, Scope, ScopeType, decide
 from huron.pkg.rbac import Principal as RbacPrincipal
+from huron.pkg.rbac.roles import PRINCIPAL_KIND_SERVICE_ACCOUNT, service_account_bindings
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -245,6 +246,40 @@ async def cached_bindings_for(
     return cache[identifiers]
 
 
+async def bindings_for_principal(
+    request: Request, repository: HierarchyRepository, actor: RbacPrincipal
+) -> tuple[Binding, ...]:
+    """The bindings ``decide()`` should see for this caller.
+
+    Humans (and their groups) resolve through stored role bindings. A
+    service account holds no roles and has no binding rows: its whole
+    authority is intrinsic to the principal kind, synthesized from the
+    account's owning organization (``service_account_bindings``). An
+    authenticated ``sa:`` principal with no service-account row - a key
+    that outlived its account - gets no bindings and is denied everywhere.
+    """
+    if actor.kind != PRINCIPAL_KIND_SERVICE_ACCOUNT:
+        return await cached_bindings_for(request, repository, actor.identifiers)
+    cache: dict[frozenset[str], tuple[Binding, ...]] | None = getattr(
+        request.state, "binding_cache", None
+    )
+    if cache is None:
+        cache = {}
+        request.state.binding_cache = cache
+    if actor.identifiers not in cache:
+        try:
+            account = await repository.service_account_by_subject(actor.subject)
+        except DomainError:
+            cache[actor.identifiers] = ()
+        else:
+            cache[actor.identifiers] = (
+                service_account_bindings(f"sa:{actor.subject}", account.organization_id)
+                if account.disabled_at is None
+                else ()
+            )
+    return cache[actor.identifiers]
+
+
 async def check(
     request: Request,
     principal: Principal,
@@ -255,7 +290,7 @@ async def check(
 ) -> None:
     """403 unless the principal's role bindings allow ``capability`` here."""
     actor = as_rbac_principal(principal)
-    bindings = await cached_bindings_for(request, get_repository(request), actor.identifiers)
+    bindings = await bindings_for_principal(request, get_repository(request), actor)
     if decide(bindings, actor, capability, scope, layer=layer) is not Decision.ALLOW:
         suffix = f" on layer {layer}" if layer else ""
         raise Forbidden(
@@ -370,6 +405,7 @@ __all__ = [
     "Forbidden",
     "LayerWrite",
     "as_rbac_principal",
+    "bindings_for_principal",
     "cached_bindings_for",
     "check",
     "clear_login_flow_cookie",

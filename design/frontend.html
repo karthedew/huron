@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html" class="here">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -124,11 +125,12 @@ layer, org, project, tags, classification, profile, quality state. Result cards 
 "browse" tree — never a degraded search.</td></tr>
 <tr><td class="k">Organization</td>
 <td>Projects list (visibility-filtered), members and delegated roles (org_admin), science-profile
-registry (steward): published versions, immutability notice, install-to-project.</td></tr>
+registry (org admin): published versions, immutability notice, install-to-project.</td></tr>
 <tr><td class="k">Project dashboard</td>
-<td>Datasets with lifecycle chips (DRAFT/ACTIVE/RETIRED); storage quota burn-down (NFS raw vs
+<td>Datasets with lifecycle chips (ACTIVE/RETIRED); storage quota burn-down (NFS raw vs
 object-storage layers); retention policy panel with the expiry consequence text; members/roles
-(owner); pending steward actions (draft activations, publication approvals) as a work queue.</td></tr>
+(project admin); pending admin actions (publication approvals) as a work queue; the effective
+policy panel showing what is inherited from the organization versus set here.</td></tr>
 <tr><td class="k">Dataset</td>
 <td>Revision history with per-revision materialization state
 (<code>raw ✓ · bronze ✓ · silver S118 · —</code>); release tags shown as pinned labels against the
@@ -148,7 +150,7 @@ mini-graph, open-in-Python snippet pinned to this snapshot.</td></tr>
 interactive lineage graph (upstream/downstream, redacted nodes rendered as locked); validation
 evidence; publish/withdraw actions for publishers; staleness banner with recompute action.</td></tr>
 <tr><td class="k">Publication queue</td>
-<td>For publishers/stewards: candidates awaiting review, evidence side-by-side with the contract,
+<td>For project admins: candidates awaiting review, evidence side-by-side with the contract,
 one-click publish with audit note.</td></tr>
 <tr><td class="k">Account</td>
 <td>API keys: create (scopes, project restriction, expiry) with the show-once secret flow, list
@@ -162,10 +164,17 @@ retention holds; job queue health (bronze/silver/gold backlogs, projection lag).
 
 <h2 id="flows">3. Flows worth specifying</h2>
 
+<p>The end-to-end scientist journey — dataset creation, entry-layer choice, raw upload, manual
+bronze intake, publication, release, open — is specified step-by-step, web UI and Python client
+side by side, in <a href="workflows.html">Scientist Workflows</a>. The flows below are the
+governance and edge flows the journey doc does not cover.</p>
+
 <ul>
-<li><strong>Steward activation:</strong> DRAFT dataset → checklist (identity, kind, ownership,
-contract, retention, classification, duplication) → activate; every unchecked item links to the
-place it gets fixed.</li>
+<li><strong>Policy administration:</strong> an org admin attaches organization policies
+(schemas, retention defaults, classification), a project admin attaches project policies; every
+policy editor shows the effective composition — what is inherited, what this scope refines —
+before saving (<a href="rbac.html#policies">RBAC §3</a>). Datasets are active on creation; there
+is no activation flow.</li>
 <li><strong>Retention choice with consequences:</strong> selecting a TTL policy shows the generated
 consequence text ("native MCNP replay unavailable after 90 days; earliest retained representation:
 Bronze") before saving — the retention design makes this a UI requirement.</li>

@@ -10,9 +10,9 @@ describe('reserved root slugs', () => {
 			.sort();
 
 		// Reserved ahead of the UI routes that will claim them; the API already
-		// refuses both as organization slugs. Anything else in RESERVED_ROOT_SLUGS
+		// refuses it as an organization slug. Anything else in RESERVED_ROOT_SLUGS
 		// without a route directory is a stale reservation.
-		const ROUTELESS_RESERVATIONS = ['auth', 'login'];
+		const ROUTELESS_RESERVATIONS = ['auth'];
 
 		// If this fails in either direction, either a new root-level route was added
 		// without reserving its slug (silently making an organization of that name

@@ -5,11 +5,13 @@ Alembic seed (``migrations/versions/0002_rbac.py``) and the API's role
 endpoints both derive from ``ROLES``; a unit test asserts the invariants that
 matter operationally:
 
-- every role holding ``data.write`` on the silver or gold layer is bindable
-  only to service accounts (``pipeline`` and ``ingest_pipeline``). The
-  invariant is the principal kind, not one privileged role name.
-- only ``ingest_pipeline`` pairs ``dataset.create`` with those writes, and it
-  binds at project scope alone.
+- no role in the vocabulary carries ``data.write`` on silver or gold, and
+  every role is holdable by human (``user``) principals only. Service
+  accounts hold no roles at all: their single authority - dataset CRUD plus
+  silver/gold read/write across their owning organization - is intrinsic to
+  the principal kind and synthesized by :func:`service_account_bindings`,
+  never granted through a binding. Silver/gold writers are therefore
+  service accounts by construction (invariant J).
 - administrative roles (``organization_admin``, ``platform_owner``) carry no
   ``data.write`` at all: administration and data production are separate
   concerns.
@@ -35,6 +37,18 @@ PRINCIPAL_KIND_SERVICE_ACCOUNT = "service_account"
 PRINCIPAL_KINDS = frozenset({PRINCIPAL_KIND_USER, PRINCIPAL_KIND_SERVICE_ACCOUNT})
 
 DATA_LAYERS = ("raw", "bronze", "silver", "gold")
+
+#: The layers a service account's intrinsic authority reaches. Raw and bronze
+#: are the human contribution surface; an organization's service accounts
+#: exist to produce and maintain its silver and gold representations.
+SERVICE_ACCOUNT_LAYERS: frozenset[str] = frozenset({"silver", "gold"})
+
+#: The control-plane half of that authority: a feed may mint the dataset it
+#: is about to fill (direct entry) and maintain its descriptive state, under
+#: the same inherited policies as a human creation.
+SERVICE_ACCOUNT_CAPABILITIES: frozenset[str] = frozenset(
+    {"dataset.create", "dataset.update", "dataset.discover"}
+)
 
 #: Capabilities that ever carry a non-NULL ``layers`` restriction on a role
 #: binding. ``layers=NULL`` in ``role_capabilities`` already means "every
@@ -125,7 +139,6 @@ class RoleDefinition:
         )
 
 
-_ANY_KIND = PRINCIPAL_KINDS
 _HUMAN_SCOPES = frozenset({ScopeType.ORGANIZATION, ScopeType.PROJECT, ScopeType.DATASET})
 
 ROLES: dict[str, RoleDefinition] = {
@@ -137,7 +150,7 @@ ROLES: dict[str, RoleDefinition] = {
             capabilities=frozenset({"dataset.discover"}),
             layer_grants=(LayerGrant("data.read"),),
             bindable_scopes=_HUMAN_SCOPES,
-            allowed_principal_kinds=_ANY_KIND,
+            allowed_principal_kinds=frozenset({PRINCIPAL_KIND_USER}),
             description="Discover datasets and read every layer in scope.",
         ),
         RoleDefinition(
@@ -153,29 +166,6 @@ ROLES: dict[str, RoleDefinition] = {
             bindable_scopes=_HUMAN_SCOPES,
             allowed_principal_kinds=frozenset({PRINCIPAL_KIND_USER}),
             description="Commit to raw and bronze; create and tag datasets.",
-        ),
-        RoleDefinition(
-            code="data_steward",
-            title="Data Steward",
-            capabilities=frozenset(
-                {
-                    "dataset.discover",
-                    "dataset.create",
-                    "dataset.update",
-                    "dataset.policy_attach",
-                    "release.create",
-                }
-            ),
-            layer_grants=(
-                LayerGrant("data.read"),
-                LayerGrant("data.write", frozenset({"raw", "bronze"})),
-            ),
-            bindable_scopes=_HUMAN_SCOPES,
-            allowed_principal_kinds=frozenset({PRINCIPAL_KIND_USER}),
-            description=(
-                "Everything a developer does, plus dataset policy. Stewards shape "
-                "silver/gold by configuring pipelines - they never hold the write."
-            ),
         ),
         RoleDefinition(
             code="project_admin",
@@ -245,42 +235,6 @@ ROLES: dict[str, RoleDefinition] = {
             allowed_principal_kinds=frozenset({PRINCIPAL_KIND_USER}),
             description="Platform-wide administration. Deliberately no data.write.",
         ),
-        RoleDefinition(
-            code="pipeline",
-            title="Pipeline",
-            capabilities=frozenset({"dataset.discover"}),
-            layer_grants=(
-                LayerGrant("data.read"),
-                LayerGrant("data.write", frozenset({"bronze", "silver", "gold"})),
-            ),
-            bindable_scopes=frozenset({ScopeType.PROJECT, ScopeType.DATASET}),
-            allowed_principal_kinds=frozenset({PRINCIPAL_KIND_SERVICE_ACCOUNT}),
-            description=(
-                "Writes bronze, silver and gold for datasets that already exist. "
-                "Holdable exclusively by service accounts, which only organization "
-                "admins may create."
-            ),
-        ),
-        RoleDefinition(
-            code="ingest_pipeline",
-            title="Ingest Pipeline",
-            capabilities=frozenset({"dataset.discover", "dataset.create"}),
-            layer_grants=(
-                LayerGrant("data.read"),
-                LayerGrant("data.write", frozenset({"bronze", "silver", "gold"})),
-            ),
-            bindable_scopes=frozenset({ScopeType.PROJECT}),
-            allowed_principal_kinds=frozenset({PRINCIPAL_KIND_SERVICE_ACCOUNT}),
-            description=(
-                "A pipeline whose data originates outside the lake - a streaming feed, "
-                "an instrument, an external service - and which therefore has to mint "
-                "the dataset it is about to fill. Project scope only, so a feed creates "
-                "datasets in exactly the project it was granted. Prefer plain "
-                "'pipeline': dataset creation is a governance act (classification, "
-                "retention, declared contract), so the default is that a human creates "
-                "and configures the dataset and the pipeline only writes into it."
-            ),
-        ),
     )
 }
 
@@ -297,6 +251,10 @@ def validate_binding(role_code: str, principal_kind: str, scope_type: ScopeType)
     definition = role(role_code)
     if principal_kind not in PRINCIPAL_KINDS:
         raise PrincipalKindNotAllowed(f"unknown principal kind: {principal_kind}")
+    if principal_kind == PRINCIPAL_KIND_SERVICE_ACCOUNT:
+        raise PrincipalKindNotAllowed(
+            "service accounts hold no roles; their authority is intrinsic to the principal kind"
+        )
     if principal_kind not in definition.allowed_principal_kinds:
         raise PrincipalKindNotAllowed(
             f"role {role_code} may not be held by a {principal_kind} principal"
@@ -354,6 +312,46 @@ def roles_granting_write(layer: str) -> tuple[RoleDefinition, ...]:
     return tuple(definition for definition in ROLES.values() if definition.grants_write(layer))
 
 
+def service_account_bindings(
+    principal_identifier: str, organization_id: UUID
+) -> tuple[Binding, ...]:
+    """The whole of a service account's authority, synthesized.
+
+    A service account holds no roles and appears in no binding row; what it
+    may do is a fixed property of the principal kind, scoped to the one
+    organization that owns it: create, update and discover datasets, and
+    read/write their silver and gold representations. Conferred in whole
+    when an organization admin creates the account, revoked in whole with
+    the account or its keys - never widened, narrowed, or reshaped through
+    the role system.
+    """
+    return (
+        Binding(
+            principal=principal_identifier,
+            capabilities=SERVICE_ACCOUNT_CAPABILITIES,
+            scope_type=ScopeType.ORGANIZATION,
+            scope_id=organization_id,
+            effect=Effect.ALLOW,
+        ),
+        Binding(
+            principal=principal_identifier,
+            capabilities=frozenset({"data.read"}),
+            scope_type=ScopeType.ORGANIZATION,
+            scope_id=organization_id,
+            effect=Effect.ALLOW,
+            layers=SERVICE_ACCOUNT_LAYERS,
+        ),
+        Binding(
+            principal=principal_identifier,
+            capabilities=frozenset({"data.write"}),
+            scope_type=ScopeType.ORGANIZATION,
+            scope_id=organization_id,
+            effect=Effect.ALLOW,
+            layers=SERVICE_ACCOUNT_LAYERS,
+        ),
+    )
+
+
 __all__ = [
     "CAPABILITIES",
     "DATA_LAYERS",
@@ -362,6 +360,8 @@ __all__ = [
     "PRINCIPAL_KIND_SERVICE_ACCOUNT",
     "PRINCIPAL_KIND_USER",
     "ROLES",
+    "SERVICE_ACCOUNT_CAPABILITIES",
+    "SERVICE_ACCOUNT_LAYERS",
     "LayerGrant",
     "PrincipalKindNotAllowed",
     "RoleDefinition",
@@ -371,5 +371,6 @@ __all__ = [
     "compile_binding",
     "role",
     "roles_granting_write",
+    "service_account_bindings",
     "validate_binding",
 ]

@@ -13,9 +13,9 @@ You are orchestrating a disciplined, senior-engineer implementation workflow for
 - Implementation plan: `$1`
 - Implementation subagent model: `${2:-anthropic/claude-sonnet-5}`
 - Verification subagent model: `${3:-anthropic/claude-opus-5}`
-- Design-plan escalation command: `${4:-/design-plan}`
+- Escalation review command: `${4:-/architectural-review}`
 
-When spawning subagents, pass the model explicitly: every implementation and fix subagent runs on `${2:-anthropic/claude-sonnet-5}`, and every verification subagent runs on `${3:-anthropic/claude-opus-4-8}`. If a specified model is unavailable in the current provider configuration, stop immediately and report the available providers instead of silently substituting a model.
+When spawning subagents, pass the model explicitly: every implementation and fix subagent runs on `${2:-anthropic/claude-sonnet-5}`, and every verification subagent runs on `${3:-anthropic/claude-opus-5}`. If a specified model is unavailable in the current provider configuration, stop immediately and report the available providers instead of silently substituting a model.
 
 Treat `$1` as the source-of-truth implementation plan. Before doing anything else, read the entire markdown file carefully. Do not begin editing until you understand the full plan, its phases, its sequencing, its stated constraints, and its acceptance criteria.
 
@@ -24,14 +24,14 @@ Treat `$1` as the source-of-truth implementation plan. Before doing anything els
 Before starting the first phase/task, do all of the following and record the results in the progress ledger:
 
 1. Read `pyproject.toml`. Determine the package import path(s) to measure (from `[project]`, `[tool.setuptools]`, `[tool.hatch]`, `[tool.pytest.ini_options]`, or the `src/` layout). State the resolved package path explicitly; every validation command below uses it.
-2. Confirm every tool in the validation gate resolves inside the project environment: `uv run ruff --version`, `uv run ty --version`, `uv run pytest --version`, `uv run python -c "import pytest_cov"`, `uv run radon --version`, `uv run complexipy --version`, `uv run pyscn --version`. If any tool is missing, stop immediately and report which tools must be added as dev dependencies. Do not treat a missing tool as "validation not applicable."
+2. Confirm every tool in the validation gate resolves inside the project environment: `uv run ruff --version`, `uv run ty --version`, `uv run mypy --version`, `uv run lint-imports --version`, `uv run pytest --version`, `uv run python -c "import pytest_cov"`, `uv run radon --version`, `uv run complexipy --version`, `uv run pyscn --version`. If any tool is missing, stop immediately and report which tools must be added as dev dependencies. Do not treat a missing tool as "validation not applicable."
 3. Run the full validation gate once on the untouched tree to establish a baseline. If the baseline already fails, report the failures and stop; the plan must be executed from a green tree so that every failure during the workflow is attributable to the current phase/task.
 
 ## Python validation gate
 
 Every implementation, fix, and verification subagent runs the complete gate. The gate passes only when every command exits 0 and produces no findings. Partial runs, "ran the relevant subset," and skipped tools are not acceptable.
 
-Configuration precedence: if `pyproject.toml` (or `ruff.toml`, `ty.toml`, `.coveragerc`) configures a tool, that configuration governs. The thresholds below are fallback defaults that apply only when the project has not configured the tool. Subagents must not loosen configured thresholds, add exclusions, or introduce `# noqa`, `# type: ignore`, `# pragma: no cover`, `@pytest.mark.skip`, or `@pytest.mark.xfail` to make the gate pass.
+Configuration precedence: if `pyproject.toml` (or `ruff.toml`, `ty.toml`, `.coveragerc`) configures a tool, that configuration governs. Any thresholds stated below are fallback defaults that apply only when the project has not configured the tool. Subagents must not loosen configured thresholds, add exclusions, or introduce `# noqa`, `# type: ignore`, `# pragma: no cover`, `@pytest.mark.skip`, or `@pytest.mark.xfail` to make the gate pass.
 
 Run from the repository root, with `<pkg>` replaced by the resolved package path:
 
@@ -39,7 +39,9 @@ Run from the repository root, with `<pkg>` replaced by the resolved package path
 uv run ruff check .
 uv run ruff format --check .
 uv run ty check
-uv run pytest --cov=<pkg> --cov-report=term-missing --cov-fail-under=90
+uv run mypy
+uv run lint-imports
+uv run pytest --cov=<pkg> --cov-report=term-missing
 uv run radon cc <pkg> --min C
 uv run radon mi <pkg> --min B
 uv run complexipy <pkg> --max-complexity-allowed 15
@@ -51,7 +53,9 @@ Pass conditions:
 - `ruff check`: zero diagnostics.
 - `ruff format --check`: zero files would be reformatted.
 - `ty check`: zero errors.
-- `pytest`: all tests pass, no tests skipped or xfailed that were not already skipped or xfailed at baseline, total coverage at or above the threshold, and every file touched in this phase/task at 100% line coverage unless the verification subagent explicitly judges a specific uncovered line to be unreachable defensive code.
+- `mypy`: zero errors, under the project's configured strictness. No new suppressions.
+- `lint-imports`: every import contract kept.
+- `pytest`: all tests pass, no tests skipped or xfailed that were not already skipped or xfailed at baseline, total coverage at or above the configured `fail_under` floor — that floor is a ratchet: never lower it, and raise it when coverage climbs — and every file touched in this phase/task at 100% line coverage unless the verification subagent explicitly judges a specific uncovered line to be unreachable defensive code.
 - `radon cc --min C`: empty output. No function, method, or class at cyclomatic grade C or worse.
 - `radon mi --min B`: empty output. No module at maintainability grade B or worse.
 - `complexipy`: exit 0. No function above the cognitive complexity limit.
@@ -78,7 +82,7 @@ Your job is to complete the markdown plan through a strict serial loop:
 
 1. Choose exactly one phase or task from the markdown plan.
 2. Send exactly one implementation subagent (model: `${2:-anthropic/claude-sonnet-5}`) to complete that phase or task.
-3. After implementation returns, send exactly one verification subagent (model: `${3:-anthropic/claude-opus-4-8}`) to review the result.
+3. After implementation returns, send exactly one verification subagent (model: `${3:-anthropic/claude-opus-5}`) to review the result.
 4. If verification finds any issue of any size, send another implementation subagent to fix every issue.
 5. Send another verification subagent.
 6. Repeat implementation -> verification, subject to the iteration cap below.
@@ -100,8 +104,9 @@ On escalation, do the following and nothing else:
    - The failed phase/task name and all 3 verification reports.
    - Your diagnosis of why the plan-as-written could not be implemented (ambiguous scope, wrong assumptions about the codebase, missing design decisions, underspecified contracts, irreducible complexity that conflicts with the gate, or task too large for one subagent).
    - The specific design questions that must be answered before implementation can resume.
-3. Instruct the user to run `${4:-/design-plan}` against the affected area, seeded with the escalation report, to produce a corrected design and implementation plan. Provide the exact command invocation they should run, with arguments filled in.
-4. End the workflow. Repeated verification failure is a signal that the plan is defective, not that more fix passes are needed.
+3. Instruct the user to run `${4:-/architectural-review}` against the affected area, seeded with the escalation report, so the architecture underlying the failed plan gets reassessed before anyone replans against it. Provide the exact command invocation they should run, with arguments filled in.
+4. Recommend that once the architectural review completes, the user re-run `/design-plan` for the same area, passing both the escalation report and the architectural review output as escalation context, to produce a corrected design and implementation plan.
+5. End the workflow. Repeated verification failure is a signal that the plan is defective, not that more fix passes are needed.
 
 ## Global engineering standards
 
@@ -156,6 +161,8 @@ Invoke one implementation subagent (model: `${2:-anthropic/claude-sonnet-5}`) fo
 - The clean-sweep rule: no backwards compatibility unless explicitly required
 - The comment rule: no code comment, docstring, test name, user-facing message, or internal note may reference the markdown, the plan, phases, or checklist mechanics
 - The expectation that all touched code should be senior-level, idiomatic, minimal, and beautiful
+- The requirement to load the `fastapi` skill (`.claude/skills/fastapi/`) before editing, when the phase/task touches the FastAPI service tier (`src/huron/service`)
+- The requirement to load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`) before editing, when the phase/task designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, or any DDL, index, constraint, or trigger work)
 - The requirement to run the complete validation gate and paste the actual output of every command
 - The requirement to summarize exactly what changed and what validation was run
 
@@ -182,6 +189,8 @@ Package path for validation: [RESOLVED_PACKAGE_PATH]
 
 Engineering rules:
 - Complete this phase/task fully.
+- If this phase/task touches the FastAPI service tier (`src/huron/service`), load the `fastapi` skill (`.claude/skills/fastapi/`) before writing code, and follow its conventions.
+- If this phase/task designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, or any DDL, index, constraint, or trigger work), load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`) and follow its conventions.
 - This is a clean sweep. Do not preserve backwards compatibility unless the markdown explicitly requires it.
 - Remove obsolete code, dead paths, compatibility shims, stale tests, unused types, and transitional abstractions made unnecessary by this work.
 - Do not reference the markdown, implementation plan, phase numbers, checklist mechanics, or this orchestration process in code comments, docstrings, test names, user-facing strings, or internal comments.
@@ -214,7 +223,7 @@ Process:
 
 ### Step 2: Verification subagent
 
-After implementation returns, invoke one verification subagent (model: `${3:-anthropic/claude-opus-4-8}`) for the same phase/task. The verification subagent must receive a self-contained assignment that includes:
+After implementation returns, invoke one verification subagent (model: `${3:-anthropic/claude-opus-5}`) for the same phase/task. The verification subagent must receive a self-contained assignment that includes:
 
 - The markdown file path: `$1`
 - The exact phase/task being verified
@@ -275,6 +284,8 @@ Verification rules:
 - Run the complete validation gate. Any non-zero exit or any finding is FAIL.
 - Flag every issue, even small ones.
 - Check correctness, completeness, code quality, naming, architecture, type annotations, comments, tests, validation, and general code health.
+- Where the change touches the FastAPI service tier (`src/huron/service`), load the `fastapi` skill (`.claude/skills/fastapi/`) and check the code against its conventions.
+- Where the change designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, DDL, indexes, constraints, triggers), load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`) and check the schema against its conventions.
 - Check the tests against the testing standard: coverage of error paths and boundaries, behavioral rather than implementation-coupled assertions, determinism, mocking only at I/O boundaries, and no skipped or xfailed tests introduced.
 - Confirm every file touched in this phase/task is fully covered, or state precisely which uncovered lines you judge unreachable and why.
 - Confirm obsolete code was removed where the clean-sweep change makes it unnecessary.
@@ -330,6 +341,8 @@ Package path for validation: [RESOLVED_PACKAGE_PATH]
 
 Rules:
 - Fix all issues, including small ones.
+- If this phase/task touches the FastAPI service tier (`src/huron/service`), load the `fastapi` skill (`.claude/skills/fastapi/`) before writing code, and follow its conventions.
+- If this phase/task designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, or any DDL, index, constraint, or trigger work), load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`) and follow its conventions.
 - Do not ignore, defer, or partially address any verification item.
 - This is a clean sweep. Do not preserve backwards compatibility unless explicitly required by the markdown.
 - Remove obsolete code made unnecessary by the fix.
@@ -387,4 +400,4 @@ At the end, provide a final summary with:
 - Coverage at baseline and at completion
 - Final risks or notes, if any
 
-Do not claim completion if any phase/task has not passed verification. If the workflow ended in escalation, say so explicitly, name the failed phase/task, and repeat the exact `${4:-/design-plan}` invocation the user should run.
+Do not claim completion if any phase/task has not passed verification. If the workflow ended in escalation, say so explicitly, name the failed phase/task, and repeat the exact `${4:-/architectural-review}` invocation the user should run, followed by the recommended `/design-plan` re-run.

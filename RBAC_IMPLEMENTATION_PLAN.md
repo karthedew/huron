@@ -21,7 +21,7 @@ Three concepts, kept separate:
 - **Capability** — the atomic thing checked: `organization.update`, `dataset.create`,
   `rbac.binding_manage`, and the two data-plane capabilities `data.read` / `data.write`,
   which carry a **layer** (`raw` / `bronze` / `silver` / `gold`) as a separate dimension.
-- **Role** — a named capability bundle. Eight system roles, below.
+- **Role** — a named capability bundle. Five system roles, below.
 - **Role binding** — `(principal, role, scope)` where scope is SYSTEM, an organization, a
   project, or a dataset. Bindings **inherit downward**: bound at the organization, a role
   applies to every project and dataset beneath it. `DENY` bindings exist and win.
@@ -29,36 +29,46 @@ Three concepts, kept separate:
 Principals are `user:{subject}`, `group:{name}`, or `sa:{subject}` (service account). The
 layer rule is a *principal-kind invariant*, not a per-user judgement:
 
-| Capability | reader | developer | data_steward | project_admin | organization_admin | platform_owner | pipeline (SA) | ingest_pipeline (SA) |
-|---|---|---|---|---|---|---|---|---|
-| organization.create / .delete | | | | | | ✓ | | |
-| organization.update / .policy_attach | | | | | ✓ | ✓ | | |
-| service_account.manage | | | | | ✓ | ✓ | | |
-| project.create | | | | | ✓ | ✓ | | |
-| project.update / .policy_attach | | | | ✓ | ✓ | ✓ | | |
-| dataset.create | | ✓ | ✓ | ✓ | | ✓ | | ✓ |
-| dataset.update | | ✓ | ✓ | ✓ | | ✓ | | |
-| dataset.policy_attach | | | ✓ | ✓ | ✓ | ✓ | | |
-| release.create | | ✓ | ✓ | ✓ | | ✓ | | |
-| rbac.binding_manage | | | | ✓ | ✓ | ✓ | | |
-| data.read (all layers) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| data.write @raw | | ✓ | ✓ | | | | | |
-| data.write @bronze | | ✓ | ✓ | | | | ✓ | ✓ |
-| data.write @silver, @gold | | | | | | | ✓ | ✓ |
-| bindable scopes | org/proj/ds | org/proj/ds | org/proj/ds | org/proj | org | system | proj/ds | **proj only** |
+| Capability | reader | developer | project_admin | organization_admin | platform_owner |
+|---|---|---|---|---|---|
+| organization.create / .delete | | | | | ✓ |
+| organization.update / .policy_attach | | | | ✓ | ✓ |
+| service_account.manage | | | | ✓ | ✓ |
+| project.create | | | | ✓ | ✓ |
+| project.update / .policy_attach | | | ✓ | ✓ | ✓ |
+| dataset.create | | ✓ | ✓ | | ✓ |
+| dataset.update | | ✓ | ✓ | | ✓ |
+| dataset.policy_attach | | | ✓ | ✓ | ✓ |
+| release.create | | ✓ | ✓ | | ✓ |
+| rbac.binding_manage | | | ✓ | ✓ | ✓ |
+| data.read (all layers) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| data.write @raw / @bronze | | ✓ | | | |
+| data.write @silver, @gold | | | | | |
+| bindable scopes | org/proj/ds | org/proj/ds | org/proj | org | system |
 
-`ingest_pipeline` (added 0004) is for pipelines whose data originates outside the lake — a
-streaming feed, an instrument, published reference data — which must mint the dataset they
-are about to fill (`design/layer-silver.html#direct-entry`). It is the only role pairing
-`dataset.create` with derived-layer writes, and it binds at project scope only, so a feed
-creates datasets in exactly the project it was granted. Plain `pipeline` deliberately keeps
-no `dataset.create`: dataset creation is a governance act (classification, retention,
-declared contract), so the default stays *human creates and configures, pipeline writes*.
-Granting `ingest_pipeline` instead of `pipeline` is the opt-in.
+**Service accounts hold no roles** (2026-08-31, migration `0007_roleless_service_accounts` —
+replaced the `pipeline`/`ingest_pipeline` pair): an SA's authority is intrinsic to the principal
+kind — `dataset.create`/`dataset.update`/`dataset.discover` plus `data.read`+`data.write` on
+**silver and gold only**, scoped to its owning organization, synthesized at decision time from
+the `service_accounts` row, never from bindings. The database refuses any role binding whose
+principal is `sa:*`. No role in the vocabulary carries silver/gold write, so no binding can leak
+it to a human. Huron's internal platform services (intake, builder, canonicalizer, retention)
+run under deployment identities, not org service accounts. See `design/rbac.html`
+§2 `#service-accounts`.
+
+*(`data_steward` removed 2026-08-31, migration `0006_role_simplification` — its only delta over
+`developer` was `dataset.policy_attach`, which the admin roles already hold. See
+`design/rbac.html` §2–3: governance by inherited policy, datasets ACTIVE on creation.)*
+
+A feed whose data originates outside the lake — a streaming feed, an instrument, published
+reference data — mints the dataset it is about to fill through its intrinsic `dataset.create`
+(`design/layer-silver.html#direct-entry`), under the same inherited policies as a human
+creation. (Historical: this was the `ingest_pipeline` role from 0004 until the 2026-08-31
+roleless-SA change.)
 
 Two deliberate absences: **admins hold no `data.write` anywhere** (administration and data
 production are separate concerns — being able to grant a write is not the same as holding
-one), and **no human role reaches silver/gold**. Stewards and analysts decide what those
+one), and **no human role reaches silver/gold**. Admins and analysts decide what those
 layers contain by configuring the pipelines; the pipelines run as service accounts, which
 only holders of `service_account.manage` (org admins and above) may create.
 
@@ -101,7 +111,7 @@ Key decisions, worth keeping when extending:
   `layer_grants: tuple[LayerGrant, ...]`, because one binding cannot say "read every layer
   but write only raw+bronze" — `compile_binding()` therefore expands a role into one binding
   for the control-plane set plus one per layer grant.
-- `allowed_principal_kinds` on the role makes "pipeline is SA-only" data, not code;
+- `allowed_principal_kinds` on the role makes principal-kind constraints data, not code;
   `bindable_scopes` does the same for "platform_owner binds only at SYSTEM".
 - `validate_binding(role, kind, scope_type)` raises typed `RoleError` subclasses that the API
   maps to 422; `compile_binding` calls it, so there is no unvalidated path to a stored grant.
@@ -152,14 +162,16 @@ The invariants live in the database, not only the app:
 
 - `role_bindings_guard` (BEFORE INSERT OR UPDATE): derives the principal kind from the
   `user:`/`group:`/`sa:` prefix and rejects a binding whose kind or scope level the role
-  does not allow. Verified rejections: pipeline→user, platform_owner→ORGANIZATION scope,
-  bad prefix, exact duplicate.
+  does not allow. Verified rejections: any `sa:` principal → any role (since `0007` all five
+  roles are user-only, so this is the whole principal-kind case), platform_owner→ORGANIZATION
+  scope, bad prefix, exact duplicate.
 - `service_account_kind_guard`: a `service_accounts` row must reference a
   `kind='service_account'` principal.
 
 The role/capability **seed mirrors `rbac/roles.py`** — change the Python first, then write a
 follow-up data migration. `migrations/schema.sql` is the human-readable summary of the whole
-metastore (0001+0002, all six sections); it is documentation, never executed.
+metastore (all six sections; it covered `0001`+`0002` when this step landed and now spans
+`0001`–`0007`); it is documentation, never executed.
 
 ## R5 — The Depends chain in `service/api/authorization.py`  ✅ implemented
 
@@ -211,16 +223,16 @@ via `compile_binding` and stores both the record and its compiled bindings;
 
 ## R8 — Tests  ✅ implemented (14 passing)
 
-- `test_rbac_roles.py` — the matrix invariants: silver/gold writers == {pipeline}; pipeline
-  is SA-only; admin roles carry no `data.write`; platform_owner binds only at SYSTEM;
+- `test_rbac_roles.py` — the matrix invariants: service accounts are the only intrinsic
+  silver/gold writers; admin roles carry no `data.write`; platform_owner binds only at SYSTEM;
   compiled developer bindings allow raw, deny silver; org-scope binding inherits to dataset
   scope and not across organizations.
 - `test_catalog_layers.py` — writability by kind; promotion graph; capability pairs.
 - `test_api_rbac.py` — the full delegation story over HTTP: root seeds org → delegates to
   alice (org admin) → alice grants bob developer → bob writes raw/bronze, is refused
-  silver/gold; alice (admin) is refused raw; `pipeline` for a user is 422; alice creates the
-  SA + key; the SA writes silver/gold/bronze, is refused raw; revoking the binding removes
-  access. Plus policy-attach guards and key-inheritance.
+  silver/gold; alice (admin) is refused raw; a service-account role binding is 422; alice creates
+  the roleless SA + key; the SA writes silver/gold, is refused raw/bronze; disabling the SA
+  revokes its keys and removes access. Plus policy-attach guards and key-inheritance.
 
 ---
 

@@ -81,8 +81,8 @@
 <h2>Retention policy</h2>
 <p class="muted">Per-category TTL with its consequence text. Not built (P5).</p>
 
-<h2>Pending steward actions</h2>
-<p class="muted">Draft activations and publication approvals as a work queue. Not built (P5).</p>
+<h2>Pending admin actions</h2>
+<p class="muted">Publication approvals as a work queue. Not built (P5).</p>
 
 <style>
 	.quotas {

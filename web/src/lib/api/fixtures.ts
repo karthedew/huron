@@ -90,8 +90,8 @@ export const datasets: Dataset[] = [
 		orgSlug: 'example-org',
 		projectSlug: 'example-study',
 		name: 'Draft Dataset',
-		description: 'Placeholder dataset still in DRAFT — proves the steward checklist path.',
-		lifecycle: 'DRAFT',
+		description: 'Placeholder freshly created dataset — active immediately, no revisions yet.',
+		lifecycle: 'ACTIVE',
 		classification: 'unclassified',
 		profile: 'example-profile@1',
 		tags: ['placeholder'],
@@ -251,7 +251,7 @@ export const whoami: WhoAmI = {
 	displayName: 'Karl Schmidt',
 	bindings: [
 		{ principal: 'karl.schmidt@example.org', role: 'reader', scope: 'example-org/example-study' },
-		{ principal: 'karl.schmidt@example.org', role: 'data_steward', scope: 'example-org' }
+		{ principal: 'karl.schmidt@example.org', role: 'project_admin', scope: 'example-org' }
 	]
 };
 
@@ -301,11 +301,11 @@ export const organizationPermissions: PermissionGrant[] = [
 		inherited: false
 	},
 	{
-		id: 'grant-maya-steward',
+		id: 'grant-maya-admin',
 		principal: 'user:maya.chen@example.org',
 		displayName: 'Maya Chen',
 		principalKind: 'user',
-		role: 'data_steward',
+		role: 'project_admin',
 		scope: 'example-org',
 		inherited: false
 	},
@@ -315,15 +315,6 @@ export const organizationPermissions: PermissionGrant[] = [
 		displayName: 'Science Data Team',
 		principalKind: 'group',
 		role: 'reader',
-		scope: 'example-org',
-		inherited: false
-	},
-	{
-		id: 'grant-bronze-pipeline',
-		principal: 'sa:bronze-pipeline',
-		displayName: 'Bronze Pipeline',
-		principalKind: 'service_account',
-		role: 'pipeline',
 		scope: 'example-org',
 		inherited: false
 	},
@@ -364,18 +355,9 @@ export const projectPermissions: PermissionGrant[] = [
 		principal: 'user:maya.chen@example.org',
 		displayName: 'Maya Chen',
 		principalKind: 'user',
-		role: 'data_steward',
+		role: 'project_admin',
 		scope: 'example-org',
 		inherited: true,
 		inheritedFrom: 'Example Organization'
-	},
-	{
-		id: 'grant-project-pipeline',
-		principal: 'sa:bronze-pipeline',
-		displayName: 'Bronze Pipeline',
-		principalKind: 'service_account',
-		role: 'pipeline',
-		scope: 'example-org/example-study',
-		inherited: false
 	}
 ];

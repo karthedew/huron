@@ -3,7 +3,8 @@
 -- ============================================================================
 -- GENERATED DOCUMENTATION, NOT EXECUTED. The Alembic migrations under
 -- migrations/versions/ are the authoritative DDL (0001_foundations,
--- 0002_rbac, 0003_layer_paths, 0004_entry_layers, 0005_auth); regenerate
+-- 0002_rbac, 0003_layer_paths, 0004_entry_layers, 0005_auth,
+-- 0006_role_simplification, 0007_roleless_service_accounts); regenerate
 -- against a migrated database with
 --     pg_dump --schema-only --no-owner huron
 -- Types/constraints below are condensed; CHECKs are shown where they carry a
@@ -35,7 +36,6 @@ CREATE TABLE projects (
     classification_default text NOT NULL,
     raw_retention_policy jsonb NOT NULL DEFAULT '{}',
     quota_bytes bigint,                 -- NULL = unlimited
-    dataset_creation_mode text NOT NULL DEFAULT 'steward_approval',
     lifecycle_state text NOT NULL DEFAULT 'ACTIVE',
     generation integer NOT NULL, version integer NOT NULL,
     created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
@@ -56,7 +56,7 @@ CREATE TABLE datasets (
                                         -- is not the origin: no revisions, no Bronze, ever.
                                         -- Gold excluded: products need a derivation record.
     data_classification text NOT NULL,
-    lifecycle_state text NOT NULL DEFAULT 'DRAFT',
+    lifecycle_state text NOT NULL DEFAULT 'ACTIVE',
     generation integer NOT NULL, version integer NOT NULL,
     created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
 );
@@ -84,7 +84,7 @@ CREATE TABLE releases (               -- immutable tags on one revision (invaria
     -- a wrong tag is withdrawn (tombstone), never repointed.
 );
 
-CREATE TABLE revision_amendments (    -- steward metadata amendments, append-only
+CREATE TABLE revision_amendments (    -- project-admin metadata amendments, append-only
     id uuid PRIMARY KEY,
     revision_id uuid NOT NULL REFERENCES dataset_revisions,
     sequence integer NOT NULL,          UNIQUE (revision_id, sequence),
@@ -124,10 +124,13 @@ CREATE TABLE ingest_files (
 --
 --    principal --< role_bindings >-- roles --< role_capabilities >-- capabilities
 --    Bindings inherit downward: SYSTEM > ORGANIZATION > PROJECT > DATASET.
---    Layer restrictions live on role_capabilities.layers; every role holding
---    the silver/gold write ('pipeline', 'ingest_pipeline') is bindable only to
---    sa: principals - the invariant is the principal kind, not one role name
---    (enforced by trigger role_bindings_guard, not just application code).
+--    Layer restrictions live on role_capabilities.layers. Roles are for
+--    humans only (0007): no role carries silver/gold data.write, and
+--    role_bindings_guard refuses any sa: principal outright - a service
+--    account's authority (dataset CRUD + silver/gold read/write across its
+--    owning organization) is intrinsic to the principal kind, synthesized
+--    from its service_accounts row (rbac.roles.service_account_bindings),
+--    never stored as a binding.
 -- ============================================================================
 
 CREATE TABLE principals (
@@ -139,7 +142,8 @@ CREATE TABLE principals (
     disabled_at timestamptz, created_at timestamptz NOT NULL
 );
 
-CREATE TABLE service_accounts (        -- owned by an organization
+CREATE TABLE service_accounts (        -- owned by an organization; roleless (0007):
+                                       -- this row IS the whole grant
     principal_id uuid PRIMARY KEY REFERENCES principals,
     organization_id uuid NOT NULL REFERENCES organizations,
     name text NOT NULL,                 UNIQUE (organization_id, name),
@@ -148,12 +152,12 @@ CREATE TABLE service_accounts (        -- owned by an organization
 );
 
 CREATE TABLE roles (                   -- seeded from huron.pkg.rbac.roles.ROLES
-    code text PRIMARY KEY,              -- reader | developer | data_steward |
-                                        -- project_admin | organization_admin |
-                                        -- platform_owner | pipeline |
-                                        -- ingest_pipeline (0004)
+    code text PRIMARY KEY,              -- reader | developer | project_admin |
+                                        -- organization_admin | platform_owner
+                                        -- data_steward removed (0006);
+                                        -- pipeline + ingest_pipeline removed (0007)
     title text NOT NULL, description text NOT NULL DEFAULT '',
-    allowed_principal_kinds text[] NOT NULL,  -- both pipelines: {service_account}
+    allowed_principal_kinds text[] NOT NULL,  -- post-0007: {user} for every role
     bindable_scopes text[] NOT NULL,          -- platform_owner: {SYSTEM}
     is_system boolean NOT NULL DEFAULT true
 );

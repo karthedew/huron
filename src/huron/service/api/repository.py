@@ -142,6 +142,7 @@ class ServiceAccount:
     subject: str
     created_by: str
     created_at: datetime
+    disabled_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -201,7 +202,13 @@ class RbacStore(Protocol):
 
     async def get_service_account(self, principal_id: UUID) -> ServiceAccount: ...
 
+    async def service_account_by_subject(self, subject: str) -> ServiceAccount: ...
+
     async def list_service_accounts(self, organization_id: UUID) -> list[ServiceAccount]: ...
+
+    async def disable_service_account(
+        self, principal_id: UUID, *, disabled_at: datetime
+    ) -> ServiceAccount: ...
 
     async def create_policy(
         self, *, policy_type: str, name: str, spec: dict[str, object], created_by: str
@@ -227,6 +234,8 @@ class ApiKeyWriter(ApiKeyStore, Protocol):
     async def add(self, record: ApiKeyRecord) -> None: ...
 
     async def touch_last_used(self, key_id: str) -> None: ...
+
+    async def revoke_all_for(self, subject: str, revoked_at: datetime) -> int: ...
 
 
 class InMemoryRbacStore:
@@ -258,8 +267,8 @@ class InMemoryRbacStore:
         """Validate against the role model, compile, and store one grant.
 
         ``compile_binding`` raises RoleError subclasses when the role does not
-        exist, the principal kind is not allowed (e.g. ``pipeline`` for a
-        user), or the scope level is not bindable.
+        exist, the principal kind is not allowed (e.g. a service account for
+        any role), or the scope level is not bindable.
         """
         principal_kind = "service_account" if principal.startswith("sa:") else "user"
         compiled = compile_binding(
@@ -349,6 +358,13 @@ class InMemoryRbacStore:
             raise ResourceNotFound(f"service account does not exist: {principal_id}")
         return record
 
+    async def service_account_by_subject(self, subject: str) -> ServiceAccount:
+        with self._lock:
+            for record in self._service_accounts.values():
+                if record.subject == subject:
+                    return record
+        raise ResourceNotFound(f"service account does not exist: {subject}")
+
     async def list_service_accounts(self, organization_id: UUID) -> list[ServiceAccount]:
         items = [
             item
@@ -356,6 +372,16 @@ class InMemoryRbacStore:
             if item.organization_id == organization_id
         ]
         return sorted(items, key=lambda item: item.name)
+
+    async def disable_service_account(
+        self, principal_id: UUID, *, disabled_at: datetime
+    ) -> ServiceAccount:
+        with self._lock:
+            record = self._service_accounts.get(principal_id)
+            if record is None:
+                raise ResourceNotFound(f"service account does not exist: {principal_id}")
+            record.disabled_at = disabled_at
+            return record
 
     async def create_policy(
         self, *, policy_type: str, name: str, spec: dict[str, object], created_by: str
@@ -530,7 +556,7 @@ class HierarchyRepository:
                 profile_name,
                 profile_version,
                 entry.value,
-                "DRAFT",
+                "ACTIVE",
                 1,
                 1,
                 datetime.now(UTC),
@@ -753,8 +779,16 @@ class HierarchyRepository:
     async def get_service_account(self, principal_id: UUID) -> ServiceAccount:
         return await self.rbac_store.get_service_account(principal_id)
 
+    async def service_account_by_subject(self, subject: str) -> ServiceAccount:
+        return await self.rbac_store.service_account_by_subject(subject)
+
     async def list_service_accounts(self, organization_id: UUID) -> list[ServiceAccount]:
         return await self.rbac_store.list_service_accounts(organization_id)
+
+    async def disable_service_account(
+        self, principal_id: UUID, *, disabled_at: datetime
+    ) -> ServiceAccount:
+        return await self.rbac_store.disable_service_account(principal_id, disabled_at=disabled_at)
 
     async def create_policy(
         self, *, policy_type: str, name: str, spec: dict[str, object], created_by: str

@@ -135,10 +135,6 @@ class ProductStaleInput(DomainError):
     code, status_code = "PRODUCT_STALE_INPUT", 409
 
 
-class DatasetDraft(DomainError):
-    code, status_code = "DATASET_DRAFT", 409
-
-
 class ApiKeyExpired(DomainError):
     code, status_code = "APIKEY_EXPIRED", 401
 
@@ -190,7 +186,6 @@ _DOMAIN_ERROR_TYPES = (
     InputNotReadable,
     ClassificationExceeded,
     ProductStaleInput,
-    DatasetDraft,
     ApiKeyExpired,
     ApiKeyRevoked,
     QuotaExceeded,
@@ -236,7 +231,6 @@ __all__ = [
     "ApiKeyRevoked",
     "ClassificationExceeded",
     "ContractMismatch",
-    "DatasetDraft",
     "DatasetLocked",
     "DomainError",
     "DuplicateContent",

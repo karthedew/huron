@@ -9,9 +9,9 @@
  *
  * This list is the UI's half of the contract; ``RESERVED_ROOT_SLUGS`` in
  * ``pkg/catalog/paths.py`` is the other half, and refuses these at
- * organization-creation time on the API side. `auth` and `login` are
- * reserved here ahead of the UI routes that will claim them - the API
- * already refuses them as organization slugs.
+ * organization-creation time on the API side. `auth` remains reserved ahead
+ * of the callback routes that will claim it; the API already refuses it as an
+ * organization slug.
  */
 export const RESERVED_ROOT_SLUGS = [
 	'account',
@@ -20,9 +20,11 @@ export const RESERVED_ROOT_SLUGS = [
 	'browse',
 	'ingestion',
 	'login',
+	'logout',
 	'product',
 	'queue',
 	'settings',
+	'signup',
 	'snapshot'
 ] as const;
 

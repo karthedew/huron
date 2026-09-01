@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -93,7 +94,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
               ┌────────────────────────────────────────┘       │       │       └───────────────┐
               ▼                                                ▼       ▼                       ▼
       ┌───────────────┐        ┌──────────────────┐   ┌─────────────┐   ┌──────────────────────────┐
-      │  NFS (POSIX)  │        │  Ceph RGW (S3)   │   │ PostgreSQL  │   │ LanceDB ({prefix}-index) │
+      │  NFS (POSIX)  │        │  Object store    │   │ PostgreSQL  │   │ LanceDB ({prefix}-index) │
       │  RAW          │        │  BRONZE/SILVER/  │   │ structural  │   │ search projection        │
       │  AUTHORITATIVE│        │  GOLD Icechunk   │   │ state only  │   │ REBUILDABLE              │
       │  evidence     │        │  AUTHORITATIVE   │   │ + outbox    │   │ (single writer)          │
@@ -113,19 +114,21 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 <code>COMMITTED</code>, amendments, generation documents, purge/expiry markers. A scientist with
 <code>ls</code> and <code>jq</code> can navigate it offline.</td>
 <td>Derived arrays; anything a pipeline can regenerate.</td></tr>
-<tr><td class="k">Ceph RGW (S3)</td>
+<tr><td class="k">Object store (S3-compatible)</td>
 <td>Bronze/Silver/Gold Icechunk repositories and their snapshot history; Iceberg files for tabular
 Gold; LanceDB tables (<code>{prefix}-index</code>).</td>
 <td>Raw evidence; the catalog of record for identity.</td></tr>
 <tr><td class="k">PostgreSQL</td>
 <td>Structural state only: identity and uniqueness (orgs → revisions), revision-number sequencing,
-per-dataset ingest locks, release tags, snapshot and product registry, lineage edges, RBAC bindings, API keys,
+per-dataset ingest locks, release tags, snapshot and product registry, the
+<a href="catalog-search.html#schema-registry">schema registry</a> (immutable published schema
+versions, org base + project enrichment), lineage edges, RBAC bindings, API keys,
 jobs, audit, outbox. Plus denormalized <code>title</code> columns for browse.</td>
 <td>Full metadata mirrors; any text search index (banned).</td></tr>
 <tr><td class="k">LanceDB</td>
 <td><em>All</em> text, tag, and (later) semantic matching, across <em>all four layers</em> —
 datasets, revisions, snapshots and products — with <code>layer</code> as a facet rather than a
-system boundary. Rebuildable from NFS + RGW + PostgreSQL; if down, <code>/search</code> is 503 and
+system boundary. Rebuildable from NFS + object store + PostgreSQL; if down, <code>/search</code> is 503 and
 browse keeps working.</td>
 <td>Anything authoritative.</td></tr>
 </table>
@@ -134,8 +137,24 @@ browse keeps working.</td>
 Structural questions (list projects, revisions of a dataset, snapshots of a repo, products depending
 on snapshot S117) are PostgreSQL. Matching questions ("absorbed dose", tag filters, similarity) are
 LanceDB. Effective metadata for a revision is read from NFS sidecars (base + folded amendments).
-Array bytes are read from RGW by the client, never through the API. No question is answered from
+Array bytes are read from the object store by the client, never through the API. No question is answered from
 two stores.</p>
+
+<p class="note" id="s3-portability"><span class="k">The object store is a portability boundary.</span>
+The deployment target is Red&nbsp;Hat OpenShift, with object storage supplied by the cluster
+(OpenShift Data Foundation — its gateway exposes an S3-compatible API that is a <em>subset</em> of
+Amazon S3, on the order of two-thirds of the surface). Huron therefore assumes only the portable
+S3 core every compatible gateway serves — <code>HeadBucket</code>/<code>HeadObject</code>,
+<code>GET</code>/<code>PUT</code>/<code>DELETE</code> object, <code>ListObjectsV2</code>,
+multipart upload, conditional requests — which is also all Icechunk, Zarr and LanceDB need.
+Nothing may depend on vendor extensions: no bucket notifications (the outbox is Huron's event
+source), no object lock or lifecycle rules (retention is Huron's own worker), no server-side
+inventory (the reconciler lists and compares itself), no ACL semantics beyond
+bucket-policy/prefix scoping. STS-style credential vending (<code>AssumeRole</code> with a
+session policy) is <strong>gateway-conditional</strong> behind the vending port
+(<a href="api.html#grants">API §5</a>): where the deployed gateway lacks it, grants fall back to
+API-proxied chunk reads — same client code, degraded transport — so no capability of the platform
+<em>requires</em> more than the core.</p>
 
 <h2 id="services">2. Service inventory</h2>
 
@@ -147,15 +166,20 @@ enforces RBAC on every request.</td><td>NFS staging, PostgreSQL</td></tr>
 <tr><td class="k">Prepare worker</td><td>Deployment</td><td>1–N</td>
 <td>Materializes hardlink dedup for unchanged files during ingest, concurrent with client uploads.</td>
 <td>NFS staging</td></tr>
-<tr><td class="k">Bronze builder</td><td>Job runner (per-profile containers)</td><td>1–N</td>
+<tr><td class="k">Layer intake service</td><td>Job runner</td><td>1–N</td>
+<td>Executes <a href="layer-bronze.html#manual-intake">manual bronze/silver intake</a>: opens
+uploaded NetCDF/HDF5/Zarr with xarray, converts to Zarr automatically, validates against the
+profile, writes the candidate Icechunk snapshot. No per-project code.</td><td>object-store bronze/silver repos</td></tr>
+<tr><td class="k">Bronze builder <span class="tag">deferred</span></td><td>Job runner (per-profile containers)</td><td>1–N</td>
 <td>Consumes raw-committed outbox events; runs the profile's extractor container; writes a candidate
-Bronze snapshot.</td><td>RGW bronze repos</td></tr>
+Bronze snapshot. Runs only for profiles that opt into an
+<a href="layer-bronze.html#auto-builder">extractor image</a>.</td><td>object-store bronze repos</td></tr>
 <tr><td class="k">Canonicalizer</td><td>Job runner</td><td>1–N</td>
 <td>Maps validated Bronze into the dataset's own canonical Silver repo; republishes that repo on
-corrections.</td><td>RGW silver repos</td></tr>
+corrections.</td><td>object-store silver repos</td></tr>
 <tr><td class="k">Product runner</td><td>Job runner</td><td>1–N</td>
 <td>Executes scientist-submitted Gold transformations with pinned inputs; writes candidate Gold
-snapshots; materializes Iceberg for tabular products.</td><td>RGW gold repos</td></tr>
+snapshots; materializes Iceberg for tabular products.</td><td>object-store gold repos</td></tr>
 <tr><td class="k">Validator</td><td>Job runner</td><td>1–N</td>
 <td>Runs the profile's/product's validation suite against candidate snapshots; records evidence;
 gates publication.</td><td>PostgreSQL (evidence)</td></tr>
@@ -169,7 +193,7 @@ gates publication.</td><td>PostgreSQL (evidence)</td></tr>
 <td>Deletes expired staging directories on NFS; aborts stale Icechunk transient state; fraction
 guard + dry-run.</td><td>NFS staging only</td></tr>
 <tr><td class="k">Reconciler</td><td>CronJob (nightly + on demand)</td><td>—</td>
-<td>Compares NFS envelopes, RGW snapshot refs, and PostgreSQL; imports orphan commits; flags
+<td>Compares NFS envelopes, object-store snapshot refs, and PostgreSQL; imports orphan commits; flags
 <code>DEGRADED</code>; never silently rewrites history.</td><td>PostgreSQL (findings)</td></tr>
 <tr><td class="k">Retention worker</td><td>CronJob (daily)</td><td>—</td>
 <td>Executes raw TTL expiration and approved purges; honors legal holds; writes markers and
@@ -191,7 +215,8 @@ Ray/KubeRay is a later swap behind the same <code>JobDispatcher</code> port.</p>
  3. Client streams uploads (hashed in flight); prepare worker hardlinks unchanged files
  4. Verify → Commit: sidecars + COMMITTED written into staging, fsync, atomic rename → published
  5. PG transaction: revision row, audit, outbox        ◀── storage leads, catalog follows
- 6. Outbox → bronze builder: extractor container reads NFS payload, writes candidate Bronze snapshot
+ 6. Scientist converts locally, `huron bronze upload … --link-raw-revision 1`: layer intake
+      service opens the arrays, writes candidate Bronze snapshot (auto-builder path deferred)
  7. Validator gates → snapshot published on the bronze repo main branch; catalog + LanceDB updated
  8. Canonicalizer: Bronze → run-0042's own Silver repo → validate → publish
  9. Scientist (Aether): opens Silver via access grant, derives dose product, submits Gold publication
@@ -207,7 +232,7 @@ Ray/KubeRay is a later swap behind the same <code>JobDispatcher</code> port.</p>
 with <code>COMMITTED</code> inside. PostgreSQL rows follow storage (reconciler imports orphans).
 Read-your-writes for browse via PostgreSQL.</li>
 <li><strong>Derived layers:</strong> an Icechunk snapshot is visible iff the catalog records it as
-published. Icechunk's own commit protocol guarantees snapshot atomicity on RGW; Huron's catalog
+published. Icechunk's own commit protocol guarantees snapshot atomicity on the object store; Huron's catalog
 adds the published/candidate distinction on top.</li>
 <li><strong>Search:</strong> eventually consistent; responses carry <code>projection_lag_seconds</code>
 and <code>projection_watermark</code>.</li>
@@ -217,8 +242,10 @@ product publication — never reconstructed after the fact.</li>
 
 <h2 id="invariants">5. Invariants</h2>
 
-<p>An invariant is a property the system must never violate. Each has a corresponding acceptance
-test in the <a href="roadmap.html">roadmap</a>.</p>
+<p>An invariant is a property the system must never violate — a property of the system, not of
+any one store; several below are held by no database rule at all. Where a PostgreSQL rule is what
+holds an invariant — or where none does —
+<a href="catalog-search.html#enforcement">Catalog §2, What the database enforces</a> names it.</p>
 
 <table>
 <tr><th></th><th>Invariant</th></tr>
@@ -242,27 +269,26 @@ test in the <a href="roadmap.html">roadmap</a>.</p>
 
 <ul>
 <li><strong>Platform:</strong> OpenShift. Arbitrary non-root UIDs, read-only root filesystems,
-NetworkPolicy so only the API is routed; PostgreSQL via HA operator (CloudNativePG); RGW and NFS
+NetworkPolicy so only the API is routed; PostgreSQL via HA operator (CloudNativePG); the object store and NFS
 reachable only from the namespace.</li>
 <li><strong>NFS mounts:</strong> API, prepare worker, bronze builder (read-only), retention worker,
 sweeper, and reconciler mount the raw filesystem. The mount is <em>not</em> exported to users; see
 <a href="rbac.html#dataplane">RBAC — data-plane enforcement</a>.</li>
 <li><strong>Identities:</strong> separate service accounts per service; the projection worker is the
 only identity with write access to <code>{prefix}-index</code>; pipeline services get per-job,
-short-lived RGW credentials scoped to the one repo they are building; the retention worker is the
+short-lived object-store credentials scoped to the one repo they are building; the retention worker is the
 only identity that can delete under <code>revisions/</code>.</li>
 <li><strong>FIPS:</strong> every image starts and imports cleanly under FIPS, MD5-for-protocol
-uses <code>usedforsecurity=False</code>, approved TLS suites to RGW/PostgreSQL, hash algorithm
+uses <code>usedforsecurity=False</code>, approved TLS suites to the object store/PostgreSQL, hash algorithm
 recorded in every manifest.</li>
 <li><strong>Backup:</strong> PostgreSQL WAL + nightly base (RPO 5 min, monthly restore test); NFS
-raw via filesystem snapshots + replication per site policy (quarterly restore drill); RGW via Ceph
-replication/EC; LanceDB not backed up — rebuilt (timed quarterly). Polaris metadata is
+raw via filesystem snapshots + replication per site policy (quarterly restore drill); object store replicated per the cluster storage layer (ODF/Ceph replication or EC); LanceDB not backed up — rebuilt (timed quarterly). Polaris metadata is
 re-syncable from Huron.</li>
 </ul>
 
 <p class="warn"><span class="k">Blast radius by design.</span> Losing LanceDB costs search until a
 rebuild. Losing PostgreSQL costs sequencing/RBAC/audit until restore — raw data and derived arrays
-remain readable and reconstructable. Losing RGW costs derived layers, all rebuildable from raw
+remain readable and reconstructable. Losing the object store costs derived layers, all rebuildable from raw
 (at compute cost) except where raw payload has expired — which is exactly why the retention policy retains
 reproducibility-essential inputs. Losing the NFS raw store is the one unrecoverable loss; it gets
 the strongest storage guarantees and the most conservative code paths.</p>

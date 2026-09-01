@@ -72,8 +72,8 @@ async def test_grant_role_validates_before_any_binding_is_stored() -> None:
     store = InMemoryRbacStore()
     with pytest.raises(PrincipalKindNotAllowed):
         await store.grant_role(
-            principal="user:bob",
-            role_code="pipeline",
+            principal="sa:astro/feed",
+            role_code="reader",
             scope_type=ScopeType.PROJECT,
             scope_id=uuid4(),
             created_by="alice",

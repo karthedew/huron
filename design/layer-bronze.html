@@ -75,6 +75,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="api.html">API</a>
   <a href="python-client.html">Client</a>
   <a href="frontend.html">Frontend</a>
+  <a href="workflows.html">Workflows</a>
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
@@ -89,7 +90,9 @@ making me parse the format."</em> It preserves source-specific meaning — <code
 <code>mesh_104</code>, <code>relative_error</code>, MCNP unit notation, original energy bins —
 and records exactly which raw bytes each array came from. It does <strong>not</strong> standardize
 names, units, or coordinates (that is <a href="layer-silver.html">Silver</a>), and it does not
-merge datasets: one Bronze snapshot corresponds to one raw revision.</p>
+merge datasets: one Bronze snapshot corresponds to one raw revision — or, for a
+<a href="#manual-intake">direct-entry dataset</a>, to one intake batch, with lineage rooting at
+Bronze (invariant <span class="inv">N</span>).</p>
 
 <h2 id="storage">2. Storage model</h2>
 
@@ -106,10 +109,12 @@ merge datasets: one Bronze snapshot corresponds to one raw revision.</p>
 <li><strong>One Icechunk repo per dataset.</strong> Snapshots within it are per raw revision. This
 keeps grant scoping (one prefix = one dataset's bronze), keeps repo count proportional to datasets,
 and lets Icechunk's history hold the full audit trail of rebuilds.</li>
-<li><strong>Branch/tag model.</strong> Builders commit on a working branch
-<code>build/{revision_id}</code>; after validation the publisher fast-forwards <code>main</code>
-and tags <code>raw/{revision_number}</code>. Consumers resolve tags through the
-catalog, never by guessing.</li>
+<li><strong>Branch/tag model.</strong> Writers commit on a working branch —
+<code>build/{revision_id}</code> for raw-derived snapshots, <code>intake/{ingest_id}</code> for
+manual intake — and after validation the publisher fast-forwards <code>main</code> and tags:
+<code>raw/{revision_number}</code> when the snapshot derives from a raw revision,
+<code>intake/{nnnnnn}</code> (monotonic per dataset) when it entered directly. Consumers resolve
+tags through the catalog, never by guessing.</li>
 <li><strong>Group layout inside a snapshot</strong> is defined by the science profile. For
 <code>mcnp-run@1.0</code>:</li>
 </ul>
@@ -164,7 +169,7 @@ silver:
 </pre>
 
 <ul>
-<li>Profiles are published by org stewards through the admin API; a published
+<li>Profiles are published by organization admins through the admin API; a published
 <code>(name, version)</code> is immutable — fixes are new versions. Rows are mirrored to object
 storage (<code>_platform/profiles/…</code>) so recovery does not depend on PostgreSQL.</li>
 <li>Extractor and canonicalizer images are referenced <em>by digest</em>. The digest is recorded in
@@ -172,9 +177,112 @@ every snapshot's provenance; "which parser produced these numbers" is always ans
 <li>The same extractor serves double duty: at ingest it populates the metadata envelope's
 <code>extensions</code> block (so the scientist confirms rather than types); at Bronze build it
 produces the arrays.</li>
+<li><strong>The <code>bronze.extractor_image</code> field is optional.</strong> A profile without
+one supports <a href="#manual-intake">manual intake</a> only — which is the v1 posture for every
+profile. Writing an extractor is the opt-in cost a project pays later for automation, never a
+prerequisite for having Bronze data.</li>
 </ul>
 
-<h2 id="pipeline">4. Build pipeline and validation</h2>
+<h2 id="ingestion">4. Ingestion paths</h2>
+
+<p>Bronze comes into existence one of two ways. <strong>Manual intake is the v1 path</strong>: it
+requires no per-project code — only the profile's declared layout and validations. The automatic
+raw&rarr;bronze builder is <strong>deferred</strong>: a per-profile extractor container is exactly
+the custom-code-per-project investment Huron does not ask of a project at this stage, and nothing
+else in the design depends on it. Raw is <em>never</em> a prerequisite for Bronze — a dataset
+whose <a href="layer-silver.html#direct-entry">entry layer</a> is <code>bronze</code> has no raw
+at all, and a dataset that does hold raw may still receive its Bronze by manual intake.</p>
+
+<h3 id="manual-intake">4a. Manual intake <span class="tag">v1 · primary</span></h3>
+
+<p>A scientist or engineer who already holds arrays — converted locally from instrument or code
+output, produced by an external pipeline, exported from another system — ingests them directly as
+a Bronze snapshot through the web UI or the Python client. The uploader supplies exactly one of
+two provenance assertions, and intake refuses an upload that supplies neither or both:</p>
+
+<ul>
+<li><strong>Linked to raw:</strong> the upload names a raw revision <em>of the same dataset</em>.
+The snapshot's provenance is a <code>promotion</code> block with
+<code>method:&nbsp;"upload"</code> — same kind as a pipeline build, different builder. Links may
+not reach into other datasets: the one-spine layout means everything about one body of data lives
+under one dataset prefix, and a cross-dataset link would put a lineage claim in one dataset's
+history that its own path cannot substantiate.</li>
+<li><strong>No raw exists:</strong> the snapshot carries an
+<a href="layer-silver.html#direct-entry">external-provenance block</a> naming the true source, and
+becomes a lineage root (invariant <span class="inv">N</span>).</li>
+</ul>
+
+<pre>
+scientist / engineer uploads NetCDF · HDF5 · zipped-Zarr files
+  (web UI or `huron bronze upload`; same transfer surface as raw ingest)
+  + metadata envelope, validated against the effective schema
+    (org base + project enrichment — <a href="catalog-search.html#schema-registry">schema registry</a>)
+  + provenance assertion: raw revision link  -or-  external source
+   │
+   ▼
+bronze intake service (service account — humans never hold storage
+  credentials, invariant J) opens the payload with xarray;
+  no extractor image, no custom code
+   │  candidate snapshot on branch intake/{ingest_id}
+   ▼
+Validator runs the profile's bronze validations:
+   ✓ structure matches the declared profile layout   ✓ file checksums verified
+   ✓ dims/shapes/dtypes self-consistent              ✓ coordinate bounds monotonic
+   ✓ NaN/missing-value behavior known                ✓ provenance assertion complete
+   ✓ raw link resolves to a COMMITTED revision of this dataset (when asserted)
+   ✓ snapshot reopens through the client read path
+   │
+   ├─ pass → publish: fast-forward main, tag, catalog row (state PUBLISHED),
+   │         outbox → LanceDB index
+   └─ fail → catalog row state FAILED with structured findings; nothing published
+</pre>
+
+<p><strong>Accepted forms, converted automatically:</strong> NetCDF, HDF5, and zipped Zarr
+stores — self-describing array containers <code>xarray</code> opens without format-specific code.
+Whatever arrives, <strong>the intake service converts it to Zarr automatically</strong>: an HDF5
+or NetCDF upload is opened with <code>xarray</code> and written into the dataset's Icechunk repo
+as Zarr — the scientist never converts and never learns the storage format; a Zarr upload skips
+the decode and is written through the same path. Bronze storage is therefore Zarr + Icechunk
+without exception. Formats <code>xarray</code> cannot open self-describingly (CSV, proprietary
+binaries) are the scientist's to convert first (<code>xr.open_dataset(...).to_zarr(...)</code> is
+one line) — the intake service stays generic precisely so it never grows per-project parsers. The
+uploaded container is a <em>transport form</em>, discarded after the snapshot is published and
+verified; what Huron keeps is the Icechunk snapshot plus the uploaded files' digests in
+provenance.</p>
+
+<p>Provenance, both shapes:</p>
+
+<pre>
+{                                          {
+  "kind": "promotion",                       "kind": "external",
+  "method": "upload",                        "source_system": "legacy-fluent-cluster",
+  "source_revision_id": "rev-0003-uuid",     "source_uri": "file://…/campaign-7/",
+  "source_revision_number": 3,               "source_digest": "sha256:0b71…",
+  "uploaded_files":                          "uploaded_files":
+    {"run42.nc": "sha256:aa10…"},              {"campaign7.h5": "sha256:cc32…"},
+  "profile": "mcnp-run@1.0.0",               "profile": "cfd-run@0.3.0",
+  "ingested_by": "user:kschmidt",            "ingested_by": "user:kschmidt",
+  "ingested_at": "2026-08-31T…"              "ingested_at": "2026-08-31T…"
+}                                          }
+</pre>
+
+<p class="note"><span class="k">Entry is orthogonal to the write rule, restated.</span>
+<code>ingested_by</code> may name a human because a human <em>initiated</em> the intake and owns
+its assertions; the storage writer is still the intake service account, and the DB trigger that
+refuses human writers on derived layers is untouched. One field says where the bytes came from
+and who vouches for them; the other says who held the credentials.</p>
+
+<h3 id="auto-builder">4b. Automatic raw&rarr;bronze builder <span class="tag">deferred</span></h3>
+
+<p class="warn"><span class="k">Deferred, not designed away.</span> Automation requires a
+per-profile <code>extractor_image</code> — custom code written and maintained per data kind,
+which Huron does not ask of projects at this stage. The seams stay in place — the raw-commit
+outbox event, the jobs table, the working-branch/validate/publish flow above — so a project that
+later wants push-button raw&rarr;bronze adds an extractor to its profile and turns this on
+without touching the model. Until then, "bronze from raw" means a scientist converts locally and
+uses manual intake with a raw link.</p>
+
+<p>When enabled, the flow is:</p>
 
 <pre>
 raw revision COMMITTED (outbox event)
@@ -188,7 +296,7 @@ candidate snapshot on branch build/{revision_id}
    ▼
 Validator runs profile's bronze validations:
    ✓ required outputs found            ✓ run completed successfully
-   ✓ all expected tallies extracted    ✓ energy-bin bounds valid & monotonic
+   ✓ all expected tallies extracted    ✓ energy-bin bounds valid &amp; monotonic
    ✓ mesh dims match array shapes      ✓ relative-error arrays match tally arrays
    ✓ NaN/missing-value behavior known  ✓ sampled values agree with source text
    ✓ snapshot reopens through the client read path
@@ -206,15 +314,17 @@ and produces a new snapshot; the catalog records the latest published snapshot p
 keeps prior ones addressable (they are Icechunk history, not deleted state).</li>
 <li><strong>Corrections:</strong> a new raw revision of the dataset triggers a fresh Bronze
 snapshot; the previous revision's snapshot remains tagged and readable. Downstream impact is
-handled in Silver (region replacement) and Gold (staleness), not by mutating Bronze.</li>
-<li><strong>Failure is not publication:</strong> Huron never publishes a broken Bronze snapshot.
-Validation evidence (pass or fail) is stored as structured JSON on the catalog row and shown in
-the UI.</li>
+handled in Silver (region replacement) and Gold (staleness), not by mutating Bronze. With the
+builder deferred, the same holds manually: the correcting scientist re-uploads against the new
+revision, and the dataset page shows the gap until they do.</li>
+<li><strong>Failure is not publication:</strong> Huron never publishes a broken Bronze snapshot —
+on either path. Validation evidence (pass or fail) is stored as structured JSON on the catalog
+row and shown in the UI.</li>
 </ul>
 
 <h2 id="access">5. Access</h2>
 
-<p>Bronze is readable by the project's <code>scientist</code> role and above (see
+<p>Bronze is readable by the project's <code>reader</code> role and above (see
 <a href="rbac.html#layers">RBAC layer matrices</a>) through the standard grant flow:
 <code>huron.open_dataset(..., layer="bronze")</code> or
 <code>huron.open_snapshot("B182")</code>. Most scientists skip Bronze and read Silver; Bronze
