@@ -13,6 +13,13 @@ repos:
         language: system
         types_or: [python, toml]
 
+      - id: pydoclint
+        name: pydoclint
+        entry: uv run pydoclint
+        language: system
+        types: [python]
+        exclude: ^(tests|web)/
+
       - id: mypy
         name: mypy
         entry: uv run mypy

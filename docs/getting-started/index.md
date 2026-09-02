@@ -3,12 +3,14 @@
 ```bash
 git clone <repo> && cd huron
 uv sync                       # runtime + dev dependencies
-make up                       # PostgreSQL on :5433, MinIO on :9000/:9001
-make migrate                  # alembic upgrade head
+make hosts                    # once: "127.0.0.1 keycloak" in /etc/hosts
+make up                       # PostgreSQL on :5433, MinIO on :9000/:9001, Keycloak on :8081
+make migrate                  # alembic upgrade head, configured by dev.env
 make test                     # the fast unit suite
 ```
 
-`make api` then serves the control plane on `http://localhost:8080`.
+`make api` then serves the control plane on `http://localhost:8080`, configured by `dev.env`,
+and `make web` serves the frontend on `http://localhost:5173`.
 
 Four things are worth knowing before the first change lands:
 

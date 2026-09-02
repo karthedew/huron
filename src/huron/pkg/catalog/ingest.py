@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from .errors import IllegalIngestTransition, SessionExpired
+from .errors import IllegalIngestTransition, IngestSessionExpired
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -74,7 +74,7 @@ class IngestSession:
     def transition(self, target: IngestState, *, now: datetime | None = None) -> IngestSession:
         current_time = now or datetime.now(UTC)
         if current_time >= self.lease.expires_at and self.state not in TERMINAL_STATES:
-            raise SessionExpired(f"ingest session {self.lease.ingest_id} has expired")
+            raise IngestSessionExpired(f"ingest session {self.lease.ingest_id} has expired")
         if target not in _TRANSITIONS[self.state]:
             raise IllegalIngestTransition(f"cannot transition {self.state} to {target}")
         return replace(self, state=target, etag=self.etag + 1)
@@ -84,7 +84,7 @@ class IngestSession:
     ) -> IngestSession:
         current_time = now or datetime.now(UTC)
         if self.state in TERMINAL_STATES or current_time >= self.lease.expires_at:
-            raise SessionExpired(f"ingest session {self.lease.ingest_id} is not renewable")
+            raise IngestSessionExpired(f"ingest session {self.lease.ingest_id} is not renewable")
         return replace(
             self,
             lease=replace(self.lease, expires_at=current_time + ttl),

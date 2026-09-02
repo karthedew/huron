@@ -18,22 +18,29 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from asyncer import asyncify
+from fastapi import APIRouter, Depends
 
 from huron.pkg.auth import Principal, PrincipalSubjectExists, make_credential
-from huron.pkg.catalog.errors import DomainError
-from huron.service.api.authorization import get_repository, require_system
-from huron.service.api.repository import ResourceNotFound
-from huron.service.api.routes.v1.common import jsonable
-from huron.service.api.routes.v1.schema.users import CreateUser, SetPassword
+from huron.pkg.catalog.errors import ResourceNotFound
+from huron.service.api.authorization import require_system
+from huron.service.api.errors import PrincipalKindMismatch, UsernameTaken
+from huron.service.api.problems import problem_response
+from huron.service.api.routes.v1.schema.users import (
+    CreateUser,
+    PasswordReset,
+    SetPassword,
+    UserView,
+)
+from huron.service.api.runtime import Repository
 
 if TYPE_CHECKING:
     from huron.pkg.auth import PrincipalRecord
     from huron.service.api.repository import HierarchyRepository
 
-router = APIRouter()
-
-_Actor = Annotated[Principal, Depends(require_system("user.manage"))]
+_manage_users = require_system("user.manage")
+_Actor = Annotated[Principal, Depends(_manage_users)]
+router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(_manage_users)])
 
 
 async def _existing_user(repository: HierarchyRepository, principal_id: UUID) -> PrincipalRecord:
@@ -41,42 +48,55 @@ async def _existing_user(repository: HierarchyRepository, principal_id: UUID) ->
     if principal is None:
         raise ResourceNotFound(f"principal does not exist: {principal_id}")
     if principal.kind != "user":
-        raise DomainError(f"principal is not a user: {principal_id}")
+        raise PrincipalKindMismatch(f"principal is not a user: {principal_id}")
     return principal
 
 
-@router.post("/users", status_code=201)
-async def create_user(request: Request, body: CreateUser, actor: _Actor) -> dict[str, object]:
-    repository = get_repository(request)
+@router.post("", status_code=201, responses={409: problem_response("username is already taken")})
+async def create_user(body: CreateUser, repository: Repository, actor: _Actor) -> UserView:
     try:
         principal = await repository.principals.create_user(
             subject=body.username, display_name=body.display_name
         )
     except PrincipalSubjectExists as exc:
-        raise DomainError(str(exc)) from exc
-    credential = make_credential(principal.id, body.password, updated_by=actor.subject)
+        raise UsernameTaken(str(exc)) from exc
+    credential = await asyncify(make_credential)(
+        principal.id, body.password, updated_by=actor.subject
+    )
     await repository.credentials.upsert(credential)
-    return jsonable(principal)
+    return UserView.model_validate(principal)
 
 
-@router.put("/users/{principal_id}/password")
+@router.put(
+    "/{principal_id}/password",
+    responses={
+        404: problem_response("no such user"),
+        409: problem_response("principal is not a user"),
+    },
+)
 async def set_password(
-    request: Request, principal_id: UUID, body: SetPassword, actor: _Actor
-) -> dict[str, str]:
-    repository = get_repository(request)
+    principal_id: UUID, body: SetPassword, repository: Repository, actor: _Actor
+) -> PasswordReset:
     principal = await _existing_user(repository, principal_id)
-    credential = make_credential(principal_id, body.password, updated_by=actor.subject)
+    credential = await asyncify(make_credential)(
+        principal_id, body.password, updated_by=actor.subject
+    )
     await repository.credentials.upsert(credential)
     await repository.sessions.revoke_all_for(principal.subject, datetime.now(UTC))
-    return {"status": "password-reset"}
+    return PasswordReset(status="password-reset")
 
 
-@router.post("/users/{principal_id}/disable")
-async def disable_user(request: Request, principal_id: UUID, _actor: _Actor) -> dict[str, object]:
-    repository = get_repository(request)
+@router.post(
+    "/{principal_id}/disable",
+    responses={
+        404: problem_response("no such user"),
+        409: problem_response("principal is not a user"),
+    },
+)
+async def disable_user(principal_id: UUID, repository: Repository) -> UserView:
     await _existing_user(repository, principal_id)
     updated = await repository.principals.disable(principal_id, disabled_at=datetime.now(UTC))
     if updated is None:
         raise ResourceNotFound(f"principal does not exist: {principal_id}")
     await repository.sessions.revoke_all_for(updated.subject, datetime.now(UTC))
-    return jsonable(updated)
+    return UserView.model_validate(updated)

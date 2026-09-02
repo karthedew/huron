@@ -113,7 +113,10 @@ def _oidc_settings(tmp_path: Path, *, env: str = "development") -> ApiSettings:
 @pytest.fixture
 def client(tmp_path: Path, serve_jwks: None) -> Iterator[TestClient]:
     settings = _oidc_settings(tmp_path)
-    repository = HierarchyRepository(PosixRawStore(settings.data_root))
+    repository = HierarchyRepository(
+        PosixRawStore(settings.data_root),
+        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
+    )
     with respx.mock:
         _mock_discovery()
         with TestClient(create_app(settings=settings, repository=repository)) as client:
@@ -157,7 +160,10 @@ def test_oidc_start_flow_cookie_omits_secure_in_development(client: TestClient) 
 
 def test_oidc_start_flow_cookie_is_secure_outside_development(tmp_path: Path) -> None:
     settings = _oidc_settings(tmp_path, env="production")
-    repository = HierarchyRepository(PosixRawStore(settings.data_root))
+    repository = HierarchyRepository(
+        PosixRawStore(settings.data_root),
+        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
+    )
     with respx.mock:
         _mock_discovery()
         with TestClient(create_app(settings=settings, repository=repository)) as production_client:
@@ -192,7 +198,10 @@ def test_oidc_start_404s_when_oidc_is_not_configured(tmp_path: Path) -> None:
         database_url="postgresql://unused",
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
     )
-    repository = HierarchyRepository(PosixRawStore(settings.data_root))
+    repository = HierarchyRepository(
+        PosixRawStore(settings.data_root),
+        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
+    )
     with TestClient(create_app(settings=settings, repository=repository)) as unconfigured:
         response = unconfigured.get("/auth/oidc/start", follow_redirects=False)
     assert response.status_code == 404

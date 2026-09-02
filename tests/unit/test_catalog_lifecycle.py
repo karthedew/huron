@@ -26,7 +26,9 @@ def test_each_member_value_equals_its_name() -> None:
 
 
 def test_created_dataset_is_active(tmp_path: Path) -> None:
-    repository = HierarchyRepository(PosixRawStore(str(tmp_path / "raw")))
+    repository = HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("internal",)
+    )
     organization = repository.create_organization(
         slug="acme",
         title="Acme",

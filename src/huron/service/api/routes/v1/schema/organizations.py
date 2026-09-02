@@ -1,8 +1,11 @@
-"""Request bodies owned by ``endpoints/organizations.py``."""
+"""Request and response bodies owned by ``endpoints/organizations.py``."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from datetime import datetime
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CreateOrganization(BaseModel):
@@ -17,3 +20,20 @@ class PatchOrganization(BaseModel):
     slug: str | None = None
     title: str | None = None
     description: str | None = None
+
+
+class OrganizationView(BaseModel):
+    """One organization as the API publishes it.
+
+    ``version`` is the value ``If-Match`` carries back on a PATCH; the
+    raw-store ``generation`` behind it is not part of this contract.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    slug: str
+    title: str
+    description: str
+    version: int
+    created_at: datetime

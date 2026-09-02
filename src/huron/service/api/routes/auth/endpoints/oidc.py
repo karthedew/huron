@@ -9,30 +9,28 @@ storage - see :class:`~huron.pkg.auth.LoginFlow`.
 from __future__ import annotations
 
 import hmac
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
 from huron.pkg.auth import AuthError, LoginFlow, OidcClient, code_challenge_s256, create_session
-from huron.service.api.authorization import (
-    LOGIN_FLOW_COOKIE_MAX_AGE,
-    LOGIN_FLOW_COOKIE_NAME,
-    clear_login_flow_cookie,
-    get_repository,
-    get_settings,
-    set_login_flow_cookie,
-    set_session_cookie,
-)
+from huron.service.api.authorization import login_flow_cookie, session_cookie
+from huron.service.api.errors import OidcNotConfigured
+from huron.service.api.problems import problem_response
+from huron.service.api.runtime import Repository, Runtime, Settings
 from huron.service.api.settings import ApiSettings
 
-router = APIRouter()
+router = APIRouter(prefix="/oidc")
 
 
-def _oidc_client(request: Request) -> OidcClient:
-    client = getattr(request.app.state, "oidc_client", None)
-    if client is None:
-        raise HTTPException(status_code=404, detail="OIDC is not configured")
-    return client
+async def _configured_oidc_client(runtime: Runtime) -> OidcClient:
+    if runtime.oidc_client is None:
+        raise OidcNotConfigured("no identity provider is configured")
+    return runtime.oidc_client
+
+
+_Client = Annotated[OidcClient, Depends(_configured_oidc_client)]
 
 
 def _flow_secret(settings: ApiSettings) -> bytes:
@@ -52,10 +50,13 @@ def _app_url(settings: ApiSettings, return_to: str) -> str:
     return settings.web_app_url.rstrip("/") + return_to
 
 
-@router.get("/oidc/start")
-async def oidc_start(request: Request, return_to: str = "/") -> RedirectResponse:
-    client = _oidc_client(request)
-    settings = get_settings(request)
+@router.get(
+    "/start",
+    status_code=302,
+    response_class=RedirectResponse,
+    responses={404: problem_response("no identity provider is configured")},
+)
+async def oidc_start(client: _Client, settings: Settings, return_to: str = "/") -> RedirectResponse:
     flow = LoginFlow.new(return_to=_safe_return_path(return_to))
     url = client.authorization_url(
         state=flow.state,
@@ -63,29 +64,44 @@ async def oidc_start(request: Request, return_to: str = "/") -> RedirectResponse
         code_challenge=code_challenge_s256(flow.code_verifier),
     )
     response = RedirectResponse(url, status_code=302)
-    set_login_flow_cookie(response, settings, flow.encode(_flow_secret(settings)))
+    login_flow_cookie(settings).issue(response, flow.encode(_flow_secret(settings)))
     return response
 
 
-@router.get("/oidc/callback")
-async def oidc_callback(request: Request, code: str, state: str) -> RedirectResponse:
-    settings = get_settings(request)
-    flow = LoginFlow.decode(
-        request.cookies.get(LOGIN_FLOW_COOKIE_NAME, ""),
+@router.get(
+    "/callback",
+    status_code=302,
+    response_class=RedirectResponse,
+    responses={
+        404: problem_response("no identity provider is configured"),
+        401: problem_response("the login flow or the provider's response could not be trusted"),
+    },
+)
+async def oidc_callback(
+    request: Request,
+    code: str,
+    state: str,
+    client: _Client,
+    settings: Settings,
+    repository: Repository,
+) -> RedirectResponse:
+    flow = login_flow_cookie(settings)
+    login_flow = LoginFlow.decode(
+        flow.read(request) or "",
         _flow_secret(settings),
-        max_age=LOGIN_FLOW_COOKIE_MAX_AGE,
+        max_age=flow.max_age,
     )
-    if not hmac.compare_digest(state, flow.state):
+    if not hmac.compare_digest(state, login_flow.state):
         raise AuthError("OIDC state mismatch")
-    client = _oidc_client(request)
-    user = await client.exchange_code(code=code, code_verifier=flow.code_verifier, nonce=flow.nonce)
-    repository = get_repository(request)
+    user = await client.exchange_code(
+        code=code, code_verifier=login_flow.code_verifier, nonce=login_flow.nonce
+    )
     principal_row = await repository.principals.upsert_oidc_user(user)
     record, token = create_session(
         principal_row.subject, groups=user.groups, authentication_method="oidc"
     )
     await repository.sessions.add(record)
-    response = RedirectResponse(_app_url(settings, flow.return_to), status_code=302)
-    set_session_cookie(response, settings, token)
-    clear_login_flow_cookie(response, settings)
+    response = RedirectResponse(_app_url(settings, login_flow.return_to), status_code=302)
+    session_cookie(settings).issue(response, token)
+    flow.revoke(response)
     return response

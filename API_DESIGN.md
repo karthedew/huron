@@ -7249,3 +7249,1227 @@ $ grep -rln 'huron.service.api.app:app' . --exclude-dir=.git --exclude-dir=node_
 `docker-compose.yml` contains no `command:` for the `api` service (only `migrate` has one:
 `["alembic", "upgrade", "head"]`), so it inherits the image `CMD` and needs no edit — confirming
 that half of Design 2's note.
+
+---
+
+## Design 9 — `authorization.py` decomposition
+
+### Target design
+
+#### The tree this design starts from
+
+`authorization.py` is 426 lines and exports 25 names today. Milestones M1–M10 do not shrink it:
+they remove four public names (`DEFAULT_SESSION_COOKIE_NAME`, `get_repository`, `get_settings`,
+`Forbidden`) and add five (`BindingCacheMap`, `request_binding_cache`, `BindingCache`,
+`current_session`, `CurrentSession`), leaving **26** exported names in a module of roughly the same
+size. The fusion this design is about is untouched by the run so far — it is the one structural
+problem in the tier that the first eight designs move around rather than resolve.
+
+#### Layout
+
+The module becomes a package. Logic lives in named submodules; `__init__.py` re-exports the public
+surface and holds nothing else, following `pkg/auth`, `pkg/catalog` and `pkg/rawstore` (three of the
+four `pkg` packages; `pkg/rbac` is the exception and stays out of scope).
+
+```text
+src/huron/service/api/authorization/
+├── __init__.py       re-exports; no logic
+├── cookies.py        the two cookies this service issues, and their attributes
+├── credentials.py    request credential -> Principal, or 401
+├── scopes.py         path identifiers -> rbac.Scope, 404 before 403
+├── decisions.py      bindings, the per-request cache, and the allow/deny call
+└── guards.py         the dependencies a route declares
+```
+
+#### `authorization/cookies.py`
+
+```python
+"""The cookies this service issues, and the attributes that define them.
+
+A cookie is cleared only if the attributes on the clearing response match
+the ones it was set with; a session cookie is read only under the name it
+was written with. Both are properties of one object here rather than
+agreements between four call sites.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from fastapi import Request, Response
+
+from huron.pkg.auth import ABSOLUTE_TTL
+
+from ..settings import ApiSettings
+
+#: The pending-login cookie's lifetime, which doubles as ``LoginFlow.decode``'s
+#: ``max_age``: a flow the browser still holds a cookie for is never rejected as
+#: stale, and a flow it has forgotten is never accepted.
+LOGIN_FLOW_MAX_AGE = 600
+
+
+@dataclass(frozen=True, slots=True)
+class CookieSpec:
+    """One cookie, fully described. Frozen: an issued cookie and the response
+    that clears it must not be able to disagree about name, path or flags."""
+
+    name: str
+    path: str
+    max_age: int
+    secure: bool
+
+    def issue(self, response: Response, value: str) -> None: ...
+    def revoke(self, response: Response) -> None: ...
+    def read(self, request: Request) -> str | None: ...
+
+
+def session_cookie(settings: ApiSettings) -> CookieSpec:
+    """The session cookie: configurable name, site-wide path, absolute TTL."""
+    return CookieSpec(
+        name=settings.session_cookie_name,
+        path="/",
+        max_age=int(ABSOLUTE_TTL.total_seconds()),
+        secure=settings.env != "development",
+    )
+
+
+def login_flow_cookie(settings: ApiSettings) -> CookieSpec:
+    """The transient OIDC pending-login cookie. Its name is not configurable -
+    it never leaves ``/auth`` - and it carries the PKCE verifier, nonce and
+    state, HMAC-signed, between ``/auth/oidc/start`` and the callback."""
+    return CookieSpec(
+        name="huron_login",
+        path="/auth",
+        max_age=LOGIN_FLOW_MAX_AGE,
+        secure=settings.env != "development",
+    )
+```
+
+`issue` and `revoke` forward exactly the arguments today's four helpers forward; the four resulting
+`Set-Cookie` headers are byte-identical under both `secure` settings (Receipt 3). `HttpOnly` and
+`SameSite=Lax` are not fields: neither cookie may ever be script-readable or sent cross-site, so
+they are not a caller's choice.
+
+#### `authorization/credentials.py`
+
+```python
+async def current_principal(request: Request, runtime: Runtime) -> Principal: ...
+CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
+
+async def current_session(request: Request, _actor: CurrentPrincipal) -> SessionRecord | None: ...
+CurrentSession = Annotated[SessionRecord | None, Depends(current_session)]
+
+async def _touch_api_key(store: ApiKeyWriter, credential: str) -> None: ...
+def _enforce_csrf(request: Request, session: SessionRecord) -> None: ...
+```
+
+The body is Design 2's `current_principal` verbatim, with one line changed: the cookie read becomes
+`session_cookie(runtime.settings).read(request)` rather than an independent
+`request.cookies.get(runtime.settings.session_cookie_name)`. That is the whole point of the cookie
+module — the reader and the two writers now name the cookie once, in one place.
+
+#### `authorization/scopes.py`
+
+```python
+def organization_scope(repository: HierarchyRepository, organization_id: UUID) -> Scope: ...
+def project_scope(repository: HierarchyRepository, project_id: UUID) -> Scope: ...
+def dataset_scope(repository: HierarchyRepository, dataset_id: UUID) -> Scope: ...
+```
+
+Unchanged bodies. Synchronous, per Design 1's disposition table (process-dict reads, 0.11 µs), and
+they stay synchronous when the hierarchy gains a real store only if that store is synchronous — the
+rule in Design 1's constraint governs.
+
+#### `authorization/decisions.py`
+
+```python
+BindingCacheMap = dict[frozenset[str], tuple[Binding, ...]]
+
+async def request_binding_cache() -> BindingCacheMap: ...
+BindingCache = Annotated[BindingCacheMap, Depends(request_binding_cache)]
+
+def as_rbac_principal(principal: Principal) -> RbacPrincipal: ...
+
+async def _cached_bindings_for(
+    cache: BindingCacheMap, repository: HierarchyRepository, identifiers: frozenset[str]
+) -> tuple[Binding, ...]: ...
+
+async def bindings_for_principal(
+    cache: BindingCacheMap, repository: HierarchyRepository, actor: RbacPrincipal
+) -> tuple[Binding, ...]: ...
+
+async def check(
+    cache: BindingCacheMap,
+    repository: HierarchyRepository,
+    principal: Principal,
+    capability: str,
+    scope: Scope,
+    *,
+    layer: str | None = None,
+) -> None: ...
+```
+
+Bodies are Design 2's. One change: `cached_bindings_for` becomes `_cached_bindings_for`. It has no
+caller in `src/` outside this unit — `bindings_for_principal` is its only one, and the two route
+modules that reach the binding path use `bindings_for_principal` and `check` (Receipt 4). Its only
+other reference is `tests/unit/test_repository_rbac.py`, which pins memoization by calling it
+directly; that test drives `bindings_for_principal` instead, which memoizes through the same dict.
+
+#### `authorization/guards.py`
+
+```python
+def require_system(capability: str) -> Callable[..., Awaitable[Principal]]: ...
+def require_organization(capability: str) -> Callable[..., Awaitable[Principal]]: ...
+def require_project(capability: str) -> Callable[..., Awaitable[Principal]]: ...
+def require_dataset(capability: str) -> Callable[..., Awaitable[Principal]]: ...
+
+@dataclass(frozen=True, slots=True)
+class LayerWrite:
+    principal: Principal
+    layer: Layer
+
+async def dataset_layer_writer(
+    dataset_id: UUID,
+    layer: str,
+    principal: CurrentPrincipal,
+    repository: Repository,
+    cache: BindingCache,
+) -> LayerWrite: ...
+```
+
+Bodies are Design 2's. Every factory still returns an `async def` closure; `dataset_layer_writer` is
+still an `async def` function returning a frozen dataclass, which is exactly the shape
+`.claude/skills/fastapi/references/dependencies.md` prescribes in place of a class dependency.
+
+#### `authorization/__init__.py`
+
+Nineteen names, down from 26 after M10 and 25 today:
+
+```python
+"""Who the caller is, and what they may do."""
+
+from .cookies import CookieSpec, login_flow_cookie, session_cookie
+from .credentials import CurrentPrincipal, CurrentSession, current_principal
+from .decisions import BindingCache, as_rbac_principal, bindings_for_principal, check
+from .guards import (
+    LayerWrite,
+    dataset_layer_writer,
+    require_dataset,
+    require_organization,
+    require_project,
+    require_system,
+)
+from .scopes import dataset_scope, organization_scope, project_scope
+
+__all__ = [
+    "BindingCache", "CookieSpec", "CurrentPrincipal", "CurrentSession", "LayerWrite",
+    "as_rbac_principal", "bindings_for_principal", "check", "current_principal",
+    "dataset_layer_writer", "dataset_scope", "login_flow_cookie", "organization_scope",
+    "project_scope", "require_dataset", "require_organization", "require_project",
+    "require_system", "session_cookie",
+]
+```
+
+**The eleven names that stop being public.** `set_session_cookie`, `clear_session_cookie`,
+`set_login_flow_cookie`, `clear_login_flow_cookie`, `LOGIN_FLOW_COOKIE_NAME` and
+`LOGIN_FLOW_COOKIE_MAX_AGE` are folded into `CookieSpec` and its two constructors — six names become
+three, and the cookie's identity stops being six independent facts. `cached_bindings_for` becomes
+private. `BindingCacheMap`, `request_binding_cache`, `current_session` and `_enforce_csrf` are
+implementation of the two aliases and the credential path; a caller declares `BindingCache` and
+`CurrentSession`, never the callable or the map type.
+
+#### Import direction inside the package
+
+```mermaid
+graph TD
+    INIT["__init__.py<br/>public surface"] --> GUARDS
+    INIT --> DEC
+    INIT --> CRED
+    INIT --> SCOPES
+    INIT --> COOK
+    GUARDS["guards.py"] --> CRED["credentials.py"]
+    GUARDS --> DEC["decisions.py"]
+    GUARDS --> SCOPES["scopes.py"]
+    CRED --> COOK["cookies.py"]
+    GUARDS --> RT["runtime.py<br/>Repository, Settings"]
+    CRED --> RT
+    DEC --> REPO["repository.py, ports.py"]
+    DEC --> ERR["errors.py -- Forbidden"]
+    SCOPES --> REPO
+    COOK --> SET["settings.py"]
+```
+
+Acyclic, and `cookies.py` and `scopes.py` are leaves. No submodule imports `routes`.
+
+#### Import-linter: one new contract
+
+```toml
+# The authorization package is entered through its public surface. Its five
+# submodules are one unit with one contract; a route that reaches past
+# __init__ into guards.py or decisions.py is depending on an arrangement of
+# internals, not on the guarantee the package makes.
+[[tool.importlinter.contracts]]
+name = "the authorization package is entered through its public surface"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["huron.service.api.routes.**", "huron.service.api.app"]
+forbidden_modules = ["huron.service.api.authorization.*"]
+```
+
+`allow_indirect_imports = true` is load-bearing, not decoration: without it the chain
+`routes → authorization → authorization.credentials` — which every legitimate package-level import
+creates — reports as a violation. With it, the contract is KEPT on the clean layout and BROKEN on a
+single direct `from huron.service.api.authorization.guards import ...` (Receipt 2). This is the
+repository's sixth contract.
+
+No `pyproject.toml` change is needed anywhere else: the per-file ignore
+`"src/huron/service/api/**" = ["TC001", "TC002", "TC003"]` is a recursive glob that already covers
+the new package, and `"src/huron/service/api/authorization.py" = ["N818"]` is deleted at M8 with
+`Forbidden`.
+
+### Explicit contracts
+
+#### The post-M10 tree this designs against, and how it was established
+
+Assumed content of `authorization.py` when this design begins: today's 426 lines, **minus**
+`get_repository`, `get_settings`, `_cookie_name`, `DEFAULT_SESSION_COOKIE_NAME` and the two
+`request.state.binding_cache` create-if-missing blocks (M2 / Design 2 → Deletions), **minus**
+`class Forbidden` and its `__all__` entry (M8 / Design 6 → Deletions), **plus**
+`BindingCacheMap` / `request_binding_cache` / `BindingCache` and `current_session` / `CurrentSession`
+(M2 / Design 2 → Target design → "`authorization.py` — the injected shape"), with every guard and
+`check` / `bindings_for_principal` / `cached_bindings_for` taking `cache` and `repository`
+parameters instead of reading `Request`. `organization_scope` / `project_scope` / `dataset_scope`,
+the four cookie helpers, `_enforce_csrf`, `_touch_api_key`, `as_rbac_principal`, `LayerWrite` and
+`dataset_layer_writer` arrive unchanged in body.
+
+Established by reading the Deletions sections of Designs 2 and 6 and the Target design of Design 2,
+then checking the remaining six milestones for edits to this file: Design 3 changes only its
+`TYPE_CHECKING` import block (`from .ports import ApiKeyWriter`), Design 4 changes its *callers*
+and adds no symbol to it, Design 7 adds no error class and no store method, Design 8 widens
+type-check scope and enables Ruff `FAST` — which `src/huron/service` already passes clean. The
+`__all__` arithmetic is 25 − 4 + 5 = 26, enumerated rather than inherited.
+
+#### `cookies.py`
+
+Guarantees a cookie is cleared with the attributes it was set with, and read under the name it was
+written with, because all three operations read the same frozen instance. Invariant: `HttpOnly` and
+`SameSite=Lax` are not configurable, and `secure` is `False` only when `settings.env ==
+"development"`. No error behavior — these are pure header manipulations. A future author must not
+add a `set_*`/`clear_*` pair beside `CookieSpec`, must not widen `samesite`, and must not add a
+third cookie without adding a constructor here: a cookie set anywhere else in the tier is outside
+this guarantee.
+
+#### `credentials.py`
+
+Guarantees that a request reaching a route body carries a resolved `Principal`, and that credential
+precedence is bearer → session cookie → development headers, in that order and with no fallthrough:
+a programmatic caller carrying a cookie jar is never silently downgraded. Error behavior: `AuthError`
+(401 `problem+json`) on every refusal, including a bearer JWT with no verifier configured and a
+missing credential outside `dev-headers` mode. Invariant: CSRF is enforced in the cookie branch and
+only there — bearer callers are exempt because a cross-site page cannot set headers, and
+GET/HEAD/OPTIONS are exempt because they are side-effect-free. A future author adding a fourth
+credential branch must state that branch's CSRF disposition; adding one that silently skips
+`_enforce_csrf` is how this module fails. `_touch_api_key` is best-effort by contract: a failed
+last-used write must never turn a valid credential into a failed request.
+
+#### `scopes.py`
+
+Guarantees 404 before 403: each function resolves the path identifier through the repository before
+any binding is consulted, so an unknown id never leaks its existence through a permission error.
+Error behavior: `ResourceNotFound` (404) from the repository. Invariant: the returned `Scope` always
+carries its full ancestry, because `rbac.decide`'s inheritance walk reads those fields. A future
+author must not construct a `Scope` in a route module — three constructors exist, and a fourth scope
+level is a change to `pkg/rbac` first.
+
+#### `decisions.py`
+
+Guarantees that role bindings are cached for exactly one request and never wider: `request_binding_cache`
+is a `Depends`-cached provider, so FastAPI creates one dict per request and every guard and handler in
+that request shares it (Design 2, Receipt 5). A mid-request role change cannot apply retroactively; no
+cache outlives the principal it was built for. `bindings_for_principal` guarantees that a service
+account's authority is synthesized from its owning organization and never read from binding rows,
+and that a `sa:` principal whose account row is missing or disabled gets `()` — denied everywhere.
+`check` raises `Forbidden` (403, from `errors.py`) and nothing else; it never returns a boolean, so a
+caller cannot forget to branch on it. A future author must not memoize bindings on `app.state`,
+module state, or any object outliving the request.
+
+#### `guards.py`
+
+Guarantees that holding a `Principal` returned by a `require_*` dependency is proof the capability
+check passed, and that holding a `LayerWrite` is proof both the layer rule and the binding check
+passed — `ensure_layer_writable` refuses human principals on silver/gold regardless of bindings, and
+runs before `check`. Error behavior: `ResourceNotFound` (404) from the scope lookup, then `Forbidden`
+(403), in that order. Invariant: a factory returns a **new** closure per call, so a capability
+declared both on a router and as a parameter must name one module-level bound closure or the check
+runs twice (Design 4's rule, Receipt 5 there). Routes never re-check permissions. A future author
+must not add a guard that returns `None` or a boolean: the returned principal is the proof, and a
+guard whose value carries no evidence is a guard a handler can forget to declare.
+
+#### The package boundary
+
+Guarantees that the five submodules may be rearranged without touching a route module, because
+routes name `huron.service.api.authorization` and nothing beneath it. Enforced by contract, not by
+convention (Receipt 2). A future author must not import a submodule from outside the package, and
+must not add a name to `__init__.py` that no module outside the package uses — the 25-name `__all__`
+this design retires grew exactly that way.
+
+### Deletions
+
+**`src/huron/service/api/authorization.py`** — the file, in full. Its post-M10 contents are
+redistributed as above; nothing is left at the old path, and no re-export module stands in for it.
+
+**Symbols that cease to exist** (not renamed, not relocated):
+
+- `set_session_cookie`, `clear_session_cookie`, `set_login_flow_cookie`, `clear_login_flow_cookie`
+  — replaced by `CookieSpec.issue` / `CookieSpec.revoke`.
+- `LOGIN_FLOW_COOKIE_NAME` — a `CookieSpec` field; `LOGIN_FLOW_COOKIE_MAX_AGE` — becomes the
+  module-private `LOGIN_FLOW_MAX_AGE`, reached by callers as `login_flow_cookie(settings).max_age`.
+- `cached_bindings_for` as a public name — becomes `_cached_bindings_for`.
+
+**Call sites edited by the above** (their `authorization` import lines change in every case):
+
+- `routes/auth/endpoints/login.py` — `set_session_cookie(response, settings, token)` →
+  `session_cookie(settings).issue(response, token)`; the `clear_session_cookie` call likewise.
+- `routes/auth/endpoints/oidc.py` — the three cookie calls; `request.cookies.get(LOGIN_FLOW_COOKIE_NAME, "")`
+  → `flow.read(request) or ""` and `max_age=LOGIN_FLOW_COOKIE_MAX_AGE` → `max_age=flow.max_age`,
+  against one `flow = login_flow_cookie(settings)`.
+- `routes/auth/endpoints/session.py`, `routes/v1/endpoints/{organizations,projects,policies,datasets,users}.py`
+  and the three modules M5 splits `endpoints/rbac.py` into — import path only.
+
+**Tests** — `tests/unit/test_repository_rbac.py:25` (`cached_bindings_for` import) and its two
+direct-call tests at `:376-389`, rewritten against `bindings_for_principal`; the module docstring's
+reference to `cached_bindings_for` at `:3`.
+
+**`pyproject.toml`** — none. Both relevant entries are already handled: the `TC00*` ignore is a
+recursive glob over `src/huron/service/api/**`, and the `N818` ignore for this file is deleted at M8.
+
+### Data flow
+
+```mermaid
+graph TD
+    REQ["HTTP request"] --> ROUTER["routes.v1.router<br/>dependencies=[Depends(current_principal)]"]
+    ROUTER --> CRED["credentials.current_principal"]
+    CRED --> RT["runtime.ApiRuntime"]
+    CRED -->|"no Authorization header"| COOK["cookies.session_cookie(settings).read"]
+    COOK --> CSRF["_enforce_csrf<br/>non-safe methods only"]
+    CRED -->|"refused"| E401["AuthError -> 401 problem+json"]
+    CRED --> P["Principal"]
+
+    P --> GUARD["guards.require_* / dataset_layer_writer"]
+    GUARD --> SCOPE["scopes.*_scope"]
+    SCOPE -->|"unknown id"| E404["ResourceNotFound -> 404"]
+    SCOPE --> DEC["decisions.check"]
+    BC["decisions.request_binding_cache<br/>one dict per request"] --> DEC
+    DEC --> BFP["decisions.bindings_for_principal"]
+    BFP --> REPO["repository.bindings_for /<br/>service_account_by_subject"]
+    DEC --> RBAC["pkg.rbac.decide"]
+    RBAC -->|"not ALLOW"| E403["errors.Forbidden -> 403"]
+    RBAC -->|"ALLOW"| BODY["path operation body"]
+
+    LOGIN["routes.auth.endpoints.login / oidc"] --> COOKW["cookies.CookieSpec.issue / revoke"]
+```
+
+The one edge worth reading twice: `credentials` and the `/auth` route modules reach the same
+`CookieSpec` constructors from opposite sides. That shared vertex is the invariant — today the read
+side and the write side derive the cookie's name independently.
+
+### Rejected alternatives
+
+- **Five flat sibling modules** (`authorization_credentials.py`, `authorization_guards.py`, …) —
+  `service/api/` already holds twelve modules after M2/M3/M6/M8 (`app`, `main`, `settings`,
+  `runtime`, `repository`, `records`, `ports`, `memory_rbac`, `errors`, `problems`, `postgres_auth`,
+  `postgres_rbac`); five more prefixed names make seventeen with no grouping, and no import-linter
+  contract can name "the authorization unit" because there is no such module.
+- **An `Authorizer` class injected with `Depends()`, holding repository, cache and settings** — the
+  shape the FastAPI skill forbids, and the cost is measured, not stylistic: `Depends(SomeClass)`
+  resolves on `AnyIO worker thread`, spending a thread hop and one of the 40 limiter tokens on every
+  one of 47 operations, while an `async def` returning an instance stays on the loop thread
+  (Receipt 1). `CookieSpec` and `LayerWrite` are the shape that is allowed — classes constructed
+  *inside* dependencies, never injected as them.
+- **Keep the four cookie functions and skip `CookieSpec`** — their docstrings say "attributes must
+  match" twice, which is a convention comment standing in for a construction-enforced invariant; the
+  frozen spec makes the mismatch unrepresentable at no runtime cost and with byte-identical headers
+  (Receipt 3).
+- **Put the cookie module under `routes/auth/`** (beside `common.py`, the house precedent for a
+  shared non-endpoint module in a routes package) — it would put the session cookie's name on the
+  route side of the boundary while `current_principal` reads it from the other side, which is the
+  split this design exists to close, and it would make `authorization` import `routes`.
+
+### Open questions
+
+1. **Does the owner accept `CookieSpec` replacing the six cookie names?** It changes two `/auth`
+   endpoint modules beyond an import line and is the only behavioral-surface change in this design
+   (the emitted headers are identical — Receipt 3). **Recommend yes.** The alternative keeps a
+   four-way attribute agreement that a linter cannot check and that fails silently in browsers:
+   a `delete_cookie` whose `path` drifts from the `set_cookie` leaves the session cookie in place.
+2. **Should the sixth import-linter contract be added?** **Recommend yes**, in the form given above.
+   It is the only mechanism that keeps the package a unit; without it the first author who needs
+   something not in `__init__.py` will reach for the submodule, and the 25-name `__all__` this design
+   retires is the evidence that this happens. A `layers` contract (`routes` > `authorization` >
+   `runtime`) also passes and catches the reverse direction (Receipt 2), but that direction already
+   holds between flat modules and is not a boundary this design creates — **recommend deferring** it
+   rather than adding two contracts in one change.
+3. **Does `tests/unit/test_api_authorization.py` split to mirror the package?** It is one 230-line
+   module pinned to one source module, and after this change it covers five. **Recommend splitting**
+   into `test_authorization_credentials.py` (precedence, CSRF, dev-header fallback),
+   `test_authorization_cookies.py` (issue/revoke/read, the `secure` rule),
+   `test_authorization_decisions.py` (cache lifetime, service-account synthesis, `check`) and
+   `test_authorization_guards.py` (the four factories, the layer-write two-stage rule) — scopes are
+   covered through the guards. A single test module against a five-module package is the same
+   fusion one level up, and coverage is per file at 100% for touched files either way.
+
+### Receipts
+
+**Receipt 1 — a class dependency costs a thread hop; a function returning an instance does not.**
+`fastapi 0.141.1`, `TestClient`:
+
+```text
+$ uv run python threads.py
+Depends(ClassDep)     -> {'dependency_ran_on': 'AnyIO worker thread'}
+async def -> instance -> {'dependency_ran_on': 'asyncio-portal-fdfa8a420860',
+                          'handler_ran_on':    'asyncio-portal-fdfa8a420860'}
+```
+
+The frozen dataclass returned by the `async def` provider had its method called on the loop thread
+too — the class itself is free; injecting it is what is not. This is the measurement behind the
+class-vs-function rejection above, and it agrees with Design 1's Receipt 5.
+
+**Receipt 2 — the proposed contracts behave as claimed.** A scratch package `hx` mirroring the
+layout (`service/api/{app,settings,runtime,routes/…,authorization/{__init__,cookies,credentials,scopes,decisions,guards}}`),
+`import-linter 2.13`:
+
+```text
+# clean layout, both candidate contracts
+api layers KEPT
+authorization entered through its public surface KEPT
+Contracts: 2 kept, 0 broken.
+
+# authorization/guards.py adds `from ..routes.common import y`
+api layers BROKEN
+  hx.service.api.authorization is not allowed to import hx.service.api.routes:
+  - hx.service.api.authorization.guards -> hx.service.api.routes.common (l.4)
+
+# routes/endpoints.py adds `from hx.service.api.authorization.guards import x`
+authorization entered through its public surface BROKEN
+  hx.service.api.routes.endpoints is not allowed to import
+  hx.service.api.authorization.guards
+```
+
+Without `allow_indirect_imports = true` the surface contract also flags the legitimate chain
+`app -> routes -> authorization -> authorization.cookies` and is unusable; with it, only direct
+submodule imports are reported. The `.**` / `.*` wildcards in `source_modules` / `forbidden_modules`
+were verified to resolve, not silently match nothing.
+
+**Receipt 3 — `CookieSpec` emits byte-identical `Set-Cookie` headers.** Today's four helpers and the
+spec were run against paired `Response` objects, both `secure` settings, all four operations:
+
+```text
+secure=True  identical=True n=4
+secure=False identical=True n=4
+sample: huron_session=tok; HttpOnly; Max-Age=604800; Path=/; SameSite=lax
+        huron_session=""; expires=…; HttpOnly; Max-Age=0; Path=/; SameSite=lax
+```
+
+**Receipt 4 — `cached_bindings_for` has no consumer outside the module.**
+
+```text
+$ grep -rn '\bcached_bindings_for\b' src tests --include=*.py | grep -v api/authorization.py
+tests/unit/test_repository_rbac.py:3    (docstring)
+tests/unit/test_repository_rbac.py:25   (import)
+tests/unit/test_repository_rbac.py:376,377,380,388,389  (direct calls)
+```
+
+Zero hits under `src/`. The two route modules on the binding path use `bindings_for_principal`
+(`endpoints/datasets.py:149`) and `check` (`endpoints/rbac.py`).
+
+**Receipt 5 — the `__init__.py` convention, counted.** `pkg/auth/__init__.py`,
+`pkg/catalog/__init__.py` and `pkg/rawstore/__init__.py` contain re-exports and `__all__` only;
+`pkg/rbac/__init__.py` holds 253 lines of dataclasses and the `decide` engine. Three of four follow
+the convention this design follows; normalizing `pkg/rbac` is outside this design's target path and
+is not proposed here.
+
+**Receipt 6 — the surface arithmetic.** `authorization.py` is 426 lines with 25 `__all__` entries
+(`sed -n '400,426p'`, enumerated). Design 2 → Deletions removes `DEFAULT_SESSION_COOKIE_NAME`,
+`get_repository`, `get_settings`; Design 6 → Deletions removes `Forbidden`; Design 2 → Target design
+adds `BindingCacheMap`, `request_binding_cache`, `BindingCache`, `current_session`, `CurrentSession`.
+25 − 4 + 5 = **26** exported names entering this design; **19** leaving it.
+
+---
+
+## Design 10 — Store adapter layout and query ownership
+
+**Recommendation, in one sentence:** the five storage adapters become
+`src/huron/service/api/stores/`, a package organized **by port** — one module per port, holding
+every implementation of it — following `pkg/auth`, which is already organized that way; and the two
+ordering hazards Design 5b named but could not test are fixed **in the SQL as well as at the
+boundary**, because a PostgreSQL 16 cluster with the collation `postgres:16` actually ships
+(`en_US.UTF-8`, Receipt 1) loses four of fourteen rows and repeats one when a keyset cursor is walked
+over a default-collation `ORDER BY` (Receipt 3), and because `ORDER BY name` on `policies` genuinely
+reorders its ties between two executions of the identical query (Receipt 4).
+
+**Design 5b's Decision 1 is not superseded.** The boundary still sorts, and the sort key is still the
+cursor key. What this design changes is a factual claim in 5b's `### Deletions` — that the untouched
+`ORDER BY` clauses "become an internal determinism guarantee" — which the proof shows is false for
+`list_policies` as written. The SQL is changed so that it becomes what 5b assumed it already was.
+That correction is recorded as Open question 1 rather than applied silently.
+
+### Target design
+
+#### Layout
+
+`postgres_auth.py` (256 lines, three stores) and `postgres_rbac.py` (465 lines, two stores) plus
+Design 3's `ports.py` and `memory_rbac.py` become one package. Logic lives in named submodules;
+`__init__.py` re-exports the public surface and holds nothing else, following `pkg/auth`,
+`pkg/catalog`, `pkg/rawstore` and the `authorization/` package Design 9 just established.
+
+```text
+src/huron/service/api/stores/
+├── __init__.py       re-exports; no logic
+├── ports.py          RbacStore, ApiKeyWriter — the two Protocols this tier owns
+├── rows.py           asyncpg.Record -> record, and the command-tag parse
+├── rbac.py           InMemoryRbacStore, PostgresRbacStore
+├── api_keys.py       PostgresApiKeyStore
+├── credentials.py    PostgresCredentialStore
+├── sessions.py       PostgresSessionStore
+└── principals.py     PostgresPrincipalStore
+```
+
+| Module | Holds | Source today |
+|---|---|---|
+| `ports.py` | `RbacStore`, `ApiKeyWriter` | Design 3's `ports.py` (`repository.py:167-238`) |
+| `rows.py` | `binding_record`, `service_account`, `policy`, `api_key_record`, `credential_record`, `session_record`, `principal_record`, `affected_row_count` | `postgres_rbac.py:34-67`, `:453-465`; `postgres_auth.py:26-64` |
+| `rbac.py` | `InMemoryRbacStore`, `PostgresRbacStore` | Design 3's `memory_rbac.py` (`repository.py:241-410`); `postgres_rbac.py:70-386` |
+| `api_keys.py` | `PostgresApiKeyStore` | `postgres_rbac.py:389-450` |
+| `credentials.py` | `PostgresCredentialStore` | `postgres_auth.py:68-105` |
+| `sessions.py` | `PostgresSessionStore` | `postgres_auth.py:108-165` |
+| `principals.py` | `PostgresPrincipalStore` | `postgres_auth.py:168-256` |
+
+`records.py` does **not** move in. It is Design 3's zero-import leaf, imported by `repository.py`,
+by four route modules for `jsonable`, and by the stores; a module three unrelated consumers depend on
+is not a store, and putting it inside the package would make every route module import `stores`.
+
+#### By port, not by backend — and why the choice is narrower than it looks
+
+**`pkg/auth` is already organized by port, and it is the house precedent.** `apikeys.py` holds
+`ApiKeyRecord`, the `ApiKeyStore` Protocol and `MemoryApiKeyStore`; `sessions.py`, `principals.py`
+and `password.py` have the identical shape — one port, its record type, and its in-process
+implementation, in one module. There is no `memory.py` anywhere in `pkg`.
+
+**For four of the five ports, by-backend is not available at all.** `CredentialStore`,
+`SessionStore`, `PrincipalStore` and `ApiKeyStore` have their in-memory implementations in
+`huron/pkg/auth` — `MemoryCredentialStore`, `MemorySessionStore`, `MemoryPrincipalStore`,
+`MemoryApiKeyStore` — and `service → pkg` is the only legal import direction, so those four cannot
+move into `service/api/stores/` under any layout. The only pair whose placement is genuinely open is
+the RBAC one, and splitting it by backend would make the package's organizing principle apply to one
+module out of seven.
+
+**The decisive argument is Half B.** Both ordering defects this design fixes are *divergences between
+two implementations of one port kept in two files*: `bindings_at` says `COLLATE "C"` in
+`postgres_rbac.py:230` and the in-memory store cannot say it at all; `list_policies` orders by
+`name` in `postgres_rbac.py:384` and by `item.name` in `repository.py:406`, and neither is the
+`(name, id)` the cursor needs. Nobody reads two files together. `stores/rbac.py` puts
+`InMemoryRbacStore.list_policies` and `PostgresRbacStore.list_policies` on adjacent screens, where
+the next divergence is a diff instead of an incident. By-backend is the arrangement that produced
+the bug.
+
+`stores/rbac.py` is roughly 490 lines, larger than either module it replaces. That is the price and
+it is worth paying: the gates in this repository are per-function (`radon cc --min C`, `complexipy
+--max-complexity-allowed 15`), not per-module, and `repository.py` at ~860 lines and
+`tests/contract/test_catalog_store.py` at 1660 are the tier's existing scale.
+
+#### `stores/ports.py`
+
+```python
+"""What the API tier needs from a storage backend, and nothing about how it is stored.
+
+Two Protocols, consumer-owned in the sense that matters: no implementation
+in this package names one in its bases, and conformance is structural.
+``HierarchyRepository`` declares ``RbacStore``; ``HierarchyRepository`` and
+``authorization.credentials`` declare ``ApiKeyWriter``. The other three
+stores here satisfy ``CredentialStore``, ``SessionStore`` and
+``PrincipalStore``, which belong to ``huron.pkg.auth`` and are declared
+there, beside their in-process implementations.
+"""
+```
+
+Body is Design 3's `ports.py` verbatim: `RbacStore` with its thirteen methods, `ApiKeyWriter(ApiKeyStore,
+Protocol)` with `add`, `touch_last_used`, `revoke_all_for`.
+
+**Both seams are right, and stay as they are.** `RbacStore` covers three record families — bindings,
+service accounts, policies — and splitting it into three Protocols is the speculative abstraction the
+design skill names specifically: each would have exactly the same two implementors, which are two
+classes, so the split would produce three seams with no independent implementor, three constructor
+keywords on `HierarchyRepository`, and three wiring paths in the composition root, for one backend
+object. Split it on the day a policy store gets its own backend, not before. `ApiKeyWriter` is
+correctly the read Protocol plus the three writes `pkg.auth.ApiKeyResolver` must not have; its name
+describes what it adds, and the docstring says the `get` it inherits comes from `ApiKeyStore`.
+
+#### `stores/rows.py`
+
+```python
+"""The asyncpg boundary: one ``Record`` becomes one record type.
+
+Every function here is total over the columns its SELECT names and does
+nothing else - no I/O, no validation, no error mapping. Keeping them out
+of the store modules is what lets each store read as its queries.
+"""
+
+from __future__ import annotations
+
+import json
+from uuid import UUID
+
+import asyncpg
+
+from huron.pkg.auth import ApiKeyRecord, CredentialRecord, PrincipalRecord, SessionRecord
+from huron.service.api.records import Policy, RoleBindingRecord, ServiceAccount
+
+
+def binding_record(row: asyncpg.Record) -> RoleBindingRecord: ...
+def service_account(row: asyncpg.Record) -> ServiceAccount: ...
+def policy(row: asyncpg.Record) -> Policy: ...
+def api_key_record(row: asyncpg.Record) -> ApiKeyRecord: ...
+def credential_record(row: asyncpg.Record) -> CredentialRecord: ...
+def session_record(row: asyncpg.Record) -> SessionRecord: ...
+def principal_record(row: asyncpg.Record) -> PrincipalRecord: ...
+
+
+def affected_row_count(tag: str) -> int:
+    """asyncpg's ``execute()`` returns a command tag like ``"UPDATE 3"``."""
+    return int(tag.rsplit(" ", 1)[-1])
+```
+
+Bodies are the seven `_*_from_row` functions moved verbatim, losing their leading underscore because
+they now cross a module boundary. `affected_row_count` is the one genuine duplication the flat layout
+hid: `postgres_auth.py:63` defines it and `postgres_rbac.py:450` inlines the same expression
+(`int(tag.rsplit(" ", 1)[-1])`) by hand. One definition, two callers.
+
+#### `stores/__init__.py`
+
+```python
+"""Storage adapters for the API tier: one module per port."""
+
+from .api_keys import PostgresApiKeyStore
+from .credentials import PostgresCredentialStore
+from .ports import ApiKeyWriter, RbacStore
+from .principals import PostgresPrincipalStore
+from .rbac import InMemoryRbacStore, PostgresRbacStore
+from .sessions import PostgresSessionStore
+
+__all__ = [
+    "ApiKeyWriter", "InMemoryRbacStore", "PostgresApiKeyStore", "PostgresCredentialStore",
+    "PostgresPrincipalStore", "PostgresRbacStore", "PostgresSessionStore", "RbacStore",
+]
+```
+
+Eight names. `rows.py` is not re-exported: a row adapter has no caller outside the store that owns
+its SELECT, and a caller reaching for one is decoding a `Record` it did not fetch.
+
+#### The import lines that change
+
+```python
+# src/huron/service/api/repository.py  (replaces Design 3's two lines)
+from .stores import ApiKeyWriter, InMemoryRbacStore, RbacStore
+
+# src/huron/service/api/authorization/credentials.py  (replaces Design 3's ``from .ports import ApiKeyWriter``)
+from ..stores import ApiKeyWriter
+
+# src/huron/service/api/app.py  (replaces the two Postgres import blocks in ``_postgres_repository``)
+from .stores import (
+    PostgresApiKeyStore, PostgresCredentialStore, PostgresPrincipalStore,
+    PostgresRbacStore, PostgresSessionStore,
+)
+
+# tests/contract/test_rbac_store.py:63
+from huron.service.api.stores import InMemoryRbacStore, PostgresApiKeyStore, PostgresRbacStore
+
+# tests/contract/test_auth_store.py:48
+from huron.service.api.stores import (
+    PostgresCredentialStore, PostgresPrincipalStore, PostgresSessionStore,
+)
+
+# tests/unit/test_repository_rbac.py  (replaces Design 3's ``from ...memory_rbac import``)
+from huron.service.api.stores import InMemoryRbacStore
+```
+
+`from huron.pkg.catalog.errors import ResourceNotFound` in both contract modules is Design 3's and is
+unchanged.
+
+#### Import-linter: one new contract
+
+```toml
+# The stores package is entered through its public surface. A caller depends
+# on the guarantee a port makes, never on which module a particular adapter
+# was filed under; ``rows`` in particular is one store's private decoding of
+# its own SELECT.
+[[tool.importlinter.contracts]]
+name = "the stores package is entered through its public surface"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = [
+    "huron.service.api.repository",
+    "huron.service.api.app",
+    "huron.service.api.authorization.**",
+    "huron.service.api.routes.**",
+]
+forbidden_modules = ["huron.service.api.stores.*"]
+```
+
+This is the repository's seventh contract, and `allow_indirect_imports = true` is load-bearing for
+the same reason it is in Design 9's: without it the chain `repository → stores → stores.rbac` that
+every legitimate package-level import creates reports as a violation.
+
+`pyproject.toml` needs nothing else. The per-file ignore
+`"src/huron/service/api/**" = ["TC001", "TC002", "TC003"]` is a recursive glob that already covers
+the new package.
+
+#### Half B — the concrete SQL
+
+Three queries; two change.
+
+**`PostgresRbacStore.list_policies`** — gains the `id` tiebreak the cursor key already assumes, and
+`COLLATE "C"` on the text component:
+
+```sql
+SELECT id, policy_type, name, spec, created_by, created_at
+FROM policies
+ORDER BY name COLLATE "C", id
+```
+
+**`PostgresRbacStore.list_service_accounts`** — gains `COLLATE "C"`; no tiebreak, because
+`UNIQUE (organization_id, name)` makes `name` unique within the one organization the `WHERE` fixes
+(`service_accounts_organization_id_name_key`, Receipt 5):
+
+```sql
+SELECT sa.principal_id, sa.organization_id, sa.name, p.subject,
+       sa.created_by, sa.created_at, p.disabled_at
+FROM service_accounts sa JOIN principals p ON p.id = sa.principal_id
+WHERE sa.organization_id = $1
+ORDER BY sa.name COLLATE "C"
+```
+
+**`PostgresRbacStore.bindings_at`** — unchanged. It is already correct:
+`ORDER BY principal COLLATE "C", role_code COLLATE "C"`, and
+`role_bindings_no_duplicates UNIQUE NULLS NOT DISTINCT (principal, role_code, scope_type, scope_id)`
+makes that pair unique once `scope_type` and `scope_id IS NOT DISTINCT FROM` fix the other two
+(Receipt 5). No tiebreak is added; a redundant one would suggest the uniqueness is in doubt.
+
+**The one in-memory change.** `InMemoryRbacStore.list_policies` (`repository.py:406`) sorts by
+`item.name`, which is the same insufficient key:
+
+```python
+    async def list_policies(self) -> list[Policy]:
+        """Every policy, ordered by ``(name, id)`` - the same key the cursor
+        advances by, and the only key ``policies`` can offer, since ``name``
+        carries no uniqueness constraint."""
+        return sorted(
+            list(self._policies.values()), key=lambda item: (item.name, str(item.id))
+        )
+```
+
+`str(item.id)` rather than `item.id` so the expression reads identically to the boundary's
+`_key` (`API_DESIGN.md` Design 5b, `_policy_key`). The three orderings agree: PostgreSQL's `uuid`
+comparison is bytewise, the canonical text form is fixed-width lowercase hex, and
+`ORDER BY id` and `ORDER BY id::text COLLATE "C"` produce identical sequences (Receipt 4).
+`InMemoryRbacStore.list_service_accounts` and `bindings_at` already match their SQL and do not change.
+
+**Nothing else in any store's SQL changes.** No `WHERE` predicate, no `limit`/`after` parameter, no
+DDL. `bindings_for`, the eleven point reads and the nine writes are untouched.
+
+### Explicit contracts
+
+#### The package
+
+Entered through `stores/__init__.py`. **No class in this package may name a Protocol from
+`ports.py` or from `huron.pkg.auth` in its bases.** Conformance is structural, and it must stay
+structural now that the Protocols and two of their implementations share a package: an
+implementation that inherits gets its method signatures checked once at definition and stops being
+the independent conformer `tests/contract/` exists to compare. Pinned by assertion, not by convention
+(see `tests/contract/` below). A future author must not add a `memory_*.py` or `postgres_*.py`
+module here — the axis is the port, and a backend-named module reintroduces the split this design
+closes.
+
+#### `ports.py`
+
+`RbacStore` guarantees only that a conformer accepts the thirteen calls with those signatures. It
+guarantees nothing about scope existence: a store takes the `scope_type`/`scope_id` pair on faith,
+and "does this organization exist" stays on `HierarchyRepository` (Design 3). It guarantees nothing
+about windowing: no method takes `limit` or `after`, and adding one is the change Design 5b's
+Decision 1 reserves and Open question 2 prices. `ApiKeyWriter` is `pkg.auth.ApiKeyStore` — one read,
+`get` — plus three writes. A future author must not widen either Protocol to a method only one
+backend can implement; the test that both conform is the only thing keeping the memory store an
+honest reference.
+
+#### The ordering contract, per collection
+
+| Collection | Store order | Boundary key | Uniqueness that makes the key total |
+|---|---|---|---|
+| `bindings_at(scope_type, scope_id)` | `principal COLLATE "C", role_code COLLATE "C"` | `(principal, role_code)` | `role_bindings_no_duplicates`, with the scope pair fixed by the `WHERE` |
+| `list_service_accounts(organization_id)` | `sa.name COLLATE "C"` | `(name,)` | `service_accounts_organization_id_name_key`, with the organization fixed by the `WHERE` |
+| `list_policies()` | `name COLLATE "C", id` | `(name, str(id))` | `policies_pkey` on `id`; **`name` alone is not unique and no constraint declares it so** |
+
+**Every text component of every `ORDER BY` in this package is `COLLATE "C"`, and that is a
+correctness requirement, not a style rule.** `COLLATE "C"` is byte order, which is exactly Python's
+`str` comparison — proven identical over fourteen strings spanning case, space, hyphen and accent
+(Receipt 2). The database default this service actually deploys against is `en_US.UTF-8` (Receipt 1),
+which folds case, ignores punctuation at the primary level and treats accents as secondary; walking
+a keyset cursor over that order with Python's `>` loses four of fourteen rows and repeats one
+(Receipt 3). A future author who adds an `ORDER BY` over a text column without `COLLATE "C"`, or who
+removes one, breaks the pages silently — no error, just missing rows.
+
+**The order is published by the boundary, and duplicated here on purpose.** Design 5b's Decision 1
+stands: the handler calls `paginate(sorted(records, key=_key), View, key=_key, ...)`, and that
+`sorted` is what the HTTP contract rests on. The store order exists for the readers below HTTP — a
+future push-down, an operator running the same SQL, the diff between two implementations of one port
+— and after this change it is genuinely a determinism guarantee, which for `list_policies` it was
+not: `ORDER BY name` returned its three tied rows in one order, then in a different order after an
+unrelated `UPDATE` moved one tuple, on the same five rows (Receipt 4).
+
+#### Error behavior, per store, after Design 6
+
+Each store maps a specific `asyncpg` exception class to exactly one named error and lets everything
+else propagate as the 500 `problems.py` renders.
+
+| Store | Raises | On |
+|---|---|---|
+| `rbac.PostgresRbacStore` | `BindingExists` | `grant_role`, `UniqueViolationError` |
+| | `ServiceAccountExists` | `create_service_account`, `UniqueViolationError` |
+| | `AttachmentExists` | `attach_policy`, `UniqueViolationError` |
+| | `ResourceNotFound` | `revoke_role`, `get_role_binding`, `get_service_account`, `service_account_by_subject`, `disable_service_account` on a zero-row result; `create_service_account` and `attach_policy` on `ForeignKeyViolationError` |
+| `rbac.InMemoryRbacStore` | the same four | the same conditions, by scan |
+| `api_keys.PostgresApiKeyStore` | `ResourceNotFound` | `add`, `ForeignKeyViolationError` on `project_id` |
+| `credentials.PostgresCredentialStore` | `ResourceNotFound` | `upsert`, `asyncpg.exceptions.RaiseError` from `local_credentials_kind_guard` |
+| `sessions.PostgresSessionStore` | nothing | — |
+| `principals.PostgresPrincipalStore` | `PrincipalSubjectExists` | `create_user`, `UniqueViolationError` |
+
+`BindingExists`, `ServiceAccountExists` and `AttachmentExists` come from
+`huron.service.api.errors` (Design 6), which imports only `huron.pkg.catalog.errors` and is
+therefore safe for an adapter to depend on; `ResourceNotFound` comes from
+`huron.pkg.catalog.errors` (Design 3). **No store in this package imports `huron.service.api.repository`
+or anything under `routes`** — the invariant Design 3 exists for, now enforceable by module rather
+than by review.
+
+Two absences are contracts. `PostgresRbacStore.create_policy` refuses nothing: `policies` has no
+unique constraint on `name`, so two policies may share one and both backends accept it. A future
+author must not add a Python-side duplicate check — it would be a scan racing every concurrent
+writer, and the honest fix is the DDL in Open question 3. `PostgresSessionStore` raises nothing:
+`touch` and `revoke` on an unknown session id are no-ops by design, because the session resolver has
+already established the session exists.
+
+#### `tests/contract/`
+
+Two modules today, and two after this change — `test_rbac_store.py` and `test_auth_store.py` split
+by which tables they drive and share an expensive `PostgresContainer("postgres:16")` fixture; a third
+module would buy a third container start. What they must cover after this change:
+
+1. **The ordering agreement, both backends, one assertion.** For each of the three collections:
+   seed the same records into `InMemoryRbacStore` and `PostgresRbacStore`, and assert both return the
+   same sequence, and that it equals `sorted(records, key=<the boundary key>)`. This is the test that
+   would have caught both defects; today nothing compares the two stores' orders at all.
+2. **That the collation is actually byte order.** Insert policy names differing only in case,
+   in a hyphen, and in an accent — `pii-mask`, `piimask`, `PII-mask`, `cafe`, `café` — and assert the
+   Postgres order equals Python's `sorted`. Without this the `COLLATE "C"` is decoration that the
+   next reader deletes; with it, deleting one fails against a container whose collation is the
+   deployed one.
+3. **The duplicate-name walk.** Three policies, two sharing a name, walked at `limit=1` through the
+   cursor to `next_cursor is None`: every row exactly once, none repeated. Receipt 4 shows the tie
+   order is unstable without the `id` component, so this is the regression that pins it.
+4. **Structural, not nominal, conformance.** `assert RbacStore not in PostgresRbacStore.__mro__` and
+   the same for `InMemoryRbacStore` and for `ApiKeyWriter` against `PostgresApiKeyStore`. New,
+   because the Protocols and two implementations now share a package and inheritance became a one-line
+   temptation.
+5. **The error table above, per row.** Each named error is already partly covered
+   (`_assert_create_service_account_reports_a_missing_organization`,
+   `_assert_api_key_add_reports_a_missing_project`); after Design 6 the assertion is on the class, not
+   on `DomainError`, and the memory store is asserted to raise the same class for the same input
+   wherever it has the operation.
+
+Both modules keep the `contract` marker and stay outside the gate's default `-m unit` run; the plan's
+existing rule — any task changing a Protocol or an implementation additionally runs
+`uv run pytest -m contract` — is what covers them.
+
+### Deletions
+
+**By file.**
+
+- `src/huron/service/api/postgres_rbac.py` — deleted entire. Its five symbols move:
+  `PostgresRbacStore` → `stores/rbac.py`, `PostgresApiKeyStore` → `stores/api_keys.py`,
+  `_binding_record_from_row` / `_service_account_from_row` / `_policy_from_row` /
+  `_api_key_record_from_row` → `stores/rows.py` without their underscores.
+- `src/huron/service/api/postgres_auth.py` — deleted entire. `PostgresCredentialStore` →
+  `stores/credentials.py`, `PostgresSessionStore` → `stores/sessions.py`,
+  `PostgresPrincipalStore` → `stores/principals.py`, the three `_*_from_row` and
+  `_affected_row_count` → `stores/rows.py` without their underscores.
+- `src/huron/service/api/ports.py` (Design 3) — deleted; content becomes `stores/ports.py` unchanged.
+- `src/huron/service/api/memory_rbac.py` (Design 3) — deleted; `InMemoryRbacStore` becomes half of
+  `stores/rbac.py` unchanged but for `list_policies`' key.
+
+**By symbol.**
+
+- `postgres_rbac.py:450`'s inline `int(tag.rsplit(" ", 1)[-1])` — the second, hand-written copy of
+  `_affected_row_count`. One definition survives, in `rows.py`.
+
+**Not deleted, deliberately.** `records.py` stays where Design 3 put it, for the reason given under
+Layout. `repository.py` keeps its name and its `HierarchyRepository`, unchanged by this design
+except for the two import lines. The `ORDER BY` clauses are not deleted — Design 5b's `### Deletions`
+already settled that, and this design is what makes its stated reason true.
+
+**Nothing is deleted from `migrations/`, `src/huron/schema`, `src/huron/pkg`, or `web/`.**
+
+### Data flow
+
+What prose states poorly is which side of the port each ordering guarantee is established on, and
+that the two are deliberately redundant rather than one delegating to the other.
+
+```mermaid
+graph TD
+    H["routes/v1/endpoints/policies.py<br/>paginate(sorted(records, key=_key), ...)<br/><b>publishes</b> (name, str(id))"]
+    R["repository.py<br/>HierarchyRepository<br/>declares RbacStore, holds one"]
+    P["stores/ports.py<br/>RbacStore, ApiKeyWriter<br/><i>no ordering promise</i>"]
+    M["stores/rbac.py :: InMemoryRbacStore<br/>sorted(key=(name, str(id)))"]
+    G["stores/rbac.py :: PostgresRbacStore<br/>ORDER BY name COLLATE #quot;C#quot;, id"]
+    W["stores/rows.py<br/>Record -> Policy"]
+    DB[("PostgreSQL 16<br/>datcollate = en_US.UTF-8")]
+
+    H -->|"list_policies()"| R
+    R -->|"awaits the Protocol"| P
+    P -.->|"structural conformance<br/>proven in tests/contract/"| M
+    P -.->|"structural conformance<br/>proven in tests/contract/"| G
+    G --> W
+    G -->|"fetch"| DB
+    DB -->|"byte order, not locale order"| G
+
+    H -.->|"the HTTP order does not<br/>depend on either store"| H
+```
+
+The dotted self-edge on the handler is the property Design 5b bought and this design keeps: the
+boundary's `sorted` re-establishes the key regardless of what arrives, so a store whose `ORDER BY`
+is wrong produces a slow page, never a wrong one. The solid `DB → G` edge is what this design fixes:
+without `COLLATE "C"` that edge delivers locale order, and every reader below HTTP believes it is
+byte order.
+
+### Rejected alternatives
+
+- **By backend — `stores/postgres.py` and `stores/memory.py`** — puts the two implementations of one
+  port in two files, which is the arrangement that produced both Half-B divergences; and four of the
+  five in-memory implementations live in `huron/pkg/auth` and cannot legally move, so the axis would
+  apply to one module in seven.
+- **Five flat sibling modules in `service/api/`** — Design 9 already priced this exact shape and
+  rejected it: the directory holds twelve modules after M2/M3/M6/M8, five more prefixed names make
+  seventeen with no grouping, and no import-linter contract can name "the store unit" because there
+  is no such module.
+- **Sort only at the HTTP boundary and leave the SQL untouched (Design 5b as literally written)** —
+  correct at HTTP and wrong everywhere else: `ORDER BY name` on `policies` returned its ties in two
+  different orders on the same five rows (Receipt 4), so the clause 5b calls "an internal determinism
+  guarantee" guarantees nothing; and the corrected SQL is 4.1× faster on 20k rows (Receipt 6), so
+  keeping the old text costs correctness and time both.
+- **Push `limit`/`after` into the three store methods now** — it needs the indexes in Open question 3
+  to be worth anything, and the hard constraint forbids requiring a migration; Design 5b's
+  Decision 1 explicitly reserves this change and states the SQL it must produce, which this design
+  has now written except for the window.
+- **Split `RbacStore` into `BindingStore`, `ServiceAccountStore`, `PolicyStore`** — three seams with
+  the same two implementors and no independent one, three constructor keywords, three wiring paths,
+  for one backend object; the speculative abstraction the design skill names by that description.
+
+### Open questions
+
+1. **Design 5b's `### Deletions` says the untouched `ORDER BY` clauses "become an internal
+   determinism guarantee"; for `list_policies` that is false, and this design changes the SQL to make
+   it true.** No contract of 5b changes: Decision 1 (boundary sorts, sort key is the cursor key), the
+   `Page[PolicyView]` cursor contract, and every response model are untouched, and 5b's constraint on
+   the future push-down is now half-discharged — the `COLLATE "C"` and the `id` tiebreak it specified
+   are in the SQL; only `limit`/`after` remain. **Recommendation: adopt.** 5b withheld the change
+   only because it had no PostgreSQL to test against and said so in the same paragraph; Receipts 2–4
+   are that test. The owner is being asked to confirm that changing SQL in this milestone — which
+   `API_IMPLEMENTATION_PLAN.md` §0 rule 3 forbids for M1–M10 and this brief opens for M11 — is
+   intended.
+2. **Does `InMemoryRbacStore.list_policies`' key change need a test-fixture sweep?** Its published
+   order is unchanged (the boundary already sorts), but five test modules construct policies and two
+   assert on store order directly. **Recommendation: change it and let the contract test from item 1
+   above be the pin.** The alternative — leaving the memory store on `item.name` while the SQL says
+   `(name, id)` — reintroduces exactly the divergence this design exists to close.
+3. **Three indexes handed to the 0008 schema track.** None is required: every query above is correct
+   without them.
+
+   ```sql
+   -- (a) RECOMMENDED. Makes ``name`` a usable handle and lets ``create_policy`` refuse a
+   --     duplicate instead of accepting it silently; retires the ``id`` tiebreak; turns
+   --     ``list_policies``' sort into an ordered index scan. ``COLLATE "C"`` matters: under the
+   --     database default, 'pii-mask' and 'piimask' compare EQUAL and this index would reject
+   --     one of them (Receipt 2). Requires checking for existing duplicates before it can be
+   --     created.
+   CREATE UNIQUE INDEX policies_name_key ON policies (name COLLATE "C");
+
+   -- (b) DEFER until the window is pushed down. ``ORDER BY sa.name COLLATE "C"`` cannot use
+   --     ``service_accounts_organization_id_name_key``, which is built under the database
+   --     default; the plan gains a Sort node (Receipt 5). At today's per-organization counts
+   --     the sort is cheaper than it was before the change, so this buys nothing yet.
+   CREATE INDEX service_accounts_org_name_c
+       ON service_accounts (organization_id, name COLLATE "C");
+
+   -- (c) DEFER, but note the finding regardless: ``role_bindings_principal_scope
+   --     (principal, scope_type, scope_id)`` looks written for ``bindings_at`` and cannot serve
+   --     it - ``scope_type`` is not a leftmost prefix - so the query falls back to a bitmap scan
+   --     on a non-leading column of ``role_bindings_no_duplicates`` plus a Sort (Receipt 5).
+   CREATE INDEX role_bindings_at_scope ON role_bindings
+       (scope_type, scope_id, principal COLLATE "C", role_code COLLATE "C");
+   ```
+
+   **Recommendation: take (a), defer (b) and (c) until `limit`/`after` reach the stores.** (a) closes
+   a real gap — a policy name is a handle in the UI and nothing stops two policies sharing one — and
+   it is the only one of the three that changes behavior rather than only cost.
+4. **Should `stores/ports.py` hold the two Protocols, given `HierarchyRepository` is their consumer
+   and lives outside the package?** `pkg/catalog/ports.py` is the precedent for a `ports.py` inside
+   the package it describes, and one import site (`from .stores import RbacStore`) beats two.
+   **Recommendation: yes, inside `stores/`**, with the no-inheritance assertion of contract item 4
+   as the guard that consumer-ownership survives the co-location.
+
+### Receipts
+
+**Environment.** A PostgreSQL 16 cluster built to match what this service deploys against.
+`docker-compose.yml` and both `tests/contract/` modules use the official `postgres:16` image, whose
+Dockerfile sets `ENV LANG en_US.utf8` before `initdb`, so the deployed database's default collation
+is `en_US.UTF-8` — not `C`.
+
+```console
+$ /usr/lib/postgresql/16/bin/initdb -D /var/lib/pgdata -E UTF8 --locale=en_US.UTF-8
+$ psql -c "select datname, datcollate, datlocprovider from pg_database"
+  datname  | datcollate  | datlocprovider
+-----------+-------------+----------------
+ huron     | en_US.UTF-8 | c
+ template1 | en_US.UTF-8 | c
+```
+
+Migrations `0001`–`0007` applied with `psql -v ON_ERROR_STOP=1` (their module-level `DDL` strings
+extracted; exit 0, 34 tables). `0008_schema_conformance.py` was deliberately **not** applied — it is
+the schema track's in-flight work and out of scope.
+
+**Receipt 1 — the deployed collation is not `C`.** Above. This is the fact Design 5b could not
+establish (`HURON_DATABASE_URL` unset, no instance reachable) and on which its whole Decision 1
+rests. It is confirmed, not overturned.
+
+**Receipt 2 — `COLLATE "C"` is Python's `str` order, and the database default is not.**
+
+```console
+$ psql -c "... SELECT string_agg(v,' | ' ORDER BY v) FROM s"          -- database default
+cafe | café | cafz | pii | Pii | pii mask | pii-mask | piimask | PII-mask | retention | Retention | RETENTION | retention-2 | retention2
+
+$ psql -c "... ORDER BY v COLLATE \"C\""
+PII-mask | Pii | RETENTION | Retention | cafe | cafz | café | pii | pii mask | pii-mask | piimask | retention | retention-2 | retention2
+
+$ python3 -c "print(' | '.join(sorted(vs)))"
+PII-mask | Pii | RETENTION | Retention | cafe | cafz | café | pii | pii mask | pii-mask | piimask | retention | retention-2 | retention2
+```
+
+`COLLATE "C"` and Python agree on all fourteen. The default folds case (`pii`/`Pii` adjacent),
+ignores punctuation at the primary level (`pii mask`/`pii-mask`/`piimask` adjacent), and sorts
+`café` between `cafe` and `cafz`.
+
+The hazard survives `service_accounts`' restrictive `CHECK (name ~ '^[a-z0-9][a-z0-9-]{1,61}$')` —
+the hyphen alone is enough:
+
+```console
+default: data-1 < data1 < databank < data-loader < dataloader
+C      : data-1 < data-loader < data1 < databank < dataloader
+python : data-1 < data-loader < data1 < databank < dataloader
+```
+
+**Receipt 3 — walking a cursor over default-collation order loses rows.** `paginate`'s algorithm
+exactly — the sequence is trusted to be sorted by the key, each page is the first `limit` items with
+`key > cutoff`, the cursor is the last key emitted — run at `limit=3` over the two SQL orders above:
+
+```console
+database default (en_US.UTF-8)   rows=14 emitted=11 missing=['PII-mask', 'Pii', 'Retention', 'RETENTION'] repeated=['café']
+COLLATE "C"                      rows=14 emitted=14 missing=[] repeated=[]
+```
+
+Four rows lost, one duplicated, no error raised. This is the failure Design 5b predicted from the SQL
+text and documented behavior; it is now measured.
+
+**Receipt 4 — `ORDER BY name` does not define the order of its ties.** Five policies, three named
+`dup`, inserted once and never re-inserted. The identical query, run twice, with one unrelated
+`UPDATE` to a sixth column in between:
+
+```console
+$ SELECT name||' '||id FROM policies ORDER BY name;           -- first run
+dup f0000000-...-000000000003 / dup 30000000-...-000000000001 / dup 90000000-...-000000000002
+$ UPDATE policies SET created_by='k2' WHERE id='30000000-...';
+$ SELECT name||' '||id FROM policies ORDER BY name;           -- second run, same five rows
+dup f0000000-...-000000000003 / dup 90000000-...-000000000002 / dup 30000000-...-000000000001
+$ SELECT name||' '||id FROM policies ORDER BY name COLLATE "C", id;   -- proposed, both runs
+dup 30000000-... / dup 90000000-... / dup f0000000-...
+```
+
+MVCC moved the updated tuple and the tie order followed it. A cursor minted mid-run over the first
+order and consumed against the second skips or repeats. The `id` tiebreak makes the sequence total.
+
+The three orderings agree on UUIDs, so `(name, str(id))` in Python is the same sequence as
+`ORDER BY name COLLATE "C", id` in SQL:
+
+```console
+$ SELECT array_agg(id::text ORDER BY id) = array_agg(id::text ORDER BY id::text COLLATE "C") FROM policies;
+ t
+```
+
+**Receipt 5 — what each `ORDER BY` costs in plan shape.**
+
+```console
+-- ORDER BY sa.name  (today, default collation, empty table so the planner picks the index)
+Nested Loop
+  ->  Index Scan using service_accounts_organization_id_name_key on service_accounts sa
+        Index Cond: (organization_id = '...')
+
+-- ORDER BY sa.name COLLATE "C"  (proposed)
+Sort
+  Sort Key: sa.name COLLATE "C"
+  ->  Nested Loop
+        ->  Index Scan using service_accounts_pkey on service_accounts sa
+              Filter: (organization_id = '...')
+
+-- with the index of Open question 3(b) present
+Index Scan using sa_org_name_c on service_accounts sa
+  Index Cond: (organization_id = '...')
+```
+
+`policies` carries no index on `name` at all — `pg_indexes` lists only `policies_pkey` — so
+`list_policies` is a sort either way. `bindings_at` is a sort either way too, and its plan shows
+`role_bindings_principal_scope` unused:
+
+```console
+Sort
+  Sort Key: principal COLLATE "C", role_code COLLATE "C"
+  ->  Bitmap Heap Scan on role_bindings
+        ->  Bitmap Index Scan on role_bindings_no_duplicates
+              Index Cond: (scope_type = 'ORGANIZATION'::text)
+```
+
+**Receipt 6 — the corrected SQL is cheaper, not more expensive.** `EXPLAIN (ANALYZE)` on 20,005
+policies and 20,000 service accounts:
+
+```console
+list_policies       ORDER BY name                      Sort  actual time=28.773..29.727  (quicksort, 1706kB)
+list_policies       ORDER BY name COLLATE "C", id      Sort  actual time= 6.947.. 7.830  (quicksort, 1862kB)   4.1x faster
+list_service_accts  ORDER BY sa.name                   Sort  actual time=40.558..41.694  (quicksort, 2018kB)
+list_service_accts  ORDER BY sa.name COLLATE "C"       Sort  actual time=17.649..18.586  (quicksort, 2167kB)   2.3x faster
+```
+
+`COLLATE "C"` sorts with `memcmp` where the default collation calls `strcoll` per comparison. The
+correctness fix pays for itself.
+
+**Receipt 7 — the counts this design depends on, re-derived rather than inherited.** Five stores in
+two modules: `PostgresRbacStore` and `PostgresApiKeyStore` in `postgres_rbac.py` (465 lines),
+`PostgresCredentialStore`, `PostgresSessionStore` and `PostgresPrincipalStore` in `postgres_auth.py`
+(256 lines). Seven `_*_from_row` functions across the two, plus `_affected_row_count` defined once
+and inlined once. `pkg/auth` declares four Protocols beside four `Memory*` implementations —
+`ApiKeyStore`/`MemoryApiKeyStore` in `apikeys.py`, `SessionStore`/`MemorySessionStore` in
+`sessions.py`, `PrincipalStore`/`MemoryPrincipalStore` in `principals.py`,
+`CredentialStore`/`MemoryCredentialStore` in `password.py` — which is the by-port precedent, checked
+by reading the four files rather than taken from a summary. `RbacStore` declares thirteen methods;
+`ApiKeyWriter` adds three to `ApiKeyStore`'s one.
+
+**Not proven.** That `postgres:16`'s image sets `LANG=en_US.utf8` — no container runtime is reachable
+from the environment this design ran in, so the deployed collation is established from the image's
+published Dockerfile plus a cluster built to match it, not read from a running instance. If the owner
+has an existing deployment, `SELECT datcollate FROM pg_database WHERE datname = current_database()`
+settles it in one line, and a value of `C` would make Receipts 2–3 moot for that deployment while
+leaving Receipt 4 — the tie instability — untouched.

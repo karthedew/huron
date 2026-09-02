@@ -2,40 +2,50 @@
 
 from __future__ import annotations
 
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
-from huron.pkg.auth import Principal
-from huron.service.api.authorization import (
-    CurrentPrincipal,
-    get_repository,
-    require_organization,
-    require_project,
-)
-from huron.service.api.routes.v1.common import (
+from huron.service.api.authorization import require_organization, require_project
+from huron.service.api.problems import problem_response
+from huron.service.api.records import Project
+from huron.service.api.routes.v1.pagination import Page, PageCursor, PageLimit, paginate
+from huron.service.api.routes.v1.preconditions import (
     IdempotencyHeader,
     IfMatchHeader,
     expected_version,
-    jsonable,
-    page,
 )
-from huron.service.api.routes.v1.schema.projects import CreateProject, PatchProject
+from huron.service.api.routes.v1.schema.projects import CreateProject, PatchProject, ProjectView
+from huron.service.api.runtime import Repository
 
-router = APIRouter()
+organization_projects = APIRouter(
+    prefix="/organizations/{organization_id}/projects", tags=["projects"]
+)
+router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-@router.post("/organizations/{organization_id}/projects", status_code=201)
-async def create_project(
-    request: Request,
+def _key(item: Project) -> tuple[str, str]:
+    return (item.slug, str(item.id))
+
+
+@organization_projects.post(
+    "",
+    status_code=201,
+    dependencies=[Depends(require_organization("project.create"))],
+    responses={
+        404: problem_response("no such organization"),
+        409: problem_response("project slug already exists"),
+    },
+)
+def create_project(
     organization_id: UUID,
     body: CreateProject,
     idempotency_key: IdempotencyHeader,
-    _actor: Annotated[Principal, Depends(require_organization("project.create"))],
-) -> dict[str, object]:
-    return jsonable(
-        get_repository(request).create_project(
+    repository: Repository,
+) -> ProjectView:
+    """Persist one project; the durable write runs in the threadpool."""
+    return ProjectView.model_validate(
+        repository.create_project(
             organization_id,
             slug=body.slug,
             title=body.title,
@@ -46,35 +56,44 @@ async def create_project(
     )
 
 
-@router.get("/organizations/{organization_id}/projects")
+@organization_projects.get(
+    "",
+    responses={
+        404: problem_response("no such organization"),
+        400: problem_response("cursor is not a valid continuation"),
+    },
+)
 async def list_projects(
-    request: Request, organization_id: UUID, _actor: CurrentPrincipal, limit: int = 50
-) -> dict[str, object]:
-    repository = get_repository(request)
-    repository.get_organization(organization_id)
-    items = [
-        item for item in repository.projects.values() if item.organization_id == organization_id
-    ]
-    return page(sorted(items, key=lambda item: (item.slug, item.id)), limit)
+    organization_id: UUID, repository: Repository, limit: PageLimit = 50, after: PageCursor = None
+) -> Page[ProjectView]:
+    return paginate(
+        repository.list_projects(organization_id), ProjectView, key=_key, limit=limit, after=after
+    )
 
 
-@router.get("/projects/{project_id}")
-async def get_project(
-    request: Request, project_id: UUID, _actor: CurrentPrincipal
-) -> dict[str, object]:
-    return jsonable(get_repository(request).get_project(project_id))
+@router.get("/{project_id}", responses={404: problem_response("no such project")})
+async def get_project(project_id: UUID, repository: Repository) -> ProjectView:
+    return ProjectView.model_validate(repository.get_project(project_id))
 
 
-@router.patch("/projects/{project_id}")
-async def patch_project(
-    request: Request,
+@router.patch(
+    "/{project_id}",
+    dependencies=[Depends(require_project("project.update"))],
+    responses={
+        404: problem_response("no such project"),
+        409: problem_response("the slug on an existing project cannot change"),
+        412: problem_response("If-Match does not match the current version"),
+    },
+)
+def patch_project(
     project_id: UUID,
     body: PatchProject,
     if_match: IfMatchHeader,
-    _actor: Annotated[Principal, Depends(require_project("project.update"))],
-) -> dict[str, object]:
-    return jsonable(
-        get_repository(request).patch_project(
+    repository: Repository,
+) -> ProjectView:
+    """Persist the patch; the durable rewrite runs in the threadpool."""
+    return ProjectView.model_validate(
+        repository.patch_project(
             project_id,
             expected_version=expected_version(if_match),
             slug=body.slug,

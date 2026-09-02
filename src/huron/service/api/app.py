@@ -8,26 +8,34 @@ exception mapping, and the versioned routers. Authorization policy lives in
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import asyncpg
 import httpx
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from asyncer import asyncify
+from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 
-from huron.pkg.auth import AuthError, JwksVerifier, OidcClient, OidcResolver
-from huron.pkg.catalog.errors import DomainError, ProjectionUnavailable
+from huron.pkg.auth import JwksVerifier, OidcClient, OidcResolver
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import ScopeType
-from huron.pkg.rbac.roles import RoleError
 
-from .postgres_auth import PostgresCredentialStore, PostgresPrincipalStore, PostgresSessionStore
-from .postgres_rbac import PostgresApiKeyStore, PostgresRbacStore
+from .errors import DependencyUnavailable
+from .problems import Problem, install_error_handlers, problem_response
 from .repository import HierarchyRepository
 from .routes import auth as auth_routes
 from .routes import v1
+from .runtime import ApiRuntime, Runtime
 from .settings import ApiSettings
+from .stores import (
+    PostgresApiKeyStore,
+    PostgresCredentialStore,
+    PostgresPrincipalStore,
+    PostgresRbacStore,
+    PostgresSessionStore,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -45,6 +53,7 @@ async def _postgres_repository(settings: ApiSettings) -> tuple[HierarchyReposito
     pool = await asyncpg.create_pool(settings.database_url)
     repository = HierarchyRepository(
         PosixRawStore(settings.data_root),
+        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
         rbac_store=PostgresRbacStore(pool),
         api_key_store=PostgresApiKeyStore(pool),
         credential_store=PostgresCredentialStore(pool),
@@ -55,22 +64,17 @@ async def _postgres_repository(settings: ApiSettings) -> tuple[HierarchyReposito
 
 
 async def _configure_oidc(
-    app: FastAPI,
     settings: ApiSettings,
     oidc_verify: Callable[[str], Mapping[str, object]] | None,
-) -> httpx.AsyncClient | None:
+) -> tuple[OidcResolver | None, OidcClient | None, httpx.AsyncClient | None]:
     """Wire the bearer-JWT resolver: a test-injected verifier wins outright,
     otherwise a configured provider is discovered for real. Neither branch
-    - or an unconfigured deployment - leaves ``oidc_resolver`` unset, so
-    ``current_principal`` can always ``getattr`` it safely."""
+    - or an unconfigured deployment - leaves the resolver unset; the caller
+    always gets an explicit ``None`` rather than an absent attribute."""
     if oidc_verify is not None:
-        app.state.oidc_resolver = OidcResolver(oidc_verify)
-        app.state.oidc_client = None
-        return None
+        return OidcResolver(oidc_verify), None, None
     if settings.oidc is None:
-        app.state.oidc_resolver = None
-        app.state.oidc_client = None
-        return None
+        return None, None, None
     oidc = settings.oidc
     http = httpx.AsyncClient()
     try:
@@ -91,107 +95,119 @@ async def _configure_oidc(
         audience=oidc.audience or oidc.client_id,
         jwks_url=client.provider.jwks_uri,
     )
-    app.state.oidc_client = client
-    app.state.oidc_resolver = OidcResolver(verifier)
-    return http
+    return OidcResolver(verifier), client, http
+
+
+class _HuronFastAPI(FastAPI):
+    """Injects the ``Problem`` schema FastAPI never derives on its own.
+
+    No operation returns ``Problem`` as a 2xx body, so nothing in the route
+    table gives ``get_openapi`` a reason to generate it, yet every
+    ``responses=`` entry ``$ref``s it. FastAPI's own docs cover this by
+    assigning a replacement function to ``app.openapi`` directly, but that
+    assignment is unsound against ``FastAPI.openapi``'s real signature - a
+    bound ``(self) -> dict[str, Any]`` method - so neither type checker
+    accepts it. Overriding the method on a subclass is the type-checkable
+    form of the same fix: it still computes and caches the schema on
+    ``app.openapi_schema`` the first time anything calls ``app.openapi()``,
+    so the docs UI and every other caller keep reading from one schema.
+    """
+
+    def openapi(self) -> dict[str, object]:
+        if self.openapi_schema is None:
+            schema = get_openapi(title=self.title, version=self.version, routes=self.routes)
+            schema["components"]["schemas"]["Problem"] = Problem.model_json_schema()
+            self.openapi_schema = schema
+        return self.openapi_schema
 
 
 def create_app(
     *,
-    settings: ApiSettings | None = None,
+    settings: ApiSettings,
     repository: HierarchyRepository | None = None,
     oidc_verify: Callable[[str], Mapping[str, object]] | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        resolved_settings = settings or ApiSettings()  # type: ignore[call-arg]
-        app.state.settings = resolved_settings
-        app.state.database_pool = None
+        pool: asyncpg.Pool | None = None
         if repository is not None:
-            app.state.repository = repository
-        elif resolved_settings.store_backend == "postgres":
-            app.state.repository, app.state.database_pool = await _postgres_repository(
-                resolved_settings
-            )
+            wired = repository
+        elif settings.store_backend == "postgres":
+            wired, pool = await _postgres_repository(settings)
         else:
-            app.state.repository = HierarchyRepository(PosixRawStore(resolved_settings.data_root))
-        app.state.http_client = await _configure_oidc(app, resolved_settings, oidc_verify)
-        await _bootstrap(app.state.repository, resolved_settings)
-        yield
-        if app.state.database_pool is not None:
-            await app.state.database_pool.close()
-        if app.state.http_client is not None:
-            await app.state.http_client.aclose()
-
-    app = FastAPI(title="Huron API", version="1.0.0", lifespan=lifespan)
-    if repository is not None:
-        # Set eagerly (in addition to the lifespan above) so a TestClient
-        # used without its context manager - which never runs ASGI
-        # lifespan events - still finds a working app.state. Bootstrap
-        # itself stays lifespan-only: it is async and must run exactly
-        # once, and a TestClient that needs it entered must use ``with``.
-        app.state.repository = repository
-        app.state.settings = settings
-        app.state.oidc_resolver = OidcResolver(oidc_verify) if oidc_verify else None
-        app.state.oidc_client = None
-
-    @app.exception_handler(DomainError)
-    async def domain_error_handler(_request: Request, exc: DomainError) -> JSONResponse:
-        return JSONResponse(
-            status_code=exc.status_code,
-            content=exc.as_problem(),
-            media_type="application/problem+json",
+            wired = HierarchyRepository(
+                PosixRawStore(settings.data_root),
+                classification_vocabulary=tuple(
+                    value.code for value in settings.classification_vocabulary
+                ),
+            )
+        oidc_resolver, oidc_client, http = await _configure_oidc(settings, oidc_verify)
+        app.state.runtime = ApiRuntime(
+            settings=settings,
+            repository=wired,
+            oidc_resolver=oidc_resolver,
+            oidc_client=oidc_client,
+            database_pool=pool,
         )
+        try:
+            await _bootstrap(wired, settings)
+            yield
+        finally:
+            if pool is not None:
+                await pool.close()
+            if http is not None:
+                await http.aclose()
 
-    @app.exception_handler(AuthError)
-    async def auth_error_handler(_request: Request, exc: AuthError) -> JSONResponse:
-        return JSONResponse(
-            status_code=401,
-            content={
-                "type": f"urn:huron:error:{exc.code.lower()}",
-                "title": "Authentication failed",
-                "status": 401,
-                "code": exc.code,
-                "detail": str(exc),
-            },
-            media_type="application/problem+json",
-        )
-
-    @app.exception_handler(RoleError)
-    async def role_error_handler(_request: Request, exc: RoleError) -> JSONResponse:
-        return JSONResponse(
-            status_code=422,
-            content={
-                "type": f"urn:huron:error:{exc.code.lower()}",
-                "title": "Role model violation",
-                "status": 422,
-                "code": exc.code,
-                "detail": str(exc),
-            },
-            media_type="application/problem+json",
-        )
+    app = _HuronFastAPI(title="Huron API", version="1.0.0", lifespan=lifespan)
+    install_error_handlers(app)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/readyz")
-    async def readyz(request: Request) -> dict[str, str]:
-        repository_state: HierarchyRepository = request.app.state.repository
-        if not repository_state.raw_store.root.exists():
-            raise DomainError("raw root is unavailable")
+    @app.get("/readyz", responses={503: problem_response("a dependency is unavailable")})
+    async def readyz(runtime: Runtime) -> dict[str, str]:
+        """Refuse traffic unless every dependency this instance needs answers.
+
+        A readiness probe that reports the process rather than its
+        dependencies sends traffic to an instance whose first authenticated
+        request will fail, so the failure is a 503 - the status an
+        orchestrator is configured to act on - and never a 4xx.
+        """
+        failed = {name: reason for name, reason in await _dependency_checks(runtime) if reason}
+        if failed:
+            raise DependencyUnavailable("a dependency is unavailable", context={"checks": failed})
         return {"status": "ready"}
 
-    @app.get("/api/v1/search")
-    async def search_unavailable() -> dict[str, object]:
-        raise ProjectionUnavailable("search projection is not configured")
-
-    # The only unauthenticated routes in the service besides /healthz and
-    # /readyz: password login, OIDC start/callback, and the provider-
-    # discovery route the login page renders from.
-    app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
-    app.include_router(v1.router, prefix="/api/v1")
+    app.include_router(auth_routes.router)
+    app.include_router(v1.router)
     return app
+
+
+async def _dependency_checks(runtime: ApiRuntime) -> list[tuple[str, str | None]]:
+    checks = [("raw_store", await asyncify(_raw_store_failure)(runtime.repository))]
+    if runtime.database_pool is not None:
+        checks.append(("database", await _database_failure(runtime.database_pool)))
+    return checks
+
+
+def _raw_store_failure(repository: HierarchyRepository) -> str | None:
+    """Stat the raw root; a hung mount must never stall the event loop."""
+    return None if repository.raw_store.root.exists() else "root is unavailable"
+
+
+async def _database_failure(pool: asyncpg.Pool) -> str | None:
+    try:
+        async with asyncio.timeout(READINESS_TIMEOUT_SECONDS):
+            await pool.fetchval("SELECT 1")
+    except (OSError, asyncpg.PostgresError, TimeoutError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
+#: A readiness probe that waits longer than the orchestrator's own probe
+#: timeout reports nothing; two seconds is well inside the usual five.
+READINESS_TIMEOUT_SECONDS = 2.0
 
 
 async def _bootstrap(repository: HierarchyRepository, settings: ApiSettings) -> None:
@@ -217,6 +233,3 @@ async def _bootstrap(repository: HierarchyRepository, settings: ApiSettings) -> 
             scope_id=None,
             created_by="bootstrap",
         )
-
-
-app = create_app()

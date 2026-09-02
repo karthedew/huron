@@ -1,6 +1,6 @@
 """Direct unit tests for the RBAC storage seam: InMemoryRbacStore, the
 HierarchyRepository delegation, the API-key touch bookkeeping, and the
-per-request binding cache in ``authorization.check``/``cached_bindings_for``.
+per-request binding cache in ``authorization.check``/``bindings_for_principal``.
 
 PostgresRbacStore and PostgresApiKeyStore are exercised only by
 ``tests/contract/test_rbac_store.py`` against a real database - asyncpg rows
@@ -10,7 +10,6 @@ are not worth faking here, and the SQL is the part a fake can't verify.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -18,16 +17,14 @@ import pytest
 
 from huron.pkg.auth import ApiKeyRecord, MemoryApiKeyStore
 from huron.pkg.auth import Principal as AuthPrincipal
-from huron.pkg.catalog.errors import DomainError
+from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import Binding, Decision, Effect, Principal, Scope, ScopeType, decide
 from huron.pkg.rbac.roles import PrincipalKindNotAllowed, ScopeNotBindable
-from huron.service.api.authorization import cached_bindings_for, check
-from huron.service.api.repository import (
-    HierarchyRepository,
-    InMemoryRbacStore,
-    ResourceNotFound,
-)
+from huron.service.api.authorization import bindings_for_principal, check
+from huron.service.api.errors import AttachmentExists, BindingExists, ServiceAccountExists
+from huron.service.api.repository import HierarchyRepository
+from huron.service.api.stores import InMemoryRbacStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,7 +33,9 @@ pytestmark = pytest.mark.unit
 
 
 def _repository(tmp_path: Path) -> HierarchyRepository:
-    return HierarchyRepository(PosixRawStore(str(tmp_path / "raw")))
+    return HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
+    )
 
 
 # -- InMemoryRbacStore --------------------------------------------------------
@@ -99,7 +98,7 @@ async def test_grant_role_rejects_an_identical_duplicate() -> None:
         scope_id=scope_id,
         created_by="alice",
     )
-    with pytest.raises(DomainError):
+    with pytest.raises(BindingExists):
         await store.grant_role(
             principal="user:bob",
             role_code="reader",
@@ -137,6 +136,7 @@ async def test_revoke_role_removes_the_binding_and_its_compiled_capabilities() -
         created_by="alice",
     )
     assert await store.bindings_for(frozenset({"user:bob"})) != ()
+    assert await store.get_role_binding(record.id) == record
 
     await store.revoke_role(record.id)
 
@@ -163,7 +163,7 @@ async def test_service_account_and_policy_listings_are_sorted_and_scoped() -> No
     accounts = await store.list_service_accounts(organization_id)
     assert [item.name for item in accounts] == ["alpha", "zeta"]
 
-    with pytest.raises(DomainError):
+    with pytest.raises(ServiceAccountExists):
         await store.create_service_account(
             organization_id, name="alpha", subject="org/alpha-2", created_by="alice"
         )
@@ -172,6 +172,14 @@ async def test_service_account_and_policy_listings_are_sorted_and_scoped() -> No
     await store.create_policy(policy_type="retention", name="aaa", spec={}, created_by="alice")
     policies = await store.list_policies()
     assert [item.name for item in policies] == ["aaa", "zzz"]
+
+
+async def test_get_service_account_and_disable_service_account_raise_when_missing() -> None:
+    store = InMemoryRbacStore()
+    with pytest.raises(ResourceNotFound):
+        await store.get_service_account(uuid4())
+    with pytest.raises(ResourceNotFound):
+        await store.disable_service_account(uuid4(), disabled_at=datetime.now(UTC))
 
 
 async def test_attach_policy_rejects_unknown_policy_and_duplicate_attachment() -> None:
@@ -188,7 +196,7 @@ async def test_attach_policy_rejects_unknown_policy_and_duplicate_attachment() -
     await store.attach_policy(
         policy.id, scope_type=ScopeType.ORGANIZATION, scope_id=scope_id, attached_by="alice"
     )
-    with pytest.raises(DomainError):
+    with pytest.raises(AttachmentExists):
         await store.attach_policy(
             policy.id, scope_type=ScopeType.ORGANIZATION, scope_id=scope_id, attached_by="alice"
         )
@@ -246,8 +254,12 @@ async def test_hierarchy_repository_checks_scope_existence_before_delegating(
 
 
 async def test_hierarchy_repository_rejects_a_scope_id_at_system_scope(tmp_path: Path) -> None:
+    """No route can produce this - the SYSTEM binding routes always pass
+    ``scope_id=None`` - so an inconsistent pair is a bug, not a client
+    contract, and raises the plain ``ValueError`` the unhandled-exception
+    path turns into a 500."""
     repository = _repository(tmp_path)
-    with pytest.raises(DomainError):
+    with pytest.raises(ValueError, match="SYSTEM scope takes no scope_id"):
         await repository.grant_role(
             principal="user:bob",
             role_code="platform_owner",
@@ -261,7 +273,7 @@ async def test_hierarchy_repository_rejects_a_missing_scope_id_below_system(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
-    with pytest.raises(DomainError):
+    with pytest.raises(ValueError, match="PROJECT scope requires a scope_id"):
         await repository.grant_role(
             principal="user:bob",
             role_code="reader",
@@ -286,6 +298,62 @@ async def test_hierarchy_repository_derives_service_account_subject_from_org_slu
     assert fetched == account
 
 
+async def test_hierarchy_repository_checks_dataset_scope_existence_before_delegating(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    organization = repository.create_organization(
+        slug="astro", title="Astro", description="", idempotency_key="org-1"
+    )
+    project = repository.create_project(
+        organization.id,
+        slug="sims",
+        title="Sims",
+        description="",
+        data_classification="open",
+        idempotency_key="proj-1",
+    )
+    dataset = repository.create_dataset(
+        project.id,
+        slug="run-0001",
+        title="Run 1",
+        description="",
+        profile_name="mcnp-run",
+        profile_version="1.0",
+        idempotency_key="ds-1",
+    )
+
+    record = await repository.grant_role(
+        principal="user:bob",
+        role_code="reader",
+        scope_type=ScopeType.DATASET,
+        scope_id=dataset.id,
+        created_by="alice",
+    )
+    assert await repository.get_role_binding(record.id) == record
+    assert await repository.revoke_role(record.id) == record
+    with pytest.raises(ResourceNotFound):
+        await repository.get_role_binding(record.id)
+
+
+async def test_hierarchy_repository_list_service_accounts_and_policies_delegate(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    organization = repository.create_organization(
+        slug="astro", title="Astro", description="", idempotency_key="org-2"
+    )
+    await repository.create_service_account(organization.id, name="loader", created_by="alice")
+    accounts = await repository.list_service_accounts(organization.id)
+    assert [item.name for item in accounts] == ["loader"]
+
+    await repository.create_policy(
+        policy_type="retention", name="raw-90d", spec={"days": 90}, created_by="alice"
+    )
+    policies = await repository.list_policies()
+    assert [item.name for item in policies] == ["raw-90d"]
+
+
 async def test_two_repositories_built_without_an_injected_store_do_not_share_bindings(
     tmp_path: Path,
 ) -> None:
@@ -296,10 +364,14 @@ async def test_two_repositories_built_without_an_injected_store_do_not_share_bin
     defaulting inside ``__init__`` rather than in the signature) would leak
     one repository's grants into every other repository built the same way.
     """
-    first = HierarchyRepository(PosixRawStore(str(tmp_path / "raw-1")))
-    second = HierarchyRepository(PosixRawStore(str(tmp_path / "raw-2")))
+    first = HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw-1")), classification_vocabulary=("open",)
+    )
+    second = HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw-2")), classification_vocabulary=("open",)
+    )
 
-    await first.rbac_store.grant_role(
+    await first.grant_role(
         principal="user:bob",
         role_code="platform_owner",
         scope_type=ScopeType.SYSTEM,
@@ -335,7 +407,7 @@ async def test_memory_api_key_store_records_touch_calls() -> None:
 
 async def test_touch_api_key_failure_does_not_break_authentication() -> None:
     """The touch is best-effort: a store that raises must not surface to the caller."""
-    from huron.service.api.authorization import _touch_api_key
+    from huron.service.api.authorization.credentials import _touch_api_key
 
     class _ExplodingStore:
         async def get(self, key_id: str) -> ApiKeyRecord | None:
@@ -361,32 +433,25 @@ class _CountingRepository:
         return self._bindings
 
 
-def _fake_request(repository: object) -> SimpleNamespace:
-    return SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(repository=repository)),
-        state=SimpleNamespace(),
-    )
-
-
-async def test_cached_bindings_for_queries_once_per_identifier_set_per_request() -> None:
+async def test_bindings_for_principal_queries_once_per_identifier_set_per_request() -> None:
     repository = _CountingRepository(())
-    request = _fake_request(repository)
-    identifiers = frozenset({"user:alice"})
+    cache: dict[frozenset[str], tuple[Binding, ...]] = {}
+    alice = Principal(subject="alice")
 
-    await cached_bindings_for(request, repository, identifiers)
-    await cached_bindings_for(request, repository, identifiers)
+    await bindings_for_principal(cache, repository, alice)
+    await bindings_for_principal(cache, repository, alice)
     assert repository.calls == 1
 
-    await cached_bindings_for(request, repository, frozenset({"user:bob"}))
+    await bindings_for_principal(cache, repository, Principal(subject="bob"))
     assert repository.calls == 2
 
 
-async def test_cached_bindings_for_does_not_leak_across_requests() -> None:
+async def test_bindings_for_principal_does_not_leak_across_requests() -> None:
     repository = _CountingRepository(())
-    identifiers = frozenset({"user:alice"})
+    alice = Principal(subject="alice")
 
-    await cached_bindings_for(_fake_request(repository), repository, identifiers)
-    await cached_bindings_for(_fake_request(repository), repository, identifiers)
+    await bindings_for_principal({}, repository, alice)
+    await bindings_for_principal({}, repository, alice)
     assert repository.calls == 2
 
 
@@ -399,10 +464,45 @@ async def test_check_only_queries_bindings_once_even_when_called_twice() -> None
         effect=Effect.ALLOW,
     )
     repository = _CountingRepository((binding,))
-    request = _fake_request(repository)
+    cache: dict[frozenset[str], tuple[Binding, ...]] = {}
     principal = AuthPrincipal(subject="alice")
 
-    await check(request, principal, "dataset.discover", Scope.system())
-    await check(request, principal, "dataset.discover", Scope.system())
+    await check(cache, repository, principal, "dataset.discover", Scope.system())
+    await check(cache, repository, principal, "dataset.discover", Scope.system())
 
     assert repository.calls == 1
+
+
+async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_account(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    organization = repository.create_organization(
+        slug="astro", title="Astro", description="", idempotency_key="k1"
+    )
+    account = await repository.create_service_account(
+        organization.id, name="feed", created_by="alice"
+    )
+    actor = Principal(subject=account.subject, kind="service_account")
+    cache: dict[frozenset[str], tuple[Binding, ...]] = {}
+
+    bindings = await bindings_for_principal(cache, repository, actor)
+
+    assert bindings != ()
+    assert actor.identifiers in cache
+
+
+async def test_bindings_for_principal_denies_a_service_account_with_no_account_row(
+    tmp_path: Path,
+) -> None:
+    """A service-account key that outlived its account resolves as a
+    principal but must never inherit bindings from a row that no longer
+    exists."""
+    repository = _repository(tmp_path)
+    actor = Principal(subject="org/gone", kind="service_account")
+    cache: dict[frozenset[str], tuple[Binding, ...]] = {}
+
+    bindings = await bindings_for_principal(cache, repository, actor)
+
+    assert bindings == ()
+    assert cache[actor.identifiers] == ()

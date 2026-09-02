@@ -44,13 +44,13 @@ from huron.pkg.auth.oidc import OidcUser
 from huron.pkg.auth.password import CredentialRecord
 from huron.pkg.auth.principals import PrincipalSubjectExists
 from huron.pkg.auth.sessions import SessionRecord
+from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
-from huron.service.api.postgres_auth import (
+from huron.service.api.stores import (
     PostgresCredentialStore,
     PostgresPrincipalStore,
     PostgresSessionStore,
 )
-from huron.service.api.repository import ResourceNotFound
 
 pytestmark = pytest.mark.contract
 
@@ -66,7 +66,7 @@ def _migrate(sqlalchemy_url: str) -> None:
     command.upgrade(config, "head")
 
 
-def test_postgres_auth_stores_against_a_migrated_database() -> None:
+def test_the_postgres_credential_session_and_principal_stores_against_a_migrated_database() -> None:
     with PostgresContainer("postgres:16") as postgres:
         _migrate(postgres.get_connection_url(driver="asyncpg"))
         asyncio.run(_assert_against(postgres.get_connection_url(driver=None)))
@@ -252,7 +252,8 @@ async def _assert_sessions_check_rejects_a_malformed_secret_hash(pool: asyncpg.P
                 (id, secret_sha256, csrf_token, subject, authentication_method,
                  created_at, last_seen_at, idle_expires_at, absolute_expires_at)
             VALUES ($1, 'not-a-hex-digest', 'csrf', 'contract-user-badsecret', 'password',
-                    $2, $2, $2 + interval '1 hour', $2 + interval '1 day')
+                    $2::timestamptz, $2::timestamptz,
+                    $2::timestamptz + interval '1 hour', $2::timestamptz + interval '1 day')
             """,
             uuid7(),
             now,

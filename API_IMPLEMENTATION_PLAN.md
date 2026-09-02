@@ -63,10 +63,12 @@ Facts about this repository's gate that the tasks below depend on, checked again
 plan runs on, not of the plan or of the repository. If any is unmet, **stop and report**; none of
 them may be worked around by skipping, weakening or deleting a gate step (rule 2 below).
 
-- **A container runtime** (Docker or Podman) reachable by `testcontainers`. Both modules under
-  `tests/contract/` drive a migrated PostgreSQL, so every per-task `uv run pytest -m contract` step
-  in this plan — M1.1, M2.1, M3.1, M8.1, M9.2 — and §5's final contract run depend on it. Without
-  one, both contract modules fail with `FileNotFoundError` on the daemon socket, for reasons
+- **A container runtime** (Docker or Podman) reachable by `testcontainers`. All **three** modules
+  under `tests/contract/` — `test_auth_store.py`, `test_rbac_store.py` and `test_catalog_store.py`,
+  each carrying `pytestmark = pytest.mark.contract` — drive a migrated PostgreSQL, so every per-task
+  `uv run pytest -m contract` step in this plan — M1.1, M2.1, M3.1, M8.1, M9.2, M11.2, M11.3 — and
+  §5's final contract run depend on it. Without one, all three contract modules fail with
+  `FileNotFoundError` on the daemon socket, for reasons
   unrelated to the change under test. A task that cannot run its mandatory contract step is not
   done, and the step is not optional: stop and report.
 - **An `x86_64` or `darwin` host**, because `pyscn` is declared with the marker
@@ -91,14 +93,32 @@ them may be worked around by skipping, weakening or deleting a gate step (rule 2
    no TODO, no speculative abstraction, no partial migration, no suppressed lint. `# noqa`,
    `# type: ignore`, `# pragma: no cover`, `skip` and `xfail` may not be introduced to make the gate
    pass. If the gate cannot be satisfied without one, stop and report.
-3. **No migration.** No task in this plan may add, edit, or require a file under `migrations/`, and
-   none may change SQL in `postgres_rbac.py` or `postgres_auth.py`. Only Python module boundaries
-   move. If a task appears to need a migration, that is a plan defect — escalate.
+3. **No migration; and no SQL change before M11.** No task in this plan may add, edit, or require a
+   file under `migrations/`, and **for M1 through M10** none may change SQL in `postgres_rbac.py` or
+   `postgres_auth.py` — through M10, only Python module boundaries move. **M11 is the exception, and
+   it is the only one.** The owner has explicitly opened SQL for that milestone, because Design 10
+   proved a live pagination defect that no boundary change can fix: walking a keyset cursor over a
+   default-collation `ORDER BY` on the cluster this service actually deploys against loses four of
+   fourteen rows and repeats one, and `ORDER BY name` on `policies` reorders its ties between two
+   executions of the identical query. The fix is in the query, so the query changes. Inside M11 the
+   opening is narrow: `SELECT` text, `COLLATE` and `ORDER BY` clauses in the store modules may
+   change, and **DDL may not.** `migrations/` and `src/huron/schema` stay out of scope for M11
+   exactly as they are for M1–M10 — no index, no constraint, no column, no table is added, dropped or
+   altered, and Design 10's three candidate indexes are a hand-off to the 0008 schema track (§1), not
+   work in this plan. If a task appears to need a migration, that is a plan defect — escalate.
 4. **Deletions land with the change that makes them dead**, in the same task, never deferred.
-5. **A gated task may not be started until its decision is recorded in section 2.** Recording a
-   decision means the owner answered; it does not mean the recommendation was adopted. If the answer
-   differs from `API_DESIGN.md`'s recommendation, stop — that is a design change and belongs back in
-   `/design-plan`, not in an implementer's judgement.
+5. **No task in this plan waits on a decision.** All **seventeen** entries in section 2 were
+   answered by the owner on **2026-09-01**, and every task's answer is recorded in the row that names
+   it. There is nothing to check before starting a task and nothing to escalate for want of an
+   answer. Section 2 remains the source for *why* each settled choice is what it is — read the row
+   your task cites, because an implementer still needs to know that `/api/v1/roles` is deliberately
+   `401` rather than accidentally so. One answer, **D-10**, departs from the design's recommendation:
+   `CreatePolicy.spec` gains a 1 MiB ceiling where Design 5b's Open question 2 recommended shipping
+   none absent a number. That deviation is specified in section 2's D-10 row and in task M7.3, and
+   those two places govern — do not re-derive it from `API_DESIGN.md`. The one item still outstanding
+   anywhere is not a task gate: under D-1 the owner updates the external deployment artifacts that
+   name `huron.service.api.app:app` before the release is deployed. M2 is implementable and buildable
+   today; see section 2's note on D-1.
 
 ---
 
@@ -110,12 +130,38 @@ instead of `Request`-threading; `repository.py` decomposed so storage adapters n
 application service; a router tree where prefix, tags and authentication are declared once and the
 whole versioned surface is closed to anonymous callers; a declared response type and a real
 pagination envelope for every operation; one uniform `application/problem+json` error contract with a
-mechanically checked code table; and the binding surface completed.
+mechanically checked code table; the binding surface completed; `authorization.py` and the five
+storage adapters decomposed into packages entered through their public surfaces; and the two
+collation-and-tiebreak ordering defects fixed in the SQL that produces them.
 
 **Non-goals — explicitly out of scope for every task in this plan.**
 
 - **`src/huron/schema` and `migrations/`.** Both are being changed concurrently by other work. No
-  task here may edit either, and no task may require a migration. See rule 3 above.
+  task here may edit either, and no task may require a migration. See rule 3 above — which M11 opens
+  for *queries* only: M11 changes `ORDER BY` clauses and adds `COLLATE "C"`, and it still writes no
+  DDL and touches neither of these two trees. **Hand-off, not a decision and not a gate:** Design 10
+  → `### Open questions` → item 3 hands the 0008 schema track three candidate indexes — a `UNIQUE`
+  index on `policies (name COLLATE "C")`, recommended and behavior-changing, plus two deferred
+  covering indexes for `service_accounts` and `role_bindings`, priced there with their query plans.
+  None is required: every query M11 ships is correct without all three, so none of them gates M11 and
+  none appears in §2. They belong to whoever owns `migrations/`.
+
+  **Where that hand-off actually goes, checked 2026-09-01.** `0008_schema_conformance` has since
+  merged to `main`, so the three candidate indexes are work for `0009`, not for `0008`. Design 10
+  applied `0001`–`0007` and deliberately skipped `0008`, which was in flight at the time; that
+  omission does **not** weaken its receipts, and three facts were re-checked against the merged
+  migration to establish it:
+
+  - `0008` adds no `COLLATE` anywhere and no uniqueness on `policies (name)` — it adds the CHECK
+    `policies_spec_is_an_object` and nothing else to that table. The ordering hazard D-17 fixes is
+    still live on `main`, and the `id` tiebreak is still load-bearing.
+  - `0008` **already resolves** Design 10's incidental finding that `role_bindings_principal_scope`
+    could not serve `bindings_at`: it drops that index as a strict subset of
+    `role_bindings_no_duplicates` and adds `role_bindings_scope` for the scope-listing path. Do not
+    re-report it.
+  - `policies_spec_is_an_object` and D-10's `MAX_POLICY_SPEC_BYTES` are complementary, not
+    overlapping: the database requires the spec to be a JSON object, the API bounds how large that
+    object may be. Neither subsumes the other and M7.3 needs no change for it.
 - **`src/huron/pkg` beyond what a named design section requires.** The only permitted `pkg` edits
   are: `ResourceNotFound` and `InvalidCursor` added to `huron/pkg/catalog/errors.py` (M3, M6);
   `ClassificationUnknown` added there (M4); and M8's subtractive changes to
@@ -132,67 +178,105 @@ mechanically checked code table; and the binding surface completed.
   assets; nothing in `web/` is edited.
 - **Persistent hierarchy storage, keyset pagination pushed into queries, policy evaluation, ingest,
   release reachability, `GET /metrics`, and in-process rate limiting.** Each is named in
-  `API_DESIGN.md` as future work with its seam recorded. No task anticipates any of them.
-- **Every open question in section 2 that is still unanswered.** An unanswered decision blocks its
-  task; it is never resolved by the implementer.
+  `API_DESIGN.md` as future work with its seam recorded. No task anticipates any of them. **M11's SQL
+  change is not the push-down** and must not be mistaken for its first half: no store method gains a
+  `limit` or an `after` parameter, no `WHERE` predicate changes, and the boundary still windows. What
+  M11 changes is the order the store returns, so that it is the order the boundary already assumes.
+- **Reopening any decision in section 2.** All seventeen were answered on 2026-09-01 and are
+  recorded there with the owner's answer. An implementer implements the recorded answer as written;
+  revisiting one is a design change and belongs back in `/design-plan`, never in an implementer's
+  judgement.
 
 ---
 
 ## 2. Human decision register
 
-`API_DESIGN.md` raises **33 open questions** across its nine design sections. Eighteen are settled
-inside the document by a recommendation that needs no external fact (for example Design 2's OQ3 on
-`dependency_overrides`, Design 3's OQ1 on where `limit` descends, Design 6's OQ3 on the `NOT_FOUND`
-collision); implementers follow those directly and this register does not repeat them.
+`API_DESIGN.md` raises **40 open questions** across its eleven design sections. Twenty-three are
+settled inside the document by a recommendation that needs no external fact (for example Design 2's
+OQ3 on `dependency_overrides`, Design 3's OQ1 on where `limit` descends, Design 6's OQ3 on the `NOT_FOUND`
+collision, Design 9's three — `CookieSpec` replacing the six cookie names, the sixth import-linter
+contract, and splitting the authorization test module — and Design 10's OQ2 and OQ4, on the
+in-memory sort key and on `ports.py` living inside `stores/`); implementers follow those directly and
+this register does not repeat them. **One more is neither settled here nor a decision:** Design 10's
+OQ3 hands three candidate indexes to the 0008 schema track, recorded under §1's non-goals. The
+arithmetic closes: 23 settled + 16 below + 1 handed off = 40.
 
-The **fifteen below need a human**, because each is either a visible contract break, a capacity or
-deployment number this repository cannot supply, or a policy choice about code that does not exist
-yet. Each is stated as a question with the design's recommendation, the milestone it gates, and the
-blast radius if the answer differs.
+The **sixteen below needed a human**, because each was either a visible contract break, a capacity
+or deployment number this repository cannot supply, or a policy choice about code that does not exist
+yet. Each is recorded as the question that was put, the design's recommendation, the milestone the
+answer governs, and — in the last column — **the owner's answer**.
 
-**D-16 is a sixteenth entry that does not come from one of the 33.** It is a wire-visible contract
+**All seventeen are ANSWERED, as of 2026-09-01.** No task in this plan is waiting on anyone. The
+`GATED on` markers that stood on fifteen task headings are gone, and every `D-` reference that survives
+elsewhere in this document cites the row as the **source of a settled choice**, never as a wait.
+The one item still outstanding anywhere is a release-coordination step and not a gate: under D-1 the
+owner updates the external deployment artifacts before the release is deployed (note below).
+
+**D-16 is the one entry that does not come from one of the 40.** It is a wire-visible contract
 break this plan surfaced while sequencing Design 3's `### Deletions`, which state the deletion but
-not its effect on response bodies. It is recorded in the same table because it gates a milestone the
-same way the other fifteen do.
+not its effect on response bodies. It is recorded in the same table because it governs a milestone
+the same way the other sixteen do.
 
-| ID | Decision | Source | Recommendation | Gates |
-|---|---|---|---|---|
-| **D-1** | Is `huron.service.api.app:app` named by any deployment artifact outside this repository? Rename to `huron.service.api.main:app`. | D2 OQ1, D8 OQ1 | Rename; edit the **three** in-repo files (`Makefile:30`, `Containerfile` `CMD`, `docs/getting-started/local-development.md:131`) — Design 8 corrects Design 2's count of two. | M2 (operator gate — see note) |
-| **D-2** | Does password hashing get its own capacity limiter, and at what size? | D1 OQ1 | Yes, default 4, passed at the `verify_password` call site. | M1.2 only |
-| **D-3** | `GET /api/v1/roles` becomes `401` to anonymous callers. Contract break. | D4 OQ1 | Authenticate it. | M5 |
-| **D-4** | `GET /api/v1/search` becomes `401` to anonymous callers and moves out of `app.py`. Contract break. | D4 OQ2 | Authenticate and relocate. | M5 |
-| **D-5** | Twelve OpenAPI tags instead of seven; generated SDK shape changes. | D4 OQ3 | Adopt the finer set. | M5 |
-| **D-6** | The envelope break: `count` is removed, `limit`/`after` are added, and an out-of-range `limit` becomes `422` instead of a silent clamp. Contract break on every collection. | D5a OQ3 + D5a `#### limit, after, …`, D5b OQ4 | Ship it. | M6, M7 |
-| **D-7** | `GET /api/v1/roles` loses its `{"items": [...]}` wrapper and returns a bare `list[RoleView]`. Contract break. | D5b OQ4 | Ship it with D-6. | M7.1 |
-| **D-8** | `GET /auth/session` gains `effective_roles: list[ScopeRoles]`, fetched on every page load; a principal bound at fifty datasets reports fifty entries. | D5a OQ1 | Ship as designed; the roadmap's `todo` applies to the frontend alone. | M6.3 |
-| **D-9** | Is `GET /api/v1/roles` readable by every authenticated caller, or does it require `rbac.binding_manage`? | D5b OQ1 | Every authenticated caller; the catalog is vocabulary, not configuration. | M7.1 |
-| **D-10** | What byte ceiling, if any, bounds `CreatePolicy.spec`? The design asks for a domain number it cannot supply. | D5b OQ2 | Bound the request, not the response. **If no number is supplied, ship no bound** and record that as the answer — do not invent one. | M7.3 |
-| **D-11** | Rename the documented code `SESSION_EXPIRED` → `INGEST_SESSION_EXPIRED` (409, reserved) and add a new `SESSION_EXPIRED` (401, live). | D6 OQ4 | Rename. | M8.1 |
-| **D-12** | `DELETE /api/v1/bindings/{binding_id}` narrows from "revoke any binding" to "revoke a SYSTEM binding"; the same id now answers `404` there. Contract break. | D7 OQ3 | Ship it with D-6. | M9.1 |
-| **D-13** | Do the binding collections list grants that have already lapsed? | D7 OQ4 | Return them; `bindings_at` does not filter expiry and `expires_at` is published. If the owner prefers filtering, the filter belongs in `bindings_at` on **both** backends — which this plan forbids (rule 3) and which would return the work to `/design-plan`. | M9.2 |
-| **D-14** | `POST /api/v1/datasets/{id}/releases` cannot succeed until P2 ingest lands. Is that accepted, and pinned by a test that drives `register_revision` directly? | D3 OQ2, D5a OQ4 | Accept and pin. | M4.2 |
-| **D-15** | `[tool.mypy].files` / `[tool.ty.src].include` become `["src/huron"]` rather than three explicit surfaces, so future service tiers inherit `--strict` without opting in. | D8 OQ2 | `["src/huron"]`. | M10.1 |
-| **D-16** | Deleting `Release.withdrawn_at` and `Release.withdrawn_reason` removes two documented keys from live response bodies: both records reach the wire through `jsonable` → `asdict`, so `GET /api/v1/datasets/{id}/releases` and `GET /api/v1/datasets/{id}/releases/{tag}` both change shape. Contract break. | Plan — D3 `### Deletions` orders the deletion but states only the persistence effect | Ship it with D-6, D-7 and D-12 as part of the one grouped release; the fields are always `null` today, but a removed key is still a removed key. | M3.2 (and, through M4.1's dependency on M3.2, all of M4) |
+| ID | Decision | Source | Recommendation | Governs | **Answer — all ANSWERED 2026-09-01** |
+|---|---|---|---|---|---|
+| **D-1** | Is `huron.service.api.app:app` named by any deployment artifact outside this repository? Rename to `huron.service.api.main:app`. | D2 OQ1, D8 OQ1 | Rename; edit the **three** in-repo files (`Makefile:30`, `Containerfile` `CMD`, `docs/getting-started/local-development.md:131`) — Design 8 corrects Design 2's count of two. | M2 (see the D-1 note below) | **Yes — external deployment artifacts do name `huron.service.api.app:app`.** The rename to `huron.service.api.main:app` proceeds; M2 edits the three in-repo files, and the owner updates the external artifacts in the same release. **Not a task gate:** the coordination is at deploy time, not build time, so M2 is implementable and buildable now. |
+| **D-2** | Does password hashing get its own capacity limiter, and at what size? | D1 OQ1 | Yes, default 4, passed at the `verify_password` call site. | M1.2 only | **Yes — a dedicated limiter, size 4.** As recommended: `total_tokens = 4`, constructed once at module level and passed at the `verify_password` call site. |
+| **D-3** | `GET /api/v1/roles` becomes `401` to anonymous callers. Contract break. | D4 OQ1 | Authenticate it. | M5 | **Accept.** `GET /api/v1/roles` becomes `401` to anonymous callers. Ships in the one grouped release. |
+| **D-4** | `GET /api/v1/search` becomes `401` to anonymous callers and moves out of `app.py`. Contract break. | D4 OQ2 | Authenticate and relocate. | M5 | **Accept.** `GET /api/v1/search` becomes `401` and relocates out of `app.py`. Ships in the one grouped release. |
+| **D-5** | Twelve OpenAPI tags instead of seven; generated SDK shape changes. | D4 OQ3 | Adopt the finer set. | M5 | **Accept.** Twelve OpenAPI tags, the finer set. |
+| **D-6** | The envelope break: `count` is removed, `limit`/`after` are added, and an out-of-range `limit` becomes `422` instead of a silent clamp. Contract break on every collection. | D5a OQ3 + D5a `#### limit, after, …`, D5b OQ4 | Ship it. | M6, M7 | **Accept, in full.** `count` is removed, `limit`/`after` are added, and an out-of-range `limit` answers `422` rather than clamping silently. Ships in the one grouped release. |
+| **D-7** | `GET /api/v1/roles` loses its `{"items": [...]}` wrapper and returns a bare `list[RoleView]`. Contract break. | D5b OQ4 | Ship it with D-6. | M7.1 | **Accept.** `GET /api/v1/roles` returns a bare `list[RoleView]`. Ships in the one grouped release. |
+| **D-8** | `GET /auth/session` gains `effective_roles: list[ScopeRoles]`, fetched on every page load; a principal bound at fifty datasets reports fifty entries. | D5a OQ1 | Ship as designed; the roadmap's `todo` applies to the frontend alone. | M6.3 | **Ship as designed.** `effective_roles` on `GET /auth/session` for every scope the principal is bound at; no `?scopes=` filter and no other narrowing. |
+| **D-9** | Is `GET /api/v1/roles` readable by every authenticated caller, or does it require `rbac.binding_manage`? | D5b OQ1 | Every authenticated caller; the catalog is vocabulary, not configuration. | M7.1 | **Every authenticated caller** may read `GET /api/v1/roles`. No `rbac.binding_manage` requirement — the catalog is vocabulary, not configuration. |
+| **D-10** | What byte ceiling, if any, bounds `CreatePolicy.spec`? The design asks for a domain number it cannot supply. | D5b OQ2 | Bound the request, not the response. **If no number is supplied, ship no bound** and record that as the answer — do not invent one. | M7.3 | **A 1 MiB ceiling on `CreatePolicy.spec`** — `1_048_576` bytes, measured over RFC 8785 canonical JSON. **This is the one answer that deviates from its recommendation**, which was to ship no bound if no number was supplied: the owner supplied one. The mechanism is not a Pydantic `max_length` — `spec` is `dict[str, object]` — and is specified in full as task M7.3's third sub-item. |
+| **D-11** | Rename the documented code `SESSION_EXPIRED` → `INGEST_SESSION_EXPIRED` (409, reserved) and add a new `SESSION_EXPIRED` (401, live). | D6 OQ4 | Rename. | M8.1 | **Rename.** `SESSION_EXPIRED` becomes `INGEST_SESSION_EXPIRED` (`409`, reserved), and a new live `SESSION_EXPIRED` (`401`) is added. |
+| **D-12** | `DELETE /api/v1/bindings/{binding_id}` narrows from "revoke any binding" to "revoke a SYSTEM binding"; the same id now answers `404` there. Contract break. | D7 OQ3 | Ship it with D-6. | M9.1 | **Accept.** `DELETE /api/v1/bindings/{binding_id}` narrows to SYSTEM scope; a non-SYSTEM id answers `404` there. Ships in the one grouped release. |
+| **D-13** | Do the binding collections list grants that have already lapsed? | D7 OQ4 | Return them; `bindings_at` does not filter expiry and `expires_at` is published. If the owner prefers filtering, the filter belongs in `bindings_at` on **both** backends — which this plan forbids (rule 3) and which would return the work to `/design-plan`. Rule 3's M11 opening does not reach this: it covers `ORDER BY` and collation, never a `WHERE` predicate. | M9.2 | **Return them.** The binding collections list grants that have already lapsed; `bindings_at` gains no `WHERE` predicate on either backend. |
+| **D-14** | `POST /api/v1/datasets/{id}/releases` cannot succeed until P2 ingest lands. Is that accepted, and pinned by a test that drives `register_revision` directly? | D3 OQ2, D5a OQ4 | Accept and pin. | M4.2 | **Accept and pin.** The releases route stays unreachable until P2 ingest lands, pinned by a test that drives `register_revision` directly. |
+| **D-15** | `[tool.mypy].files` / `[tool.ty.src].include` become `["src/huron"]` rather than three explicit surfaces, so future service tiers inherit `--strict` without opting in. | D8 OQ2 | `["src/huron"]`. | M10.1 | **`["src/huron"]`** for both `[tool.mypy].files` and `[tool.ty.src].include`. |
+| **D-16** | Deleting `Release.withdrawn_at` and `Release.withdrawn_reason` removes two documented keys from live response bodies: both records reach the wire through `jsonable` → `asdict`, so `GET /api/v1/datasets/{id}/releases` and `GET /api/v1/datasets/{id}/releases/{tag}` both change shape. Contract break. | Plan — D3 `### Deletions` orders the deletion but states only the persistence effect | Ship it with D-6, D-7 and D-12 as part of the one grouped release; the fields are always `null` today, but a removed key is still a removed key. | M3.2 (and, through M4.1's dependency on M3.2, all of M4) | **Accept.** `Release.withdrawn_at` and `Release.withdrawn_reason` go, and the two keys leave both release responses. Ships in the one grouped release. |
+| **D-17** | M11 changes shipped SQL. `PostgresRbacStore.list_policies` becomes `ORDER BY name COLLATE "C", id`, `list_service_accounts` becomes `ORDER BY sa.name COLLATE "C"`, and `InMemoryRbacStore.list_policies` sorts by `(item.name, str(item.id))` to match. No response model, cursor format or envelope changes — the boundary already sorts and publishes the order (D-6, Design 5b Decision 1) — but a keyset walk that silently dropped rows and repeated one starts returning each row exactly once, which is a change in what deployed clients receive from `GET /api/v1/policies` and `GET /api/v1/organizations/{id}/service-accounts`. | D10 OQ1 | Adopt. Design 5b withheld the `COLLATE "C"` and the `id` tiebreak only because it had no PostgreSQL to test against and said so; Design 10's Receipts 2–4 are that test, on the `postgres:16` image both `docker-compose.yml` and `tests/contract/` already use. §0 rule 3 records that the owner opened SQL for M11; this entry is where the specific queries are confirmed. **DDL is not part of the answer** — the `UNIQUE` index that would retire the `id` tiebreak is the schema track's (§1). | M11.3 | **Adopt** the SQL ordering fix exactly as stated — both `ORDER BY` changes and the in-memory sort key. DDL stays out; the `UNIQUE` index remains the schema track's. |
 
-**Note on D-1 and the critical path.** D-1 is the only decision that touches a milestone the whole
-chain depends on, and it is deliberately structured as an **operator gate rather than a code gate**:
-the code shape is not in question. Design 2's `create_app` cannot build an app without settings, so
-`main.py` must exist and must be the module that reads the environment; that is settled inside the
-design. What a human must supply is the fact this repository cannot hold — whether a Kubernetes
-manifest, Helm chart, systemd unit or CI deploy job outside this tree names the old string. M2 may
-therefore be implemented while that check is outstanding, but **the result may not be deployed until
-D-1 is answered.** If the answer is "yes, external artifacts name it", those artifacts are updated
-outside this repository in the same release; no code changes.
+**Note on D-1: a release-coordination item, not a task gate.** D-1's answer is *yes* — deployment
+artifacts outside this repository do name `huron.service.api.app:app` — and the rename proceeds
+anyway. The code shape was never in question: Design 2's `create_app` cannot build an app without
+settings, so `main.py` must exist and must be the module that reads the environment, and that is
+settled inside the design. **M2 is implementable and buildable now**, and M2 edits the three in-repo
+files (`Makefile:30`, `Containerfile` `CMD`, `docs/getting-started/local-development.md:131`). The
+one outstanding item is the owner's: the external artifacts — Kubernetes manifest, Helm chart,
+systemd unit or CI deploy job — are updated outside this tree **in the same release**, before that
+release is deployed. That is a deploy-time coordination step. No code changes for it, no task waits
+on it, and no milestone is held for it.
 
-**How the gates are arranged so the sequence is not blocked behind them.** M1 and M3.1 — the whole
-execution-model change and the mechanical, contract-preserving half of the `repository.py`
-decomposition — are ungated and can be implemented while the answers are collected. Two gates sit
-inside otherwise-ungated milestones: M1.2 on D-2, which is one call-site argument, and **M3.2 on
-D-16**, which is a visible contract break and therefore belongs to the grouped release. Because
-M4.1 depends on M3.2, M4 inherits D-16 as well; M4 carries no gate of its own beyond D-14 on M4.2.
-Every remaining gate (D-3 through D-13, plus D-16) is a visible contract break, and all of them
-should ship as **one release**, not five; grouping them behind M3.2 and M5–M9 is what makes that
-possible.
+**D-10 is the one answer that departs from its recommendation.** Design 5b's Open question 2
+recommended bounding the request and, absent a supplied number, shipping no bound at all rather than
+inventing one. The owner supplied the number: **1 MiB**. Because the recommendation's conditional
+never fired, this is a decision the design anticipated rather than a design change, and it needs no
+return to `/design-plan`. It does need a mechanism, because `spec` is `dict[str, object]` and
+Pydantic's `max_length` cannot express a byte ceiling over a decoded JSON object. **Task M7.3
+specifies it in full** — where the check lives, what is measured, what the caller gets back, the
+named constant, and the test that pins both sides of the boundary. M7.3 governs; do not re-derive
+the mechanism from `API_DESIGN.md`.
+
+**The grouped release, and why the breaks were accepted so readily.** Eight of the answers are
+client-visible breaks — **D-3, D-4, D-5, D-6, D-7, D-12, D-16 and D-17** — and the owner's answer is
+that they **ship as one release**, exactly as §4's R5 and each of those rows recommend. Worth
+recording once, because a later reader will want it: **this repository contains no live consumer of
+the API's response shapes.** `web/src/lib/api/client.ts` is a hand-written seam that reads from
+`fixtures.ts`, and `web/src/lib/api/README.md` states that the real client is *generated* from
+`openapi/v1.json` — a file that does not exist yet and first ships in P1. The sweep therefore lands
+before the client that would have to be regenerated against it. That is a statement about this
+repository, not a claim that no consumer exists anywhere: an external caller written against the
+deployed surface would still see all eight breaks, which is why they ship together.
+
+**How the sequence runs, now that nothing is gated.** M1 and M3.1 — the whole execution-model change
+and the mechanical, contract-preserving half of the `repository.py` decomposition — break no client
+contract and can be deployed alone if a partial deploy is ever needed (§4 R5). Everything from M3.2
+onward carries part of the grouped release: M3.2 removes two keys from both release responses
+(D-16), and M4.1 depends on M3.2, so M4 rides with it. M5 through M9 carry the rest, and M11.3's
+ordering fix rides the same release because M11 is last. The sequencing constraint that remains is
+therefore a **release** constraint — hold the release, never the milestones — and it is R5's, not a
+decision's.
 
 ---
 
@@ -203,18 +287,31 @@ with 8 free-floating. This plan follows it, splits Design 3 and Design 5 where t
 names the split, and lands Design 8 last because its type-check widening and Ruff `FAST` rules would
 otherwise be enforced against code that six later milestones rewrite.
 
-| # | Milestone | Design | Gated on | Shape |
+**Designs 9 and 10 stand outside that chain and land together as M11.** Neither is in `### Ordering`;
+both were written against the tree the first ten milestones leave behind, and each says so — Design 9
+enumerates the post-M10 contents of `authorization.py` name by name, and Design 10's package absorbs
+Design 3's `ports.py` and `memory_rbac.py` and states its error table in Design 6's vocabulary. They
+are one milestone rather than two because the second's package imports the first's, and because the
+seventh import-linter contract names `huron.service.api.authorization.**` as a source module.
+
+**No milestone is blocked.** The fourth column below used to read *Gated on*; every decision it
+names was answered on 2026-09-01, so it now records **which settled decisions govern the milestone** —
+the rows in §2 an implementer reads to know why the milestone's contract is what it is. It is not a
+list of waits.
+
+| # | Milestone | Design | Decisions that govern it (§2 — all settled) | Shape |
 |---|---|---|---|---|
-| **M1** | Execution model: blocking I/O off the event loop | Design 1 | D-2 (task M1.2 only) | 2 tasks |
-| **M2** | Composition root, `ApiRuntime`, injected dependencies, entrypoint module | Design 2 | D-1 (operator) | **1 task — atomic** |
-| **M3** | `repository.py` decomposition and the record relocation | Design 3 | D-16 (task M3.2) | 2 tasks |
-| **M4** | Repository query methods, classification enforcement, release pinning | Design 3 | D-14 (task M4.2); inherits D-16 via M4.1's dependency on M3.2 | 2 tasks |
-| **M5** | Router composition and the authenticated surface | Design 4 | D-3, D-4, D-5 | **1 task — atomic** |
-| **M6** | Response models for the resource surface, and the pagination envelope | Design 5 | D-6, D-8 | 3 tasks |
-| **M7** | Response models for the administrative surface | Design 5b | D-6, D-7, D-9, D-10 | 3 tasks |
-| **M8** | Error contract and `problem+json` coverage | Design 6 | D-11 | 4 tasks |
-| **M9** | Binding surface completion | Design 7 | D-12, D-13 | 2 tasks |
-| **M10** | Type-check scope, entrypoint rationale, Ruff `FAST` | Design 8 | D-15 (task M10.1) | 3 tasks |
+| **M1** | Execution model: blocking I/O off the event loop | Design 1 | D-2 — settled: limiter size 4 (task M1.2 only) | 2 tasks |
+| **M2** | Composition root, `ApiRuntime`, injected dependencies, entrypoint module | Design 2 | D-1 — settled: rename proceeds. Buildable now; the owner's external-artifact update is a deploy-time step, not a gate | **1 task — atomic** |
+| **M3** | `repository.py` decomposition and the record relocation | Design 3 | D-16 — settled: the two keys go (task M3.2) | 2 tasks |
+| **M4** | Repository query methods, classification enforcement, release pinning | Design 3 | D-14 — settled: accept and pin (task M4.2); carries D-16's break via M4.1's dependency on M3.2 | 2 tasks |
+| **M5** | Router composition and the authenticated surface | Design 4 | D-3, D-4, D-5 — all settled: accept | **1 task — atomic** |
+| **M6** | Response models for the resource surface, and the pagination envelope | Design 5 | D-6, D-8 — settled: envelope break in full; `effective_roles` as designed | 3 tasks |
+| **M7** | Response models for the administrative surface | Design 5b | D-6, D-7, D-9 — settled: accept; **D-10 — settled at 1 MiB, the one deviation, specified in M7.3** | 3 tasks |
+| **M8** | Error contract and `problem+json` coverage | Design 6 | D-11 — settled: rename, plus a live `SESSION_EXPIRED` | 4 tasks |
+| **M9** | Binding surface completion | Design 7 | D-12, D-13 — settled: narrow to SYSTEM; return lapsed grants | 2 tasks |
+| **M10** | Type-check scope, entrypoint rationale, Ruff `FAST` | Design 8 | D-15 — settled: `["src/huron"]` (task M10.1) | 3 tasks |
+| **M11** | The `authorization/` and `stores/` packages, and the ordering fix | Designs 9, 10 | D-17 — settled: adopt the ordering fix (task M11.3) | 4 tasks — **two atomic** |
 
 **The atomic milestones, and why they do not split.** M2 and M5 are each one task because the change
 has no green intermediate state:
@@ -235,6 +332,14 @@ has no green intermediate state:
 M8's first task is atomic for the same reason at smaller scale — `DomainError` becoming abstract
 breaks all fourteen bare raise sites in the same instant — but the `/readyz` rewrite, the bijection
 test and the `responses={}` declarations are genuinely separable and are separate tasks.
+
+**M11.1 and M11.2 are atomic in the same sense as M2.1 and M5.1**, and for a reason particular to
+turning a module into a package: the moment `authorization.py` (or `postgres_rbac.py` and
+`postgres_auth.py`) stops existing, every importer of it fails to import, and Python offers no state
+between "the module" and "the package" that is neither a re-export shim nor a broken tree. A
+half-moved package does not compile, so it cannot be a task boundary. What *is* separable is
+everything that does not move a module: M11.3 changes three SQL statements and one sort key inside
+the package M11.2 built, and M11.4 splits a test module and touches no source file at all.
 
 ---
 
@@ -301,9 +406,9 @@ uv run pytest -m contract -q
 - `uv run pytest -m contract` passes (not covered by the gate's pytest line).
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
-### Task M1.2 — Dedicated capacity limiter for password hashing — **GATED on D-2**
+### Task M1.2 — Dedicated capacity limiter for password hashing — **capacity settled by D-2**
 
 **Intent.** Bound Argon2id's memory and CPU blast radius to a queue on `/auth/login` instead of the
 shared 40-token threadpool limiter.
@@ -314,8 +419,8 @@ shared 40-token threadpool limiter.
 **Modify.** The `verify_password` `asyncify` call site in `routes/auth/endpoints/login.py`; wherever
 the limiter object is constructed (module level, alongside the call site).
 
-**Depends on.** M1.1 (the call site must exist and the `limiter=` probe must have been run). **Do not
-start until D-2 is recorded in section 2 with a concrete integer.**
+**Depends on.** M1.1 alone — the call site must exist and the `limiter=` probe must have been run.
+D-2 is settled in section 2: **the total is `4`**, on a limiter dedicated to password hashing.
 
 **Verify.**
 
@@ -334,7 +439,7 @@ uv run pytest tests/unit/test_api_login.py -m unit -q
   `tests/unit/test_api_login.py` passes untouched.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
 ---
 
@@ -349,6 +454,13 @@ three.
 
 **Intent.** Remove every path by which a request can reach unset composition-root state, and replace
 `Request`-threading with declared dependencies.
+
+**D-1 is settled and this task is not waiting on it.** Deployment artifacts outside this repository
+do name `huron.service.api.app:app`, and the rename to `huron.service.api.main:app` proceeds anyway.
+**M2.1 is implementable and buildable today**; it edits the three in-repo references and nothing else
+is owed to it. The one outstanding item is the owner's, and it is a deploy-time step: the external
+artifacts are updated in the same release, before that release is deployed. Do not defer any part of
+this task for it, and do not leave a compatibility alias at the old path — rule 2 forbids one.
 
 **Design reference.** `## Design 2` → `#### New module: src/huron/service/api/runtime.py`,
 `#### create_app`, `#### New module: src/huron/service/api/main.py`,
@@ -424,7 +536,7 @@ uv run pytest -m contract -q
   the gate will not catch a typing regression in these two new modules for you.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
 ---
 
@@ -433,7 +545,8 @@ uv run pytest -m contract -q
 Design: `API_DESIGN.md` → `## Design 3 — repository.py decomposition and query ownership`. Design 3
 itself authorises this split — *"relocation first (mechanical, contract-preserving), query methods
 second"* — and M3/M4 take it. The "contract-preserving" half is **M3.1 alone**: M3.2's field
-deletion is wire-visible and is gated on D-16 (see §2).
+deletion is wire-visible, and D-16 settles it — the break is accepted and ships with the grouped
+release (see §2).
 
 ### Task M3.1 — Split `repository.py` into `records` / `ports` / `memory_rbac` / `repository`
 
@@ -497,9 +610,9 @@ uv run pytest -m contract -q
   `common`, and `common.jsonable` no longer exists.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
-### Task M3.2 — Delete the dead repository symbols — **GATED on D-16**
+### Task M3.2 — Delete the dead repository symbols — **break settled by D-16**
 
 **Intent.** Remove the four dead symbols and the reader-with-no-writer pair the decomposition makes
 visible, so the module states only what it can actually do.
@@ -550,7 +663,7 @@ uv run pytest -m unit -q
   a grep confirms they were not swept along.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
 ---
 
@@ -606,9 +719,9 @@ uv run pytest -m unit -q
 - Response bodies for the four list routes are byte-identical to before this task.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
-### Task M4.2 — Enforce `classification_vocabulary`, and pin `create_release` — **GATED on D-14**
+### Task M4.2 — Enforce `classification_vocabulary`, and pin `create_release` — **settled by D-14**
 
 **Intent.** Close the gap where `data_classification` is accepted without being checked against the
 configured vocabulary, and make the unreachable release route visible to the suite instead of silent.
@@ -627,7 +740,8 @@ M8.3's, not this task's.**
 `tests/unit/` — a new or extended module that drives `create_release` end to end by calling
 `register_revision(RevisionSeed(...))` directly.
 
-**Depends on.** M4.1. **Do not start until D-14 is recorded.**
+**Depends on.** M4.1 alone. D-14 is settled in section 2: the route's unreachability until P2 is
+accepted, and this task ships the test that pins it.
 
 **Verify.**
 
@@ -647,7 +761,7 @@ uv run pytest -m unit -q -k "classification or release"
 - `ClassificationUnknown` subclasses `DomainError` and declares both `code` and `status_code`.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
 ---
 
@@ -655,7 +769,7 @@ uv run pytest -m unit -q -k "classification or release"
 
 Design: `API_DESIGN.md` → `## Design 4 — Router composition and the authenticated surface`.
 
-### Task M5.1 — Rebuild the router tree and close the versioned surface — **one atomic task, GATED on D-3, D-4, D-5**
+### Task M5.1 — Rebuild the router tree and close the versioned surface — **one atomic task; contract settled by D-3, D-4, D-5**
 
 **Intent.** Declare prefix, tags and authentication once per router, so no `/api/v1` route can be
 reached without a credential and no decorator repeats a path prefix.
@@ -731,7 +845,7 @@ uv run pytest -m unit -q
   byte-identical, so an edit there is evidence the restructure moved a live path.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
 ---
 
@@ -741,7 +855,7 @@ Design: `API_DESIGN.md` → `## Design 5 — Response models and the pagination 
 `PageLimit`/`PageCursor`, `paginate`, the `XView` naming rule and the `from_attributes` rule are
 decided here and inherited unchanged by M7; M7 may not re-open any of them.
 
-### Task M6.1 — The envelope, the precondition split, and the three paged hierarchy collections — **GATED on D-6**
+### Task M6.1 — The envelope, the precondition split, and the three paged hierarchy collections — **break settled by D-6**
 
 **Intent.** Replace the untyped `page()`/`jsonable()` envelope with a declared generic and a keyset
 cursor, and convert the three collections that used it.
@@ -793,7 +907,7 @@ uv run pytest -m unit -q
 - No handler in the three modules returns `dict[str, object]`.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
 ### Task M6.2 — Views for the remaining hierarchy operations
 
@@ -839,9 +953,9 @@ uv run pytest -m unit -q
   no response carries a replay indicator.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
-### Task M6.3 — The unversioned surface, and `effective_roles` — **GATED on D-8**
+### Task M6.3 — The unversioned surface, and `effective_roles` — **shape settled by D-8**
 
 **Intent.** Model the unversioned responses and close Drift 8 by shipping effective roles per scope
 on `GET /auth/session`.
@@ -855,7 +969,8 @@ on `GET /auth/session`.
 **Modify.** `routes/auth/schema/session.py` (`SessionInfo` gains
 `effective_roles: list[ScopeRoles]`); `routes/auth/endpoints/session.py`, `login.py`, `oidc.py`.
 
-**Depends on.** M6.1 (the naming and `from_attributes` rules). **Do not start until D-8 is recorded.**
+**Depends on.** M6.1 alone (the naming and `from_attributes` rules). D-8 is settled in section 2:
+`effective_roles` ships as designed, with no `?scopes=` filter.
 
 **Verify.**
 
@@ -872,7 +987,7 @@ uv run pytest tests/unit/test_api_login.py tests/unit/test_api_oidc.py -m unit -
 - No unversioned response model carries `from_attributes`, and none can be filled from a record.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
 ---
 
@@ -882,7 +997,7 @@ Design: `API_DESIGN.md` → `## Design 5b — Response models for the administra
 `## Design 5` → `### The split — brief for Design 5b`, which fixes what 5b inherits and may not
 re-open.
 
-### Task M7.1 — `roles` and `bindings` — **GATED on D-6, D-7, D-9**
+### Task M7.1 — `roles` and `bindings` — **breaks settled by D-6, D-7, D-9**
 
 **Intent.** Replace the hand-assembled role catalog and the two hand-built binding envelopes with
 declared models.
@@ -927,9 +1042,9 @@ uv run pytest -m unit -q -k "roles or binding"
 - `?limit=5000` answers `422` on both collections.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
-### Task M7.2 — `service_accounts` and `api_keys`, and the two secret-bearing responses — **GATED on D-6**
+### Task M7.2 — `service_accounts` and `api_keys`, and the two secret-bearing responses — **break settled by D-6**
 
 **Intent.** Model the service-account surface and make the show-once rule for minted secrets
 structural rather than conventional.
@@ -971,9 +1086,9 @@ uv run pytest -m unit -q -k "service_account or api_key"
   `datetime` in an untyped dict.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
-### Task M7.3 — `policies` and `users` — **GATED on D-6, D-10**
+### Task M7.3 — `policies` and `users` — **settled by D-6; `spec` ceiling settled by D-10**
 
 **Intent.** Model the last two administrative modules, and stop `GET /users` publishing
 `idp_subject`.
@@ -983,23 +1098,89 @@ PolicyView is`, `#### Users, and the second over-published field`, `#### The han
 `### Deletions`, `### Open questions` question 2 (the `spec` size bound).
 
 **Create.** `PolicyView`, `PolicyAttachmentView`, `UserView`, `PasswordReset` in their schema modules.
+In `routes/v1/schema/policies.py`: the module-level constant `MAX_POLICY_SPEC_BYTES = 1_048_576` and
+the `field_validator` on `CreatePolicy.spec` that enforces it (the D-10 sub-item below).
 
-**Modify.** `routes/v1/endpoints/policies.py`, `routes/v1/endpoints/users.py`.
+**Modify.** `routes/v1/endpoints/policies.py`, `routes/v1/endpoints/users.py`,
+`routes/v1/schema/policies.py` (`CreatePolicy` gains the validator; `AttachPolicy` is untouched).
 
 **Delete.** `GET /policies`'s `{"items": [...]}` envelope; four `jsonable(...)` returns in
 `policies.py`; the `_actor: CurrentPrincipal` parameter at `policies.py:40` if M5 has not already
 removed it; two `jsonable(principal)` returns in `users.py`; the `{"status": "password-reset"}` dict
 literal; the eight remaining `-> dict[...]` annotations across both modules.
 
-**Depends on.** M7.2. If D-10 supplied a byte ceiling, it is applied to `CreatePolicy.spec` here —
-the only request-body change either half of task 5 makes. If D-10 answered "no bound", ship none and
-add no comment about it.
+**Depends on.** M7.2 alone.
+
+#### The `CreatePolicy.spec` byte ceiling — D-10, settled at 1 MiB
+
+D-10 is answered: **`CreatePolicy.spec` is bounded at 1 MiB**. This is the one settled answer that
+departs from its recommendation — Design 5b's Open question 2 said to ship no bound if no number was
+supplied, and a number was supplied — so this sub-item, not `API_DESIGN.md`, is the specification.
+It is the only request-body change either half of task 5 makes.
+
+**Where.** A `@field_validator("spec")` on `CreatePolicy` in `routes/v1/schema/policies.py`, so the
+bound is applied to the request before anything is stored. Design 5b Decision 3 rests on this being a
+write-side bound — `PolicyView.spec` is returned in full on both `POST /policies` and `GET /policies`
+and gains no bound of its own, and the response side stays governed by `limit ≤ 200`.
+
+**What is measured.** `len(canonical_bytes(spec))`, using
+`huron.pkg.catalog.manifest.canonical_bytes` — the repository's existing RFC 8785 (JCS)
+canonicalization, built on the already-declared `rfc8785` dependency and the same function
+`content_identity` uses. Its signature is `canonical_bytes(doc: Mapping[str, object]) -> bytes`, which
+takes `spec: dict[str, object]` unchanged, with no conversion and no cast. Reusing it keeps **one**
+definition of "how many bytes is this document" in the codebase; a `json.dumps(...).encode()` would
+introduce a second one whose answer moves with separator and key-ordering arguments, so that the same
+document could be under the ceiling in one module and over it in another. `canonical_bytes` also
+calls `_assert_ints_safe`, which raises `ValueError` for an integer outside the JCS safe range — do
+**not** catch it: inside a `field_validator` Pydantic already converts a `ValueError` into a
+validation error, so a spec that cannot be canonicalized lands on the same 422 path as one that is
+too large, rather than escaping as a 500.
+
+**The import is legal under the import-linter contracts**, checked rather than assumed. The layers
+contract is `huron.service` → `huron.pkg` → `huron.schema`, so a `routes/v1/schema/` module importing
+from `huron.pkg.catalog` runs with the layering, not against it; route modules already do exactly
+this (`endpoints/users.py` imports from `huron.pkg.auth` and `huron.pkg.catalog.errors`). The
+independence and framework-free contracts name only `huron.pkg.*` modules as sources and constrain
+what `pkg` may import, never what imports `pkg`. Neither contract M11 adds names anything under
+`routes/`. Nothing changes in `pyproject.toml` for this.
+
+**What the caller gets.** A `field_validator` rejection on a request body raises inside FastAPI's
+body parsing and surfaces as a **`RequestValidationError` → `422`** — the existing validation path,
+**not** a new `DomainError`. Confirmed against Design 6's handler table rather than assumed: Design 6
+maps `RequestValidationError` to `422 application/problem+json` with the five required keys plus
+`context.errors` carrying the encoded pydantic error list, under the code `REQUEST_INVALID` ("the
+request did not satisfy the declared schema"). No new error code, no new row in `design/api.html`
+§7, and nothing added to M8.1's conversion table or M8.3's bijection test. Because M7.3 lands before
+M8, the rejection is FastAPI's own `422 application/json` when this task ships and becomes
+`problem+json` with every other `RequestValidationError` when M8.1 and M8.4 land; that is M8's
+conversion, not a second contract.
+
+**The constant.** `MAX_POLICY_SPEC_BYTES = 1_048_576`, module-level in
+`routes/v1/schema/policies.py`, written as `1_048_576` and never as a bare literal inside the
+validator. The validator reads the constant; the tests read the same constant, so the two cannot
+drift.
+
+**Acceptance criteria for this sub-item.**
+
+- `grep -rn 'MAX_POLICY_SPEC_BYTES' src/huron` returns exactly one assignment, and its value is
+  `1_048_576`.
+- `POST /api/v1/policies` with a `spec` whose canonical form is exactly `MAX_POLICY_SPEC_BYTES`
+  bytes is **accepted**; the same spec grown by one byte is **rejected with 422**. Both tests build
+  their body from one shared construction so the boundary is exact rather than approximate, and both
+  assert against `len(canonical_bytes(spec))` rather than against a hand-counted size.
+- The validator is on `CreatePolicy` only. `PolicyView.spec`, `AttachPolicy` and every read path are
+  unbounded and unchanged; `grep -rn 'field_validator' src/huron/service/api/routes/v1/schema/policies.py`
+  returns one decorator.
+- `uv run lint-imports` keeps every contract with the new `huron.pkg.catalog.manifest` import in
+  place.
 
 **Verify.**
 
 ```text
 grep -rn 'idp_subject' src/huron/service/api/routes/
 grep -rn -- '-> dict\[str, ' src/huron/service/api/routes/
+grep -rn 'MAX_POLICY_SPEC_BYTES\|canonical_bytes' src/huron/service/api/
+uv run lint-imports
 uv run pytest -m unit -q
 <full validation gate>
 ```
@@ -1011,8 +1192,9 @@ uv run pytest -m unit -q
   appears nowhere under `routes/`.
 - `PrincipalRecord.idp_subject` still exists in `pkg` — the OIDC login path writes it and
   `postgres_auth` reads it. Nothing in `pkg` is deleted by this task.
-- `GET /policies` returns `Page[PolicyView]` keyed on `(name, id)`; `PolicyView.spec` stays
-  `dict[str, object]`.
+- `GET /policies` returns `Page[PolicyView]` keyed on `(name, str(id))`; `PolicyView.spec` stays
+  `dict[str, object]` and stays unbounded — the ceiling is on the request alone.
+- The D-10 sub-item above is complete, with its four acceptance criteria met.
 - `PUT /users/{id}/password` returns a `PasswordReset` model with a `Literal`, matching `SignOut`.
 - **After this task, `grep -rn -- '-> dict\[str, ' src/huron/service/api/routes/` returns nothing at
   all** — the only two surviving `-> dict[str, str]` handlers in the tier are `/healthz` and
@@ -1020,7 +1202,10 @@ uv run pytest -m unit -q
   `records.jsonable`'s docstring becoming persistence-only. Update that docstring here if M6 has not.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done** — landed with a folded-in fix for `search.py` (`response_model=None`/`-> NoReturn`
+  per `API_DESIGN.md`'s Design 5), since no task in this plan's Create/Modify/Delete lists ever
+  assigned that file's fix even though this task carries the tier-wide `-> dict[str, ` acceptance
+  criterion. Recorded as a plan-decomposition gap, not an M7.3 defect.
 
 ---
 
@@ -1028,7 +1213,7 @@ uv run pytest -m unit -q
 
 Design: `API_DESIGN.md` → `## Design 6 — Error contract and problem+json coverage`.
 
-### Task M8.1 — `DomainError` becomes abstract, and the fourteen bare raises get names — **atomic, GATED on D-11**
+### Task M8.1 — `DomainError` becomes abstract, and the fourteen bare raises get names — **atomic; code names settled by D-11**
 
 **Intent.** Retire `DOMAIN_ERROR` as a wire code by making the base class unraisable, so "every error
 has a code" is mechanical rather than aspirational.
@@ -1123,7 +1308,32 @@ uv run pytest -m contract -q
   It needs the container runtime named under §0's **Environment prerequisites**.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done** — the duplicate-slug status is `409` (Design 6's actual `SlugExists` class and code
+  table), not the `400` this criterion's prose states; `400` was the deleted `DomainError` base's old
+  default, carried into the prose by mistake. Design 6's `code: ClassVar[str]` on `DomainError` is also
+  incompatible with the pre-existing `PathRuleViolation` (proven: `mypy --strict` rejects it); `code` is
+  a plain annotation instead, with abstractness enforced by the `TypeError` in `__init__`. Both recorded
+  as design/plan imprecisions, not implementation defects. **Residual risk carried into M8.3:**
+  `PathRuleViolation`'s six per-instance codes (`PATH_OUTSIDE_PAYLOAD`, `PATH_NOT_NFC`, `PATH_TOO_LONG`,
+  `PATH_TRAVERSAL`, `PATH_CONTROL_CHARS`, `PATH_SEPARATOR`, all reachable on the wire from
+  `manifest.py`) are invisible to `wire_error_codes()`, which reads only `cls.__dict__["code"]`. M8.3's
+  bijection test will pass green comparing `PATH_RULE_VIOLATION` on both sides while these six
+  undocumented codes stay emittable — the exact defect Design 6 exists to catch. M8.3 must account for
+  this explicitly rather than trust a green bijection result at face value.
+
+  **Correction recorded 2026-09-02, discovered by M10.1's verification:** this task's acceptance
+  criterion "`DOMAIN_ERROR` and `ROLE_VIOLATION` appear nowhere in `src/huron`" was **not actually met**
+  when this status was first set to done. `pkg/rbac/roles.py`'s `RoleError` retained its base-class
+  default `code = "ROLE_VIOLATION"` — the Deletions list called for removing it, but it survived. Two
+  tests (`test_api_problems.py::test_wire_error_codes_excludes_the_retired_dispatch_codes`,
+  `test_error_contract.py::test_every_documented_code_has_a_class_and_every_class_has_a_row`) were red
+  for this reason from M8.1 through M9 without being caught, because `src/huron/service` was outside
+  the gate's type-check scope and no other check re-derived this specific criterion. M10.1 removed the
+  stale default while fixing an unrelated `mypy`/`ty` finding on the same class, which incidentally
+  closed this gap; M10.1's verification confirmed by mutation-restoring the old default that both tests
+  go red without the fix. No further action needed — recorded here because a milestone was marked done
+  with one of its own stated criteria silently unmet, which is worth knowing if this plan's process is
+  revisited.
 
 ### Task M8.2 — `/readyz` probes its real dependencies
 
@@ -1161,9 +1371,9 @@ uv run pytest tests/unit/test_api_app.py -m unit -q
 - The raw-store stat runs off the event loop (Design 1 owns that; this task preserves it).
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
-### Task M8.3 — The `design/api.html` §7 table and the bijection test — **GATED on D-11**
+### Task M8.3 — The `design/api.html` §7 table and the bijection test — **code names settled by D-11**
 
 **Intent.** Make the error contract mechanically checkable in both directions, so a code added to
 either side without the other fails CI.
@@ -1210,7 +1420,17 @@ grep -c 'id="error-codes"' design/api.html
 - `make docs` still builds (`uv run --group docs zensical build --strict`), since §7's markup changed.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done** — closed the M8.1 residual risk (`PathRuleViolation`'s six per-instance codes were
+  invisible to `wire_error_codes()`'s class-attribute walk): `problems.py` gained
+  `_path_rule_violation_codes()`, which derives the codes from `manifest.py`'s actual
+  `PathRuleViolation(...)` call sites via `ast`, so a future call site surfaces automatically instead
+  of needing a parallel hand-maintained list. §7 now has 65 rows (46 live `DomainError` + 6 `AuthError`
+  + 3 `RoleError` + framework/derived), verified row-by-row against the current tree — two things
+  Design 6's own table got wrong here were corrected: `BAD_REQUEST` was missing entirely, and the
+  reserved-catalog count is 19, not 18. **Note for the record:** `make docs`'s strict build does not
+  actually exercise `design/api.html` — `zensical.toml`'s nav covers only `docs/`, so this acceptance
+  criterion is satisfied but vacuous; the real protection against malformed §7 markup is
+  `test_error_contract.py`'s `HTMLParser`-based parse, not the docs build.
 
 ### Task M8.4 — `responses={}` declarations on the routers
 
@@ -1243,7 +1463,12 @@ uv run pytest -m unit -q
 - No operation declares an error status the router already declares.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done — Milestone 8 complete.** Two undocumented, non-blocking gaps recorded for whoever next
+  touches Design 6 or `problems.py`: `ClassificationUnknown` (400, from `create_project`) is reachable
+  from `POST .../projects` but falls outside Design 6's closed per-operation enumeration, so it carries
+  no `responses=` entry; `/healthz`/`/readyz` are registered directly on `app` rather than under either
+  router, so neither documents 422/500 the way every `/api/v1` and `/auth` operation does (harmless —
+  neither takes a request parameter).
 
 ---
 
@@ -1251,7 +1476,7 @@ uv run pytest -m unit -q
 
 Design: `API_DESIGN.md` → `## Design 7 — Binding surface completion`.
 
-### Task M9.1 — Scope-rooted revoke, and the end of the `type: ignore` cluster — **GATED on D-12**
+### Task M9.1 — Scope-rooted revoke, and the end of the `type: ignore` cluster — **break settled by D-12**
 
 **Intent.** Replace the flat any-scope revoke with four scope-rooted handlers whose narrowing the
 type system accepts.
@@ -1299,9 +1524,9 @@ uv run pytest -m unit -q -k binding
   — the grep over `routes/` returns nothing.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done**
 
-### Task M9.2 — The two missing binding collections — **GATED on D-13**
+### Task M9.2 — The two missing binding collections — **expiry semantics settled by D-13**
 
 **Intent.** Close Drift 4 by adding the two absent collections, so all four scope roots are
 symmetrical.
@@ -1341,7 +1566,7 @@ uv run pytest -m contract -q
 - No new error code is introduced; `ResourceNotFound` and `Forbidden` are the only errors raised.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done — Milestone 9 complete.**
 
 ---
 
@@ -1351,7 +1576,7 @@ Design: `API_DESIGN.md` → `## Design 8 — Entrypoint, ORM, frontend serving, 
 Landed last on purpose: widening the type gate and enabling new lint rules against code that M2–M9
 rewrite would mean fixing the same errors twice.
 
-### Task M10.1 — `src/huron/service` joins `mypy --strict` and `ty` — **GATED on D-15**
+### Task M10.1 — `src/huron/service` joins `mypy --strict` and `ty` — **scope settled by D-15**
 
 **Intent.** Remove the last un-checked surface, so `type: ignore` comments in this tier become live
 assertions rather than unread comments.
@@ -1391,7 +1616,11 @@ grep -rn 'ignore_missing_imports' pyproject.toml
   dependency was removed.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done** — the widened scope surfaced and fixed five genuine type errors (a `RoleError.code`
+  `ClassVar` declaration, an explicit `Layer` conversion at a service boundary, a parameter narrowing in
+  `_write_generation`, a variable rename in `authorization.py`, and an unsound `app.openapi` monkeypatch
+  replaced with a proper `FastAPI` subclass) — none behavior-changing. Also closed the M8.1
+  `ROLE_VIOLATION` gap recorded above.
 
 ### Task M10.2 — Enable the Ruff `FAST` rules
 
@@ -1419,7 +1648,10 @@ uv run ruff format --check .
   ignore and no `# noqa`.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done** — zero-code-change enablement, confirmed genuinely live (not inert) via a scratch-file
+  triple-violation probe. Note for whoever next edits Design 8 §5: `FAST` at the pinned Ruff version is
+  three rules, not the two the design record discusses — `FAST003` (unused path parameter) is also
+  enforced and currently passes, but the design gives no rationale for it.
 
 ### Task M10.3 — Record the three deviations as decisions
 
@@ -1454,7 +1686,415 @@ uv run --group docs zensical build --strict
 - `make docs` builds `--strict`.
 - Full validation gate clean.
 
-**Status: pending**
+**Status: done — Milestone 10 complete.**
+
+---
+
+## M11 — The `authorization/` and `stores/` packages, and the ordering fix
+
+Design: `API_DESIGN.md` → ``## Design 9 — `authorization.py` decomposition`` and
+`## Design 10 — Store adapter layout and query ownership`. Neither design is in `### Ordering`; both
+are written against the tree M1–M10 leave behind and say so, which is why they land last and
+together. M11 is also where §0 rule 3's SQL prohibition lifts — **for queries, in M11.3, and nowhere
+else**: no task here writes DDL, and no task here edits `migrations/` or `src/huron/schema`.
+
+### Task M11.1 — Turn `authorization.py` into the `authorization/` package — **one atomic task**
+
+**Intent.** Give each of the five concerns fused in one module — the cookies this service issues,
+the credential path, scope resolution, the binding decision, and the guards a route declares — one
+home with one contract, behind a public surface a route cannot reach past.
+
+**This task is atomic.** The moment `authorization.py` stops existing, every importer of it fails at
+import time; there is no state between "the module" and "the package" that is not either a
+re-export shim (rule 2 forbids it) or a tree that does not compile. The cookie change is part of the
+same instant: `set_session_cookie` and its three siblings are deleted as `CookieSpec` arrives, and
+the two `/auth` endpoint modules move with them.
+
+**Design reference.** ``## Design 9 — `authorization.py` decomposition`` → `#### Layout`, the five
+`#### authorization/*.py` blocks, `#### authorization/__init__.py`,
+`#### Import direction inside the package`, `#### Import-linter: one new contract`,
+`### Explicit contracts` (per-module guarantees and `#### The package boundary`), and
+`### Deletions`.
+
+**Create.** `src/huron/service/api/authorization/__init__.py` (re-exports only, `__all__` exactly
+Design 9's nineteen names); `cookies.py` (`CookieSpec`, `session_cookie`, `login_flow_cookie`, the
+module-private `LOGIN_FLOW_MAX_AGE`); `credentials.py` (`current_principal`, `CurrentPrincipal`,
+`current_session`, `CurrentSession`, `_touch_api_key`, `_enforce_csrf`); `scopes.py` (the three
+scope resolvers, bodies unchanged); `decisions.py` (`BindingCacheMap`, `request_binding_cache`,
+`BindingCache`, `as_rbac_principal`, `_cached_bindings_for`, `bindings_for_principal`, `check`);
+`guards.py` (the four `require_*` factories, `LayerWrite`, `dataset_layer_writer`).
+
+**Modify.** `pyproject.toml` — the **sixth** import-linter contract, verbatim from
+`#### Import-linter: one new contract`, including `allow_indirect_imports = true`, which is
+load-bearing and not decoration: without it every legitimate package-level import reports as a
+violation. `routes/auth/endpoints/login.py` and `routes/auth/endpoints/oidc.py` (the cookie call
+sites, which change beyond their import line: `session_cookie(settings).issue(...)`,
+`flow = login_flow_cookie(settings)` and `flow.read(request) or ""`);
+`routes/auth/endpoints/session.py`, `routes/v1/endpoints/{organizations,projects,policies,datasets,users}.py`
+and the three modules M5.1 split `endpoints/rbac.py` into (import path only);
+`tests/unit/test_repository_rbac.py` (`:25`'s `cached_bindings_for` import and the two direct-call
+tests at `:376-389`, which drive `bindings_for_principal` — it memoizes through the same dict — plus
+the module docstring at `:3` and the in-test `_touch_api_key` import at `:338`, which follows the
+symbol to `authorization.credentials`); `tests/unit/test_api_authorization.py` (the retired cookie
+names only; the four-way split is M11.4 and does not belong in an atomic move);
+`docs/getting-started/repository-layout.md:25`, whose tree diagram names `authorization.py` as a
+file — that one line becomes `authorization/`, keeping its one-line gloss. **That doc edit is an
+explicit carve-out from §1's "Documentation reconciliation" non-goal**, on D-1's precedent (which
+carves out `docs/getting-started/local-development.md:131` the same way): the non-goal defers
+reconciling documentation that is *already* stale, not correcting the single line this task itself
+falsifies — and leaving it stale hands M11.2 a red `docs/` grep with no permitted fix.
+
+**Delete.** `src/huron/service/api/authorization.py`, the file, in full — nothing stands at the old
+path. By symbol: `set_session_cookie`, `clear_session_cookie`, `set_login_flow_cookie`,
+`clear_login_flow_cookie`, `LOGIN_FLOW_COOKIE_NAME` and `LOGIN_FLOW_COOKIE_MAX_AGE` (six names
+become three: two constructors and one frozen `CookieSpec`); `cached_bindings_for` as a public name.
+No `pyproject.toml` deletion: the `TC00*` per-file ignore is a recursive glob that already covers the
+package, and the `N818` entry for this file went with `Forbidden` at M8.1.
+
+**The design's `__init__.py` snippet is internally consistent — transcribe it, do not adjust it.**
+`#### authorization/__init__.py` imports `CurrentPrincipal, CurrentSession, current_principal` from
+`.credentials`, and every name on every one of its import lines is among the nineteen in `__all__`.
+There is nothing to prune and nothing to add: the implementer imports exactly the nineteen names the
+snippet exports, `CurrentSession` among them. `current_session` is an implementation detail of
+`credentials.py` — no `__init__.py` line names it and no route declares it — so it is neither a
+twentieth export nor a missing one. Dropping `CurrentSession` in the belief that it is an unused
+import would raise Ruff `F822` and break every route that declares it.
+
+**Depends on.** **M8.1** — the last task that edits `authorization.py`'s contents (it deletes
+`Forbidden`), and the tree Design 9 enumerates as its starting point is exactly the post-M8.1 one.
+Through M8.1 this inherits **M2.1** (which adds `BindingCache`, `current_session` and the `cache`
+/`repository` parameters this design moves unchanged) and **M5.1** (which produces the three
+`endpoints/rbac.py` successors named in the import-line edits). **Not M9** — Design 7 adds no symbol
+to this module — and **not M10**, though because M11 runs after M10.1 the new package is covered by
+`uv run mypy` through the gate rather than by the by-hand `--strict` step earlier tasks carry.
+
+**Verify.**
+
+```text
+test ! -e src/huron/service/api/authorization.py && ls src/huron/service/api/authorization/
+uv run python -c "import huron.service.api.authorization as a; print(len(a.__all__), sorted(a.__all__))"
+grep -rn 'authorization\.\(cookies\|credentials\|scopes\|decisions\|guards\)' src/
+grep -rn 'authorization\.py' src/ tests/ docs/ Makefile
+grep -rn 'set_session_cookie\|clear_session_cookie\|set_login_flow_cookie\|clear_login_flow_cookie\|LOGIN_FLOW_COOKIE_NAME\|LOGIN_FLOW_COOKIE_MAX_AGE\|cached_bindings_for' src/ tests/
+grep -rn --include='*.py' 'set_cookie\|delete_cookie' src/huron/service/api/
+uv run lint-imports
+uv run pytest -m unit -q
+<full validation gate>
+```
+
+**Acceptance criteria.**
+
+- `authorization.py` does not exist; the package holds exactly the six files above.
+- `len(a.__all__) == 19` and the list is Design 9's, name for name.
+- The submodule grep returns nothing outside `src/huron/service/api/authorization/` itself: no route
+  module, and no other module in the tier, names a submodule.
+- `uv run lint-imports` reports **six** contracts kept, the new one by name. The contract is proven
+  to bite: adding a single `from huron.service.api.authorization.guards import require_system` to a
+  route module makes `lint-imports` fail, and the line is reverted. A contract nobody has seen fail
+  is a contract nobody knows is wired.
+- The six retired cookie names appear nowhere in `src/` or `tests/`, and `set_cookie`/`delete_cookie`
+  appear only in `authorization/cookies.py` — one object owns each cookie's name, path and flags, so
+  a clearing response cannot disagree with the response that set it.
+- The four `Set-Cookie` headers are byte-identical to today's under both `secure` settings, pinned by
+  a unit test over login, logout and the two OIDC legs rather than by inspection.
+- `tests/unit/test_repository_rbac.py` no longer imports `cached_bindings_for`; per-request
+  memoization is still pinned, through `bindings_for_principal`.
+- `grep -rn 'authorization\.py' src/ tests/ docs/ Makefile` returns nothing: no import, no test and
+  no line of prose still points at a file that no longer exists.
+- **No `-m contract` run is required for this task**, and this is deliberate: it moves no Protocol
+  and no implementation of one. `ApiKeyWriter` is still `ports.py`'s until M11.2, which does carry
+  the mandatory contract step.
+- No new module docstring, comment or test name references this plan, a milestone, a task number or
+  `API_DESIGN.md` (§0 rule 1). The five module docstrings state the guarantee the module makes.
+- Full validation gate clean.
+
+**Status: done** — an accidental `git checkout --` on `organizations.py` mid-task (this repo carries no
+  commits over its ~10-milestone working tree, so the command silently restored a pre-M2/M5 relic
+  instead of undoing a two-line edit) was caught, disclosed, and the file reconstructed by hand from
+  sibling modules and the repository/schema ground truth. Verification independently confirmed the
+  reconstruction behaviorally sound on six axes, including 40+ matched `TestClient` scenarios against
+  `projects.py`. **No `git checkout --`/`git reset --hard` on any path is safe for the remainder of this
+  plan** — undo edits by hand.
+
+### Task M11.2 — Move the five storage adapters into `stores/`, organized by port — **one atomic task**
+
+**Intent.** Put every implementation of a port in one module with the port, so the next divergence
+between two implementations of one interface is a diff on adjacent screens instead of an incident,
+and so no adapter can import the application service by accident again.
+
+**This task is atomic**, for M11.1's reason at larger scale: `postgres_rbac.py`, `postgres_auth.py`,
+`ports.py` and `memory_rbac.py` are deleted and their contents redistributed in the same instant.
+`repository.py`, `app.py`, `authorization/credentials.py` and both `tests/contract/` modules import
+from them, and a half-moved package leaves the tree red.
+
+**Design reference.** `## Design 10 — Store adapter layout and query ownership` → `#### Layout`,
+`#### By port, not by backend — and why the choice is narrower than it looks`,
+`#### stores/ports.py`, `#### stores/rows.py`,
+`#### stores/__init__.py`, `#### The import lines that change`,
+`#### Import-linter: one new contract`, `### Explicit contracts` (`#### The package`,
+`#### ports.py`, `#### Error behavior, per store, after Design 6`, and `#### tests/contract/` item
+4), and `### Deletions`. **`#### Half B — the concrete SQL` is not this task's** — it is M11.3's.
+
+**Create.** `src/huron/service/api/stores/__init__.py` (re-exports only, `__all__` exactly the eight
+names; `rows` is **not** re-exported); `ports.py` (`RbacStore`, `ApiKeyWriter`, body verbatim from
+Design 3's `ports.py`); `rows.py` (the seven row mappers, losing their leading underscore because
+they now cross a module boundary, plus one `affected_row_count`); `rbac.py` (`InMemoryRbacStore` and
+`PostgresRbacStore`, ~490 lines, both implementations of one port in one module); `api_keys.py`;
+`credentials.py`; `sessions.py`; `principals.py`.
+
+**Modify.** `pyproject.toml` — the **seventh** import-linter contract, verbatim from the design,
+`allow_indirect_imports = true` again load-bearing. `src/huron/service/api/repository.py` (one import
+line replaces Design 3's two); `src/huron/service/api/authorization/credentials.py`
+(`from ..stores import ApiKeyWriter`); `src/huron/service/api/app.py` (the two Postgres import blocks
+in `_postgres_repository` become one); `tests/contract/test_rbac_store.py:63`;
+`tests/contract/test_auth_store.py:48`; `tests/unit/test_repository_rbac.py`;
+`tests/unit/test_api_postgres_auth_mapping.py`, whose subject is the row mappers themselves — it
+imports `_affected_row_count`, `_credential_record_from_row`, `_principal_record_from_row` and
+`_session_record_from_row` by their private names, which become the public names in
+`huron.service.api.stores.rows`. That test imports the submodule directly and this is correct: the
+seventh contract's `source_modules` are `repository`, `app`, `authorization.**` and `routes.**`, and
+a test that pins a row mapper is the one caller that legitimately decodes a `Record` it staged.
+Finally `docs/getting-started/repository-layout.md:27`, whose tree diagram names `postgres_rbac.py`:
+that line becomes `stores/`, one gloss for the package that now owns both backends. Same explicit §1
+carve-out and the same reason as M11.1's — this task's own `docs/` grep below returns that line
+otherwise, and under the non-goal no later task would be permitted to clear it.
+
+**Delete.** `src/huron/service/api/postgres_rbac.py`, `postgres_auth.py`, `ports.py` and
+`memory_rbac.py` — all four entire, none replaced by a re-export. By symbol:
+`postgres_rbac.py:450`'s hand-written `int(tag.rsplit(" ", 1)[-1])`, the second copy of what
+`rows.affected_row_count` now defines once; the leading underscores on all seven row mappers.
+`records.py` is **not** moved in — three unrelated consumers depend on it, and putting it inside the
+package would make every route module import `stores`.
+
+**Depends on.** **M3.1**, which creates `ports.py` and `memory_rbac.py` (this task absorbs both) and
+`records.py` (which `rows.py` imports); **M8.1**, because Design 10 states this package's error table
+in Design 6's vocabulary — `BindingExists`, `ServiceAccountExists`, `AttachmentExists`,
+`PrincipalSubjectExists` from `errors.py` — and moving raise sites and renaming them in one task
+would be two changes wearing one diff; and **M11.1**, because the seventh contract names
+`huron.service.api.authorization.**` as a source module, a package that exists only after M11.1.
+
+**Verify.**
+
+```text
+test ! -e src/huron/service/api/postgres_rbac.py && test ! -e src/huron/service/api/postgres_auth.py
+test ! -e src/huron/service/api/ports.py && test ! -e src/huron/service/api/memory_rbac.py
+ls src/huron/service/api/stores/
+uv run python -c "import huron.service.api.stores as s; print(len(s.__all__), sorted(s.__all__))"
+uv run python -c "from huron.service.api.stores import api_keys, ports, rbac; print(ports.RbacStore not in rbac.PostgresRbacStore.__mro__, ports.RbacStore not in rbac.InMemoryRbacStore.__mro__, ports.ApiKeyWriter not in api_keys.PostgresApiKeyStore.__mro__)"
+grep -rn 'rsplit' src/huron/service/api/stores/
+grep -rn 'postgres_rbac\|postgres_auth\|memory_rbac\|api import ports\|api\.ports' src/ tests/ docs/ Makefile
+grep -rn 'stores\.rows\|from \.rows\|from \.\.stores\.' src/
+uv run lint-imports
+uv run pytest -m unit -q
+uv run pytest -m contract -q
+<full validation gate>
+```
+
+**Acceptance criteria.**
+
+- The four old modules do not exist; `stores/` holds exactly the eight files above;
+  `len(s.__all__) == 8` and `rows` is not among them.
+- The three-way conformance probe prints `True True True`, and the same assertion lands in
+  `tests/contract/` (Design 10's `#### tests/contract/` item 4) rather than only in this verify
+  block — the Protocols and two of their implementations now share a package, and inheritance became
+  a one-line temptation that would end structural conformance.
+- `grep -rn 'rsplit' src/huron/service/api/stores/` returns exactly one line, in `rows.py`: one
+  definition of the command-tag parse, two callers.
+- Inside `src/`, `rows` is imported only by the store modules that own the SELECTs it decodes.
+- The `postgres_rbac\|postgres_auth\|memory_rbac\|api import ports\|api\.ports` grep over
+  `src/ tests/ docs/ Makefile` returns nothing, `docs/` included — the carve-out above is what makes
+  that last directory clearable rather than a permanently red step.
+- **No SQL text changes in this task.** A `git diff` of the moved store bodies shows changed import
+  lines, the row-mapper renames and the two `affected_row_count` call sites, and nothing inside any
+  SQL string literal. The ordering fix is M11.3, separated so this move is reviewable as a move.
+- The per-store error table in `### Explicit contracts` holds unchanged after the move: each named
+  error is still raised by the same method on the same `asyncpg` exception class, and the memory
+  store still raises the same class for the same input wherever it has the operation.
+- `uv run lint-imports` reports **seven** contracts kept. The seventh is proven to bite the same way
+  the sixth was: a direct `from huron.service.api.stores.rbac import PostgresRbacStore` in `app.py`
+  fails the check and is reverted.
+- `uv run pytest -m contract` passes, and is **mandatory**: this task moves both Protocols and all
+  five implementations, and `tests/contract/` is the only proof both backends still conform — the
+  gate's pytest line runs `-m unit` only. It needs the container runtime named under §0's
+  **Environment prerequisites**; if the host has none, stop and report rather than declaring the task
+  done with the step unrun.
+- No module docstring, comment or test name references this plan, a milestone or `API_DESIGN.md`
+  (§0 rule 1).
+- Full validation gate clean.
+
+**Status: done** — verified across two passes. Attempt 1 confirmed all fifteen acceptance criteria against
+  the live tree (file layout, `__all__`, the three-way structural-conformance probe pinned in
+  `tests/contract/` and mutation-killed, the single `rsplit` in `rows.py`, `rows`'s importer set, no SQL
+  text changed — 30 literals byte-identical across all 34 method bodies, the two ordering defects
+  correctly left untouched for M11.3, the per-store error table, the seventh import-linter contract
+  proven to bite by an independent violation, the mandatory `pytest -m contract` run, and the
+  `credentials.py`/`records.py` package-boundary reasoning) and flagged two non-blocking hygiene gaps:
+  a stale `docs/getting-started/repository-layout.md` gloss (predated this task, cleared under this
+  task's carve-out) and two contract test names whose prose incidentally contained
+  `postgres_rbac`/`postgres_auth` as substrings. Both were fixed and attempt 2 confirmed the fixes
+  precisely, with no collateral change, and a fully clean gate. The `postgres_rbac` substring
+  necessarily survives in the second test's new name (`test_the_postgres_rbac_and_api_key_stores_...`)
+  since the rename only added a prefix; both verification passes judged this inert prose, not a live
+  reference — the four deleted module paths (`postgres_rbac.py`, `postgres_auth.py`, `ports.py`,
+  `memory_rbac.py`) are unreachable from anywhere in the tree.
+
+### Task M11.3 — Make the store order the order the cursor assumes — **SQL change settled by D-17**
+
+**Intent.** Fix the two ordering defects in the SQL that produces them, so that walking a keyset
+cursor over a collection returns every row exactly once on the cluster this service actually deploys
+against.
+
+**This is the one task in the plan that changes shipped SQL**, and the only one with a runtime
+contract to pin rather than a module boundary to move. §0 rule 3 opens SQL for M11 and for M11 only;
+D-17 is where the specific queries are confirmed. The opening does not extend to DDL: the `UNIQUE`
+index that would retire the `id` tiebreak is handed to the 0008 schema track (§1) and does not gate
+this task.
+
+**Design reference.** `## Design 10` → `#### Half B — the concrete SQL`, `### Explicit contracts` →
+`#### The ordering contract, per collection` and `#### tests/contract/` items 1–3, and
+`### Open questions` item 1.
+
+**Modify.** `src/huron/service/api/stores/rbac.py` — `PostgresRbacStore.list_policies` becomes
+`ORDER BY name COLLATE "C", id`; `PostgresRbacStore.list_service_accounts` becomes
+`ORDER BY sa.name COLLATE "C"` with **no** tiebreak, because
+`service_accounts_organization_id_name_key` makes `name` unique within the one organization the
+`WHERE` fixes; `InMemoryRbacStore.list_policies` sorts by `(item.name, str(item.id))` — `str(item.id)`
+so the expression reads identically to the boundary's key — and its docstring states the order.
+`tests/contract/test_rbac_store.py` — the three assertions below.
+
+**Delete.** Nothing. `bindings_at` is already correct
+(`ORDER BY principal COLLATE "C", role_code COLLATE "C"`, total under
+`role_bindings_no_duplicates`) and gains no tiebreak: a redundant one would suggest the uniqueness is
+in doubt. `InMemoryRbacStore.list_service_accounts` and `bindings_at` already match their SQL and do
+not change.
+
+**Depends on.** **M11.2** — both implementations of `list_policies` must be in one module before the
+"same sequence from both backends" assertion is a diff rather than a two-file comparison, which is
+the arrangement that produced the defect. **M7.3**, **M7.2** and **M7.1**, which introduce the three
+boundary keys this task must agree with: `(name, str(id))` for policies, `(name,)` for service
+accounts, and `(principal, role_code)` for bindings — the third collection acceptance criterion 1
+pins alongside the other two. **D-17 is settled in §2** — adopt, exactly these three statements, and
+no DDL — which is what makes this task's SQL change sanctioned rather than a rule 3 violation.
+
+**Verify.**
+
+```text
+grep -rn 'ORDER BY' src/huron/service/api/stores/
+grep -rn 'COLLATE' src/huron/service/api/stores/
+grep -rni 'create index\|create unique\|alter table\|drop \|create table' src/huron/service/api/stores/
+git diff --stat -- migrations/ src/huron/schema/
+uv run pytest -m contract -q
+uv run pytest -m unit -q
+<full validation gate>
+```
+
+**Acceptance criteria.**
+
+- Three `ORDER BY` clauses in the package, and **every text component of every one of them carries
+  `COLLATE "C"`.** This is correctness, not style: `COLLATE "C"` is byte order, which is exactly
+  Python's `str` comparison, and the database default this service deploys against folds case and
+  ignores punctuation at the primary level.
+- The DDL grep returns nothing and `git diff --stat -- migrations/ src/huron/schema/` is empty — the
+  M11 boundary of §0 rule 3, checked rather than asserted.
+- `tests/contract/` gains and passes the three pins, each of which **fails when its fix is reverted**
+  — reverted once by hand per SQL change, so that neither the `COLLATE "C"` nor the `id` tiebreak can
+  be deleted later as decoration: (1) the ordering agreement, for all three collections, seeded
+  identically into `InMemoryRbacStore` and `PostgresRbacStore`, asserting both return the same
+  sequence and that it equals `sorted(records, key=<the boundary key>)`; (2) the collation is byte
+  order, over names differing only in case, in a hyphen and in an accent; (3) the duplicate-name walk
+  — three policies, two sharing a name, walked at `limit=1` to `next_cursor is None`, every row
+  exactly once.
+- `uv run pytest -m contract` passes and is **mandatory**: it is the only proof both backends order
+  alike, and it is where the deployed collation is exercised. It needs the container runtime named
+  under §0's **Environment prerequisites**; stop and report if the host has none.
+- No store method gained a `limit` or an `after` parameter and no `WHERE` predicate changed — this is
+  not the push-down (§1), and `git diff` touches no file under `routes/`: no response model, cursor
+  format or envelope moves with it. That is D-17's blast radius, and it is bounded to what clients
+  receive from two collections, not to how they ask for it.
+- No comment, docstring or test name references this plan, a milestone or `API_DESIGN.md` (§0 rule
+  1); the new tests are named for the ordering property they pin.
+- Full validation gate clean.
+
+**Status: done** — verified on attempt 1. `PostgresRbacStore.list_policies` now orders
+  `name COLLATE "C", id`, `list_service_accounts` orders `sa.name COLLATE "C"` with no tiebreak
+  (`service_accounts_organization_id_name_key` makes it total under the query's `WHERE`), and
+  `InMemoryRbacStore.list_policies` sorts by `(item.name, str(item.id))`. `bindings_at` and
+  `InMemoryRbacStore.list_service_accounts` were already correct and are untouched. Three ordering
+  pins were added to `tests/contract/test_rbac_store.py` and mutation-proven twice over — once by the
+  implementer and again independently by verification, which reverted all four individual changes
+  (both `COLLATE`s, the `id` tiebreak, and the in-memory key) by hand, confirmed each produces exactly
+  one distinct failing assertion with the other two pins still green, and confirmed the `id`-tiebreak
+  mutation manifests as a genuinely lost row through a real `paginate` walk — the defect D-17 exists to
+  close. Verification additionally traced all three boundary keys against their live route handlers
+  (not just the tests) and confirmed exact agreement, and established that the shipped fix's
+  correctness rests on defined properties (`COLLATE "C"` is byte order by definition; `uuid` primary
+  keys make the sort total) rather than any Postgres-incidental tie behavior — only the *demonstration*
+  of the `id`-tiebreak mutation depends on today's observed engine behavior, not the fix itself. No DDL,
+  no `routes/` changes, no new store parameters. Full gate and `pytest -m contract` clean.
+
+### Task M11.4 — Split the authorization test module to mirror the package
+
+**Intent.** Stop one 230-line test module from standing against five source modules, so a failure
+names the surface that broke.
+
+**Design reference.** `## Design 9` → `### Open questions` item 3, which is settled inside the
+document — it needs no external fact — and is therefore followed directly, per §2's intro.
+
+**Create.** `tests/unit/test_authorization_credentials.py` (credential precedence, CSRF, the
+dev-header fallback); `tests/unit/test_authorization_cookies.py` (issue, revoke, read, and the
+`secure` rule); `tests/unit/test_authorization_decisions.py` (cache lifetime, service-account
+synthesis, `check`); `tests/unit/test_authorization_guards.py` (the four factories and the
+layer-write two-stage rule).
+
+**Modify.** Nothing under `src/`.
+
+**Delete.** `tests/unit/test_api_authorization.py`, with no content left unplaced: every test in it
+lands in exactly one of the four, moved rather than rewritten.
+
+**Depends on.** **M11.1** only. It is separable from M11.1 precisely because it touches no source
+file: the module M11.1 leaves behind imports the package's public surface and passes, so this split
+is a reorganization the gate can verify on its own.
+
+**Verify.**
+
+```text
+test ! -e tests/unit/test_api_authorization.py && ls tests/unit/test_authorization_*.py
+git diff --stat -- src/
+uv run pytest -m unit -q
+uv run pytest --cov=src/huron --cov-report=term-missing
+<full validation gate>
+```
+
+**Acceptance criteria.**
+
+- The four modules exist, the old one does not, and `git diff --stat -- src/` is **empty**: this task
+  changes no source file.
+- The collected unit-test count is not lower than before the split, and no test was dropped in the
+  move.
+- Every file under `src/huron/service/api/authorization/` is at 100% line coverage. `scopes.py` has
+  no test module of its own and is covered through the guards, as the design directs — five modules
+  do not require five test modules, four do the work.
+- No test name or docstring references this plan, a milestone, a task number or `API_DESIGN.md` (§0
+  rule 1). Each module is named for the surface it pins.
+- Full validation gate clean.
+
+**Status: done — Milestone 11 complete. Plan complete.** `tests/unit/test_api_authorization.py` (18 tests,
+  covering only `cookies.py` and `credentials.py`) split into four modules mirroring the package:
+  `test_authorization_cookies.py`, `test_authorization_credentials.py` (18 moved verbatim, name-identical,
+  behaviorally equivalent — independently reconstructed via `git show HEAD:...` plus pytest's cross-run
+  node-id cache, not taken on trust), `test_authorization_decisions.py` and `test_authorization_guards.py`
+  (23 new tests, since the old module had never directly exercised `decisions.py` or `guards.py` at all).
+  All six `authorization/` files at 100% line coverage, `scopes.py` reached purely through the guards
+  tests as the design directs, overall coverage unchanged at 90.20%. Zero source files under `src/`
+  touched by this task — proven independently by mtime ordering (no `src/` file, of any extension, carries
+  an mtime at or after the first new test file's), not accepted from the implementer's account, since the
+  acceptance criterion's literal `git diff --stat -- src/` wording is unsatisfiable in a repository with no
+  commits over its working tree and would have equally failed M11.1–M11.3. Four non-blocking follow-ups
+  recorded by verification for whoever next touches `authorization/`: no direct test for `current_session`
+  or the `hk_` API-key branch of `current_principal` (100% only via route tests); the live-service-account
+  synthesis test asserts presence, not which capabilities; `CookieSpec.read` untested for a jar present but
+  missing the configured name; `test_authorization_credentials.py` still imports the private `_enforce_csrf`
+  directly, inherited verbatim from the pre-split module.
 
 ---
 
@@ -1530,23 +2170,32 @@ question is whether Design 6's six-handler shape should be five modules or one.
 **Symptom.** M5 lands and is deployed; a client discovers `/api/v1/roles` now answers `401` weeks
 before `count` disappears from every collection in M6 and `DELETE /bindings/{id}` narrows in M9.
 
-**Why it matters.** D-3, D-4, D-6, D-7, D-12 and D-16 are six separate visible breaks that this plan
-deliberately groups so they can ship as one release. Landing them as six releases spends the same
-client goodwill six times and makes each one look like an unrelated regression.
+**Why it matters.** **The grouping is now a decision, not a proposal.** The owner settled all
+seventeen entries in §2 on 2026-09-01 and settled with them that the **eight** client-visible
+changes — **D-3** (`/roles` becomes 401), **D-4** (`/search` becomes 401 and relocates), **D-5** (the
+twelve OpenAPI tags, which change generated SDK shape), **D-6** (the envelope break), **D-7**
+(`/roles` loses its `items` wrapper), **D-12** (`DELETE /bindings/{id}` narrows to SYSTEM), **D-16**
+(the two release keys) and **D-17** (the ordering fix, a fix rather than a break: a cursor walk that
+dropped rows stops dropping them) — **ship as one release.** Because M11 is last, D-17 rides that
+release without a separate decision. Landing them as eight releases would spend the same client
+goodwill eight times and make each one look like an unrelated regression.
 
-**Fallback decision point.** This is a release decision, not an implementation one: **hold the
+**Fallback decision point.** The residual risk is no longer *whether* to group but whether a partial
+deploy is ever forced; the answer is a release decision, not an implementation one: **hold the
 release, never the milestones.** If the owner needs a partial deploy, the honest cut is everything
 through **M3.1** — the execution-model change and the mechanical, contract-preserving half of the
 repository decomposition, which together break no client contract — with **M3.2 onward** held
 together. The cut is M3.1 and not M4 because M3.2 removes two keys from both release responses
-(D-16), and M4.1 depends on M3.2, so no later milestone can be deployed without it.
+(D-16), and M4.1 depends on M3.2, so no later milestone can be deployed without it. Holding the
+release never holds a milestone: every task in this plan is implementable today.
 
 ---
 
 ## 5. Definition of done
 
-The plan is complete when every task above is `Status: done`, every one passed the implement →
-verify loop within its cap, and all of the following hold on the final tree.
+The plan is complete when every task above is `Status: done` — **twenty-seven tasks across eleven
+milestones** — every one passed the implement → verify loop within its cap, and all of the following
+hold on the final tree.
 
 **Gate.**
 
@@ -1564,15 +2213,26 @@ verify loop within its cap, and all of the following hold on the final tree.
 
 - `grep -rn 'request: Request' src/huron/service/api/routes/` returns nothing; exactly one function
   in the tier reads `request.app`.
-- `records.py` imports nothing from `huron`; `postgres_auth.py` imports nothing from
-  `huron.service.api`; `uv run lint-imports` keeps every contract.
+- `records.py` imports nothing from `huron`; no store module imports anything from
+  `huron.service.api` beyond `records` and `errors`; `uv run lint-imports` keeps every contract, and
+  there are **seven** of them — the five this repository started with, plus one per package M11
+  creates.
+- `authorization.py`, `postgres_rbac.py`, `postgres_auth.py`, `ports.py` and `memory_rbac.py` do not
+  exist. `src/huron/service/api/authorization/` and `src/huron/service/api/stores/` do, each entered
+  through an `__init__.py` that holds re-exports and no logic — nineteen names and eight — and no
+  module outside either package names a submodule of it.
+- `grep -rn --include='*.py' 'set_cookie\|delete_cookie' src/huron/service/api/` returns hits only
+  in `authorization/cookies.py`, and `grep -rn 'rsplit' src/huron/service/api/stores/` returns exactly
+  one line.
 - `routes/v1/common.py` does not exist. `jsonable` is imported by no route module and its docstring
   describes persistence only.
 - `grep -rn -- '-> dict\[str, ' src/huron/service/api/routes/` returns nothing; the only two such
   handlers left in the tier are `/healthz` and `/readyz` in `app.py`.
 - `grep -rn 'raise DomainError(\|HTTPException\|DOMAIN_ERROR' src/huron` returns nothing.
 - No file under `migrations/` and no file under `src/huron/schema` was modified in the entire run —
-  verifiable with `git diff --stat` against the run's base commit.
+  verifiable with `git diff --stat` against the run's base commit. M11's SQL opening (§0 rule 3)
+  changed `ORDER BY` clauses and nothing else: no DDL statement exists anywhere under
+  `src/huron/service/api/stores/`.
 
 **Behavior.**
 
@@ -1588,13 +2248,25 @@ verify loop within its cap, and all of the following hold on the final tree.
 - `/readyz` answers `503` when a dependency is unavailable, never `4xx`.
 - All four binding scope roots support create, list and revoke; a binding named from the wrong root
   is a `404`; no update verb exists at any scope.
+- Every text component of every `ORDER BY` in `stores/` carries `COLLATE "C"`; `list_policies`
+  returns `(name, str(id))` order from both backends and `list_service_accounts` returns
+  `name COLLATE "C"`; a cursor walk at `limit=1` over policies sharing a name enumerates each row
+  exactly once, proven against the `postgres:16` container rather than against the in-memory store
+  alone.
+- `RbacStore` and `ApiKeyWriter` appear in no implementation's `__mro__`: conformance is structural
+  on both backends, asserted in `tests/contract/`.
 - `make docs` builds `--strict`; `make test` and `make lint` pass; `make api` and the `Containerfile`
   `CMD` both name `huron.service.api.main:app`.
 
 **Process.**
 
-- Every one of the sixteen decisions in section 2 is recorded with the owner's answer. An unanswered
-  decision means its milestone is not done, regardless of gate state.
+- Every one of the **seventeen** decisions in section 2 is recorded with the owner's answer —
+  **all seventeen were answered on 2026-09-01**, so this condition is already met and no milestone
+  can be held for want of one. What remains verifiable here is that the shipped code matches the
+  recorded answers, D-10's 1 MiB `CreatePolicy.spec` ceiling included.
+- The eight client-visible changes (D-3, D-4, D-5, D-6, D-7, D-12, D-16, D-17) went out as **one**
+  release, and the external deployment artifacts that name `huron.service.api.app:app` were updated
+  by the owner before that release was deployed (D-1).
 - No code comment, docstring, test name or user-facing string references this plan, its milestones,
   its task numbers, `API_DESIGN.md`, or checklist mechanics anywhere in the diff.
 
@@ -2014,3 +2686,204 @@ restated, and every corrected line number was confirmed against the source. Noth
    the correction pass was correctly told not to touch. Affects no instruction to an implementer.
 4. **"Environment prerequisites" is a bold lead-in, not a heading,** so the three cross-references to
    it are textual rather than anchored. Cosmetic.
+
+### M11 verification
+
+Scope: M11 only, plus the amendments made for it and whether adding it broke the existing plan.
+M1–M10 were not re-verified. **Six defects**, none of them a blocker for M11.1/M11.2/M11.4 as
+written; defects 1 and 2 will stop an implementer mid-task.
+
+#### Defects
+
+1. **M11.1's "One conflict in the design" paragraph resolves a conflict that does not exist, and its
+   instruction cannot be executed as written.** `API_DESIGN.md:7451`, inside
+   `#### `authorization/__init__.py``, reads
+   `from .credentials import CurrentPrincipal, CurrentSession, current_principal`. It does **not**
+   import `current_session`, and all three names it does import are in the nineteen-name `__all__`.
+   The paragraph asserts the snippet "imports `current_session` from `.credentials` but does not list
+   it in the nineteen-name `__all__`, which Ruff reports as an unused import", and directs "The
+   import line drops the name." There is no such name on that line. The nearest candidate,
+   `CurrentSession`, **is** in `__all__`; an implementer following the instruction literally drops it
+   and gets Ruff `F822` (undefined name in `__all__`) plus an `AttributeError` on
+   `authorization.CurrentSession` from every route that declares it — precisely the failure the
+   paragraph claims to prevent. *Correction:* delete the paragraph, or replace it with "the design's
+   `__init__.py` snippet is internally consistent — import exactly the nineteen names it exports."
+
+2. **M11.2's verify block greps `docs/`, which holds a reference the task is neither told to fix nor
+   permitted to.** `docs/getting-started/repository-layout.md:27` names `postgres_rbac.py` (and `:25`
+   names `authorization.py`). M11.2's verify runs
+   `grep -rn 'postgres_rbac\|postgres_auth\|memory_rbac\|api import ports\|api\.ports' src/ tests/ docs/ Makefile`,
+   which returns that line after the move. The file is absent from M11.2's **Modify** list, and §1's
+   "Documentation reconciliation" non-goal excludes every doc edit except `design/api.html` §7. The
+   implementer is left with a red verify step, no instruction, and a rule forbidding the obvious fix.
+   The same stale line survives M11.1 unseen, because M11.1's greps cover only `src/` and `tests/`.
+   *Correction:* either add `docs/getting-started/repository-layout.md` to M11.1's and M11.2's Modify
+   lists with an explicit §1 carve-out (D-1 already carves out `docs/getting-started/local-development.md:131`,
+   so the precedent exists), or drop `docs/` from the grep and record the stale line as a hand-off to
+   the roadmap-reconciliation phase.
+
+3. **§2's opening sentence still carries a stale section count.** `:166` — "**40 open questions**
+   across its **ten** design sections". The pre-amendment text said "33 … across its **nine** design
+   sections", and nine was the count of `^## Design ` headings (1, 2, 3, 4, 5, 5b, 6, 7, 8). By that
+   same convention the count is now **eleven**, not ten — `grep -c '^## Design '` returns 12, of
+   which one is `## Design Tasks`. The `40` itself is correct (counted below). *Correction:* "eleven
+   design sections". This is the only surviving old number found; every other corrected count
+   reconciles.
+
+4. **Two of M11's nineteen `API_DESIGN.md` heading references are not verbatim, so a literal search
+   fails.** `:1508` and `:1526` cite `## Design 9 — authorization.py decomposition`; the heading is
+   ``## Design 9 — `authorization.py` decomposition`` (backticks around the filename). `:1628` cites
+   `#### By port, not by backend`; the heading is
+   `#### By port, not by backend — and why the choice is narrower than it looks`. Navigation only —
+   no task changes meaning — but the plan's own convention is verbatim citation, and the other
+   seventeen references match `grep -Fx` exactly. *Correction:* restore the backticks and the tail.
+
+5. **M7.3 and M11.3 state the policies boundary key differently, while M11.3 asserts they are
+   identical.** M11.3 specifies `InMemoryRbacStore.list_policies` sorts by `(item.name, str(item.id))`
+   — "`str(item.id)` so the expression reads identically to the boundary's key" — and its acceptance
+   criterion 1 requires the contract test to assert both stores equal
+   `sorted(records, key=<the boundary key>)`. M7.3's acceptance (`:1059`) publishes that key as
+   `Page[PolicyView]` **keyed on `(name, id)`**. Design 10's `#### The ordering contract, per collection`
+   says `(name, str(id))`. The two orderings coincide for canonical lowercase UUID strings, so this is
+   not a runtime failure — but M11.3's stated rationale is false against M7.3 as written, and the
+   contract test's `<the boundary key>` is ambiguous at the point it is written. *Correction:* make
+   M7.3's acceptance read `(name, str(id))`.
+
+6. **M11.3's Depends-on omits the task that establishes the third collection's boundary key.** Its
+   acceptance criterion 1 requires the ordering-agreement pin "for all three collections", which
+   includes `bindings_at` and its `(principal, role_code)` key (Design 10's ordering table). That key
+   comes from M7.1 (`RoleBindingView`) / M9.2, not from M7.2 or M7.3, which are the only M7 tasks the
+   Depends-on names. M11 runs after all of M1–M10, so this cannot fail in execution; the dependency
+   line is incomplete rather than wrong, and an incomplete one is what makes a later re-sequence
+   unsafe. *Correction:* add M7.1, or narrow criterion 1 to the two collections M11.3 changes.
+
+#### Dependency claims tested — all four held
+
+- **M11.1 on M8.1.** `grep -n 'authorization\.py' API_IMPLEMENTATION_PLAN.md` returns every task that
+  names the file: M1.1 (`:308`), M2.1 (`:409`, `:421`), M5.1 (`:725`), M8.1 (`:1116`, `:1119`,
+  `:1124`). The only later hit is M9.1 `:1343`, which is an **acceptance criterion** asserting where
+  `check` is invoked — M9.1's Modify list is `routes/v1/endpoints/bindings.py` and a test module, and
+  its Delete list explicitly says "`authorization.check` and the three `*_scope` helpers **stay**".
+  M10.1–M10.3 do not name it, consistent with Design 9's statement that `src/huron/service` already
+  passes Ruff `FAST` clean. **M8.1 is the last task that edits `authorization.py`. CONFIRMED.**
+- **M11.2 on M3.1.** M3.1's Create list (`:494-495`) is
+  `src/huron/service/api/ports.py` (`RbacStore`, `ApiKeyWriter`) and
+  `src/huron/service/api/memory_rbac.py` (`InMemoryRbacStore`) — byte-identical paths to the two
+  M11.2 deletes and absorbs. M3.1 also creates `records.py` (`:493`), which `rows.py` imports.
+  **CONFIRMED.**
+- **M11.3 on M7.2 and M7.3.** M7.2's acceptance: "`GET .../service-accounts` returns
+  `Page[ServiceAccountView]` keyed on `(name,)`" — matches M11.3's `(name,)`. M7.3's acceptance:
+  "`GET /policies` returns `Page[PolicyView]` keyed on `(name, id)`" — matches in substance, differs
+  in expression (defect 5). **CONFIRMED, with defect 5.**
+- **No task touches a module after M11.2 deletes it.** Every plan hit for
+  `postgres_rbac|postgres_auth|memory_rbac|ports.py` outside M11 is at or before M8.1 (M3.1 `:494`,
+  M3.2 `:499-500`, M8.1 `:1117`), except §5's definition of done (`:1956`) and the pre-existing
+  `## Verification` record. M11.3 modifies `stores/rbac.py`, the post-move path. **CONFIRMED.**
+
+#### The SQL amendment — checked, and it holds
+
+Rule 3 (`:95-107`) scopes the freeze to "**for M1 through M10**", names M11 as "the exception, and it
+is the only one", permits "`SELECT` text, `COLLATE` and `ORDER BY` clauses in the store modules", and
+states "**DDL may not**" with `migrations/` and `src/huron/schema` out of scope for M11 exactly as for
+M1–M10. No M11 task requires DDL: M11.3's Modify list is `src/huron/service/api/stores/rbac.py` and
+`tests/contract/test_rbac_store.py` and nothing else; its acceptance carries a DDL grep and
+`git diff --stat -- migrations/ src/huron/schema/`. Design 10's three candidate indexes are recorded
+as a hand-off in §1's non-goals ("None is required … none of them gates M11 and none appears in §2"),
+matching Design 10 `### Open questions` item 3 ("None is required: every query above is correct
+without them"); D-17 closes with "**DDL is not part of the answer**". `grep -c '^| \*\*D-'` returns
+**17** — no index appears as a decision. The three current `ORDER BY` clauses were read on disk:
+`postgres_rbac.py:230` already `principal COLLATE "C", role_code COLLATE "C"` (M11.3 correctly leaves
+it), `:311` `ORDER BY sa.name`, `:384` `ORDER BY name` — exactly the two M11.3 changes.
+`repository.py:415` is `sorted(self._policies.values(), key=lambda item: item.name)` — the one
+in-memory key M11.3 changes.
+
+#### Coverage, Designs 9 and 10, both directions
+
+Design 10's four module deletions all carry: `postgres_rbac.py`, `postgres_auth.py`, `ports.py`,
+`memory_rbac.py` are named in M11.2's **Delete** and re-checked in its verify (`test ! -e` ×4) and in
+§5. The by-symbol deletion (`postgres_rbac.py:450`'s hand-written `int(tag.rsplit(" ", 1)[-1])`) is
+named, and the line is on disk at `:450`. Design 9's eleven names that stop being public all carry:
+the six cookie names and `cached_bindings_for` are in M11.1's **Delete** by symbol; `BindingCacheMap`,
+`request_binding_cache`, `current_session` and `_enforce_csrf` are carried by placement in submodules
+plus the `len(a.__all__) == 19` acceptance, which is enforceable. Design 9's per-module contracts map
+to the five Create entries; `#### The package boundary` maps to the sixth import-linter contract and
+its "proven to bite" criterion. Design 10's `#### Error behavior, per store` maps to M11.2's error-table
+criterion, `#### tests/contract/` item 4 to the three-way conformance probe, items 1–3 to M11.3's three
+pins, `#### stores/__init__.py` to `len(s.__all__) == 8` with `rows` excluded. Every M11 task has a
+basis: M11.1 ← Design 9; M11.2 ← Design 10 Half A; M11.3 ← Design 10 Half B + OQ1; M11.4 ← Design 9
+OQ3. No orphan task, no uncarried deletion.
+
+#### Counts, checked on disk
+
+| Claim | Checked | Result |
+|---|---|---|
+| 11 milestones | `grep -c '^## M'` | **11** |
+| 27 tasks | `grep -c '^### Task M'` | **27** |
+| 27 pending | `grep -c '^\*\*Status: pending\*\*'` | **27** |
+| 17 decisions | `grep -c '^\| \*\*D-'` | **17** — D-1…D-17, `:1999` says "seventeen" |
+| 40 open questions | counted per `### Open questions` | D1 3, D2 3, D3 4, D4 3, D5 4, D5b 4, D6 4, D7 4, D8 4, D9 3, D10 4 = **40** |
+| 23 + 16 + 1 = 40 | §2 arithmetic | **reconciles** |
+| 19 / 8 `__all__` | counted in the design snippets | **19** and **8** |
+| 6 / 7 contracts | `grep -c '\[\[tool.importlinter.contracts\]\]' pyproject.toml` = 5; no M1–M10 task adds one | **sixth and seventh are correct** |
+| stale old numbers | grep over §0–§5 for 33 / nine / eighteen / fifteen / "ten milestones" / "23 tasks" | one miss — defect 3 |
+
+#### Mechanical executability
+
+Every file and line M11 names was checked on disk. `authorization.py` is 426 lines (Design 9's figure);
+`postgres_rbac.py` 465, `postgres_auth.py` 256, `test_api_authorization.py` 230 — all as stated.
+`tests/contract/test_rbac_store.py:63` is `from huron.service.api.postgres_rbac import …`;
+`test_auth_store.py:48` is `from huron.service.api.postgres_auth import (`;
+`tests/unit/test_repository_rbac.py:3` (docstring), `:25` (`cached_bindings_for` import), `:338`
+(`_touch_api_key`), `:376-389` (the two direct-call tests) — **all four exact**, and `:338` is an
+addition the plan makes over Design 9's Deletions list, correctly. `postgres_rbac.py:450` is the
+`rsplit` line. M11.1's claim that only `test_api_authorization.py` names the retired cookie names in
+`tests/` was tested by grep across the whole tree: the only test hits are
+`test_api_authorization.py:21,23,142,145,147,158,160,166,168`; `test_api_login.py` and
+`test_api_oidc.py` do not name them. `routes/auth/endpoints/{login,oidc,session}.py` and the five
+`routes/v1/endpoints/*.py` M11.1 lists all exist today. Every verify command in M11 was executed:
+all five greps, `test ! -e`, and `git diff --stat -- migrations/ src/huron/schema/` run cleanly. All
+nineteen `API_DESIGN.md` heading references were checked with `grep -Fxc`; seventeen matched, two did
+not (defect 4).
+
+#### Regression
+
+`git diff --numstat` — `API_DESIGN.md` **1224 insertions, 0 deletions**, one hunk, `@@ -7251,0 +7252,1224 @@`:
+a pure append of Designs 9 and 10, nothing else touched. `API_IMPLEMENTATION_PLAN.md` 425 insertions,
+22 deletions; the highest-numbered hunk is `@@ -1596,2 +1999,2 @@`, and `## Verification` begins at
+`:2006`. **The `## Verification` section is byte-unchanged.**
+
+#### Gate
+
+Run on this host with `UV_PROJECT_ENVIRONMENT=$HOME/gatevenv`, mypy on a fresh `--cache-dir` outside
+the tree.
+
+| Command | Result |
+|---|---|
+| `uv run ruff check .` | `All checks passed!` |
+| `uv run ruff format --check .` | `101 files already formatted` |
+| `uv run ty check` | `All checks passed!` |
+| `uv run mypy --cache-dir=…` | `Success: no issues found in 27 source files` |
+| `uv run lint-imports` | `Contracts: 5 kept, 0 broken.` |
+| `uv run pytest -m unit -q` | `218 passed, 3 deselected, 2 warnings in 4.85s` |
+
+`pyscn` and the container runtime are unavailable on this host and are not recorded as defects — §0's
+**Environment prerequisites** document both as properties of the host.
+
+#### Observations
+
+- §0's environment-prerequisite bullet, amended in this change to add M11.2 and M11.3, still says
+  "**Both** modules under `tests/contract/` drive a migrated PostgreSQL". There are **three**:
+  `test_auth_store.py:55`, `test_rbac_store.py:66` and `test_catalog_store.py:134` all carry
+  `pytestmark = pytest.mark.contract`. Design 10's `#### tests/contract/` repeats the same "Two
+  modules today". Pre-existing wording, outside the M11 diff, but M11.2 and M11.3 now rest on it.
+- M11.1's acceptance reads `grep -rn 'set_cookie\|delete_cookie' src/huron/service/api/` as returning
+  hits only in `authorization/cookies.py`. On a working copy with a stale `__pycache__` that grep also
+  prints `binary file matches` for the old `.pyc`. Adding `--include='*.py'` would make the criterion
+  mean what it says.
+- M11.3's DDL grep includes the bare alternative `drop ` under `-i`, which matches ordinary prose. It
+  is a screening grep followed by `git diff --stat`, so a false positive costs a read, not a failure.
+- Design 10's Layout table cites `InMemoryRbacStore.list_policies` at `repository.py:406`; it is at
+  `:415` today. Design-side only — every line reference the **plan** makes was exact.
+- M11.1's "Not M9 … and not M10" note and M11.2's three-part dependency rationale are the two places
+  where this milestone's sequencing reasoning is strongest; both survived testing against the tasks
+  they name.

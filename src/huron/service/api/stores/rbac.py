@@ -1,11 +1,11 @@
-"""Postgres-backed RBAC storage: role bindings, service accounts, policies, API keys.
+"""Both implementations of ``RbacStore``: role bindings, service accounts, policies.
 
-Every write here is preceded by the same Python-level validation the
-in-memory store performs (``compile_binding`` for grants). The database
-triggers (``role_bindings_guard``, ``service_accounts_kind_guard``) exist so
-a row inserted outside the API - a migration, a support script, psql - is
-still refused; in the normal request path they never fire, because a bad
-grant never reaches the INSERT.
+Every write in ``PostgresRbacStore`` is preceded by the same Python-level
+validation ``InMemoryRbacStore`` performs (``compile_binding`` for grants).
+The database triggers (``role_bindings_guard``, ``service_accounts_kind_guard``)
+exist so a row inserted outside the API - a migration, a support script,
+psql - is still refused; in the normal request path they never fire,
+because a bad grant never reaches the INSERT.
 """
 
 from __future__ import annotations
@@ -13,58 +13,198 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from datetime import UTC, datetime
+from threading import RLock
 from uuid import UUID
 
 import asyncpg
 
-from huron.pkg.auth import ApiKeyRecord
-from huron.pkg.catalog.errors import DomainError
+from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.rbac import Binding, Effect, ScopeType
 from huron.pkg.rbac.roles import LAYER_SCOPED_CAPABILITIES, compile_binding
-from huron.service.api.repository import (
-    Policy,
-    PolicyAttachment,
-    ResourceNotFound,
-    RoleBindingRecord,
-    ServiceAccount,
-)
+from huron.service.api.errors import AttachmentExists, BindingExists, ServiceAccountExists
+from huron.service.api.records import Policy, PolicyAttachment, RoleBindingRecord, ServiceAccount
+
+from .rows import binding_record, policy, service_account
 
 
-def _binding_record_from_row(row: asyncpg.Record) -> RoleBindingRecord:
-    return RoleBindingRecord(
-        id=row["id"],
-        principal=row["principal"],
-        role_code=row["role_code"],
-        scope_type=row["scope_type"],
-        scope_id=row["scope_id"],
-        created_by=row["created_by"],
-        created_at=row["created_at"],
-        expires_at=row["expires_at"],
-    )
+class InMemoryRbacStore:
+    """The reference RBAC store: precompiled bindings held in process memory.
 
+    This is what every unit test runs against, and what ``HierarchyRepository``
+    defaults to when no store is injected, so existing behavior is unchanged
+    unless a composition root explicitly wires ``PostgresRbacStore`` instead.
+    """
 
-def _service_account_from_row(row: asyncpg.Record) -> ServiceAccount:
-    return ServiceAccount(
-        principal_id=row["principal_id"],
-        organization_id=row["organization_id"],
-        name=row["name"],
-        subject=row["subject"],
-        created_by=row["created_by"],
-        created_at=row["created_at"],
-        disabled_at=row["disabled_at"],
-    )
+    def __init__(self) -> None:
+        self._role_bindings: dict[UUID, RoleBindingRecord] = {}
+        self._service_accounts: dict[UUID, ServiceAccount] = {}
+        self._policies: dict[UUID, Policy] = {}
+        self._policy_attachments: list[PolicyAttachment] = []
+        self._compiled: dict[UUID, tuple[Binding, ...]] = {}
+        self._lock = RLock()
 
+    async def grant_role(
+        self,
+        *,
+        principal: str,
+        role_code: str,
+        scope_type: ScopeType,
+        scope_id: UUID | None,
+        created_by: str,
+        expires_at: datetime | None = None,
+    ) -> RoleBindingRecord:
+        """Validate against the role model, compile, and store one grant.
 
-def _policy_from_row(row: asyncpg.Record) -> Policy:
-    return Policy(
-        id=row["id"],
-        policy_type=row["policy_type"],
-        name=row["name"],
-        spec=json.loads(row["spec"]),
-        created_by=row["created_by"],
-        created_at=row["created_at"],
-    )
+        ``compile_binding`` raises RoleError subclasses when the role does not
+        exist, the principal kind is not allowed (e.g. a service account for
+        any role), or the scope level is not bindable.
+        """
+        principal_kind = "service_account" if principal.startswith("sa:") else "user"
+        compiled = compile_binding(
+            role_code,
+            principal_identifier=principal,
+            principal_kind=principal_kind,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            expires_at=expires_at,
+        )
+        with self._lock:
+            if any(
+                item.principal == principal
+                and item.role_code == role_code
+                and item.scope_type == scope_type.value
+                and item.scope_id == scope_id
+                for item in self._role_bindings.values()
+            ):
+                raise BindingExists("an identical role binding already exists")
+            record = RoleBindingRecord(
+                uuid7(),
+                principal,
+                role_code,
+                scope_type.value,
+                scope_id,
+                created_by,
+                datetime.now(UTC),
+                expires_at,
+            )
+            self._role_bindings[record.id] = record
+            self._compiled[record.id] = compiled
+            return record
+
+    async def revoke_role(self, binding_id: UUID) -> RoleBindingRecord:
+        with self._lock:
+            record = self._role_bindings.pop(binding_id, None)
+            if record is None:
+                raise ResourceNotFound(f"role binding does not exist: {binding_id}")
+            self._compiled.pop(binding_id, None)
+            return record
+
+    async def get_role_binding(self, binding_id: UUID) -> RoleBindingRecord:
+        record = self._role_bindings.get(binding_id)
+        if record is None:
+            raise ResourceNotFound(f"role binding does not exist: {binding_id}")
+        return record
+
+    async def bindings_for(self, identifiers: frozenset[str]) -> tuple[Binding, ...]:
+        """Every compiled capability binding whose principal the caller is."""
+        return tuple(
+            binding
+            for record_id, bindings in self._compiled.items()
+            if self._role_bindings[record_id].principal in identifiers
+            for binding in bindings
+        )
+
+    async def bindings_at(
+        self, scope_type: ScopeType, scope_id: UUID | None
+    ) -> list[RoleBindingRecord]:
+        return sorted(
+            (
+                item
+                for item in self._role_bindings.values()
+                if item.scope_type == scope_type.value and item.scope_id == scope_id
+            ),
+            key=lambda item: (item.principal, item.role_code),
+        )
+
+    async def create_service_account(
+        self, organization_id: UUID, *, name: str, subject: str, created_by: str
+    ) -> ServiceAccount:
+        with self._lock:
+            if any(
+                item.organization_id == organization_id and item.name == name
+                for item in self._service_accounts.values()
+            ):
+                raise ServiceAccountExists(f"service account already exists: {name}")
+            record = ServiceAccount(
+                uuid7(), organization_id, name, subject, created_by, datetime.now(UTC)
+            )
+            self._service_accounts[record.principal_id] = record
+            return record
+
+    async def get_service_account(self, principal_id: UUID) -> ServiceAccount:
+        record = self._service_accounts.get(principal_id)
+        if record is None:
+            raise ResourceNotFound(f"service account does not exist: {principal_id}")
+        return record
+
+    async def service_account_by_subject(self, subject: str) -> ServiceAccount:
+        with self._lock:
+            for record in self._service_accounts.values():
+                if record.subject == subject:
+                    return record
+        raise ResourceNotFound(f"service account does not exist: {subject}")
+
+    async def list_service_accounts(self, organization_id: UUID) -> list[ServiceAccount]:
+        items = [
+            item
+            for item in self._service_accounts.values()
+            if item.organization_id == organization_id
+        ]
+        return sorted(items, key=lambda item: item.name)
+
+    async def disable_service_account(
+        self, principal_id: UUID, *, disabled_at: datetime
+    ) -> ServiceAccount:
+        with self._lock:
+            record = self._service_accounts.get(principal_id)
+            if record is None:
+                raise ResourceNotFound(f"service account does not exist: {principal_id}")
+            record.disabled_at = disabled_at
+            return record
+
+    async def create_policy(
+        self, *, policy_type: str, name: str, spec: dict[str, object], created_by: str
+    ) -> Policy:
+        with self._lock:
+            record = Policy(uuid7(), policy_type, name, spec, created_by, datetime.now(UTC))
+            self._policies[record.id] = record
+            return record
+
+    async def attach_policy(
+        self, policy_id: UUID, *, scope_type: ScopeType, scope_id: UUID, attached_by: str
+    ) -> PolicyAttachment:
+        if policy_id not in self._policies:
+            raise ResourceNotFound(f"policy does not exist: {policy_id}")
+        with self._lock:
+            if any(
+                item.policy_id == policy_id
+                and item.scope_type == scope_type.value
+                and item.scope_id == scope_id
+                for item in self._policy_attachments
+            ):
+                raise AttachmentExists("policy is already attached at this scope")
+            attachment = PolicyAttachment(
+                policy_id, scope_type.value, scope_id, attached_by, datetime.now(UTC)
+            )
+            self._policy_attachments.append(attachment)
+            return attachment
+
+    async def list_policies(self) -> list[Policy]:
+        """Every policy, ordered by ``(name, id)`` - the same key the cursor
+        advances by, and the only key ``policies`` can offer, since ``name``
+        carries no uniqueness constraint."""
+        return sorted(self._policies.values(), key=lambda item: (item.name, str(item.id)))
 
 
 class PostgresRbacStore:
@@ -124,7 +264,7 @@ class PostgresRbacStore:
                 record.created_at,
             )
         except asyncpg.UniqueViolationError as exc:
-            raise DomainError("an identical role binding already exists") from exc
+            raise BindingExists("an identical role binding already exists") from exc
         return record
 
     async def revoke_role(self, binding_id: UUID) -> RoleBindingRecord:
@@ -138,7 +278,7 @@ class PostgresRbacStore:
         )
         if row is None:
             raise ResourceNotFound(f"role binding does not exist: {binding_id}")
-        return _binding_record_from_row(row)
+        return binding_record(row)
 
     async def get_role_binding(self, binding_id: UUID) -> RoleBindingRecord:
         row = await self._pool.fetchrow(
@@ -151,7 +291,7 @@ class PostgresRbacStore:
         )
         if row is None:
             raise ResourceNotFound(f"role binding does not exist: {binding_id}")
-        return _binding_record_from_row(row)
+        return binding_record(row)
 
     async def bindings_for(self, identifiers: frozenset[str]) -> tuple[Binding, ...]:
         """Reconstruct compiled ``Binding`` values by joining the grant to its role.
@@ -232,7 +372,7 @@ class PostgresRbacStore:
             scope_type.value,
             scope_id,
         )
-        return [_binding_record_from_row(row) for row in rows]
+        return [binding_record(row) for row in rows]
 
     async def create_service_account(
         self, organization_id: UUID, *, name: str, subject: str, created_by: str
@@ -270,7 +410,7 @@ class PostgresRbacStore:
         except asyncpg.ForeignKeyViolationError as exc:
             raise ResourceNotFound(f"organization does not exist: {organization_id}") from exc
         except asyncpg.UniqueViolationError as exc:
-            raise DomainError(f"service account already exists: {name}") from exc
+            raise ServiceAccountExists(f"service account already exists: {name}") from exc
         return ServiceAccount(principal_id, organization_id, name, subject, created_by, created_at)
 
     async def get_service_account(self, principal_id: UUID) -> ServiceAccount:
@@ -285,7 +425,7 @@ class PostgresRbacStore:
         )
         if row is None:
             raise ResourceNotFound(f"service account does not exist: {principal_id}")
-        return _service_account_from_row(row)
+        return service_account(row)
 
     async def service_account_by_subject(self, subject: str) -> ServiceAccount:
         row = await self._pool.fetchrow(
@@ -299,7 +439,7 @@ class PostgresRbacStore:
         )
         if row is None:
             raise ResourceNotFound(f"service account does not exist: {subject}")
-        return _service_account_from_row(row)
+        return service_account(row)
 
     async def list_service_accounts(self, organization_id: UUID) -> list[ServiceAccount]:
         rows = await self._pool.fetch(
@@ -308,11 +448,11 @@ class PostgresRbacStore:
                    sa.created_by, sa.created_at, p.disabled_at
             FROM service_accounts sa JOIN principals p ON p.id = sa.principal_id
             WHERE sa.organization_id = $1
-            ORDER BY sa.name
+            ORDER BY sa.name COLLATE "C"
             """,
             organization_id,
         )
-        return [_service_account_from_row(row) for row in rows]
+        return [service_account(row) for row in rows]
 
     async def disable_service_account(
         self, principal_id: UUID, *, disabled_at: datetime
@@ -376,90 +516,15 @@ class PostgresRbacStore:
         except asyncpg.ForeignKeyViolationError as exc:
             raise ResourceNotFound(f"policy does not exist: {policy_id}") from exc
         except asyncpg.UniqueViolationError as exc:
-            raise DomainError("policy is already attached at this scope") from exc
+            raise AttachmentExists("policy is already attached at this scope") from exc
         return PolicyAttachment(policy_id, scope_type.value, scope_id, attached_by, attached_at)
 
     async def list_policies(self) -> list[Policy]:
         rows = await self._pool.fetch(
-            "SELECT id, policy_type, name, spec, created_by, created_at FROM policies ORDER BY name"
-        )
-        return [_policy_from_row(row) for row in rows]
-
-
-class PostgresApiKeyStore:
-    """The ``api_keys`` table behind ``pkg.auth.ApiKeyStore``."""
-
-    def __init__(self, pool: asyncpg.Pool) -> None:
-        self._pool = pool
-
-    async def get(self, key_id: str) -> ApiKeyRecord | None:
-        row = await self._pool.fetchrow(
             """
-            SELECT key_id, owner_subject, name, secret_sha256, scopes, project_id,
-                   expires_at, revoked_at, owner_kind
-            FROM api_keys WHERE key_id = $1
-            """,
-            key_id,
-        )
-        if row is None:
-            return None
-        return _api_key_record_from_row(row)
-
-    async def add(self, record: ApiKeyRecord) -> None:
-        project_id = UUID(record.project_id) if record.project_id is not None else None
-        try:
-            await self._pool.execute(
-                """
-                INSERT INTO api_keys
-                    (id, key_id, owner_subject, name, secret_sha256, scopes,
-                     project_id, expires_at, revoked_at, owner_kind, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                """,
-                uuid7(),
-                record.key_id,
-                record.subject,
-                record.name,
-                record.secret_sha256,
-                list(record.scopes),
-                project_id,
-                record.expires_at,
-                record.revoked_at,
-                record.owner_kind,
-                datetime.now(UTC),
-            )
-        except asyncpg.ForeignKeyViolationError as exc:
-            raise ResourceNotFound(f"project does not exist: {project_id}") from exc
-
-    async def touch_last_used(self, key_id: str) -> None:
-        await self._pool.execute(
-            "UPDATE api_keys SET last_used_at = now() WHERE key_id = $1", key_id
-        )
-
-    async def revoke_all_for(self, subject: str, revoked_at: datetime) -> int:
-        tag = await self._pool.execute(
+            SELECT id, policy_type, name, spec, created_by, created_at
+            FROM policies
+            ORDER BY name COLLATE "C", id
             """
-            UPDATE api_keys
-            SET revoked_at = $2
-            WHERE owner_subject = $1
-              AND owner_kind = 'service_account'
-              AND revoked_at IS NULL
-            """,
-            subject,
-            revoked_at,
         )
-        return int(tag.rsplit(" ", 1)[-1])
-
-
-def _api_key_record_from_row(row: asyncpg.Record) -> ApiKeyRecord:
-    project_id: UUID | None = row["project_id"]
-    return ApiKeyRecord(
-        key_id=row["key_id"],
-        subject=row["owner_subject"],
-        name=row["name"],
-        secret_sha256=row["secret_sha256"],
-        scopes=frozenset(row["scopes"]),
-        project_id=str(project_id) if project_id is not None else None,
-        expires_at=row["expires_at"],
-        revoked_at=row["revoked_at"],
-        owner_kind=row["owner_kind"],
-    )
+        return [policy(row) for row in rows]

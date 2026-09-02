@@ -11,7 +11,7 @@
     "realm": [
       {
         "name": "platform-admins",
-        "description": "Dev-only realm role, surfaced in ID/access tokens as the 'groups' claim by the realm-role protocol mapper on the 'huron-web' client below. It grants no Huron capability by itself: HURON_BOOTSTRAP_PLATFORM_OWNER=karl (docker-compose.yml) is what actually seeds karl's platform_owner RBAC binding at startup. This role exists so the OIDC groups-claim plumbing has something real to carry end-to-end."
+        "description": "Dev-only realm role, carried into ID/access tokens as the 'groups' claim by the huron-web client's realm-role mapper. Grants no Huron capability by itself: HURON_BOOTSTRAP_PLATFORM_OWNER=karl (docker-compose.yml) seeds karl's platform_owner binding."
       }
     ]
   },
@@ -63,6 +63,7 @@
       "enabled": true,
       "emailVerified": true,
       "firstName": "Karl",
+      "lastName": "Developer",
       "email": "karl@huron.dev.local",
       "credentials": [
         {
@@ -80,6 +81,7 @@
       "enabled": true,
       "emailVerified": true,
       "firstName": "Sam",
+      "lastName": "Reader",
       "email": "sam@huron.dev.local",
       "credentials": [
         {

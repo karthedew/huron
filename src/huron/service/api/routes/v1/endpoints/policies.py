@@ -5,86 +5,129 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
 from huron.pkg.auth import Principal
 from huron.pkg.rbac import ScopeType
 from huron.service.api.authorization import (
     CurrentPrincipal,
-    get_repository,
     require_dataset,
     require_organization,
     require_project,
 )
-from huron.service.api.routes.v1.common import jsonable
-from huron.service.api.routes.v1.schema.policies import AttachPolicy, CreatePolicy
+from huron.service.api.problems import problem_response
+from huron.service.api.records import Policy
+from huron.service.api.routes.v1.pagination import Page, PageCursor, PageLimit, paginate
+from huron.service.api.routes.v1.schema.policies import (
+    AttachPolicy,
+    CreatePolicy,
+    PolicyAttachmentView,
+    PolicyView,
+)
+from huron.service.api.runtime import Repository
 
-router = APIRouter()
+router = APIRouter(prefix="/policies", tags=["policies"])
+organization_attachments = APIRouter(
+    prefix="/organizations/{organization_id}/policy-attachments", tags=["policy-attachments"]
+)
+project_attachments = APIRouter(
+    prefix="/projects/{project_id}/policy-attachments", tags=["policy-attachments"]
+)
+dataset_attachments = APIRouter(
+    prefix="/datasets/{dataset_id}/policy-attachments", tags=["policy-attachments"]
+)
 
 
-@router.post("/policies", status_code=201)
+def _key(item: Policy) -> tuple[str, str]:
+    return (item.name, str(item.id))
+
+
+@router.post("", status_code=201)
 async def create_policy(
-    request: Request, body: CreatePolicy, actor: CurrentPrincipal
-) -> dict[str, object]:
+    body: CreatePolicy, repository: Repository, actor: CurrentPrincipal
+) -> PolicyView:
     """Creating a policy grants nothing - attachment is the guarded act."""
-    record = await get_repository(request).create_policy(
+    record = await repository.create_policy(
         policy_type=body.policy_type,
         name=body.name,
         spec=body.spec,
         created_by=actor.subject,
     )
-    return jsonable(record)
+    return PolicyView.model_validate(record)
 
 
-@router.get("/policies")
-async def list_policies(request: Request, _actor: CurrentPrincipal) -> dict[str, object]:
-    items = await get_repository(request).list_policies()
-    return {"items": [jsonable(item) for item in items]}
+@router.get("", responses={400: problem_response("cursor is not a valid continuation")})
+async def list_policies(
+    repository: Repository, limit: PageLimit = 50, after: PageCursor = None
+) -> Page[PolicyView]:
+    records = await repository.list_policies()
+    return paginate(sorted(records, key=_key), PolicyView, key=_key, limit=limit, after=after)
 
 
-@router.post("/organizations/{organization_id}/policy-attachments", status_code=201)
+@organization_attachments.post(
+    "",
+    status_code=201,
+    responses={
+        404: problem_response("no such organization or policy"),
+        409: problem_response("policy is already attached at this scope"),
+    },
+)
 async def attach_to_organization(
-    request: Request,
     organization_id: UUID,
     body: AttachPolicy,
+    repository: Repository,
     actor: Annotated[Principal, Depends(require_organization("organization.policy_attach"))],
-) -> dict[str, object]:
-    attachment = await get_repository(request).attach_policy(
+) -> PolicyAttachmentView:
+    attachment = await repository.attach_policy(
         UUID(body.policy_id),
         scope_type=ScopeType.ORGANIZATION,
         scope_id=organization_id,
         attached_by=actor.subject,
     )
-    return jsonable(attachment)
+    return PolicyAttachmentView.model_validate(attachment)
 
 
-@router.post("/projects/{project_id}/policy-attachments", status_code=201)
+@project_attachments.post(
+    "",
+    status_code=201,
+    responses={
+        404: problem_response("no such project or policy"),
+        409: problem_response("policy is already attached at this scope"),
+    },
+)
 async def attach_to_project(
-    request: Request,
     project_id: UUID,
     body: AttachPolicy,
+    repository: Repository,
     actor: Annotated[Principal, Depends(require_project("project.policy_attach"))],
-) -> dict[str, object]:
-    attachment = await get_repository(request).attach_policy(
+) -> PolicyAttachmentView:
+    attachment = await repository.attach_policy(
         UUID(body.policy_id),
         scope_type=ScopeType.PROJECT,
         scope_id=project_id,
         attached_by=actor.subject,
     )
-    return jsonable(attachment)
+    return PolicyAttachmentView.model_validate(attachment)
 
 
-@router.post("/datasets/{dataset_id}/policy-attachments", status_code=201)
+@dataset_attachments.post(
+    "",
+    status_code=201,
+    responses={
+        404: problem_response("no such dataset or policy"),
+        409: problem_response("policy is already attached at this scope"),
+    },
+)
 async def attach_to_dataset(
-    request: Request,
     dataset_id: UUID,
     body: AttachPolicy,
+    repository: Repository,
     actor: Annotated[Principal, Depends(require_dataset("dataset.policy_attach"))],
-) -> dict[str, object]:
-    attachment = await get_repository(request).attach_policy(
+) -> PolicyAttachmentView:
+    attachment = await repository.attach_policy(
         UUID(body.policy_id),
         scope_type=ScopeType.DATASET,
         scope_id=dataset_id,
         attached_by=actor.subject,
     )
-    return jsonable(attachment)
+    return PolicyAttachmentView.model_validate(attachment)

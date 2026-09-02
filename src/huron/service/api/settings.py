@@ -79,3 +79,12 @@ class ApiSettings(BaseSettings):
         if not codes:
             raise ValueError("classification vocabulary may not be empty")
         return self
+
+
+def settings_from_environment() -> ApiSettings:
+    """Populate every field from ``HURON_*``.
+
+    The call reads argument-less to a type checker, which cannot see that
+    pydantic-settings supplies the required fields from the environment.
+    """
+    return ApiSettings()  # type: ignore[call-arg]

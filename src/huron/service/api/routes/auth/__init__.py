@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from huron.service.api.problems import UNIVERSAL_ERRORS
+
 from .endpoints import login, oidc, session
 
-router = APIRouter()
+router = APIRouter(prefix="/auth", tags=["authentication"], responses=UNIVERSAL_ERRORS)
 router.include_router(login.router)
 router.include_router(oidc.router)
 router.include_router(session.router)

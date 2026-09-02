@@ -47,9 +47,11 @@ import asyncpg
 import pytest
 from alembic import command
 from alembic.config import Config
+from pydantic import BaseModel, ConfigDict
 from testcontainers.postgres import PostgresContainer
 
 from huron.pkg.auth import ApiKeyRecord
+from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.rbac import ScopeType
 from huron.pkg.rbac.roles import (
@@ -60,8 +62,15 @@ from huron.pkg.rbac.roles import (
     ScopeNotBindable,
     compile_binding,
 )
-from huron.service.api.postgres_rbac import PostgresApiKeyStore, PostgresRbacStore
-from huron.service.api.repository import ResourceNotFound
+from huron.service.api.records import Policy, RoleBindingRecord, ServiceAccount
+from huron.service.api.routes.v1.pagination import paginate
+from huron.service.api.stores import (
+    ApiKeyWriter,
+    InMemoryRbacStore,
+    PostgresApiKeyStore,
+    PostgresRbacStore,
+    RbacStore,
+)
 
 pytestmark = pytest.mark.contract
 
@@ -75,10 +84,22 @@ def _migrate(sqlalchemy_url: str) -> None:
     command.upgrade(config, "head")
 
 
-def test_postgres_rbac_and_api_key_stores_against_a_migrated_database() -> None:
+def test_the_postgres_rbac_and_api_key_stores_against_a_migrated_database() -> None:
     with PostgresContainer("postgres:16") as postgres:
         _migrate(postgres.get_connection_url(driver="asyncpg"))
         asyncio.run(_assert_against(postgres.get_connection_url(driver=None)))
+
+
+def test_stores_conform_to_their_ports_structurally_not_by_inheritance() -> None:
+    """``RbacStore`` and ``ApiKeyWriter`` now share a package with every
+    implementation of them, which makes inheriting the Protocol a one-line
+    temptation. Conformance must stay structural: an implementation that
+    names the Protocol in its bases gets its signatures checked once at
+    definition and stops being the independent conformer this module exists
+    to compare against the in-memory reference."""
+    assert RbacStore not in PostgresRbacStore.__mro__
+    assert RbacStore not in InMemoryRbacStore.__mro__
+    assert ApiKeyWriter not in PostgresApiKeyStore.__mro__
 
 
 async def _assert_against(dsn: str) -> None:
@@ -102,6 +123,9 @@ async def _assert_against(dsn: str) -> None:
         await _assert_capability_delete_is_refused_while_a_role_still_grants_it(pool)
         await _assert_role_delete_cascades_its_capability_rows_once_its_bindings_are_gone(pool)
         await _assert_policies_and_role_bindings_jsonb_shape(pool)
+        await _assert_store_order_agrees_between_backends_and_matches_the_boundary_key(pool)
+        await _assert_postgres_orders_policy_names_by_byte_order_not_locale_order(pool)
+        await _assert_a_duplicate_policy_name_is_walked_exactly_once(pool)
     finally:
         await pool.close()
 
@@ -646,3 +670,216 @@ async def _assert_policies_and_role_bindings_jsonb_shape(pool: asyncpg.Pool) -> 
                 await pool.execute(update, literal, *case.key)
         await pool.execute(update, case.accepted, *case.key)
         await pool.execute(update, case.accepted_populated, *case.key)
+
+
+# -- ordering: the keyset cursor's assumption about store order --------------
+
+
+def _policy_key(item: Policy) -> tuple[str, str]:
+    return (item.name, str(item.id))
+
+
+def _service_account_key(item: ServiceAccount) -> tuple[str]:
+    return (item.name,)
+
+
+def _binding_key(item: RoleBindingRecord) -> tuple[str, str]:
+    return (item.principal, item.role_code)
+
+
+async def _insert_policy_row(pool: asyncpg.Pool, record: Policy) -> None:
+    await pool.execute(
+        """
+        INSERT INTO policies (id, policy_type, name, spec, created_by, created_at)
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+        """,
+        record.id,
+        record.policy_type,
+        record.name,
+        json.dumps(record.spec),
+        record.created_by,
+        record.created_at,
+    )
+
+
+async def _assert_store_order_agrees_between_backends_and_matches_the_boundary_key(
+    pool: asyncpg.Pool,
+) -> None:
+    """The one property no other assertion in this module checks: that the
+    two backends return records from the same collection in the same
+    sequence, and that the sequence is what sorting the records by the HTTP
+    boundary's own cursor key would produce - for all three collections
+    ``RbacStore`` orders."""
+    memory_store = InMemoryRbacStore()
+    postgres_store = PostgresRbacStore(pool)
+
+    names = ["zebra", "apple", "mango"]
+
+    memory_policies = [
+        await memory_store.create_policy(
+            policy_type="retention", name=f"{name}-policy", spec={}, created_by="contract-test"
+        )
+        for name in names
+    ]
+    postgres_policies = [
+        await postgres_store.create_policy(
+            policy_type="retention", name=f"{name}-policy", spec={}, created_by="contract-test"
+        )
+        for name in names
+    ]
+    memory_policy_ids = {record.id for record in memory_policies}
+    postgres_policy_ids = {record.id for record in postgres_policies}
+    memory_listed_policies = [
+        item for item in await memory_store.list_policies() if item.id in memory_policy_ids
+    ]
+    postgres_listed_policies = [
+        item for item in await postgres_store.list_policies() if item.id in postgres_policy_ids
+    ]
+    assert [item.name for item in memory_listed_policies] == [
+        item.name for item in postgres_listed_policies
+    ]
+    assert memory_listed_policies == sorted(memory_policies, key=_policy_key)
+    assert postgres_listed_policies == sorted(postgres_policies, key=_policy_key)
+
+    # ``service_accounts.name`` is restricted to lowercase, digits and
+    # hyphens, so case and accents can't probe the collation here - a
+    # hyphen against an adjacent character can: under the default locale it
+    # is treated as ignorable, reordering these three relative to byte order.
+    account_names = ["a-count", "a1-count", "ab-count"]
+    memory_organization_id = uuid4()
+    postgres_organization_id = await _insert_organization(pool, slug="astro-ordering")
+    memory_accounts = [
+        await memory_store.create_service_account(
+            memory_organization_id,
+            name=name,
+            subject=f"astro-ordering-memory/{name}",
+            created_by="contract-test",
+        )
+        for name in account_names
+    ]
+    postgres_accounts = [
+        await postgres_store.create_service_account(
+            postgres_organization_id,
+            name=name,
+            subject=f"astro-ordering-postgres/{name}",
+            created_by="contract-test",
+        )
+        for name in account_names
+    ]
+    memory_listed_accounts = await memory_store.list_service_accounts(memory_organization_id)
+    postgres_listed_accounts = await postgres_store.list_service_accounts(postgres_organization_id)
+    assert [item.name for item in memory_listed_accounts] == [
+        item.name for item in postgres_listed_accounts
+    ]
+    assert memory_listed_accounts == sorted(memory_accounts, key=_service_account_key)
+    assert postgres_listed_accounts == sorted(postgres_accounts, key=_service_account_key)
+
+    principals = ["user:zoe", "user:amy", "user:mia"]
+    memory_project_id = uuid4()
+    postgres_project_id = uuid4()
+    memory_bindings = [
+        await memory_store.grant_role(
+            principal=principal,
+            role_code="developer",
+            scope_type=ScopeType.PROJECT,
+            scope_id=memory_project_id,
+            created_by="contract-test",
+        )
+        for principal in principals
+    ]
+    postgres_bindings = [
+        await postgres_store.grant_role(
+            principal=principal,
+            role_code="developer",
+            scope_type=ScopeType.PROJECT,
+            scope_id=postgres_project_id,
+            created_by="contract-test",
+        )
+        for principal in principals
+    ]
+    memory_listed_bindings = await memory_store.bindings_at(ScopeType.PROJECT, memory_project_id)
+    postgres_listed_bindings = await postgres_store.bindings_at(
+        ScopeType.PROJECT, postgres_project_id
+    )
+    assert [item.principal for item in memory_listed_bindings] == [
+        item.principal for item in postgres_listed_bindings
+    ]
+    assert memory_listed_bindings == sorted(memory_bindings, key=_binding_key)
+    assert postgres_listed_bindings == sorted(postgres_bindings, key=_binding_key)
+
+
+async def _assert_postgres_orders_policy_names_by_byte_order_not_locale_order(
+    pool: asyncpg.Pool,
+) -> None:
+    """This cluster's default collation folds case and treats a hyphen and
+    an accent as insignificant; ``COLLATE "C"`` must override that so the
+    store's order is exactly Python's ``str`` order, which is the order the
+    keyset cursor's comparison assumes."""
+    store = PostgresRbacStore(pool)
+    now = datetime.now(UTC)
+    names = ["pii-mask", "piimask", "PII-mask", "cafe", "café"]
+    records = [Policy(uuid7(), "retention", name, {}, "contract-test", now) for name in names]
+    for record in records:
+        await _insert_policy_row(pool, record)
+
+    ids = {record.id for record in records}
+    listed = [item for item in await store.list_policies() if item.id in ids]
+    assert [item.name for item in listed] == sorted(names)
+
+
+class _PolicyIdView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+
+
+async def _assert_a_duplicate_policy_name_is_walked_exactly_once(pool: asyncpg.Pool) -> None:
+    """Two policies sharing a name have no natural tiebreak but ``id``.
+    Inserting the lexicographically later id first means an id-less order
+    would come back in insertion order - the wrong order for the cursor's
+    key - and walking that order at ``limit=1`` would skip the row the
+    cursor's ``>`` comparison can no longer see."""
+    store = PostgresRbacStore(pool)
+    now = datetime.now(UTC)
+    high = Policy(
+        UUID("ffffffff-ffff-ffff-ffff-fffffffffffe"),
+        "retention",
+        "shared-name",
+        {},
+        "contract-test",
+        now,
+    )
+    low = Policy(
+        UUID("00000000-0000-0000-0000-000000000001"),
+        "retention",
+        "shared-name",
+        {},
+        "contract-test",
+        now,
+    )
+    solo = Policy(uuid7(), "retention", "solo-name", {}, "contract-test", now)
+    expected = [item.id for item in sorted((high, low, solo), key=_policy_key)]
+
+    memory_store = InMemoryRbacStore()
+    for record in (high, low, solo):  # high inserted first, on purpose
+        memory_store._policies[record.id] = record
+    assert [item.id for item in await memory_store.list_policies()] == expected
+
+    for record in (high, low, solo):  # high inserted first, on purpose
+        await _insert_policy_row(pool, record)
+
+    ids = {high.id, low.id, solo.id}
+    listed = [item for item in await store.list_policies() if item.id in ids]
+
+    seen: list[UUID] = []
+    after: str | None = None
+    while True:
+        page = paginate(listed, _PolicyIdView, key=_policy_key, limit=1, after=after)
+        if not page.items:
+            break
+        seen.append(page.items[0].id)
+        after = page.next_cursor
+        if after is None:
+            break
+
+    assert seen == expected

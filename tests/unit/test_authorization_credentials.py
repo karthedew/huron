@@ -1,6 +1,6 @@
-"""The cookie half of ``current_principal``: CSRF enforcement, the cookie
-attribute helpers, and the priority rule that a bearer credential is never
-downgraded to a session even when a valid session cookie also rides along."""
+"""Request credential -> Principal, or 401: bearer/session/dev-header
+precedence, CSRF enforcement in the cookie branch, and the dev-header
+fallback outside OIDC deployments."""
 
 from __future__ import annotations
 
@@ -10,19 +10,13 @@ from uuid import uuid4
 
 import pytest
 from starlette.requests import Request
-from starlette.responses import Response
 
-from huron.pkg.auth import ABSOLUTE_TTL, AuthError, SessionRecord, create_session
+from huron.pkg.auth import AuthError, OidcResolver, SessionRecord, create_session
 from huron.pkg.rawstore import PosixRawStore
-from huron.service.api.authorization import (
-    DEFAULT_SESSION_COOKIE_NAME,
-    _cookie_name,
-    _enforce_csrf,
-    clear_session_cookie,
-    current_principal,
-    set_session_cookie,
-)
+from huron.service.api.authorization import current_principal
+from huron.service.api.authorization.credentials import _enforce_csrf
 from huron.service.api.repository import HierarchyRepository
+from huron.service.api.runtime import ApiRuntime
 from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
 
 if TYPE_CHECKING:
@@ -31,29 +25,28 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-class _State:
-    def __init__(self, **kwargs: object) -> None:
-        self.__dict__.update(kwargs)
-
-
-class _App:
-    def __init__(self, **kwargs: object) -> None:
-        self.state = _State(**kwargs)
-
-
 def _request(
     *,
     method: str = "GET",
     headers: dict[str, str] | None = None,
     cookies: dict[str, str] | None = None,
-    app: object | None = None,
 ) -> Request:
     raw_headers = [(key.lower().encode(), value.encode()) for key, value in (headers or {}).items()]
     if cookies:
         cookie_header = "; ".join(f"{key}={value}" for key, value in cookies.items())
         raw_headers.append((b"cookie", cookie_header.encode()))
-    scope = {"type": "http", "method": method, "path": "/", "headers": raw_headers, "app": app}
+    scope = {"type": "http", "method": method, "path": "/", "headers": raw_headers, "app": None}
     return Request(scope)
+
+
+def _runtime(*, repository: HierarchyRepository, settings: ApiSettings) -> ApiRuntime:
+    return ApiRuntime(
+        settings=settings,
+        repository=repository,
+        oidc_resolver=None,
+        oidc_client=None,
+        database_pool=None,
+    )
 
 
 def _settings(*, env: str) -> ApiSettings:
@@ -92,19 +85,6 @@ def _session_record(csrf_token: str = "the-csrf-token") -> SessionRecord:
     )
 
 
-# -- _cookie_name -------------------------------------------------------------
-
-
-def test_cookie_name_uses_the_configured_name() -> None:
-    request = _request(app=_App(settings=_settings(env="development")))
-    assert _cookie_name(request) == "huron_session"
-
-
-def test_cookie_name_falls_back_to_the_default_without_settings() -> None:
-    request = _request(app=_App())
-    assert _cookie_name(request) == DEFAULT_SESSION_COOKIE_NAME
-
-
 # -- _enforce_csrf --------------------------------------------------------------
 
 
@@ -139,50 +119,19 @@ def test_enforce_csrf_rejects_a_non_ascii_header_without_raising_type_error() ->
         _enforce_csrf(request, _session_record(csrf_token="right"))
 
 
-# -- set_session_cookie / clear_session_cookie -----------------------------
-
-
-def test_set_session_cookie_is_httponly_lax_and_secure_outside_development() -> None:
-    response = Response()
-    set_session_cookie(response, _settings(env="production"), "hs_abc_def")
-    cookie = response.headers.get("set-cookie")
-    assert cookie is not None
-    assert cookie.startswith("huron_session=hs_abc_def")
-    assert "HttpOnly" in cookie
-    assert "SameSite=lax" in cookie
-    assert "Path=/" in cookie
-    assert "Secure" in cookie
-    assert f"Max-Age={int(ABSOLUTE_TTL.total_seconds())}" in cookie
-
-
-def test_set_session_cookie_omits_secure_in_development() -> None:
-    response = Response()
-    set_session_cookie(response, _settings(env="development"), "hs_abc_def")
-    cookie = response.headers.get("set-cookie")
-    assert cookie is not None
-    assert "Secure" not in cookie
-
-
-def test_clear_session_cookie_expires_the_cookie_immediately() -> None:
-    response = Response()
-    clear_session_cookie(response, _settings(env="production"))
-    cookie = response.headers.get("set-cookie")
-    assert cookie is not None
-    assert cookie.startswith("huron_session=")
-    assert "Max-Age=0" in cookie
-
-
 # -- current_principal: cookie branch and bearer priority --------------------
 
 
 async def test_current_principal_resolves_a_valid_session_cookie(tmp_path: Path) -> None:
-    repository = HierarchyRepository(PosixRawStore(str(tmp_path / "raw")))
+    repository = HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
+    )
     record, token = create_session("alice", authentication_method="password")
     await repository.sessions.add(record)
-    app = _App(repository=repository, settings=_settings(env="development"))
+    runtime = _runtime(repository=repository, settings=_settings(env="development"))
 
-    request = _request(method="GET", cookies={"huron_session": token}, app=app)
-    principal = await current_principal(request)
+    request = _request(method="GET", cookies={"huron_session": token})
+    principal = await current_principal(request, runtime)
 
     assert principal.subject == "alice"
     assert principal.authentication_method == "session"
@@ -190,22 +139,23 @@ async def test_current_principal_resolves_a_valid_session_cookie(tmp_path: Path)
 
 
 async def test_current_principal_enforces_csrf_for_a_cookie_authed_write(tmp_path: Path) -> None:
-    repository = HierarchyRepository(PosixRawStore(str(tmp_path / "raw")))
+    repository = HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
+    )
     record, token = create_session("alice", authentication_method="password")
     await repository.sessions.add(record)
-    app = _App(repository=repository, settings=_settings(env="development"))
+    runtime = _runtime(repository=repository, settings=_settings(env="development"))
 
-    denied = _request(method="POST", cookies={"huron_session": token}, app=app)
+    denied = _request(method="POST", cookies={"huron_session": token})
     with pytest.raises(AuthError):
-        await current_principal(denied)
+        await current_principal(denied, runtime)
 
     allowed = _request(
         method="POST",
         cookies={"huron_session": token},
         headers={"X-Huron-CSRF": record.csrf_token},
-        app=app,
     )
-    principal = await current_principal(allowed)
+    principal = await current_principal(allowed, runtime)
     assert principal.subject == "alice"
 
 
@@ -215,16 +165,55 @@ async def test_current_principal_never_downgrades_a_bearer_caller_to_its_cookie(
     """A programmatic caller with both a bearer token and a cookie jar must
     be resolved as the bearer credential, even when that bearer path then
     fails - it must never silently fall through to the session cookie."""
-    repository = HierarchyRepository(PosixRawStore(str(tmp_path / "raw")))
+    repository = HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
+    )
     record, token = create_session("alice", authentication_method="password")
     await repository.sessions.add(record)
-    app = _App(repository=repository, settings=_settings(env="development"))
+    runtime = _runtime(repository=repository, settings=_settings(env="development"))
 
     request = _request(
         method="GET",
         headers={"Authorization": "Bearer some.jwt.token"},
         cookies={"huron_session": token},
-        app=app,
     )
     with pytest.raises(AuthError, match="no OIDC verifier configured"):
-        await current_principal(request)
+        await current_principal(request, runtime)
+
+
+async def test_current_principal_resolves_a_bearer_jwt_through_the_configured_verifier(
+    tmp_path: Path,
+) -> None:
+    repository = HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
+    )
+    resolver = OidcResolver(lambda _token: {"sub": "carol", "groups": ["astro"]})
+    runtime = ApiRuntime(
+        settings=_settings(env="production"),
+        repository=repository,
+        oidc_resolver=resolver,
+        oidc_client=None,
+        database_pool=None,
+    )
+
+    request = _request(method="GET", headers={"Authorization": "Bearer some.jwt.token"})
+    principal = await current_principal(request, runtime)
+
+    assert principal.subject == "carol"
+    assert principal.groups == frozenset({"astro"})
+
+
+async def test_current_principal_refuses_an_oidc_deployment_with_no_credential_at_all(
+    tmp_path: Path,
+) -> None:
+    """Outside ``dev-headers``, a request with neither a bearer token nor a
+    session cookie is refused rather than falling through to the
+    development header resolver."""
+    repository = HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
+    )
+    runtime = _runtime(repository=repository, settings=_settings(env="production"))
+
+    request = _request(method="GET")
+    with pytest.raises(AuthError, match="a bearer credential is required"):
+        await current_principal(request, runtime)

@@ -26,6 +26,7 @@ dependencies = [
     "pyjwt[crypto]>=2.13.0",
     "argon2-cffi>=25.1.0",
     "greenlet>=3.5.5",
+    "asyncer>=0.0.18",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -49,6 +50,10 @@ dev = [
     "radon>=6.0.1",
     "complexipy>=7.0.1",
     "pyscn>=1.30.0 ; platform_machine == 'x86_64' or sys_platform == 'darwin'",
+    # Checks every docstring against its signature: parameters, returns, yields
+    # and raised exceptions. ruff's D rules prove a docstring exists and is well
+    # formed; only pydoclint proves it is complete.
+    "pydoclint>=0.9.1",
 ]
 # Documentation toolchain. Install with:  uv sync --group docs
 #
@@ -69,9 +74,25 @@ extend-exclude = ["*.md"]
 force-exclude = true
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH", "RUF"]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH", "RUF", "FAST", "D"]
+
+[tool.ruff.lint.pydocstyle]
+# Google style: a one-line summary, then Args / Returns / Yields / Raises
+# sections. This is the one convention under which ruff also checks that an
+# Args section names every parameter (D417); pydoclint (below) checks that the
+# sections exist and match the signature.
+convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
+# Tests document what they prove, not how they are called: every module,
+# class, test and fixture carries a summary line, but a test double's
+# __init__ and dunder methods add nothing a reader needs.
+"tests/**" = ["D105", "D107"]
+# A route's docstring is also its OpenAPI description. FastAPI truncates the
+# description at a form feed, so the caller-facing prose comes first and the
+# Args/Returns/Raises sections follow "\f" - which D301 would otherwise want
+# a raw string for, defeating the escape.
+"src/huron/service/api/routes/**/endpoints/*.py" = ["D301"]
 # Stable public error names intentionally mirror their API codes.
 "src/huron/pkg/auth/errors.py" = ["N818"]
 "src/huron/pkg/auth/password.py" = ["N818"]
@@ -81,18 +102,45 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH", "RUF"]
 "src/huron/pkg/catalog/layers.py" = ["N818"]
 # The role/rbac error names intentionally mirror their stable API codes.
 "src/huron/pkg/rbac/roles.py" = ["N818"]
-"src/huron/service/api/authorization.py" = ["N818"]
-"src/huron/service/api/repository.py" = ["N818"]
+"src/huron/service/api/errors.py" = ["N818"]
 # FastAPI resolves annotations at runtime; type-checking-only imports break
 # dependency injection in these modules.
 "src/huron/service/api/**" = ["TC001", "TC002", "TC003"]
 
+[tool.pydoclint]
+style = "google"
+quiet = true
+# Types live in the signature and are never repeated in the docstring.
+arg-type-hints-in-docstring = false
+check-return-types = false
+check-yield-types = false
+# A summary alone is not a complete docstring for anything with parameters.
+skip-checking-short-docstrings = false
+check-arg-order = true
+skip-checking-raises = false
+should-document-star-arguments = true
+# __init__ documents its own parameters (ruff's D107 requires the docstring);
+# the class docstring describes the object, not its constructor.
+allow-init-docstring = true
+# A None-returning function without a return statement needs no Returns.
+require-return-section-when-returning-nothing = false
+# Fields are documented where they are declared (pydantic Field descriptions,
+# attribute comments), not repeated in an Attributes section.
+check-class-attributes = false
+# A NumPy- or Sphinx-style docstring that sneaks in is a mismatch, not a pass.
+check-style-mismatch = true
+
 [tool.mypy]
 strict = true
-# The pkg tier and the shared schema floor are strict from day one. Services are
-# composition roots full of third-party wiring; add them here once the frameworks
-# they compose have settled.
-files = ["src/huron/pkg", "src/huron/schema"]
+files = ["src/huron"]
+
+[[tool.mypy.overrides]]
+# asyncpg ships no py.typed marker. The two Postgres store adapters, the
+# composition root and its runtime pool holder are the modules that touch
+# it, and each narrows every row to a typed record at its own boundary, so
+# the driver's own annotations buy nothing here.
+module = "asyncpg.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -176,11 +224,35 @@ forbidden_modules = [
     "fastapi", "starlette", "uvicorn", "sqlalchemy", "asyncpg", "alembic",
 ]
 
+# The authorization package is entered through its public surface. Its five
+# submodules are one unit with one contract; a route that reaches past
+# __init__ into guards.py or decisions.py is depending on an arrangement of
+# internals, not on the guarantee the package makes.
+[[tool.importlinter.contracts]]
+name = "the authorization package is entered through its public surface"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["huron.service.api.routes.**", "huron.service.api.app"]
+forbidden_modules = ["huron.service.api.authorization.*"]
+
+# The stores package is entered through its public surface. A caller depends
+# on the guarantee a port makes, never on which module a particular adapter
+# was filed under; ``rows`` in particular is one store's private decoding of
+# its own SELECT.
+[[tool.importlinter.contracts]]
+name = "the stores package is entered through its public surface"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = [
+    "huron.service.api.repository",
+    "huron.service.api.app",
+    "huron.service.api.authorization.**",
+    "huron.service.api.routes.**",
+]
+forbidden_modules = ["huron.service.api.stores.*"]
+
 [tool.ty.src]
-# Typing policy: the pkg tier and the shared schema floor are strictly typed
-# (mypy --strict above); ty mirrors that scope. Services are composition roots
-# full of third-party wiring and join once their frameworks settle.
-include = ["src/huron/pkg", "src/huron/schema"]
+include = ["src/huron"]
 
 [tool.coverage.report]
 # Ratchet floor set at the measured baseline (2026-08-30). Never lower it;

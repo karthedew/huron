@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
+from typing import ClassVar
 
 
 class DomainError(Exception):
-    """A failure whose stable code is part of Huron's public contract."""
+    """A failure whose stable code is part of Huron's public contract.
 
-    code: str = "DOMAIN_ERROR"
-    status_code: int = 400
+    Abstract: a subclass supplies ``code`` and ``status_code``, and the pair
+    is one row of the error table. Raising this class directly would put a
+    status on the wire with no code for a client to switch on.
+    """
+
+    #: Not a ``ClassVar``: ``PathRuleViolation`` below names a more specific
+    #: code per instance for a handful of raise sites, so ``code`` has to
+    #: stay writable on a subclass. ``status_code`` never varies within a
+    #: subclass and stays a true class variable.
+    code: str
+    status_code: ClassVar[int]
 
     def __init__(self, detail: str | None = None, *, context: dict[str, object] | None = None):
+        if type(self) is DomainError:
+            raise TypeError("DomainError is abstract; raise a subclass with a stable code")
         self.detail = detail or self.code.replace("_", " ").lower()
         self.context = context or {}
         super().__init__(self.detail)
@@ -35,8 +43,8 @@ class DatasetLocked(DomainError):
     code, status_code = "DATASET_LOCKED", 409
 
 
-class SessionExpired(DomainError):
-    code, status_code = "SESSION_EXPIRED", 409
+class IngestSessionExpired(DomainError):
+    code, status_code = "INGEST_SESSION_EXPIRED", 409
 
 
 class ManifestMismatch(DomainError):
@@ -135,14 +143,6 @@ class ProductStaleInput(DomainError):
     code, status_code = "PRODUCT_STALE_INPUT", 409
 
 
-class ApiKeyExpired(DomainError):
-    code, status_code = "APIKEY_EXPIRED", 401
-
-
-class ApiKeyRevoked(DomainError):
-    code, status_code = "APIKEY_REVOKED", 401
-
-
 class QuotaExceeded(DomainError):
     code, status_code = "QUOTA_EXCEEDED", 413
 
@@ -159,44 +159,25 @@ class ContractMismatch(DomainError):
     code, status_code = "CONTRACT_MISMATCH", 409
 
 
-_DOMAIN_ERROR_TYPES = (
-    DatasetLocked,
-    SessionExpired,
-    ManifestMismatch,
-    TagExists,
-    TagWithdrawn,
-    DuplicateContent,
-    PathCollision,
-    EmptyRevision,
-    FileTooLarge,
-    TooManyFiles,
-    RevisionTooLarge,
-    IdempotencyKeyReused,
-    PreconditionFailed,
-    SlugImmutable,
-    AmendmentFieldForbidden,
-    ProjectionUnavailable,
-    GrantExpired,
-    GrantScopeExceeded,
-    LayerNotMaterialized,
-    SnapshotNotPublished,
-    ProductVersionExists,
-    ValidationRequired,
-    ValidationFailed,
-    InputNotReadable,
-    ClassificationExceeded,
-    ProductStaleInput,
-    ApiKeyExpired,
-    ApiKeyRevoked,
-    QuotaExceeded,
-    RetentionHoldPresent,
-    ProfileUnknown,
-    ContractMismatch,
-)
+class ResourceNotFound(DomainError):
+    code, status_code = "NOT_FOUND", 404
+
+
+class ClassificationUnknown(DomainError):
+    code, status_code = "CLASSIFICATION_UNKNOWN", 400
+
+
+class InvalidCursor(DomainError):
+    code, status_code = "INVALID_CURSOR", 400
 
 
 class PathRuleViolation(DomainError):
-    """A path fails one of the storage-layout or manifest rules."""
+    """A path fails one of the storage-layout or manifest rules.
+
+    Most raise sites report the shared ``PATH_RULE_VIOLATION`` code; a few
+    in ``manifest.py`` name a more specific code for a rule the path check
+    alone can't describe (a byte length, a control character).
+    """
 
     code = "PATH_RULE_VIOLATION"
     status_code = 400
@@ -216,20 +197,10 @@ class IllegalIngestTransition(DomainError):
     status_code = 409
 
 
-def all_domain_error_types() -> tuple[type[DomainError], ...]:
-    """Return exactly the error types documented in ``design/api.html``."""
-    return _DOMAIN_ERROR_TYPES
-
-
-def error_codes(types: Iterable[type[DomainError]] | None = None) -> frozenset[str]:
-    return frozenset(error.code for error in (types or all_domain_error_types()))
-
-
 __all__ = [
     "AmendmentFieldForbidden",
-    "ApiKeyExpired",
-    "ApiKeyRevoked",
     "ClassificationExceeded",
+    "ClassificationUnknown",
     "ContractMismatch",
     "DatasetLocked",
     "DomainError",
@@ -240,7 +211,9 @@ __all__ = [
     "GrantScopeExceeded",
     "IdempotencyKeyReused",
     "IllegalIngestTransition",
+    "IngestSessionExpired",
     "InputNotReadable",
+    "InvalidCursor",
     "LayerNotMaterialized",
     "ManifestMismatch",
     "PathCollision",
@@ -251,9 +224,9 @@ __all__ = [
     "ProfileUnknown",
     "ProjectionUnavailable",
     "QuotaExceeded",
+    "ResourceNotFound",
     "RetentionHoldPresent",
     "RevisionTooLarge",
-    "SessionExpired",
     "SlugImmutable",
     "SnapshotNotPublished",
     "TagExists",
@@ -261,6 +234,4 @@ __all__ = [
     "TooManyFiles",
     "ValidationFailed",
     "ValidationRequired",
-    "all_domain_error_types",
-    "error_codes",
 ]

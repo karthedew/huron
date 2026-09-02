@@ -16,13 +16,25 @@ uv sync --group docs    # adds the documentation toolchain
 ## The Compose stack
 
 ```bash
-make up      # docker compose up -d --wait postgres minio keycloak  (or podman-compose)
+make up      # compose up -d --wait postgres minio keycloak, then scripts/check-stack.sh
+make check   # re-run the probes against a stack that is already up
+make logs SERVICE=keycloak   # follow one service's logs (omit SERVICE for all)
 make down    # stop and remove the containers
 ```
 
 `make up` starts infra only — Postgres, MinIO, and Keycloak (the local IdP) — and nothing else.
 The API itself runs on the host (`make api`, below) unless you opt into the fully containerized
 stack.
+
+`make up` does not trust `compose up --wait` on its own. Docker Compose fails when a container
+exits before its healthcheck passes; **podman-compose does not** — Podman's remote API (the path
+`podman machine` always takes on macOS) answers `0` for a container that stopped before becoming
+healthy, so podman-compose prints a bare `0` in its `--wait` output and exits successfully. That
+is exactly what a failed Keycloak realm import looks like. So `make up` finishes by running
+`scripts/check-stack.sh`, which probes each service from the host — Postgres answers the wire
+protocol on 5433, MinIO's liveness endpoint, the `huron` realm's discovery document with the
+expected issuer, and whether `keycloak` resolves on this host — and fails with a `[FAIL]` line
+and a hint when one does not.
 
 | Service | Host port | Stands in for |
 |---|---|---|
@@ -31,10 +43,14 @@ stack.
 | Keycloak 26 | 8081 | The IdP; realm `huron` is pre-seeded from `scripts/keycloak/huron-realm.json` |
 
 Keycloak's healthcheck probes `/health/ready` on its management port
-(`KC_HEALTH_ENABLED=true`), not just the HTTP port accepting connections — so
-`make up`/`make stack` only report it healthy once realm import has actually finished, and a
-broken `huron-realm.json` shows up as `make up` hanging/failing rather than as a later
-discovery 404 from `api`.
+(`KC_HEALTH_ENABLED=true`), not just the HTTP port accepting connections, so the container is
+only healthy once realm import has actually finished. A broken `huron-realm.json` aborts the
+import and the container exits; `make up` then reports `[FAIL] keycloak realm 'huron' is
+missing`. Read the cause with `make logs SERVICE=keycloak`, fix the file, and run
+`make keycloak-reset` — Keycloak keeps no volume, so re-creating its container re-imports the
+realm from scratch. Two limits of the import schema are easy to trip: a role `description` is
+at most 255 characters, and every user needs `firstName`, `lastName` and `email` or the
+default user profile stops each login at an "Update Account Information" page.
 
 ### Running the whole app in containers
 
@@ -68,16 +84,9 @@ service name) or on the host (`make api`, where it needs the `make hosts` line).
 host-mode variant that can skip it or use `localhost:8081` instead — `HURON_OIDC__ISSUER` is
 `http://keycloak:8081/realms/huron` either way.
 
-Run `make hosts` once, then set the same OIDC variables whether `api` runs in the container or
-on the host — e.g. in `.env` for `make api`:
-
-```bash
-HURON_AUTH_MODE=oidc
-HURON_OIDC__ISSUER=http://keycloak:8081/realms/huron
-HURON_OIDC__CLIENT_ID=huron-web
-HURON_OIDC__CLIENT_SECRET=dev-only-secret
-HURON_OIDC__REDIRECT_URL=http://localhost:8080/auth/oidc/callback
-```
+Run `make hosts` once. The OIDC variables are the same whether `api` runs in the container or
+on the host: both read `dev.env` (below), and the compose service overrides only
+`HURON_DATABASE_URL`.
 
 Both dev users seeded in the realm log in at Keycloak's own login form during the code flow:
 `karl` / `karl-dev-password` (realm role `platform-admins`, surfaced as the OIDC `groups`
@@ -117,7 +126,7 @@ podman machine stop && podman machine start
 ## Migrations
 
 ```bash
-make migrate            # uv run alembic upgrade head
+make migrate            # uv run --env-file dev.env alembic upgrade head
 ```
 
 Migrations live in `migrations/versions/`. Each one is a module docstring explaining *why*, a
@@ -128,11 +137,18 @@ documentation and is never executed.
 ## Running the API
 
 ```bash
-make api                # uvicorn huron.service.api.app:app --reload --port 8080
+make api                # uv run --env-file dev.env uvicorn huron.service.api.main:app --reload --port 8080
 ```
 
 Configuration is environment variables with the `HURON_` prefix, read by `ApiSettings` in
-`huron/service/api/settings.py`:
+`huron/service/api/settings.py`. `ApiSettings` reads the process environment and nothing else —
+it has no `.env` support of its own, so a bare `uvicorn` with nothing exported fails at import
+with four `Field required` errors. `dev.env` at the repository root holds the development
+values, and both `make api` and `make migrate` load it through `uv run --env-file`; a variable
+already set in your shell takes precedence over the file. The compose `api` service reads the
+same file through `env_file`, so there is one place to change the development configuration.
+Every value in it is a development-only literal for the local stack — the JSON vocabulary is
+single-quoted so uv, Docker Compose and podman-compose all read it byte for byte.
 
 | Variable | Required | Notes |
 |---|---|---|
@@ -171,9 +187,25 @@ is treated as an OIDC JWT and passed to the verifier the composition root inject
     role. `HURON_BOOTSTRAP_PLATFORM_OWNER` grants exactly one SYSTEM-scope `platform_owner`
     binding at startup — the single way in. Unset it once real bindings exist.
 
-!!! note "`HURON_STORE_BACKEND` defaults to `memory`"
+!!! note "`HURON_STORE_BACKEND` defaults to `memory`; `dev.env` opts into `postgres`"
 
     `postgres` wires the Postgres-backed RBAC *and* auth stores together, and is only safe
     once the rows their foreign keys target — organizations and projects — are real Postgres
     rows. The organization/project/dataset hierarchy is not Postgres-backed yet, so `memory`
-    is the working default and `postgres` is an explicit opt-in.
+    is the code's default and `postgres` is an explicit opt-in. `dev.env` opts in, the same
+    as the compose stack, so sessions and role bindings survive uvicorn's reloads; run
+    `make migrate` before the first `make api`.
+
+## Running the frontend
+
+```bash
+make web-install        # npm ci in web/, once
+make web                # vite dev server on http://localhost:5173
+make web-check          # svelte-check + prettier --check
+make web-test           # vitest
+make web-build          # production build (adapter-node)
+```
+
+`http://localhost:5173` is where `/auth/oidc/callback` sends the browser after login
+(`HURON_WEB_APP_URL` in `dev.env`), so the API and the frontend are meant to run side by side:
+`make up`, `make migrate`, then `make api` in one terminal and `make web` in another.

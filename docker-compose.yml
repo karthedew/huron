@@ -64,7 +64,13 @@ services:
       # a live instance) against Keycloak 26.x's realm-import schema. Every
       # credential in it - the huron-web client secret, karl's and sam's
       # passwords - is a dev-only literal for this local instance; regenerate
-      # by hand if they ever need to change.
+      # by hand if they ever need to change. Two limits of that schema are
+      # easy to trip and abort the whole import (the container then exits and
+      # `make up`'s stack check reports the realm missing): a role description
+      # is at most 255 characters (KEYCLOAK_ROLE.DESCRIPTION), and every user
+      # needs firstName, lastName and email, or the default user profile stops
+      # each login at "Update Account Information". The realm has no volume,
+      # so `make keycloak-reset` re-imports the file from scratch.
       - ./scripts/keycloak/huron-realm.json:/opt/keycloak/data/import/huron-realm.json:ro
     healthcheck:
       # A raw HTTP/1.1 GET over /dev/tcp (no curl/wget in this image), against
@@ -86,8 +92,9 @@ services:
 
   # Everything below is behind the "app" profile: `make up` (infra only) never
   # starts these; `make stack` does (docker/podman compose --profile app ...).
-  # Dev-only secrets below (client secret, flow secret) are literals for a
-  # local Keycloak/Postgres nobody else can reach - never real credentials.
+  # Dev-only secrets (client secret, flow secret) live in dev.env and are
+  # literals for a local Keycloak/Postgres nobody else can reach - never real
+  # credentials.
   migrate:
     profiles: ["app"]
     build:
@@ -107,19 +114,15 @@ services:
       dockerfile: Containerfile
     ports:
       - "8080:8080"
+    # The same HURON_* configuration `make api` uses on the host, so there is
+    # one place to change it. Only the database URL differs: from inside the
+    # compose network Postgres is postgres:5432, from the host localhost:5433.
+    # `environment` takes precedence over `env_file` in both docker compose
+    # and podman-compose.
+    env_file:
+      - dev.env
     environment:
-      HURON_ENV: development
-      HURON_AUTH_MODE: oidc
       HURON_DATABASE_URL: postgresql://huron:huron@postgres:5432/huron
-      HURON_STORE_BACKEND: postgres
-      HURON_OIDC__ISSUER: http://keycloak:8081/realms/huron
-      HURON_OIDC__CLIENT_ID: huron-web
-      HURON_OIDC__CLIENT_SECRET: dev-only-secret
-      HURON_OIDC__REDIRECT_URL: http://localhost:8080/auth/oidc/callback
-      HURON_LOGIN_FLOW_SECRET: dev-only-flow-secret
-      HURON_WEB_APP_URL: http://localhost:5173
-      HURON_BOOTSTRAP_PLATFORM_OWNER: karl
-      HURON_CLASSIFICATION_VOCABULARY: '[{"code":"internal","order":0,"discoverable":true}]'
     depends_on:
       keycloak:
         condition: service_healthy

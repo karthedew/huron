@@ -37,7 +37,10 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
         bootstrap_platform_owner="root",
     )
-    repository = HierarchyRepository(PosixRawStore(settings.data_root))
+    repository = HierarchyRepository(
+        PosixRawStore(settings.data_root),
+        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
+    )
     # Entered as a context manager so the ASGI lifespan actually runs and
     # performs the one-time bootstrap grant below - a TestClient built
     # without ``with`` never fires startup/shutdown events at all.
@@ -233,6 +236,20 @@ def test_policy_attachment_requires_the_scoped_capability(client: TestClient) ->
     )
 
 
+def test_issuing_an_api_key_requires_an_idempotency_key(client: TestClient) -> None:
+    headers = _headers("root")
+    del headers["Idempotency-Key"]
+    missing = client.post("/api/v1/auth/api-keys", json={"name": "laptop"}, headers=headers)
+    assert missing.status_code == 422
+
+    empty = client.post(
+        "/api/v1/auth/api-keys",
+        json={"name": "laptop"},
+        headers={**headers, "Idempotency-Key": ""},
+    )
+    assert empty.status_code == 422
+
+
 def test_api_keys_inherit_the_callers_identity(client: TestClient) -> None:
     issued = client.post(
         "/api/v1/auth/api-keys",
@@ -241,8 +258,9 @@ def test_api_keys_inherit_the_callers_identity(client: TestClient) -> None:
     )
     assert issued.status_code == 201
     token = issued.json()["secret"]
-    session_info = client.get("/auth/session", headers={"Authorization": f"Bearer {token}"})
-    assert session_info.json() == {
+    info = client.get("/auth/session", headers={"Authorization": f"Bearer {token}"}).json()
+    identity = {key: value for key, value in info.items() if key != "effective_roles"}
+    assert identity == {
         "subject": "root",
         "kind": "user",
         "groups": [],
@@ -250,6 +268,9 @@ def test_api_keys_inherit_the_callers_identity(client: TestClient) -> None:
         "csrf_token": None,
         "expires_at": None,
     }
+    # A bearer credential resolves the same binding set a cookie session
+    # would - the bootstrap platform owner's one SYSTEM-scope grant.
+    assert [entry["scope_type"] for entry in info["effective_roles"]] == ["SYSTEM"]
 
 
 def test_slugs_are_immutable_at_every_level_for_every_role(client: TestClient) -> None:

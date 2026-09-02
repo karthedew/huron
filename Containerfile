@@ -1,8 +1,11 @@
-# Multi-stage build: resolve the locked venv with uv, then copy just the
-# venv and application code into a slim runtime image with no build tooling
-# and no root user. Development-only convenience (reload, dev headers) lives
-# on the host via `make api`; this image is the containerized path (`make
-# stack`) and always runs plain uvicorn.
+# Multi-stage build: resolve the locked venv with uv, then copy just the venv
+# and application code into a slim runtime image with no build tooling and no
+# root user. The runtime invokes uvicorn directly rather than the `fastapi`
+# CLI: the CLI is a Typer/Rich terminal application whose only job here would
+# be to call uvicorn, and its documented install (`fastapi[standard]`) pulls
+# fastapi-cloud-cli and sentry-sdk into an image that must not carry an
+# outbound telemetry client. Development-only convenience (reload) lives on
+# the host via `make api`.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
@@ -24,4 +27,4 @@ COPY --from=build --chown=huron:huron /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 USER huron
 EXPOSE 8080
-CMD ["uvicorn", "huron.service.api.app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "huron.service.api.main:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -210,34 +210,79 @@ client code path, degraded transport.</li>
 
 <p>Stable codes clients use for control flow:</p>
 
-<pre>
-DATASET_LOCKED           SESSION_EXPIRED          MANIFEST_MISMATCH
-TAG_EXISTS               TAG_WITHDRAWN
-DUPLICATE_CONTENT        PATH_COLLISION           EMPTY_REVISION
-FILE_TOO_LARGE           TOO_MANY_FILES           REVISION_TOO_LARGE
-IDEMPOTENCY_KEY_REUSED   PRECONDITION_FAILED      SLUG_IMMUTABLE
-AMENDMENT_FIELD_FORBIDDEN PROJECTION_UNAVAILABLE  GRANT_EXPIRED
-GRANT_SCOPE_EXCEEDED
-LAYER_NOT_MATERIALIZED   SNAPSHOT_NOT_PUBLISHED   PRODUCT_VERSION_EXISTS
-VALIDATION_REQUIRED      VALIDATION_FAILED        INPUT_NOT_READABLE
-CLASSIFICATION_EXCEEDED  PRODUCT_STALE_INPUT
-APIKEY_EXPIRED           APIKEY_REVOKED           QUOTA_EXCEEDED
-RETENTION_HOLD_PRESENT   PROFILE_UNKNOWN          CONTRACT_MISMATCH
-</pre>
+<table id="error-codes">
+<tr><th>Code</th><th>HTTP status</th><th>Live/reserved</th><th>Meaning</th></tr>
+<tr><td>EMPTY_REVISION</td><td>400</td><td>live</td><td>manifest declares no files</td></tr>
+<tr><td>PATH_RULE_VIOLATION</td><td>400</td><td>live</td><td>a slug or path breaks a storage-layout rule not covered by a more specific code below</td></tr>
+<tr><td>PATH_OUTSIDE_PAYLOAD</td><td>400</td><td>live</td><td>manifest path does not begin with <code>payload/</code></td></tr>
+<tr><td>PATH_NOT_NFC</td><td>400</td><td>live</td><td>manifest path is not Unicode NFC-normalized</td></tr>
+<tr><td>PATH_TOO_LONG</td><td>400</td><td>live</td><td>manifest path exceeds 1024 UTF-8 bytes</td></tr>
+<tr><td>PATH_TRAVERSAL</td><td>400</td><td>live</td><td>manifest path contains an empty, <code>.</code> or <code>..</code> segment</td></tr>
+<tr><td>PATH_CONTROL_CHARS</td><td>400</td><td>live</td><td>manifest path contains a control character</td></tr>
+<tr><td>PATH_SEPARATOR</td><td>400</td><td>live</td><td>manifest path contains a backslash</td></tr>
+<tr><td>AMENDMENT_FIELD_FORBIDDEN</td><td>400</td><td>live</td><td>an amendment touched a field outside the allow-list</td></tr>
+<tr><td>IDEMPOTENCY_KEY_REUSED</td><td>409</td><td>live</td><td>same idempotency key, different request body</td></tr>
+<tr><td>SLUG_IMMUTABLE</td><td>409</td><td>live</td><td><code>PATCH</code> tried to change a slug</td></tr>
+<tr><td>TAG_EXISTS</td><td>409</td><td>live</td><td>release tag already resolves</td></tr>
+<tr><td>PATH_COLLISION</td><td>409</td><td>live</td><td>two manifest entries claim one path</td></tr>
+<tr><td>ILLEGAL_INGEST_TRANSITION</td><td>409</td><td>live</td><td>ingest session state machine refused the transition</td></tr>
+<tr><td>LAYER_WORKFLOW_VIOLATION</td><td>409</td><td>live</td><td>unknown layer, or a derivation the workflow forbids</td></tr>
+<tr><td>LAYER_WRITE_FORBIDDEN</td><td>403</td><td>live</td><td>this principal kind may never write this layer</td></tr>
+<tr><td>PRECONDITION_FAILED</td><td>412</td><td>live</td><td><code>If-Match</code> version did not match</td></tr>
+<tr><td>FILE_TOO_LARGE</td><td>413</td><td>live</td><td>one file exceeds the configured limit</td></tr>
+<tr><td>TOO_MANY_FILES</td><td>413</td><td>live</td><td>revision exceeds the file-count limit</td></tr>
+<tr><td>REVISION_TOO_LARGE</td><td>413</td><td>live</td><td>revision exceeds the byte limit</td></tr>
+<tr><td>PROJECTION_UNAVAILABLE</td><td>503</td><td>live</td><td>the search projection is not configured or is down</td></tr>
+<tr><td>MANIFEST_MISMATCH</td><td>400</td><td>reserved</td><td>uploaded content does not match the declared manifest (§3 ingest)</td></tr>
+<tr><td>PROFILE_UNKNOWN</td><td>400</td><td>reserved</td><td>unknown dataset profile (§2 dataset profiles)</td></tr>
+<tr><td>INGEST_SESSION_EXPIRED</td><td>409</td><td>reserved</td><td>ingest session passed its idle or absolute TTL (§3 ingest)</td></tr>
+<tr><td>DATASET_LOCKED</td><td>409</td><td>reserved</td><td>dataset is locked against concurrent ingest (§3 ingest)</td></tr>
+<tr><td>DUPLICATE_CONTENT</td><td>409</td><td>reserved</td><td>identical content already ingested (§3 ingest)</td></tr>
+<tr><td>LAYER_NOT_MATERIALIZED</td><td>409</td><td>reserved</td><td>referenced layer has not been materialized (§4 layers)</td></tr>
+<tr><td>SNAPSHOT_NOT_PUBLISHED</td><td>409</td><td>reserved</td><td>referenced snapshot has not been published (§4 snapshots)</td></tr>
+<tr><td>PRODUCT_VERSION_EXISTS</td><td>409</td><td>reserved</td><td>product version already published (§4 products)</td></tr>
+<tr><td>PRODUCT_STALE_INPUT</td><td>409</td><td>reserved</td><td>product input is stale relative to its pinned sources (§4 products)</td></tr>
+<tr><td>VALIDATION_REQUIRED</td><td>409</td><td>reserved</td><td>validation evidence is required before publishing (§4 validation)</td></tr>
+<tr><td>CONTRACT_MISMATCH</td><td>409</td><td>reserved</td><td>payload violates its registered schema contract (§6 schema registry)</td></tr>
+<tr><td>RETENTION_HOLD_PRESENT</td><td>409</td><td>reserved</td><td>a retention hold blocks the operation (§6 retention)</td></tr>
+<tr><td>TAG_WITHDRAWN</td><td>410</td><td>reserved</td><td>release tag was withdrawn (§2 <code>POST /datasets/{id}/releases/{tag}:withdraw</code>)</td></tr>
+<tr><td>VALIDATION_FAILED</td><td>422</td><td>reserved</td><td>validation evidence did not pass (§4 validation)</td></tr>
+<tr><td>GRANT_EXPIRED</td><td>401</td><td>reserved</td><td>data-access grant passed its expiry (§5 data-access grants)</td></tr>
+<tr><td>GRANT_SCOPE_EXCEEDED</td><td>403</td><td>reserved</td><td>requested access exceeds the grant's scope (§5 data-access grants)</td></tr>
+<tr><td>INPUT_NOT_READABLE</td><td>403</td><td>reserved</td><td>principal may not read one of the referenced inputs (§5 data-access grants)</td></tr>
+<tr><td>CLASSIFICATION_EXCEEDED</td><td>403</td><td>reserved</td><td>data classification exceeds what the grant allows (§5 data-access grants)</td></tr>
+<tr><td>QUOTA_EXCEEDED</td><td>413</td><td>reserved</td><td>project storage quota exceeded (§2 project quota)</td></tr>
+<tr><td>CLASSIFICATION_UNKNOWN</td><td>400</td><td>live</td><td><code>data_classification</code> is outside the project's configured vocabulary</td></tr>
+<tr><td>INVALID_CURSOR</td><td>400</td><td>live</td><td><code>after</code> is not a decodable keyset cursor</td></tr>
+<tr><td>BAD_REQUEST</td><td>400</td><td>live</td><td>the request body could not be read (for example, the client disconnected before sending it completely) — raised inside FastAPI's request-body reading, once a route has already matched</td></tr>
+<tr><td>FORBIDDEN</td><td>403</td><td>live</td><td>role bindings do not allow this capability here</td></tr>
+<tr><td>NOT_FOUND</td><td>404</td><td>live</td><td>no such resource, or no such route</td></tr>
+<tr><td>OIDC_NOT_CONFIGURED</td><td>404</td><td>live</td><td>the OIDC routes are mounted but no identity provider is configured</td></tr>
+<tr><td>METHOD_NOT_ALLOWED</td><td>405</td><td>live</td><td>path exists, method does not</td></tr>
+<tr><td>SLUG_EXISTS</td><td>409</td><td>live</td><td>an organization, project or dataset already holds this slug</td></tr>
+<tr><td>BINDING_EXISTS</td><td>409</td><td>live</td><td>an identical role binding already exists</td></tr>
+<tr><td>SERVICE_ACCOUNT_EXISTS</td><td>409</td><td>live</td><td>that service-account name is taken in this organization</td></tr>
+<tr><td>ATTACHMENT_EXISTS</td><td>409</td><td>live</td><td>the policy is already attached at this scope</td></tr>
+<tr><td>USERNAME_TAKEN</td><td>409</td><td>live</td><td>some principal already holds that subject</td></tr>
+<tr><td>PRINCIPAL_KIND_MISMATCH</td><td>409</td><td>live</td><td>the addressed principal is not a user</td></tr>
+<tr><td>REQUEST_INVALID</td><td>422</td><td>live</td><td>the request did not satisfy the declared schema</td></tr>
+<tr><td>INTERNAL_ERROR</td><td>500</td><td>live</td><td>an unhandled failure; nothing about it is on the wire</td></tr>
+<tr><td>DEPENDENCY_UNAVAILABLE</td><td>503</td><td>live</td><td><code>/readyz</code>: a probed dependency did not answer</td></tr>
+<tr><td>INVALID_CREDENTIAL</td><td>401</td><td>live</td><td>no usable credential, deliberately non-specific</td></tr>
+<tr><td>PASSWORD_REJECTED</td><td>401</td><td>live</td><td>password verification failed</td></tr>
+<tr><td>SESSION_EXPIRED</td><td>401</td><td>live</td><td>the login session passed its idle or absolute TTL</td></tr>
+<tr><td>SESSION_REVOKED</td><td>401</td><td>live</td><td>the login session was revoked</td></tr>
+<tr><td>APIKEY_EXPIRED</td><td>401</td><td>live</td><td>the API key passed its expiry</td></tr>
+<tr><td>APIKEY_REVOKED</td><td>401</td><td>live</td><td>the API key was revoked</td></tr>
+<tr><td>UNKNOWN_ROLE</td><td>422</td><td>live</td><td>no such role code</td></tr>
+<tr><td>SCOPE_NOT_BINDABLE</td><td>422</td><td>live</td><td>the role cannot be bound at that scope level</td></tr>
+<tr><td>PRINCIPAL_KIND_NOT_ALLOWED</td><td>422</td><td>live</td><td>that kind of principal may not hold that role</td></tr>
+</table>
 
-<p class="note"><strong>There is no bijection test and no error-table document today.</strong> This
-list is hand-maintained and is already behind the code — 32 codes here against 34
-<code>DomainError</code> subclasses, with <code>ILLEGAL_INGEST_TRANSITION</code> and
-<code>PATH_RULE_VIOLATION</code> missing (receipts: <code>API_DESIGN.md</code> § "Roadmap Drift" →
-"Drift 5"). The intent is unchanged — every code has exactly one exception class and every
-exception class the service can raise has exactly one row — and the mechanism that will enforce it
-is designed in <code>API_DESIGN.md</code> § "Design 6 — Error contract and <code>problem+json</code>
-coverage": this list becomes a four-column <code>&lt;table id="error-codes"&gt;</code> (code, HTTP
-status, live/reserved, meaning) that <code>tests/unit/test_error_contract.py</code> parses and
-asserts in both directions. Until <code>API_IMPLEMENTATION_PLAN.md</code> § "Task M8.3 — The
-<code>design/api.html</code> §7 table and the bijection test" lands — gated on decision D-11, which
-also renames the <code>SESSION_EXPIRED</code> entry listed above — nothing keeps this list honest, so read
-it as intent, not as a checked contract.</p>
+<p class="note">Every code in this table has exactly one exception class, and every exception class
+the service can raise has exactly one row here. <code>tests/unit/test_error_contract.py</code>
+asserts the bijection and the status column in both directions; a code added to either side without
+the other fails CI.</p>
 
 </main>
 </body>

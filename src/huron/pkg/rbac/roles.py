@@ -24,7 +24,7 @@ place and the role layer is only vocabulary plus validation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from huron.pkg.rbac import Binding, Effect, ScopeType
 
@@ -86,9 +86,14 @@ CAPABILITIES: frozenset[str] = frozenset(
 
 
 class RoleError(Exception):
-    """A role lookup or role binding violated the role model."""
+    """A role lookup or role binding violated the role model.
 
-    code = "ROLE_VIOLATION"
+    Abstract: every subclass names a stable ``code`` of its own and none
+    overrides it per instance, so unlike ``DomainError`` it is a true
+    ``ClassVar`` here.
+    """
+
+    code: ClassVar[str]
 
 
 class UnknownRole(RoleError):

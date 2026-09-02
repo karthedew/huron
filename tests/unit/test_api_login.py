@@ -7,16 +7,22 @@ password-lookup seam already enforces at the store level."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from huron.pkg.auth import PrincipalRecord, make_credential
 from huron.pkg.rawstore import PosixRawStore
+from huron.pkg.rbac.roles import ROLES
 from huron.service.api.app import create_app
 from huron.service.api.repository import HierarchyRepository
+from huron.service.api.routes.auth.endpoints.login import _password_hash_limiter
+from huron.service.api.routes.auth.schema.login import LoginResult, SignOut
+from huron.service.api.routes.auth.schema.session import ProviderInfo, ScopeRoles, SessionInfo
 from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
 
 if TYPE_CHECKING:
@@ -28,7 +34,12 @@ pytestmark = pytest.mark.unit
 PASSWORD = "correct-horse-battery-staple"
 
 
-def _settings(tmp_path: Path, *, password_login_enabled: bool = True) -> ApiSettings:
+def _settings(
+    tmp_path: Path,
+    *,
+    password_login_enabled: bool = True,
+    bootstrap_platform_owner: str | None = None,
+) -> ApiSettings:
     return ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -36,11 +47,19 @@ def _settings(tmp_path: Path, *, password_login_enabled: bool = True) -> ApiSett
         database_url="postgresql://unused",
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
         password_login_enabled=password_login_enabled,
+        bootstrap_platform_owner=bootstrap_platform_owner,
     )
 
 
+def _dev_headers(subject: str) -> dict[str, str]:
+    return {"X-Huron-Subject": subject, "Idempotency-Key": str(uuid4())}
+
+
 def _repository(settings: ApiSettings) -> HierarchyRepository:
-    return HierarchyRepository(PosixRawStore(settings.data_root))
+    return HierarchyRepository(
+        PosixRawStore(settings.data_root),
+        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
+    )
 
 
 def _seed_user(
@@ -108,6 +127,7 @@ def test_password_login_sets_a_cookie_and_the_session_resolves_on_the_next_reque
     assert info["authentication_method"] == "session"
     assert info["csrf_token"] == body["csrf_token"]
     assert info["expires_at"] is not None
+    assert info["effective_roles"] == []
 
 
 def test_password_login_rejects_the_wrong_password_with_a_generic_message(
@@ -154,6 +174,14 @@ def test_password_login_is_refused_outright_when_disabled_by_settings(tmp_path: 
     with TestClient(create_app(settings=settings, repository=repository)) as client:
         response = client.post("/auth/login", json={"username": "alice", "password": PASSWORD})
     assert response.status_code == 401
+
+
+def test_password_hashing_has_its_own_four_token_capacity_limiter() -> None:
+    """Pins the capacity decision in code: password hashing must queue on a
+    dedicated limiter sized well below the shared 40-token threadpool
+    limiter, so a burst of login attempts cannot reserve the memory an
+    unbounded flood of Argon2id hashes would demand."""
+    assert _password_hash_limiter.total_tokens == 4
 
 
 # -- CSRF on the one session-authed write every caller can reach: logout ----
@@ -250,3 +278,140 @@ def test_providers_reports_oidc_enabled_when_configured(tmp_path: Path) -> None:
         "oidc": True,
         "oidc_start_url": "/auth/oidc/start",
     }
+
+
+# -- /auth/session: effective_roles ------------------------------------------
+
+
+def test_session_reports_a_single_system_scope_entry_for_the_platform_owner(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with TestClient(create_app(settings=settings, repository=_repository(settings))) as client:
+        response = client.get("/auth/session", headers=_dev_headers("root"))
+    assert response.status_code == 200
+    expected_roles = sorted(ROLES["platform_owner"].capabilities | {"data.read"})
+    assert response.json()["effective_roles"] == [
+        {"scope_type": "SYSTEM", "scope_id": None, "roles": expected_roles}
+    ]
+
+
+def test_session_orders_effective_roles_by_scope_type_then_scope_id_and_holds_on_repeat(
+    tmp_path: Path,
+) -> None:
+    """A caller administering one organization and developing on a project in
+    another is told about both scopes, ``ORGANIZATION`` before ``PROJECT`` -
+    and asking again returns the identical order, not one recomputed from
+    whatever order a set or dict happened to iterate in this time."""
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with TestClient(create_app(settings=settings, repository=_repository(settings))) as client:
+        organization = client.post(
+            "/api/v1/organizations",
+            json={"slug": "astro", "title": "Astro"},
+            headers=_dev_headers("root"),
+        ).json()
+        project = client.post(
+            f"/api/v1/organizations/{organization['id']}/projects",
+            json={"slug": "sims", "title": "Sims", "data_classification": "open"},
+            headers=_dev_headers("root"),
+        ).json()
+        assert (
+            client.post(
+                f"/api/v1/organizations/{organization['id']}/bindings",
+                json={"principal": "user:carol", "role": "organization_admin"},
+                headers=_dev_headers("root"),
+            ).status_code
+            == 201
+        )
+        assert (
+            client.post(
+                f"/api/v1/projects/{project['id']}/bindings",
+                json={"principal": "user:carol", "role": "developer"},
+                headers=_dev_headers("root"),
+            ).status_code
+            == 201
+        )
+
+        first = client.get("/auth/session", headers=_dev_headers("carol")).json()
+        second = client.get("/auth/session", headers=_dev_headers("carol")).json()
+
+    expected_organization_roles = sorted(ROLES["organization_admin"].capabilities | {"data.read"})
+    expected_project_roles = sorted(ROLES["developer"].capabilities | {"data.read", "data.write"})
+    expected = [
+        {
+            "scope_type": "ORGANIZATION",
+            "scope_id": organization["id"],
+            "roles": expected_organization_roles,
+        },
+        {"scope_type": "PROJECT", "scope_id": project["id"], "roles": expected_project_roles},
+    ]
+    assert first["effective_roles"] == expected
+    assert second["effective_roles"] == expected
+
+
+def test_session_breaks_ties_between_same_type_scopes_by_scope_id(tmp_path: Path) -> None:
+    """Two ``ORGANIZATION``-scope entries sort by ``scope_id`` alone, proving
+    the tie-break rather than relying on the scope-type ordering the other
+    ordering test already covers."""
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with TestClient(create_app(settings=settings, repository=_repository(settings))) as client:
+        first_org = client.post(
+            "/api/v1/organizations",
+            json={"slug": "astro", "title": "Astro"},
+            headers=_dev_headers("root"),
+        ).json()
+        second_org = client.post(
+            "/api/v1/organizations",
+            json={"slug": "bio", "title": "Bio"},
+            headers=_dev_headers("root"),
+        ).json()
+        for org in (first_org, second_org):
+            assert (
+                client.post(
+                    f"/api/v1/organizations/{org['id']}/bindings",
+                    json={"principal": "user:carol", "role": "organization_admin"},
+                    headers=_dev_headers("root"),
+                ).status_code
+                == 201
+            )
+        response = client.get("/auth/session", headers=_dev_headers("carol"))
+
+    scope_ids = [entry["scope_id"] for entry in response.json()["effective_roles"]]
+    assert scope_ids == sorted([first_org["id"], second_org["id"]], key=str)
+
+
+def test_session_reports_no_effective_roles_for_an_unbound_principal(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with TestClient(create_app(settings=settings, repository=_repository(settings))) as client:
+        response = client.get("/auth/session", headers=_dev_headers("nobody"))
+    assert response.status_code == 200
+    assert response.json()["effective_roles"] == []
+
+
+# -- unversioned models are hand-assembled, never validated from a record ---
+
+
+def test_none_of_the_unversioned_auth_models_can_be_filled_from_a_bare_object() -> None:
+    """These responses are constructed field by field from live authorization
+    or credential-minting state, never from a stored record - an object with
+    matching attributes but no ``from_attributes`` config must still fail."""
+    bare = SimpleNamespace(
+        subject="alice",
+        kind="user",
+        groups=[],
+        authentication_method="session",
+        effective_roles=[],
+        csrf_token=None,
+        expires_at=None,
+        scope_type="SYSTEM",
+        scope_id=None,
+        roles=[],
+        display_name="Alice",
+        status="signed-out",
+        password=True,
+        oidc=False,
+        oidc_start_url=None,
+    )
+    for model in (SessionInfo, ScopeRoles, LoginResult, SignOut, ProviderInfo):
+        with pytest.raises(ValidationError):
+            model.model_validate(bare)

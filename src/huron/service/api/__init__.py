@@ -9,7 +9,7 @@ them into catalog use cases. Routers and DTOs stay thin -- no rule that
 belongs in a package is restated here.
 """
 
-from .app import app, create_app
+from .app import create_app
 from .settings import ApiSettings
 
-__all__ = ["ApiSettings", "app", "create_app"]
+__all__ = ["ApiSettings", "create_app"]

@@ -22,9 +22,9 @@ huron/
 src/huron/
   service/    composition roots, one per deployable
               api/            the FastAPI control plane
-                              authorization.py   the Depends chain: credential → principal → check
-                              repository.py      hierarchy + RbacStore/ApiKeyWriter Protocols
-                              postgres_rbac.py   the asyncpg implementations of those Protocols
+                              authorization/     the Depends chain: credential → principal → check
+                              repository.py      the hierarchy application service
+                              stores/            both backends of RbacStore/ApiKeyWriter, and the Protocols
                               routes/v1/         schemas.py + endpoints/
   pkg/        independent libraries
               catalog/        the manifest, hierarchy, layer workflow, and paths
