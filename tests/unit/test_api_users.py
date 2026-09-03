@@ -252,6 +252,57 @@ def test_disable_sets_disabled_at_and_revokes_every_session(
     assert relogin.status_code == 401
 
 
+def _mint_api_key(client: TestClient, *, subject: str) -> str:
+    """Mints an API key for `subject` via dev-header self-service and returns its secret."""
+    issued = client.post(
+        "/api/v1/auth/api-keys", json={"name": "laptop"}, headers=_headers(subject)
+    )
+    assert issued.status_code == 201, issued.text
+    return str(issued.json()["secret"])
+
+
+def test_disable_revokes_every_api_key_the_user_holds(app: FastAPI, client: TestClient) -> None:
+    """Disabling a user revokes the API keys they minted, not only their sessions."""
+    principal_id = _create_user(client, username="alice")
+    key_client = TestClient(app)
+    secret = _mint_api_key(key_client, subject="alice")
+    assert (
+        key_client.get("/auth/session", headers={"Authorization": f"Bearer {secret}"}).status_code
+        == 200
+    )
+
+    disabled = client.post(f"/api/v1/users/{principal_id}/disable", headers=_headers("root"))
+    assert disabled.status_code == 200
+
+    revoked = key_client.get("/auth/session", headers={"Authorization": f"Bearer {secret}"})
+    assert revoked.status_code == 401
+    assert revoked.json()["code"] == "APIKEY_REVOKED"
+
+
+def test_set_password_revokes_every_api_key_the_user_holds(
+    app: FastAPI, client: TestClient
+) -> None:
+    """Resetting a user's password revokes the API keys they minted, not only their sessions."""
+    principal_id = _create_user(client, username="bob")
+    key_client = TestClient(app)
+    secret = _mint_api_key(key_client, subject="bob")
+    assert (
+        key_client.get("/auth/session", headers={"Authorization": f"Bearer {secret}"}).status_code
+        == 200
+    )
+
+    reset = client.put(
+        f"/api/v1/users/{principal_id}/password",
+        json={"password": "bobs-second-password"},
+        headers=_headers("root"),
+    )
+    assert reset.status_code == 200
+
+    revoked = key_client.get("/auth/session", headers={"Authorization": f"Bearer {secret}"})
+    assert revoked.status_code == 401
+    assert revoked.json()["code"] == "APIKEY_REVOKED"
+
+
 def test_disable_404s_for_an_unknown_principal_id(client: TestClient) -> None:
     """Disabling an unknown principal id 404s."""
     response = client.post(f"/api/v1/users/{uuid4()}/disable", headers=_headers("root"))

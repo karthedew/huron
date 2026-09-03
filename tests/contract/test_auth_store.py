@@ -1,10 +1,11 @@
 """Proves the Postgres auth stores round-trip and the schema's guards hold outside them.
 
 Proves the Postgres auth schema (``0005_auth``) round-trips through
-``PostgresCredentialStore``/``PostgresSessionStore``/``PostgresPrincipalStore``,
-and that the guard trigger and CHECK constraints it seeds truly protect a row
-inserted outside those stores - the same two-pronged proof
-``test_rbac_store.py`` makes for RBAC, applied to the auth tables:
+``PostgresCredentialStore``/``PostgresSessionStore``/``PostgresPrincipalStore``/
+``PostgresApiKeyStore``, and that the guard trigger and CHECK constraints it
+seeds truly protect a row inserted outside those stores - the same
+two-pronged proof ``test_rbac_store.py`` makes for RBAC, applied to the auth
+tables:
 
 1. every store method is pushed through a real Postgres connection and read
    back, because that is the only way to catch a query that is syntactically
@@ -13,10 +14,15 @@ inserted outside those stores - the same two-pronged proof
    CHECKs are exercised through raw INSERTs that deliberately bypass the
    stores, proving the database refuses a bad row on its own, independent of
    any Python-side validation;
-3. ``revoke_all_for`` and ``upsert_oidc_user`` are exercised for the two
-   properties nothing else can catch: revocation must be scoped to exactly
-   one subject's *active* rows, and a repeat login for the same
-   ``idp_subject`` must update in place rather than create a second row;
+3. ``revoke_all_for`` is exercised on both the session and API-key stores
+   for the property nothing else can catch: revocation is scoped to exactly
+   one subject's *active* rows, and for API keys holds regardless of the
+   key's ``owner_kind``; ``upsert_oidc_user`` is exercised on the principal
+   store, proving a repeat login for the same ``idp_subject`` updates in
+   place rather than creating a second row, and that a first-ever login
+   whose subject collides with an existing password user's username is
+   refused as :class:`~huron.pkg.auth.PrincipalSubjectExists` rather than
+   auto-linked;
 4. ``create_user``, ``disable``, and ``get_by_id`` - the admin-provisioning
    surface - are proven against the real ``principals.subject`` UNIQUE
    constraint: a subject already claimed by a password user, an OIDC login,
@@ -42,6 +48,7 @@ from alembic import command
 from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
+from huron.pkg.auth import ApiKeyRecord
 from huron.pkg.auth.oidc import OidcUser
 from huron.pkg.auth.password import CredentialRecord
 from huron.pkg.auth.principals import PrincipalSubjectExists
@@ -49,6 +56,7 @@ from huron.pkg.auth.sessions import SessionRecord
 from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
 from huron.service.api.stores import (
+    PostgresApiKeyStore,
     PostgresCredentialStore,
     PostgresPrincipalStore,
     PostgresSessionStore,
@@ -69,7 +77,7 @@ def _migrate(sqlalchemy_url: str) -> None:
     command.upgrade(config, "head")
 
 
-def test_the_postgres_credential_session_and_principal_stores_against_a_migrated_database() -> None:
+def test_the_postgres_auth_stores_against_a_migrated_database() -> None:
     """The auth stores behave correctly against a freshly migrated PostgreSQL 16 database."""
     with PostgresContainer("postgres:16") as postgres:
         _migrate(postgres.get_connection_url(driver="asyncpg"))
@@ -77,7 +85,7 @@ def test_the_postgres_credential_session_and_principal_stores_against_a_migrated
 
 
 async def _assert_against(dsn: str) -> None:
-    """Runs every credential, session, and principal store assertion against one connection pool."""
+    """Runs every auth store assertion against one connection pool."""
     pool = await asyncpg.create_pool(dsn)
     try:
         await _assert_credential_round_trip(pool)
@@ -87,7 +95,9 @@ async def _assert_against(dsn: str) -> None:
         await _assert_session_round_trip_touch_and_revoke(pool)
         await _assert_sessions_check_rejects_a_malformed_secret_hash(pool)
         await _assert_revoke_all_for_touches_only_the_subjects_active_rows(pool)
+        await _assert_api_key_revoke_all_for_ignores_owner_kind(pool)
         await _assert_upsert_oidc_user_creates_then_updates_without_duplicating(pool)
+        await _assert_upsert_oidc_user_refuses_a_subject_a_password_user_holds(pool)
         await _assert_get_user_by_subject_hides_missing_disabled_and_service_accounts(pool)
         await _assert_create_user_inserts_a_password_user(pool)
         await _assert_create_user_refuses_a_subject_another_principal_holds(pool)
@@ -301,6 +311,53 @@ async def _assert_revoke_all_for_touches_only_the_subjects_active_rows(pool: asy
     assert other_after is not None and other_after.revoked_at is None
 
 
+# -- api keys ---------------------------------------------------------------
+
+
+async def _assert_api_key_revoke_all_for_ignores_owner_kind(pool: asyncpg.Pool) -> None:
+    """``revoke_all_for`` revokes a subject's key whatever its ``owner_kind``.
+
+    A user-owned key and a service-account-owned key belong to two
+    different subjects; revoking one subject's keys must not filter by
+    ``owner_kind`` and must not touch the other subject's key.
+    """
+    store = PostgresApiKeyStore(pool)
+    user_subject, service_account_subject = "contract-key-user", "contract-key-sa"
+    expires_at = datetime.now(UTC) + timedelta(days=1)
+
+    user_key = ApiKeyRecord(
+        key_id="contract-revoke-user-key",
+        subject=user_subject,
+        name="user key",
+        secret_sha256="a" * 64,
+        scopes=frozenset({"read"}),
+        project_id=None,
+        expires_at=expires_at,
+        owner_kind="user",
+    )
+    service_account_key = ApiKeyRecord(
+        key_id="contract-revoke-sa-key",
+        subject=service_account_subject,
+        name="service account key",
+        secret_sha256="b" * 64,
+        scopes=frozenset({"read"}),
+        project_id=None,
+        expires_at=expires_at,
+        owner_kind="service_account",
+    )
+    await store.add(user_key)
+    await store.add(service_account_key)
+
+    revoked_at = datetime.now(UTC)
+    count = await store.revoke_all_for(user_subject, revoked_at)
+    assert count == 1
+
+    revoked = await store.get(user_key.key_id)
+    untouched = await store.get(service_account_key.key_id)
+    assert revoked is not None and revoked.revoked_at == revoked_at
+    assert untouched is not None and untouched.revoked_at is None
+
+
 # -- principals: upsert-on-login, admin provisioning, and lookup ------------
 
 
@@ -332,6 +389,29 @@ async def _assert_upsert_oidc_user_creates_then_updates_without_duplicating(
 
     count = await pool.fetchval(
         "SELECT count(*) FROM principals WHERE idp_subject = $1", "idp-contract-carol"
+    )
+    assert count == 1
+
+
+async def _assert_upsert_oidc_user_refuses_a_subject_a_password_user_holds(
+    pool: asyncpg.Pool,
+) -> None:
+    """A first-ever OIDC login is refused, not auto-linked, when its subject is a local username."""
+    store = PostgresPrincipalStore(pool)
+    await store.create_user(subject="contract-collide-s", display_name="Password User")
+
+    with pytest.raises(PrincipalSubjectExists):
+        await store.upsert_oidc_user(
+            OidcUser(
+                idp_subject="contract-collide-s",
+                display_name="Impostor",
+                email=None,
+                groups=frozenset(),
+            )
+        )
+
+    count = await pool.fetchval(
+        "SELECT count(*) FROM principals WHERE subject = $1", "contract-collide-s"
     )
     assert count == 1
 

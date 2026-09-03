@@ -220,16 +220,20 @@ class RbacStore(Protocol):
         """Mark a service account disabled and return it as it now is.
 
         Disabling is a timestamp, not a deletion: the account, its name and
-        its subject stay reserved. Disabling an already-disabled account
-        replaces the timestamp. An id that names no service account raises
-        ``ResourceNotFound``.
+        its subject stay reserved. Disabling is idempotent: an
+        already-disabled account keeps its original ``disabled_at``, and
+        the given instant is discarded. An id that names no service account
+        raises ``ResourceNotFound``.
 
         Args:
             principal_id: The account's principal id.
-            disabled_at: The moment to record as the disablement time.
+            disabled_at: The moment to record as the disablement time, if
+                the account is not already disabled.
 
         Returns:
-            The account with ``disabled_at`` set.
+            The account with ``disabled_at`` set - to this call's instant on
+            a first disable, or to the original instant if it was already
+            disabled.
         """
         ...
 
@@ -325,9 +329,9 @@ class ApiKeyWriter(ApiKeyStore, Protocol):
         ...
 
     async def revoke_all_for(self, subject: str, revoked_at: datetime) -> int:
-        """Revoke every still-active key a subject owns.
+        """Revoke every still-active key a subject owns, regardless of ``owner_kind``.
 
-        Called when a service account is disabled, so its keys stop
+        Called today when a service account is disabled, so its keys stop
         resolving with it. Keys already revoked keep their original
         ``revoked_at`` and are not counted.
 

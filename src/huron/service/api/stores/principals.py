@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 
     from huron.pkg.auth import OidcUser
 
+#: The name Postgres gives ``principals.subject``'s column-level UNIQUE
+#: constraint, absent an explicit ``CONSTRAINT`` clause in the migration.
+_SUBJECT_UNIQUE_CONSTRAINT = "principals_subject_key"
+
 
 class PostgresPrincipalStore:
     """The ``principals`` table behind ``pkg.auth.PrincipalStore``.
@@ -31,7 +35,9 @@ class PostgresPrincipalStore:
     ``upsert_oidc_user`` is the upsert performed on OIDC login: the first
     login for a given ``idp_subject`` inserts the row (``subject`` mirrors
     ``idp_subject``, matching what the bearer-JWT path already treats as
-    the OIDC subject), every later one only refreshes the display name.
+    the OIDC subject), every later one only refreshes the display name. A
+    first-ever ``idp_subject`` that collides with another principal's
+    ``subject`` is refused, never auto-linked.
 
     ``subject`` is UNIQUE across every principal and ``idp_subject`` across
     every user, and both are set once, at creation, and never move. Shares
@@ -85,26 +91,43 @@ class PostgresPrincipalStore:
         always yields exactly one row, so the result is never None. A
         disabled user is returned with ``disabled_at`` set, not refused -
         the login route decides what that means. The conflict target is
-        ``idp_subject`` alone: a ``subject`` already held by a password
-        user is not an ``idp_subject`` conflict and is not translated here.
+        ``idp_subject`` alone: a first-ever ``idp_subject`` that instead
+        collides with the ``subject`` UNIQUE constraint - some other
+        principal already holds it - is not an ``idp_subject`` conflict,
+        so it falls through to a raw ``UniqueViolationError`` on the
+        ``subject`` column that this method translates into a refusal.
 
         Args:
             user: The identity the provider's callback established.
 
         Returns:
             The principal row as it is after the upsert.
+
+        Raises:
+            PrincipalSubjectExists: If ``idp_subject`` is not yet known and
+                some other principal already holds it as ``subject``.
+            asyncpg.exceptions.UniqueViolationError: If the insert violates
+                a UNIQUE constraint other than ``subject`` - not expected
+                against the current schema, where ``idp_subject`` is the
+                statement's only other conflict target and is handled by
+                ``ON CONFLICT``.
         """
-        row = await self._pool.fetchrow(
-            """
-            INSERT INTO principals (id, kind, subject, display_name, idp_subject, created_at)
-            VALUES ($1, 'user', $2, $3, $2, now())
-            ON CONFLICT (idp_subject) DO UPDATE SET display_name = EXCLUDED.display_name
-            RETURNING id, kind, subject, display_name, idp_subject, disabled_at, created_at
-            """,
-            uuid7(),
-            user.idp_subject,
-            user.display_name,
-        )
+        try:
+            row = await self._pool.fetchrow(
+                """
+                INSERT INTO principals (id, kind, subject, display_name, idp_subject, created_at)
+                VALUES ($1, 'user', $2, $3, $2, now())
+                ON CONFLICT (idp_subject) DO UPDATE SET display_name = EXCLUDED.display_name
+                RETURNING id, kind, subject, display_name, idp_subject, disabled_at, created_at
+                """,
+                uuid7(),
+                user.idp_subject,
+                user.display_name,
+            )
+        except asyncpg.exceptions.UniqueViolationError as exc:
+            if getattr(exc, "constraint_name", None) != _SUBJECT_UNIQUE_CONSTRAINT:
+                raise
+            raise PrincipalSubjectExists(user.idp_subject) from exc
         # INSERT ... ON CONFLICT DO UPDATE ... RETURNING always yields
         # exactly one row - unlike DO NOTHING, there is no way to affect zero.
         return principal_record(row)

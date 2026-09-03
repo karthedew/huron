@@ -117,6 +117,7 @@ async def _assert_against(dsn: str) -> None:
         await _assert_grant_role_round_trips_through_bindings_for_and_bindings_at(pool)
         await _assert_service_account_round_trip(pool)
         await _assert_create_service_account_reports_a_missing_organization(pool)
+        await _assert_disable_service_account_is_idempotent(pool)
         await _assert_policy_round_trip(pool)
         await _assert_api_key_round_trip(pool)
         await _assert_api_key_add_reports_a_missing_project(pool)
@@ -336,6 +337,28 @@ async def _assert_create_service_account_reports_a_missing_organization(
         await store.create_service_account(
             uuid4(), name="orphan", subject="nowhere/orphan", created_by="contract-test"
         )
+
+
+async def _assert_disable_service_account_is_idempotent(pool: asyncpg.Pool) -> None:
+    """A second ``disable_service_account`` call returns the original instant, unchanged."""
+    store = PostgresRbacStore(pool)
+    organization_id = await _insert_organization(pool, slug="astro-disable")
+    account = await store.create_service_account(
+        organization_id,
+        name="pipeline-disable",
+        subject="astro-disable/pipeline-disable",
+        created_by="contract-test",
+    )
+
+    first = await store.disable_service_account(account.principal_id, disabled_at=datetime.now(UTC))
+    second = await store.disable_service_account(
+        account.principal_id, disabled_at=datetime.now(UTC) + timedelta(days=1)
+    )
+    assert first.disabled_at is not None
+    assert second.disabled_at == first.disabled_at
+
+    with pytest.raises(ResourceNotFound):
+        await store.disable_service_account(uuid4(), disabled_at=datetime.now(UTC))
 
 
 # -- policies -------------------------------------------------------------------

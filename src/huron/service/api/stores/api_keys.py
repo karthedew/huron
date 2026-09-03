@@ -121,11 +121,9 @@ class PostgresApiKeyStore:
         )
 
     async def revoke_all_for(self, subject: str, revoked_at: datetime) -> int:
-        """Revoke every active service-account key a subject owns.
+        """Revoke every active key a subject owns, whatever its ``owner_kind``.
 
-        The UPDATE is restricted to ``owner_kind = 'service_account'`` - the
-        one caller is service-account disablement, and a user's keys are
-        never swept by it - and to rows whose ``revoked_at`` is still NULL,
+        The UPDATE is restricted to rows whose ``revoked_at`` is still NULL,
         so an earlier revocation keeps its own timestamp.
 
         Args:
@@ -140,7 +138,6 @@ class PostgresApiKeyStore:
             UPDATE api_keys
             SET revoked_at = $2
             WHERE owner_subject = $1
-              AND owner_kind = 'service_account'
               AND revoked_at IS NULL
             """,
             subject,

@@ -60,8 +60,9 @@ class PrincipalRecord:
     and every role binding refers to. ``idp_subject`` is set only for a
     principal created by OIDC login (where it equals ``subject``) and is
     None for password users and service accounts. ``disabled_at`` is the
-    off switch: a disabled user cannot log in with a password, though the
-    row and its bindings remain. ``kind`` is ``"user"`` or
+    off switch: a disabled principal cannot log in by any method - password,
+    OIDC or a self-issued API key - though the row and its bindings remain.
+    ``kind`` is ``"user"`` or
     ``"service_account"`` and never changes.
     """
 
@@ -151,6 +152,10 @@ class PrincipalStore(Protocol):
         ``idp_subject``, and every later one only refreshes the display
         name. Subject and ``idp_subject`` are keyed once, at creation, and
         never move. The record is returned whether or not it is disabled.
+        A local account is never auto-linked to an identity provider:
+        raises :class:`PrincipalSubjectExists` when ``idp_subject`` is not
+        yet known and some other principal already holds it as
+        ``subject``, rather than merging the two identities.
 
         Args:
             user: The claims the OIDC callback mapped from the ID token.
@@ -263,13 +268,20 @@ class MemoryPrincipalStore:
         The first login for an ``idp_subject`` creates the row with
         ``subject`` equal to ``idp_subject``; every later one only
         refreshes the display name. A disabled principal is refreshed and
-        returned like any other.
+        returned like any other. A local account is never auto-linked to
+        an identity provider, so a first-ever ``idp_subject`` that
+        collides with some other principal's ``subject`` is refused rather
+        than creating a second principal under a name already taken.
 
         Args:
             user: The claims the OIDC callback mapped from the ID token.
 
         Returns:
             The principal row for this identity, created or refreshed.
+
+        Raises:
+            PrincipalSubjectExists: If ``idp_subject`` is not yet known and
+                some other principal already holds it as ``subject``.
         """
         existing = next(
             (record for record in self.records.values() if record.idp_subject == user.idp_subject),
@@ -279,6 +291,8 @@ class MemoryPrincipalStore:
             updated = replace(existing, display_name=user.display_name)
             self.records[updated.id] = updated
             return updated
+        if any(record.subject == user.idp_subject for record in self.records.values()):
+            raise PrincipalSubjectExists(user.idp_subject)
         record = PrincipalRecord(
             id=uuid4(),
             kind="user",

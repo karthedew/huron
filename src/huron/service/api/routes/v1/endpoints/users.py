@@ -119,10 +119,11 @@ async def set_password(
 ) -> PasswordReset:
     """Replace a user's password.
 
-    Requires ``user.manage`` at SYSTEM scope. Every session the user holds
-    is revoked before the acknowledgement is returned. An unknown principal
-    is 404; one that is a service account rather than a user is refused
-    with 409.
+    Requires ``user.manage`` at SYSTEM scope. Every session and every API
+    key the user holds is revoked before the acknowledgement is returned -
+    a reset logs the user out everywhere, and a key is a login that would
+    otherwise outlive it. An unknown principal is 404; one that is a
+    service account rather than a user is refused with 409.
     \f
     Args:
         principal_id: The user whose password to replace.
@@ -133,14 +134,16 @@ async def set_password(
 
     Returns:
         The acknowledgement that the password was replaced and the user's
-        sessions revoked.
+        sessions and API keys revoked.
     """
     principal = await _existing_user(repository, principal_id)
     credential = await asyncify(make_credential)(
         principal_id, body.password, updated_by=actor.subject
     )
     await repository.credentials.upsert(credential)
-    await repository.sessions.revoke_all_for(principal.subject, datetime.now(UTC))
+    reset_at = datetime.now(UTC)
+    await repository.sessions.revoke_all_for(principal.subject, reset_at)
+    await repository.api_keys.revoke_all_for(principal.subject, reset_at)
     return PasswordReset(status="password-reset")
 
 
@@ -152,12 +155,12 @@ async def set_password(
     },
 )
 async def disable_user(principal_id: UUID, repository: Repository) -> UserView:
-    """Disable a user and revoke every session they hold.
+    """Disable a user, revoke every session they hold, and revoke every API key they hold.
 
     Requires ``user.manage`` at SYSTEM scope. A disabled user can no longer
-    log in with a password, and the API offers no way to re-enable them. An
-    unknown principal is 404; one that is a service account rather than a
-    user is refused with 409.
+    log in by any method - password, OIDC or a self-issued API key - and
+    the API offers no way to re-enable them. An unknown principal is 404;
+    one that is a service account rather than a user is refused with 409.
     \f
     Args:
         principal_id: The user to disable.
@@ -171,8 +174,10 @@ async def disable_user(principal_id: UUID, repository: Repository) -> UserView:
             disable is applied.
     """
     await _existing_user(repository, principal_id)
-    updated = await repository.principals.disable(principal_id, disabled_at=datetime.now(UTC))
+    disabled_at = datetime.now(UTC)
+    updated = await repository.principals.disable(principal_id, disabled_at=disabled_at)
     if updated is None:
         raise ResourceNotFound(f"principal does not exist: {principal_id}")
-    await repository.sessions.revoke_all_for(updated.subject, datetime.now(UTC))
+    await repository.sessions.revoke_all_for(updated.subject, disabled_at)
+    await repository.api_keys.revoke_all_for(updated.subject, disabled_at)
     return UserView.model_validate(updated)

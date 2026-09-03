@@ -17,9 +17,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
-from huron.pkg.auth import AuthError, LoginFlow, OidcClient, code_challenge_s256, create_session
+from huron.pkg.auth import (
+    AuthError,
+    LoginFlow,
+    OidcClient,
+    PrincipalSubjectExists,
+    code_challenge_s256,
+    create_session,
+)
 from huron.service.api.authorization import login_flow_cookie, session_cookie
-from huron.service.api.errors import OidcNotConfigured
+from huron.service.api.errors import OidcNotConfigured, UsernameTaken
 from huron.service.api.problems import problem_response
 from huron.service.api.runtime import Repository, Runtime, Settings
 from huron.service.api.settings import ApiSettings
@@ -142,7 +149,11 @@ async def oidc_start(client: _Client, settings: Settings, return_to: str = "/") 
     response_class=RedirectResponse,
     responses={
         404: problem_response("no identity provider is configured"),
-        401: problem_response("the login flow or the provider's response could not be trusted"),
+        401: problem_response(
+            "the login flow or the provider's response could not be trusted, "
+            "or the principal is disabled"
+        ),
+        409: problem_response("the subject is already held by a local account"),
     },
 )
 async def oidc_callback(
@@ -160,12 +171,19 @@ async def oidc_callback(
     that ``/auth/oidc/start`` set; ``state`` must match it, and the code is
     exchanged and the resulting ID token verified against the provider. A
     first login provisions the user, a later one refreshes the display
-    name. On success the session cookie is set, the login cookie is cleared
-    and the browser is sent, 302, to the web application at the path the
-    flow was started with. Answers 401 when the login cookie is missing,
-    expired or forged, when ``state`` does not match, or when the
-    provider's response cannot be trusted; 404 when this deployment has no
-    identity provider.
+    name. A local account is never auto-linked to an identity provider: if
+    this is a first-ever login for the provider's subject and that subject
+    is already a local account's username, the login is refused rather
+    than the two identities merged. A disabled principal never gets a
+    session, no matter how it was provisioned - the same refusal a
+    disabled password login answers. On success the session cookie is set,
+    the login cookie is cleared and the browser is sent, 302, to the web
+    application at the path the flow was started with. Answers 401 when
+    the login cookie is missing, expired or forged, when ``state`` does
+    not match, when the provider's response cannot be trusted, or when the
+    principal is disabled; 404 when this deployment has no identity
+    provider; 409 when the provider's subject collides with an existing
+    local account's username.
     \f
     Args:
         request: The incoming request; the login-flow cookie is read from it.
@@ -183,7 +201,10 @@ async def oidc_callback(
 
     Raises:
         AuthError: If ``state`` does not match the pending login the cookie
-            describes.
+            describes, or if the resolved principal is disabled.
+        UsernameTaken: If this is a first-ever login for the provider's
+            subject and some local account already holds it as its
+            username.
     """
     flow = login_flow_cookie(settings)
     login_flow = LoginFlow.decode(
@@ -196,7 +217,12 @@ async def oidc_callback(
     user = await client.exchange_code(
         code=code, code_verifier=login_flow.code_verifier, nonce=login_flow.nonce
     )
-    principal_row = await repository.principals.upsert_oidc_user(user)
+    try:
+        principal_row = await repository.principals.upsert_oidc_user(user)
+    except PrincipalSubjectExists as exc:
+        raise UsernameTaken(str(exc)) from exc
+    if principal_row.disabled_at is not None:
+        raise AuthError(f"principal is disabled: {principal_row.subject}")
     record, token = create_session(
         principal_row.subject, groups=user.groups, authentication_method="oidc"
     )

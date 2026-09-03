@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlsplit
+from uuid import uuid4
 
 import jwt
 import pytest
@@ -26,6 +27,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from jwt.algorithms import RSAAlgorithm
 
+from huron.pkg.auth import MemoryPrincipalStore, MemorySessionStore, PrincipalRecord
 from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
 from huron.service.api.repository import HierarchyRepository
@@ -275,3 +277,84 @@ def test_oidc_callback_rejects_a_request_with_no_flow_cookie_at_all(client: Test
         follow_redirects=False,
     )
     assert response.status_code == 401
+
+
+def test_oidc_callback_refuses_a_disabled_principal_and_starts_no_session(
+    tmp_path: Path, serve_jwks: None, private_key: RSAPrivateKey
+) -> None:
+    """A disabled principal completing the callback gets 401, no session cookie and no session."""
+    settings = _oidc_settings(tmp_path)
+    disabled = PrincipalRecord(
+        id=uuid4(),
+        kind="user",
+        subject="user-123",
+        display_name="Ada Lovelace",
+        idp_subject="user-123",
+        disabled_at=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    sessions = MemorySessionStore()
+    repository = HierarchyRepository(
+        PosixRawStore(settings.data_root),
+        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
+        principal_store=MemoryPrincipalStore({disabled.id: disabled}),
+        session_store=sessions,
+    )
+    with respx.mock:
+        _mock_discovery()
+        with TestClient(create_app(settings=settings, repository=repository)) as disabled_client:
+            start = _start(disabled_client)
+            query = parse_qs(urlsplit(start.headers["location"]).query)
+            state, nonce = query["state"][0], query["nonce"][0]
+            respx.post(f"{ISSUER}/token").mock(
+                return_value=Response(200, json={"id_token": _id_token(private_key, nonce=nonce)})
+            )
+            callback = disabled_client.get(
+                "/auth/oidc/callback",
+                params={"code": "the-auth-code", "state": state},
+                follow_redirects=False,
+            )
+            assert callback.status_code == 401
+            assert disabled_client.cookies.get("huron_session") is None
+    assert sessions.records == {}
+
+
+def test_oidc_callback_refuses_a_subject_a_local_account_already_holds(
+    tmp_path: Path, serve_jwks: None, private_key: RSAPrivateKey
+) -> None:
+    """A first-ever OIDC login is refused, not auto-linked, when a local account owns its name."""
+    settings = _oidc_settings(tmp_path)
+    local_user = PrincipalRecord(
+        id=uuid4(),
+        kind="user",
+        subject="user-123",
+        display_name="Local User",
+        idp_subject=None,
+        disabled_at=None,
+        created_at=datetime.now(UTC),
+    )
+    sessions = MemorySessionStore()
+    repository = HierarchyRepository(
+        PosixRawStore(settings.data_root),
+        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
+        principal_store=MemoryPrincipalStore({local_user.id: local_user}),
+        session_store=sessions,
+    )
+    with respx.mock:
+        _mock_discovery()
+        with TestClient(create_app(settings=settings, repository=repository)) as taken_client:
+            start = _start(taken_client)
+            query = parse_qs(urlsplit(start.headers["location"]).query)
+            state, nonce = query["state"][0], query["nonce"][0]
+            respx.post(f"{ISSUER}/token").mock(
+                return_value=Response(200, json={"id_token": _id_token(private_key, nonce=nonce)})
+            )
+            callback = taken_client.get(
+                "/auth/oidc/callback",
+                params={"code": "the-auth-code", "state": state},
+                follow_redirects=False,
+            )
+            assert callback.status_code == 409
+            assert callback.json()["code"] == "USERNAME_TAKEN"
+            assert taken_client.cookies.get("huron_session") is None
+    assert sessions.records == {}

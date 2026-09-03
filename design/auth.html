@@ -182,8 +182,11 @@ environment, a first login before an IdP is wired up — and are deliberately th
 two login paths. <strong>There is no self-registration, no email verification, and no
 self-service password reset.</strong> An administrator creates the account and sets the
 password; the same administrator (or the user, through the admin) resets it. A password reset or
-an account disable both revoke every session the subject holds — a reset logs the user out
-everywhere, by design, not as a side effect worth suppressing.</p>
+an account disable both revoke every session and every API key the subject holds — a reset logs
+the user out everywhere, by design, not as a side effect worth suppressing, and a key is a login
+that never expires on its own, so leaving it live would outlive the reset and undo the disable. A
+disable additionally closes OIDC as a way back in: the callback refuses a disabled principal with
+the same 401 a disabled password login already answers, never a fresh session.</p>
 
 <p class="note">This is a proportionality choice, not an oversight. A control plane for a
 scientific data lake has a small, known population of human users provisioned by the same

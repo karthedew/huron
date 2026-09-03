@@ -53,6 +53,28 @@ async def test_upsert_oidc_user_updates_display_name_without_duplicating() -> No
     assert len(store.records) == 1
 
 
+async def test_upsert_oidc_user_refuses_a_first_login_whose_subject_a_password_user_holds() -> None:
+    """A first-ever OIDC login is refused, not auto-linked, when its subject is a local username."""
+    store = MemoryPrincipalStore()
+    await store.create_user(subject="dana", display_name="Dana")
+    with pytest.raises(PrincipalSubjectExists):
+        await store.upsert_oidc_user(_oidc_user(idp_subject="dana", display_name="Impostor"))
+    # The refusal must not have mutated anything: exactly the password user remains.
+    assert len(store.records) == 1
+
+
+async def test_upsert_oidc_user_still_updates_in_place_once_the_idp_subject_is_known() -> None:
+    """A later login for an already-known ``idp_subject`` still updates the same row."""
+    store = MemoryPrincipalStore()
+    created = await store.upsert_oidc_user(_oidc_user(idp_subject="dana", display_name="Dana"))
+    updated = await store.upsert_oidc_user(
+        _oidc_user(idp_subject="dana", display_name="Dana Renamed")
+    )
+    assert updated.id == created.id
+    assert updated.display_name == "Dana Renamed"
+    assert len(store.records) == 1
+
+
 async def test_get_user_by_subject_returns_none_for_an_unknown_subject() -> None:
     """An unknown subject looked up by ``get_user_by_subject`` resolves to None."""
     store = MemoryPrincipalStore()

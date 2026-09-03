@@ -301,14 +301,17 @@ class InMemoryRbacStore:
 
         The stored record is updated in place, so a ``ServiceAccount``
         handed out earlier by ``get_service_account`` shows the change too.
-        Disabling twice replaces the timestamp.
+        Disabling is idempotent: an already-disabled account keeps its
+        original timestamp, and ``disabled_at`` is discarded.
 
         Args:
             principal_id: The account's principal id.
-            disabled_at: The moment to record as the disablement time.
+            disabled_at: The moment to record as the disablement time, if
+                the account is not already disabled.
 
         Returns:
-            The same account with ``disabled_at`` set.
+            The account with ``disabled_at`` set - to this call's instant
+            on a first disable, or unchanged if it was already disabled.
 
         Raises:
             ResourceNotFound: If no service account has this principal id.
@@ -317,7 +320,8 @@ class InMemoryRbacStore:
             record = self._service_accounts.get(principal_id)
             if record is None:
                 raise ResourceNotFound(f"service account does not exist: {principal_id}")
-            record.disabled_at = disabled_at
+            if record.disabled_at is None:
+                record.disabled_at = disabled_at
             return record
 
     async def create_policy(
@@ -810,34 +814,33 @@ class PostgresRbacStore:
     ) -> ServiceAccount:
         """Set ``disabled_at`` on the account's principal and return the account.
 
-        The UPDATE is restricted to ``kind = 'service_account'``, so a user's
-        principal id is reported as no such service account rather than
-        being disabled through the wrong door. Disabling twice replaces the
-        timestamp. The account is then re-read, so the result reflects the
-        row after the update.
+        The UPDATE is restricted to ``kind = 'service_account'`` and to a
+        principal not already disabled, so a user's principal id is
+        reported as no such service account rather than being disabled
+        through the wrong door, and disabling an already-disabled account
+        is a no-op that leaves its original timestamp untouched. The
+        account is re-read through ``get_service_account`` either way, so
+        the result reflects the row as it now stands - freshly disabled, or
+        unchanged - and an id that names no service account raises
+        ``ResourceNotFound`` there.
 
         Args:
             principal_id: The account's principal id.
-            disabled_at: The moment to record as the disablement time.
+            disabled_at: The moment to record as the disablement time, if
+                the account is not already disabled.
 
         Returns:
-            The account as stored after the update.
-
-        Raises:
-            ResourceNotFound: If no service-account principal has this id.
+            The account as stored after the call.
         """
-        row = await self._pool.fetchrow(
+        await self._pool.execute(
             """
             UPDATE principals
             SET disabled_at = $2
-            WHERE id = $1 AND kind = 'service_account'
-            RETURNING id
+            WHERE id = $1 AND kind = 'service_account' AND disabled_at IS NULL
             """,
             principal_id,
             disabled_at,
         )
-        if row is None:
-            raise ResourceNotFound(f"service account does not exist: {principal_id}")
         return await self.get_service_account(principal_id)
 
     async def create_policy(

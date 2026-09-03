@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from huron.pkg.auth.apikeys import ApiKeyRecord
+from huron.pkg.auth.apikeys import ApiKeyRecord, MemoryApiKeyStore
 from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
 from huron.service.api.repository import HierarchyRepository
@@ -221,6 +221,78 @@ def test_disabling_a_service_account_refuses_one_from_a_different_organization(
         headers=_headers("root"),
     )
     assert response.status_code == 403
+
+
+def test_disabling_a_service_account_twice_keeps_the_original_disabled_at(
+    client: TestClient,
+) -> None:
+    """A second disable call reports the timestamp of the first, not a later one."""
+    organization_id = _organization(client, "astro-org")
+    account = client.post(
+        f"/api/v1/organizations/{organization_id}/service-accounts",
+        json={"name": "pipeline"},
+        headers=_headers("root"),
+    ).json()
+
+    first = client.post(
+        f"/api/v1/organizations/{organization_id}/service-accounts/"
+        f"{account['principal_id']}/disable",
+        headers=_headers("root"),
+    )
+    second = client.post(
+        f"/api/v1/organizations/{organization_id}/service-accounts/"
+        f"{account['principal_id']}/disable",
+        headers=_headers("root"),
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["disabled_at"] == second.json()["disabled_at"]
+
+
+class _CountingApiKeyStore(MemoryApiKeyStore):
+    """A ``MemoryApiKeyStore`` that counts how many times revocation is called."""
+
+    def __init__(self) -> None:
+        """Start with no keys and no recorded revocation calls."""
+        super().__init__()
+        self.revoke_calls = 0
+
+    async def revoke_all_for(self, subject: str, revoked_at: datetime) -> int:
+        """Record the call, then revoke as the base store would."""
+        self.revoke_calls += 1
+        return await super().revoke_all_for(subject, revoked_at)
+
+
+def test_disabling_an_already_disabled_service_account_does_not_revoke_keys_again(
+    tmp_path: Path,
+) -> None:
+    """A second disable call skips revocation - the account's keys were revoked at the first."""
+    settings = _settings(tmp_path)
+    api_keys = _CountingApiKeyStore()
+    repository = HierarchyRepository(
+        PosixRawStore(settings.data_root),
+        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
+        api_key_store=api_keys,
+    )
+    with TestClient(create_app(settings=settings, repository=repository)) as client:
+        organization_id = _organization(client, "astro-org")
+        account = client.post(
+            f"/api/v1/organizations/{organization_id}/service-accounts",
+            json={"name": "pipeline"},
+            headers=_headers("root"),
+        ).json()
+
+        client.post(
+            f"/api/v1/organizations/{organization_id}/service-accounts/"
+            f"{account['principal_id']}/disable",
+            headers=_headers("root"),
+        )
+        client.post(
+            f"/api/v1/organizations/{organization_id}/service-accounts/"
+            f"{account['principal_id']}/disable",
+            headers=_headers("root"),
+        )
+        assert api_keys.revoke_calls == 1
 
 
 def test_an_issued_service_account_key_carries_scopes_and_the_accounts_subject(

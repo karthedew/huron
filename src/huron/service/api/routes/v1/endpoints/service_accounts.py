@@ -205,8 +205,11 @@ async def disable_service_account(
 
     Requires ``service_account.manage`` on the organization. Once disabled,
     no key issued to the account authenticates and no new key can be issued
-    for it; the API offers no way to re-enable it. An account owned by a
-    different organization is refused with 403; an unknown account is 404.
+    for it; the API offers no way to re-enable it. Disabling is idempotent:
+    calling it again on an already-disabled account reports the original
+    ``disabled_at`` and does not revoke keys a second time. An account
+    owned by a different organization is refused with 403; an unknown
+    account is 404.
     \f
     Args:
         organization_id: The organization that owns the account.
@@ -219,5 +222,10 @@ async def disable_service_account(
     await _account_in_organization(repository, organization_id, principal_id)
     disabled_at = datetime.now(UTC)
     account = await repository.disable_service_account(principal_id, disabled_at=disabled_at)
+    if account.disabled_at is not None and account.disabled_at < disabled_at:
+        # Already disabled before this call: its keys were revoked at the
+        # original disable and must not be re-processed with a later,
+        # wrong timestamp.
+        return ServiceAccountView.model_validate(account)
     await repository.api_keys.revoke_all_for(account.subject, disabled_at)
     return ServiceAccountView.model_validate(account)

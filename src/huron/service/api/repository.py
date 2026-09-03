@@ -1050,16 +1050,21 @@ class HierarchyRepository:
 
         Disabling is recorded, not deleted: the account stays resolvable by
         id and by subject with ``disabled_at`` set, and a disabled account
-        resolves to no bindings. Revoking the account's existing API keys is
-        the caller's job, not this method's. The store raises
+        resolves to no bindings. Disabling is idempotent: an
+        already-disabled account keeps its original ``disabled_at`` and
+        ``disabled_at`` is discarded. Revoking the account's existing API
+        keys is the caller's job, not this method's. The store raises
         ``ResourceNotFound`` when no such account exists.
 
         Args:
             principal_id: The account's principal id.
-            disabled_at: The instant recorded as the disabling time.
+            disabled_at: The instant recorded as the disabling time, if the
+                account is not already disabled.
 
         Returns:
-            The account with ``disabled_at`` set.
+            The account with ``disabled_at`` set - to this call's instant on
+            a first disable, or to the original instant if it was already
+            disabled.
         """
         return await self._rbac_store.disable_service_account(principal_id, disabled_at=disabled_at)
 
