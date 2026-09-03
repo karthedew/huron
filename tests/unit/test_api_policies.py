@@ -1,8 +1,10 @@
-"""Policy routes not already exercised by
-``test_api_rbac.py::test_policy_attachment_requires_the_scoped_capability``:
-listing the catalog, attaching a policy to a project or a dataset rather
-than an organization, the ordering and pagination of the listing, and the
-``spec`` byte ceiling enforced on creation alone."""
+"""Policy routes not already exercised by the RBAC delegation scenario.
+
+Beyond ``test_api_rbac.py::test_policy_attachment_requires_the_scoped_capability``,
+this covers listing the catalog, attaching a policy to a project or a
+dataset rather than an organization, the ordering and pagination of the
+listing, and the ``spec`` byte ceiling enforced on creation alone.
+"""
 
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ pytestmark = pytest.mark.unit
 
 
 def _settings(tmp_path: Path) -> ApiSettings:
+    """A development ApiSettings with dev-headers auth and root bootstrapped as platform owner."""
     return ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -44,6 +47,7 @@ def _settings(tmp_path: Path) -> ApiSettings:
 
 @pytest.fixture
 def repository(tmp_path: Path) -> HierarchyRepository:
+    """A HierarchyRepository backed by a PosixRawStore under the test's tmp_path."""
     settings = _settings(tmp_path)
     return HierarchyRepository(
         PosixRawStore(settings.data_root),
@@ -53,20 +57,24 @@ def repository(tmp_path: Path) -> HierarchyRepository:
 
 @pytest.fixture
 def app(tmp_path: Path, repository: HierarchyRepository) -> FastAPI:
+    """The FastAPI app wired to `repository`, so tests can reach in and inspect stored state."""
     return create_app(settings=_settings(tmp_path), repository=repository)
 
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
+    """A TestClient over `app`, for tests that only need to drive the HTTP surface."""
     with TestClient(app) as client:
         yield client
 
 
 def _headers(subject: str) -> dict[str, str]:
+    """Auth and idempotency headers for `subject`, with a fresh Idempotency-Key each call."""
     return {"X-Huron-Subject": subject, "Idempotency-Key": str(uuid4())}
 
 
 def _create_policy(client: TestClient, *, name: str = "raw-90d") -> str:
+    """Creates a retention policy named `name` and returns its id, failing loudly if refused."""
     response = client.post(
         "/api/v1/policies",
         json={"policy_type": "retention", "name": name, "spec": {"days": 90}},
@@ -77,10 +85,13 @@ def _create_policy(client: TestClient, *, name: str = "raw-90d") -> str:
 
 
 def _spec_padded_to(size: int) -> dict[str, object]:
-    """Build a spec whose RFC 8785 canonical form is exactly ``size`` bytes,
-    by measuring an unpadded spec and growing one string field by exactly
-    the shortfall - the same measure the request-side ceiling itself uses,
-    so the boundary in the test is exact rather than approximate."""
+    """A spec whose RFC 8785 canonical form is exactly ``size`` bytes.
+
+    Built by measuring an unpadded spec and growing one string field by
+    exactly the shortfall - the same measure the request-side ceiling
+    itself uses, so the boundary in the test is exact rather than
+    approximate.
+    """
     spec: dict[str, object] = {"pad": ""}
     base = len(canonical_bytes(spec))
     spec["pad"] = "a" * (size - base)
@@ -89,6 +100,7 @@ def _spec_padded_to(size: int) -> dict[str, object]:
 
 
 def test_policies_can_be_listed_by_any_authenticated_caller(client: TestClient) -> None:
+    """Any authenticated caller can list policies, seeing the ones already created."""
     _create_policy(client)
     response = client.get("/api/v1/policies", headers=_headers("anyone"))
     assert response.status_code == 200
@@ -101,6 +113,7 @@ def test_policies_can_be_listed_by_any_authenticated_caller(client: TestClient) 
 def test_created_policy_response_publishes_exactly_the_declared_fields(
     client: TestClient,
 ) -> None:
+    """A created policy's response body publishes exactly its declared fields, nothing more."""
     response = client.post(
         "/api/v1/policies",
         json={"policy_type": "retention", "name": "raw-90d", "spec": {"days": 90}},
@@ -120,10 +133,13 @@ def test_created_policy_response_publishes_exactly_the_declared_fields(
 def test_policy_spec_publishes_as_an_inline_schema_not_a_named_component(
     app: FastAPI,
 ) -> None:
-    """``spec`` is opaque caller JSON with no fields of its own; the OpenAPI
+    """``spec`` publishes as an inline object schema, not a named ``PolicySpec`` component.
+
+    ``spec`` is opaque caller JSON with no fields of its own; the OpenAPI
     document must describe it inline on ``CreatePolicy`` and ``PolicyView``
     rather than factoring it into a ``PolicySpec`` component that implies a
-    shape the service does not actually constrain."""
+    shape the service does not actually constrain.
+    """
     schema = app.openapi()
     assert "PolicySpec" not in schema["components"]["schemas"]
     inline_spec_schema = {"type": "object", "additionalProperties": True, "title": "Spec"}
@@ -134,6 +150,7 @@ def test_policy_spec_publishes_as_an_inline_schema_not_a_named_component(
 
 
 def test_policies_are_ordered_by_name(client: TestClient) -> None:
+    """Policies list in name order regardless of the order they were created in."""
     for name in ["charlie", "alpha", "bravo"]:
         _create_policy(client, name=name)
     response = client.get("/api/v1/policies", headers=_headers("root"))
@@ -143,23 +160,28 @@ def test_policies_are_ordered_by_name(client: TestClient) -> None:
 
 
 def test_policies_rejects_an_out_of_range_limit(client: TestClient) -> None:
+    """A limit outside the allowed range is rejected with 422."""
     response = client.get("/api/v1/policies", params={"limit": 5000}, headers=_headers("root"))
     assert response.status_code == 422
 
 
 class _ReversedOrderRbacStore(InMemoryRbacStore):
-    """A store that hands policies back in the opposite of its own order -
-    stands in for any future ``RbacStore`` whose ``ORDER BY`` disagrees with
+    """A store that hands policies back in the opposite of its own order.
+
+    Stands in for any future ``RbacStore`` whose ``ORDER BY`` disagrees with
     ``(name, str(id))``; the list handler must re-sort what it is given
-    rather than trust the store's ordering."""
+    rather than trust the store's ordering.
+    """
 
     async def list_policies(self) -> list[Policy]:
+        """The base store's policies, reversed, to prove the caller does not trust store order."""
         return list(reversed(await super().list_policies()))
 
 
 async def test_the_boundary_orders_policies_whatever_order_the_store_returns(
     tmp_path: Path,
 ) -> None:
+    """The route re-sorts by name whatever order the RBAC store hands its policies back in."""
     settings = _settings(tmp_path)
     repository = HierarchyRepository(
         PosixRawStore(settings.data_root),
@@ -176,6 +198,7 @@ async def test_the_boundary_orders_policies_whatever_order_the_store_returns(
 
 
 def test_a_spec_at_the_byte_ceiling_is_accepted(client: TestClient) -> None:
+    """A spec exactly at the byte ceiling is accepted."""
     spec = _spec_padded_to(MAX_POLICY_SPEC_BYTES)
     response = client.post(
         "/api/v1/policies",
@@ -186,6 +209,7 @@ def test_a_spec_at_the_byte_ceiling_is_accepted(client: TestClient) -> None:
 
 
 def test_a_spec_one_byte_over_the_ceiling_is_rejected(client: TestClient) -> None:
+    """A spec one byte over the byte ceiling is rejected with 422."""
     spec = _spec_padded_to(MAX_POLICY_SPEC_BYTES + 1)
     response = client.post(
         "/api/v1/policies",
@@ -198,10 +222,12 @@ def test_a_spec_one_byte_over_the_ceiling_is_rejected(client: TestClient) -> Non
 async def test_a_spec_that_reached_storage_over_the_ceiling_is_still_read_back_whole(
     repository: HierarchyRepository, client: TestClient
 ) -> None:
-    """The ceiling binds ``CreatePolicy`` alone. A spec already in storage -
-    seeded directly here, standing in for anything that reached storage some
-    other way than this route - is still returned in full by ``GET
-    /policies``, unbounded and untruncated."""
+    """The ceiling binds ``CreatePolicy`` alone.
+
+    A spec already in storage - seeded directly here, standing in for
+    anything that reached storage some other way than this route - is
+    still returned in full by ``GET /policies``, unbounded and untruncated.
+    """
     oversized = _spec_padded_to(MAX_POLICY_SPEC_BYTES + 1)
     await repository.create_policy(
         policy_type="retention", name="grandfathered", spec=oversized, created_by="root"
@@ -215,8 +241,11 @@ async def test_a_spec_that_reached_storage_over_the_ceiling_is_still_read_back_w
 def test_a_spec_with_an_integer_outside_the_canonicalization_range_is_rejected(
     client: TestClient,
 ) -> None:
-    """A spec that cannot be canonicalized at all fails for the same reason
-    - and on the same path - as one that canonicalizes but is too large."""
+    """A spec that fails to canonicalize is rejected the same way as one that is merely too large.
+
+    A spec that cannot be canonicalized at all fails for the same reason -
+    and on the same path - as one that canonicalizes but is too large.
+    """
     response = client.post(
         "/api/v1/policies",
         json={
@@ -230,6 +259,7 @@ def test_a_spec_with_an_integer_outside_the_canonicalization_range_is_rejected(
 
 
 def test_a_policy_can_be_attached_to_a_project(client: TestClient) -> None:
+    """Attaching a policy to a project needs the capability and reports scope_type PROJECT."""
     organization_id = client.post(
         "/api/v1/organizations", json={"slug": "geo-org", "title": "Geo"}, headers=_headers("root")
     ).json()["id"]
@@ -259,6 +289,7 @@ def test_a_policy_can_be_attached_to_a_project(client: TestClient) -> None:
 
 
 def test_a_policy_can_be_attached_to_a_dataset(client: TestClient) -> None:
+    """Attaching a policy to a dataset needs the capability and reports scope_type DATASET."""
     organization_id = client.post(
         "/api/v1/organizations", json={"slug": "geo-org", "title": "Geo"}, headers=_headers("root")
     ).json()["id"]

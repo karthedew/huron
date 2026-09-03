@@ -1,5 +1,7 @@
-"""Local password credentials, server-side browser sessions, and the
-``user.manage`` capability that guards admin-provisioned user accounts.
+"""Local password credentials, server-side browser sessions, and the ``user.manage`` capability.
+
+``user.manage`` is the capability that guards admin-provisioned user
+accounts.
 
 ``principals`` (0002) already carries ``idp_subject`` and its
 ``kind = 'user' OR idp_subject IS NULL`` guard, so the OIDC upsert needs no
@@ -87,10 +89,12 @@ INSERT INTO role_capabilities (role_code, capability_code, layers) VALUES
 
 
 def upgrade() -> None:
+    """Create ``local_credentials`` and ``sessions`` and seed the ``user.manage`` capability."""
     execute_sql(DDL)
 
 
 def downgrade() -> None:
+    """Unseed ``user.manage`` and drop ``sessions`` and ``local_credentials`` with its guard."""
     execute_sql("""
     DELETE FROM role_capabilities
      WHERE role_code = 'platform_owner' AND capability_code = 'user.manage';

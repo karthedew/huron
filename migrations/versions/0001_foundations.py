@@ -320,10 +320,12 @@ CREATE TABLE reconciliation_findings (
 
 
 def upgrade() -> None:
+    """Create the foundation tables, their indexes and the release-immutability trigger."""
     execute_sql(DDL)
 
 
 def downgrade() -> None:
+    """Drop every table this revision created and the ``releases_immutable`` trigger function."""
     execute_sql("""
     DROP TABLE IF EXISTS reconciliation_findings, lineage_edges, product_versions, products,
       snapshots, jobs, retention_holds, purge_records, science_profiles, idempotency_records,

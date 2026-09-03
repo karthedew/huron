@@ -1,6 +1,9 @@
-"""The principal-provisioning seam: OIDC upsert-on-login, and the password
-lookup that folds "unknown", "disabled", and "service account" into one
-``None`` so a caller cannot distinguish them by branching."""
+"""The principal-provisioning seam, proved against MemoryPrincipalStore's OIDC upsert and lookup.
+
+Exercises OIDC upsert-on-login, and the password lookup that folds
+"unknown", "disabled", and "service account" into one ``None`` so a
+caller cannot distinguish them by branching.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 def _oidc_user(idp_subject: str = "idp-sub-1", display_name: str = "Alice Example") -> OidcUser:
+    """An OidcUser with a default subject and display name, both overridable."""
     return OidcUser(
         idp_subject=idp_subject,
         display_name=display_name,
@@ -29,6 +33,7 @@ def _oidc_user(idp_subject: str = "idp-sub-1", display_name: str = "Alice Exampl
 
 
 async def test_upsert_oidc_user_creates_a_new_principal_keyed_on_idp_subject() -> None:
+    """The first OIDC login for a subject creates an enabled user keyed on that idp_subject."""
     store = MemoryPrincipalStore()
     record = await store.upsert_oidc_user(_oidc_user())
     assert record.idp_subject == "idp-sub-1"
@@ -39,6 +44,7 @@ async def test_upsert_oidc_user_creates_a_new_principal_keyed_on_idp_subject() -
 
 
 async def test_upsert_oidc_user_updates_display_name_without_duplicating() -> None:
+    """A later OIDC login for the same subject updates the display name, not a new row."""
     store = MemoryPrincipalStore()
     first = await store.upsert_oidc_user(_oidc_user(display_name="Alice"))
     second = await store.upsert_oidc_user(_oidc_user(display_name="Alice Renamed"))
@@ -48,11 +54,13 @@ async def test_upsert_oidc_user_updates_display_name_without_duplicating() -> No
 
 
 async def test_get_user_by_subject_returns_none_for_an_unknown_subject() -> None:
+    """An unknown subject looked up by ``get_user_by_subject`` resolves to None."""
     store = MemoryPrincipalStore()
     assert await store.get_user_by_subject("nobody") is None
 
 
 async def test_get_user_by_subject_returns_none_for_a_disabled_user() -> None:
+    """A disabled user is invisible to ``get_user_by_subject``, resolving to None."""
     record = PrincipalRecord(
         id=uuid4(),
         kind="user",
@@ -67,6 +75,7 @@ async def test_get_user_by_subject_returns_none_for_a_disabled_user() -> None:
 
 
 async def test_get_user_by_subject_returns_none_for_a_service_account() -> None:
+    """A service account is invisible to ``get_user_by_subject``, resolving to None."""
     record = PrincipalRecord(
         id=uuid4(),
         kind="service_account",
@@ -81,6 +90,7 @@ async def test_get_user_by_subject_returns_none_for_a_service_account() -> None:
 
 
 async def test_get_user_by_subject_returns_the_matching_active_user() -> None:
+    """An enabled user is returned by ``get_user_by_subject`` under its own subject."""
     record = PrincipalRecord(
         id=uuid4(),
         kind="user",
@@ -98,6 +108,7 @@ async def test_get_user_by_subject_returns_the_matching_active_user() -> None:
 
 
 async def test_create_user_provisions_a_password_user_with_no_idp_subject() -> None:
+    """``create_user`` provisions a password user with no idp_subject and not disabled."""
     store = MemoryPrincipalStore()
     record = await store.create_user(subject="dana", display_name="Dana")
     assert record.kind == "user"
@@ -108,6 +119,7 @@ async def test_create_user_provisions_a_password_user_with_no_idp_subject() -> N
 
 
 async def test_create_user_refuses_a_subject_an_oidc_login_already_claimed() -> None:
+    """``create_user`` refuses a subject an OIDC login already claimed, leaving it untouched."""
     store = MemoryPrincipalStore()
     await store.upsert_oidc_user(_oidc_user(idp_subject="dana", display_name="Dana"))
     with pytest.raises(PrincipalSubjectExists):
@@ -117,6 +129,7 @@ async def test_create_user_refuses_a_subject_an_oidc_login_already_claimed() -> 
 
 
 async def test_create_user_refuses_a_subject_another_password_user_already_holds() -> None:
+    """``create_user`` refuses to create a second user under a subject already taken."""
     store = MemoryPrincipalStore()
     await store.create_user(subject="dana", display_name="Dana")
     with pytest.raises(PrincipalSubjectExists):
@@ -125,17 +138,20 @@ async def test_create_user_refuses_a_subject_another_password_user_already_holds
 
 
 async def test_get_by_id_returns_none_for_an_unknown_id() -> None:
+    """``get_by_id`` returns None for an id no principal has."""
     store = MemoryPrincipalStore()
     assert await store.get_by_id(uuid4()) is None
 
 
 async def test_get_by_id_returns_the_matching_record_regardless_of_kind_or_disabled_state() -> None:
+    """``get_by_id`` returns the exact record stored for a principal's id."""
     store = MemoryPrincipalStore()
     record = await store.create_user(subject="dana", display_name="Dana")
     assert await store.get_by_id(record.id) == record
 
 
 async def test_disable_sets_disabled_at_and_returns_the_updated_record() -> None:
+    """``disable`` stamps disabled_at, and the principal then fails password-login lookup."""
     store = MemoryPrincipalStore()
     record = await store.create_user(subject="dana", display_name="Dana")
     moment = datetime.now(UTC)
@@ -148,5 +164,6 @@ async def test_disable_sets_disabled_at_and_returns_the_updated_record() -> None
 
 
 async def test_disable_returns_none_for_an_unknown_id() -> None:
+    """``disable`` returns None for an id no principal has."""
     store = MemoryPrincipalStore()
     assert await store.disable(uuid4(), disabled_at=datetime.now(UTC)) is None

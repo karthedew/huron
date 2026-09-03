@@ -1,7 +1,12 @@
-"""Role-binding routes not already exercised by the delegation scenario in
-``test_api_rbac.py``: minting a SYSTEM-scope binding directly, listing
-bindings at all four roots, scope inheritance into the dataset collection,
-and revoking a binding at each of the four scopes it can live at."""
+"""Role-binding routes not already covered by the delegation scenario in ``test_api_rbac.py``.
+
+Drives the FastAPI app through a TestClient over an in-memory
+``HierarchyRepository`` with dev-header auth and ``root`` bootstrapped as
+platform owner. Proves minting a SYSTEM-scope binding directly, listing
+bindings at all four scope roots, scope inheritance into the dataset
+collection, and revoking a binding at each of the four scopes it can
+live at.
+"""
 
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def repository(tmp_path: Path) -> HierarchyRepository:
+    """A fresh ``HierarchyRepository`` writing raw bytes under ``tmp_path``."""
     return HierarchyRepository(
         PosixRawStore(str(tmp_path / "data")),
         classification_vocabulary=("open",),
@@ -38,6 +44,7 @@ def repository(tmp_path: Path) -> HierarchyRepository:
 
 @pytest.fixture
 def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClient]:
+    """A dev-header TestClient wired to ``repository``, with ``root`` as platform owner."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -51,6 +58,7 @@ def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClie
 
 
 def _headers(subject: str) -> dict[str, str]:
+    """Dev-header credentials for ``subject``, paired with a fresh idempotency key."""
     return {"X-Huron-Subject": subject, "Idempotency-Key": str(uuid4())}
 
 
@@ -103,6 +111,7 @@ _ROOT_ROLE = {
 
 
 def _bindings_path(scope: str, organization_id: str, project_id: str, dataset_id: str) -> str:
+    """The bindings-collection URL for ``scope``, given the hierarchy's ids."""
     return {
         "system": "/api/v1/bindings",
         "organization": f"/api/v1/organizations/{organization_id}/bindings",
@@ -125,6 +134,7 @@ def _create_binding(
 
 
 def test_a_platform_owner_creates_a_system_scope_binding(client: TestClient) -> None:
+    """A platform owner creates a SYSTEM-scope binding with no scope id or expiry."""
     response = client.post(
         "/api/v1/bindings",
         json={"principal": "user:alice", "role": "platform_owner"},
@@ -138,6 +148,7 @@ def test_a_platform_owner_creates_a_system_scope_binding(client: TestClient) -> 
 
 
 def test_a_binding_with_an_expiry_carries_it_forward(client: TestClient) -> None:
+    """A binding created with ``expires_in_days`` carries a non-null ``expires_at``."""
     response = client.post(
         "/api/v1/bindings",
         json={"principal": "user:temp", "role": "platform_owner", "expires_in_days": 30},
@@ -150,6 +161,7 @@ def test_a_binding_with_an_expiry_carries_it_forward(client: TestClient) -> None
 def test_creating_a_system_scope_binding_is_denied_without_the_capability(
     client: TestClient,
 ) -> None:
+    """Creating a SYSTEM-scope binding is denied to a caller without the capability."""
     response = client.post(
         "/api/v1/bindings",
         json={"principal": "user:alice", "role": "platform_owner"},
@@ -159,6 +171,7 @@ def test_creating_a_system_scope_binding_is_denied_without_the_capability(
 
 
 def test_the_bootstrap_platform_owner_reads_the_system_bindings_roster(client: TestClient) -> None:
+    """The bootstrap platform owner can read the SYSTEM bindings roster, listing ``user:root``."""
     response = client.get("/api/v1/bindings", headers=_headers("root"))
     assert response.status_code == 200
     principals = {item["principal"] for item in response.json()["items"]}
@@ -166,6 +179,7 @@ def test_the_bootstrap_platform_owner_reads_the_system_bindings_roster(client: T
 
 
 def test_system_bindings_are_denied_to_an_organization_admin(client: TestClient) -> None:
+    """An organization admin is denied when reading the SYSTEM-scope bindings roster."""
     organization_id, _project_id, _dataset_id = _hierarchy(client)
     client.post(
         f"/api/v1/organizations/{organization_id}/bindings",
@@ -177,6 +191,7 @@ def test_system_bindings_are_denied_to_an_organization_admin(client: TestClient)
 
 
 def test_system_bindings_are_denied_to_an_unbound_authenticated_caller(client: TestClient) -> None:
+    """An authenticated but unbound caller is denied the SYSTEM-scope bindings roster."""
     response = client.get("/api/v1/bindings", headers=_headers("mallory"))
     assert response.status_code == 403
 
@@ -184,6 +199,7 @@ def test_system_bindings_are_denied_to_an_unbound_authenticated_caller(client: T
 def test_organization_bindings_can_be_listed_by_someone_who_manages_them(
     client: TestClient,
 ) -> None:
+    """An organization admin can list that organization's bindings roster."""
     organization_id, _project_id, _dataset_id = _hierarchy(client)
     client.post(
         f"/api/v1/organizations/{organization_id}/bindings",
@@ -199,6 +215,7 @@ def test_organization_bindings_can_be_listed_by_someone_who_manages_them(
 
 
 def test_organization_bindings_are_ordered_by_principal_then_role(client: TestClient) -> None:
+    """Organization bindings are listed ordered by principal, then by role code."""
     organization_id, _project_id, _dataset_id = _hierarchy(client)
     for principal, role in [
         ("user:carol", "organization_admin"),
@@ -264,6 +281,7 @@ _UNSORTED_BINDINGS = {
 def test_the_boundary_orders_bindings_whatever_order_the_store_returns(
     tmp_path: Path, scope: str
 ) -> None:
+    """Bindings come back sorted even when the RBAC store returns them in reverse order."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -293,6 +311,7 @@ def test_the_boundary_orders_bindings_whatever_order_the_store_returns(
 
 
 def test_organization_bindings_rejects_an_out_of_range_limit(client: TestClient) -> None:
+    """Listing organization bindings with an out-of-range limit is rejected with 422."""
     organization_id, _project_id, _dataset_id = _hierarchy(client)
     response = client.get(
         f"/api/v1/organizations/{organization_id}/bindings",
@@ -303,6 +322,7 @@ def test_organization_bindings_rejects_an_out_of_range_limit(client: TestClient)
 
 
 def test_project_bindings_rejects_an_out_of_range_limit(client: TestClient) -> None:
+    """Listing project bindings with an out-of-range limit is rejected with 422."""
     organization_id, project_id, _dataset_id = _hierarchy(client)
     client.post(
         f"/api/v1/organizations/{organization_id}/bindings",
@@ -319,6 +339,7 @@ def test_project_bindings_rejects_an_out_of_range_limit(client: TestClient) -> N
 
 @pytest.mark.parametrize("scope", ["system", "organization", "project", "dataset"])
 def test_binding_scope_id_is_null_only_for_the_system_scope(client: TestClient, scope: str) -> None:
+    """A created binding's ``scope_id`` is null only when its scope is SYSTEM."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     _path, binding = _create_binding(client, scope, organization_id, project_id, dataset_id)
 
@@ -330,6 +351,7 @@ def test_binding_scope_id_is_null_only_for_the_system_scope(client: TestClient, 
 
 
 def test_project_bindings_can_be_listed_by_someone_who_manages_them(client: TestClient) -> None:
+    """An organization admin can list bindings on a project in their organization."""
     organization_id, project_id, _dataset_id = _hierarchy(client)
     client.post(
         f"/api/v1/organizations/{organization_id}/bindings",
@@ -350,6 +372,7 @@ def test_project_bindings_can_be_listed_by_someone_who_manages_them(client: Test
 def test_dataset_bindings_are_readable_by_a_project_admin_bound_at_the_parent_project(
     client: TestClient,
 ) -> None:
+    """A project admin bound at the parent project can read a dataset's bindings."""
     _organization_id, project_id, dataset_id = _hierarchy(client)
     client.post(
         f"/api/v1/projects/{project_id}/bindings",
@@ -363,6 +386,7 @@ def test_dataset_bindings_are_readable_by_a_project_admin_bound_at_the_parent_pr
 def test_dataset_bindings_are_readable_by_an_organization_admin_at_the_grandparent(
     client: TestClient,
 ) -> None:
+    """An organization admin bound at the grandparent organization can read dataset bindings."""
     organization_id, _project_id, dataset_id = _hierarchy(client)
     client.post(
         f"/api/v1/organizations/{organization_id}/bindings",
@@ -374,6 +398,7 @@ def test_dataset_bindings_are_readable_by_an_organization_admin_at_the_grandpare
 
 
 def test_dataset_bindings_are_denied_to_a_reader_bound_at_that_dataset(client: TestClient) -> None:
+    """A reader bound directly at a dataset is denied that dataset's bindings roster."""
     _organization_id, _project_id, dataset_id = _hierarchy(client)
     client.post(
         f"/api/v1/datasets/{dataset_id}/bindings",
@@ -385,6 +410,7 @@ def test_dataset_bindings_are_denied_to_a_reader_bound_at_that_dataset(client: T
 
 
 def test_dataset_bindings_404_for_an_unknown_dataset(client: TestClient) -> None:
+    """Dataset bindings 404 for a dataset id that does not exist."""
     response = client.get(f"/api/v1/datasets/{uuid4()}/bindings", headers=_headers("root"))
     assert response.status_code == 404
 
@@ -393,6 +419,7 @@ def test_dataset_bindings_404_for_an_unknown_dataset(client: TestClient) -> None
 def test_a_cursor_walk_visits_every_binding_at_the_root_exactly_once(
     client: TestClient, path: str
 ) -> None:
+    """A cursor walk with ``limit=1`` visits every binding at a root exactly once."""
     _organization_id, _project_id, dataset_id = _hierarchy(client)
     bindings_path = path.format(dataset_id=dataset_id)
     scope = "system" if path == "/api/v1/bindings" else "dataset"
@@ -459,6 +486,7 @@ async def test_a_lapsed_grant_still_appears_in_the_listing(
 def test_revoking_a_binding_at_its_own_root_succeeds_with_an_empty_body(
     client: TestClient, scope: str
 ) -> None:
+    """Revoking a binding at its own root succeeds with 204 and an empty body."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     path, binding = _create_binding(client, scope, organization_id, project_id, dataset_id)
 
@@ -471,6 +499,7 @@ def test_revoking_a_binding_at_its_own_root_succeeds_with_an_empty_body(
 def test_revoking_a_binding_removes_it_from_that_roots_listing(
     client: TestClient, scope: str
 ) -> None:
+    """Revoking a binding removes it from that root's listing immediately."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     path, binding = _create_binding(client, scope, organization_id, project_id, dataset_id)
 
@@ -491,6 +520,7 @@ def test_revoking_a_binding_removes_it_from_that_roots_listing(
 def test_revoking_a_binding_immediately_removes_the_capability_it_granted(
     client: TestClient, scope: str, role: str, grantee: str
 ) -> None:
+    """Revoking a binding immediately removes the capability it had granted."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     path = _bindings_path(scope, organization_id, project_id, dataset_id)
     grant = client.post(
@@ -512,6 +542,7 @@ def test_revoking_a_binding_immediately_removes_the_capability_it_granted(
 
 
 def test_an_organization_binding_named_under_the_system_root_404s(client: TestClient) -> None:
+    """Deleting an organization-scope binding via the SYSTEM bindings root 404s."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     _path, binding = _create_binding(
         client, "organization", organization_id, project_id, dataset_id
@@ -522,6 +553,7 @@ def test_an_organization_binding_named_under_the_system_root_404s(client: TestCl
 
 
 def test_a_dataset_binding_named_under_the_organization_root_404s(client: TestClient) -> None:
+    """Deleting a dataset-scope binding via the organization's bindings root 404s."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     _path, binding = _create_binding(client, "dataset", organization_id, project_id, dataset_id)
 
@@ -536,6 +568,7 @@ def test_a_dataset_binding_named_under_the_organization_root_404s(client: TestCl
 def test_a_binding_named_under_a_sibling_scope_of_the_same_kind_404s(
     client: TestClient, scope: str
 ) -> None:
+    """Deleting a binding via a sibling scope of the same kind 404s and leaves it intact."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     path, binding = _create_binding(client, scope, organization_id, project_id, dataset_id)
 
@@ -553,6 +586,7 @@ def test_a_binding_named_under_a_sibling_scope_of_the_same_kind_404s(
 
 @pytest.mark.parametrize("scope", ["system", "organization", "project", "dataset"])
 def test_revoking_an_unknown_binding_404s(client: TestClient, scope: str) -> None:
+    """Revoking an unknown binding id 404s at every scope."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     path = _bindings_path(scope, organization_id, project_id, dataset_id)
 
@@ -564,6 +598,7 @@ def test_revoking_an_unknown_binding_404s(client: TestClient, scope: str) -> Non
 def test_revoking_the_same_binding_twice_404s_the_second_time(
     client: TestClient, scope: str
 ) -> None:
+    """Revoking the same binding a second time 404s instead of repeating success."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     path, binding = _create_binding(client, scope, organization_id, project_id, dataset_id)
     binding_path = f"{path}/{binding['id']}"
@@ -577,6 +612,7 @@ def test_revoking_the_same_binding_twice_404s_the_second_time(
 def test_revoking_a_binding_is_denied_without_the_capability_at_its_scope(
     client: TestClient, scope: str
 ) -> None:
+    """Revoking a binding is denied to a caller without the capability at its scope."""
     organization_id, project_id, dataset_id = _hierarchy(client)
     path, binding = _create_binding(client, scope, organization_id, project_id, dataset_id)
 
@@ -595,6 +631,7 @@ def test_revoking_a_binding_is_denied_without_the_capability_at_its_scope(
 def test_revoking_at_a_nonexistent_scope_404s_before_checking_the_capability(
     client: TestClient, path_template: str
 ) -> None:
+    """Revoking at a nonexistent scope 404s before the capability check runs."""
     path = path_template.format(uuid4(), uuid4())
     response = client.delete(path, headers=_headers("mallory"))
     assert response.status_code == 404

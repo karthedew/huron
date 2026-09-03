@@ -1,8 +1,11 @@
-"""The event-loop/threadpool boundary: which of the 52 operations block the
-loop and are declared ``def`` (or wrap their one blocking call in
-``asyncify``), and the invariant that keeps ``HierarchyRepository``'s
-lock-protected writes safe to run from worker threads - no ``await`` ever
-appears inside a method that holds ``self._lock``."""
+"""The event-loop/threadpool boundary: which operations block, and where the lock forbids await.
+
+Pins which of the 52 operations block the loop and are declared ``def``
+(or wrap their one blocking call in ``asyncify``), and the invariant that
+keeps ``HierarchyRepository``'s lock-protected writes safe to run from
+worker threads - no ``await`` ever appears inside a method that holds
+``self._lock``.
+"""
 
 from __future__ import annotations
 
@@ -105,6 +108,7 @@ DOCUMENTATION_ENDPOINTS = frozenset(
 
 
 def _settings(tmp_path: Path, *, bootstrap_platform_owner: str | None = None) -> ApiSettings:
+    """Build dev-headers ``ApiSettings`` at ``tmp_path``, with an optional bootstrap owner."""
     return ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -116,13 +120,16 @@ def _settings(tmp_path: Path, *, bootstrap_platform_owner: str | None = None) ->
 
 
 def _built_app(tmp_path: Path) -> FastAPI:
+    """Build a fully wired FastAPI app over ``tmp_path``'s settings."""
     return create_app(settings=_settings(tmp_path))
 
 
 def _operations(app: FastAPI) -> Iterator[Callable[..., object]]:
-    """Every path operation FastAPI will actually route to, including those
-    nested inside an included router - ``app.routes`` alone stops at the
-    router boundary and never reaches the endpoints inside it."""
+    """Every path operation FastAPI will actually route to, across every included router.
+
+    Includes those nested inside an included router - ``app.routes`` alone
+    stops at the router boundary and never reaches the endpoints inside it.
+    """
     routes: list[object] = list(app.routes)
     while routes:
         route = routes.pop()
@@ -138,6 +145,7 @@ def _operations(app: FastAPI) -> Iterator[Callable[..., object]]:
 def test_the_route_table_has_exactly_the_operations_this_service_defines(
     tmp_path: Path,
 ) -> None:
+    """Registered operations minus the four documentation routes equal exactly the 52 expected."""
     names = {op.__name__ for op in _operations(_built_app(tmp_path))}
     assert names - DOCUMENTATION_ENDPOINTS == set(EXPECTED_COROUTINE_FUNCTION)
 
@@ -145,6 +153,7 @@ def test_the_route_table_has_exactly_the_operations_this_service_defines(
 def test_every_operation_s_async_keyword_matches_the_execution_model_disposition(
     tmp_path: Path,
 ) -> None:
+    """Every operation's ``async def``/``def`` keyword matches its declared disposition."""
     actual = {
         op.__name__: inspect.iscoroutinefunction(op)
         for op in _operations(_built_app(tmp_path))
@@ -154,9 +163,11 @@ def test_every_operation_s_async_keyword_matches_the_execution_model_disposition
 
 
 def _event_loop_is_running() -> bool:
-    """Whether the calling thread is the one currently driving an ``asyncio``
-    event loop - the distinction that matters here, since a spawned worker
-    thread is not the main thread but has no loop of its own either."""
+    """Return whether the calling thread currently drives an ``asyncio`` event loop.
+
+    The distinction that matters here, since a spawned worker thread is not
+    the main thread but has no loop of its own either.
+    """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -165,9 +176,12 @@ def _event_loop_is_running() -> bool:
 
 
 def test_the_three_blocking_calls_execute_off_the_event_loop_thread(tmp_path: Path) -> None:
-    """``password_login``, ``create_user`` and ``set_password`` stay
-    ``async def`` because they also await store calls, so their one blocking
-    call must run on a worker thread rather than the event loop."""
+    """The blocking calls inside login, user creation and password reset run off the loop.
+
+    ``password_login``, ``create_user`` and ``set_password`` stay
+    ``async def`` because they also await store calls, so their one
+    blocking call must run on a worker thread rather than the event loop.
+    """
     ran_on_the_event_loop: list[bool] = []
 
     def _tracking_verify_password(record: CredentialRecord | None, password: str) -> bool:
@@ -206,10 +220,13 @@ def test_the_three_blocking_calls_execute_off_the_event_loop_thread(tmp_path: Pa
 
 
 def test_readyz_s_raw_store_stat_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
-    """``readyz`` is ``async def`` - it also awaits the database check - so
+    """``readyz``'s raw-store stat still executes off the event-loop thread via ``asyncify``.
+
+    ``readyz`` is ``async def`` - it also awaits the database check - so
     the raw-store stat's off-loop guarantee no longer falls out of the
     disposition table above; it comes only from the ``asyncify`` wrapping
-    around the call site in ``app.py``, which this pins directly."""
+    around the call site in ``app.py``, which this pins directly.
+    """
     ran_on_the_event_loop: list[bool] = []
     real_raw_store_failure = app_module._raw_store_failure
 
@@ -228,9 +245,12 @@ def test_readyz_s_raw_store_stat_executes_off_the_event_loop_thread(tmp_path: Pa
 
 
 def test_no_asyncify_call_site_in_the_service_tier_is_cancellable() -> None:
-    """A cancelled ``asyncify`` call would abandon a rawstore write or a
+    """No ``asyncify`` call site in the service tier passes ``cancellable=``.
+
+    A cancelled ``asyncify`` call would abandon a rawstore write or a
     credential hash mid-flight; every call site in the tier must accept the
-    default (non-cancellable) behavior."""
+    default (non-cancellable) behavior.
+    """
     package_root = Path(api_package.__file__).resolve().parent
     for path in package_root.rglob("*.py"):
         assert "cancellable" not in path.read_text(), f"{path} passes cancellable="
@@ -240,6 +260,7 @@ def test_no_asyncify_call_site_in_the_service_tier_is_cancellable() -> None:
 
 
 def _is_self_lock(expr: ast.expr) -> bool:
+    """Return whether an AST expression is exactly the attribute access ``self._lock``."""
     return (
         isinstance(expr, ast.Attribute)
         and expr.attr == "_lock"
@@ -249,9 +270,11 @@ def _is_self_lock(expr: ast.expr) -> bool:
 
 
 def _mutating_methods(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
-    """Every ``HierarchyRepository`` method whose body takes ``self._lock`` -
-    the read-check-write sequences that must stay atomic while the lock is
-    held."""
+    """Return every ``HierarchyRepository`` method whose body takes ``self._lock``.
+
+    The read-check-write sequences that must stay atomic while the lock is
+    held.
+    """
     (repository_class,) = (
         node
         for node in ast.walk(tree)
@@ -272,9 +295,12 @@ def _mutating_methods(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunct
 
 
 def test_no_await_appears_inside_a_mutating_hierarchy_repository_method() -> None:
-    """The invariant the threading model depends on: a worker thread holding
+    """No ``HierarchyRepository`` method that holds ``self._lock`` contains an ``await``.
+
+    The invariant the threading model depends on: a worker thread holding
     ``_lock`` across an ``fsync`` must never suspend there, or every other
-    concurrent writer stalls behind it instead of behind the fsync alone."""
+    concurrent writer stalls behind it instead of behind the fsync alone.
+    """
     tree = ast.parse(REPOSITORY_MODULE.read_text())
     mutating_methods = _mutating_methods(tree)
     assert len(mutating_methods) >= 7, "expected to find the repository's write methods"
@@ -289,9 +315,12 @@ LIST_QUERY_METHODS = frozenset(
 
 
 def test_the_list_query_methods_never_acquire_the_lock() -> None:
-    """These run on the event-loop thread; taking ``_lock`` there would block
+    """None of the four list-query methods acquires ``self._lock``.
+
+    They run on the event-loop thread; taking ``_lock`` there would block
     behind a writer's in-flight ``fsync`` and reintroduce the stall the
-    threading model exists to remove."""
+    threading model exists to remove.
+    """
     tree = ast.parse(REPOSITORY_MODULE.read_text())
     (repository_class,) = (
         node

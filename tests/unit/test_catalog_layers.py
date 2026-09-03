@@ -23,6 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_humans_write_raw_and_bronze_only() -> None:
+    """Users may write only raw and bronze; service accounts may write only silver and gold."""
     ensure_layer_writable(Layer.RAW, "user")
     ensure_layer_writable(Layer.BRONZE, "user")
     for layer in (Layer.SILVER, Layer.GOLD):
@@ -38,6 +39,7 @@ def test_humans_write_raw_and_bronze_only() -> None:
 
 
 def test_promotions_follow_the_workflow() -> None:
+    """Promotion moves one step up raw, bronze, silver, gold; skipping or reversing is refused."""
     validate_promotion(Layer.RAW, Layer.BRONZE)
     validate_promotion(Layer.BRONZE, Layer.SILVER)
     validate_promotion(Layer.SILVER, Layer.GOLD)
@@ -62,6 +64,7 @@ def test_entry_is_allowed_everywhere_except_gold() -> None:
 
 
 def test_parse_entry_layer_refuses_gold_by_name() -> None:
+    """``parse_entry_layer`` accepts silver but refuses gold and an unknown name alike."""
     assert parse_entry_layer("silver") is Layer.SILVER
     with pytest.raises(LayerWorkflowError):
         parse_entry_layer("gold")
@@ -77,6 +80,7 @@ def test_entry_does_not_loosen_the_promotion_rule() -> None:
 
 
 def test_capability_pairs_and_parsing() -> None:
+    """``required_capability`` pairs action and layer; ``parse_layer`` accepts known codes only."""
     assert required_capability(LayerAction.WRITE, Layer.SILVER) == ("data.write", "silver")
     assert required_capability(LayerAction.READ, Layer.RAW) == ("data.read", "raw")
     assert parse_layer("gold") is Layer.GOLD

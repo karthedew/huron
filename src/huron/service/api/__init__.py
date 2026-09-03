@@ -7,6 +7,10 @@ replicas.
 Composition root: constructs the concrete stores from settings and injects
 them into catalog use cases. Routers and DTOs stay thin -- no rule that
 belongs in a package is restated here.
+
+The package's public surface is ``create_app``, which builds the
+application from validated settings, and ``ApiSettings``, the settings
+model it takes.
 """
 
 from .app import create_app

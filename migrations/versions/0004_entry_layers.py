@@ -69,10 +69,12 @@ UPDATE roles
 
 
 def upgrade() -> None:
+    """Add entry layers, the snapshot-origin constraints and the ``ingest_pipeline`` role."""
     execute_sql(DDL)
 
 
 def downgrade() -> None:
+    """Remove the ``ingest_pipeline`` role, the snapshot-origin constraints and the entry layer."""
     execute_sql("""
     UPDATE roles
        SET description = 'The only role that writes silver and gold. Service accounts only.'

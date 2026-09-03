@@ -24,4 +24,13 @@ router = APIRouter(prefix="/search", tags=["search"])
     responses={503: problem_response("the search projection is not configured")},
 )
 async def search_unavailable() -> NoReturn:
+    """Search the catalog.
+
+    The search projection is not configured, so every request is refused
+    with 503 ``PROJECTION_UNAVAILABLE``.
+    \f
+    Raises:
+        ProjectionUnavailable: Always, because no search projection is
+            configured.
+    """
     raise ProjectionUnavailable("search projection is not configured")

@@ -23,6 +23,7 @@ DIGEST = "sha256:" + "a" * 64
 
 
 def promotion(**overrides: Any) -> dict[str, Any]:
+    """Build a valid ``promotion`` provenance document, with any overrides merged in."""
     document: dict[str, Any] = {
         "schema": "urn:huron:snapshot-provenance:1",
         "kind": "promotion",
@@ -39,6 +40,7 @@ def promotion(**overrides: Any) -> dict[str, Any]:
 
 
 def external(**overrides: Any) -> dict[str, Any]:
+    """Build a valid ``external`` provenance document, with any overrides merged in."""
     document: dict[str, Any] = {
         "schema": "urn:huron:snapshot-provenance:1",
         "kind": "external",
@@ -56,6 +58,7 @@ def external(**overrides: Any) -> dict[str, Any]:
 
 
 def derivation(**overrides: Any) -> dict[str, Any]:
+    """Build a valid ``derivation`` provenance document, with any overrides merged in."""
     document: dict[str, Any] = {
         "schema": "urn:huron:snapshot-provenance:1",
         "kind": "derivation",
@@ -85,15 +88,18 @@ def derivation(**overrides: Any) -> dict[str, Any]:
 
 
 def test_the_schema_itself_is_valid() -> None:
+    """The provenance schema itself is a valid JSON Schema document."""
     validator(SCHEMA)
 
 
 def test_each_origin_validates() -> None:
+    """Each of the three well-formed origin documents validates against the schema."""
     for document in (promotion(), external(), derivation()):
         validate(SCHEMA, document)
 
 
 def test_a_snapshot_must_state_an_origin() -> None:
+    """A document missing ``kind``, or naming an unknown kind, fails validation."""
     with pytest.raises(ValidationError):
         validate(SCHEMA, {"schema": "urn:huron:snapshot-provenance:1"})
     with pytest.raises(ValidationError):
@@ -101,6 +107,7 @@ def test_a_snapshot_must_state_an_origin() -> None:
 
 
 def test_a_promotion_must_name_what_it_descends_from() -> None:
+    """A promotion names exactly one lower-layer origin: a revision or a snapshot, never both."""
     orphan = promotion()
     del orphan["source_revision_id"]
     with pytest.raises(ValidationError):
@@ -125,6 +132,7 @@ def test_an_external_entry_must_name_its_source_and_its_service_account() -> Non
 
 
 def test_streaming_windows_are_optional_but_well_formed() -> None:
+    """An external entry's ``window`` is optional but, if present, needs ``start`` and ``end``."""
     windowless = external()
     del windowless["window"]
     validate(SCHEMA, windowless)
@@ -133,6 +141,7 @@ def test_streaming_windows_are_optional_but_well_formed() -> None:
 
 
 def test_a_derivation_without_inputs_is_not_a_product() -> None:
+    """A derivation needs at least one input and a transformation record to be valid."""
     with pytest.raises(ValidationError):
         validate(SCHEMA, derivation(inputs=[]))
     incomplete = derivation()

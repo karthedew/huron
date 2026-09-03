@@ -97,17 +97,34 @@ class RoleError(Exception):
 
 
 class UnknownRole(RoleError):
+    """The ``UNKNOWN_ROLE`` condition: the code names no role in ``ROLES``.
+
+    Raised by :func:`role`, and so by anything that validates or compiles
+    a binding for a role code that was never defined.
+    """
+
     code = "UNKNOWN_ROLE"
 
 
 class PrincipalKindNotAllowed(RoleError):
-    """The role restricts which kind of principal may hold it."""
+    """The role restricts which kind of principal may hold it.
+
+    The ``PRINCIPAL_KIND_NOT_ALLOWED`` condition. :func:`validate_binding`
+    raises it in three cases: a principal kind outside ``PRINCIPAL_KINDS``,
+    a service account (which holds no roles at all), and a kind the role's
+    ``allowed_principal_kinds`` excludes.
+    """
 
     code = "PRINCIPAL_KIND_NOT_ALLOWED"
 
 
 class ScopeNotBindable(RoleError):
-    """The role cannot be granted at the requested scope level."""
+    """The role cannot be granted at the requested scope level.
+
+    The ``SCOPE_NOT_BINDABLE`` condition: the scope type is outside the
+    role's ``bindable_scopes`` - a ``platform_owner`` anywhere but
+    ``SYSTEM``, an ``organization_admin`` below its organization, and so on.
+    """
 
     code = "SCOPE_NOT_BINDABLE"
 
@@ -125,6 +142,14 @@ class LayerGrant:
 
 @dataclass(frozen=True, slots=True)
 class RoleDefinition:
+    """One named role: the capabilities it bundles and the rules for binding it.
+
+    A definition is vocabulary, not enforcement: :func:`compile_binding`
+    turns it into plain bindings and ``decide()`` never sees the role.
+    ``code`` is the stable identifier a binding row and the API carry;
+    ``title`` and ``description`` are what the API shows for it.
+    """
+
     code: str
     title: str
     #: Control-plane capabilities (no layer dimension).
@@ -138,6 +163,17 @@ class RoleDefinition:
     description: str = ""
 
     def grants_write(self, layer: str) -> bool:
+        """Return whether a binding for this role can allow ``data.write`` on ``layer``.
+
+        True when some layer grant carries ``data.write`` and either names
+        ``layer`` or is unrestricted (``layers=None``).
+
+        Args:
+            layer: A storage layer code from ``DATA_LAYERS``.
+
+        Returns:
+            True when the role writes to that layer.
+        """
         return any(
             grant.capability == "data.write" and (grant.layers is None or layer in grant.layers)
             for grant in self.layer_grants
@@ -245,6 +281,17 @@ ROLES: dict[str, RoleDefinition] = {
 
 
 def role(code: str) -> RoleDefinition:
+    """Look up a role definition by its stable code.
+
+    Args:
+        code: A role code such as ``developer``.
+
+    Returns:
+        The definition registered in ``ROLES`` under ``code``.
+
+    Raises:
+        UnknownRole: If no role has that code.
+    """
     try:
         return ROLES[code]
     except KeyError as exc:
@@ -252,7 +299,29 @@ def role(code: str) -> RoleDefinition:
 
 
 def validate_binding(role_code: str, principal_kind: str, scope_type: ScopeType) -> RoleDefinition:
-    """Check a proposed binding against the role model; return the role."""
+    """Check a proposed binding against the role model; return the role.
+
+    The checks run in order: the role must exist (an unknown code fails in
+    :func:`role` with ``UnknownRole``); the principal kind must be one of
+    ``PRINCIPAL_KINDS``; it must not be a service account, which holds no
+    roles because its authority is intrinsic to the kind; it must be a kind
+    the role allows; and the scope type must be one the role can be bound
+    at. Stores run this before writing a binding, so an invalid grant is
+    refused before any row exists.
+
+    Args:
+        role_code: The role being granted.
+        principal_kind: ``user`` or ``service_account``.
+        scope_type: The level the binding would attach at.
+
+    Returns:
+        The role's definition, ready to compile.
+
+    Raises:
+        PrincipalKindNotAllowed: If the kind is unknown, is a service
+            account, or is not one the role allows.
+        ScopeNotBindable: If the role is not bindable at ``scope_type``.
+    """
     definition = role(role_code)
     if principal_kind not in PRINCIPAL_KINDS:
         raise PrincipalKindNotAllowed(f"unknown principal kind: {principal_kind}")
@@ -282,7 +351,27 @@ def compile_binding(
 
     A role becomes one binding for its control-plane capabilities plus one
     binding per layer grant, so a role can read every layer while writing
-    only some.
+    only some. Every binding produced is an ``ALLOW`` sharing the same
+    principal, scope and expiry; the control-plane binding is omitted for
+    a role with no control-plane capabilities. The grant is validated
+    first, so the ``RoleError`` subclasses of :func:`validate_binding`
+    surface from here unchanged.
+
+    Args:
+        role_code: The role being granted.
+        principal_identifier: The ``user:``, ``sa:`` or ``group:`` string
+            the bindings address.
+        principal_kind: ``user`` or ``service_account``; checked against
+            the role, not derived from the identifier.
+        scope_type: The level the bindings attach at.
+        scope_id: The organization, project or dataset id, or None for
+            ``SYSTEM``.
+        expires_at: When every produced binding stops applying, or None
+            for no expiry.
+
+    Returns:
+        The compiled bindings: the control-plane binding first, when the
+        role has one, then one per layer grant in definition order.
     """
     definition = validate_binding(role_code, principal_kind, scope_type)
     compiled: list[Binding] = []
@@ -313,14 +402,25 @@ def compile_binding(
 
 
 def roles_granting_write(layer: str) -> tuple[RoleDefinition, ...]:
-    """The roles whose bindings can allow ``data.write`` on ``layer``."""
+    """Return the roles whose bindings can allow ``data.write`` on ``layer``.
+
+    This is the operational check behind the invariant that no role writes
+    silver or gold: for those layers it returns nothing.
+
+    Args:
+        layer: A storage layer code from ``DATA_LAYERS``.
+
+    Returns:
+        The matching definitions in ``ROLES`` order; empty when no role
+        writes there.
+    """
     return tuple(definition for definition in ROLES.values() if definition.grants_write(layer))
 
 
 def service_account_bindings(
     principal_identifier: str, organization_id: UUID
 ) -> tuple[Binding, ...]:
-    """The whole of a service account's authority, synthesized.
+    """Synthesize the whole of a service account's authority.
 
     A service account holds no roles and appears in no binding row; what it
     may do is a fixed property of the principal kind, scoped to the one
@@ -329,6 +429,16 @@ def service_account_bindings(
     when an organization admin creates the account, revoked in whole with
     the account or its keys - never widened, narrowed, or reshaped through
     the role system.
+
+    Args:
+        principal_identifier: The account's ``sa:{subject}`` identifier.
+        organization_id: The one organization that owns the account and
+            bounds everything it may do.
+
+    Returns:
+        Three never-expiring ``ALLOW`` bindings at the organization's
+        scope: ``SERVICE_ACCOUNT_CAPABILITIES``, then ``data.read`` and
+        ``data.write`` each restricted to ``SERVICE_ACCOUNT_LAYERS``.
     """
     return (
         Binding(

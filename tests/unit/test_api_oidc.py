@@ -1,4 +1,5 @@
-"""The browser half of the OIDC code flow through the HTTP surface:
+"""The browser half of the OIDC code flow through the HTTP surface.
+
 ``GET /auth/oidc/start`` redirects to the IdP with a signed flow cookie, and
 ``GET /auth/oidc/callback`` verifies state, exchanges the code, and starts a
 session - the same discovery and JWKS seams ``test_api_app.py`` and
@@ -45,11 +46,13 @@ KID = "test-signing-key"
 
 @pytest.fixture(scope="session")
 def private_key() -> RSAPrivateKey:
+    """A session-scoped RSA private key used to sign every mock IdP token in this module."""
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
 @pytest.fixture
 def serve_jwks(monkeypatch: pytest.MonkeyPatch, private_key: RSAPrivateKey) -> None:
+    """The mock IdP's JWKS endpoint is served from `private_key`, bypassing an actual fetch."""
     jwk = RSAAlgorithm.to_jwk(private_key.public_key(), as_dict=True)
     jwk["kid"], jwk["alg"], jwk["use"] = KID, "RS256", "sig"
     document = {"keys": [jwk]}
@@ -57,6 +60,7 @@ def serve_jwks(monkeypatch: pytest.MonkeyPatch, private_key: RSAPrivateKey) -> N
 
 
 def _id_token(private_key: RSAPrivateKey, *, nonce: str, **overrides: object) -> str:
+    """A signed ID token for user-123 with the given nonce and any claim overrides applied."""
     issued = datetime.now(UTC)
     claims: dict[str, object] = {
         "iss": ISSUER,
@@ -74,6 +78,7 @@ def _id_token(private_key: RSAPrivateKey, *, nonce: str, **overrides: object) ->
 
 
 def _mock_discovery() -> None:
+    """Mocks the IdP's OpenID discovery document with the authorize, token and jwks endpoints."""
     respx.get(f"{ISSUER}/.well-known/openid-configuration").mock(
         return_value=Response(
             200,
@@ -88,6 +93,7 @@ def _mock_discovery() -> None:
 
 
 def _oidc_settings(tmp_path: Path, *, env: str = "development") -> ApiSettings:
+    """An ApiSettings for oidc auth against the mocked issuer, development by default."""
     return ApiSettings(
         # "development" (not "production") deliberately by default: TestClient's
         # base URL is plain http, and a Secure session cookie would silently be
@@ -112,6 +118,7 @@ def _oidc_settings(tmp_path: Path, *, env: str = "development") -> ApiSettings:
 
 @pytest.fixture
 def client(tmp_path: Path, serve_jwks: None) -> Iterator[TestClient]:
+    """A TestClient wired for the oidc auth mode, with discovery mocked against the fake issuer."""
     settings = _oidc_settings(tmp_path)
     repository = HierarchyRepository(
         PosixRawStore(settings.data_root),
@@ -124,6 +131,7 @@ def client(tmp_path: Path, serve_jwks: None) -> Iterator[TestClient]:
 
 
 def _start(client: TestClient, *, return_to: str = "/") -> Response:
+    """Starts the OIDC code flow for `client` and returns the un-followed redirect response."""
     return client.get("/auth/oidc/start", params={"return_to": return_to}, follow_redirects=False)
 
 
@@ -133,6 +141,7 @@ def _start(client: TestClient, *, return_to: str = "/") -> Response:
 def test_oidc_start_redirects_to_the_authorize_url_with_pkce_and_sets_the_flow_cookie(
     client: TestClient,
 ) -> None:
+    """Starting the flow 302s to the IdP with PKCE params and sets a scoped flow cookie."""
     response = _start(client, return_to="/projects/9")
     assert response.status_code == 302
     location = response.headers["location"]
@@ -154,11 +163,13 @@ def test_oidc_start_redirects_to_the_authorize_url_with_pkce_and_sets_the_flow_c
 
 
 def test_oidc_start_flow_cookie_omits_secure_in_development(client: TestClient) -> None:
+    """The flow cookie omits the Secure attribute in a development environment."""
     cookie = _start(client).headers["set-cookie"]
     assert "Secure" not in cookie
 
 
 def test_oidc_start_flow_cookie_is_secure_outside_development(tmp_path: Path) -> None:
+    """The flow cookie carries the Secure attribute outside a development environment."""
     settings = _oidc_settings(tmp_path, env="production")
     repository = HierarchyRepository(
         PosixRawStore(settings.data_root),
@@ -174,8 +185,11 @@ def test_oidc_start_flow_cookie_is_secure_outside_development(tmp_path: Path) ->
 def test_oidc_start_drops_a_return_to_that_is_not_a_local_path(
     client: TestClient, private_key: RSAPrivateKey
 ) -> None:
-    """``//evil.example`` looks like a path but is protocol-relative; it must
-    land the callback at the app root, never at an attacker's host."""
+    """A protocol-relative ``return_to`` is dropped in favor of the app root.
+
+    ``//evil.example`` looks like a path but is protocol-relative; it must
+    land the callback at the app root, never at an attacker's host.
+    """
     start = _start(client, return_to="//evil.example")
     query = parse_qs(urlsplit(start.headers["location"]).query)
     state, nonce = query["state"][0], query["nonce"][0]
@@ -191,6 +205,7 @@ def test_oidc_start_drops_a_return_to_that_is_not_a_local_path(
 
 
 def test_oidc_start_404s_when_oidc_is_not_configured(tmp_path: Path) -> None:
+    """``/auth/oidc/start`` 404s when the deployment is not configured for OIDC auth."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -213,6 +228,7 @@ def test_oidc_start_404s_when_oidc_is_not_configured(tmp_path: Path) -> None:
 def test_oidc_callback_exchanges_the_code_and_redirects_into_the_web_app(
     client: TestClient, private_key: RSAPrivateKey
 ) -> None:
+    """A valid callback exchanges the code, starts a session, and redirects to the return_to."""
     start = _start(client, return_to="/projects/9")
     query = parse_qs(urlsplit(start.headers["location"]).query)
     state, nonce = query["state"][0], query["nonce"][0]
@@ -241,6 +257,7 @@ def test_oidc_callback_exchanges_the_code_and_redirects_into_the_web_app(
 def test_oidc_callback_rejects_a_state_that_does_not_match_the_flow_cookie(
     client: TestClient,
 ) -> None:
+    """A callback whose state does not match the flow cookie's state is refused with 401."""
     _start(client)
     response = client.get(
         "/auth/oidc/callback",
@@ -251,6 +268,7 @@ def test_oidc_callback_rejects_a_state_that_does_not_match_the_flow_cookie(
 
 
 def test_oidc_callback_rejects_a_request_with_no_flow_cookie_at_all(client: TestClient) -> None:
+    """A callback with no flow cookie at all is refused with 401."""
     response = client.get(
         "/auth/oidc/callback",
         params={"code": "the-auth-code", "state": "does-not-matter"},

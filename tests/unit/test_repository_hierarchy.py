@@ -1,7 +1,10 @@
-"""Direct unit tests for ``HierarchyRepository``'s write paths: idempotent
-replay, slug conflicts, optimistic-concurrency preconditions, and the
-release tag's two independent guards (the in-memory index and the raw
-store's own once-only write)."""
+"""Direct unit tests for ``HierarchyRepository``'s write paths and listing snapshots.
+
+Idempotent replay, slug conflicts, optimistic-concurrency preconditions,
+the release tag's two independent guards (the in-memory index and the raw
+store's own once-only write), and each ``list_*`` method's ordering,
+scoping and copy-on-read isolation.
+"""
 
 from __future__ import annotations
 
@@ -32,6 +35,7 @@ pytestmark = pytest.mark.unit
 
 
 def _repository(tmp_path: Path) -> HierarchyRepository:
+    """Build a ``HierarchyRepository`` at ``tmp_path`` with only "open" classification allowed."""
     return HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
     )
@@ -66,6 +70,7 @@ def _hierarchy(repository: HierarchyRepository) -> tuple[UUID, UUID, UUID]:
 
 
 def test_create_organization_replays_an_identical_request(tmp_path: Path) -> None:
+    """Replaying ``create_organization`` with the same key returns the identical object."""
     repository = _repository(tmp_path)
     first = repository.create_organization(
         slug="astro", title="Astro", description="", idempotency_key="k1"
@@ -79,6 +84,7 @@ def test_create_organization_replays_an_identical_request(tmp_path: Path) -> Non
 def test_create_organization_rejects_reuse_of_a_key_with_different_arguments(
     tmp_path: Path,
 ) -> None:
+    """Reusing an idempotency key with a different title raises ``IdempotencyKeyReused``."""
     repository = _repository(tmp_path)
     repository.create_organization(
         slug="astro", title="Astro", description="", idempotency_key="k1"
@@ -90,6 +96,7 @@ def test_create_organization_rejects_reuse_of_a_key_with_different_arguments(
 
 
 def test_create_organization_rejects_a_duplicate_slug(tmp_path: Path) -> None:
+    """A second organization with the same slug but a new idempotency key raises ``SlugExists``."""
     repository = _repository(tmp_path)
     repository.create_organization(
         slug="astro", title="Astro", description="", idempotency_key="k1"
@@ -103,9 +110,12 @@ def test_create_organization_rejects_a_duplicate_slug(tmp_path: Path) -> None:
 def test_create_organization_rejects_a_replay_whose_stored_result_has_the_wrong_type(
     tmp_path: Path,
 ) -> None:
-    """Each call site replays into its own type; a stored result of any other
+    """A stored idempotency result of the wrong type raises ``RuntimeError`` instead of trust.
+
+    Each call site replays into its own type; a stored result of any other
     type means the idempotency store itself was corrupted, and every call
-    site guards against trusting it."""
+    site guards against trusting it.
+    """
     repository = _repository(tmp_path)
     fingerprint = _fingerprint("organization", "astro", "Astro", "")
     repository._idempotency["k1"] = (fingerprint, object())
@@ -120,6 +130,7 @@ def test_create_organization_rejects_a_replay_whose_stored_result_has_the_wrong_
 
 
 def test_create_project_replays_an_identical_request(tmp_path: Path) -> None:
+    """Replaying ``create_project`` with the same idempotency key returns the identical object."""
     repository = _repository(tmp_path)
     organization_id, _, _ = _hierarchy(repository)
     first = repository.create_project(
@@ -142,6 +153,7 @@ def test_create_project_replays_an_identical_request(tmp_path: Path) -> None:
 
 
 def test_create_project_rejects_a_duplicate_slug(tmp_path: Path) -> None:
+    """A second project with an existing slug in the same organization raises ``SlugExists``."""
     repository = _repository(tmp_path)
     organization_id, _, _ = _hierarchy(repository)
     with pytest.raises(SlugExists, match="project slug already exists"):
@@ -158,6 +170,7 @@ def test_create_project_rejects_a_duplicate_slug(tmp_path: Path) -> None:
 def test_create_project_accepts_a_classification_in_the_configured_vocabulary(
     tmp_path: Path,
 ) -> None:
+    """A classification listed in the configured vocabulary is accepted and stored."""
     repository = _repository(tmp_path)
     organization_id, _, _ = _hierarchy(repository)
     project = repository.create_project(
@@ -174,6 +187,7 @@ def test_create_project_accepts_a_classification_in_the_configured_vocabulary(
 def test_create_project_rejects_a_classification_outside_the_configured_vocabulary(
     tmp_path: Path,
 ) -> None:
+    """A classification outside the configured vocabulary raises ``ClassificationUnknown``."""
     repository = _repository(tmp_path)
     organization_id, _, _ = _hierarchy(repository)
     with pytest.raises(ClassificationUnknown):
@@ -190,6 +204,7 @@ def test_create_project_rejects_a_classification_outside_the_configured_vocabula
 def test_create_project_with_an_empty_vocabulary_refuses_every_classification(
     tmp_path: Path,
 ) -> None:
+    """With an empty classification vocabulary, even a plausible classification is refused."""
     repository = HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=()
     )
@@ -211,6 +226,7 @@ def test_create_project_with_an_empty_vocabulary_refuses_every_classification(
 
 
 def test_create_dataset_replays_an_identical_request(tmp_path: Path) -> None:
+    """Replaying ``create_dataset`` with the same idempotency key returns the identical object."""
     repository = _repository(tmp_path)
     _, project_id, _ = _hierarchy(repository)
     first = repository.create_dataset(
@@ -235,6 +251,7 @@ def test_create_dataset_replays_an_identical_request(tmp_path: Path) -> None:
 
 
 def test_create_dataset_rejects_a_duplicate_slug(tmp_path: Path) -> None:
+    """A second dataset with an existing slug in the same project raises ``SlugExists``."""
     repository = _repository(tmp_path)
     _, project_id, _ = _hierarchy(repository)
     with pytest.raises(SlugExists, match="dataset slug already exists"):
@@ -253,6 +270,7 @@ def test_create_dataset_rejects_a_duplicate_slug(tmp_path: Path) -> None:
 
 
 def test_patch_dataset_rejects_a_slug_change(tmp_path: Path) -> None:
+    """``patch_dataset`` refuses to change the slug, raising ``SlugImmutable``."""
     repository = _repository(tmp_path)
     _, _, dataset_id = _hierarchy(repository)
     with pytest.raises(SlugImmutable):
@@ -262,6 +280,7 @@ def test_patch_dataset_rejects_a_slug_change(tmp_path: Path) -> None:
 
 
 def test_patch_dataset_rejects_a_stale_expected_version(tmp_path: Path) -> None:
+    """``patch_dataset`` refuses a stale ``expected_version``, raising ``PreconditionFailed``."""
     repository = _repository(tmp_path)
     _, _, dataset_id = _hierarchy(repository)
     with pytest.raises(PreconditionFailed):
@@ -274,6 +293,7 @@ def test_patch_dataset_rejects_a_stale_expected_version(tmp_path: Path) -> None:
 
 
 def test_create_release_replays_an_identical_request(tmp_path: Path) -> None:
+    """Replaying ``create_release`` with the same idempotency key returns the identical object."""
     repository = _repository(tmp_path)
     _, _, dataset_id = _hierarchy(repository)
     repository.register_revision(
@@ -299,6 +319,7 @@ def test_create_release_replays_an_identical_request(tmp_path: Path) -> None:
 
 
 def test_create_release_rejects_a_duplicate_tag(tmp_path: Path) -> None:
+    """A second release with an already-used tag raises ``TagExists`` under a new key too."""
     repository = _repository(tmp_path)
     _, _, dataset_id = _hierarchy(repository)
     repository.register_revision(
@@ -326,10 +347,13 @@ def test_create_release_rejects_a_duplicate_tag(tmp_path: Path) -> None:
 def test_create_release_translates_a_raw_store_collision_into_tag_exists(
     tmp_path: Path,
 ) -> None:
-    """The in-memory index and the raw store's once-only write are two
+    """With the in-memory release index entry dropped, the tag still raises ``TagExists``.
+
+    The in-memory index and the raw store's once-only write are two
     independent guards against the same race; dropping the in-memory entry
     while the tag file on disk survives proves the second guard still
-    refuses the write on its own."""
+    refuses the write on its own.
+    """
     repository = _repository(tmp_path)
     _, _, dataset_id = _hierarchy(repository)
     repository.register_revision(
@@ -357,6 +381,7 @@ def test_create_release_translates_a_raw_store_collision_into_tag_exists(
 
 
 def test_resolve_release_raises_for_an_unknown_tag(tmp_path: Path) -> None:
+    """``resolve_release`` raises ``ResourceNotFound`` for a tag that was never created."""
     repository = _repository(tmp_path)
     _, _, dataset_id = _hierarchy(repository)
     with pytest.raises(ResourceNotFound):
@@ -366,6 +391,7 @@ def test_resolve_release_raises_for_an_unknown_tag(tmp_path: Path) -> None:
 def test_create_release_persists_a_tag_document_with_no_withdrawal_keys(
     tmp_path: Path,
 ) -> None:
+    """A release's tag document on disk has exactly these keys and no fields for withdrawal."""
     repository = _repository(tmp_path)
     organization_id, project_id, dataset_id = _hierarchy(repository)
     repository.register_revision(
@@ -404,6 +430,7 @@ def test_create_release_persists_a_tag_document_with_no_withdrawal_keys(
 
 
 def test_patch_organization_rejects_a_stale_expected_version(tmp_path: Path) -> None:
+    """``patch_organization`` refuses a stale version, raising ``PreconditionFailed``."""
     repository = _repository(tmp_path)
     organization_id, _, _ = _hierarchy(repository)
     with pytest.raises(PreconditionFailed):
@@ -413,6 +440,7 @@ def test_patch_organization_rejects_a_stale_expected_version(tmp_path: Path) -> 
 
 
 def test_patch_organization_updates_description_only(tmp_path: Path) -> None:
+    """Patching only the description leaves the title unchanged and still bumps the version."""
     repository = _repository(tmp_path)
     organization_id, _, _ = _hierarchy(repository)
     patched = repository.patch_organization(
@@ -424,6 +452,7 @@ def test_patch_organization_updates_description_only(tmp_path: Path) -> None:
 
 
 def test_patch_project_updates_title_and_description(tmp_path: Path) -> None:
+    """Patching a project's title and description updates both and bumps the version."""
     repository = _repository(tmp_path)
     _, project_id, _ = _hierarchy(repository)
     patched = repository.patch_project(
@@ -435,6 +464,7 @@ def test_patch_project_updates_title_and_description(tmp_path: Path) -> None:
 
 
 def test_patch_project_rejects_a_slug_change(tmp_path: Path) -> None:
+    """``patch_project`` refuses to change the slug, raising ``SlugImmutable``."""
     repository = _repository(tmp_path)
     _, project_id, _ = _hierarchy(repository)
     with pytest.raises(SlugImmutable):
@@ -444,6 +474,7 @@ def test_patch_project_rejects_a_slug_change(tmp_path: Path) -> None:
 
 
 def test_patch_project_rejects_a_stale_expected_version(tmp_path: Path) -> None:
+    """``patch_project`` refuses a stale ``expected_version``, raising ``PreconditionFailed``."""
     repository = _repository(tmp_path)
     _, project_id, _ = _hierarchy(repository)
     with pytest.raises(PreconditionFailed):
@@ -456,6 +487,7 @@ def test_patch_project_rejects_a_stale_expected_version(tmp_path: Path) -> None:
 
 
 def test_list_organizations_orders_by_slug(tmp_path: Path) -> None:
+    """``list_organizations`` returns organizations ordered by slug, not creation order."""
     repository = _repository(tmp_path)
     repository.create_organization(slug="zeta", title="Zeta", description="", idempotency_key="k1")
     repository.create_organization(
@@ -468,6 +500,7 @@ def test_list_organizations_orders_by_slug(tmp_path: Path) -> None:
 
 
 def test_list_organizations_returns_the_empty_list_when_none_exist(tmp_path: Path) -> None:
+    """``list_organizations`` returns an empty list when no organization exists."""
     repository = _repository(tmp_path)
     assert repository.list_organizations() == []
 
@@ -475,6 +508,7 @@ def test_list_organizations_returns_the_empty_list_when_none_exist(tmp_path: Pat
 def test_list_organizations_returns_a_snapshot_that_mutation_cannot_corrupt(
     tmp_path: Path,
 ) -> None:
+    """Clearing a ``list_organizations`` result does not affect the repository's stored data."""
     repository = _repository(tmp_path)
     repository.create_organization(
         slug="astro", title="Astro", description="", idempotency_key="k1"
@@ -487,6 +521,7 @@ def test_list_organizations_returns_a_snapshot_that_mutation_cannot_corrupt(
 
 
 def test_list_projects_orders_by_slug_and_excludes_other_organizations(tmp_path: Path) -> None:
+    """``list_projects`` returns only the given organization's projects, ordered by slug."""
     repository = _repository(tmp_path)
     organization_id, _, _ = _hierarchy(repository)
     other_organization = repository.create_organization(
@@ -517,6 +552,7 @@ def test_list_projects_orders_by_slug_and_excludes_other_organizations(tmp_path:
 def test_list_projects_returns_the_empty_list_when_the_organization_has_no_projects(
     tmp_path: Path,
 ) -> None:
+    """``list_projects`` returns an empty list for an organization with no projects."""
     repository = _repository(tmp_path)
     organization = repository.create_organization(
         slug="astro", title="Astro", description="", idempotency_key="k1"
@@ -525,12 +561,14 @@ def test_list_projects_returns_the_empty_list_when_the_organization_has_no_proje
 
 
 def test_list_projects_raises_for_an_unknown_organization(tmp_path: Path) -> None:
+    """``list_projects`` raises ``ResourceNotFound`` for an unknown organization id."""
     repository = _repository(tmp_path)
     with pytest.raises(ResourceNotFound):
         repository.list_projects(uuid4())
 
 
 def test_list_projects_returns_a_snapshot_that_mutation_cannot_corrupt(tmp_path: Path) -> None:
+    """Clearing a ``list_projects`` result does not affect the repository's stored data."""
     repository = _repository(tmp_path)
     organization_id, _, _ = _hierarchy(repository)
 
@@ -541,6 +579,7 @@ def test_list_projects_returns_a_snapshot_that_mutation_cannot_corrupt(tmp_path:
 
 
 def test_list_datasets_orders_by_slug_and_excludes_other_projects(tmp_path: Path) -> None:
+    """``list_datasets`` returns only the given project's datasets, ordered by slug."""
     repository = _repository(tmp_path)
     organization_id, project_id, _ = _hierarchy(repository)
     repository.create_dataset(
@@ -578,6 +617,7 @@ def test_list_datasets_orders_by_slug_and_excludes_other_projects(tmp_path: Path
 def test_list_datasets_returns_the_empty_list_when_the_project_has_no_datasets(
     tmp_path: Path,
 ) -> None:
+    """``list_datasets`` returns an empty list for a project with no datasets."""
     repository = _repository(tmp_path)
     organization_id, _, _ = _hierarchy(repository)
     project = repository.create_project(
@@ -592,12 +632,14 @@ def test_list_datasets_returns_the_empty_list_when_the_project_has_no_datasets(
 
 
 def test_list_datasets_raises_for_an_unknown_project(tmp_path: Path) -> None:
+    """``list_datasets`` raises ``ResourceNotFound`` for an unknown project id."""
     repository = _repository(tmp_path)
     with pytest.raises(ResourceNotFound):
         repository.list_datasets(uuid4())
 
 
 def test_list_datasets_returns_a_snapshot_that_mutation_cannot_corrupt(tmp_path: Path) -> None:
+    """Clearing a ``list_datasets`` result does not affect the repository's stored data."""
     repository = _repository(tmp_path)
     _, project_id, _ = _hierarchy(repository)
 
@@ -608,6 +650,7 @@ def test_list_datasets_returns_a_snapshot_that_mutation_cannot_corrupt(tmp_path:
 
 
 def test_list_releases_orders_by_tag(tmp_path: Path) -> None:
+    """``list_releases`` returns a dataset's releases ordered by tag, not creation order."""
     repository = _repository(tmp_path)
     _, _, dataset_id = _hierarchy(repository)
     repository.register_revision(
@@ -638,18 +681,21 @@ def test_list_releases_orders_by_tag(tmp_path: Path) -> None:
 def test_list_releases_returns_the_empty_list_when_the_dataset_has_no_releases(
     tmp_path: Path,
 ) -> None:
+    """``list_releases`` returns an empty list for a dataset with no releases."""
     repository = _repository(tmp_path)
     _, _, dataset_id = _hierarchy(repository)
     assert repository.list_releases(dataset_id) == []
 
 
 def test_list_releases_raises_for_an_unknown_dataset(tmp_path: Path) -> None:
+    """``list_releases`` raises ``ResourceNotFound`` for an unknown dataset id."""
     repository = _repository(tmp_path)
     with pytest.raises(ResourceNotFound):
         repository.list_releases(uuid4())
 
 
 def test_list_releases_returns_a_snapshot_that_mutation_cannot_corrupt(tmp_path: Path) -> None:
+    """Clearing a ``list_releases`` result does not affect the repository's stored data."""
     repository = _repository(tmp_path)
     _, _, dataset_id = _hierarchy(repository)
     repository.register_revision(

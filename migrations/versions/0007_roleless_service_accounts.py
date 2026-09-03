@@ -78,10 +78,12 @@ END $$;
 
 
 def upgrade() -> None:
+    """Retire the pipeline roles, delete every ``sa:`` binding and refuse new ones in the guard."""
     execute_sql(DDL)
 
 
 def downgrade() -> None:
+    """Restore the pipeline roles and the binding guard that accepts ``sa:`` principals."""
     execute_sql(r"""
     UPDATE roles SET allowed_principal_kinds = ARRAY['user','service_account']
      WHERE code = 'reader';

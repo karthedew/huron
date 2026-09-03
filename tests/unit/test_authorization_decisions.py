@@ -1,5 +1,8 @@
-"""Bindings, the per-request cache, and the allow/deny call: cache lifetime,
-service-account synthesis, and ``check``'s pass/refuse behavior."""
+"""Bindings, the per-request cache, and the allow/deny call, proved with fakes and a repository.
+
+Covers cache lifetime, service-account binding synthesis, and
+``check``'s pass/refuse behavior.
+"""
 
 from __future__ import annotations
 
@@ -28,14 +31,18 @@ pytestmark = pytest.mark.unit
 
 
 def _repository(tmp_path: Path) -> HierarchyRepository:
+    """A real, filesystem-backed HierarchyRepository for the service-account synthesis tests."""
     return HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
     )
 
 
 class _StaticRepository:
-    """Exercises ``check``/``bindings_for_principal`` without a
-    filesystem-backed ``HierarchyRepository``: its bindings never change."""
+    """A fake repository whose ``bindings_for`` always returns the same fixed bindings.
+
+    Exercises ``check``/``bindings_for_principal`` without a
+    filesystem-backed ``HierarchyRepository``: its bindings never change.
+    """
 
     def __init__(self, bindings: tuple[Binding, ...]) -> None:
         self._bindings = bindings
@@ -48,6 +55,7 @@ class _StaticRepository:
 
 
 async def test_request_binding_cache_returns_a_fresh_dict_every_call() -> None:
+    """``request_binding_cache`` mints a fresh, empty dict on every call."""
     first = await request_binding_cache()
     second = await request_binding_cache()
     assert first == {}
@@ -59,6 +67,7 @@ async def test_request_binding_cache_returns_a_fresh_dict_every_call() -> None:
 
 
 def test_as_rbac_principal_carries_subject_groups_and_kind() -> None:
+    """``as_rbac_principal`` maps a Principal's subject, groups and kind onto RbacPrincipal."""
     principal = Principal(subject="alice", groups=frozenset({"astro"}), kind="service_account")
     assert as_rbac_principal(principal) == RbacPrincipal(
         subject="alice", groups=frozenset({"astro"}), kind="service_account"
@@ -69,6 +78,7 @@ def test_as_rbac_principal_carries_subject_groups_and_kind() -> None:
 
 
 async def test_check_allows_silently_when_a_binding_grants_the_capability() -> None:
+    """``check`` passes silently when a binding grants the capability at the right scope."""
     binding = Binding(
         principal="user:alice",
         capabilities=frozenset({"dataset.discover"}),
@@ -86,6 +96,7 @@ async def test_check_allows_silently_when_a_binding_grants_the_capability() -> N
 
 
 async def test_check_raises_forbidden_naming_capability_subject_and_scope() -> None:
+    """A missing binding raises Forbidden naming the capability, subject and scope."""
     with pytest.raises(Forbidden) as excinfo:
         await check(
             {},
@@ -98,6 +109,7 @@ async def test_check_raises_forbidden_naming_capability_subject_and_scope() -> N
 
 
 async def test_check_names_the_layer_in_its_message_when_one_is_given() -> None:
+    """Forbidden's message names the layer too when ``check`` is called with one."""
     dataset_id = uuid4()
     scope = Scope(ScopeType.DATASET, dataset_id, dataset_id=dataset_id)
     with pytest.raises(Forbidden) as excinfo:
@@ -113,11 +125,16 @@ async def test_check_names_the_layer_in_its_message_when_one_is_given() -> None:
 
 
 async def test_check_reuses_the_cache_across_two_calls_for_the_same_principal() -> None:
-    """The cache is the caller's to reuse across guards within one request:
+    """A second ``check`` call for the same principal reuses the cache instead of re-querying.
+
+    The cache is the caller's to reuse across guards within one request:
     a second ``check`` call for the same principal must not re-query, even
-    when the first call denied."""
+    when the first call denied.
+    """
 
     class _CountingRepository:
+        """A fake repository counting how many times ``bindings_for`` is called."""
+
         def __init__(self) -> None:
             self.calls = 0
 
@@ -143,6 +160,7 @@ async def test_check_reuses_the_cache_across_two_calls_for_the_same_principal() 
 async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_account(
     tmp_path: Path,
 ) -> None:
+    """A live service account gets synthesized bindings from ``bindings_for_principal``."""
     repository = _repository(tmp_path)
     organization = repository.create_organization(
         slug="astro", title="Astro", description="", idempotency_key="k1"
@@ -160,6 +178,7 @@ async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_acco
 async def test_bindings_for_principal_synthesizes_nothing_for_a_disabled_service_account(
     tmp_path: Path,
 ) -> None:
+    """A disabled service account gets no bindings from ``bindings_for_principal``."""
     repository = _repository(tmp_path)
     organization = repository.create_organization(
         slug="astro", title="Astro", description="", idempotency_key="k1"
@@ -178,9 +197,12 @@ async def test_bindings_for_principal_synthesizes_nothing_for_a_disabled_service
 async def test_bindings_for_principal_denies_a_service_account_with_no_account_row(
     tmp_path: Path,
 ) -> None:
-    """A service-account key that outlived its account resolves as a
+    """A service-account principal with no matching account row gets no bindings.
+
+    A service-account key that outlived its account resolves as a
     principal but must never inherit bindings from a row that no longer
-    exists."""
+    exists.
+    """
     repository = _repository(tmp_path)
     actor = RbacPrincipal(subject="org/gone", kind="service_account")
 

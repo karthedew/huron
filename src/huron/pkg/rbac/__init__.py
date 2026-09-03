@@ -1,4 +1,26 @@
-"""Pure role-binding authorization with classification-aware discovery."""
+"""Pure role-binding authorization with classification-aware discovery.
+
+This module is the authorization engine itself, not a re-export shim:
+:func:`decide` and the value types it reads live here, and
+:mod:`huron.pkg.rbac.roles` beside it holds the role vocabulary that
+compiles into those values. Nothing here touches a framework, a database
+or a clock beyond the ``now`` argument, so a decision is a pure function
+of the bindings the caller loaded, the principal asking, the capability,
+the scope and the time; the service tier does the loading and asks.
+
+The model is small. A :class:`Principal` answers to a set of identifiers -
+its own ``user:`` or ``sa:`` name and its groups. A :class:`Binding` grants
+or denies a set of capabilities to one identifier at one scope. A
+:class:`Scope` names the organization, project or dataset a question is
+about together with its ancestry, so a binding attached higher up covers
+everything nested beneath it; that is how a dataset inherits policies
+attached at its project or organization. ``decide`` answers
+deny-by-default, lets any applicable DENY win, and otherwise allows when a
+covering ALLOW binding admits the requested layer.
+:class:`RoleBindingAuthorizer` adds the classification vocabulary that
+discovery needs: a project is listed only when its classification is
+discoverable or the principal is cleared up to it.
+"""
 
 from __future__ import annotations
 
@@ -12,16 +34,37 @@ if TYPE_CHECKING:
 
 
 class Decision(StrEnum):
+    """The answer to an authorization question: ``ALLOW`` or ``DENY``.
+
+    :func:`decide` answers ``DENY`` unless some binding positively allows,
+    so having no bindings at all is a denial, not an error.
+    """
+
     ALLOW = "ALLOW"
     DENY = "DENY"
 
 
 class Effect(StrEnum):
+    """What a binding does when it applies: grant (``ALLOW``) or withhold (``DENY``).
+
+    One applicable ``DENY`` binding overrides every ``ALLOW`` at every scope
+    level, which is what makes a denial usable as an exception carved out
+    of a broader grant.
+    """
+
     ALLOW = "ALLOW"
     DENY = "DENY"
 
 
 class ScopeType(StrEnum):
+    """The levels a binding can attach at, from the whole platform down to one dataset.
+
+    ``SYSTEM`` contains every organization, an ``ORGANIZATION`` its
+    projects, a ``PROJECT`` its datasets; a binding covers the scope it is
+    attached to and everything nested inside it (see
+    :meth:`Binding.covers`).
+    """
+
     SYSTEM = "SYSTEM"
     ORGANIZATION = "ORGANIZATION"
     PROJECT = "PROJECT"
@@ -30,6 +73,20 @@ class ScopeType(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Principal:
+    """Who is asking: a subject, the groups it belongs to, and what kind of actor it is.
+
+    The engine never compares principals directly; it compares the
+    identifier strings in :attr:`identifiers` against ``Binding.principal``,
+    so a binding may address a user, a service account or a whole group.
+
+    Attributes:
+        subject: The stable subject identifier the credential resolved to.
+        groups: The group names the subject belongs to; each is an
+            identifier a binding may address as ``group:{name}``.
+        kind: ``user`` or ``service_account``, which decides the prefix of
+            the subject's own identifier.
+    """
+
     subject: str
     groups: frozenset[str] = frozenset()
     #: "user" or "service_account"; service accounts bind as "sa:{subject}".
@@ -37,12 +94,43 @@ class Principal:
 
     @property
     def identifiers(self) -> frozenset[str]:
+        """Return every binding-principal string this principal answers to.
+
+        That is ``sa:{subject}`` for a service account, ``user:{subject}``
+        for any other kind, plus ``group:{name}`` for each group. A binding
+        applies to the principal when its ``principal`` field is one of
+        these.
+
+        Returns:
+            The identifier strings as a set; never empty.
+        """
         prefix = "sa" if self.kind == "service_account" else "user"
         return frozenset({f"{prefix}:{self.subject}", *(f"group:{group}" for group in self.groups)})
 
 
 @dataclass(frozen=True, slots=True)
 class Scope:
+    """The place an authorization question is asked about, with its ancestry.
+
+    ``scope_type`` and ``scope_id`` name the scope itself;
+    ``organization_id``, ``project_id`` and ``dataset_id`` name the chain
+    of containers above and including it, and are what
+    :meth:`Binding.covers` reads when it decides whether a binding attached
+    higher up reaches this scope. A caller that omits the ancestry gets no
+    inheritance: a dataset scope built without its ``project_id`` is not
+    covered by a project binding. The ``SYSTEM`` scope carries no ids at
+    all.
+
+    Attributes:
+        scope_type: The level the question is about.
+        scope_id: The id of the organization, project or dataset at that
+            level, or None for ``SYSTEM``.
+        organization_id: The owning organization, for organization, project
+            and dataset scopes.
+        project_id: The owning project, for project and dataset scopes.
+        dataset_id: The dataset itself, for dataset scopes.
+    """
+
     scope_type: ScopeType
     scope_id: UUID | None = None
     organization_id: UUID | None = None
@@ -51,11 +139,42 @@ class Scope:
 
     @classmethod
     def system(cls) -> Scope:
+        """Return the ``SYSTEM`` scope, which has no id and no ancestry.
+
+        Returns:
+            The scope that only ``SYSTEM`` bindings cover.
+        """
         return cls(ScopeType.SYSTEM)
 
 
 @dataclass(frozen=True, slots=True)
 class Binding:
+    """One grant or denial of a set of capabilities to a principal identifier at a scope.
+
+    A binding is the unit :func:`decide` evaluates. It is addressed to a
+    single identifier string (``user:…``, ``sa:…`` or ``group:…``),
+    attached at one scope, and applies to a question when it matches the
+    principal, covers the scope and has not expired. Roles compile to
+    bindings (:func:`huron.pkg.rbac.roles.compile_binding`); the engine
+    never sees a role.
+
+    Attributes:
+        principal: The identifier the binding addresses, in the form
+            :attr:`Principal.identifiers` produces.
+        capabilities: The capability codes granted or denied together.
+        scope_type: The level the binding is attached at.
+        scope_id: The id of the organization, project or dataset it is
+            attached to; None only for ``SYSTEM``.
+        effect: Whether an applicable binding allows or denies.
+        expires_at: The instant from which the binding no longer applies,
+            or None for a binding that never expires.
+        maximum_classification: The highest classification code the binding
+            clears its principal for during discovery, or None when it
+            confers no clearance.
+        layers: The storage layers a ``data.read``/``data.write`` grant is
+            limited to; None means every layer.
+    """
+
     principal: str
     capabilities: frozenset[str]
     scope_type: ScopeType
@@ -66,9 +185,43 @@ class Binding:
     layers: frozenset[str] | None = None
 
     def matches(self, principal: Principal) -> bool:
+        """Return whether this binding is addressed to ``principal``.
+
+        A binding matches when its ``principal`` string is one of the
+        identifiers the principal answers to: its own user or
+        service-account name, or any of its groups.
+
+        Args:
+            principal: The actor whose identifiers are consulted.
+
+        Returns:
+            True when the binding addresses the principal directly or
+            through a group.
+        """
         return self.principal in principal.identifiers
 
     def covers(self, scope: Scope) -> bool:
+        """Return whether the scope this binding is attached at contains ``scope``.
+
+        Coverage is how policies inherit: a binding at an organization
+        covers the organization itself and every project and dataset whose
+        ancestry names it, a binding at a project covers the project and
+        its datasets, and a binding at a dataset covers only that dataset.
+        A ``SYSTEM`` binding covers every scope. Containment is read from
+        the scope's ancestry fields (``organization_id``, ``project_id``,
+        ``dataset_id``) and, for a scope at the binding's own level, from
+        ``scope_id`` too, so a scope built without ancestry still matches
+        a binding at its own level. A non-``SYSTEM`` binding whose
+        ``scope_id`` is None covers nothing: a malformed binding must never
+        widen into a grant.
+
+        Args:
+            scope: The scope of the question, with its ancestry set.
+
+        Returns:
+            True when the binding's attachment point is ``scope`` or an
+            ancestor of it.
+        """
         if self.scope_type is ScopeType.SYSTEM:
             return True
         if self.scope_id is None:
@@ -86,11 +239,34 @@ class Binding:
         )
 
     def is_expired(self, now: datetime) -> bool:
+        """Return whether the binding has lapsed at ``now``.
+
+        A binding without ``expires_at`` never expires; one with it is
+        expired from that instant onward, the boundary included.
+
+        Args:
+            now: The instant to judge against, comparable with
+                ``expires_at`` (both timezone-aware).
+
+        Returns:
+            True when ``expires_at`` is set and is at or before ``now``.
+        """
         return self.expires_at is not None and self.expires_at <= now
 
 
 @dataclass(frozen=True, slots=True)
 class Classification:
+    """One level of the classification vocabulary discovery ranks projects by.
+
+    Attributes:
+        code: The classification code projects carry.
+        order: The level's rank; a higher order is more restricted, and a
+            binding's ``maximum_classification`` clears every level whose
+            order is at most its own.
+        discoverable: Whether projects at this level are listed to anyone
+            holding ``dataset.discover`` there, without any clearance.
+    """
+
     code: str
     order: int
     discoverable: bool
@@ -98,12 +274,28 @@ class Classification:
 
 @dataclass(frozen=True, slots=True)
 class ProjectVisibility:
+    """What discovery needs to know about one project: identity, owner and classification.
+
+    Attributes:
+        project_id: The project being listed.
+        organization_id: The organization that owns it, so bindings at the
+            organization cover it.
+        classification: The project's classification code, looked up in
+            the authorizer's vocabulary.
+    """
+
     project_id: UUID
     organization_id: UUID
     classification: str
 
     @property
     def scope(self) -> Scope:
+        """Return the project's scope with its organization ancestry filled in.
+
+        Returns:
+            A ``PROJECT`` scope covered by bindings at the project, at its
+            organization, or at ``SYSTEM``.
+        """
         return Scope(
             ScopeType.PROJECT,
             self.project_id,
@@ -114,6 +306,18 @@ class ProjectVisibility:
 
 @dataclass(frozen=True, slots=True)
 class RoleBindingAuthorizer:
+    """The decision engine paired with a classification vocabulary.
+
+    :meth:`decide` is the module-level function unchanged;
+    :meth:`visible_project_ids` is the classification-aware discovery that
+    needs the vocabulary. The vocabulary is a closed list: a project whose
+    classification code is not in it is never visible, so an unknown code
+    fails closed rather than open.
+
+    Attributes:
+        classifications: The vocabulary discovery ranks projects against.
+    """
+
     classifications: tuple[Classification, ...] = field(default_factory=tuple)
 
     def decide(
@@ -126,6 +330,24 @@ class RoleBindingAuthorizer:
         layer: str | None = None,
         now: datetime | None = None,
     ) -> Decision:
+        """Decide whether ``principal`` holds ``capability`` at ``scope``.
+
+        Delegates to :func:`decide`; the vocabulary plays no part in a
+        capability decision.
+
+        Args:
+            bindings: Every binding loaded for the principal's identifiers.
+            principal: The actor asking.
+            capability: The capability code in question.
+            scope: The scope of the question, with its ancestry set.
+            layer: The storage layer for ``data.read``/``data.write``
+                questions; None for control-plane capabilities.
+            now: The instant expiries are judged at; the current UTC time
+                when None.
+
+        Returns:
+            ``Decision.ALLOW`` or ``Decision.DENY``.
+        """
         return decide(bindings, principal, capability, scope, layer=layer, now=now)
 
     def visible_project_ids(
@@ -136,6 +358,30 @@ class RoleBindingAuthorizer:
         *,
         now: datetime | None = None,
     ) -> list[UUID]:
+        """Return the ids of the projects ``principal`` may see, in the order given.
+
+        A project is visible when all three hold: some binding allows
+        ``dataset.discover`` at the project's scope (bindings at its
+        organization or at ``SYSTEM`` inherit down); its classification
+        code is in the vocabulary; and either that classification is
+        discoverable or the principal holds clearance for it - an unexpired
+        ``ALLOW`` binding covering the project whose
+        ``maximum_classification`` ranks at or above the project's,
+        whatever capabilities that binding carries. Expiry is judged once,
+        at ``now``, for the whole listing.
+
+        Args:
+            principal: The actor listing projects.
+            projects: The candidate projects with their owning organization
+                and classification.
+            bindings: Every binding loaded for the principal's identifiers.
+            now: The instant expiries are judged at; the current UTC time
+                when None.
+
+        Returns:
+            The ``project_id`` of each visible project, preserving the
+            input order.
+        """
         vocabulary = {item.code: item for item in self.classifications}
         current_time = now or datetime.now(UTC)
         visible: list[UUID] = []
@@ -173,7 +419,23 @@ def _applicable_bindings(
     scope: Scope,
     now: datetime,
 ) -> list[Binding]:
-    """Bindings matching the principal, covering the scope, unexpired, granting the capability."""
+    """Return the bindings that bear on one authorization question.
+
+    Bindings matching the principal, covering the scope, unexpired,
+    granting the capability. Effect is not a filter: DENY bindings are
+    returned alongside ALLOW ones so that :func:`decide` can let a denial
+    win.
+
+    Args:
+        bindings: Every binding loaded for the principal's identifiers.
+        principal: The actor asking.
+        capability: The capability code in question.
+        scope: The scope of the question, with its ancestry set.
+        now: The instant expiries are judged at.
+
+    Returns:
+        The applicable bindings, in the order they were given.
+    """
     return [
         binding
         for binding in bindings
@@ -185,7 +447,22 @@ def _applicable_bindings(
 
 
 def _permits_layer(binding: Binding, layer: str | None) -> bool:
-    """A binding scoped to specific layers only grants capabilities within them."""
+    """Return whether ``binding``'s layer restriction admits ``layer``.
+
+    A binding scoped to specific layers only grants capabilities within
+    them. Either side being None lifts the restriction: a question asked
+    without a layer is admitted by every binding, and a binding with
+    ``layers=None`` reaches every layer.
+
+    Args:
+        binding: The binding whose ``layers`` are consulted.
+        layer: The storage layer in question, or None for a control-plane
+            capability.
+
+    Returns:
+        True unless both sides name layers and ``layer`` is not among the
+        binding's.
+    """
     return layer is None or binding.layers is None or layer in binding.layers
 
 
@@ -198,6 +475,37 @@ def decide(
     layer: str | None = None,
     now: datetime | None = None,
 ) -> Decision:
+    """Decide whether ``principal`` holds ``capability`` at ``scope``.
+
+    The answer is deny-by-default. Only bindings that match the principal,
+    cover the scope, are unexpired and name the capability are considered.
+    Any considered binding with effect ``DENY`` decides ``DENY`` outright,
+    before layers are consulted, so a DENY binding restricted to some
+    layers still denies on every layer. Otherwise the answer is ``ALLOW``
+    when some considered ``ALLOW`` binding at any covering level -
+    dataset, project, organization or ``SYSTEM`` - admits ``layer``; this
+    is how a dataset inherits what was granted at its project or
+    organization, and how a role that reads every layer can still write
+    only some.
+
+    Args:
+        bindings: Every binding loaded for the principal's identifiers;
+            the engine filters, it never loads.
+        principal: The actor asking.
+        capability: The capability code in question, such as
+            ``dataset.create``.
+        scope: The scope of the question, with its ancestry set so bindings
+            attached higher up cover it.
+        layer: The storage layer for ``data.read``/``data.write``
+            questions; None for control-plane capabilities, which no layer
+            restriction withholds.
+        now: The instant expiries are judged at; the current UTC time when
+            None.
+
+    Returns:
+        ``Decision.ALLOW`` when a covering ALLOW binding admits the layer
+        and no covering DENY binding applies; ``Decision.DENY`` otherwise.
+    """
     current_time = now or datetime.now(UTC)
     applicable = _applicable_bindings(bindings, principal, capability, scope, current_time)
     if any(binding.effect is Effect.DENY for binding in applicable):
@@ -226,6 +534,25 @@ def _has_clearance(
     vocabulary: dict[str, Classification],
     now: datetime,
 ) -> bool:
+    """Return whether the principal is cleared for a classification of ``required_order``.
+
+    Clearance comes from any unexpired ``ALLOW`` binding that matches the
+    principal, covers the scope and names a ``maximum_classification`` in
+    the vocabulary whose order is at least ``required_order``. The
+    binding's capabilities are irrelevant here, and a code outside the
+    vocabulary confers nothing.
+
+    Args:
+        bindings: Every binding loaded for the principal's identifiers.
+        principal: The actor asking.
+        scope: The project scope being discovered.
+        required_order: The order of the project's classification.
+        vocabulary: The classification vocabulary keyed by code.
+        now: The instant expiries are judged at.
+
+    Returns:
+        True when at least one binding clears the principal to that order.
+    """
     for binding in bindings:
         if (
             binding.effect is Effect.ALLOW

@@ -1,6 +1,9 @@
-"""``GET /api/v1/roles``: the role catalog, closed to anonymous callers -
+"""``GET /api/v1/roles`` access control and its fidelity to the role registry.
+
+The route serves the role catalog and is closed to anonymous callers -
 the whole platform's capability model is not something an unauthenticated
-caller needs to enumerate."""
+caller needs to enumerate.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 def _settings(tmp_path: Path) -> ApiSettings:
+    """A development ``ApiSettings`` with dev-headers auth and one open classification value."""
     return ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -30,6 +34,7 @@ def _settings(tmp_path: Path) -> ApiSettings:
 
 
 def test_roles_refuses_an_anonymous_caller(tmp_path: Path) -> None:
+    """An anonymous caller is refused 401 with the INVALID_CREDENTIAL problem code."""
     with TestClient(create_app(settings=_settings(tmp_path))) as client:
         response = client.get("/api/v1/roles")
     assert response.status_code == 401
@@ -38,6 +43,7 @@ def test_roles_refuses_an_anonymous_caller(tmp_path: Path) -> None:
 
 
 def test_roles_lists_the_catalog_for_any_authenticated_caller(tmp_path: Path) -> None:
+    """Any authenticated caller receives 200 with a role catalog that includes platform_owner."""
     with TestClient(create_app(settings=_settings(tmp_path))) as client:
         response = client.get("/api/v1/roles", headers={"X-Huron-Subject": "anyone"})
     assert response.status_code == 200
@@ -48,6 +54,7 @@ def test_roles_lists_the_catalog_for_any_authenticated_caller(tmp_path: Path) ->
 
 
 def test_roles_are_a_pure_function_of_the_role_registry(tmp_path: Path) -> None:
+    """Each role view reproduces its ROLES entry field by field, with set-like fields sorted."""
     with TestClient(create_app(settings=_settings(tmp_path))) as client:
         response = client.get("/api/v1/roles", headers={"X-Huron-Subject": "anyone"})
     body = response.json()

@@ -1,4 +1,12 @@
-"""API configuration and deploy-time safety refusals."""
+"""API configuration and deploy-time safety refusals.
+
+Every setting is read from the ``HURON_*`` environment, with ``__``
+separating the levels of a nested model (``HURON_OIDC__ISSUER`` populates
+``ApiSettings.oidc.issuer``). Validation happens when the settings object
+is built, before anything is wired, so a combination that would weaken
+authentication or discovery is refused by the process that would have run
+it rather than discovered by the first request it answered.
+"""
 
 from __future__ import annotations
 
@@ -9,14 +17,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ClassificationValue(BaseModel):
+    """One level of the data-classification vocabulary a deployment defines.
+
+    Projects carry a classification ``code`` from this vocabulary. ``order``
+    ranks the levels so a binding's maximum classification can be compared
+    against a project's; ``discoverable`` says whether a project at this
+    level is listed for any principal allowed to discover datasets, or
+    only for one whose bindings clear the level. Codes and orders are each
+    unique across the vocabulary, which ``ApiSettings`` enforces.
+    """
+
     code: str = Field(min_length=1)
     order: int = Field(ge=0)
     discoverable: bool
 
 
 class OidcSettings(BaseModel):
-    """One configured identity provider. ``HURON_OIDC__*`` env vars populate
-    this (``env_nested_delimiter="__"`` on ``ApiSettings.model_config``)."""
+    """One configured identity provider.
+
+    ``HURON_OIDC__*`` env vars populate this (``env_nested_delimiter="__"``
+    on ``ApiSettings.model_config``). The issuer is discovered at startup;
+    the client credentials and redirect URL drive the authorization-code
+    login flow, and ``audience`` is what bearer tokens must be issued for.
+    """
 
     issuer: str
     client_id: str
@@ -30,6 +53,17 @@ class OidcSettings(BaseModel):
 
 
 class ApiSettings(BaseSettings):
+    """The API service's configuration, read from ``HURON_*`` and validated.
+
+    Building one succeeds only for a combination the service is willing to
+    run: development-only authentication never leaves development, OIDC is
+    never selected without a provider, the login-flow cookie is never
+    unsigned outside development, and the classification vocabulary is
+    non-empty with unique codes and orders. ``create_app`` takes the
+    validated object and never reads the environment itself, which is what
+    lets tests construct settings directly.
+    """
+
     model_config = SettingsConfigDict(
         env_prefix="HURON_", case_sensitive=False, env_nested_delimiter="__"
     )
@@ -64,6 +98,26 @@ class ApiSettings(BaseSettings):
 
     @model_validator(mode="after")
     def refuse_unsafe_combinations(self) -> Self:
+        """Refuse a configuration that would weaken authentication or discovery.
+
+        Each check guards a failure that would otherwise surface only at
+        request time: dev-headers outside development would let any client
+        name its own subject, OIDC without a provider would leave every
+        bearer token unverifiable, an empty ``login_flow_secret`` would
+        leave the pending-login cookie unsigned, and a vocabulary with
+        repeated codes or orders (or none at all) would make classification
+        comparisons ambiguous.
+
+        Returns:
+            The settings unchanged, once every combination passed.
+
+        Raises:
+            ValueError: If ``auth_mode`` is ``dev-headers`` while ``env`` is
+                not ``development``; if ``auth_mode`` is ``oidc`` and
+                ``oidc`` is unset; if ``login_flow_secret`` is empty outside
+                development; if two classification values share a code; if
+                two share an order; or if the vocabulary is empty.
+        """
         if self.auth_mode == "dev-headers" and self.env != "development":
             raise ValueError("dev-headers auth is refused outside development")
         if self.auth_mode == "oidc" and self.oidc is None:
@@ -86,5 +140,10 @@ def settings_from_environment() -> ApiSettings:
 
     The call reads argument-less to a type checker, which cannot see that
     pydantic-settings supplies the required fields from the environment.
+    Validation runs as part of construction, so an environment describing
+    an unsafe combination fails here.
+
+    Returns:
+        The validated settings for this process.
     """
     return ApiSettings()  # type: ignore[call-arg]

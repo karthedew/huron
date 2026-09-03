@@ -93,6 +93,8 @@ convention = "google"
 # Args/Returns/Raises sections follow "\f" - which D301 would otherwise want
 # a raw string for, defeating the escape.
 "src/huron/service/api/routes/**/endpoints/*.py" = ["D301"]
+# app.py defines the two health probes the same way.
+"src/huron/service/api/app.py" = ["D301"]
 # Stable public error names intentionally mirror their API codes.
 "src/huron/pkg/auth/errors.py" = ["N818"]
 "src/huron/pkg/auth/password.py" = ["N818"]
@@ -255,6 +257,7 @@ forbidden_modules = ["huron.service.api.stores.*"]
 include = ["src/huron"]
 
 [tool.coverage.report]
-# Ratchet floor set at the measured baseline (2026-08-30). Never lower it;
-# raise it as coverage climbs. New or touched files are covered in full.
-fail_under = 75
+# Ratchet floor: the measured value at the last raise, rounded down. Never
+# lower it; raise it as coverage climbs. New or touched files are covered in
+# full.
+fail_under = 89

@@ -1,6 +1,8 @@
-"""The service tier's own stable errors: every class here is a
-``DomainError`` subclass whose ``code``/``status_code`` pair is the one row
-of the error table a raiser gets by construction."""
+"""Proves each service-tier error's stable ``code``/``status_code`` pair and default detail.
+
+Every class here is a ``DomainError`` subclass whose ``code``/``status_code``
+pair is the one row of the error table a raiser gets by construction.
+"""
 
 from __future__ import annotations
 
@@ -38,6 +40,7 @@ _CLASSES = [
 def test_each_error_carries_its_documented_code_and_status(
     error_type: type[DomainError], code: str, status_code: int
 ) -> None:
+    """Each error type carries its documented ``code``/``status_code`` and a given detail."""
     instance = error_type("something went wrong")
     assert isinstance(instance, DomainError)
     assert instance.code == code
@@ -49,11 +52,13 @@ def test_each_error_carries_its_documented_code_and_status(
 def test_a_detail_defaults_to_the_code_in_lowercase_words(
     error_type: type[DomainError], code: str, status_code: int
 ) -> None:
+    """With no detail given, an error's detail defaults to its code in lowercase words."""
     instance = error_type()
     assert instance.detail == code.replace("_", " ").lower()
 
 
 def test_context_travels_into_as_problem() -> None:
+    """``as_problem`` carries the constructor's ``context`` through into the problem body."""
     instance = SlugExists("astro already exists", context={"slug": "astro"})
     problem = instance.as_problem()
     assert problem["context"] == {"slug": "astro"}

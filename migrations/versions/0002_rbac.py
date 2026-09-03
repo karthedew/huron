@@ -1,5 +1,4 @@
-"""RBAC: principals, service accounts, the role catalog, guarded bindings,
-and policies.
+"""RBAC: principals, service accounts, the role catalog, guarded bindings, and policies.
 
 The role/capability seed below mirrors ``huron.pkg.rbac.roles.ROLES`` - that
 module is the source of truth and a contract test compares the two against a
@@ -267,10 +266,12 @@ INSERT INTO role_capabilities (role_code, capability_code, layers) VALUES
 
 
 def upgrade() -> None:
+    """Create the principal, role-catalog and policy tables, guard bindings and seed the roles."""
     execute_sql(DDL)
 
 
 def downgrade() -> None:
+    """Drop the guards, catalog and policy tables, and restore free-form binding capabilities."""
     execute_sql("""
     DROP TRIGGER IF EXISTS role_bindings_guard ON role_bindings;
     DROP FUNCTION IF EXISTS role_binding_guard();

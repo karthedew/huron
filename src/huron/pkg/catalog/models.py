@@ -1,4 +1,11 @@
-"""Small immutable values shared by the framework-free catalog modules."""
+"""Small immutable values shared by the framework-free catalog modules.
+
+These are the record shapes the catalog's ports exchange with the services
+that implement them: enough identity to build a storage path, enough about
+a committed revision to record it, and the event that announces it. They
+carry no behaviour and no framework import, so both sides of a port can use
+them without either importing the other.
+"""
 
 from __future__ import annotations
 
@@ -12,12 +19,33 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class EntityRef:
+    """The identity of an organization, project or dataset as a storage path needs it.
+
+    An id plus a slug is exactly what the path constructors in
+    :mod:`huron.pkg.catalog.paths` take (they spell ``{slug}--{id}``), so
+    this value satisfies their ``Slugged`` protocol without the full record.
+
+    Attributes:
+        id: The entity's identifier.
+        slug: The entity's URL- and path-safe name.
+    """
+
     id: UUID
     slug: str
 
 
 @dataclass(frozen=True, slots=True)
 class RevisionRef:
+    """What a release tag resolves to: one revision, named by id and number.
+
+    Attributes:
+        id: The revision's identifier.
+        dataset_id: The dataset the revision belongs to.
+        number: The revision's 1-based position within its dataset.
+        manifest_sha256: The content identity of the revision's manifest,
+            so a resolver can prove it got the revision it asked for.
+    """
+
     id: UUID
     dataset_id: UUID
     number: int
@@ -26,6 +54,24 @@ class RevisionRef:
 
 @dataclass(frozen=True, slots=True)
 class RevisionRecord:
+    """A committed raw revision as the metastore records it.
+
+    Built once the envelope is published and never updated: a revision is
+    immutable, so its record is too.
+
+    Attributes:
+        id: The revision's identifier.
+        dataset_id: The dataset the revision belongs to.
+        number: The revision's 1-based position within its dataset.
+        manifest_sha256: The content identity of the committed manifest.
+        revision_path: The revision directory in the raw store, as
+            :func:`huron.pkg.catalog.paths.revision_dir` builds it.
+        committed_by: The principal whose ingest session committed it.
+        committed_at: When the commit became durable.
+        file_count: How many files the manifest lists.
+        total_bytes: The sum of the manifest's file sizes.
+    """
+
     id: UUID
     dataset_id: UUID
     number: int
@@ -39,6 +85,18 @@ class RevisionRecord:
 
 @dataclass(frozen=True, slots=True)
 class OutboxEvent:
+    """An event stored in the same transaction as the change it announces.
+
+    Writing the event through a transactional outbox, rather than publishing
+    it directly, means a consumer can never learn of a revision that was
+    not durably recorded, and a recorded revision can never go unannounced.
+
+    Attributes:
+        kind: The event type a consumer dispatches on.
+        subject_id: The id of the entity the event is about.
+        payload: The event body, as JSON-compatible values.
+    """
+
     kind: str
     subject_id: UUID
     payload: dict[str, object]

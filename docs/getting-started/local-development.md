@@ -130,7 +130,9 @@ make migrate            # uv run --env-file dev.env alembic upgrade head
 ```
 
 Migrations live in `migrations/versions/`. Each one is a module docstring explaining *why*, a
-`DDL = r"""..."""` string, `upgrade()` running `op.execute(DDL)`, and a real `downgrade()`.
+`DDL = r"""..."""` string, `upgrade()` handing it to `migrations._ddl.execute_sql` (asyncpg
+prepares one statement at a time, so a multi-statement `op.execute` fails), and a real
+`downgrade()`.
 `migrations/schema.sql` is a hand-maintained summary of the whole metastore for reading — it is
 documentation and is never executed.
 

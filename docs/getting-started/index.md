@@ -17,8 +17,8 @@ Four things are worth knowing before the first change lands:
 1. **[`design/`](../index.md) is authoritative.** If code and a design document disagree, the
    design document wins and the code is what gets fixed — see
    [conventions](conventions.md#the-design-record).
-2. **`make lint` runs everything CI runs.** Four checks, described in
-   [conventions](conventions.md).
+2. **`make lint` runs the whole validation gate.** Eleven steps, described in
+   [conventions](conventions.md); the docstring rules have [their own page](docstrings.md).
 3. **`pytest` runs only the unit suite by default.** The other three suites need real services;
    see [testing](testing.md).
 4. **Packages may not import their siblings.** This is mechanically enforced and is the rule new

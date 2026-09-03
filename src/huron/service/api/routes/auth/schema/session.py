@@ -25,14 +25,16 @@ class ScopeRoles(BaseModel):
 
 
 class SessionInfo(BaseModel):
-    """The answer to "who am I, and how was I authenticated" - moved from
-    ``GET /api/v1/auth/whoami`` to the unversioned ``GET /auth/session``.
+    """The answer to "who am I, and how was I authenticated".
 
-    ``effective_roles`` is resolved from the same binding set the
-    authorization guards consult, so what a caller is told it may do and
-    what it is actually allowed to do cannot drift apart.
+    Served by the unversioned ``GET /auth/session`` rather than a
+    versioned resource route: identity introspection is a login concern,
+    not a v1 resource. ``effective_roles`` is resolved from the same
+    binding set the authorization guards consult, so what a caller is told
+    it may do and what it is actually allowed to do cannot drift apart.
     ``csrf_token``/``expires_at`` are only ever set for a cookie-authenticated
-    caller; a bearer credential carries no server-side session to report."""
+    caller; a bearer credential carries no server-side session to report.
+    """
 
     subject: str
     kind: str
@@ -44,8 +46,13 @@ class SessionInfo(BaseModel):
 
 
 class ProviderInfo(BaseModel):
-    """What the login page renders from - which credential methods this
-    deployment accepts, unauthenticated by design."""
+    """What the login page renders from: the credential methods this deployment accepts.
+
+    Served unauthenticated by design - the page has no principal yet when
+    it needs this. ``oidc_start_url`` is the path that begins a browser
+    login when an identity provider is configured, and ``null`` when
+    ``oidc`` is false.
+    """
 
     password: bool
     oidc: bool

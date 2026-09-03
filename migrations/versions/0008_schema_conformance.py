@@ -1,6 +1,7 @@
-"""Bring the metastore into conformance with the house PostgreSQL table-design
-rules, closing the integrity gaps and constraint/index omissions the schema
-audit proved on a live database.
+"""Bring the metastore into conformance with the house PostgreSQL table-design rules.
+
+This revision closes the integrity gaps and constraint/index omissions the
+schema audit proved on a live database.
 
 A release cites a revision by ``revision_id`` alone today, independent of the
 ``dataset_id`` it also carries, so a release can anchor its citation to a
@@ -449,10 +450,12 @@ ALTER TABLE audit_events
 
 
 def upgrade() -> None:
+    """Apply the conformance constraints and indexes and rebuild ``audit_events`` unpartitioned."""
     execute_sql(DDL)
 
 
 def downgrade() -> None:
+    """Re-partition ``audit_events`` and restore the pre-conformance constraints and indexes."""
     execute_sql("""
     ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_payload_is_an_object;
     ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_kind_format;

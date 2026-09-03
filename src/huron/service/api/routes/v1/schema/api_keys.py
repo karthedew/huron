@@ -13,6 +13,14 @@ from pydantic import BaseModel, Field
 
 
 class CreateApiKey(BaseModel):
+    """The body that asks for a new API key: what to call it and how far it reaches.
+
+    A key never widens what its owner may do; ``scopes`` and ``project_id``
+    only narrow it, and default to read-only with no project restriction.
+    ``expires_in_days`` bounds the key's life to between a day and four
+    hundred, ninety by default: no key is issued without an expiry.
+    """
+
     name: str = Field(min_length=1)
     scopes: set[str] = Field(default_factory=lambda: {"read"})
     project_id: str | None = None

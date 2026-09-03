@@ -1,10 +1,12 @@
-"""Properties of the router tree itself, as opposed to any one route's
-business behavior: the credential requirement inherited from the versioned
-router reaches routes nested inside a further-included router with no
-per-operation declaration, a capability guard declared on both a router and
-a parameter resolves through one bound closure rather than two, the OpenAPI
-document carries the resource-grained tag set, and the ``responses={}``
-error contract merges rather than replaces as it descends the router tree."""
+"""Properties of the router tree itself, as opposed to any one route's business behavior.
+
+The credential requirement inherited from the versioned router reaches
+routes nested inside a further-included router with no per-operation
+declaration, a capability guard declared on both a router and a parameter
+resolves through one bound closure rather than two, the OpenAPI document
+carries the resource-grained tag set, and the ``responses={}`` error
+contract merges rather than replaces as it descends the router tree.
+"""
 
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ pytestmark = pytest.mark.unit
 
 
 def _settings(tmp_path: Path, *, bootstrap_platform_owner: str | None = None) -> ApiSettings:
+    """An ApiSettings with dev-headers auth and an optional bootstrapped platform owner."""
     return ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -43,11 +46,14 @@ def _settings(tmp_path: Path, *, bootstrap_platform_owner: str | None = None) ->
 
 
 def test_a_route_two_routers_below_v1_still_requires_a_credential(tmp_path: Path) -> None:
-    """``list_organization_bindings`` declares no guard of its own at all -
+    """A route with no guard of its own still requires a credential from its router ancestors.
+
+    ``list_organization_bindings`` declares no guard of its own at all -
     it is reachable only through ``bindings.organization_bindings``, itself
     included under the ``/api/v1`` router - so a ``401`` here proves the
     credential requirement propagates through two levels of ``include_router``
-    rather than needing a guard written at the leaf."""
+    rather than needing a guard written at the leaf.
+    """
     with TestClient(create_app(settings=_settings(tmp_path))) as client:
         response = client.get(
             f"/api/v1/organizations/{uuid4()}/bindings",
@@ -59,11 +65,14 @@ def test_a_route_two_routers_below_v1_still_requires_a_credential(tmp_path: Path
 def test_a_capability_bound_on_both_the_router_and_a_parameter_decides_once(
     tmp_path: Path,
 ) -> None:
-    """``create_user`` reads the ``user.manage`` principal as a parameter and
+    """A capability guarded on both the router and a parameter still decides exactly once.
+
+    ``create_user`` reads the ``user.manage`` principal as a parameter and
     ``users.router`` also requires it; both reference the same module-level
     closure, so the request must reach ``decide()`` exactly once - two
     independent ``require_system("user.manage")`` closures would decide
-    twice for the same answer."""
+    twice for the same answer.
+    """
     calls: list[str] = []
     real_decide = decisions.decide
 
@@ -96,10 +105,13 @@ def test_a_capability_bound_on_both_the_router_and_a_parameter_decides_once(
 def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decides_once(
     tmp_path: Path,
 ) -> None:
-    """The same bind-once invariant for a scope whose guard is built from a
+    """The bind-once invariant also holds for a factory-built, dataset-scoped guard.
+
+    The same bind-once invariant for a scope whose guard is built from a
     factory called at both the router (``dataset_bindings``) and the
     parameter (``create_dataset_binding``'s ``actor``) - both must reference
-    one ``require_dataset("rbac.binding_manage")`` closure."""
+    one ``require_dataset("rbac.binding_manage")`` closure.
+    """
     calls: list[str] = []
     real_decide = decisions.decide
 
@@ -148,9 +160,12 @@ def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decid
 
 
 def test_the_openapi_document_carries_twelve_resource_grained_tags(tmp_path: Path) -> None:
-    """One tag per resource rather than one per module: ``role-bindings`` and
-    ``service-accounts`` are distinct groups, and nothing is tagged ``auth``
-    any more - the unversioned surface carries ``authentication`` instead."""
+    """The OpenAPI document tags one per resource rather than one per module.
+
+    ``role-bindings`` and ``service-accounts`` are distinct groups, and
+    nothing is tagged ``auth`` any more - the unversioned surface carries
+    ``authentication`` instead.
+    """
     app = create_app(settings=_settings(tmp_path))
     schema = app.openapi()
     tags: set[str] = set()
@@ -178,9 +193,13 @@ def test_the_openapi_document_carries_twelve_resource_grained_tags(tmp_path: Pat
 def test_a_credential_field_appears_only_on_the_two_key_issuance_responses(
     tmp_path: Path,
 ) -> None:
-    """``secret`` is the plaintext of a freshly minted API key or
-    service-account key, shown exactly once. No other schema in the document
-    may declare ``secret`` or the stored hash it is never derived from."""
+    """``secret`` appears only on the two key-issuance response schemas, never as a hash.
+
+    ``secret`` is the plaintext of a freshly minted API key or
+    service-account key, shown exactly once. No other schema in the
+    document may declare ``secret`` or the stored hash it is never
+    derived from.
+    """
     schema = create_app(settings=_settings(tmp_path)).openapi()
     schemas = schema["components"]["schemas"]
     carrying_secret = {
@@ -192,10 +211,13 @@ def test_a_credential_field_appears_only_on_the_two_key_issuance_responses(
 
 
 def test_the_problem_schema_is_registered_exactly_once(tmp_path: Path) -> None:
-    """``Problem`` backs no 2xx response, so nothing would put it in
+    """``Problem`` is registered in the schema components exactly once, via an explicit override.
+
+    ``Problem`` backs no 2xx response, so nothing would put it in
     ``components.schemas`` without the explicit ``app.openapi()`` override -
     and every declared error response must resolve its ``$ref`` against
-    that one entry, not a per-operation copy."""
+    that one entry, not a per-operation copy.
+    """
     schema = create_app(settings=_settings(tmp_path)).openapi()
     schemas = schema["components"]["schemas"]
     assert list(schemas).count("Problem") == 1
@@ -203,6 +225,7 @@ def test_the_problem_schema_is_registered_exactly_once(tmp_path: Path) -> None:
 
 
 def test_every_declared_error_response_refs_the_shared_problem_schema(tmp_path: Path) -> None:
+    """Every declared 4xx/5xx response across the document refs the shared Problem schema."""
     schema = create_app(settings=_settings(tmp_path)).openapi()
     for methods in schema["paths"].values():
         for operation in methods.values():
@@ -217,12 +240,15 @@ def test_every_declared_error_response_refs_the_shared_problem_schema(tmp_path: 
 
 
 def test_router_level_responses_are_inherited_two_levels_deep(tmp_path: Path) -> None:
-    """``organization_bindings`` is included into ``v1.router``, which is in
+    """Router-declared error responses inherit down two levels of ``include_router`` nesting.
+
+    ``organization_bindings`` is included into ``v1.router``, which is in
     turn included into the app - two levels - and declares no ``responses=``
     of its own, so the ``401``/``403``/``422``/``500`` its operations answer
     with come entirely from the ``/api/v1`` router. The unversioned side
     mirrors this: ``oidc.router`` under ``auth.router`` inherits ``422``/
-    ``500`` with no declaration at either the endpoint router or operation."""
+    ``500`` with no declaration at either the endpoint router or operation.
+    """
     schema = create_app(settings=_settings(tmp_path)).openapi()
     binding_create = schema["paths"]["/api/v1/organizations/{organization_id}/bindings"]["post"]
     assert {401, 403, 422, 500} <= {int(status) for status in binding_create["responses"]}
@@ -234,10 +260,13 @@ def test_router_level_responses_are_inherited_two_levels_deep(tmp_path: Path) ->
 def test_per_operation_responses_add_to_the_inherited_set_rather_than_replace_it(
     tmp_path: Path,
 ) -> None:
-    """``create_organization`` declares only its own ``409``; the full
+    """A route's own declared responses union with the router's inherited set, replacing neither.
+
+    ``create_organization`` declares only its own ``409``; the full
     response set on the generated operation is that addition union the
     ``/api/v1`` router's inherited ``401``/``403``/``422``/``500``, not one
-    or the other."""
+    or the other.
+    """
     schema = create_app(settings=_settings(tmp_path)).openapi()
     create_organization = schema["paths"]["/api/v1/organizations"]["post"]
     assert {int(status) for status in create_organization["responses"]} == {
@@ -254,9 +283,12 @@ def test_per_operation_responses_add_to_the_inherited_set_rather_than_replace_it
 
 
 def _decorator_response_statuses(module: ModuleType) -> set[int]:
-    """The integer status codes named in a ``responses={...}`` keyword on any
+    """The status codes a module's route decorators declare via their own ``responses={...}``.
+
+    The integer status codes named in a ``responses={...}`` keyword on any
     decorator in ``module``'s source - the operation's own declarations,
-    before the router's inherited set is merged in."""
+    before the router's inherited set is merged in.
+    """
     tree = ast.parse(inspect.getsource(module))
     statuses: set[int] = set()
     for node in ast.walk(tree):
@@ -275,10 +307,13 @@ def _decorator_response_statuses(module: ModuleType) -> set[int]:
 
 
 def test_no_v1_operation_redeclares_a_status_the_v1_router_already_covers() -> None:
-    """``AUTHENTICATED_ERRORS`` (401/403/422/500) is declared once, on
+    """No v1 operation redeclares a status already covered by AUTHENTICATED_ERRORS on the router.
+
+    ``AUTHENTICATED_ERRORS`` (401/403/422/500) is declared once, on
     ``routes/v1/__init__.py``'s router - repeating any of them on an
     operation's own ``responses=`` would defeat the point of declaring it
-    there."""
+    there.
+    """
     from huron.service.api.routes.v1.endpoints import (
         api_keys,
         bindings,
@@ -308,8 +343,7 @@ def test_no_v1_operation_redeclares_a_status_the_v1_router_already_covers() -> N
 
 
 def test_no_auth_operation_redeclares_a_status_the_auth_router_already_covers() -> None:
-    """``UNIVERSAL_ERRORS`` (422/500) is declared once, on
-    ``routes/auth/__init__.py``'s router."""
+    """``UNIVERSAL_ERRORS`` (422/500) is declared once, on ``routes/auth/__init__.py``'s router."""
     from huron.service.api.routes.auth.endpoints import login, oidc, session
 
     for module in (login, oidc, session):

@@ -1,4 +1,14 @@
-"""Who the caller is, and what they may do."""
+"""Who the caller is, and what they may do.
+
+The public surface, by module: ``cookies`` (``CookieSpec`` and the two
+specs the service issues), ``credentials`` (``current_principal`` and the
+``CurrentPrincipal``/``CurrentSession`` dependencies that turn a request's
+credential into a principal), ``scopes`` (path identifier to RBAC scope,
+404 before 403), ``decisions`` (the per-request ``BindingCache``, the
+bindings a caller is judged by, and ``check``, the one allow-or-403 call)
+and ``guards`` (the ``require_*`` factories and ``dataset_layer_writer``
+that routes declare). Routes import from here, never from the modules.
+"""
 
 from .cookies import CookieSpec, login_flow_cookie, session_cookie
 from .credentials import CurrentPrincipal, CurrentSession, current_principal

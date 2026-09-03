@@ -15,7 +15,7 @@ Non-trivial work in this repo goes through three Claude Code slash commands, def
 
 2. `/implement-markdown <plan-file> [impl-model] [verify-model] [escalation-command]`
    - Implements an `IMPLEMENTATION_PLAN.md` produced by `/design-plan`, one phase/task at a time, through a strict implement → verify serial loop.
-   - Every attempt runs the full Python validation gate (ruff, ty, mypy, lint-imports, pytest with coverage, radon, complexipy, pyscn) — no suppressed lints, no partial runs.
+   - Every attempt runs the full Python validation gate (ruff, pydoclint, ty, mypy, lint-imports, pytest with coverage, radon, complexipy, pyscn) — no suppressed lints, no partial runs.
    - Capped at 3 verification attempts per phase/task.
    - On the 3rd failure: reverts/isolates the broken state, appends a `## Escalation` section to the plan (what was tried, what failed, the open design questions), and instructs the user to run `/architectural-review` against the affected area, seeded with that escalation report.
    - Defaults: `impl-model=anthropic/claude-sonnet-5`, `verify-model=anthropic/claude-opus-5`, `escalation-command=/architectural-review`.
@@ -45,6 +45,7 @@ Non-trivial work in this repo goes through three Claude Code slash commands, def
 
 - Clean-sweep by default: no backwards-compatibility shims, no TODOs, no speculative abstractions, no suppressed lints — unless the design or plan explicitly requires otherwise for this change.
 - No comment, docstring, test name, or user-facing string may reference the plan, phases, or checklist mechanics. Comments explain enduring code intent, not orchestration history.
+- Every module, class, function and method carries a Google-style docstring whose `Args`/`Returns`/`Yields`/`Raises` match the signature — enforced by ruff's `D` rules and `pydoclint` in the gate; tests carry a one-line summary of what they prove. The standard is `docs/getting-started/docstrings.md`.
 - Subagents run serially, never in parallel, within each command.
 - Commands and skills live in `.claude/commands/` and `.claude/skills/<name>/SKILL.md` respectively, both committed to the repo so the workflow travels with it.
 

@@ -1,8 +1,10 @@
-"""The error contract as a whole: that ``design/api.html`` §7 and the
-exception classes the service can actually raise name the same codes, that
-each documented status matches the class that answers with it, that all six
-error handlers answer in the same shape, and that the base class enforcing
-all of this stays impossible to raise directly."""
+"""The error contract end to end: documented codes, statuses, uniform shape, and the base class.
+
+``design/api.html`` §7 and the exception classes the service can actually
+raise name the same codes; each documented status matches the class that
+answers with it; all six error handlers answer in the same shape; and the
+base class enforcing all of this stays impossible to raise directly.
+"""
 
 from __future__ import annotations
 
@@ -32,6 +34,8 @@ API_HTML = Path(__file__).parents[2] / "design" / "api.html"
 
 
 class _ErrorTableRow:
+    """One parsed row of the documented error table: a code, a status and a disposition."""
+
     __slots__ = ("code", "disposition", "status")
 
     def __init__(self, code: str, status: int, disposition: str) -> None:
@@ -83,6 +87,7 @@ class _ErrorTableParser(HTMLParser):
 
 
 def _documented_rows() -> list[_ErrorTableRow]:
+    """Parse ``design/api.html``'s error-codes table into its documented rows."""
     parser = _ErrorTableParser()
     parser.feed(API_HTML.read_text())
     return parser.rows
@@ -107,6 +112,7 @@ def _status_by_domain_error_code() -> dict[str, int]:
 
 
 def test_every_documented_code_has_a_class_and_every_class_has_a_row() -> None:
+    """Every raisable error code is documented in §7, and every §7 row has a raising class."""
     documented = {row.code for row in _documented_rows()}
     raisable = wire_error_codes()
     undocumented = raisable - documented
@@ -116,6 +122,7 @@ def test_every_documented_code_has_a_class_and_every_class_has_a_row() -> None:
 
 
 def test_domain_error_rows_document_their_class_status_code() -> None:
+    """Every documented row for a ``DomainError`` code states that class's own status code."""
     status_by_code = _status_by_domain_error_code()
     mismatched = [
         (row.code, row.status, status_by_code[row.code])
@@ -126,6 +133,7 @@ def test_domain_error_rows_document_their_class_status_code() -> None:
 
 
 def test_every_auth_error_row_answers_401_and_every_role_error_row_answers_422() -> None:
+    """Every ``AuthError`` code documents status 401; every ``RoleError`` code documents 422."""
     auth_codes = {AuthError.__dict__.get("code"), *(sub.code for sub in AuthError.__subclasses__())}
     role_codes = {sub.code for sub in RoleError.__subclasses__()}
     rows_by_code = {row.code: row for row in _documented_rows()}
@@ -136,11 +144,13 @@ def test_every_auth_error_row_answers_401_and_every_role_error_row_answers_422()
 
 
 def test_domain_error_refuses_direct_instantiation() -> None:
+    """Instantiating ``DomainError`` itself raises ``TypeError``, not a usable error."""
     with pytest.raises(TypeError, match="DomainError is abstract"):
         DomainError("x")
 
 
 def _uniform_shape_app() -> FastAPI:
+    """Build a minimal FastAPI app, wired with the shared handlers, with one route per error."""
     app = FastAPI()
     install_error_handlers(app)
 
@@ -169,10 +179,12 @@ def _uniform_shape_app() -> FastAPI:
 
 @pytest.fixture
 def client() -> TestClient:
+    """A ``TestClient`` for the uniform-shape app that returns server errors as responses."""
     return TestClient(_uniform_shape_app(), raise_server_exceptions=False)
 
 
 def _assert_uniform_problem(response: Response, *, status: int) -> None:
+    """Assert a response is a problem document with the given status and a raisable code."""
     assert response.headers["content-type"] == PROBLEM_MEDIA_TYPE
     body = response.json()
     assert body.keys() >= {"type", "title", "status", "code", "detail"}
@@ -181,24 +193,30 @@ def _assert_uniform_problem(response: Response, *, status: int) -> None:
 
 
 def test_a_domain_error_answers_uniformly(client: TestClient) -> None:
+    """A ``DomainError`` (``ResourceNotFound``) answers as a uniform problem with its own status."""
     _assert_uniform_problem(client.get("/resource/missing"), status=404)
 
 
 def test_an_auth_error_answers_uniformly(client: TestClient) -> None:
+    """An ``AuthError`` answers as a uniform problem document with status 401."""
     _assert_uniform_problem(client.get("/auth"), status=401)
 
 
 def test_a_role_error_answers_uniformly(client: TestClient) -> None:
+    """A ``RoleError`` (``UnknownRole``) answers as a uniform problem document with status 422."""
     _assert_uniform_problem(client.get("/role"), status=422)
 
 
 def test_an_unrouted_path_answers_uniformly(client: TestClient) -> None:
+    """A path with no matching route still answers as a uniform 404 problem document."""
     _assert_uniform_problem(client.get("/does-not-exist"), status=404)
 
 
 def test_a_request_validation_failure_answers_uniformly(client: TestClient) -> None:
+    """A request validation failure still answers as a uniform 422 problem document."""
     _assert_uniform_problem(client.get("/query", params={"n": "not-an-int"}), status=422)
 
 
 def test_an_unhandled_exception_answers_uniformly(client: TestClient) -> None:
+    """An unhandled exception still answers as a uniform 500 problem document."""
     _assert_uniform_problem(client.get("/boom"), status=500)

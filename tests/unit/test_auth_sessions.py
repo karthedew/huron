@@ -1,5 +1,8 @@
-"""Server-side session tokens: format parsing, double-bounded expiry, touch
-throttling, and revocation."""
+"""Server-side session tokens, proved against MemorySessionStore and SessionResolver.
+
+Covers format parsing, double-bounded expiry, touch throttling, and
+revocation.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def test_create_session_token_matches_the_hs_prefixed_golden_format() -> None:
+    """``create_session``'s token starts with ``hs_``, embeds the session id, then a secret."""
     record, token = create_session("alice", authentication_method="password", now=T0)
     # The secret half is base64url and may itself contain underscores, so
     # only the first two underscores are structural.
@@ -38,6 +42,7 @@ def test_create_session_token_matches_the_hs_prefixed_golden_format() -> None:
 
 
 def test_parse_session_token_recovers_the_id_and_matches_the_stored_hash() -> None:
+    """``parse_session_token`` recovers the id and a secret whose hash matches the record."""
     record, token = create_session("alice", authentication_method="password", now=T0)
     session_id, secret = parse_session_token(token)
     assert session_id == record.id
@@ -57,11 +62,13 @@ def test_parse_session_token_recovers_the_id_and_matches_the_stored_hash() -> No
     ],
 )
 def test_parse_session_token_rejects_malformed_tokens(token: str) -> None:
+    """A malformed session token is rejected however its shape is broken."""
     with pytest.raises(AuthError):
         parse_session_token(token)
 
 
 async def test_resolver_returns_a_session_principal_for_a_fresh_token() -> None:
+    """A fresh, valid session token resolves to a session principal and its record."""
     store = MemorySessionStore()
     record, token = create_session(
         "alice", groups=frozenset({"physics"}), authentication_method="password", now=T0
@@ -79,6 +86,7 @@ async def test_resolver_returns_a_session_principal_for_a_fresh_token() -> None:
 
 
 async def test_resolver_rejects_a_wrong_secret_with_a_valid_session_id() -> None:
+    """A token with the right session id but a wrong secret is rejected."""
     store = MemorySessionStore()
     record, _ = create_session("alice", authentication_method="password", now=T0)
     await store.add(record)
@@ -91,6 +99,7 @@ async def test_resolver_rejects_a_wrong_secret_with_a_valid_session_id() -> None
 
 
 async def test_resolver_rejects_an_unknown_session_id() -> None:
+    """A token naming a session id the store has never seen is rejected."""
     store = MemorySessionStore()
     resolver = SessionResolver(store)
     _, token = create_session("alice", authentication_method="password", now=T0)
@@ -101,6 +110,7 @@ async def test_resolver_rejects_an_unknown_session_id() -> None:
 
 
 async def test_idle_expiry_slides_forward_on_use() -> None:
+    """Resolving a session past the touch interval slides its idle deadline forward."""
     store = MemorySessionStore()
     record, token = create_session("alice", authentication_method="password", now=T0)
     await store.add(record)
@@ -115,6 +125,7 @@ async def test_idle_expiry_slides_forward_on_use() -> None:
 
 
 async def test_absolute_expiry_never_slides() -> None:
+    """A session's absolute expiry never moves, even when the idle deadline slides."""
     store = MemorySessionStore()
     record, token = create_session("alice", authentication_method="password", now=T0)
     await store.add(record)
@@ -128,9 +139,12 @@ async def test_absolute_expiry_never_slides() -> None:
 
 
 async def test_idle_expiry_is_capped_at_the_absolute_deadline() -> None:
-    """Late in a session's life a touch would push idle_expires_at past the
+    """A touch that would push idle_expires_at past the absolute deadline is clamped there.
+
+    Late in a session's life a touch would push idle_expires_at past the
     absolute deadline; it must be clamped there instead, simulated here by
-    starting from a record already near that deadline."""
+    starting from a record already near that deadline.
+    """
     store = MemorySessionStore()
     record, token = create_session("alice", authentication_method="password", now=T0)
     near_absolute_deadline = record.absolute_expires_at - timedelta(hours=1)
@@ -145,6 +159,7 @@ async def test_idle_expiry_is_capped_at_the_absolute_deadline() -> None:
 
 
 async def test_session_expires_once_the_idle_deadline_passes() -> None:
+    """A session is expired the instant ``now`` reaches its idle deadline."""
     store = MemorySessionStore()
     record, token = create_session("alice", authentication_method="password", now=T0)
     await store.add(record)
@@ -155,6 +170,7 @@ async def test_session_expires_once_the_idle_deadline_passes() -> None:
 
 
 async def test_session_expires_once_the_absolute_deadline_passes_even_if_idle() -> None:
+    """A session is expired once ``now`` reaches its absolute deadline."""
     store = MemorySessionStore()
     record, token = create_session("alice", authentication_method="password", now=T0)
     await store.add(record)
@@ -165,6 +181,7 @@ async def test_session_expires_once_the_absolute_deadline_passes_even_if_idle() 
 
 
 async def test_touch_is_throttled_to_at_most_once_per_touch_interval() -> None:
+    """A touch is recorded at most once per TOUCH_INTERVAL, not on every request."""
     store = MemorySessionStore()
     record, token = create_session("alice", authentication_method="password", now=T0)
     await store.add(record)
@@ -185,6 +202,7 @@ async def test_touch_is_throttled_to_at_most_once_per_touch_interval() -> None:
 
 
 async def test_revoked_session_is_rejected_even_before_expiry() -> None:
+    """A revoked session is refused before its expiry is even considered."""
     store = MemorySessionStore()
     record, token = create_session("alice", authentication_method="password", now=T0)
     await store.add(record)
@@ -196,6 +214,7 @@ async def test_revoked_session_is_rejected_even_before_expiry() -> None:
 
 
 async def test_revoke_all_for_only_touches_the_subjects_active_sessions() -> None:
+    """``revoke_all_for`` revokes only a subject's still-live sessions, leaving others alone."""
     store = MemorySessionStore()
     alice_record, _ = create_session("alice", authentication_method="password", now=T0)
     alice_second_record, _ = create_session("alice", authentication_method="password", now=T0)
@@ -217,5 +236,6 @@ async def test_revoke_all_for_only_touches_the_subjects_active_sessions() -> Non
 
 
 def test_idle_and_absolute_ttls_are_the_documented_lengths() -> None:
+    """``IDLE_TTL`` is 12 hours and ``ABSOLUTE_TTL`` is 7 days, as documented."""
     assert timedelta(hours=12) == IDLE_TTL
     assert timedelta(days=7) == ABSOLUTE_TTL

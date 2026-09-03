@@ -17,15 +17,18 @@ pytestmark = pytest.mark.unit
 
 
 def test_member_set_is_exactly_active_retired_superseded() -> None:
+    """``DatasetLifecycle`` has exactly three members: ACTIVE, RETIRED and SUPERSEDED."""
     assert {member.name for member in DatasetLifecycle} == {"ACTIVE", "RETIRED", "SUPERSEDED"}
 
 
 def test_each_member_value_equals_its_name() -> None:
+    """Every ``DatasetLifecycle`` member's value equals its own name."""
     for member in DatasetLifecycle:
         assert member.value == member.name
 
 
 def test_created_dataset_is_active(tmp_path: Path) -> None:
+    """A freshly created dataset's lifecycle state is ACTIVE, both as enum member and as string."""
     repository = HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("internal",)
     )

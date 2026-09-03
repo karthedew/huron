@@ -1,9 +1,12 @@
-"""Service-account routes and error paths not already exercised by
-``test_api_rbac.py``'s pipeline-service-account scenario: listing service
-accounts, the ordering and pagination of that list, the two refusals
-``issue_service_account_key`` and ``disable_service_account`` share - a
-principal that belongs to a different organization, and (for key issuance)
-one that is already disabled - and the shape of a freshly minted key."""
+"""Service-account routes and error paths not already exercised by the RBAC scenario.
+
+Beyond ``test_api_rbac.py``'s pipeline-service-account scenario, covers
+listing service accounts, the ordering and pagination of that list, the
+two refusals ``issue_service_account_key`` and ``disable_service_account``
+share - a principal that belongs to a different organization, and (for
+key issuance) one that is already disabled - and the shape of a freshly
+minted key.
+"""
 
 from __future__ import annotations
 
@@ -34,6 +37,7 @@ pytestmark = pytest.mark.unit
 
 
 def _settings(tmp_path: Path) -> ApiSettings:
+    """A development ApiSettings with dev-headers auth and root bootstrapped as platform owner."""
     return ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -46,6 +50,7 @@ def _settings(tmp_path: Path) -> ApiSettings:
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
+    """A TestClient with root bootstrapped as platform owner, backed by a fresh repository."""
     settings = _settings(tmp_path)
     repository = HierarchyRepository(
         PosixRawStore(settings.data_root),
@@ -56,16 +61,19 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def _headers(subject: str) -> dict[str, str]:
+    """Auth and idempotency headers for `subject`, with a fresh Idempotency-Key each call."""
     return {"X-Huron-Subject": subject, "Idempotency-Key": str(uuid4())}
 
 
 def _organization(client: TestClient, slug: str) -> str:
+    """The id of a newly created organization with the given slug, created as root."""
     return client.post(
         "/api/v1/organizations", json={"slug": slug, "title": slug}, headers=_headers("root")
     ).json()["id"]
 
 
 def test_service_accounts_can_be_listed(client: TestClient) -> None:
+    """A newly created service account appears in that organization's listing."""
     organization_id = _organization(client, "astro-org")
     client.post(
         f"/api/v1/organizations/{organization_id}/service-accounts",
@@ -83,6 +91,7 @@ def test_service_accounts_can_be_listed(client: TestClient) -> None:
 
 
 def test_service_accounts_are_ordered_by_name(client: TestClient) -> None:
+    """Service accounts list in name order regardless of the order they were created in."""
     organization_id = _organization(client, "astro-org")
     for name in ["charlie", "alpha", "bravo"]:
         client.post(
@@ -99,6 +108,7 @@ def test_service_accounts_are_ordered_by_name(client: TestClient) -> None:
 
 
 def test_service_accounts_rejects_an_out_of_range_limit(client: TestClient) -> None:
+    """A limit outside the allowed range is rejected with 422."""
     organization_id = _organization(client, "astro-org")
     response = client.get(
         f"/api/v1/organizations/{organization_id}/service-accounts",
@@ -109,18 +119,22 @@ def test_service_accounts_rejects_an_out_of_range_limit(client: TestClient) -> N
 
 
 class _ReversedOrderRbacStore(InMemoryRbacStore):
-    """A store that hands service accounts back in the opposite of its own
-    order - stands in for any future ``RbacStore`` whose ``ORDER BY``
-    disagrees with ``(name,)``; the list handler must re-sort what it is
-    given rather than trust the store's ordering."""
+    """A store that hands service accounts back in the opposite of its own order.
+
+    Stands in for any future ``RbacStore`` whose ``ORDER BY`` disagrees with
+    ``(name,)``; the list handler must re-sort what it is given rather than
+    trust the store's ordering.
+    """
 
     async def list_service_accounts(self, organization_id: UUID) -> list[ServiceAccount]:
+        """The base store's accounts, reversed, to prove the route doesn't trust store order."""
         return list(reversed(await super().list_service_accounts(organization_id)))
 
 
 def test_the_boundary_orders_service_accounts_whatever_order_the_store_returns(
     tmp_path: Path,
 ) -> None:
+    """The route re-sorts by name whatever order the RBAC store returns its accounts in."""
     settings = _settings(tmp_path)
     repository = HierarchyRepository(
         PosixRawStore(settings.data_root),
@@ -148,6 +162,7 @@ def test_the_boundary_orders_service_accounts_whatever_order_the_store_returns(
 def test_issuing_a_key_refuses_a_service_account_from_a_different_organization(
     client: TestClient,
 ) -> None:
+    """Issuing a key via the wrong organization's path for the account is refused with 403."""
     home_organization_id = _organization(client, "astro-org")
     other_organization_id = _organization(client, "geo-org")
     account = client.post(
@@ -166,6 +181,7 @@ def test_issuing_a_key_refuses_a_service_account_from_a_different_organization(
 
 
 def test_issuing_a_key_refuses_a_disabled_service_account(client: TestClient) -> None:
+    """Issuing a key for an already-disabled service account is refused with 403."""
     organization_id = _organization(client, "astro-org")
     account = client.post(
         f"/api/v1/organizations/{organization_id}/service-accounts",
@@ -190,6 +206,7 @@ def test_issuing_a_key_refuses_a_disabled_service_account(client: TestClient) ->
 def test_disabling_a_service_account_refuses_one_from_a_different_organization(
     client: TestClient,
 ) -> None:
+    """Disabling a service account through the wrong organization's path is refused with 403."""
     home_organization_id = _organization(client, "astro-org")
     other_organization_id = _organization(client, "geo-org")
     account = client.post(
@@ -209,6 +226,7 @@ def test_disabling_a_service_account_refuses_one_from_a_different_organization(
 def test_an_issued_service_account_key_carries_scopes_and_the_accounts_subject(
     client: TestClient,
 ) -> None:
+    """An issued service-account key carries its scopes, a future expiry, and the subject."""
     organization_id = _organization(client, "astro-org")
     account = client.post(
         f"/api/v1/organizations/{organization_id}/service-accounts",
@@ -234,10 +252,13 @@ def test_an_issued_service_account_key_carries_scopes_and_the_accounts_subject(
 
 
 def test_issued_service_account_key_cannot_be_filled_from_a_stored_record() -> None:
-    """``ApiKeyRecord`` carries ``secret_sha256`` and no plaintext secret - the
+    """Filling ``IssuedServiceAccountKey`` from a stored ``ApiKeyRecord`` fails outright.
+
+    ``ApiKeyRecord`` carries ``secret_sha256`` and no plaintext secret - the
     shape a future author might reach for if they forgot the rule. Filling
     ``IssuedServiceAccountKey`` from it must fail before any field is even
-    inspected, because the model declares no ``from_attributes`` config."""
+    inspected, because the model declares no ``from_attributes`` config.
+    """
     record = ApiKeyRecord(
         key_id="abc123",
         subject="astro-org/pipeline",

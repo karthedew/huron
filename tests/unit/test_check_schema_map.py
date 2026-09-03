@@ -24,6 +24,7 @@ _MODULE_PATH = Path(__file__).resolve().parent.parent.parent / "scripts" / "chec
 
 
 def _load_check_schema_map() -> ModuleType:
+    """Load ``scripts/check_schema_map.py`` as a module, since ``scripts/`` is not a package."""
     spec = importlib.util.spec_from_file_location("check_schema_map", _MODULE_PATH)
     assert spec is not None
     assert spec.loader is not None
@@ -36,6 +37,7 @@ check_schema_map = _load_check_schema_map()
 
 
 def test_reflected_revision_parses_the_named_stamp() -> None:
+    """``reflected_revision`` extracts the revision id named on the ``-- Reflects:`` line."""
     header = (
         "-- Huron metastore: table architecture summary\n-- Reflects: 0008_schema_conformance\n--\n"
     )
@@ -46,6 +48,7 @@ def test_reflected_revision_parses_the_named_stamp() -> None:
 def test_main_exits_nonzero_when_stamp_names_a_revision_other_than_the_head(
     tmp_path: Path,
 ) -> None:
+    """``main`` exits non-zero when the map's stamped revision differs from the given head."""
     schema_map = tmp_path / "schema.sql"
     schema_map.write_text("-- Reflects: 0006_role_simplification\n")
 
@@ -57,6 +60,7 @@ def test_main_exits_nonzero_when_stamp_names_a_revision_other_than_the_head(
 
 
 def test_main_exits_nonzero_when_the_header_has_no_reflects_line(tmp_path: Path) -> None:
+    """``main`` exits non-zero when the schema map's header has no ``-- Reflects:`` line."""
     schema_map = tmp_path / "schema.sql"
     schema_map.write_text("-- Huron metastore: table architecture summary\n-- no stamp here\n")
 

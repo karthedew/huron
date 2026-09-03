@@ -4,18 +4,26 @@
 make lint    # every static check CI enforces
 ```
 
-That is four commands, and all four must be clean:
+That is the whole validation gate, and every step must be clean:
 
 ```bash
-uv run ruff check .           # lint
-uv run ruff format --check .  # formatting
-uv run mypy                   # types
-uv run lint-imports           # architectural boundaries
+uv run ruff check .                              # lint, including docstring presence and shape
+uv run ruff format --check .                     # formatting
+uv run pydoclint src migrations scripts          # docstrings match signatures (see below)
+uv run mypy                                      # types, strict
+uv run ty check                                  # types, second opinion
+uv run lint-imports                              # architectural boundaries
+uv run python scripts/check_schema_map.py        # migrations/schema.sql is current
+uv run radon cc src/huron --min C                # cyclomatic complexity, informational
+uv run radon mi src/huron --min B                # maintainability index, informational
+uv run complexipy src/huron --max-complexity-allowed 15
+uv run pyscn check src/huron                     # dead code, complexity, clones
 ```
 
 ## Formatting and lint
 
-`ruff`, line length **100**, rule sets `E`, `F`, `I`, `N`, `UP`, `B`, `SIM`, `TCH`, `RUF`.
+`ruff`, line length **100**, rule sets `E`, `F`, `I`, `N`, `UP`, `B`, `SIM`, `TCH`, `RUF`, `FAST`
+and `D` (docstrings, Google convention — see [docstrings](docstrings.md)).
 
 Per-file ignores exist and are narrow, each for a stated reason:
 
@@ -25,6 +33,11 @@ Per-file ignores exist and are narrow, each for a stated reason:
 - `TC001`–`TC003` (move imports into a type-checking block) are waived across
   `src/huron/service/api/**`, because FastAPI resolves annotations at runtime to build dependency
   injection — moving those imports breaks the application.
+- `D301` (raw string for a docstring with a backslash) is waived for route modules
+  (`routes/**/endpoints/*.py` and `app.py`), whose docstrings hold a `\f` so that FastAPI stops the
+  published OpenAPI description before the `Args`/`Returns`/`Raises` sections.
+- `D105` and `D107` are waived under `tests/**`: a test double's dunder methods and constructor
+  need no docstring, everything else in a test module does.
 
 Do not add a suppression to make a check pass. If a rule genuinely cannot be satisfied, the
 narrow per-file ignore goes in `pyproject.toml` with a comment saying why.
@@ -80,6 +93,11 @@ string concatenation elsewhere; the reconciler and sweeper depend on the round-t
 Comments are rare and explain enduring intent — an invariant, a lifecycle assumption, a security
 boundary, a subtle trade-off. They do not narrate the code, and they never reference an
 implementation plan, a phase, a task number, or a review process.
+
+## Docstrings
+
+Every module, class, function and method carries one, and `pydoclint` holds it to the
+signature. The standard, with examples, is its own page: [docstrings](docstrings.md).
 
 ## Documentation
 

@@ -42,13 +42,24 @@ if TYPE_CHECKING:
 
 
 async def _postgres_repository(settings: ApiSettings) -> tuple[HierarchyRepository, asyncpg.Pool]:
-    """The RBAC and auth tables opted into Postgres together, sharing a pool.
+    """Wire the Postgres-backed RBAC and auth stores over one shared pool.
 
+    The RBAC and auth tables opted into Postgres together, sharing a pool.
     The organization/project/dataset hierarchy stays in-memory until it
     gets its own store, so this is only safe once the rows those foreign
     keys target (organizations, projects) are real Postgres rows - which
     requires choosing ``store_backend="postgres"`` explicitly rather than
     inferring it from "no repository was injected".
+
+    Args:
+        settings: Supplies the database URL the pool connects to, the raw
+            store's root and the classification vocabulary the repository
+            validates projects against.
+
+    Returns:
+        The repository and the pool every one of its Postgres stores shares.
+        The caller owns the pool and closes it at shutdown; the repository
+        never does.
     """
     pool = await asyncpg.create_pool(settings.database_url)
     repository = HierarchyRepository(
@@ -67,10 +78,32 @@ async def _configure_oidc(
     settings: ApiSettings,
     oidc_verify: Callable[[str], Mapping[str, object]] | None,
 ) -> tuple[OidcResolver | None, OidcClient | None, httpx.AsyncClient | None]:
-    """Wire the bearer-JWT resolver: a test-injected verifier wins outright,
-    otherwise a configured provider is discovered for real. Neither branch
-    - or an unconfigured deployment - leaves the resolver unset; the caller
-    always gets an explicit ``None`` rather than an absent attribute."""
+    """Wire the bearer-JWT resolver from an injected verifier or a real provider.
+
+    A test-injected verifier wins outright, otherwise a configured provider
+    is discovered for real. Neither branch - or an unconfigured deployment -
+    leaves the resolver unset; the caller always gets an explicit ``None``
+    rather than an absent attribute.
+
+    Args:
+        settings: Read for ``oidc``, the configured identity provider, which
+            is ``None`` in a deployment that accepts no bearer JWTs.
+        oidc_verify: A verifier mapping a bearer token to its claims, or
+            None. When given it replaces provider discovery entirely, so a
+            test never needs a reachable issuer.
+
+    Returns:
+        A ``(resolver, client, http)`` triple. With an injected verifier only
+        the resolver is set; with no provider configured all three are
+        ``None``; after real discovery all three are set, and the HTTP
+        client is the caller's to close at shutdown because the OIDC client
+        keeps using it for the authorization-code flow.
+
+    Raises:
+        Exception: Whatever provider discovery raised, re-raised unchanged
+            after the HTTP client has been closed, so a failed startup does
+            not leave an open connection pool behind.
+    """
     if oidc_verify is not None:
         return OidcResolver(oidc_verify), None, None
     if settings.oidc is None:
@@ -114,6 +147,13 @@ class _HuronFastAPI(FastAPI):
     """
 
     def openapi(self) -> dict[str, object]:
+        """Return the OpenAPI document, computing and caching it on first use.
+
+        Returns:
+            The document FastAPI derives from the route table, with the
+            ``Problem`` schema added under ``components.schemas`` so every
+            error response's ``$ref`` resolves.
+        """
         if self.openapi_schema is None:
             schema = get_openapi(title=self.title, version=self.version, routes=self.routes)
             schema["components"]["schemas"]["Problem"] = Problem.model_json_schema()
@@ -127,8 +167,55 @@ def create_app(
     repository: HierarchyRepository | None = None,
     oidc_verify: Callable[[str], Mapping[str, object]] | None = None,
 ) -> FastAPI:
+    """Build the application, deferring every connection to its lifespan.
+
+    Nothing is connected when this returns. The lifespan builds one
+    :class:`ApiRuntime` - the repository, the optional OIDC resolver and
+    client, the optional database pool - and publishes it on
+    ``app.state.runtime`` as the application's only piece of mutable state;
+    every injected route reads it through ``huron.service.api.runtime``. An
+    application whose lifespan never started therefore refuses to serve
+    rather than falling through to defaults, because the cost of guessing
+    at wiring is an unauthenticated request answered as though it were
+    authenticated.
+
+    The unversioned ``/healthz`` and ``/readyz`` probes, the error handlers
+    that keep every failure in the problem+json shape, and the ``/auth`` and
+    ``/api/v1`` routers are all mounted here and nowhere else.
+
+    Args:
+        settings: The validated configuration; ``store_backend`` decides
+            whether the RBAC and auth stores live in memory or in Postgres.
+        repository: A repository built by the caller, which wins over
+            ``store_backend`` entirely. Tests use it to serve from a
+            pre-populated in-memory hierarchy.
+        oidc_verify: A verifier mapping a bearer token to its claims. When
+            given it replaces provider discovery, so bearer JWTs are
+            accepted without a reachable issuer.
+
+    Returns:
+        The application, ready for an ASGI server to run its lifespan.
+    """
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Wire the runtime for the server's lifetime, then release it.
+
+        The repository comes from the injected one, else from Postgres when
+        ``store_backend`` says so, else from process memory; the bearer-JWT
+        resolver follows the same injected-first rule. The bootstrap grant
+        runs inside the block whose ``finally`` closes the pool and the HTTP
+        client, so a failure there releases both before the error surfaces.
+
+        Args:
+            app: The application whose ``state.runtime`` is set for the
+                duration of the lifespan.
+
+        Yields:
+            Nothing. The application serves while suspended here, and the
+            pool and HTTP client are closed once it exits, whether or not
+            startup completed.
+        """
         pool: asyncpg.Pool | None = None
         if repository is not None:
             wired = repository
@@ -163,6 +250,15 @@ def create_app(
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
+        """Report that the process is up and answering requests.
+
+        Liveness only: nothing beyond the process itself is consulted, so
+        an instance whose dependencies are gone still answers 200 here and
+        relies on the readiness probe to be taken out of rotation.
+        \f
+        Returns:
+            ``{"status": "ok"}``, unconditionally.
+        """
         return {"status": "ok"}
 
     @app.get("/readyz", responses={503: problem_response("a dependency is unavailable")})
@@ -172,7 +268,21 @@ def create_app(
         A readiness probe that reports the process rather than its
         dependencies sends traffic to an instance whose first authenticated
         request will fail, so the failure is a 503 - the status an
-        orchestrator is configured to act on - and never a 4xx.
+        orchestrator is configured to act on - and never a 4xx. The raw
+        store's root is always probed; the database is probed only when
+        this instance was wired with a pool.
+        \f
+        Args:
+            runtime: The wiring the lifespan published, naming the
+                dependencies to probe.
+
+        Returns:
+            ``{"status": "ready"}`` once every probe passed.
+
+        Raises:
+            DependencyUnavailable: If any probe failed; its ``context``
+                carries ``checks``, a mapping from each failed dependency's
+                name to the reason it gave.
         """
         failed = {name: reason for name, reason in await _dependency_checks(runtime) if reason}
         if failed:
@@ -185,6 +295,21 @@ def create_app(
 
 
 async def _dependency_checks(runtime: ApiRuntime) -> list[tuple[str, str | None]]:
+    """Probe each dependency this instance was wired with.
+
+    The raw store's stat runs on a worker thread, so a hung mount stalls
+    this probe but never the event loop the other requests share; the
+    database round-trip is bounded by ``READINESS_TIMEOUT_SECONDS``.
+
+    Args:
+        runtime: The wiring the lifespan published; a ``None`` pool means
+            there is no database to probe.
+
+    Returns:
+        One ``(name, failure)`` pair per probed dependency, in probe order,
+        where ``failure`` is ``None`` for a dependency that answered and
+        the reason it did not otherwise.
+    """
     checks = [("raw_store", await asyncify(_raw_store_failure)(runtime.repository))]
     if runtime.database_pool is not None:
         checks.append(("database", await _database_failure(runtime.database_pool)))
@@ -192,11 +317,39 @@ async def _dependency_checks(runtime: ApiRuntime) -> list[tuple[str, str | None]
 
 
 def _raw_store_failure(repository: HierarchyRepository) -> str | None:
-    """Stat the raw root; a hung mount must never stall the event loop."""
+    """Stat the raw root; a hung mount must never stall the event loop.
+
+    Deliberately synchronous: the ``stat`` behind ``exists()`` can block on
+    a network filesystem, so the caller runs this on a worker thread rather
+    than from a coroutine.
+
+    Args:
+        repository: The wired repository, whose raw store names the root
+            directory the data plane writes under.
+
+    Returns:
+        ``None`` while the root exists, otherwise the reason the probe
+        reports for it.
+    """
     return None if repository.raw_store.root.exists() else "root is unavailable"
 
 
 async def _database_failure(pool: asyncpg.Pool) -> str | None:
+    """Round-trip the pool once, within the readiness timeout.
+
+    A pool that cannot answer ``SELECT 1`` promptly is reported rather than
+    waited for: the connection-level, server-level and timeout failures are
+    all caught, so a wedged database turns into a 503 instead of a stalled
+    probe.
+
+    Args:
+        pool: The pool the lifespan opened for the Postgres-backed stores.
+
+    Returns:
+        ``None`` when the query answered in time, otherwise the failure's
+        class name and message, which is what ``/readyz`` reports for the
+        ``database`` check.
+    """
     try:
         async with asyncio.timeout(READINESS_TIMEOUT_SECONDS):
             await pool.fetchval("SELECT 1")
@@ -215,7 +368,15 @@ async def _bootstrap(repository: HierarchyRepository, settings: ApiSettings) -> 
 
     Without one SYSTEM-scope ``platform_owner`` binding nothing can create
     organizations or grant further roles; every other permission then flows
-    through the API's own guarded binding routes.
+    through the API's own guarded binding routes. The grant is idempotent
+    across restarts: an existing binding for the same subject is left
+    alone, so a persistent store never accumulates duplicates.
+
+    Args:
+        repository: Where SYSTEM-scope bindings are read and the grant is
+            stored.
+        settings: Read for ``bootstrap_platform_owner``; an unset subject
+            makes this a no-op.
     """
     subject = settings.bootstrap_platform_owner
     if not subject:

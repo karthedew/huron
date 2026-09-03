@@ -1,6 +1,9 @@
-"""``GET /api/v1/search``: closed to anonymous callers like the rest of the
-versioned surface, and still ``503`` for an authenticated one until the
-search projection exists."""
+"""``GET /api/v1/search`` access control, ahead of the projection it will search.
+
+The route is closed to anonymous callers like the rest of the versioned
+surface, and still answers ``503`` for an authenticated caller until the
+search projection exists.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ pytestmark = pytest.mark.unit
 
 
 def _settings(tmp_path: Path) -> ApiSettings:
+    """A development ``ApiSettings`` with dev-headers auth and one open classification value."""
     return ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -29,6 +33,7 @@ def _settings(tmp_path: Path) -> ApiSettings:
 
 
 def test_search_refuses_an_anonymous_caller(tmp_path: Path) -> None:
+    """An anonymous caller is refused 401 with the INVALID_CREDENTIAL problem code."""
     with TestClient(create_app(settings=_settings(tmp_path))) as client:
         response = client.get("/api/v1/search")
     assert response.status_code == 401
@@ -39,6 +44,7 @@ def test_search_refuses_an_anonymous_caller(tmp_path: Path) -> None:
 def test_search_is_unavailable_to_an_authenticated_caller_until_the_projection_ships(
     tmp_path: Path,
 ) -> None:
+    """An authenticated caller gets 503 with PROJECTION_UNAVAILABLE until the projection exists."""
     with TestClient(create_app(settings=_settings(tmp_path))) as client:
         response = client.get("/api/v1/search", headers={"X-Huron-Subject": "root"})
     assert response.status_code == 503
@@ -46,6 +52,7 @@ def test_search_is_unavailable_to_an_authenticated_caller_until_the_projection_s
 
 
 def test_search_advertises_no_response_body_in_its_openapi_document(tmp_path: Path) -> None:
+    """The OpenAPI document declares an empty response schema for the search route's 200."""
     app = create_app(settings=_settings(tmp_path))
     operation = app.openapi()["paths"]["/api/v1/search"]["get"]
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {}

@@ -1,6 +1,11 @@
-"""Path construction and parsing for the shared organization/project/dataset
-layout: raw revisions, per-dataset layer segments, and Gold products split
-by provenance scope."""
+"""Path construction and parsing round-trip for the shared org/project/dataset layout.
+
+Covers ``revision_dir``/``parse_revision_dir`` (round trip, and rejection of
+paths outside the root, old-layout paths, wrong-kind segments, bad revision
+numbers and malformed ids), ``dataset_layer_dir``, single-source vs. fused
+``product_dir`` placement, ``release_tag_file``, ``staging_dir``, and
+``validate_org_slug``'s reserved-route rule.
+"""
 
 from __future__ import annotations
 
@@ -30,10 +35,13 @@ ROOT = PurePosixPath("/data")
 
 
 def _entity(slug: str) -> EntityRef:
+    """Build an ``EntityRef`` with a fresh id and the given slug."""
     return EntityRef(uuid7(), slug)
 
 
 class Hierarchy:
+    """A related organization, project and dataset, each with a fresh id and a fixed slug."""
+
     def __init__(self) -> None:
         self.organization = _entity("nuclear-engineering")
         self.project = _entity("huron-shielding-study")
@@ -41,6 +49,7 @@ class Hierarchy:
 
 
 def test_revision_dir_nests_raw_and_revision_under_the_dataset() -> None:
+    """A revision directory nests as ``{dataset dir}/raw/revision/{NNNNNN}--{id}``."""
     hierarchy = Hierarchy()
     revision_id = uuid7()
     path = revision_dir(
@@ -56,6 +65,7 @@ def test_revision_dir_nests_raw_and_revision_under_the_dataset() -> None:
 
 
 def test_parse_revision_dir_round_trips_through_revision_dir() -> None:
+    """``parse_revision_dir`` recovers exactly the identity ``revision_dir`` was built from."""
     hierarchy = Hierarchy()
     revision_id = uuid7()
     path = revision_dir(
@@ -73,6 +83,7 @@ def test_parse_revision_dir_round_trips_through_revision_dir() -> None:
 
 
 def test_parse_revision_dir_rejects_a_path_outside_the_root() -> None:
+    """A path outside the given root is refused by ``parse_revision_dir``."""
     hierarchy = Hierarchy()
     path = revision_dir(
         ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, 1, uuid7()
@@ -82,9 +93,7 @@ def test_parse_revision_dir_rejects_a_path_outside_the_root() -> None:
 
 
 def test_parse_revision_dir_rejects_the_old_layout_without_a_raw_segment() -> None:
-    """A revision directory built under the pre-existing scheme, where raw sat
-    directly at the data root and a dataset's revision hung straight off it,
-    must be rejected rather than silently resolved to the wrong thing."""
+    """A pre-existing-layout path with no ``raw`` segment is refused, not silently resolved."""
     hierarchy = Hierarchy()
     revision_id = uuid7()
     old_style = (
@@ -97,6 +106,7 @@ def test_parse_revision_dir_rejects_the_old_layout_without_a_raw_segment() -> No
 
 
 def test_parse_revision_dir_rejects_a_wrong_kind_segment() -> None:
+    """A path whose ``dataset`` kind segment has been renamed to something else is refused."""
     hierarchy = Hierarchy()
     revision_id = uuid7()
     path = revision_dir(
@@ -119,6 +129,7 @@ def test_parse_revision_dir_rejects_a_wrong_kind_segment() -> None:
     ],
 )
 def test_parse_revision_dir_rejects_a_bad_revision_number(revision_component: str) -> None:
+    """A revision number that is zero, out of range, unpadded, or non-numeric is refused."""
     hierarchy = Hierarchy()
     base = dataset_dir(ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset)
     path = base / "raw" / "revision" / revision_component
@@ -135,6 +146,7 @@ def test_parse_revision_dir_rejects_a_bad_revision_number(revision_component: st
     ],
 )
 def test_parse_revision_dir_rejects_a_malformed_uuid(revision_hex: str) -> None:
+    """A revision id that is too short, upper-case, or not hexadecimal is refused."""
     hierarchy = Hierarchy()
     base = dataset_dir(ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset)
     path = base / "raw" / "revision" / f"000042--{revision_hex}"
@@ -144,6 +156,7 @@ def test_parse_revision_dir_rejects_a_malformed_uuid(revision_hex: str) -> None:
 
 @pytest.mark.parametrize("layer", [Layer.RAW, Layer.BRONZE, Layer.SILVER, Layer.GOLD])
 def test_dataset_layer_dir_sits_under_the_dataset(layer: Layer) -> None:
+    """Each layer's directory is the dataset directory's child named after the layer code."""
     hierarchy = Hierarchy()
     path = dataset_layer_dir(
         ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, layer
@@ -156,6 +169,7 @@ def test_dataset_layer_dir_sits_under_the_dataset(layer: Layer) -> None:
 
 
 def test_dataset_layer_dir_accepts_a_plain_string_layer() -> None:
+    """``dataset_layer_dir`` accepts a plain layer string in place of a ``Layer`` member."""
     hierarchy = Hierarchy()
     path = dataset_layer_dir(
         ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, "gold"
@@ -164,6 +178,7 @@ def test_dataset_layer_dir_accepts_a_plain_string_layer() -> None:
 
 
 def test_dataset_layer_dir_rejects_an_unknown_layer() -> None:
+    """``dataset_layer_dir`` refuses a layer string that names no real layer."""
     hierarchy = Hierarchy()
     with pytest.raises(PathRuleViolation):
         dataset_layer_dir(
@@ -172,6 +187,7 @@ def test_dataset_layer_dir_rejects_an_unknown_layer() -> None:
 
 
 def test_single_source_product_lives_under_its_dataset() -> None:
+    """A single-source product's directory sits under its dataset's gold segment."""
     hierarchy = Hierarchy()
     product = _entity("shielding-dose-response")
     path = product_dir(
@@ -186,6 +202,7 @@ def test_single_source_product_lives_under_its_dataset() -> None:
 
 
 def test_fused_product_lives_under_the_project() -> None:
+    """A fused product with no dataset sits under the project's product segment instead."""
     hierarchy = Hierarchy()
     product = _entity("shielding-dose-response")
     path = product_dir(ROOT, hierarchy.organization, hierarchy.project, product)
@@ -198,6 +215,7 @@ def test_fused_product_lives_under_the_project() -> None:
 
 
 def test_single_source_and_fused_products_never_collide() -> None:
+    """The same product's single-source and fused directories never collide on one path."""
     hierarchy = Hierarchy()
     product = _entity("shielding-dose-response")
     single_source = product_dir(
@@ -208,6 +226,7 @@ def test_single_source_and_fused_products_never_collide() -> None:
 
 
 def test_release_tag_file_is_a_sibling_of_raw_not_nested_inside_it() -> None:
+    """A release tag file sits beside raw under releases/, never nested inside raw."""
     hierarchy = Hierarchy()
     tag_path = release_tag_file(
         ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, "v1.0"
@@ -218,6 +237,7 @@ def test_release_tag_file_is_a_sibling_of_raw_not_nested_inside_it() -> None:
 
 
 def test_staging_dir_sits_at_the_data_root() -> None:
+    """An ingest session's staging directory sits at the data root, under ``.staging``."""
     ingest_id = uuid7()
     assert staging_dir(ROOT, ingest_id) == ROOT / ".staging" / ingest_id.hex
 
@@ -230,4 +250,5 @@ def test_validate_org_slug_reserves_root_routes(slug: str) -> None:
 
 
 def test_validate_org_slug_accepts_an_ordinary_slug() -> None:
+    """An ordinary, non-reserved organization slug passes validation without raising."""
     validate_org_slug("nuclear-engineering")

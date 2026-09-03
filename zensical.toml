@@ -19,6 +19,7 @@ nav = [
     { "Local development" = "getting-started/local-development.md" },
     { "Repository layout" = "getting-started/repository-layout.md" },
     { "Conventions" = "getting-started/conventions.md" },
+    { "Docstrings" = "getting-started/docstrings.md" },
     { "Testing" = "getting-started/testing.md" },
   ] },
   { "Backend design" = "backend-design.md" },

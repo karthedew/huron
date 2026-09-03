@@ -1,9 +1,11 @@
-"""``PostgresRbacStore`` translates a unique-constraint violation into the
-named conflict error the rest of the tier raises, rather than letting a raw
-``asyncpg`` exception escape the storage seam. The SQL itself is proven
-against a real database in ``tests/contract/test_rbac_store.py``; this pins
-only the translation, against a fake pool that stands in for the database
-returning the one error code each site is written to catch."""
+"""``PostgresRbacStore`` translates a unique-constraint violation into its named conflict error.
+
+The SQL itself is proven against a real database in
+``tests/contract/test_rbac_store.py``; this pins only the translation,
+against a fake pool that stands in for the database returning the one
+error code each site is written to catch, rather than letting a raw
+``asyncpg`` exception escape the storage seam.
+"""
 
 from __future__ import annotations
 
@@ -21,8 +23,10 @@ pytestmark = pytest.mark.unit
 
 
 class _FakePool:
-    """Stands in for ``asyncpg.Pool``: every ``execute`` raises the given
-    error, as if a unique index refused the insert."""
+    """Stands in for ``asyncpg.Pool``; every ``execute`` raises the given error.
+
+    As if a unique index had refused the insert.
+    """
 
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
@@ -35,6 +39,8 @@ class _FakePool:
 
 
 class _FakeAcquireContext:
+    """An async context manager that yields a ``_FakeConnection`` wrapping the given error."""
+
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
 
@@ -46,6 +52,8 @@ class _FakeAcquireContext:
 
 
 class _FakeConnection:
+    """A fake connection whose ``execute`` raises the given error; its transaction is a no-op."""
+
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
 
@@ -57,6 +65,8 @@ class _FakeConnection:
 
 
 class _FakeTransactionContext:
+    """A no-op async transaction context manager."""
+
     async def __aenter__(self) -> None:
         return None
 
@@ -65,10 +75,12 @@ class _FakeTransactionContext:
 
 
 def _store_that_refuses_with(exc: Exception) -> PostgresRbacStore:
+    """Build a ``PostgresRbacStore`` backed by a pool whose every write raises ``exc``."""
     return PostgresRbacStore(cast("asyncpg.Pool", _FakePool(exc)))
 
 
 async def test_grant_role_translates_a_unique_violation_into_binding_exists() -> None:
+    """``grant_role`` translates a unique violation on the binding into ``BindingExists``."""
     store = _store_that_refuses_with(asyncpg.UniqueViolationError("duplicate"))
     with pytest.raises(BindingExists):
         await store.grant_role(
@@ -81,12 +93,14 @@ async def test_grant_role_translates_a_unique_violation_into_binding_exists() ->
 
 
 async def test_create_service_account_translates_a_unique_violation() -> None:
+    """``create_service_account`` translates a unique violation into ``ServiceAccountExists``."""
     store = _store_that_refuses_with(asyncpg.UniqueViolationError("duplicate"))
     with pytest.raises(ServiceAccountExists):
         await store.create_service_account(uuid4(), name="dup", subject="org/dup", created_by="a")
 
 
 async def test_attach_policy_translates_a_unique_violation_into_attachment_exists() -> None:
+    """``attach_policy`` translates a unique violation into ``AttachmentExists``."""
     store = _store_that_refuses_with(asyncpg.UniqueViolationError("duplicate"))
     with pytest.raises(AttachmentExists):
         await store.attach_policy(

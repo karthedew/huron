@@ -1,4 +1,9 @@
-"""Organizations: creation is platform-scope; edits are organization-scope."""
+"""Organizations: creation is platform-scope; edits are organization-scope.
+
+Creating an organization needs ``organization.create`` at SYSTEM scope,
+editing one needs ``organization.update`` on that organization, and reading
+needs only a credential. Slugs are chosen once, at creation, and never change.
+"""
 
 from __future__ import annotations
 
@@ -40,7 +45,25 @@ def create_organization(
     idempotency_key: IdempotencyHeader,
     repository: Repository,
 ) -> OrganizationView:
-    """Persist one organization; the durable write runs in the threadpool."""
+    """Create an organization.
+
+    Requires ``organization.create`` at SYSTEM scope. The slug must be unique
+    across the platform and can never change afterwards; a duplicate is
+    refused with 409. Replaying the same ``Idempotency-Key`` with the same
+    request returns the original organization instead of a 409; reusing the
+    key for a different request is refused with 409.
+    \f
+    The durable write is blocking, so the operation runs in the threadpool
+    rather than on the event loop.
+
+    Args:
+        body: The slug, title and description to store.
+        idempotency_key: The caller's ``Idempotency-Key`` header.
+        repository: The wired hierarchy repository.
+
+    Returns:
+        The organization as the API renders it.
+    """
     return OrganizationView.model_validate(
         repository.create_organization(
             slug=body.slug,
@@ -55,6 +78,20 @@ def create_organization(
 async def list_organizations(
     repository: Repository, limit: PageLimit = 50, after: PageCursor = None
 ) -> Page[OrganizationView]:
+    """List every organization.
+
+    Organizations are ordered by slug. ``after`` continues from the cursor a
+    previous page returned; a cursor that is not a valid continuation is
+    refused with 400.
+    \f
+    Args:
+        repository: The wired hierarchy repository.
+        limit: The most organizations to return in this page.
+        after: The ``next_cursor`` of the previous page, or None for the first.
+
+    Returns:
+        One page of organizations and the cursor to the next, if any.
+    """
     return paginate(
         repository.list_organizations(), OrganizationView, key=_key, limit=limit, after=after
     )
@@ -62,6 +99,18 @@ async def list_organizations(
 
 @router.get("/{organization_id}", responses={404: problem_response("no such organization")})
 async def get_organization(organization_id: UUID, repository: Repository) -> OrganizationView:
+    """Fetch one organization by id.
+
+    An unknown id is 404.
+    \f
+    Args:
+        organization_id: The organization to fetch.
+        repository: The wired hierarchy repository.
+
+    Returns:
+        The organization as the API renders it, including the ``version``
+        that ``If-Match`` carries back on a PATCH.
+    """
     return OrganizationView.model_validate(repository.get_organization(organization_id))
 
 
@@ -80,7 +129,26 @@ def patch_organization(
     if_match: IfMatchHeader,
     repository: Repository,
 ) -> OrganizationView:
-    """Persist the patch; the durable rewrite runs in the threadpool."""
+    """Update an organization's title or description.
+
+    Requires ``organization.update`` on the organization. ``If-Match`` must
+    carry the organization's current ``version``; a stale or malformed value
+    is refused with 412 and nothing changes. Slugs are immutable: a ``slug``
+    that differs from the current one is refused with 409. Every successful
+    update advances ``version`` by one. An unknown organization is 404.
+    \f
+    The durable rewrite is blocking, so the operation runs in the threadpool
+    rather than on the event loop.
+
+    Args:
+        organization_id: The organization to update.
+        body: The fields to change; a field left out or null keeps its value.
+        if_match: The caller's ``If-Match`` header.
+        repository: The wired hierarchy repository.
+
+    Returns:
+        The updated organization as the API renders it.
+    """
     return OrganizationView.model_validate(
         repository.patch_organization(
             organization_id,

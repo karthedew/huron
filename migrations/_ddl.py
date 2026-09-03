@@ -21,7 +21,17 @@ from alembic import op
 
 
 def execute_sql(block: str) -> None:
-    """Execute each ``;``-terminated statement in `block` separately."""
+    """Execute each ``;``-terminated statement in `block` separately.
+
+    Statements run in source order on the migration's own connection, so a
+    later statement may rely on every earlier one; nothing is reordered or
+    batched.
+
+    Args:
+        block: A revision's DDL as authored - any number of SQL statements
+            separated by top-level semicolons, in the quoting forms `_split`
+            understands.
+    """
     for statement in _split(block):
         op.execute(statement)
 
@@ -37,6 +47,16 @@ def _split(block: str) -> list[str]:
       (used by regex ``CHECK`` patterns like ``'^[a-z0-9]...$'``)
     - ``$$...$$`` or ``$tag$...$tag$`` dollar-quoted bodies (the plpgsql
       trigger functions, whose bodies contain their own semicolons)
+
+    Args:
+        block: The SQL text to split.
+
+    Returns:
+        The statements in source order, each stripped of surrounding
+        whitespace and of its terminating semicolon. Comments are not
+        removed - a comment stays inside the fragment it falls in, normally
+        the statement that follows it - and a fragment that is empty after
+        stripping, such as whitespace after the last semicolon, is left out.
     """
     statements: list[str] = []
     start = 0

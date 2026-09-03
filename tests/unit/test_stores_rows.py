@@ -1,8 +1,10 @@
-"""The row-mapping helpers in ``stores/rows.py`` are pure functions over a
-mapping - exercised here with plain dicts standing in for ``asyncpg.Record``,
-the same duck-typed access (``row["column"]``) either provides. The store
-classes that own the SQL are covered by ``tests/contract/`` against a real
-database instead."""
+"""The row-mapping helpers in ``stores/rows.py`` are pure functions over a mapping.
+
+Exercised here with plain dicts standing in for ``asyncpg.Record``, the same
+duck-typed access (``row["column"]``) either provides. The store classes
+that own the SQL are covered by ``tests/contract/`` against a real database
+instead.
+"""
 
 from __future__ import annotations
 
@@ -27,6 +29,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_binding_record_maps_every_column_including_a_null_expiry() -> None:
+    """``binding_record`` maps every column of a row, including a null ``expires_at``."""
     binding_id = uuid4()
     scope_id = uuid4()
     now = datetime.now(UTC)
@@ -48,6 +51,7 @@ def test_binding_record_maps_every_column_including_a_null_expiry() -> None:
 
 
 def test_service_account_maps_every_column_including_a_null_disabled_at() -> None:
+    """``service_account`` maps every column of a row, including a null ``disabled_at``."""
     principal_id = uuid4()
     organization_id = uuid4()
     now = datetime.now(UTC)
@@ -68,6 +72,7 @@ def test_service_account_maps_every_column_including_a_null_disabled_at() -> Non
 
 
 def test_policy_decodes_the_jsonb_spec_column() -> None:
+    """``policy`` decodes the JSONB ``spec`` column from a string into a dict."""
     policy_id = uuid4()
     now = datetime.now(UTC)
     row = {
@@ -84,6 +89,7 @@ def test_policy_decodes_the_jsonb_spec_column() -> None:
 
 
 def test_api_key_record_maps_scopes_to_a_frozenset_and_a_present_project_id() -> None:
+    """``api_key_record`` maps ``scopes`` to a frozenset and stringifies ``project_id``."""
     project_id = uuid4()
     now = datetime.now(UTC)
     row = {
@@ -104,6 +110,7 @@ def test_api_key_record_maps_scopes_to_a_frozenset_and_a_present_project_id() ->
 
 
 def test_api_key_record_leaves_project_id_none_when_the_key_is_unscoped() -> None:
+    """``api_key_record`` leaves ``project_id`` as None when the key is unscoped."""
     now = datetime.now(UTC)
     row = {
         "key_id": "hk_abc123",
@@ -121,6 +128,7 @@ def test_api_key_record_leaves_project_id_none_when_the_key_is_unscoped() -> Non
 
 
 def test_credential_record_maps_every_column() -> None:
+    """``credential_record`` maps every column of a row onto the record."""
     principal_id = uuid4()
     now = datetime.now(UTC)
     row = {
@@ -137,6 +145,7 @@ def test_credential_record_maps_every_column() -> None:
 
 
 def test_session_record_maps_groups_to_a_frozenset() -> None:
+    """``session_record`` maps ``groups`` to a frozenset."""
     session_id = uuid4()
     now = datetime.now(UTC)
     row = {
@@ -159,6 +168,7 @@ def test_session_record_maps_groups_to_a_frozenset() -> None:
 
 
 def test_principal_record_maps_every_column() -> None:
+    """``principal_record`` maps every column of a row onto the record."""
     principal_id = uuid4()
     now = datetime.now(UTC)
     row = {
@@ -181,4 +191,5 @@ def test_principal_record_maps_every_column() -> None:
     [("UPDATE 0", 0), ("UPDATE 1", 1), ("UPDATE 42", 42)],
 )
 def test_affected_row_count_parses_the_asyncpg_command_tag(tag: str, expected: int) -> None:
+    """``affected_row_count`` parses the row count from an asyncpg ``UPDATE`` command tag."""
     assert affected_row_count(tag) == expected

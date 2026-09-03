@@ -38,10 +38,12 @@ ALTER TABLE snapshots
 
 
 def upgrade() -> None:
+    """Attach products to a dataset and require one on every bronze or silver snapshot."""
     execute_sql(DDL)
 
 
 def downgrade() -> None:
+    """Remove the snapshot constraint, the product dataset column and its composite-key target."""
     execute_sql("""
     ALTER TABLE snapshots DROP CONSTRAINT IF EXISTS snapshots_dataset_required_below_gold;
     ALTER TABLE products

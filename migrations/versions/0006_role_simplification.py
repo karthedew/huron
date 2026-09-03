@@ -1,5 +1,4 @@
-"""Role simplification: the data-steward role is removed and the dataset
-activation gate with it.
+"""Role simplification: the data-steward role is removed and the dataset activation gate with it.
 
 The steward's only capability delta over ``developer`` was
 ``dataset.policy_attach``, which the admin roles already hold - a whole role
@@ -44,10 +43,12 @@ ALTER TABLE projects DROP COLUMN dataset_creation_mode;
 
 
 def upgrade() -> None:
+    """Delete ``data_steward``, lift DRAFT datasets to ACTIVE and drop the creation-mode column."""
     execute_sql(DDL)
 
 
 def downgrade() -> None:
+    """Restore the creation-mode column, the DRAFT default and the ``data_steward`` role."""
     execute_sql(r"""
     ALTER TABLE projects
       ADD COLUMN dataset_creation_mode text NOT NULL DEFAULT 'steward_approval';

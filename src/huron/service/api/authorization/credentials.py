@@ -41,7 +41,27 @@ async def current_principal(request: Request, runtime: Runtime) -> Principal:
     happens to carry a cookie jar must never be silently downgraded to a
     session principal. Only once there is no ``Authorization`` header at
     all does a session cookie get a look, and only after that does the
-    development-only header fallback apply.
+    development-only header fallback apply. Within the bearer branch an
+    ``hk_`` token is an API key and anything else is an OIDC JWT, which is
+    refused outright when no verifier is configured rather than guessed
+    at. A session principal additionally passes the CSRF check, and the
+    session is left on ``request.state`` for ``current_session``.
+
+    Args:
+        request: The request whose ``Authorization`` header, cookies and -
+            in development - ``X-Huron-*`` headers are read.
+        runtime: The published wiring: the key and session stores, the
+            optional OIDC resolver and the settings that name the session
+            cookie and the auth mode.
+
+    Returns:
+        The authenticated principal, with ``authentication_method`` saying
+        which branch produced it.
+
+    Raises:
+        AuthError: If a JWT is presented but no OIDC verifier is
+            configured, or if no credential of any kind is present outside
+            ``dev-headers`` mode.
     """
     authorization = request.headers.get("authorization")
     if authorization:
@@ -70,10 +90,20 @@ CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
 
 
 async def current_session(request: Request, _actor: CurrentPrincipal) -> SessionRecord | None:
-    """The session behind this request, if the caller authenticated with one.
+    """Return the session behind this request, if the caller authenticated with one.
 
     Set by ``current_principal``'s cookie branch, which is why this depends
     on it: a bearer caller has no session and correctly gets ``None``.
+
+    Args:
+        request: The request whose ``state.session`` the cookie branch may
+            have set.
+        _actor: The resolved principal; unused except to order this
+            dependency after credential resolution.
+
+    Returns:
+        The session record for a cookie-authenticated caller, or ``None``
+        for a bearer or dev-header one.
     """
     session: SessionRecord | None = getattr(request.state, "session", None)
     return session
@@ -83,8 +113,18 @@ CurrentSession = Annotated[SessionRecord | None, Depends(current_session)]
 
 
 async def _touch_api_key(store: ApiKeyWriter, credential: str) -> None:
-    """Best-effort last-used bookkeeping; a write failure here must never
-    turn a valid credential into a failed request."""
+    """Record that an API key was just used, without ever failing the request.
+
+    Best-effort last-used bookkeeping; a write failure here must never
+    turn a valid credential into a failed request. Any exception is logged
+    with its traceback and swallowed, so the caller sees the same outcome
+    whether or not the timestamp landed.
+
+    Args:
+        store: The key store whose ``touch_last_used`` records the moment.
+        credential: The full ``hk_`` token, already accepted by the
+            resolver; only its key id is used.
+    """
     try:
         key_id, _secret = parse_api_key(credential)
         await store.touch_last_used(key_id)
@@ -93,13 +133,26 @@ async def _touch_api_key(store: ApiKeyWriter, credential: str) -> None:
 
 
 def _enforce_csrf(request: Request, session: SessionRecord) -> None:
-    """Cookie-authenticated state changes must echo the session's CSRF token.
+    """Require a cookie-authenticated state change to echo the session's CSRF token.
 
+    Cookie-authenticated state changes must echo the session's CSRF token.
     Bearer paths are exempt (headers cannot be set cross-site by an
     attacker's page, so a bearer caller needs no proof beyond the token
     itself); GET/HEAD/OPTIONS are exempt (they must stay side-effect-free
     anyway). The token reaches the browser in the login response and in
-    ``GET /auth/session``.
+    ``GET /auth/session``. The comparison is constant-time and made on
+    bytes, so a header holding non-ASCII bytes is a mismatch rather than
+    an exception.
+
+    Args:
+        request: The request whose method and ``X-Huron-CSRF`` header are
+            checked.
+        session: The session the cookie resolved to, holding the expected
+            token.
+
+    Raises:
+        AuthError: If a mutating request's ``X-Huron-CSRF`` header is
+            missing or does not equal the session's token.
     """
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return

@@ -1,4 +1,17 @@
-"""Every way of authenticating, resolved to one Principal."""
+"""Every way of authenticating, resolved to one Principal.
+
+The package owns authentication and nothing else, and is free of any web
+framework. Its public surface, re-exported here, is: the credential
+resolvers (``ApiKeyResolver``, ``SessionResolver``, ``OidcResolver`` with
+``JwksVerifier``, ``DevHeaderResolver``) and the ``OidcClient``/``LoginFlow``
+pair behind the browser login; the store protocols with their in-memory
+implementations and the records they hold (API keys, sessions, password
+credentials, principals); the ``create_*``/``parse_*`` helpers that mint
+and split credentials; the argon2 password functions and
+``MIN_PASSWORD_LENGTH``; the session lifetimes ``IDLE_TTL``,
+``ABSOLUTE_TTL`` and ``TOUCH_INTERVAL``; the stable errors; and
+``Principal`` itself.
+"""
 
 from .apikeys import (
     ApiKeyRecord,

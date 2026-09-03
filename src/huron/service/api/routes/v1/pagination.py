@@ -43,11 +43,42 @@ class Page[ItemT: BaseModel](BaseModel):
 
 
 def encode_cursor(key: tuple[str, ...]) -> str:
+    """Return the opaque cursor that names the position just after ``key``.
+
+    The cursor is ``CURSOR_VERSION``, a colon, then the key parts joined by
+    a separator and URL-safe base64 encoded without padding - the shape
+    ``PageCursor`` accepts back. It is opaque to clients by contract: the
+    only thing a client may do with one is pass it as ``after``.
+
+    Args:
+        key: The ordering key of the last item in a window, as the
+            ``key`` callable given to ``paginate`` produces it.
+
+    Returns:
+        The versioned, URL-safe cursor string.
+    """
     packed = urlsafe_b64encode(_KEY_SEPARATOR.join(key).encode()).decode().rstrip("=")
     return f"{CURSOR_VERSION}:{packed}"
 
 
 def decode_cursor(cursor: str) -> tuple[str, ...]:
+    """Return the ordering key an ``encode_cursor`` cursor stands for.
+
+    A cursor from a deployment with a different ``CURSOR_VERSION`` is
+    refused rather than misread, and so is any value that does not decode
+    to a key: both are the caller's ``INVALID_CURSOR`` 400, never a page
+    that silently starts somewhere else.
+
+    Args:
+        cursor: The ``after`` value a client sent back.
+
+    Returns:
+        The key parts, in the order ``encode_cursor`` was given them.
+
+    Raises:
+        InvalidCursor: If the version prefix is not ``CURSOR_VERSION``, or
+            the remainder is not the base64 of a key.
+    """
     version, _, packed = cursor.partition(":")
     if version != CURSOR_VERSION:
         raise InvalidCursor(f"unsupported cursor version: {version}")
@@ -70,7 +101,24 @@ def paginate[RecordT, ViewT: BaseModel](
 
     ``records`` must already be ordered by ``key`` before this is called,
     whether by the repository's query method or by the caller sorting the
-    sequence itself.
+    sequence itself. The window is every record whose key sorts after the
+    cursor's, cut to ``limit``; ``next_cursor`` names the last record in
+    the window, and only when a record follows it, so a page that reaches
+    the end of the collection says so with ``null``.
+
+    Args:
+        records: The whole collection, already ordered by ``key``.
+        view: The response model each record in the window is rendered
+            through, via ``model_validate``.
+        key: Maps a record to its ordering key: a tuple of strings that is
+            unique per record and compares in the collection's order.
+        limit: The most items the page may hold; at least one.
+        after: The cursor of the previous page, or ``None`` to start from
+            the beginning of the collection.
+
+    Returns:
+        The rendered window and the cursor to continue from, ``None`` if
+        nothing follows.
     """
     remaining = list(records)
     if after is not None:

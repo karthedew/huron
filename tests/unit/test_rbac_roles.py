@@ -40,6 +40,7 @@ def test_no_role_writes_silver_or_gold_and_all_roles_are_human_only() -> None:
 
 
 def test_service_accounts_hold_no_roles() -> None:
+    """No role can be bound to a service account; each raises ``PrincipalKindNotAllowed``."""
     for code in ROLES:
         with pytest.raises(PrincipalKindNotAllowed):
             validate_binding(code, "service_account", ScopeType.ORGANIZATION)
@@ -79,17 +80,20 @@ def test_service_account_authority_is_org_scoped_silver_gold_crud() -> None:
 
 
 def test_admin_roles_carry_no_data_write() -> None:
+    """None of the three admin roles carries a ``data.write`` layer grant."""
     for code in ("project_admin", "organization_admin", "platform_owner"):
         assert not any(grant.capability == "data.write" for grant in ROLES[code].layer_grants), code
 
 
 def test_platform_owner_binds_only_at_system_scope() -> None:
+    """``platform_owner`` refuses organization scope but binds at system scope."""
     with pytest.raises(ScopeNotBindable):
         validate_binding("platform_owner", "user", ScopeType.ORGANIZATION)
     validate_binding("platform_owner", "user", ScopeType.SYSTEM)
 
 
 def test_every_role_capability_is_in_the_vocabulary() -> None:
+    """Every role's capabilities and layer-grant capabilities are drawn from ``CAPABILITIES``."""
     for role in ROLES.values():
         assert role.capabilities <= CAPABILITIES, role.code
         for grant in role.layer_grants:
@@ -97,6 +101,7 @@ def test_every_role_capability_is_in_the_vocabulary() -> None:
 
 
 def test_compiled_developer_writes_raw_not_silver() -> None:
+    """A compiled ``developer`` binding allows raw writes and gold reads, denies silver writes."""
     organization_id, project_id, dataset_id = uuid4(), uuid4(), uuid4()
     bindings = list(
         compile_binding(
@@ -123,6 +128,7 @@ def test_compiled_developer_writes_raw_not_silver() -> None:
 
 
 def test_organization_binding_inherits_downward() -> None:
+    """An org-scoped ``reader`` binding lets a group member read datasets under that org only."""
     organization_id, project_id, dataset_id = uuid4(), uuid4(), uuid4()
     bindings = list(
         compile_binding(
@@ -153,6 +159,7 @@ def test_organization_binding_inherits_downward() -> None:
 
 
 def test_service_account_principal_uses_sa_prefix() -> None:
+    """A service-account principal's identifiers use the ``sa:`` prefix, never ``user:``."""
     account = Principal("alpha/loader", kind="service_account")
     assert "sa:alpha/loader" in account.identifiers
     assert "user:alpha/loader" not in account.identifiers

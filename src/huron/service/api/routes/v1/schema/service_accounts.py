@@ -11,6 +11,14 @@ from huron.service.api.routes.v1.schema.api_keys import IssuedApiKey
 
 
 class CreateServiceAccount(BaseModel):
+    """The body of ``POST /organizations/{organization_id}/service-accounts``.
+
+    ``name`` is the account's label within the owning organization, which
+    the route names; it must be unique there, and a second account with
+    the same name is refused with ``SERVICE_ACCOUNT_EXISTS``. The account's
+    authority is fixed by its kind, so there is nothing else to declare.
+    """
+
     name: str = Field(min_length=2, max_length=62)
 
 

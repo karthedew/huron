@@ -29,6 +29,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
+    """A TestClient with root bootstrapped as platform owner, its lifespan startup already run."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -49,6 +50,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def _headers(subject: str, groups: str = "") -> dict[str, str]:
+    """Auth headers for `subject` with a fresh Idempotency-Key, plus X-Huron-Groups when given."""
     headers = {"X-Huron-Subject": subject, "Idempotency-Key": str(uuid4())}
     if groups:
         headers["X-Huron-Groups"] = groups
@@ -56,6 +58,7 @@ def _headers(subject: str, groups: str = "") -> dict[str, str]:
 
 
 def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
+    """Delegation gates each step; a developer writes raw/bronze, a service account silver/gold."""
     # Unbound users can authenticate but not act.
     denied = client.post(
         "/api/v1/organizations",
@@ -203,6 +206,7 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
 
 
 def test_policy_attachment_requires_the_scoped_capability(client: TestClient) -> None:
+    """A caller is denied unless bound, and only the platform owner may attach an org policy."""
     organization = client.post(
         "/api/v1/organizations",
         json={"slug": "geo", "title": "Geo"},
@@ -237,6 +241,7 @@ def test_policy_attachment_requires_the_scoped_capability(client: TestClient) ->
 
 
 def test_issuing_an_api_key_requires_an_idempotency_key(client: TestClient) -> None:
+    """Minting an API key requires a present, non-empty Idempotency-Key header."""
     headers = _headers("root")
     del headers["Idempotency-Key"]
     missing = client.post("/api/v1/auth/api-keys", json={"name": "laptop"}, headers=headers)
@@ -251,6 +256,7 @@ def test_issuing_an_api_key_requires_an_idempotency_key(client: TestClient) -> N
 
 
 def test_api_keys_inherit_the_callers_identity(client: TestClient) -> None:
+    """An issued API key resolves back to the issuing user's own identity and SYSTEM-scope roles."""
     issued = client.post(
         "/api/v1/auth/api-keys",
         json={"name": "laptop"},
@@ -274,8 +280,11 @@ def test_api_keys_inherit_the_callers_identity(client: TestClient) -> None:
 
 
 def test_slugs_are_immutable_at_every_level_for_every_role(client: TestClient) -> None:
-    """A slug is baked into the storage path, so it never changes - not for an
-    organization admin, and not for the platform owner either."""
+    """A slug never changes once created, not for an organization admin nor the platform owner.
+
+    A slug is baked into the storage path, so it never changes - not for an
+    organization admin, and not for the platform owner either.
+    """
     organization = client.post(
         "/api/v1/organizations",
         json={"slug": "immutable-org", "title": "Immutable"},

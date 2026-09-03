@@ -78,6 +78,7 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 
 
 def _migrate(sqlalchemy_url: str) -> None:
+    """Upgrades the target database to the latest Alembic migration head."""
     config = Config()
     config.set_main_option("script_location", str(MIGRATIONS_DIR))
     config.set_main_option("sqlalchemy.url", sqlalchemy_url)
@@ -85,24 +86,29 @@ def _migrate(sqlalchemy_url: str) -> None:
 
 
 def test_the_postgres_rbac_and_api_key_stores_against_a_migrated_database() -> None:
+    """The RBAC and API-key stores behave correctly against a real, migrated PostgreSQL database."""
     with PostgresContainer("postgres:16") as postgres:
         _migrate(postgres.get_connection_url(driver="asyncpg"))
         asyncio.run(_assert_against(postgres.get_connection_url(driver=None)))
 
 
 def test_stores_conform_to_their_ports_structurally_not_by_inheritance() -> None:
-    """``RbacStore`` and ``ApiKeyWriter`` now share a package with every
+    """Neither Postgres nor in-memory store inherits its Protocol; conformance stays structural.
+
+    ``RbacStore`` and ``ApiKeyWriter`` now share a package with every
     implementation of them, which makes inheriting the Protocol a one-line
     temptation. Conformance must stay structural: an implementation that
     names the Protocol in its bases gets its signatures checked once at
     definition and stops being the independent conformer this module exists
-    to compare against the in-memory reference."""
+    to compare against the in-memory reference.
+    """
     assert RbacStore not in PostgresRbacStore.__mro__
     assert RbacStore not in InMemoryRbacStore.__mro__
     assert ApiKeyWriter not in PostgresApiKeyStore.__mro__
 
 
 async def _assert_against(dsn: str) -> None:
+    """Runs every RBAC and API-key store assertion against one connection pool."""
     pool = await asyncpg.create_pool(dsn)
     try:
         await _assert_seed_matches_roles(pool)
@@ -135,6 +141,7 @@ async def _assert_against(dsn: str) -> None:
 
 
 async def _insert_organization(pool: asyncpg.Pool, *, slug: str) -> UUID:
+    """Inserts an organization row directly, standing in for the not-yet-Postgres catalog store."""
     organization_id = uuid7()
     now = datetime.now(UTC)
     await pool.execute(
@@ -151,6 +158,7 @@ async def _insert_organization(pool: asyncpg.Pool, *, slug: str) -> UUID:
 
 
 async def _insert_project(pool: asyncpg.Pool, *, organization_id: UUID, slug: str) -> UUID:
+    """Inserts a project row directly, standing in for the not-yet-Postgres catalog store."""
     project_id = uuid7()
     now = datetime.now(UTC)
     await pool.execute(
@@ -172,6 +180,7 @@ async def _insert_project(pool: asyncpg.Pool, *, organization_id: UUID, slug: st
 
 
 async def _assert_seed_matches_roles(pool: asyncpg.Pool) -> None:
+    """The seeded roles table matches ROLES exactly in kinds, scopes, and every capability grant."""
     role_rows = {row["code"]: row for row in await pool.fetch("SELECT * FROM roles")}
     assert set(role_rows) == set(ROLES)
 
@@ -212,6 +221,7 @@ async def _assert_seed_matches_roles(pool: asyncpg.Pool) -> None:
 async def _assert_seed_capabilities_match_the_python_capability_vocabulary(
     pool: asyncpg.Pool,
 ) -> None:
+    """The seeded capabilities table holds exactly the codes in CAPABILITIES."""
     seeded = {row["code"] for row in await pool.fetch("SELECT code FROM capabilities")}
     assert seeded == CAPABILITIES
 
@@ -220,6 +230,7 @@ async def _assert_seed_capabilities_match_the_python_capability_vocabulary(
 
 
 async def _assert_grant_role_validates_before_touching_the_database(pool: asyncpg.Pool) -> None:
+    """``grant_role`` refuses a bad principal kind or scope before writing to ``role_bindings``."""
     store = PostgresRbacStore(pool)
     with pytest.raises(PrincipalKindNotAllowed):
         await store.grant_role(
@@ -247,6 +258,7 @@ async def _assert_grant_role_validates_before_touching_the_database(pool: asyncp
 async def _assert_grant_role_round_trips_through_bindings_for_and_bindings_at(
     pool: asyncpg.Pool,
 ) -> None:
+    """A granted binding is found by every read method and gone from all of them once revoked."""
     store = PostgresRbacStore(pool)
     project_id = uuid4()
     principal = "user:diana"
@@ -292,6 +304,7 @@ async def _assert_grant_role_round_trips_through_bindings_for_and_bindings_at(
 
 
 async def _assert_service_account_round_trip(pool: asyncpg.Pool) -> None:
+    """A service account round-trips through get and list; an unknown id raises ResourceNotFound."""
     store = PostgresRbacStore(pool)
     organization_id = await _insert_organization(pool, slug="astro-sa")
 
@@ -317,6 +330,7 @@ async def _assert_service_account_round_trip(pool: asyncpg.Pool) -> None:
 async def _assert_create_service_account_reports_a_missing_organization(
     pool: asyncpg.Pool,
 ) -> None:
+    """``create_service_account`` raises ResourceNotFound for an unknown organization id."""
     store = PostgresRbacStore(pool)
     with pytest.raises(ResourceNotFound):
         await store.create_service_account(
@@ -328,6 +342,7 @@ async def _assert_create_service_account_reports_a_missing_organization(
 
 
 async def _assert_policy_round_trip(pool: asyncpg.Pool) -> None:
+    """A created policy round-trips through attach and list, and attaching an unknown id fails."""
     store = PostgresRbacStore(pool)
     organization_id = await _insert_organization(pool, slug="astro-policy")
 
@@ -360,6 +375,7 @@ async def _assert_policy_round_trip(pool: asyncpg.Pool) -> None:
 
 
 async def _assert_api_key_round_trip(pool: asyncpg.Pool) -> None:
+    """An API key round-trips through get; touch_last_used stamps it; an unknown key is None."""
     store = PostgresApiKeyStore(pool)
     organization_id = await _insert_organization(pool, slug="astro-keys")
     project_id = await _insert_project(pool, organization_id=organization_id, slug="survey")
@@ -388,6 +404,7 @@ async def _assert_api_key_round_trip(pool: asyncpg.Pool) -> None:
 
 
 async def _assert_api_key_add_reports_a_missing_project(pool: asyncpg.Pool) -> None:
+    """``add`` raises ResourceNotFound for an API key naming a project id that doesn't exist."""
     store = PostgresApiKeyStore(pool)
     record = ApiKeyRecord(
         key_id="orphankey",
@@ -406,6 +423,7 @@ async def _assert_api_key_add_reports_a_missing_project(pool: asyncpg.Pool) -> N
 
 
 async def _assert_trigger_rejects_any_service_account_binding(pool: asyncpg.Pool) -> None:
+    """The guard trigger refuses any role binding naming a service-account principal."""
     with pytest.raises(asyncpg.exceptions.RaiseError):
         await pool.execute(
             """
@@ -419,6 +437,7 @@ async def _assert_trigger_rejects_any_service_account_binding(pool: asyncpg.Pool
 
 
 async def _assert_trigger_rejects_platform_owner_at_organization_scope(pool: asyncpg.Pool) -> None:
+    """The guard trigger refuses ``platform_owner`` bound at ORGANIZATION scope."""
     with pytest.raises(asyncpg.exceptions.RaiseError):
         await pool.execute(
             """
@@ -434,9 +453,12 @@ async def _assert_trigger_rejects_platform_owner_at_organization_scope(pool: asy
 
 
 async def _assert_trigger_rejects_a_malformed_principal_prefix(pool: asyncpg.Pool) -> None:
-    """A principal with no ``user:``/``group:``/``sa:`` prefix, at a scope
+    """The guard trigger refuses a principal with no kind prefix, even at an otherwise valid scope.
+
+    A principal with no ``user:``/``group:``/``sa:`` prefix, at a scope
     (SYSTEM) and role (platform_owner) that would otherwise be entirely
-    valid - isolating the prefix check from the kind and scope checks."""
+    valid - isolating the prefix check from the kind and scope checks.
+    """
     with pytest.raises(asyncpg.exceptions.RaiseError):
         await pool.execute(
             """
@@ -449,6 +471,7 @@ async def _assert_trigger_rejects_a_malformed_principal_prefix(pool: asyncpg.Poo
 
 
 async def _assert_trigger_rejects_an_exact_duplicate_system_binding(pool: asyncpg.Pool) -> None:
+    """A duplicate SYSTEM-scope binding for one principal and role is refused outright."""
     insert = """
         INSERT INTO role_bindings
             (id, principal, role_code, scope_type, scope_id, effect, created_by, created_at)
@@ -463,6 +486,7 @@ async def _assert_trigger_rejects_an_exact_duplicate_system_binding(pool: asyncp
 async def _insert_role(
     pool: asyncpg.Pool, *, code: str, bindable_scopes: list[str] | None = None
 ) -> None:
+    """Inserts a role row directly, allowing only 'user' principals at the given bindable scopes."""
     await pool.execute(
         """
         INSERT INTO roles (code, title, allowed_principal_kinds, bindable_scopes)
@@ -474,6 +498,7 @@ async def _insert_role(
 
 
 async def _insert_capability(pool: asyncpg.Pool, *, code: str) -> None:
+    """Inserts a capability row directly, by code alone."""
     await pool.execute("INSERT INTO capabilities (code) VALUES ($1)", code)
 
 
@@ -484,6 +509,7 @@ async def _insert_capability(pool: asyncpg.Pool, *, code: str) -> None:
 async def _assert_role_delete_is_refused_while_a_binding_still_names_it(
     pool: asyncpg.Pool,
 ) -> None:
+    """Deleting a role is refused by its foreign key while a role_bindings row still names it."""
     role_code = "contract_test_role_bound"
     await _insert_role(pool, code=role_code)
     await pool.execute(
@@ -507,6 +533,7 @@ async def _assert_role_delete_is_refused_while_a_binding_still_names_it(
 async def _assert_capability_delete_is_refused_while_a_role_still_grants_it(
     pool: asyncpg.Pool,
 ) -> None:
+    """Deleting a capability is refused by its foreign key while a role still grants it."""
     role_code = "contract_test_role_granting"
     capability_code = "contract_test.capability_granted"
     await _insert_role(pool, code=role_code)
@@ -533,6 +560,7 @@ async def _assert_capability_delete_is_refused_while_a_role_still_grants_it(
 async def _assert_role_delete_cascades_its_capability_rows_once_its_bindings_are_gone(
     pool: asyncpg.Pool,
 ) -> None:
+    """Deleting a role, once its bindings are gone, cascades to its role_capabilities rows."""
     role_code = "contract_test_role_retired"
     capability_code = "contract_test.capability_retired"
     binding_id = uuid7()
@@ -570,6 +598,7 @@ async def _assert_role_delete_cascades_its_capability_rows_once_its_bindings_are
 async def _assert_trigger_rejects_a_service_account_row_over_a_user_principal(
     pool: asyncpg.Pool,
 ) -> None:
+    """The guard trigger refuses a service_accounts row naming a 'user'-kind principal."""
     principal_id = uuid7()
     await pool.execute(
         """
@@ -598,9 +627,12 @@ _BAD_OBJECT_LITERALS = ('"just a string"', "42", "true", "[]", "null")
 
 @dataclass(frozen=True)
 class _JsonbShapeColumn:
-    """One jsonb column's refused/permitted pair, checked by ``UPDATE`` against
+    """One jsonb column's refused-and-permitted literal pair, checked against a fixture row.
+
+    One jsonb column's refused/permitted pair, checked by ``UPDATE`` against
     a fixture row already holding a legal value - `where`/`key` locate that
-    row, with `key` bound starting at `$2`."""
+    row, with `key` bound starting at `$2`.
+    """
 
     table: str
     column: str
@@ -612,6 +644,7 @@ class _JsonbShapeColumn:
 
 
 async def _insert_policy_for_jsonb_shape(pool: asyncpg.Pool) -> UUID:
+    """Inserts a policy row directly, with an empty jsonb object as its spec."""
     policy_id = uuid7()
     await pool.execute(
         """
@@ -625,6 +658,7 @@ async def _insert_policy_for_jsonb_shape(pool: asyncpg.Pool) -> UUID:
 
 
 async def _insert_role_binding_for_jsonb_shape(pool: asyncpg.Pool) -> UUID:
+    """Inserts a role and a role_bindings row directly, its conditions an empty jsonb object."""
     role_code = "contract_test_role_jsonb_shape"
     await _insert_role(pool, code=role_code)
     binding_id = uuid7()
@@ -644,11 +678,14 @@ async def _insert_role_binding_for_jsonb_shape(pool: asyncpg.Pool) -> UUID:
 
 
 async def _assert_policies_and_role_bindings_jsonb_shape(pool: asyncpg.Pool) -> None:
-    """``policies.spec`` and ``role_bindings.conditions`` each refuse a bare
+    """``policies.spec`` and ``role_bindings.conditions`` each refuse a non-object jsonb value.
+
+    ``policies.spec`` and ``role_bindings.conditions`` each refuse a bare
     string, number, boolean, array and JSON ``null``, and accept both an
     empty and a populated object - the same pairing
     ``tests/contract/test_catalog_store.py`` applies to its own twelve jsonb
-    columns."""
+    columns.
+    """
     cases = (
         _JsonbShapeColumn(
             table="policies",
@@ -676,18 +713,22 @@ async def _assert_policies_and_role_bindings_jsonb_shape(pool: asyncpg.Pool) -> 
 
 
 def _policy_key(item: Policy) -> tuple[str, str]:
+    """Returns the (name, id) tuple that orders policies the way the HTTP boundary's cursor does."""
     return (item.name, str(item.id))
 
 
 def _service_account_key(item: ServiceAccount) -> tuple[str]:
+    """Returns the (name,) tuple that orders service accounts the way the cursor does."""
     return (item.name,)
 
 
 def _binding_key(item: RoleBindingRecord) -> tuple[str, str]:
+    """Returns the (principal, role_code) tuple that orders bindings the way the cursor does."""
     return (item.principal, item.role_code)
 
 
 async def _insert_policy_row(pool: asyncpg.Pool, record: Policy) -> None:
+    """Inserts a policy row directly with every field controlled, for testing store order."""
     await pool.execute(
         """
         INSERT INTO policies (id, policy_type, name, spec, created_by, created_at)
@@ -705,11 +746,14 @@ async def _insert_policy_row(pool: asyncpg.Pool, record: Policy) -> None:
 async def _assert_store_order_agrees_between_backends_and_matches_the_boundary_key(
     pool: asyncpg.Pool,
 ) -> None:
-    """The one property no other assertion in this module checks: that the
+    """The in-memory and Postgres stores list policies, accounts, and bindings in the same order.
+
+    The one property no other assertion in this module checks: that the
     two backends return records from the same collection in the same
     sequence, and that the sequence is what sorting the records by the HTTP
     boundary's own cursor key would produce - for all three collections
-    ``RbacStore`` orders."""
+    ``RbacStore`` orders.
+    """
     memory_store = InMemoryRbacStore()
     postgres_store = PostgresRbacStore(pool)
 
@@ -811,10 +855,13 @@ async def _assert_store_order_agrees_between_backends_and_matches_the_boundary_k
 async def _assert_postgres_orders_policy_names_by_byte_order_not_locale_order(
     pool: asyncpg.Pool,
 ) -> None:
-    """This cluster's default collation folds case and treats a hyphen and
+    """``list_policies`` orders names by raw byte value, not the cluster's folding collation.
+
+    This cluster's default collation folds case and treats a hyphen and
     an accent as insignificant; ``COLLATE "C"`` must override that so the
     store's order is exactly Python's ``str`` order, which is the order the
-    keyset cursor's comparison assumes."""
+    keyset cursor's comparison assumes.
+    """
     store = PostgresRbacStore(pool)
     now = datetime.now(UTC)
     names = ["pii-mask", "piimask", "PII-mask", "cafe", "café"]
@@ -828,17 +875,22 @@ async def _assert_postgres_orders_policy_names_by_byte_order_not_locale_order(
 
 
 class _PolicyIdView(BaseModel):
+    """A minimal view exposing only a policy's id, for driving this module's keyset paginator."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
 
 
 async def _assert_a_duplicate_policy_name_is_walked_exactly_once(pool: asyncpg.Pool) -> None:
-    """Two policies sharing a name have no natural tiebreak but ``id``.
+    """The keyset paginator visits every policy exactly once even when two rows share a name.
+
+    Two policies sharing a name have no natural tiebreak but ``id``.
     Inserting the lexicographically later id first means an id-less order
     would come back in insertion order - the wrong order for the cursor's
     key - and walking that order at ``limit=1`` would skip the row the
-    cursor's ``>`` comparison can no longer see."""
+    cursor's ``>`` comparison can no longer see.
+    """
     store = PostgresRbacStore(pool)
     now = datetime.now(UTC)
     high = Policy(

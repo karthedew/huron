@@ -1,5 +1,9 @@
-"""``IngestSession``'s two expiry checks: past the lease, an in-progress
-session refuses to advance state and refuses a heartbeat renewal alike."""
+"""``IngestSession`` refuses to advance once its lease or its state is spent.
+
+Past the lease's expiry, an in-progress session refuses both to transition
+and to renew by heartbeat. A heartbeat is refused once more by a session that
+has already reached a terminal state, even with time left on the lease.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ pytestmark = pytest.mark.unit
 
 
 def _lease(*, expires_at: datetime) -> IngestLease:
+    """Build an ``IngestLease`` with arbitrary ids and the given expiry."""
     return IngestLease(
         ingest_id=uuid4(),
         dataset_id=uuid4(),
@@ -25,6 +30,7 @@ def _lease(*, expires_at: datetime) -> IngestLease:
 
 
 def test_transition_refuses_once_the_lease_has_expired() -> None:
+    """Past its lease, an uploading session refuses to transition, even to a legal next state."""
     now = datetime.now(UTC)
     session = IngestSession(
         lease=_lease(expires_at=now - timedelta(seconds=1)),
@@ -36,6 +42,7 @@ def test_transition_refuses_once_the_lease_has_expired() -> None:
 
 
 def test_heartbeat_refuses_once_the_lease_has_expired() -> None:
+    """Past its lease, an uploading session refuses a heartbeat renewal too."""
     now = datetime.now(UTC)
     session = IngestSession(
         lease=_lease(expires_at=now - timedelta(seconds=1)),
@@ -47,6 +54,7 @@ def test_heartbeat_refuses_once_the_lease_has_expired() -> None:
 
 
 def test_heartbeat_refuses_once_the_session_reached_a_terminal_state() -> None:
+    """A committed session refuses a heartbeat renewal even though its lease has not expired."""
     now = datetime.now(UTC)
     session = IngestSession(
         lease=_lease(expires_at=now + timedelta(hours=1)),

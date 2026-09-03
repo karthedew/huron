@@ -35,8 +35,16 @@ def reflected_revision(text: str) -> str:
     """Return the revision id named by `text`'s `-- Reflects:` line.
 
     Reads only the first `_HEADER_LINES_READ` lines, matching the header
-    window the map's own obligation names. Raises `SchemaMapStampError` when
-    no such line is present there.
+    window the map's own obligation names.
+
+    Args:
+        text: The full text of the schema map.
+
+    Returns:
+        The revision id, exactly as the stamp spells it.
+
+    Raises:
+        SchemaMapStampError: When no such line is present in that window.
     """
     header = text.splitlines()[:_HEADER_LINES_READ]
     for line in header:
@@ -56,6 +64,18 @@ def main(schema_map_path: Path | None = None, head: str | None = None) -> int:
     without reading `migrations/versions/`. Left `None`, each is resolved
     from this repository: the map from `SCHEMA_MAP_PATH`, the head from
     `ScriptDirectory.from_config(Config(ALEMBIC_INI_PATH)).get_current_head()`.
+
+    Args:
+        schema_map_path: The schema map to read, or None for this
+            repository's own.
+        head: The revision id the stamp must name, or None to read the
+            current head of this repository's Alembic revision graph.
+
+    Returns:
+        The process exit status: 0 when the stamp names the head; 1 when the
+        stamp is missing or malformed, the revision graph cannot be loaded
+        or has no head, or the two revisions differ - each case explained on
+        stderr first.
     """
     path = SCHEMA_MAP_PATH if schema_map_path is None else schema_map_path
     try:

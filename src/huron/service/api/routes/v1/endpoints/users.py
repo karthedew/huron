@@ -44,6 +44,24 @@ router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(_manag
 
 
 async def _existing_user(repository: HierarchyRepository, principal_id: UUID) -> PrincipalRecord:
+    """Return the principal, provided it exists and is a user.
+
+    The id came from the caller, so it is re-validated here before any
+    credential or session is touched: a service-account id gets an honest
+    refusal rather than the database trigger's generic "does not exist".
+
+    Args:
+        repository: The wired hierarchy repository.
+        principal_id: The id the route was addressed with.
+
+    Returns:
+        The user's principal record.
+
+    Raises:
+        ResourceNotFound: If no principal has this id.
+        PrincipalKindMismatch: If the principal is a service account rather
+            than a user.
+    """
     principal = await repository.principals.get_by_id(principal_id)
     if principal is None:
         raise ResourceNotFound(f"principal does not exist: {principal_id}")
@@ -54,6 +72,28 @@ async def _existing_user(repository: HierarchyRepository, principal_id: UUID) ->
 
 @router.post("", status_code=201, responses={409: problem_response("username is already taken")})
 async def create_user(body: CreateUser, repository: Repository, actor: _Actor) -> UserView:
+    """Provision a password user.
+
+    Requires ``user.manage`` at SYSTEM scope. The username becomes the
+    user's subject and must not be held by any existing principal - a
+    password user, an OIDC identity or a service account, disabled or not -
+    or the request is refused with 409: a password is attached to a subject
+    exactly once, at creation, never silently handed to an existing
+    identity.
+    \f
+    Args:
+        body: The username, display name and initial password.
+        repository: The wired hierarchy repository.
+        actor: The administrator provisioning the user, recorded as the
+            credential's author.
+
+    Returns:
+        The user as the API renders it.
+
+    Raises:
+        UsernameTaken: If a principal already holds the username as its
+            subject.
+    """
     try:
         principal = await repository.principals.create_user(
             subject=body.username, display_name=body.display_name
@@ -77,6 +117,24 @@ async def create_user(body: CreateUser, repository: Repository, actor: _Actor) -
 async def set_password(
     principal_id: UUID, body: SetPassword, repository: Repository, actor: _Actor
 ) -> PasswordReset:
+    """Replace a user's password.
+
+    Requires ``user.manage`` at SYSTEM scope. Every session the user holds
+    is revoked before the acknowledgement is returned. An unknown principal
+    is 404; one that is a service account rather than a user is refused
+    with 409.
+    \f
+    Args:
+        principal_id: The user whose password to replace.
+        body: The new password.
+        repository: The wired hierarchy repository.
+        actor: The administrator resetting the password, recorded as the
+            credential's author.
+
+    Returns:
+        The acknowledgement that the password was replaced and the user's
+        sessions revoked.
+    """
     principal = await _existing_user(repository, principal_id)
     credential = await asyncify(make_credential)(
         principal_id, body.password, updated_by=actor.subject
@@ -94,6 +152,24 @@ async def set_password(
     },
 )
 async def disable_user(principal_id: UUID, repository: Repository) -> UserView:
+    """Disable a user and revoke every session they hold.
+
+    Requires ``user.manage`` at SYSTEM scope. A disabled user can no longer
+    log in with a password, and the API offers no way to re-enable them. An
+    unknown principal is 404; one that is a service account rather than a
+    user is refused with 409.
+    \f
+    Args:
+        principal_id: The user to disable.
+        repository: The wired hierarchy repository.
+
+    Returns:
+        The user as the API renders it, with ``disabled_at`` set.
+
+    Raises:
+        ResourceNotFound: If no principal has this id by the time the
+            disable is applied.
+    """
     await _existing_user(repository, principal_id)
     updated = await repository.principals.disable(principal_id, disabled_at=datetime.now(UTC))
     if updated is None:

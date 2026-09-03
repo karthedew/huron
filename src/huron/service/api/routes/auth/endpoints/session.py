@@ -32,6 +32,27 @@ async def session_info(
     repository: Repository,
     cache: BindingCache,
 ) -> SessionInfo:
+    """Describe the caller: who they are, how they authenticated, what they may do.
+
+    Requires a credential (401 without one) but no particular role - every
+    principal may ask about itself. ``effective_roles`` lists, per scope,
+    the capabilities the caller's role bindings grant there, resolved from
+    the same bindings every guarded route consults, so it cannot disagree
+    with what the API will actually allow. ``csrf_token`` and
+    ``expires_at`` are set only for a cookie session; a bearer credential
+    has no server-side session and reports ``null`` for both.
+    \f
+    Args:
+        actor: The principal the request credential resolved to.
+        session: The session behind the credential, or ``None`` for a
+            bearer caller.
+        repository: The wired repository; supplies the role bindings.
+        cache: The per-request binding cache shared with the guards.
+
+    Returns:
+        The caller's identity, groups, per-scope capabilities and, for a
+        cookie session, its CSRF token and absolute expiry.
+    """
     bindings = await bindings_for_principal(cache, repository, as_rbac_principal(actor))
     capabilities_by_scope: dict[tuple[str, UUID | None], set[str]] = defaultdict(set)
     for binding in bindings:
@@ -57,6 +78,22 @@ async def session_info(
 
 @router.get("/providers")
 async def providers(settings: Settings) -> ProviderInfo:
+    """List the login methods this deployment accepts.
+
+    Needs no credential: the login page asks this before anyone is signed
+    in. ``password`` says whether ``POST /auth/login`` is enabled; ``oidc``
+    whether an identity provider is configured, in which case
+    ``oidc_start_url`` is the path that begins a browser login and is
+    ``null`` otherwise. It reveals nothing beyond what the login page must
+    render.
+    \f
+    Args:
+        settings: The wired API settings; supplies the password-login
+            switch and the identity-provider configuration.
+
+    Returns:
+        Which login methods are available and where the OIDC flow starts.
+    """
     return ProviderInfo(
         password=settings.password_login_enabled,
         oidc=settings.oidc is not None,

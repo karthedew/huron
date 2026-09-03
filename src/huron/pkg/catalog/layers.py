@@ -1,5 +1,7 @@
-"""The storage-layer workflow: what each layer is, who may write it, and how
-data is promoted between layers.
+"""The storage-layer workflow: each layer, who may write it, and how data moves between them.
+
+What each layer is, who may write it, and how data is promoted between
+layers, as definitions a service composes rather than behaviour it calls.
 
 Definitions only - this module performs no I/O and holds no framework
 imports. The API service composes it with ``pkg/rbac`` to answer "may this
@@ -28,7 +30,9 @@ at silver has no raw and no bronze and never will.
 :func:`ensure_layer_writable` enforces the kind half of that rule
 independently of role bindings, so even a mis-seeded binding cannot let a
 user commit to silver or gold (defense in depth; the binding layer enforces
-the same rule through the ``pipeline`` role).
+the same rule on its side, where silver and gold write authority is
+synthesized for service accounts alone and no role in the vocabulary
+carries it).
 """
 
 from __future__ import annotations
@@ -40,6 +44,12 @@ from .errors import DomainError
 
 
 class Layer(StrEnum):
+    """The four storage layers, valued as the lower-case codes paths and the API use.
+
+    This enum is the one place the codes are spelled out; the path layout
+    and the API both derive their layer names from it.
+    """
+
     RAW = "raw"
     BRONZE = "bronze"
     SILVER = "silver"
@@ -47,20 +57,33 @@ class Layer(StrEnum):
 
 
 class LayerAction(StrEnum):
+    """What a principal can do to a layer, named as the suffix of the ``data.*`` capability."""
+
     READ = "read"
     WRITE = "write"
 
 
 class LayerWorkflowError(DomainError):
+    """A layer name is unknown, or a derivation or entry the workflow does not define."""
+
     code, status_code = "LAYER_WORKFLOW_VIOLATION", 409
 
 
 class LayerWriteForbidden(DomainError):
+    """A principal of this kind may never write this layer, whatever its bindings say."""
+
     code, status_code = "LAYER_WRITE_FORBIDDEN", 403
 
 
 @dataclass(frozen=True, slots=True)
 class LayerSpec:
+    """The workflow's definition of one layer: provenance, writers, entry and producer.
+
+    Attributes:
+        layer: The layer this specification describes.
+        description: What the layer holds, for people; not interpreted.
+    """
+
     layer: Layer
     #: Layers a promotion into this layer may read from. Empty for raw:
     #: raw enters the lake from outside, through ingest.
@@ -121,6 +144,21 @@ LAYER_ORDER: tuple[Layer, ...] = (Layer.RAW, Layer.BRONZE, Layer.SILVER, Layer.G
 
 
 def parse_layer(value: str) -> Layer:
+    """Turn a layer code from a request or a path into a :class:`Layer`.
+
+    The failure is a :class:`LayerWorkflowError` rather than the enum's own
+    ``ValueError`` so that an unknown layer named by a client answers with
+    the stable ``LAYER_WORKFLOW_VIOLATION`` code instead of a 500.
+
+    Args:
+        value: The layer code, exactly as :class:`Layer` spells it.
+
+    Returns:
+        The matching layer.
+
+    Raises:
+        LayerWorkflowError: If ``value`` is not one of the four layer codes.
+    """
     try:
         return Layer(value)
     except ValueError as exc:
@@ -128,19 +166,62 @@ def parse_layer(value: str) -> Layer:
 
 
 def required_capability(action: LayerAction, layer: Layer) -> tuple[str, str]:
-    """The ``(capability, layer)`` pair to pass to ``rbac.decide()``."""
+    """Return the ``(capability, layer)`` pair to pass to ``rbac.decide()``.
+
+    Layer access is decided on a layer-scoped capability (``data.read`` or
+    ``data.write``) plus the layer as a separate argument, never on a
+    capability with the layer baked into its name.
+
+    Args:
+        action: Whether the principal wants to read or write.
+        layer: The layer the action targets.
+
+    Returns:
+        The capability name and the layer code, in the order ``decide()``
+        takes them.
+    """
     return (f"data.{action.value}", layer.value)
 
 
 def writable_layers_for_kind(principal_kind: str) -> tuple[Layer, ...]:
-    """Layers a principal of this kind may ever hold a write on."""
+    """Return the layers a principal of this kind may ever hold a write on.
+
+    Service accounts get silver and gold; every other kind gets the layers
+    whose specification marks them ``principal_writable``. The two sets are
+    disjoint by design: no kind of principal can write on both sides of the
+    human/pipeline boundary.
+
+    Args:
+        principal_kind: ``"service_account"`` or ``"user"``, as
+            :mod:`huron.pkg.rbac` names principal kinds.
+
+    Returns:
+        The writable layers, in promotion order.
+    """
     if principal_kind == "service_account":
         return (Layer.SILVER, Layer.GOLD)
     return tuple(layer for layer in LAYER_ORDER if LAYER_SPECS[layer].principal_writable)
 
 
 def ensure_layer_writable(layer: Layer, principal_kind: str) -> None:
-    """Refuse writes outside a principal kind's allowed layer surface."""
+    """Refuse writes outside a principal kind's allowed layer surface.
+
+    This is the kind half of the write rule, checked before and independently
+    of any role binding: a service account may write silver and gold, and
+    any other kind may write only the layers marked ``principal_writable``.
+    Returning normally means only that the kind is allowed here; whether
+    this particular principal holds ``data.write`` on this dataset is the
+    binding layer's question.
+
+    Args:
+        layer: The layer about to be written.
+        principal_kind: The kind of the principal asking, as
+            :mod:`huron.pkg.rbac` names kinds.
+
+    Raises:
+        LayerWriteForbidden: If principals of this kind may never write
+            ``layer``.
+    """
     if principal_kind == "service_account" and layer in (Layer.SILVER, Layer.GOLD):
         return
     if LAYER_SPECS[layer].principal_writable and principal_kind != "service_account":
@@ -149,7 +230,12 @@ def ensure_layer_writable(layer: Layer, principal_kind: str) -> None:
 
 
 def entry_layers() -> tuple[Layer, ...]:
-    """Layers a dataset may declare as its entry point, in promotion order."""
+    """Return the layers a dataset may declare as its entry point, in promotion order.
+
+    Returns:
+        Every layer whose specification accepts direct entry: raw, bronze
+        and silver, never gold.
+    """
     return tuple(layer for layer in LAYER_ORDER if LAYER_SPECS[layer].accepts_direct_entry)
 
 
@@ -162,6 +248,12 @@ def validate_entry(layer: Layer) -> None:
     a derivation record naming pinned inputs, a transform digest and
     parameters (invariant K), so "gold with no inputs" is not a product but a
     silver dataset that has not admitted what it is.
+
+    Args:
+        layer: The layer the dataset declares as its entry point.
+
+    Raises:
+        LayerWorkflowError: If ``layer`` does not accept direct entry.
     """
     if not LAYER_SPECS[layer].accepts_direct_entry:
         raise LayerWorkflowError(
@@ -172,14 +264,40 @@ def validate_entry(layer: Layer) -> None:
 
 
 def parse_entry_layer(value: str) -> Layer:
-    """Parse a dataset's declared entry layer, refusing gold."""
+    """Parse a dataset's declared entry layer, refusing gold.
+
+    The two checks it composes, :func:`parse_layer` and
+    :func:`validate_entry`, both report through :class:`LayerWorkflowError`,
+    so a caller handles one error for an unknown name and a forbidden entry
+    alike.
+
+    Args:
+        value: The layer code from the dataset's declaration.
+
+    Returns:
+        The declared layer, which accepts direct entry.
+    """
     layer = parse_layer(value)
     validate_entry(layer)
     return layer
 
 
 def validate_promotion(source: Layer, target: Layer) -> None:
-    """Refuse a derivation the workflow does not define (e.g. raw -> gold)."""
+    """Refuse a derivation the workflow does not define (e.g. raw -> gold).
+
+    A promotion into ``target`` may read only the layers its specification
+    lists in ``derived_from``. Raw lists none, since it enters the lake from
+    outside; asking to promote anything into raw is refused on that ground
+    before the source is even considered.
+
+    Args:
+        source: The layer the promotion reads from.
+        target: The layer the promotion writes.
+
+    Raises:
+        LayerWorkflowError: If ``target`` is not produced from another layer
+            at all, or is not produced from ``source``.
+    """
     allowed = LAYER_SPECS[target].derived_from
     if not allowed:
         raise LayerWorkflowError(f"{target.value} is not produced from another layer")

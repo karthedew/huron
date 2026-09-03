@@ -1,8 +1,13 @@
-"""``create_app``'s lifespan wiring: the memory-store default when no
-repository is injected, and real OIDC discovery against a respx-mocked
-provider - the same seam ``test_auth_oidc.py`` uses, exercised here through
-the composition root rather than ``OidcClient`` directly. Also ``/readyz``,
-the one app-level route that isn't a lifespan concern."""
+"""Proves ``create_app``'s lifespan wiring and the ``/readyz`` route through a TestClient.
+
+Each test builds its own app with ``create_app`` and drives it with a
+``TestClient`` context manager, covering the memory-store default that
+applies when no repository is injected, real OIDC discovery against a
+respx-mocked provider - the same seam ``test_auth_oidc.py`` uses,
+exercised here through the composition root rather than ``OidcClient``
+directly - and an injected OIDC verifier that bypasses discovery. Also
+covers ``/readyz``, the one app-level route that isn't a lifespan concern.
+"""
 
 from __future__ import annotations
 
@@ -33,10 +38,12 @@ ISSUER = "https://idp.example"
 
 
 class _FakePool:
-    """Stands in for ``asyncpg.Pool``: ``fetchval`` answers, raises the given
-    exception, or - standing in for a wedged connection - never returns at
-    all, so every failure branch of ``/readyz`` is reachable without a real
-    Postgres instance."""
+    """A fake ``asyncpg.Pool`` whose ``fetchval`` can answer, raise, or hang on command.
+
+    Standing in for a wedged connection when it hangs, it makes every
+    failure branch of ``/readyz`` reachable without a real Postgres
+    instance.
+    """
 
     def __init__(self, *, fails_with: Exception | None = None, hangs: bool = False) -> None:
         self._fails_with = fails_with
@@ -63,6 +70,7 @@ def _with_database_pool(app: Any, pool: _FakePool) -> None:
 
 
 def _oidc_settings(tmp_path: Path) -> ApiSettings:
+    """Settings for an app wired for OIDC auth against the fake ``ISSUER``."""
     return ApiSettings(
         env="production",
         auth_mode="oidc",
@@ -82,6 +90,7 @@ def _oidc_settings(tmp_path: Path) -> ApiSettings:
 def test_lifespan_discovers_the_configured_oidc_provider_and_closes_its_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Successful OIDC discovery wires the client/resolver and closes the client on shutdown."""
     created: list[httpx.AsyncClient] = []
 
     class _TrackingAsyncClient(httpx.AsyncClient):
@@ -114,8 +123,7 @@ def test_lifespan_discovers_the_configured_oidc_provider_and_closes_its_client(
 def test_lifespan_closes_the_http_client_when_oidc_discovery_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A discovery failure during startup must not leak the ``AsyncClient``
-    opened to make the discovery request in the first place."""
+    """A discovery failure during startup still closes the ``AsyncClient`` used to attempt it."""
     created: list[httpx.AsyncClient] = []
 
     class _TrackingAsyncClient(httpx.AsyncClient):
@@ -134,8 +142,11 @@ def test_lifespan_closes_the_http_client_when_oidc_discovery_fails(
 
 
 def test_lifespan_prefers_an_injected_oidc_verifier_over_discovery(tmp_path: Path) -> None:
-    """The bearer-JWT test-injection seam stays: when a verifier is passed
-    directly, no discovery call happens at all."""
+    """Passing ``oidc_verify`` directly skips OIDC discovery entirely.
+
+    The bearer-JWT test-injection seam stays: when a verifier is passed
+    directly, no discovery call happens at all.
+    """
     settings = _oidc_settings(tmp_path)
     app = create_app(settings=settings, oidc_verify=lambda _token: {"sub": "svc"})
     with TestClient(app) as client:
@@ -147,6 +158,7 @@ def test_lifespan_prefers_an_injected_oidc_verifier_over_discovery(tmp_path: Pat
 def test_lifespan_defaults_to_the_memory_repository_when_none_is_injected(
     tmp_path: Path,
 ) -> None:
+    """A dev-headers app boots with the default in-memory repository and no OIDC resolver."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -164,10 +176,13 @@ def test_lifespan_defaults_to_the_memory_repository_when_none_is_injected(
 def test_a_request_before_the_lifespan_starts_answers_500_and_never_resolves_a_principal(
     tmp_path: Path,
 ) -> None:
-    """An application whose lifespan never ran has no ``ApiRuntime`` to
-    read, so every injected route must refuse rather than fall through to
-    a default - the security defect this design closes was exactly a
-    missing-state read treated as "no objection"."""
+    """A request before the lifespan runs answers 500 instead of resolving a principal.
+
+    An application whose lifespan never ran has no ``ApiRuntime`` to read,
+    so every injected route must refuse rather than fall through to a
+    default - the security defect this design closes was exactly a
+    missing-state read treated as "no objection".
+    """
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -182,6 +197,7 @@ def test_a_request_before_the_lifespan_starts_answers_500_and_never_resolves_a_p
 
 
 def test_readyz_reports_ready_while_the_raw_root_exists(tmp_path: Path) -> None:
+    """``/readyz`` reports ready while the raw storage root exists."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -196,6 +212,7 @@ def test_readyz_reports_ready_while_the_raw_root_exists(tmp_path: Path) -> None:
 
 
 def test_readyz_refuses_once_the_raw_root_is_gone(tmp_path: Path) -> None:
+    """``/readyz`` answers 503 with a raw-store check once the raw root is removed."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -216,6 +233,7 @@ def test_readyz_refuses_once_the_raw_root_is_gone(tmp_path: Path) -> None:
 def test_readyz_reports_ready_when_the_raw_root_and_database_pool_both_answer(
     tmp_path: Path,
 ) -> None:
+    """``/readyz`` reports ready when both the raw root and the database pool answer."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -232,6 +250,7 @@ def test_readyz_reports_ready_when_the_raw_root_and_database_pool_both_answer(
 
 
 def test_readyz_reports_the_database_check_when_the_pool_does_not_answer(tmp_path: Path) -> None:
+    """``/readyz`` reports the database check by name when the pool raises ``OSError``."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -255,6 +274,7 @@ def test_readyz_reports_the_database_check_when_the_pool_does_not_answer(tmp_pat
 def test_readyz_reports_the_database_check_when_the_pool_raises_a_postgres_error(
     tmp_path: Path,
 ) -> None:
+    """``/readyz`` reports the database check by name when the pool raises ``PostgresError``."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -278,9 +298,12 @@ def test_readyz_reports_the_database_check_when_the_pool_raises_a_postgres_error
 def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A connection that never answers must not hang the probe forever - the
+    """A wedged database pool times out instead of hanging the ``/readyz`` probe forever.
+
+    A connection that never answers must not hang the probe forever - the
     orchestrator's own probe timeout would otherwise expire first, so the
-    timeout inside ``/readyz`` has to fire and turn the stall into a 503."""
+    timeout inside ``/readyz`` has to fire and turn the stall into a 503.
+    """
     monkeypatch.setattr(app_module, "READINESS_TIMEOUT_SECONDS", 0.01)
     settings = ApiSettings(
         env="development",

@@ -1,8 +1,13 @@
-"""The read surface over organizations, projects and datasets - list and get
-by id - plus the two dataset write routes exercised nowhere else: patching a
-dataset and creating a release once a revision has been registered directly
-against the repository (``POST .../releases`` cannot drive ingest itself -
-there is no HTTP route that registers a revision yet)."""
+"""The read surface over organizations, projects and datasets, plus two dataset write routes.
+
+Drives the FastAPI app through a TestClient over an in-memory
+``HierarchyRepository`` with dev-header auth and ``root`` bootstrapped as
+platform owner. Covers list and get-by-id for all three hierarchy levels,
+plus the two dataset write routes exercised nowhere else: patching a
+dataset, and creating a release once a revision has been registered
+directly against the repository (``POST .../releases`` cannot drive
+ingest itself - there is no HTTP route that registers a revision yet).
+"""
 
 from __future__ import annotations
 
@@ -51,11 +56,13 @@ _DATASET_KEYS = {
 
 
 def _headers(subject: str = "root") -> dict[str, str]:
+    """Dev-header credentials for ``subject``, paired with a fresh idempotency key."""
     return {"X-Huron-Subject": subject, "Idempotency-Key": str(uuid4())}
 
 
 @pytest.fixture
 def repository(tmp_path: Path) -> HierarchyRepository:
+    """A fresh ``HierarchyRepository`` writing raw bytes under ``tmp_path``."""
     return HierarchyRepository(
         PosixRawStore(str(tmp_path / "data")), classification_vocabulary=("open",)
     )
@@ -63,6 +70,7 @@ def repository(tmp_path: Path) -> HierarchyRepository:
 
 @pytest.fixture
 def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClient]:
+    """A dev-header TestClient over ``repository``, with ``root`` as platform owner."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -76,6 +84,7 @@ def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClie
 
 
 def _organization(client: TestClient, slug: str = "astro") -> str:
+    """Creates an organization with ``slug`` and returns its id."""
     response = client.post(
         "/api/v1/organizations", json={"slug": slug, "title": slug.title()}, headers=_headers()
     )
@@ -84,6 +93,7 @@ def _organization(client: TestClient, slug: str = "astro") -> str:
 
 
 def _project(client: TestClient, organization_id: str, slug: str = "sims") -> str:
+    """Creates a project with ``slug`` under ``organization_id`` and returns its id."""
     response = client.post(
         f"/api/v1/organizations/{organization_id}/projects",
         json={"slug": slug, "title": slug.title(), "data_classification": "open"},
@@ -94,6 +104,7 @@ def _project(client: TestClient, organization_id: str, slug: str = "sims") -> st
 
 
 def _dataset(client: TestClient, project_id: str, slug: str = "run-0001") -> str:
+    """Creates a dataset with ``slug`` under ``project_id`` and returns its id."""
     response = client.post(
         f"/api/v1/projects/{project_id}/datasets",
         json={
@@ -114,6 +125,7 @@ def _dataset(client: TestClient, project_id: str, slug: str = "run-0001") -> str
 def test_list_organizations_orders_by_slug_within_the_paginated_envelope(
     client: TestClient,
 ) -> None:
+    """Listed organizations are ordered by slug, and each item has exactly the documented fields."""
     zeta_id = _organization(client, "zeta")
     astro_id = _organization(client, "astro")
 
@@ -130,6 +142,7 @@ def test_list_organizations_orders_by_slug_within_the_paginated_envelope(
 
 
 def test_list_organizations_returns_the_empty_list_when_none_exist(client: TestClient) -> None:
+    """An empty organizations collection returns an empty ``items`` list and a null cursor."""
     response = client.get("/api/v1/organizations", headers=_headers())
     assert response.status_code == 200
     assert response.json() == {"items": [], "next_cursor": None}
@@ -138,6 +151,7 @@ def test_list_organizations_returns_the_empty_list_when_none_exist(client: TestC
 def test_list_organizations_cursor_walk_visits_every_item_exactly_once(
     client: TestClient,
 ) -> None:
+    """A cursor walk with ``limit=1`` visits every organization exactly once, in slug order."""
     slugs = ["zeta", "astro", "mid", "beta"]
     ids_by_slug = {slug: _organization(client, slug) for slug in slugs}
 
@@ -162,11 +176,13 @@ def test_list_organizations_cursor_walk_visits_every_item_exactly_once(
 
 @pytest.mark.parametrize("limit", [0, 201, -3])
 def test_list_organizations_rejects_an_out_of_range_limit(client: TestClient, limit: int) -> None:
+    """Listing organizations with an out-of-range limit is rejected with 422."""
     response = client.get("/api/v1/organizations", params={"limit": limit}, headers=_headers())
     assert response.status_code == 422
 
 
 def test_list_organizations_rejects_a_malformed_cursor(client: TestClient) -> None:
+    """Listing organizations with a malformed cursor is rejected with 422."""
     response = client.get(
         "/api/v1/organizations", params={"after": "not-a-cursor"}, headers=_headers()
     )
@@ -174,6 +190,7 @@ def test_list_organizations_rejects_a_malformed_cursor(client: TestClient) -> No
 
 
 def test_page_organization_view_is_a_distinct_openapi_component(client: TestClient) -> None:
+    """The organizations list route publishes ``Page_OrganizationView_`` as its own schema."""
     schema = client.app.openapi()
     assert "Page_OrganizationView_" in schema["components"]["schemas"]
     operation = schema["paths"]["/api/v1/organizations"]["get"]
@@ -183,6 +200,7 @@ def test_page_organization_view_is_a_distinct_openapi_component(client: TestClie
 
 
 def test_get_organization_returns_the_created_organization(client: TestClient) -> None:
+    """Getting an organization by id returns the organization that was created."""
     organization_id = _organization(client)
     response = client.get(f"/api/v1/organizations/{organization_id}", headers=_headers())
     assert response.status_code == 200
@@ -190,6 +208,7 @@ def test_get_organization_returns_the_created_organization(client: TestClient) -
 
 
 def test_get_organization_404s_for_an_unknown_id(client: TestClient) -> None:
+    """Getting an organization by an unknown id 404s."""
     response = client.get(f"/api/v1/organizations/{uuid4()}", headers=_headers())
     assert response.status_code == 404
 
@@ -197,6 +216,7 @@ def test_get_organization_404s_for_an_unknown_id(client: TestClient) -> None:
 def test_creating_an_organization_with_a_taken_slug_answers_a_named_code(
     client: TestClient,
 ) -> None:
+    """Creating an organization with a taken slug 409s with the ``SLUG_EXISTS`` code."""
     _organization(client, "astro")
     response = client.post(
         "/api/v1/organizations", json={"slug": "astro", "title": "Astro Again"}, headers=_headers()
@@ -212,6 +232,7 @@ def test_creating_an_organization_with_a_taken_slug_answers_a_named_code(
 def test_list_projects_orders_by_slug_and_excludes_other_organizations(
     client: TestClient,
 ) -> None:
+    """Listed projects are ordered by slug and exclude projects from other organizations."""
     organization_id = _organization(client)
     other_organization_id = _organization(client, "biolab")
     zeta_id = _project(client, organization_id, "zeta")
@@ -230,6 +251,7 @@ def test_list_projects_orders_by_slug_and_excludes_other_organizations(
 
 
 def test_list_projects_cursor_walk_visits_every_item_exactly_once(client: TestClient) -> None:
+    """A cursor walk with ``limit=1`` visits every project exactly once, in slug order."""
     organization_id = _organization(client)
     slugs = ["zeta", "astro", "mid", "beta"]
     ids_by_slug = {slug: _project(client, organization_id, slug) for slug in slugs}
@@ -258,6 +280,7 @@ def test_list_projects_cursor_walk_visits_every_item_exactly_once(client: TestCl
 def test_list_projects_returns_the_empty_list_when_the_organization_has_no_projects(
     client: TestClient,
 ) -> None:
+    """An organization with no projects returns an empty ``items`` list."""
     organization_id = _organization(client)
     response = client.get(f"/api/v1/organizations/{organization_id}/projects", headers=_headers())
     assert response.status_code == 200
@@ -265,12 +288,14 @@ def test_list_projects_returns_the_empty_list_when_the_organization_has_no_proje
 
 
 def test_list_projects_404s_for_an_unknown_organization(client: TestClient) -> None:
+    """Listing projects under an unknown organization id 404s."""
     response = client.get(f"/api/v1/organizations/{uuid4()}/projects", headers=_headers())
     assert response.status_code == 404
 
 
 @pytest.mark.parametrize("limit", [0, 201, -3])
 def test_list_projects_rejects_an_out_of_range_limit(client: TestClient, limit: int) -> None:
+    """Listing projects with an out-of-range limit is rejected with 422."""
     organization_id = _organization(client)
     response = client.get(
         f"/api/v1/organizations/{organization_id}/projects",
@@ -281,6 +306,7 @@ def test_list_projects_rejects_an_out_of_range_limit(client: TestClient, limit: 
 
 
 def test_list_projects_rejects_a_malformed_cursor(client: TestClient) -> None:
+    """Listing projects with a malformed cursor is rejected with 422."""
     organization_id = _organization(client)
     response = client.get(
         f"/api/v1/organizations/{organization_id}/projects",
@@ -291,6 +317,7 @@ def test_list_projects_rejects_a_malformed_cursor(client: TestClient) -> None:
 
 
 def test_get_project_returns_the_created_project(client: TestClient) -> None:
+    """Getting a project by id returns the project that was created."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     response = client.get(f"/api/v1/projects/{project_id}", headers=_headers())
@@ -299,6 +326,7 @@ def test_get_project_returns_the_created_project(client: TestClient) -> None:
 
 
 def test_get_project_404s_for_an_unknown_id(client: TestClient) -> None:
+    """Getting a project by an unknown id 404s."""
     response = client.get(f"/api/v1/projects/{uuid4()}", headers=_headers())
     assert response.status_code == 404
 
@@ -306,6 +334,7 @@ def test_get_project_404s_for_an_unknown_id(client: TestClient) -> None:
 def test_create_project_rejects_a_classification_outside_the_configured_vocabulary(
     client: TestClient,
 ) -> None:
+    """Creating a project with an unconfigured classification 400s as ``CLASSIFICATION_UNKNOWN``."""
     organization_id = _organization(client)
     response = client.post(
         f"/api/v1/organizations/{organization_id}/projects",
@@ -320,6 +349,7 @@ def test_create_project_rejects_a_classification_outside_the_configured_vocabula
 
 
 def test_list_datasets_orders_by_slug_and_excludes_other_projects(client: TestClient) -> None:
+    """Listed datasets are ordered by slug and exclude datasets from other projects."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     other_project_id = _project(client, organization_id, "other-project")
@@ -339,6 +369,7 @@ def test_list_datasets_orders_by_slug_and_excludes_other_projects(client: TestCl
 
 
 def test_list_datasets_cursor_walk_visits_every_item_exactly_once(client: TestClient) -> None:
+    """A cursor walk with ``limit=1`` visits every dataset exactly once, in slug order."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     slugs = ["zeta", "astro", "mid", "beta"]
@@ -368,6 +399,7 @@ def test_list_datasets_cursor_walk_visits_every_item_exactly_once(client: TestCl
 def test_list_datasets_returns_the_empty_list_when_the_project_has_no_datasets(
     client: TestClient,
 ) -> None:
+    """A project with no datasets returns an empty ``items`` list."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     response = client.get(f"/api/v1/projects/{project_id}/datasets", headers=_headers())
@@ -376,12 +408,14 @@ def test_list_datasets_returns_the_empty_list_when_the_project_has_no_datasets(
 
 
 def test_list_datasets_404s_for_an_unknown_project(client: TestClient) -> None:
+    """Listing datasets under an unknown project id 404s."""
     response = client.get(f"/api/v1/projects/{uuid4()}/datasets", headers=_headers())
     assert response.status_code == 404
 
 
 @pytest.mark.parametrize("limit", [0, 201, -3])
 def test_list_datasets_rejects_an_out_of_range_limit(client: TestClient, limit: int) -> None:
+    """Listing datasets with an out-of-range limit is rejected with 422."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     response = client.get(
@@ -391,6 +425,7 @@ def test_list_datasets_rejects_an_out_of_range_limit(client: TestClient, limit: 
 
 
 def test_list_datasets_rejects_a_malformed_cursor(client: TestClient) -> None:
+    """Listing datasets with a malformed cursor is rejected with 422."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     response = client.get(
@@ -402,6 +437,7 @@ def test_list_datasets_rejects_a_malformed_cursor(client: TestClient) -> None:
 
 
 def test_get_dataset_returns_the_created_dataset(client: TestClient) -> None:
+    """Getting a dataset by id returns the dataset that was created."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -411,11 +447,13 @@ def test_get_dataset_returns_the_created_dataset(client: TestClient) -> None:
 
 
 def test_get_dataset_404s_for_an_unknown_id(client: TestClient) -> None:
+    """Getting a dataset by an unknown id 404s."""
     response = client.get(f"/api/v1/datasets/{uuid4()}", headers=_headers())
     assert response.status_code == 404
 
 
 def test_patch_dataset_updates_title_and_description(client: TestClient) -> None:
+    """Patching a dataset updates its title and description and bumps its version."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -433,6 +471,7 @@ def test_patch_dataset_updates_title_and_description(client: TestClient) -> None
 
 
 def test_patch_dataset_rejects_a_malformed_if_match_header(client: TestClient) -> None:
+    """Patching a dataset with a malformed ``If-Match`` header 412s as ``PRECONDITION_FAILED``."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -452,9 +491,12 @@ def test_patch_dataset_rejects_a_malformed_if_match_header(client: TestClient) -
 def test_create_release_succeeds_once_a_revision_is_registered_directly(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
-    """``register_revision`` is called on the repository directly - there is
+    """Creating a release succeeds once its revision is registered directly on the repository.
+
+    ``register_revision`` is called on the repository directly - there is
     no HTTP route for it yet - the same seam a future ingest pipeline will
-    drive through ``create_app``'s injected repository."""
+    drive through ``create_app``'s injected repository.
+    """
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -474,6 +516,7 @@ def test_create_release_succeeds_once_a_revision_is_registered_directly(
 
 
 def test_create_release_404s_without_a_registered_revision(client: TestClient) -> None:
+    """Creating a release without a registered revision 404s."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -489,6 +532,7 @@ def test_create_release_404s_without_a_registered_revision(client: TestClient) -
 def test_create_release_replay_returns_the_identical_body_with_no_replay_indicator(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
+    """Replaying a release creation with the same idempotency key returns an identical body."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -509,6 +553,7 @@ def test_create_release_replay_returns_the_identical_body_with_no_replay_indicat
 def test_dataset_and_release_responses_carry_no_etag_header(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
+    """No ``ETag`` header appears on either response, and the dataset's version stays 1."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -532,6 +577,7 @@ def test_dataset_and_release_responses_carry_no_etag_header(
 def test_list_releases_and_resolve_release_return_what_was_created(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
+    """Listing and resolving releases both return the release with its full documented shape."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -570,6 +616,7 @@ def test_list_releases_and_resolve_release_return_what_was_created(
 
 
 def test_list_releases_orders_by_tag(client: TestClient, repository: HierarchyRepository) -> None:
+    """Listed releases are ordered by tag rather than creation order."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -592,6 +639,7 @@ def test_list_releases_orders_by_tag(client: TestClient, repository: HierarchyRe
 def test_list_releases_cursor_walk_visits_every_item_exactly_once(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
+    """A cursor walk with ``limit=1`` visits every release exactly once, in tag order."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -630,6 +678,7 @@ def test_list_releases_cursor_walk_visits_every_item_exactly_once(
 
 @pytest.mark.parametrize("limit", [0, 201, -3])
 def test_list_releases_rejects_an_out_of_range_limit(client: TestClient, limit: int) -> None:
+    """Listing releases with an out-of-range limit is rejected with 422."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -640,6 +689,7 @@ def test_list_releases_rejects_an_out_of_range_limit(client: TestClient, limit: 
 
 
 def test_list_releases_rejects_a_malformed_cursor(client: TestClient) -> None:
+    """Listing releases with a malformed cursor is rejected with 422."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -654,6 +704,7 @@ def test_list_releases_rejects_a_malformed_cursor(client: TestClient) -> None:
 def test_list_releases_returns_the_empty_list_when_the_dataset_has_no_releases(
     client: TestClient,
 ) -> None:
+    """A dataset with no releases returns an empty ``items`` list."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -663,11 +714,13 @@ def test_list_releases_returns_the_empty_list_when_the_dataset_has_no_releases(
 
 
 def test_list_releases_404s_for_an_unknown_dataset(client: TestClient) -> None:
+    """Listing releases under an unknown dataset id 404s."""
     response = client.get(f"/api/v1/datasets/{uuid4()}/releases", headers=_headers())
     assert response.status_code == 404
 
 
 def test_resolve_release_404s_for_an_unknown_tag(client: TestClient) -> None:
+    """Resolving a release by an unknown tag 404s."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -682,6 +735,7 @@ def test_resolve_release_404s_for_an_unknown_tag(client: TestClient) -> None:
 
 
 def test_list_layers_annotates_what_the_caller_may_do_at_each_layer(client: TestClient) -> None:
+    """A platform owner's layer listing shows raw as the entry layer with read but not write."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -699,6 +753,7 @@ def test_list_layers_annotates_what_the_caller_may_do_at_each_layer(client: Test
 def test_list_layers_marks_write_true_only_for_the_layers_a_binding_covers(
     client: TestClient,
 ) -> None:
+    """A developer's binding grants write on raw and bronze only, with read everywhere."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -725,6 +780,7 @@ def test_list_layers_marks_write_true_only_for_the_layers_a_binding_covers(
 
 
 def test_create_write_intent_returns_the_grant_it_authorized(client: TestClient) -> None:
+    """Creating a write intent returns the exact capability grant it authorized."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)

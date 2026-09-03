@@ -1,8 +1,14 @@
-"""``POST /auth/login`` and ``POST /auth/logout`` through the HTTP surface:
-the cookie a successful login sets, the CSRF rule that gated write governs,
-the generic refusal a wrong credential gets, and the two kind guards a
-password login must honor (disabled, service account) exactly as the
-password-lookup seam already enforces at the store level."""
+"""``POST /auth/login`` and ``POST /auth/logout``, driven through a TestClient.
+
+Drives the FastAPI app through a TestClient over an in-memory
+``HierarchyRepository`` with dev-header auth, seeding principals and
+credentials directly in the store rather than through the admin
+provisioning routes. Proves the cookie a successful login sets, the CSRF
+rule that gated write governs, the generic refusal a wrong credential
+gets, and the two kind guards a password login must honor (disabled,
+service account) exactly as the password-lookup seam already enforces at
+the store level.
+"""
 
 from __future__ import annotations
 
@@ -40,6 +46,7 @@ def _settings(
     password_login_enabled: bool = True,
     bootstrap_platform_owner: str | None = None,
 ) -> ApiSettings:
+    """Dev-header settings with tunable password-login and bootstrap-owner flags."""
     return ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -52,10 +59,12 @@ def _settings(
 
 
 def _dev_headers(subject: str) -> dict[str, str]:
+    """Dev-header credentials for ``subject``, paired with a fresh idempotency key."""
     return {"X-Huron-Subject": subject, "Idempotency-Key": str(uuid4())}
 
 
 def _repository(settings: ApiSettings) -> HierarchyRepository:
+    """A fresh ``HierarchyRepository`` writing raw bytes under ``settings.data_root``."""
     return HierarchyRepository(
         PosixRawStore(settings.data_root),
         classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
@@ -70,10 +79,13 @@ def _seed_user(
     kind: str = "user",
     disabled: bool = False,
 ) -> PrincipalRecord:
-    """Populate the memory stores directly - the same seam
+    """Seed a principal and password credential directly into the repository's stores.
+
+    Populate the memory stores directly - the same seam
     ``test_auth_principals.py`` pre-seeds through - so a login test can set
     up a principal without going through the (separately tested) admin
-    provisioning routes."""
+    provisioning routes.
+    """
     now = datetime.now(UTC)
     record = PrincipalRecord(
         id=uuid4(),
@@ -93,11 +105,13 @@ def _seed_user(
 
 @pytest.fixture
 def repository(tmp_path: Path) -> HierarchyRepository:
+    """A fresh ``HierarchyRepository`` built from default dev-header settings."""
     return _repository(_settings(tmp_path))
 
 
 @pytest.fixture
 def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClient]:
+    """A dev-header TestClient wired to ``repository`` with default login settings."""
     settings = _settings(tmp_path)
     with TestClient(create_app(settings=settings, repository=repository)) as client:
         yield client
@@ -109,6 +123,7 @@ def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClie
 def test_password_login_sets_a_cookie_and_the_session_resolves_on_the_next_request(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
+    """A successful password login sets a session cookie that resolves on the next request."""
     _seed_user(repository, subject="alice", password=PASSWORD)
 
     login = client.post("/auth/login", json={"username": "alice", "password": PASSWORD})
@@ -133,6 +148,7 @@ def test_password_login_sets_a_cookie_and_the_session_resolves_on_the_next_reque
 def test_password_login_rejects_the_wrong_password_with_a_generic_message(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
+    """A wrong password is refused with 401 and a generic invalid-credentials message."""
     _seed_user(repository, subject="alice", password=PASSWORD)
     response = client.post("/auth/login", json={"username": "alice", "password": "nope"})
     assert response.status_code == 401
@@ -142,6 +158,7 @@ def test_password_login_rejects_the_wrong_password_with_a_generic_message(
 def test_password_login_rejects_an_unknown_username_with_the_same_generic_message(
     client: TestClient,
 ) -> None:
+    """An unknown username is refused with the same generic message as a wrong password."""
     response = client.post("/auth/login", json={"username": "nobody", "password": PASSWORD})
     assert response.status_code == 401
     assert response.json()["detail"] == "invalid username or password"
@@ -150,6 +167,7 @@ def test_password_login_rejects_an_unknown_username_with_the_same_generic_messag
 def test_password_login_refuses_a_disabled_user(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
+    """A disabled user's password login is refused with 401."""
     _seed_user(repository, subject="dana", password=PASSWORD, disabled=True)
     response = client.post("/auth/login", json={"username": "dana", "password": PASSWORD})
     assert response.status_code == 401
@@ -158,16 +176,20 @@ def test_password_login_refuses_a_disabled_user(
 def test_password_login_cannot_reach_a_service_account_even_with_a_password_row(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
-    """A ``local_credentials`` row keyed to a service-account principal id
+    """A service-account principal cannot log in via password even with a stored credential row.
+
+    A ``local_credentials`` row keyed to a service-account principal id
     should never exist (the kind guard on both stores refuses it), but if
-    one did, the password-login lookup still cannot reach it: it filters on
-    ``kind='user'`` before a hash is ever compared."""
+    one did, the password-login lookup still cannot reach it: it filters
+    on ``kind='user'`` before a hash is ever compared.
+    """
     _seed_user(repository, subject="astro/pipeline", password=PASSWORD, kind="service_account")
     response = client.post("/auth/login", json={"username": "astro/pipeline", "password": PASSWORD})
     assert response.status_code == 401
 
 
 def test_password_login_is_refused_outright_when_disabled_by_settings(tmp_path: Path) -> None:
+    """Password login is refused with 401 outright when disabled by settings."""
     settings = _settings(tmp_path, password_login_enabled=False)
     repository = _repository(settings)
     _seed_user(repository, subject="alice", password=PASSWORD)
@@ -177,10 +199,13 @@ def test_password_login_is_refused_outright_when_disabled_by_settings(tmp_path: 
 
 
 def test_password_hashing_has_its_own_four_token_capacity_limiter() -> None:
-    """Pins the capacity decision in code: password hashing must queue on a
+    """Password hashing queues on its own limiter, capped at 4 tokens.
+
+    Pins the capacity decision in code: password hashing must queue on a
     dedicated limiter sized well below the shared 40-token threadpool
     limiter, so a burst of login attempts cannot reserve the memory an
-    unbounded flood of Argon2id hashes would demand."""
+    unbounded flood of Argon2id hashes would demand.
+    """
     assert _password_hash_limiter.total_tokens == 4
 
 
@@ -190,6 +215,7 @@ def test_password_hashing_has_its_own_four_token_capacity_limiter() -> None:
 def test_logout_without_the_csrf_header_is_refused_for_a_session_authed_caller(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
+    """Logging out without the CSRF header is refused with 401 for a session-authed caller."""
     _seed_user(repository, subject="alice", password=PASSWORD)
     client.post("/auth/login", json={"username": "alice", "password": PASSWORD})
     response = client.post("/auth/logout")
@@ -199,6 +225,7 @@ def test_logout_without_the_csrf_header_is_refused_for_a_session_authed_caller(
 def test_logout_with_the_csrf_header_succeeds_and_revokes_the_session(
     client: TestClient, repository: HierarchyRepository
 ) -> None:
+    """Logging out with the CSRF header succeeds and revokes the session server-side."""
     _seed_user(repository, subject="alice", password=PASSWORD)
     login = client.post("/auth/login", json={"username": "alice", "password": PASSWORD})
     csrf_token = login.json()["csrf_token"]
@@ -219,6 +246,7 @@ def test_logout_with_the_csrf_header_succeeds_and_revokes_the_session(
 def test_logout_over_bearer_needs_no_csrf_header(
     tmp_path: Path, repository: HierarchyRepository
 ) -> None:
+    """Logging out over a bearer token succeeds without a CSRF header."""
     settings = _settings(tmp_path)
     with TestClient(create_app(settings=settings, repository=repository)) as client:
         issued = client.post(
@@ -237,12 +265,14 @@ def test_logout_over_bearer_needs_no_csrf_header(
 
 
 def test_providers_reports_password_only_by_default(client: TestClient) -> None:
+    """``/auth/providers`` reports password enabled and OIDC disabled by default."""
     response = client.get("/auth/providers")
     assert response.status_code == 200
     assert response.json() == {"password": True, "oidc": False, "oidc_start_url": None}
 
 
 def test_providers_reports_password_disabled(tmp_path: Path) -> None:
+    """``/auth/providers`` reflects password login disabled by settings."""
     settings = _settings(tmp_path, password_login_enabled=False)
     with TestClient(create_app(settings=settings, repository=_repository(settings))) as client:
         response = client.get("/auth/providers")
@@ -250,6 +280,7 @@ def test_providers_reports_password_disabled(tmp_path: Path) -> None:
 
 
 def test_providers_reports_oidc_enabled_when_configured(tmp_path: Path) -> None:
+    """``/auth/providers`` reports OIDC enabled with its start URL when configured."""
     settings = ApiSettings(
         env="production",
         auth_mode="oidc",
@@ -286,6 +317,7 @@ def test_providers_reports_oidc_enabled_when_configured(tmp_path: Path) -> None:
 def test_session_reports_a_single_system_scope_entry_for_the_platform_owner(
     tmp_path: Path,
 ) -> None:
+    """The bootstrap platform owner's session reports one SYSTEM-scope entry with all its roles."""
     settings = _settings(tmp_path, bootstrap_platform_owner="root")
     with TestClient(create_app(settings=settings, repository=_repository(settings))) as client:
         response = client.get("/auth/session", headers=_dev_headers("root"))
@@ -299,10 +331,13 @@ def test_session_reports_a_single_system_scope_entry_for_the_platform_owner(
 def test_session_orders_effective_roles_by_scope_type_then_scope_id_and_holds_on_repeat(
     tmp_path: Path,
 ) -> None:
-    """A caller administering one organization and developing on a project in
-    another is told about both scopes, ``ORGANIZATION`` before ``PROJECT`` -
-    and asking again returns the identical order, not one recomputed from
-    whatever order a set or dict happened to iterate in this time."""
+    """Effective roles are ordered ``ORGANIZATION`` before ``PROJECT``, stably across requests.
+
+    A caller administering one organization and developing on a project in
+    another is told about both scopes, ``ORGANIZATION`` before ``PROJECT``
+    - and asking again returns the identical order, not one recomputed
+    from whatever order a set or dict happened to iterate in this time.
+    """
     settings = _settings(tmp_path, bootstrap_platform_owner="root")
     with TestClient(create_app(settings=settings, repository=_repository(settings))) as client:
         organization = client.post(
@@ -350,9 +385,11 @@ def test_session_orders_effective_roles_by_scope_type_then_scope_id_and_holds_on
 
 
 def test_session_breaks_ties_between_same_type_scopes_by_scope_id(tmp_path: Path) -> None:
-    """Two ``ORGANIZATION``-scope entries sort by ``scope_id`` alone, proving
-    the tie-break rather than relying on the scope-type ordering the other
-    ordering test already covers."""
+    """Two same-type scope entries in effective roles are ordered by ``scope_id`` alone.
+
+    This proves the tie-break rather than relying on the scope-type
+    ordering the other ordering test already covers.
+    """
     settings = _settings(tmp_path, bootstrap_platform_owner="root")
     with TestClient(create_app(settings=settings, repository=_repository(settings))) as client:
         first_org = client.post(
@@ -381,6 +418,7 @@ def test_session_breaks_ties_between_same_type_scopes_by_scope_id(tmp_path: Path
 
 
 def test_session_reports_no_effective_roles_for_an_unbound_principal(tmp_path: Path) -> None:
+    """An unbound principal's session reports an empty ``effective_roles`` list."""
     settings = _settings(tmp_path, bootstrap_platform_owner="root")
     with TestClient(create_app(settings=settings, repository=_repository(settings))) as client:
         response = client.get("/auth/session", headers=_dev_headers("nobody"))
@@ -392,9 +430,13 @@ def test_session_reports_no_effective_roles_for_an_unbound_principal(tmp_path: P
 
 
 def test_none_of_the_unversioned_auth_models_can_be_filled_from_a_bare_object() -> None:
-    """These responses are constructed field by field from live authorization
-    or credential-minting state, never from a stored record - an object with
-    matching attributes but no ``from_attributes`` config must still fail."""
+    """None of the unversioned auth response models can be filled from a bare object.
+
+    These responses are constructed field by field from live authorization
+    or credential-minting state, never from a stored record - an object
+    with matching attributes but no ``from_attributes`` config must still
+    fail.
+    """
     bare = SimpleNamespace(
         subject="alice",
         kind="user",

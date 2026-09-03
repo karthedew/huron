@@ -8,6 +8,13 @@ from pydantic import BaseModel, Field
 
 
 class PasswordLogin(BaseModel):
+    """The body of ``POST /auth/login``: a username and the password proving it.
+
+    Both must be non-empty; nothing else is checked here. Whether the pair
+    names an enabled user with that password is decided by the login
+    route, which answers every failure identically.
+    """
+
     username: str = Field(min_length=1)
     password: str = Field(min_length=1)
 
@@ -25,4 +32,11 @@ class LoginResult(BaseModel):
 
 
 class SignOut(BaseModel):
+    """The acknowledgement ``POST /auth/logout`` returns.
+
+    ``status`` is always ``signed-out``: by the time this is sent, the
+    session behind the request (if there was one) is revoked and the
+    session cookie is cleared.
+    """
+
     status: Literal["signed-out"]
