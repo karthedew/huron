@@ -20,7 +20,7 @@ class Forbidden(DomainError):
     Raised by the binding check once the principal is known, so it is
     always a 403 and never a 401: the credential was fine, the authority
     was not. The service-account routes raise it too, for an account that
-    belongs to another organization or has been disabled.
+    has been disabled.
     """
 
     code, status_code = "FORBIDDEN", 403

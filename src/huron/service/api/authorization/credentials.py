@@ -67,7 +67,7 @@ async def current_principal(request: Request, runtime: Runtime) -> Principal:
     if authorization:
         token = authorization.removeprefix("Bearer ").strip()
         if token.startswith("hk_"):
-            store = runtime.repository.api_keys
+            store = runtime.api_keys
             principal = await ApiKeyResolver(store).resolve(token)
             await _touch_api_key(store, token)
             return principal
@@ -76,7 +76,7 @@ async def current_principal(request: Request, runtime: Runtime) -> Principal:
         return await runtime.oidc_resolver.resolve(token)
     session_token = session_cookie(runtime.settings).read(request)
     if session_token:
-        resolver = SessionResolver(runtime.repository.sessions)
+        resolver = SessionResolver(runtime.sessions)
         principal, session = await resolver.resolve(session_token)
         _enforce_csrf(request, session)
         request.state.session = session

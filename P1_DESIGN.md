@@ -990,3 +990,71 @@ nothing under `src/`, `tests/` or `migrations/` was modified by the grill or the
 5. **Cursor issued.** `GET /api/v1/organizations?limit=1` → `next_cursor: "v1:b3JnLWEf…"`.
 6. **Anonymous refused.** `GET /api/v1/organizations` without a credential → `401
    INVALID_CREDENTIAL`.
+
+---
+
+## Status addendum — 2026-09-03
+
+Everything above was written against the working tree of 2026-09-01. Re-checked on 2026-09-03
+against `main` at `2bcf604` (L1/L2 as defined under "Authority order"); this section records what
+moved, what did not, and the answers to the open questions. Nothing above is edited — where this
+section and an earlier sentence disagree, this section is current.
+
+### What moved
+
+- **The API clean sweep shipped** as `600ff2a` (2026-09-02); `API_IMPLEMENTATION_PLAN.md` carries
+  28 `Status: done`. Consequences for this design: `service/api/stores/` exists with `ports.py`
+  (`RbacStore`, `ApiKeyWriter`), `rows.py` (seven row mappers + `affected_row_count`), and one
+  module per port (`rbac`, `api_keys`, `credentials`, `sessions`, `principals`), re-exported from
+  `stores/__init__.py` under an import-linter contract; `service/api/errors.py` exists
+  (`Forbidden`, `SlugExists`, `BindingExists`, …) while `TagExists`, `IdempotencyKeyReused`,
+  `PreconditionFailed`, `SlugImmutable`, `ResourceNotFound`, `ClassificationUnknown` and
+  `InvalidCursor` live in `pkg/catalog/errors.py`; `authorization.py` is the `authorization/`
+  package (`cookies`, `credentials`, `scopes`, `decisions`, `guards`), whose three scope helpers
+  are today synchronous `def organization_scope(repository, id) -> Scope` and friends. Design 1's
+  "Layout" and Design 2's "Applying it" are therefore buildable now; **Open question 2 is
+  satisfied by fact.**
+- **`FINDINGS_IMPLEMENTATION_PLAN.md`** (the 2026-09-03 docstring sweep; 5 tasks done, 24 pending,
+  M2.1 in the working tree) overlaps this design in four tasks that patch the in-memory
+  `HierarchyRepository` Design 1 deletes: **M5.1** (idempotency fingerprints cover every settable
+  field), **M5.2** (patch durable before visible; no-op patch is a no-op, D-7), **M5.3** (reads
+  check existence; `register_revision` refuses, D-8) and **M4.2** (resolve the scope before the
+  layer rule, D-11). Decided 2026-09-03: **P1 absorbs them.** Its answered decisions bind this
+  design's port: the request digest covers every settable argument (M5.1); `update_*` is not
+  called and no document is written when a `PATCH` changes no field, and the current record is
+  returned with `200` (D-7); `InMemoryHierarchyStore.register_revision` raises `ResourceNotFound`
+  for an unknown dataset and `RuntimeError` for a duplicate `(dataset_id, number)` (D-8); the
+  scope helpers resolve the target through the store before `ensure_layer_writable` runs (D-11).
+  The four tasks are marked superseded in the FINDINGS plan by this design's Phase 5.
+- **`design/roadmap.html` is unchanged since `9b293c1` (2026-08-31).** Drift 3 and Drift 4 now
+  hold in the stronger form: the sweep and `0008` are committed on `main` and the roadmap still
+  says "nothing here has been implemented" and `todo`. Design 4's write-back covers both.
+
+### What did not move (re-verified)
+
+`repository.py:153-157, 176` — five dicts and the `RLock`; `visible_project_ids` — zero callers
+outside its own docstring; `settings.py:88` `store_backend`; `pagination.py:92` `paginate`;
+`pkg/` holds `auth catalog rawstore rbac` and no `metastore`; no `.github/`; no test imports
+`hypothesis`; the import-linter independence lists are the four packages and one service;
+`migrations/versions/` ends at `0008`; `records.py` still holds mutable `Organization`,
+`Project`, `Dataset`, `Release` and frozen `RevisionSeed`. Receipts 3–4 (hierarchy in-process,
+no visibility) describe `main` today.
+
+### Decision register — all answered 2026-09-03
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Where the store lives | **`service/api/stores/hierarchy.py`**, as recommended; lift to `pkg/metastore` in the P3 pass |
+| 2 | Precondition on sweep M8.1 / M11.2 | **Satisfied** — shipped in `600ff2a` |
+| 3 | Idempotency TTL | **24 hours**; expired claims may be taken over; P1 deletes no rows |
+| 4 | `COLLATE "C"` slug indexes | **P1 ships no DDL**; three `(… slug COLLATE "C", id)` indexes go to a `0009` schema-track item |
+| 5 | Who owns visibility | **P1** owns the `Visibility` value, the predicate and the 404 rule; T0-3 keeps the route-wide sweep, audit rows, direct-vs-inherited grants |
+| 6 | `store_backend` | **Deleted**; in-memory stores are a test seam reached only by injecting `ApiStores` |
+| 7 | CI provider | **GitHub Actions** (`.github/workflows/ci.yml`) |
+| 8 | Contract stage required | **Required** |
+| 9 | `Metastore.record_revision` vs `metadata_sha256 NOT NULL` | **Deferred to P2**, recorded as its starting point |
+
+Inherited, already answered in `FINDINGS_IMPLEMENTATION_PLAN.md` § 2 and binding here: **D-7**
+(no-op patch), **D-8** (`register_revision` refuses), **D-11** (scope before layer).
+
+No milestone of the implementation plan is gated.

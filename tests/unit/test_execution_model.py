@@ -1,15 +1,14 @@
-"""The event-loop/threadpool boundary: which operations block, and where the lock forbids await.
+"""The event-loop/threadpool boundary: which operations block, and where the loop must never stall.
 
-Pins which of the 52 operations block the loop and are declared ``def``
-(or wrap their one blocking call in ``asyncify``), and the invariant that
-keeps ``HierarchyRepository``'s lock-protected writes safe to run from
-worker threads - no ``await`` ever appears inside a method that holds
-``self._lock``.
+Pins which of the 52 operations run on the event loop directly (they only
+``await``) versus which wrap a blocking call in ``asyncify``: every
+hierarchy operation now awaits the store, so all 52 are coroutine
+functions, and the tripwire this module keeps is that the raw store's
+filesystem calls stay off the loop thread.
 """
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import inspect
 from pathlib import Path
@@ -27,6 +26,7 @@ from huron.service.api.app import create_app
 from huron.service.api.routes.auth.endpoints import login
 from huron.service.api.routes.v1.endpoints import users
 from huron.service.api.settings import ApiSettings, ClassificationValue
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -38,8 +38,6 @@ if TYPE_CHECKING:
     from huron.service.api.repository import HierarchyRepository
 
 pytestmark = pytest.mark.unit
-
-REPOSITORY_MODULE = Path(__file__).resolve().parents[2] / "src/huron/service/api/repository.py"
 
 #: The execution-model disposition of every path operation FastAPI
 #: registers, named by its handler function (unique across the tier) and
@@ -57,19 +55,19 @@ EXPECTED_COROUTINE_FUNCTION = {
     "oidc_callback": True,
     "session_info": True,
     "providers": True,
-    "create_organization": False,
+    "create_organization": True,
     "list_organizations": True,
     "get_organization": True,
-    "patch_organization": False,
-    "create_project": False,
+    "patch_organization": True,
+    "create_project": True,
     "list_projects": True,
     "get_project": True,
-    "patch_project": False,
-    "create_dataset": False,
+    "patch_project": True,
+    "create_dataset": True,
     "list_datasets": True,
     "get_dataset": True,
-    "patch_dataset": False,
-    "create_release": False,
+    "patch_dataset": True,
+    "create_release": True,
     "list_releases": True,
     "resolve_release": True,
     "list_layers": True,
@@ -121,7 +119,7 @@ def _settings(tmp_path: Path, *, bootstrap_platform_owner: str | None = None) ->
 
 def _built_app(tmp_path: Path) -> FastAPI:
     """Build a fully wired FastAPI app over ``tmp_path``'s settings."""
-    return create_app(settings=_settings(tmp_path))
+    return create_app(settings=_settings(tmp_path), stores=memory_stores())
 
 
 def _operations(app: FastAPI) -> Iterator[Callable[..., object]]:
@@ -199,7 +197,7 @@ def test_the_three_blocking_calls_execute_off_the_event_loop_thread(tmp_path: Pa
     with (
         patch.object(login, "verify_password", _tracking_verify_password),
         patch.object(users, "make_credential", _tracking_make_credential),
-        TestClient(create_app(settings=settings)) as client,
+        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
     ):
         client.post("/auth/login", json={"username": "nobody", "password": "wrong-password"})
         created = client.post(
@@ -236,7 +234,7 @@ def test_readyz_s_raw_store_stat_executes_off_the_event_loop_thread(tmp_path: Pa
 
     with (
         patch.object(app_module, "_raw_store_failure", _tracking_raw_store_failure),
-        TestClient(create_app(settings=_settings(tmp_path))) as client,
+        TestClient(create_app(settings=_settings(tmp_path), stores=memory_stores())) as client,
     ):
         response = client.get("/readyz")
 
@@ -254,89 +252,3 @@ def test_no_asyncify_call_site_in_the_service_tier_is_cancellable() -> None:
     package_root = Path(api_package.__file__).resolve().parent
     for path in package_root.rglob("*.py"):
         assert "cancellable" not in path.read_text(), f"{path} passes cancellable="
-
-
-# -- the lock-protected critical section admits no await --------------------
-
-
-def _is_self_lock(expr: ast.expr) -> bool:
-    """Return whether an AST expression is exactly the attribute access ``self._lock``."""
-    return (
-        isinstance(expr, ast.Attribute)
-        and expr.attr == "_lock"
-        and isinstance(expr.value, ast.Name)
-        and expr.value.id == "self"
-    )
-
-
-def _mutating_methods(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
-    """Return every ``HierarchyRepository`` method whose body takes ``self._lock``.
-
-    The read-check-write sequences that must stay atomic while the lock is
-    held.
-    """
-    (repository_class,) = (
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ClassDef) and node.name == "HierarchyRepository"
-    )
-    methods: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
-    for node in repository_class.body:
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
-        holds_lock = any(
-            isinstance(child, ast.With)
-            and any(_is_self_lock(item.context_expr) for item in child.items)
-            for child in ast.walk(node)
-        )
-        if holds_lock:
-            methods.append(node)
-    return methods
-
-
-def test_no_await_appears_inside_a_mutating_hierarchy_repository_method() -> None:
-    """No ``HierarchyRepository`` method that holds ``self._lock`` contains an ``await``.
-
-    The invariant the threading model depends on: a worker thread holding
-    ``_lock`` across an ``fsync`` must never suspend there, or every other
-    concurrent writer stalls behind it instead of behind the fsync alone.
-    """
-    tree = ast.parse(REPOSITORY_MODULE.read_text())
-    mutating_methods = _mutating_methods(tree)
-    assert len(mutating_methods) >= 7, "expected to find the repository's write methods"
-    for method in mutating_methods:
-        awaits = [child for child in ast.walk(method) if isinstance(child, ast.Await)]
-        assert awaits == [], f"{method.name} awaits inside its _lock critical section"
-
-
-LIST_QUERY_METHODS = frozenset(
-    {"list_organizations", "list_projects", "list_datasets", "list_releases"}
-)
-
-
-def test_the_list_query_methods_never_acquire_the_lock() -> None:
-    """None of the four list-query methods acquires ``self._lock``.
-
-    They run on the event-loop thread; taking ``_lock`` there would block
-    behind a writer's in-flight ``fsync`` and reintroduce the stall the
-    threading model exists to remove.
-    """
-    tree = ast.parse(REPOSITORY_MODULE.read_text())
-    (repository_class,) = (
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ClassDef) and node.name == "HierarchyRepository"
-    )
-    query_methods = [
-        node
-        for node in repository_class.body
-        if isinstance(node, ast.FunctionDef) and node.name in LIST_QUERY_METHODS
-    ]
-    assert {method.name for method in query_methods} == LIST_QUERY_METHODS
-    for method in query_methods:
-        holds_lock = any(
-            isinstance(child, ast.With)
-            and any(_is_self_lock(item.context_expr) for item in child.items)
-            for child in ast.walk(method)
-        )
-        assert not holds_lock, f"{method.name} acquires the lock"

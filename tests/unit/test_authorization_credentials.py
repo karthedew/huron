@@ -15,14 +15,18 @@ from starlette.requests import Request
 
 from huron.pkg.auth import AuthError, OidcResolver, SessionRecord, create_session
 from huron.pkg.rawstore import PosixRawStore
+from huron.pkg.rbac import RoleBindingAuthorizer
 from huron.service.api.authorization import current_principal
 from huron.service.api.authorization.credentials import _enforce_csrf
 from huron.service.api.repository import HierarchyRepository
 from huron.service.api.runtime import ApiRuntime
 from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from huron.service.api.runtime import ApiStores
 
 pytestmark = pytest.mark.unit
 
@@ -42,11 +46,28 @@ def _request(
     return Request(scope)
 
 
-def _runtime(*, repository: HierarchyRepository, settings: ApiSettings) -> ApiRuntime:
-    """An ApiRuntime wired to the given repository and settings, with no OIDC configured."""
+def _repository(tmp_path: Path, stores: ApiStores) -> HierarchyRepository:
+    """A real, filesystem-backed HierarchyRepository over ``stores``' hierarchy and rbac stores."""
+    return HierarchyRepository(
+        PosixRawStore(str(tmp_path / "raw")),
+        stores.hierarchy,
+        classification_vocabulary=("open",),
+        rbac_store=stores.rbac,
+    )
+
+
+def _runtime(
+    *, repository: HierarchyRepository, stores: ApiStores, settings: ApiSettings
+) -> ApiRuntime:
+    """An ApiRuntime wired to the given repository and stores, with no OIDC configured."""
     return ApiRuntime(
         settings=settings,
         repository=repository,
+        authorizer=RoleBindingAuthorizer(),
+        api_keys=stores.api_keys,
+        credentials=stores.credentials,
+        sessions=stores.sessions,
+        principals=stores.principals,
         oidc_resolver=None,
         oidc_client=None,
         database_pool=None,
@@ -135,12 +156,11 @@ def test_enforce_csrf_rejects_a_non_ascii_header_without_raising_type_error() ->
 
 async def test_current_principal_resolves_a_valid_session_cookie(tmp_path: Path) -> None:
     """A valid session cookie resolves to its principal, with the session left on request.state."""
-    repository = HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
-    )
+    stores = memory_stores()
+    repository = _repository(tmp_path, stores)
     record, token = create_session("alice", authentication_method="password")
-    await repository.sessions.add(record)
-    runtime = _runtime(repository=repository, settings=_settings(env="development"))
+    await stores.sessions.add(record)
+    runtime = _runtime(repository=repository, stores=stores, settings=_settings(env="development"))
 
     request = _request(method="GET", cookies={"huron_session": token})
     principal = await current_principal(request, runtime)
@@ -152,12 +172,11 @@ async def test_current_principal_resolves_a_valid_session_cookie(tmp_path: Path)
 
 async def test_current_principal_enforces_csrf_for_a_cookie_authed_write(tmp_path: Path) -> None:
     """A cookie-authenticated POST needs the matching X-Huron-CSRF header to succeed."""
-    repository = HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
-    )
+    stores = memory_stores()
+    repository = _repository(tmp_path, stores)
     record, token = create_session("alice", authentication_method="password")
-    await repository.sessions.add(record)
-    runtime = _runtime(repository=repository, settings=_settings(env="development"))
+    await stores.sessions.add(record)
+    runtime = _runtime(repository=repository, stores=stores, settings=_settings(env="development"))
 
     denied = _request(method="POST", cookies={"huron_session": token})
     with pytest.raises(AuthError):
@@ -181,12 +200,11 @@ async def test_current_principal_never_downgrades_a_bearer_caller_to_its_cookie(
     be resolved as the bearer credential, even when that bearer path then
     fails - it must never silently fall through to the session cookie.
     """
-    repository = HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
-    )
+    stores = memory_stores()
+    repository = _repository(tmp_path, stores)
     record, token = create_session("alice", authentication_method="password")
-    await repository.sessions.add(record)
-    runtime = _runtime(repository=repository, settings=_settings(env="development"))
+    await stores.sessions.add(record)
+    runtime = _runtime(repository=repository, stores=stores, settings=_settings(env="development"))
 
     request = _request(
         method="GET",
@@ -201,13 +219,17 @@ async def test_current_principal_resolves_a_bearer_jwt_through_the_configured_ve
     tmp_path: Path,
 ) -> None:
     """A bearer JWT resolves through the configured OIDC verifier to its principal."""
-    repository = HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
-    )
+    stores = memory_stores()
+    repository = _repository(tmp_path, stores)
     resolver = OidcResolver(lambda _token: {"sub": "carol", "groups": ["astro"]})
     runtime = ApiRuntime(
         settings=_settings(env="production"),
         repository=repository,
+        authorizer=RoleBindingAuthorizer(),
+        api_keys=stores.api_keys,
+        credentials=stores.credentials,
+        sessions=stores.sessions,
+        principals=stores.principals,
         oidc_resolver=resolver,
         oidc_client=None,
         database_pool=None,
@@ -229,10 +251,9 @@ async def test_current_principal_refuses_an_oidc_deployment_with_no_credential_a
     session cookie is refused rather than falling through to the
     development header resolver.
     """
-    repository = HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
-    )
-    runtime = _runtime(repository=repository, settings=_settings(env="production"))
+    stores = memory_stores()
+    repository = _repository(tmp_path, stores)
+    runtime = _runtime(repository=repository, stores=stores, settings=_settings(env="production"))
 
     request = _request(method="GET")
     with pytest.raises(AuthError, match="a bearer credential is required"):

@@ -28,7 +28,7 @@ from huron.pkg.auth import (
 from huron.service.api.authorization import login_flow_cookie, session_cookie
 from huron.service.api.errors import OidcNotConfigured, UsernameTaken
 from huron.service.api.problems import problem_response
-from huron.service.api.runtime import Repository, Runtime, Settings
+from huron.service.api.runtime import Principals, Runtime, Sessions, Settings
 from huron.service.api.settings import ApiSettings
 
 router = APIRouter(prefix="/oidc")
@@ -162,7 +162,8 @@ async def oidc_callback(
     state: str,
     client: _Client,
     settings: Settings,
-    repository: Repository,
+    principals: Principals,
+    sessions: Sessions,
 ) -> RedirectResponse:
     """Finish a browser login: exchange the provider's code for a session.
 
@@ -192,8 +193,8 @@ async def oidc_callback(
         client: The client for the configured identity provider.
         settings: The wired API settings; supplies the flow-signing secret,
             the cookie attributes and the web application URL.
-        repository: The wired repository; supplies the principal and
-            session stores.
+        principals: The wired principal store.
+        sessions: The wired session store.
 
     Returns:
         The redirect into the web application, carrying the session cookie
@@ -218,7 +219,7 @@ async def oidc_callback(
         code=code, code_verifier=login_flow.code_verifier, nonce=login_flow.nonce
     )
     try:
-        principal_row = await repository.principals.upsert_oidc_user(user)
+        principal_row = await principals.upsert_oidc_user(user)
     except PrincipalSubjectExists as exc:
         raise UsernameTaken(str(exc)) from exc
     if principal_row.disabled_at is not None:
@@ -226,7 +227,7 @@ async def oidc_callback(
     record, token = create_session(
         principal_row.subject, groups=user.groups, authentication_method="oidc"
     )
-    await repository.sessions.add(record)
+    await sessions.add(record)
     response = RedirectResponse(_app_url(settings, login_flow.return_to), status_code=302)
     session_cookie(settings).issue(response, token)
     flow.revoke(response)

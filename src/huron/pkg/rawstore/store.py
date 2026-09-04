@@ -228,14 +228,20 @@ class PosixRawStore:
         """Record one generation of an entity document and point ``CURRENT.json`` at it.
 
         The document lands at ``{entity_dir}/generations/{NNNNNN}.json``
-        through :meth:`write_once`, so a generation number is written once
-        and a replay of the same number fails at the exclusive create.
-        ``{entity_dir}/CURRENT.json`` is then replaced atomically with a
-        small pointer, ``{"generation": N, "path": "generations/NNNNNN.json"}``.
-        The two steps are ordered, not joint: the generation file is durable
-        before the pointer moves, so a crash between them leaves
-        ``CURRENT.json`` naming the previous generation with the new file
-        already on disk.
+        through :meth:`atomic_replace`, not :meth:`write_once`: immutability
+        of an *acknowledged* generation is guaranteed above this layer, by
+        the hierarchy store advancing an entity's generation only through a
+        committed, version-guarded update, never by refusing to overwrite a
+        file. A generation file already on disk at the number being written
+        can therefore only be a crashed attempt that never reached that
+        commit - a committed generation N would have made the store hand
+        out N+1 next - so replacing it loses nothing a caller was ever told
+        succeeded. ``{entity_dir}/CURRENT.json`` is then replaced atomically
+        with a small pointer,
+        ``{"generation": N, "path": "generations/NNNNNN.json"}``. The two
+        steps are ordered, not joint: the generation file is durable before
+        the pointer moves, so a crash between them leaves ``CURRENT.json``
+        naming the previous generation with the new file already on disk.
 
         Args:
             entity_dir: The organization, project or dataset directory.
@@ -253,7 +259,7 @@ class PosixRawStore:
             raise ValueError(f"generation out of range: {generation}")
         entity_path = Path(entity_dir)
         generation_path = entity_path / "generations" / f"{generation:06d}.json"
-        self.write_once(generation_path, payload)
+        self.atomic_replace(generation_path, payload, mode=0o444)
         pointer = (
             f'{{"generation":{generation},"path":"generations/{generation:06d}.json"}}'
         ).encode()

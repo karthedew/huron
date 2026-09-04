@@ -7,6 +7,7 @@ side effects, and the exact field set the responses publish.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -15,10 +16,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from huron.pkg.auth import MemoryPrincipalStore, PrincipalRecord
-from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
-from huron.service.api.repository import HierarchyRepository
 from huron.service.api.settings import ApiSettings, ClassificationValue
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from fastapi import FastAPI
+
+    from huron.service.api.runtime import ApiStores
 
 pytestmark = pytest.mark.unit
 
@@ -48,17 +50,15 @@ def _settings(tmp_path: Path) -> ApiSettings:
 
 
 @pytest.fixture
-def repository(tmp_path: Path) -> HierarchyRepository:
-    """A HierarchyRepository backed by a PosixRawStore under the test's tmp_path."""
-    return HierarchyRepository(
-        PosixRawStore(str(tmp_path / "data")), classification_vocabulary=("open",)
-    )
+def stores() -> ApiStores:
+    """A fresh set of in-memory stores, seedable before or after the app starts."""
+    return memory_stores()
 
 
 @pytest.fixture
-def app(tmp_path: Path, repository: HierarchyRepository) -> FastAPI:
-    """The FastAPI app wired to `repository`, so tests can seed principals directly."""
-    return create_app(settings=_settings(tmp_path), repository=repository)
+def app(tmp_path: Path, stores: ApiStores) -> FastAPI:
+    """The FastAPI app wired to `stores`, so tests can seed principals directly."""
+    return create_app(settings=_settings(tmp_path), stores=stores)
 
 
 @pytest.fixture
@@ -156,7 +156,7 @@ def test_create_user_refuses_a_subject_that_already_exists(client: TestClient) -
 
 
 def test_set_password_refuses_a_service_account_id_with_an_honest_error(
-    client: TestClient, repository: HierarchyRepository
+    client: TestClient, stores: ApiStores
 ) -> None:
     """Setting a password for a service-account id fails with an honest kind mismatch, not 404.
 
@@ -178,7 +178,7 @@ def test_set_password_refuses_a_service_account_id_with_an_honest_error(
         disabled_at=None,
         created_at=datetime.now(UTC),
     )
-    repository.principals.records[account.id] = account
+    stores.principals.records[account.id] = account
 
     response = client.put(
         f"/api/v1/users/{account.id}/password",
@@ -336,11 +336,9 @@ def test_disable_404s_when_the_principal_is_gone_by_the_time_the_write_runs(
         disabled_at=None,
         created_at=datetime.now(UTC),
     )
-    repository = HierarchyRepository(
-        PosixRawStore(str(tmp_path / "data")),
-        classification_vocabulary=("open",),
-        principal_store=_VanishingPrincipalStore({account.id: account}),
+    stores = dataclasses.replace(
+        memory_stores(), principals=_VanishingPrincipalStore({account.id: account})
     )
-    with TestClient(create_app(settings=_settings(tmp_path), repository=repository)) as client:
+    with TestClient(create_app(settings=_settings(tmp_path), stores=stores)) as client:
         response = client.post(f"/api/v1/users/{account.id}/disable", headers=_headers("root"))
     assert response.status_code == 404

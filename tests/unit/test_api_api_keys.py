@@ -20,11 +20,10 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from huron.pkg.auth.apikeys import ApiKeyRecord
-from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
-from huron.service.api.repository import HierarchyRepository
 from huron.service.api.routes.v1.schema.api_keys import IssuedApiKey
 from huron.service.api.settings import ApiSettings, ClassificationValue
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -44,11 +43,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
         bootstrap_platform_owner="root",
     )
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-    )
-    with TestClient(create_app(settings=settings, repository=repository)) as client:
+    with TestClient(create_app(settings=settings, stores=memory_stores())) as client:
         yield client
 
 

@@ -74,7 +74,7 @@ class AttachPolicy(BaseModel):
     with ``ATTACHMENT_EXISTS``.
     """
 
-    policy_id: str
+    policy_id: UUID
 
 
 class PolicyView(BaseModel):

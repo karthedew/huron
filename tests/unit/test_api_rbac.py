@@ -15,10 +15,9 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
-from huron.service.api.repository import HierarchyRepository
 from huron.service.api.settings import ApiSettings, ClassificationValue
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -38,14 +37,10 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
         bootstrap_platform_owner="root",
     )
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-    )
     # Entered as a context manager so the ASGI lifespan actually runs and
     # performs the one-time bootstrap grant below - a TestClient built
     # without ``with`` never fires startup/shutdown events at all.
-    with TestClient(create_app(settings=settings, repository=repository)) as client:
+    with TestClient(create_app(settings=settings, stores=memory_stores())) as client:
         yield client
 
 
@@ -84,7 +79,8 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
     )
     assert bound.status_code == 201
 
-    # alice can now create a project; bob (unbound) cannot.
+    # alice can now create a project; bob (unbound, so the organization is
+    # outside his visibility) gets 404, not 403.
     project = client.post(
         f"/api/v1/organizations/{organization_id}/projects",
         json={"slug": "sims", "title": "Simulations", "data_classification": "open"},
@@ -98,7 +94,7 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
             json={"slug": "nope", "title": "Nope", "data_classification": "open"},
             headers=_headers("bob"),
         ).status_code
-        == 403
+        == 404
     )
 
     # alice grants bob developer on the project; bob creates a dataset.
@@ -221,14 +217,15 @@ def test_policy_attachment_requires_the_scoped_capability(client: TestClient) ->
     assert policy.status_code == 201
     policy_id = policy.json()["id"]
 
-    # A random authenticated user cannot attach; the platform owner can.
+    # A random authenticated user cannot attach: unbound, the organization
+    # is outside her visibility, so this is 404, not 403.
     assert (
         client.post(
             f"/api/v1/organizations/{organization_id}/policy-attachments",
             json={"policy_id": policy_id},
             headers=_headers("mallory"),
         ).status_code
-        == 403
+        == 404
     )
     assert (
         client.post(

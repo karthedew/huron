@@ -189,6 +189,35 @@ class OidcUser:
     groups: frozenset[str]
 
 
+_REQUIRED_DISCOVERY_FIELDS: tuple[str, ...] = (
+    "issuer",
+    "authorization_endpoint",
+    "token_endpoint",
+    "jwks_uri",
+)
+
+
+def _validate_discovery_document(document: Mapping[str, object], issuer: str) -> None:
+    """Confirm a discovery document carries every endpoint a client needs.
+
+    Args:
+        document: The parsed JSON body of the provider's well-known
+            discovery document.
+        issuer: The issuer this client was configured to discover.
+
+    Raises:
+        AuthError: If a required field is absent from ``document``, or
+            ``document["issuer"]`` does not equal ``issuer``.
+    """
+    for field in _REQUIRED_DISCOVERY_FIELDS:
+        if field not in document:
+            raise AuthError(f"OIDC discovery document for issuer {issuer!r} is missing {field!r}")
+    if document["issuer"] != issuer:
+        raise AuthError(
+            f"OIDC discovery document for issuer {issuer!r} reports issuer {document['issuer']!r}"
+        )
+
+
 class OidcClient:
     """Discovery plus the authorization-code flow for one configured provider.
 
@@ -254,10 +283,10 @@ class OidcClient:
         """Fetch ``{issuer}/.well-known/openid-configuration`` and build a client.
 
         The well-known path is appended to ``issuer`` verbatim, and the
-        document's ``issuer`` field - not the argument - is what tokens
-        are later checked against. A document that lacks one of the
-        required endpoints fails with a ``KeyError`` rather than a
-        half-configured client.
+        document's ``issuer`` field must equal it exactly - a provider
+        that serves a different issuer's document (a misconfigured proxy,
+        or a copy-pasted well-known URL) is refused rather than silently
+        trusted.
 
         Args:
             http: The async HTTP client used for discovery and, afterwards,
@@ -275,7 +304,9 @@ class OidcClient:
             A client configured from the discovery document.
 
         Raises:
-            AuthError: If the discovery request returns an error status.
+            AuthError: If the discovery request returns an error status,
+                the document is missing a required endpoint, or the
+                document's ``issuer`` does not match ``issuer``.
         """
         response = await http.get(f"{issuer}/.well-known/openid-configuration")
         try:
@@ -283,6 +314,7 @@ class OidcClient:
         except httpx.HTTPStatusError as error:
             raise AuthError(f"OIDC discovery failed for issuer {issuer!r}: {error}") from error
         document = response.json()
+        _validate_discovery_document(document, issuer)
         provider = OidcProviderConfig(
             issuer=document["issuer"],
             authorization_endpoint=document["authorization_endpoint"],

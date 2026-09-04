@@ -72,9 +72,10 @@ class PostgresApiKeyStore:
         The row gets a new surrogate id and the current time as
         ``created_at``; everything else is the record as ``create_api_key``
         built it, with the record's string ``project_id`` parsed back into
-        the uuid the column holds. Only the project foreign key is
-        translated: ``key_id`` is 16 random hex characters, so a collision
-        on its UNIQUE constraint is not an outcome this store maps.
+        the uuid the column holds. ``key_id`` is 16 random hex characters,
+        so a collision on its UNIQUE constraint is not a request the caller
+        could have provoked - it is a 128-bit accident, and this store
+        reports it as the bug it is rather than a client error.
 
         Args:
             record: The key to store, its secret already hashed.
@@ -82,6 +83,8 @@ class PostgresApiKeyStore:
         Raises:
             ResourceNotFound: If ``record.project_id`` names no project (the
                 foreign key refused the row).
+            RuntimeError: If ``record.key_id`` collides with an
+                already-stored key.
         """
         project_id = UUID(record.project_id) if record.project_id is not None else None
         try:
@@ -106,6 +109,8 @@ class PostgresApiKeyStore:
             )
         except asyncpg.ForeignKeyViolationError as exc:
             raise ResourceNotFound(f"project does not exist: {project_id}") from exc
+        except asyncpg.UniqueViolationError as exc:
+            raise RuntimeError(f"key_id collision: {record.key_id}") from exc
 
     async def touch_last_used(self, key_id: str) -> None:
         """Stamp the key's ``last_used_at`` with the database clock.

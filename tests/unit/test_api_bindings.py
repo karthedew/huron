@@ -10,6 +10,7 @@ live at.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -17,35 +18,25 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import ScopeType
 from huron.service.api.app import create_app
-from huron.service.api.repository import HierarchyRepository
 from huron.service.api.settings import ApiSettings, ClassificationValue
 from huron.service.api.stores import InMemoryRbacStore
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
     from huron.service.api.records import RoleBindingRecord
+    from huron.service.api.repository import HierarchyRepository
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-def repository(tmp_path: Path) -> HierarchyRepository:
-    """A fresh ``HierarchyRepository`` writing raw bytes under ``tmp_path``."""
-    return HierarchyRepository(
-        PosixRawStore(str(tmp_path / "data")),
-        classification_vocabulary=("open",),
-    )
-
-
-@pytest.fixture
-def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClient]:
-    """A dev-header TestClient wired to ``repository``, with ``root`` as platform owner."""
-    settings = ApiSettings(
+def _settings(tmp_path: Path) -> ApiSettings:
+    """Dev-header settings with ``root`` bootstrapped as platform owner."""
+    return ApiSettings(
         env="development",
         auth_mode="dev-headers",
         data_root=str(tmp_path / "data"),
@@ -53,8 +44,20 @@ def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClie
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
         bootstrap_platform_owner="root",
     )
-    with TestClient(create_app(settings=settings, repository=repository)) as client:
+
+
+@pytest.fixture
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    """A dev-header TestClient over a freshly wired in-memory repository, ``root`` bootstrapped."""
+    app = create_app(settings=_settings(tmp_path), stores=memory_stores())
+    with TestClient(app) as client:
         yield client
+
+
+@pytest.fixture
+def repository(client: TestClient) -> HierarchyRepository:
+    """The repository the running app's lifespan built, reachable for direct seeding."""
+    return client.app.state.runtime.repository
 
 
 def _headers(subject: str) -> dict[str, str]:
@@ -282,20 +285,9 @@ def test_the_boundary_orders_bindings_whatever_order_the_store_returns(
     tmp_path: Path, scope: str
 ) -> None:
     """Bindings come back sorted even when the RBAC store returns them in reverse order."""
-    settings = ApiSettings(
-        env="development",
-        auth_mode="dev-headers",
-        data_root=str(tmp_path / "data"),
-        database_url="postgresql://unused",
-        classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
-        bootstrap_platform_owner="root",
-    )
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-        rbac_store=_ReversedOrderRbacStore(),
-    )
-    with TestClient(create_app(settings=settings, repository=repository)) as client:
+    settings = _settings(tmp_path)
+    stores = dataclasses.replace(memory_stores(), rbac=_ReversedOrderRbacStore())
+    with TestClient(create_app(settings=settings, stores=stores)) as client:
         organization_id, project_id, dataset_id = _hierarchy(client)
         bindings_path = _bindings_path(scope, organization_id, project_id, dataset_id)
         for principal, role in _UNSORTED_BINDINGS[scope]:
@@ -510,17 +502,23 @@ def test_revoking_a_binding_removes_it_from_that_roots_listing(
 
 
 @pytest.mark.parametrize(
-    "scope,role,grantee",
+    "scope,role,grantee,expected_status",
     [
-        ("system", "platform_owner", "alice"),
-        ("organization", "organization_admin", "alice"),
-        ("project", "project_admin", "bob"),
+        ("system", "platform_owner", "alice", 403),
+        ("organization", "organization_admin", "alice", 404),
+        ("project", "project_admin", "bob", 404),
     ],
 )
 def test_revoking_a_binding_immediately_removes_the_capability_it_granted(
-    client: TestClient, scope: str, role: str, grantee: str
+    client: TestClient, scope: str, role: str, grantee: str, expected_status: int
 ) -> None:
-    """Revoking a binding immediately removes the capability it had granted."""
+    """Revoking a binding immediately removes the capability it had granted.
+
+    SYSTEM has no id to resolve, so the grantee is still 403 once revoked
+    there; at organization and project scope the revoked binding was the
+    grantee's only one anywhere, so the scope is now outside their
+    visibility too, and the answer is 404 instead.
+    """
     organization_id, project_id, dataset_id = _hierarchy(client)
     path = _bindings_path(scope, organization_id, project_id, dataset_id)
     grant = client.post(
@@ -538,7 +536,7 @@ def test_revoking_a_binding_immediately_removes_the_capability_it_granted(
     blocked = client.post(
         path, json={"principal": "user:probe-2", "role": role}, headers=_headers(grantee)
     )
-    assert blocked.status_code == 403
+    assert blocked.status_code == expected_status
 
 
 def test_an_organization_binding_named_under_the_system_root_404s(client: TestClient) -> None:
@@ -608,16 +606,24 @@ def test_revoking_the_same_binding_twice_404s_the_second_time(
     assert response.status_code == 404
 
 
-@pytest.mark.parametrize("scope", ["system", "organization", "project", "dataset"])
+@pytest.mark.parametrize(
+    ("scope", "expected_status"),
+    [("system", 403), ("organization", 404), ("project", 404), ("dataset", 404)],
+)
 def test_revoking_a_binding_is_denied_without_the_capability_at_its_scope(
-    client: TestClient, scope: str
+    client: TestClient, scope: str, expected_status: int
 ) -> None:
-    """Revoking a binding is denied to a caller without the capability at its scope."""
+    """Revoking a binding is denied to a caller without the capability at its scope.
+
+    SYSTEM has no id to resolve, so an unbound caller is still 403 there;
+    at every other scope the caller (unbound everywhere) cannot discover
+    the scope at all, so it is 404 instead.
+    """
     organization_id, project_id, dataset_id = _hierarchy(client)
     path, binding = _create_binding(client, scope, organization_id, project_id, dataset_id)
 
     response = client.delete(f"{path}/{binding['id']}", headers=_headers("mallory"))
-    assert response.status_code == 403
+    assert response.status_code == expected_status
 
 
 @pytest.mark.parametrize(

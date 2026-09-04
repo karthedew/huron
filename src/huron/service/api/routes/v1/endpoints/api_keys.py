@@ -18,7 +18,7 @@ from huron.pkg.auth import create_api_key
 from huron.service.api.authorization import CurrentPrincipal
 from huron.service.api.routes.v1.preconditions import IdempotencyHeader
 from huron.service.api.routes.v1.schema.api_keys import CreateApiKey, IssuedApiKey
-from huron.service.api.runtime import Repository
+from huron.service.api.runtime import ApiKeys
 
 router = APIRouter(prefix="/auth/api-keys", tags=["api-keys"])
 
@@ -37,7 +37,7 @@ def _require_idempotency_key(idempotency_key: IdempotencyHeader) -> None:
 @router.post("", status_code=201, dependencies=[Depends(_require_idempotency_key)])
 async def issue_api_key(
     body: CreateApiKey,
-    repository: Repository,
+    api_keys: ApiKeys,
     actor: CurrentPrincipal,
 ) -> IssuedApiKey:
     """Issue an API key for the calling principal.
@@ -52,7 +52,7 @@ async def issue_api_key(
     Args:
         body: The key's name, scopes, optional project restriction and
             lifetime in days.
-        repository: The wired hierarchy repository.
+        api_keys: The wired API-key store.
         actor: The authenticated caller the key is issued to.
 
     Returns:
@@ -66,7 +66,7 @@ async def issue_api_key(
         ttl=timedelta(days=body.expires_in_days),
         owner_kind=actor.kind,
     )
-    await repository.api_keys.add(record)
+    await api_keys.add(record)
     return IssuedApiKey(
         id=record.key_id,
         name=record.name,

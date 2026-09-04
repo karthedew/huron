@@ -20,18 +20,19 @@ from fastapi.openapi.utils import get_openapi
 
 from huron.pkg.auth import JwksVerifier, OidcClient, OidcResolver
 from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import ScopeType
+from huron.pkg.rbac import Classification, RoleBindingAuthorizer, ScopeType
 
 from .errors import DependencyUnavailable
 from .problems import Problem, install_error_handlers, problem_response
 from .repository import HierarchyRepository
 from .routes import auth as auth_routes
 from .routes import v1
-from .runtime import ApiRuntime, Runtime
+from .runtime import ApiRuntime, ApiStores, Runtime
 from .settings import ApiSettings
 from .stores import (
     PostgresApiKeyStore,
     PostgresCredentialStore,
+    PostgresHierarchyStore,
     PostgresPrincipalStore,
     PostgresRbacStore,
     PostgresSessionStore,
@@ -41,37 +42,24 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
 
-async def _postgres_repository(settings: ApiSettings) -> tuple[HierarchyRepository, asyncpg.Pool]:
-    """Wire the Postgres-backed RBAC and auth stores over one shared pool.
-
-    The RBAC and auth tables opted into Postgres together, sharing a pool.
-    The organization/project/dataset hierarchy stays in-memory until it
-    gets its own store, so this is only safe once the rows those foreign
-    keys target (organizations, projects) are real Postgres rows - which
-    requires choosing ``store_backend="postgres"`` explicitly rather than
-    inferring it from "no repository was injected".
+def _postgres_stores(pool: asyncpg.Pool) -> ApiStores:
+    """Wire the Postgres-backed RBAC and authentication stores over one shared pool.
 
     Args:
-        settings: Supplies the database URL the pool connects to, the raw
-            store's root and the classification vocabulary the repository
-            validates projects against.
+        pool: The already-open pool every store shares. The caller owns
+            the pool and closes it at shutdown; the stores never do.
 
     Returns:
-        The repository and the pool every one of its Postgres stores shares.
-        The caller owns the pool and closes it at shutdown; the repository
-        never does.
+        The six stores, each a thin wrapper around the pool.
     """
-    pool = await asyncpg.create_pool(settings.database_url)
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-        rbac_store=PostgresRbacStore(pool),
-        api_key_store=PostgresApiKeyStore(pool),
-        credential_store=PostgresCredentialStore(pool),
-        session_store=PostgresSessionStore(pool),
-        principal_store=PostgresPrincipalStore(pool),
+    return ApiStores(
+        hierarchy=PostgresHierarchyStore(pool),
+        rbac=PostgresRbacStore(pool),
+        api_keys=PostgresApiKeyStore(pool),
+        credentials=PostgresCredentialStore(pool),
+        sessions=PostgresSessionStore(pool),
+        principals=PostgresPrincipalStore(pool),
     )
-    return repository, pool
 
 
 async def _configure_oidc(
@@ -164,31 +152,31 @@ class _HuronFastAPI(FastAPI):
 def create_app(
     *,
     settings: ApiSettings,
-    repository: HierarchyRepository | None = None,
+    stores: ApiStores | None = None,
     oidc_verify: Callable[[str], Mapping[str, object]] | None = None,
 ) -> FastAPI:
     """Build the application, deferring every connection to its lifespan.
 
     Nothing is connected when this returns. The lifespan builds one
-    :class:`ApiRuntime` - the repository, the optional OIDC resolver and
-    client, the optional database pool - and publishes it on
-    ``app.state.runtime`` as the application's only piece of mutable state;
-    every injected route reads it through ``huron.service.api.runtime``. An
-    application whose lifespan never started therefore refuses to serve
-    rather than falling through to defaults, because the cost of guessing
-    at wiring is an unauthenticated request answered as though it were
-    authenticated.
+    :class:`ApiRuntime` - the repository, the authorizer, the RBAC and
+    authentication stores, the optional OIDC resolver and client, the
+    optional database pool - and publishes it on ``app.state.runtime`` as
+    the application's only piece of mutable state; every injected route
+    reads it through ``huron.service.api.runtime``. An application whose
+    lifespan never started therefore refuses to serve rather than falling
+    through to defaults, because the cost of guessing at wiring is an
+    unauthenticated request answered as though it were authenticated.
 
     The unversioned ``/healthz`` and ``/readyz`` probes, the error handlers
     that keep every failure in the problem+json shape, and the ``/auth`` and
     ``/api/v1`` routers are all mounted here and nowhere else.
 
     Args:
-        settings: The validated configuration; ``store_backend`` decides
-            whether the RBAC and auth stores live in memory or in Postgres.
-        repository: A repository built by the caller, which wins over
-            ``store_backend`` entirely. Tests use it to serve from a
-            pre-populated in-memory hierarchy.
+        settings: The validated configuration; ``database_url`` is where
+            the lifespan opens its pool when no stores are injected.
+        stores: The RBAC and authentication stores built by the caller,
+            which skip opening a pool entirely. Tests inject a set built on
+            the in-memory implementations.
         oidc_verify: A verifier mapping a bearer token to its claims. When
             given it replaces provider discovery, so bearer JWTs are
             accepted without a reachable issuer.
@@ -201,43 +189,65 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         """Wire the runtime for the server's lifetime, then release it.
 
-        The repository comes from the injected one, else from Postgres when
-        ``store_backend`` says so, else from process memory; the bearer-JWT
-        resolver follows the same injected-first rule. The bootstrap grant
-        runs inside the block whose ``finally`` closes the pool and the HTTP
-        client, so a failure there releases both before the error surfaces.
+        The RBAC and authentication stores come from the injected set, else
+        the lifespan opens a fresh pool from ``settings.database_url`` and
+        wires every store to Postgres; the hierarchy repository and the
+        authorizer are always built fresh here, over the raw store and the
+        classification vocabulary the settings declare. The bearer-JWT
+        resolver follows the same injected-first rule as the stores.
+        Opening the pool, discovering the OIDC provider, running the
+        bootstrap grant and suspending at ``yield`` all happen inside one
+        block whose ``finally`` closes the pool and the HTTP client, so a
+        failure at any point after the pool opens releases it before the
+        error surfaces - including a discovery failure that happens after
+        the pool is already open.
 
         Args:
             app: The application whose ``state.runtime`` is set for the
                 duration of the lifespan.
 
         Yields:
-            Nothing. The application serves while suspended here, and the
-            pool and HTTP client are closed once it exits, whether or not
-            startup completed.
+            Nothing. The application serves while suspended here. Whether
+            startup completed or raised, every resource it acquired - the
+            database pool, the OIDC discovery HTTP client - is closed
+            before the lifespan exits.
         """
         pool: asyncpg.Pool | None = None
-        if repository is not None:
-            wired = repository
-        elif settings.store_backend == "postgres":
-            wired, pool = await _postgres_repository(settings)
-        else:
-            wired = HierarchyRepository(
+        http: httpx.AsyncClient | None = None
+        try:
+            if stores is not None:
+                wired = stores
+            else:
+                pool = await asyncpg.create_pool(settings.database_url)
+                wired = _postgres_stores(pool)
+            repository = HierarchyRepository(
                 PosixRawStore(settings.data_root),
+                wired.hierarchy,
                 classification_vocabulary=tuple(
                     value.code for value in settings.classification_vocabulary
                 ),
+                rbac_store=wired.rbac,
             )
-        oidc_resolver, oidc_client, http = await _configure_oidc(settings, oidc_verify)
-        app.state.runtime = ApiRuntime(
-            settings=settings,
-            repository=wired,
-            oidc_resolver=oidc_resolver,
-            oidc_client=oidc_client,
-            database_pool=pool,
-        )
-        try:
-            await _bootstrap(wired, settings)
+            authorizer = RoleBindingAuthorizer(
+                classifications=tuple(
+                    Classification(value.code, value.order, value.discoverable)
+                    for value in settings.classification_vocabulary
+                )
+            )
+            oidc_resolver, oidc_client, http = await _configure_oidc(settings, oidc_verify)
+            app.state.runtime = ApiRuntime(
+                settings=settings,
+                repository=repository,
+                authorizer=authorizer,
+                api_keys=wired.api_keys,
+                credentials=wired.credentials,
+                sessions=wired.sessions,
+                principals=wired.principals,
+                oidc_resolver=oidc_resolver,
+                oidc_client=oidc_client,
+                database_pool=pool,
+            )
+            await _bootstrap(repository, settings)
             yield
         finally:
             if pool is not None:
@@ -297,9 +307,10 @@ def create_app(
 async def _dependency_checks(runtime: ApiRuntime) -> list[tuple[str, str | None]]:
     """Probe each dependency this instance was wired with.
 
-    The raw store's stat runs on a worker thread, so a hung mount stalls
-    this probe but never the event loop the other requests share; the
-    database round-trip is bounded by ``READINESS_TIMEOUT_SECONDS``.
+    The raw store's stat runs on a worker thread so a hung mount never
+    stalls the event loop the other requests share, and the database
+    round-trip runs on the loop directly; both are bounded by the same
+    ``READINESS_TIMEOUT_SECONDS`` so neither can hang the probe past it.
 
     Args:
         runtime: The wiring the lifespan published; a ``None`` pool means
@@ -310,10 +321,39 @@ async def _dependency_checks(runtime: ApiRuntime) -> list[tuple[str, str | None]
         where ``failure`` is ``None`` for a dependency that answered and
         the reason it did not otherwise.
     """
-    checks = [("raw_store", await asyncify(_raw_store_failure)(runtime.repository))]
+    checks = [("raw_store", await _raw_store_probe(runtime.repository))]
     if runtime.database_pool is not None:
         checks.append(("database", await _database_failure(runtime.database_pool)))
     return checks
+
+
+async def _raw_store_probe(repository: HierarchyRepository) -> str | None:
+    """Stat the raw root on a worker thread, within the readiness timeout.
+
+    A mount that never answers ``stat`` must not hang the probe forever, so
+    the wait is bounded the same way the database round-trip is. Timing out
+    abandons the worker thread rather than cancelling it: threads have no
+    interrupt point to cancel into, so the thread stays blocked in ``stat``
+    and exits on its own whenever the mount eventually answers or the
+    process shuts down. It never blocks a later probe, which starts a fresh
+    thread of its own, but under a mount that stays wedged and is polled
+    repeatedly, each abandoned thread stays alive until the mount answers,
+    so blocked threads accumulate for as long as the hang persists.
+
+    Args:
+        repository: The wired repository, whose raw store names the root
+            directory the data plane writes under.
+
+    Returns:
+        ``None`` while the root exists, ``"root is unavailable"`` while it
+        does not, and the readiness-timeout message once the bound above
+        is reached.
+    """
+    try:
+        async with asyncio.timeout(READINESS_TIMEOUT_SECONDS):
+            return await asyncify(_raw_store_failure)(repository)
+    except TimeoutError:
+        return f"did not answer within {READINESS_TIMEOUT_SECONDS}s"
 
 
 def _raw_store_failure(repository: HierarchyRepository) -> str | None:

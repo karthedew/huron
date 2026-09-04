@@ -67,9 +67,9 @@ user, `uvicorn ... --host 0.0.0.0 --port 8080`) and brings up two more services 
   `api` waits for it to complete successfully before starting.
 - `api` — the whole application, published on `http://localhost:8080`, configured entirely
   through the `HURON_*` environment variables set in `docker-compose.yml` (see the table below
-  for what each one means). `HURON_STORE_BACKEND=postgres` and `HURON_AUTH_MODE=oidc` here — this
-  is the one place the whole login flow (password *and* OIDC) runs end-to-end against real
-  Postgres and a real IdP.
+  for what each one means). The API always connects to `HURON_DATABASE_URL`, real Postgres
+  here, and `HURON_AUTH_MODE=oidc` makes this the one place the whole login flow (password
+  *and* OIDC) runs end-to-end against real Postgres and a real IdP.
 
 **The issuer, decided once — and `make hosts` is required in BOTH modes.** The compose
 `keycloak` service sets `KC_HOSTNAME: http://keycloak:8081`, which fixes Keycloak's *entire*
@@ -160,7 +160,6 @@ single-quoted so uv, Docker Compose and podman-compose all read it byte for byte
 | `HURON_CLASSIFICATION_VOCABULARY` | yes | Codes and orders must each be unique, and the list may not be empty |
 | `HURON_DATA_ROOT` | no | Defaults to `/data` |
 | `HURON_BOOTSTRAP_PLATFORM_OWNER` | no | Subject granted a SYSTEM-scope `platform_owner` binding at startup |
-| `HURON_STORE_BACKEND` | no | `memory` (default) or `postgres` |
 | `HURON_LOGIN_FLOW_SECRET` | outside `development` | Signs the transient `huron_login` flow cookie |
 | `HURON_OIDC__*` | when `HURON_AUTH_MODE=oidc` | Nested via `__`, e.g. `HURON_OIDC__ISSUER`, `HURON_OIDC__CLIENT_ID`, `HURON_OIDC__CLIENT_SECRET`, `HURON_OIDC__REDIRECT_URL` |
 | `HURON_PASSWORD_LOGIN_ENABLED` | no | Defaults to `true` |
@@ -188,15 +187,6 @@ is treated as an OIDC JWT and passed to the verifier the composition root inject
     A fresh deployment has no role bindings, so nothing can create an organization or grant a
     role. `HURON_BOOTSTRAP_PLATFORM_OWNER` grants exactly one SYSTEM-scope `platform_owner`
     binding at startup — the single way in. Unset it once real bindings exist.
-
-!!! note "`HURON_STORE_BACKEND` defaults to `memory`; `dev.env` opts into `postgres`"
-
-    `postgres` wires the Postgres-backed RBAC *and* auth stores together, and is only safe
-    once the rows their foreign keys target — organizations and projects — are real Postgres
-    rows. The organization/project/dataset hierarchy is not Postgres-backed yet, so `memory`
-    is the code's default and `postgres` is an explicit opt-in. `dev.env` opts in, the same
-    as the compose stack, so sessions and role bindings survive uvicorn's reloads; run
-    `make migrate` before the first `make api`.
 
 ## Running the frontend
 

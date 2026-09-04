@@ -1,6 +1,6 @@
 """The record types the API tier stores and serializes.
 
-Nine dataclasses with no behavior and no project imports. This module is the
+Eight dataclasses with no behavior and no project imports. This module is the
 leaf the rest of the tier depends on: a storage adapter needs a record type,
 not the application service that happens to have declared it, and keeping
 the records here is what lets ``stores`` import them without importing
@@ -93,22 +93,6 @@ class Dataset:
     generation: int
     version: int
     created_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class RevisionSeed:
-    """The little the hierarchy must know about a revision to release it.
-
-    A revision's full record lives with the catalog; the hierarchy keeps
-    only its identity, its dataset, its sequential ``number`` (what a
-    release request names) and its manifest digest. Frozen because a
-    revision, once registered, never changes.
-    """
-
-    id: UUID
-    dataset_id: UUID
-    number: int
-    manifest_sha256: str
 
 
 @dataclass(slots=True)

@@ -21,12 +21,21 @@ from huron.pkg.auth import ApiKeyRecord, MemoryApiKeyStore
 from huron.pkg.auth import Principal as AuthPrincipal
 from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import Binding, Decision, Effect, Principal, Scope, ScopeType, decide
+from huron.pkg.rbac import (
+    Binding,
+    Decision,
+    Effect,
+    Principal,
+    Scope,
+    ScopeType,
+    Visibility,
+    decide,
+)
 from huron.pkg.rbac.roles import PrincipalKindNotAllowed, ScopeNotBindable
 from huron.service.api.authorization import bindings_for_principal, check
 from huron.service.api.errors import AttachmentExists, BindingExists, ServiceAccountExists
-from huron.service.api.repository import HierarchyRepository
-from huron.service.api.stores import InMemoryRbacStore
+from huron.service.api.repository import HierarchyRepository, request_sha256
+from huron.service.api.stores import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,7 +46,17 @@ pytestmark = pytest.mark.unit
 def _repository(tmp_path: Path) -> HierarchyRepository:
     """Build a ``HierarchyRepository`` at ``tmp_path`` with only "open" classification allowed."""
     return HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
+        PosixRawStore(str(tmp_path / "raw")),
+        InMemoryHierarchyStore(),
+        classification_vocabulary=("open",),
+        rbac_store=InMemoryRbacStore(),
+    )
+
+
+def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
+    """Build an idempotency claim staked by ``tester`` over one operation's digest parts."""
+    return IdempotencyClaim(
+        principal="tester", key=key, request_sha256=request_sha256(operation, *parts)
     )
 
 
@@ -304,8 +323,11 @@ async def test_hierarchy_repository_derives_service_account_subject_from_org_slu
 ) -> None:
     """A service account's subject is derived as ``{org slug}/{name}`` and round-trips."""
     repository = _repository(tmp_path)
-    organization = repository.create_organization(
-        slug="astro", title="Astro", description="", idempotency_key="k1"
+    organization = await repository.create_organization(
+        slug="astro",
+        title="Astro",
+        description="",
+        claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
     account = await repository.create_service_account(
         organization.id, name="canonicalizer", created_by="alice"
@@ -320,25 +342,40 @@ async def test_hierarchy_repository_checks_dataset_scope_existence_before_delega
 ) -> None:
     """Granting, fetching and revoking a role at a real dataset's scope succeeds end to end."""
     repository = _repository(tmp_path)
-    organization = repository.create_organization(
-        slug="astro", title="Astro", description="", idempotency_key="org-1"
+    organization = await repository.create_organization(
+        slug="astro",
+        title="Astro",
+        description="",
+        claim=_claim("organization", "astro", "Astro", "", key="org-1"),
     )
-    project = repository.create_project(
+    project = await repository.create_project(
         organization.id,
+        Visibility.ALL,
         slug="sims",
         title="Sims",
         description="",
         data_classification="open",
-        idempotency_key="proj-1",
+        claim=_claim("project", str(organization.id), "sims", "Sims", "", "open", key="proj-1"),
     )
-    dataset = repository.create_dataset(
+    dataset = await repository.create_dataset(
         project.id,
+        Visibility.ALL,
         slug="run-0001",
         title="Run 1",
         description="",
         profile_name="mcnp-run",
         profile_version="1.0",
-        idempotency_key="ds-1",
+        claim=_claim(
+            "dataset",
+            str(project.id),
+            "run-0001",
+            "Run 1",
+            "",
+            "mcnp-run",
+            "1.0",
+            "raw",
+            key="ds-1",
+        ),
     )
 
     record = await repository.grant_role(
@@ -354,13 +391,35 @@ async def test_hierarchy_repository_checks_dataset_scope_existence_before_delega
         await repository.get_role_binding(record.id)
 
 
+async def test_bindings_at_raises_for_an_unknown_scope(tmp_path: Path) -> None:
+    """``bindings_at`` raises ``ResourceNotFound`` for a scope id that names nothing.
+
+    An unknown scope used to answer an empty list, indistinguishable from a
+    scope with no bindings; it now fails closed the same way every other
+    hierarchy read does.
+    """
+    repository = _repository(tmp_path)
+    with pytest.raises(ResourceNotFound):
+        await repository.bindings_at(ScopeType.PROJECT, uuid4())
+
+
+async def test_list_service_accounts_raises_for_an_unknown_organization(tmp_path: Path) -> None:
+    """``list_service_accounts`` raises ``ResourceNotFound`` for an unknown organization id."""
+    repository = _repository(tmp_path)
+    with pytest.raises(ResourceNotFound):
+        await repository.list_service_accounts(uuid4())
+
+
 async def test_hierarchy_repository_list_service_accounts_and_policies_delegate(
     tmp_path: Path,
 ) -> None:
     """``list_service_accounts`` and ``list_policies`` delegate correctly to the rbac store."""
     repository = _repository(tmp_path)
-    organization = repository.create_organization(
-        slug="astro", title="Astro", description="", idempotency_key="org-2"
+    organization = await repository.create_organization(
+        slug="astro",
+        title="Astro",
+        description="",
+        claim=_claim("organization", "astro", "Astro", "", key="org-2"),
     )
     await repository.create_service_account(organization.id, name="loader", created_by="alice")
     accounts = await repository.list_service_accounts(organization.id)
@@ -371,35 +430,6 @@ async def test_hierarchy_repository_list_service_accounts_and_policies_delegate(
     )
     policies = await repository.list_policies()
     assert [item.name for item in policies] == ["raw-90d"]
-
-
-async def test_two_repositories_built_without_an_injected_store_do_not_share_bindings(
-    tmp_path: Path,
-) -> None:
-    """Each ``HierarchyRepository()`` call must get its own ``InMemoryRbacStore``.
-
-    A shared default instance (the classic Python mutable-default-argument
-    trap, reached here through ``rbac_store: RbacStore | None = None``
-    defaulting inside ``__init__`` rather than in the signature) would leak
-    one repository's grants into every other repository built the same way.
-    """
-    first = HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw-1")), classification_vocabulary=("open",)
-    )
-    second = HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw-2")), classification_vocabulary=("open",)
-    )
-
-    await first.grant_role(
-        principal="user:bob",
-        role_code="platform_owner",
-        scope_type=ScopeType.SYSTEM,
-        scope_id=None,
-        created_by="alice",
-    )
-
-    assert await first.bindings_for(frozenset({"user:bob"})) != ()
-    assert await second.bindings_for(frozenset({"user:bob"})) == ()
 
 
 # -- API key touch bookkeeping -------------------------------------------------
@@ -505,8 +535,11 @@ async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_acco
 ) -> None:
     """``bindings_for_principal`` synthesizes non-empty grants for a live service account."""
     repository = _repository(tmp_path)
-    organization = repository.create_organization(
-        slug="astro", title="Astro", description="", idempotency_key="k1"
+    organization = await repository.create_organization(
+        slug="astro",
+        title="Astro",
+        description="",
+        claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
     account = await repository.create_service_account(
         organization.id, name="feed", created_by="alice"

@@ -1,11 +1,14 @@
-"""Bindings, the per-request cache, and the allow/deny call, proved with fakes and a repository.
+"""Bindings, the per-request cache, the allow/deny call, and current_visibility.
 
-Covers cache lifetime, service-account binding synthesis, and
-``check``'s pass/refuse behavior.
+Proved with fakes and a real repository. Covers cache lifetime,
+service-account binding synthesis, ``check``'s pass/refuse behavior, and
+``current_visibility``'s reduction of a caller's bindings against the
+hierarchy's shape.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -13,16 +16,26 @@ import pytest
 
 from huron.pkg.auth import Principal
 from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import Binding, Effect, Scope, ScopeType
+from huron.pkg.rbac import (
+    Binding,
+    Classification,
+    Effect,
+    RoleBindingAuthorizer,
+    Scope,
+    ScopeType,
+    Visibility,
+)
 from huron.pkg.rbac import Principal as RbacPrincipal
 from huron.service.api.authorization.decisions import (
     as_rbac_principal,
     bindings_for_principal,
     check,
+    current_visibility,
     request_binding_cache,
 )
 from huron.service.api.errors import Forbidden
-from huron.service.api.repository import HierarchyRepository
+from huron.service.api.repository import HierarchyRepository, request_sha256
+from huron.service.api.stores import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,7 +46,17 @@ pytestmark = pytest.mark.unit
 def _repository(tmp_path: Path) -> HierarchyRepository:
     """A real, filesystem-backed HierarchyRepository for the service-account synthesis tests."""
     return HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw")), classification_vocabulary=("open",)
+        PosixRawStore(str(tmp_path / "raw")),
+        InMemoryHierarchyStore(),
+        classification_vocabulary=("open",),
+        rbac_store=InMemoryRbacStore(),
+    )
+
+
+def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
+    """Build an idempotency claim staked by ``tester`` over one operation's digest parts."""
+    return IdempotencyClaim(
+        principal="tester", key=key, request_sha256=request_sha256(operation, *parts)
     )
 
 
@@ -162,8 +185,11 @@ async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_acco
 ) -> None:
     """A live service account gets synthesized bindings from ``bindings_for_principal``."""
     repository = _repository(tmp_path)
-    organization = repository.create_organization(
-        slug="astro", title="Astro", description="", idempotency_key="k1"
+    organization = await repository.create_organization(
+        slug="astro",
+        title="Astro",
+        description="",
+        claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
     account = await repository.create_service_account(
         organization.id, name="feed", created_by="alice"
@@ -180,8 +206,11 @@ async def test_bindings_for_principal_synthesizes_nothing_for_a_disabled_service
 ) -> None:
     """A disabled service account gets no bindings from ``bindings_for_principal``."""
     repository = _repository(tmp_path)
-    organization = repository.create_organization(
-        slug="astro", title="Astro", description="", idempotency_key="k1"
+    organization = await repository.create_organization(
+        slug="astro",
+        title="Astro",
+        description="",
+        claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
     account = await repository.create_service_account(
         organization.id, name="feed", created_by="alice"
@@ -209,3 +238,137 @@ async def test_bindings_for_principal_denies_a_service_account_with_no_account_r
     bindings = await bindings_for_principal({}, repository, actor)
 
     assert bindings == ()
+
+
+# -- current_visibility ---------------------------------------------------
+
+
+async def test_current_visibility_for_a_system_platform_owner_is_unrestricted(
+    tmp_path: Path,
+) -> None:
+    """A SYSTEM-scope ``platform_owner`` binding makes ``current_visibility`` unrestricted."""
+    repository = _repository(tmp_path)
+    await repository.grant_role(
+        principal="user:root",
+        role_code="platform_owner",
+        scope_type=ScopeType.SYSTEM,
+        scope_id=None,
+        created_by="admin",
+    )
+    runtime = SimpleNamespace(authorizer=RoleBindingAuthorizer())
+
+    visibility = await current_visibility({}, repository, Principal(subject="root"), runtime)
+
+    assert visibility.unrestricted is True
+
+
+async def test_current_visibility_for_a_project_scoped_reader_holds_exactly_that_project(
+    tmp_path: Path,
+) -> None:
+    """A PROJECT-scope ``reader`` binding makes ``current_visibility`` hold exactly that project."""
+    repository = _repository(tmp_path)
+    organization = await repository.create_organization(
+        slug="astro",
+        title="Astro",
+        description="",
+        claim=_claim("organization", "astro", "Astro", "", key="org-1"),
+    )
+    project = await repository.create_project(
+        organization.id,
+        Visibility.ALL,
+        slug="sims",
+        title="Sims",
+        description="",
+        data_classification="open",
+        claim=_claim("project", str(organization.id), "sims", "Sims", "", "open", key="proj-1"),
+    )
+    await repository.grant_role(
+        principal="user:alice",
+        role_code="reader",
+        scope_type=ScopeType.PROJECT,
+        scope_id=project.id,
+        created_by="admin",
+    )
+    runtime = SimpleNamespace(
+        authorizer=RoleBindingAuthorizer(classifications=(Classification("open", 0, True),))
+    )
+
+    visibility = await current_visibility({}, repository, Principal(subject="alice"), runtime)
+
+    assert visibility.project_ids == frozenset({project.id})
+    assert visibility.organization_ids == frozenset()
+    assert visibility.dataset_ids == frozenset()
+    assert visibility.unrestricted is False
+
+
+async def test_current_visibility_for_a_dataset_scoped_reader_holds_that_dataset(
+    tmp_path: Path,
+) -> None:
+    """A DATASET-scope binding makes ``current_visibility`` resolve and hold that dataset.
+
+    Reaching the dataset's id requires ``dataset_parents`` to resolve its
+    owning project, which ``current_visibility`` calls only because this
+    binding is DATASET-scoped.
+    """
+    repository = _repository(tmp_path)
+    organization = await repository.create_organization(
+        slug="astro",
+        title="Astro",
+        description="",
+        claim=_claim("organization", "astro", "Astro", "", key="org-1"),
+    )
+    project = await repository.create_project(
+        organization.id,
+        Visibility.ALL,
+        slug="sims",
+        title="Sims",
+        description="",
+        data_classification="open",
+        claim=_claim("project", str(organization.id), "sims", "Sims", "", "open", key="proj-1"),
+    )
+    dataset = await repository.create_dataset(
+        project.id,
+        Visibility.ALL,
+        slug="run-0001",
+        title="Run 1",
+        description="",
+        profile_name="mcnp-run",
+        profile_version="1.0",
+        claim=_claim(
+            "dataset",
+            str(project.id),
+            "run-0001",
+            "Run 1",
+            "",
+            "mcnp-run",
+            "1.0",
+            "raw",
+            key="ds-1",
+        ),
+    )
+    await repository.grant_role(
+        principal="user:alice",
+        role_code="reader",
+        scope_type=ScopeType.DATASET,
+        scope_id=dataset.id,
+        created_by="admin",
+    )
+    runtime = SimpleNamespace(
+        authorizer=RoleBindingAuthorizer(classifications=(Classification("open", 0, True),))
+    )
+
+    visibility = await current_visibility({}, repository, Principal(subject="alice"), runtime)
+
+    assert visibility.dataset_ids == frozenset({dataset.id})
+    assert visibility.project_ids == frozenset()
+    assert visibility.unrestricted is False
+
+
+async def test_current_visibility_for_a_caller_with_no_bindings_is_empty(tmp_path: Path) -> None:
+    """A caller with no bindings at all gets an empty ``Visibility``."""
+    repository = _repository(tmp_path)
+    runtime = SimpleNamespace(authorizer=RoleBindingAuthorizer())
+
+    visibility = await current_visibility({}, repository, Principal(subject="nobody"), runtime)
+
+    assert visibility == Visibility()

@@ -15,10 +15,38 @@ from typing import Annotated
 import asyncpg
 from fastapi import Depends, Request
 
-from huron.pkg.auth import OidcClient, OidcResolver
+from huron.pkg.auth import CredentialStore, OidcClient, OidcResolver, PrincipalStore, SessionStore
+from huron.pkg.rbac import RoleBindingAuthorizer
 
 from .repository import HierarchyRepository
 from .settings import ApiSettings
+from .stores import ApiKeyWriter, HierarchyStore, RbacStore
+
+
+@dataclass(frozen=True, slots=True)
+class ApiStores:
+    """The hierarchy, RBAC and authentication stores a deployment wires as one unit.
+
+    Bundling all six together gives the composition root one shape to
+    build - Postgres in production, process memory in a test - and gives a
+    test exactly one object to inject in place of that wiring.
+
+    Attributes:
+        hierarchy: Durable storage for the organization/project/dataset/
+            release hierarchy and its idempotency claims.
+        rbac: Storage for role bindings, service accounts and policies.
+        api_keys: Storage for API keys.
+        credentials: Storage for password credentials.
+        sessions: Storage for browser sessions.
+        principals: Storage for user and service-account identities.
+    """
+
+    hierarchy: HierarchyStore
+    rbac: RbacStore
+    api_keys: ApiKeyWriter
+    credentials: CredentialStore
+    sessions: SessionStore
+    principals: PrincipalStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,12 +59,17 @@ class ApiRuntime:
     deployment lacks rather than defaulting it: ``oidc_resolver`` and
     ``oidc_client`` are ``None`` when no identity provider is configured,
     so bearer JWTs are refused and the OIDC routes answer 404, and
-    ``database_pool`` is ``None`` unless ``store_backend`` chose Postgres,
-    so the readiness probe knows whether there is a database to check.
+    ``database_pool`` is ``None`` only when the stores were injected, so
+    the readiness probe knows whether there is a database to check.
     """
 
     settings: ApiSettings
     repository: HierarchyRepository
+    authorizer: RoleBindingAuthorizer
+    api_keys: ApiKeyWriter
+    credentials: CredentialStore
+    sessions: SessionStore
+    principals: PrincipalStore
     oidc_resolver: OidcResolver | None
     oidc_client: OidcClient | None
     database_pool: asyncpg.Pool | None
@@ -98,15 +131,78 @@ async def api_settings(runtime: Runtime) -> ApiSettings:
     return runtime.settings
 
 
+async def api_api_keys(runtime: Runtime) -> ApiKeyWriter:
+    """Return the API-key store the service was wired with.
+
+    Args:
+        runtime: The published wiring, resolved by ``api_runtime``.
+
+    Returns:
+        The one API-key store every request in this process shares.
+    """
+    return runtime.api_keys
+
+
+async def api_credentials(runtime: Runtime) -> CredentialStore:
+    """Return the credential store the service was wired with.
+
+    Args:
+        runtime: The published wiring, resolved by ``api_runtime``.
+
+    Returns:
+        The one password-credential store every request in this process
+        shares.
+    """
+    return runtime.credentials
+
+
+async def api_sessions(runtime: Runtime) -> SessionStore:
+    """Return the session store the service was wired with.
+
+    Args:
+        runtime: The published wiring, resolved by ``api_runtime``.
+
+    Returns:
+        The one browser-session store every request in this process shares.
+    """
+    return runtime.sessions
+
+
+async def api_principals(runtime: Runtime) -> PrincipalStore:
+    """Return the principal store the service was wired with.
+
+    Args:
+        runtime: The published wiring, resolved by ``api_runtime``.
+
+    Returns:
+        The one store of user and service-account identities every request
+        in this process shares.
+    """
+    return runtime.principals
+
+
 Repository = Annotated[HierarchyRepository, Depends(api_repository)]
 Settings = Annotated[ApiSettings, Depends(api_settings)]
+ApiKeys = Annotated[ApiKeyWriter, Depends(api_api_keys)]
+Credentials = Annotated[CredentialStore, Depends(api_credentials)]
+Sessions = Annotated[SessionStore, Depends(api_sessions)]
+Principals = Annotated[PrincipalStore, Depends(api_principals)]
 
 __all__ = [
+    "ApiKeys",
     "ApiRuntime",
+    "ApiStores",
+    "Credentials",
+    "Principals",
     "Repository",
     "Runtime",
+    "Sessions",
     "Settings",
+    "api_api_keys",
+    "api_credentials",
+    "api_principals",
     "api_repository",
     "api_runtime",
+    "api_sessions",
     "api_settings",
 ]

@@ -32,18 +32,17 @@ from huron.service.api.routes.v1.schema.users import (
     SetPassword,
     UserView,
 )
-from huron.service.api.runtime import Repository
+from huron.service.api.runtime import ApiKeys, Credentials, Principals, Sessions
 
 if TYPE_CHECKING:
-    from huron.pkg.auth import PrincipalRecord
-    from huron.service.api.repository import HierarchyRepository
+    from huron.pkg.auth import PrincipalRecord, PrincipalStore
 
 _manage_users = require_system("user.manage")
 _Actor = Annotated[Principal, Depends(_manage_users)]
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(_manage_users)])
 
 
-async def _existing_user(repository: HierarchyRepository, principal_id: UUID) -> PrincipalRecord:
+async def _existing_user(principals: PrincipalStore, principal_id: UUID) -> PrincipalRecord:
     """Return the principal, provided it exists and is a user.
 
     The id came from the caller, so it is re-validated here before any
@@ -51,7 +50,7 @@ async def _existing_user(repository: HierarchyRepository, principal_id: UUID) ->
     refusal rather than the database trigger's generic "does not exist".
 
     Args:
-        repository: The wired hierarchy repository.
+        principals: The wired principal store.
         principal_id: The id the route was addressed with.
 
     Returns:
@@ -62,7 +61,7 @@ async def _existing_user(repository: HierarchyRepository, principal_id: UUID) ->
         PrincipalKindMismatch: If the principal is a service account rather
             than a user.
     """
-    principal = await repository.principals.get_by_id(principal_id)
+    principal = await principals.get_by_id(principal_id)
     if principal is None:
         raise ResourceNotFound(f"principal does not exist: {principal_id}")
     if principal.kind != "user":
@@ -71,7 +70,9 @@ async def _existing_user(repository: HierarchyRepository, principal_id: UUID) ->
 
 
 @router.post("", status_code=201, responses={409: problem_response("username is already taken")})
-async def create_user(body: CreateUser, repository: Repository, actor: _Actor) -> UserView:
+async def create_user(
+    body: CreateUser, principals: Principals, credentials: Credentials, actor: _Actor
+) -> UserView:
     """Provision a password user.
 
     Requires ``user.manage`` at SYSTEM scope. The username becomes the
@@ -83,7 +84,8 @@ async def create_user(body: CreateUser, repository: Repository, actor: _Actor) -
     \f
     Args:
         body: The username, display name and initial password.
-        repository: The wired hierarchy repository.
+        principals: The wired principal store.
+        credentials: The wired credential store.
         actor: The administrator provisioning the user, recorded as the
             credential's author.
 
@@ -95,7 +97,7 @@ async def create_user(body: CreateUser, repository: Repository, actor: _Actor) -
             subject.
     """
     try:
-        principal = await repository.principals.create_user(
+        principal = await principals.create_user(
             subject=body.username, display_name=body.display_name
         )
     except PrincipalSubjectExists as exc:
@@ -103,7 +105,7 @@ async def create_user(body: CreateUser, repository: Repository, actor: _Actor) -
     credential = await asyncify(make_credential)(
         principal.id, body.password, updated_by=actor.subject
     )
-    await repository.credentials.upsert(credential)
+    await credentials.upsert(credential)
     return UserView.model_validate(principal)
 
 
@@ -115,7 +117,13 @@ async def create_user(body: CreateUser, repository: Repository, actor: _Actor) -
     },
 )
 async def set_password(
-    principal_id: UUID, body: SetPassword, repository: Repository, actor: _Actor
+    principal_id: UUID,
+    body: SetPassword,
+    principals: Principals,
+    credentials: Credentials,
+    sessions: Sessions,
+    api_keys: ApiKeys,
+    actor: _Actor,
 ) -> PasswordReset:
     """Replace a user's password.
 
@@ -128,7 +136,10 @@ async def set_password(
     Args:
         principal_id: The user whose password to replace.
         body: The new password.
-        repository: The wired hierarchy repository.
+        principals: The wired principal store.
+        credentials: The wired credential store.
+        sessions: The wired session store.
+        api_keys: The wired API-key store.
         actor: The administrator resetting the password, recorded as the
             credential's author.
 
@@ -136,14 +147,14 @@ async def set_password(
         The acknowledgement that the password was replaced and the user's
         sessions and API keys revoked.
     """
-    principal = await _existing_user(repository, principal_id)
+    principal = await _existing_user(principals, principal_id)
     credential = await asyncify(make_credential)(
         principal_id, body.password, updated_by=actor.subject
     )
-    await repository.credentials.upsert(credential)
+    await credentials.upsert(credential)
     reset_at = datetime.now(UTC)
-    await repository.sessions.revoke_all_for(principal.subject, reset_at)
-    await repository.api_keys.revoke_all_for(principal.subject, reset_at)
+    await sessions.revoke_all_for(principal.subject, reset_at)
+    await api_keys.revoke_all_for(principal.subject, reset_at)
     return PasswordReset(status="password-reset")
 
 
@@ -154,7 +165,9 @@ async def set_password(
         409: problem_response("principal is not a user"),
     },
 )
-async def disable_user(principal_id: UUID, repository: Repository) -> UserView:
+async def disable_user(
+    principal_id: UUID, principals: Principals, sessions: Sessions, api_keys: ApiKeys
+) -> UserView:
     """Disable a user, revoke every session they hold, and revoke every API key they hold.
 
     Requires ``user.manage`` at SYSTEM scope. A disabled user can no longer
@@ -164,7 +177,9 @@ async def disable_user(principal_id: UUID, repository: Repository) -> UserView:
     \f
     Args:
         principal_id: The user to disable.
-        repository: The wired hierarchy repository.
+        principals: The wired principal store.
+        sessions: The wired session store.
+        api_keys: The wired API-key store.
 
     Returns:
         The user as the API renders it, with ``disabled_at`` set.
@@ -173,11 +188,11 @@ async def disable_user(principal_id: UUID, repository: Repository) -> UserView:
         ResourceNotFound: If no principal has this id by the time the
             disable is applied.
     """
-    await _existing_user(repository, principal_id)
+    await _existing_user(principals, principal_id)
     disabled_at = datetime.now(UTC)
-    updated = await repository.principals.disable(principal_id, disabled_at=disabled_at)
+    updated = await principals.disable(principal_id, disabled_at=disabled_at)
     if updated is None:
         raise ResourceNotFound(f"principal does not exist: {principal_id}")
-    await repository.sessions.revoke_all_for(updated.subject, disabled_at)
-    await repository.api_keys.revoke_all_for(updated.subject, disabled_at)
+    await sessions.revoke_all_for(updated.subject, disabled_at)
+    await api_keys.revoke_all_for(updated.subject, disabled_at)
     return UserView.model_validate(updated)

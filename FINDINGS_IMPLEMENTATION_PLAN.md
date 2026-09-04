@@ -127,8 +127,8 @@ recorded; every other task proceeds.
 | **M1** Disabled principals stay disabled | A1, A2, A13, B12, A5 | HTTP (OIDC callback, API keys, disable routes) | 4 |
 | **M2** The composition root fails clean | A3, A4, B16, A6 | startup, `/readyz`, password login | 4 |
 | **M3** Client mistakes are 4xx, never 500 | B7, B13, A12, A10, A11, C8, C10, C11 | HTTP + latent store paths | 4 |
-| **M4** Route semantics match the design | B8, B10, B11, A7, A9, B14, B9 | HTTP | 6 |
-| **M5** Repository invariants | C1, C2, C3, C4, C6 | HTTP (create/patch) + seams | 3 |
+| **M4** Route semantics match the design | B8, B10, B11, A7, A9, B14, B9 | HTTP | 6 — M4.2 superseded by P1 |
+| **M5** Repository invariants | C1, C2, C3, C4, C6 | HTTP (create/patch) + seams | 3 — superseded by P1 |
 | **M6** RBAC engine semantics | B1, B2, B4 | engine (latent for B1) | 2 |
 | **M7** API-key restrictions are enforced | A8 | HTTP, every key-authenticated request | 1 |
 | **M8** Rawstore, tooling and test hygiene | C12, C15, C16, C17, A14, B17, C18, C19, A15 | store/script/test | 4 |
@@ -272,7 +272,7 @@ uv run pytest -m contract -q tests/contract/test_auth_store.py
 **Acceptance criteria.** No `UniqueViolationError` can escape `upsert_oidc_user`; both stores raise
 the same class for the same input; gate clean.
 
-**Status: pending**
+**Status: done**
 
 ## M2 — The composition root fails clean
 
@@ -300,7 +300,7 @@ uv run pytest -q tests/unit/test_api_app.py
 
 **Acceptance criteria.** The new test fails on the untouched tree and passes after; gate clean.
 
-**Status: pending**
+**Status: done**
 
 ### Task M2.2 — `OidcClient.discover` refuses an incomplete discovery document
 
@@ -319,7 +319,7 @@ mismatch, each `AuthError` with the field named.
 
 **Acceptance criteria.** `grep -n "KeyError" src/huron/pkg/auth/oidc.py` is empty; gate clean.
 
-**Status: pending**
+**Status: done**
 
 ### Task M2.3 — `/readyz` bounds the raw-store probe
 
@@ -340,7 +340,7 @@ timeout makes `/readyz` answer `503 DEPENDENCY_UNAVAILABLE` within the bound (mi
 
 **Acceptance criteria.** Both probes sit under `asyncio.timeout`; the new test passes; gate clean.
 
-**Status: pending**
+**Status: done**
 
 ### Task M2.4 — Password login rehashes outdated credentials
 
@@ -362,7 +362,7 @@ byte-identical; a store failure during the rewrite still answers `200`.
 **Acceptance criteria.** `grep -n "needs_rehash" src/huron/service/api/routes/auth/endpoints/login.py`
 finds the call; gate clean.
 
-**Status: pending**
+**Status: done**
 
 ## M3 — Client mistakes are 4xx, never 500
 
@@ -381,7 +381,7 @@ directly. Delete the three `UUID(...)` calls by symbol.
 **Verify.** `grep -n "UUID(body.policy_id)" src/huron/service/api/routes/v1/endpoints/policies.py`
 is empty; full gate.
 
-**Status: pending**
+**Status: done**
 
 ### Task M3.2 — `If-Match` is parsed, not stripped — **GATED on D-3**
 
@@ -400,7 +400,7 @@ not `"N"` or `W/"N"` is `REQUEST_INVALID`".
 
 **Verify.** Full gate.
 
-**Status: pending**
+**Status: done**
 
 ### Task M3.3 — Store exceptions are translated, and translated correctly
 
@@ -510,7 +510,9 @@ dataset + `silver` → `404`.
 **Verify.** `grep -n "Forbidden" src/huron/service/api/routes/v1/endpoints/service_accounts.py` is
 empty; full gate.
 
-**Status: pending**
+Superseded 2026-09-03 — absorbed by `P1_IMPLEMENTATION_PLAN.md` (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
+
+**Status: superseded**
 
 ### Task M4.3 — One password-length constant
 
@@ -596,7 +598,9 @@ field, each `IdempotencyKeyReused`; the route-level twins in `test_api_catalog_h
 
 **Verify.** Full gate.
 
-**Status: pending**
+Superseded 2026-09-03 — absorbed by `P1_IMPLEMENTATION_PLAN.md` (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
+
+**Status: superseded**
 
 ### Task M5.2 — A patch is durable before it is visible, and a no-op patch changes nothing — **the no-op half GATED on D-7**
 
@@ -618,7 +622,9 @@ record, the same generation file count, and the same `If-Match` still succeeds a
 
 **Verify.** Full gate.
 
-**Status: pending**
+Superseded 2026-09-03 — absorbed by `P1_IMPLEMENTATION_PLAN.md` (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
+
+**Status: superseded**
 
 ### Task M5.3 — Repository reads check existence; revision seeds are refused, not replaced — **the seed half GATED on D-8**
 
@@ -637,7 +643,9 @@ to expect `ResourceNotFound`.
 
 **Verify.** Full gate.
 
-**Status: pending**
+Superseded 2026-09-03 — absorbed by `P1_IMPLEMENTATION_PLAN.md` (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
+
+**Status: superseded**
 
 ## M6 — RBAC engine semantics
 

@@ -1,40 +1,33 @@
 """Hierarchy application service used by the HTTP composition root.
 
-The production structural adapter is PostgreSQL; this small repository keeps
-the use-case sequencing independently testable. Filesystem generation/release
-documents are always written before the result is made visible through this
-repository.
-
-The module holds :class:`HierarchyRepository` - the service tier's facade over
-the organization/project/dataset/release/revision hierarchy, which it keeps in
-process memory, and over the injected RBAC, API-key, credential, session and
-principal stores - together with the private helpers behind idempotency-key
-replay: request fingerprinting and the replay/remember pair every creation
-method runs under the repository lock.
+:class:`HierarchyRepository` is the service tier's facade over the
+organization/project/dataset/release/revision hierarchy - persisted through
+an injected :class:`~huron.service.api.stores.HierarchyStore` - and over the
+injected RBAC store. Every write is one store transaction: the row lands
+first, then the durable generation (or release-tag) document, both before
+the transaction's commit makes the change visible to any reader. A slug is
+immutable once created, because it is baked into the storage path; no patch
+accepts a different one. The store itself validates nothing - every slug,
+tag and classification check happens here, before the store is ever asked to
+do anything - and writes no file; the document write is this repository's
+job, run off the event loop through ``asyncify`` because it may block on the
+raw store's filesystem.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
-from threading import RLock
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from huron.pkg.auth import (
-    CredentialStore,
-    MemoryApiKeyStore,
-    MemoryCredentialStore,
-    MemoryPrincipalStore,
-    MemorySessionStore,
-    PrincipalStore,
-    SessionStore,
-)
+from asyncer import asyncify
+
 from huron.pkg.catalog.errors import (
     ClassificationUnknown,
-    IdempotencyKeyReused,
     PreconditionFailed,
-    ResourceNotFound,
     SlugImmutable,
     TagExists,
 )
@@ -52,9 +45,8 @@ from huron.pkg.catalog.paths import (
     validate_tag,
 )
 from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import Binding, ScopeType
+from huron.pkg.rbac import Binding, ProjectVisibility, ScopeType, Visibility
 
-from .errors import SlugExists
 from .records import (
     Dataset,
     Organization,
@@ -62,12 +54,16 @@ from .records import (
     PolicyAttachment,
     Project,
     Release,
-    RevisionSeed,
     RoleBindingRecord,
     ServiceAccount,
     jsonable,
 )
-from .stores import ApiKeyWriter, InMemoryRbacStore, RbacStore
+from .stores import RbacStore, Replay
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from .stores import HierarchyStore, HierarchyWriter, IdempotencyClaim, Window
 
 
 class HierarchyRepository:
@@ -75,105 +71,60 @@ class HierarchyRepository:
 
     One instance is wired per application, and every route reaches the
     hierarchy - organizations, projects, datasets, revisions and releases -
-    through it. The hierarchy itself is held in process memory and does not
-    survive a restart; role bindings, service accounts, policies, API keys,
-    credentials, sessions and principals live in the injected stores, and
-    the raw store holds the durable generation and release-tag documents.
+    through it. The hierarchy and its idempotency claims live in the
+    injected ``HierarchyStore``; role bindings, service accounts and
+    policies live in the injected RBAC store; the raw store holds the
+    durable generation and release-tag documents.
 
     Invariants every method keeps:
 
-    - A created record becomes visible only after its durable document is on
-      disk: the generation file (or release-tag file) is written first, then
-      the in-memory map is updated.
-    - A slug is immutable once created, because it is baked into the storage
-      path; no role can change it, and the patch methods refuse a different
-      slug before the version precondition is even compared.
-    - Every mutation, and every idempotency-key lookup, runs under one
-      re-entrant lock, so a replayed request never observes a half-applied
-      one.
-    - Creation is idempotent per ``idempotency_key``: replaying a key with the
-      same request returns the original record without writing again, and
-      reusing it for a different request is refused. Keys are global to the
-      repository, not per resource kind.
+    - A write is one store transaction: the row is inserted or updated
+      first, then its durable document is written, both before the
+      transaction commits and the change becomes visible to any reader.
+      Nothing ever touches disk before the row insert or update succeeded.
+    - A slug is immutable once created, because it is baked into the
+      storage path; no role can change it, and the patch methods refuse a
+      different slug before the version precondition is even compared.
+    - Every read, write and RBAC existence check is resolved through the
+      caller's ``Visibility``: an id the caller cannot discover is
+      ``ResourceNotFound``, indistinguishable from one that does not exist.
+    - Creation is idempotent per ``IdempotencyClaim``: replaying an
+      identical claim returns the original record without writing again,
+      and reusing a claim's key for a different request is refused.
 
     Attributes:
         raw_store: The POSIX raw store holding the durable documents.
-        organizations: Every organization, by id.
-        projects: Every project, by id.
-        datasets: Every dataset, by id.
-        revisions: The registered revision seeds, by ``(dataset_id, number)``.
-        releases: Every release, by ``(dataset_id, tag)``.
-        api_keys: The API-key store the routes and the credential resolver
-            share.
-        credentials: The password-credential store.
-        sessions: The server-side browser-session store.
-        principals: The store of user and service-account identities.
     """
 
     def __init__(
         self,
         raw_store: PosixRawStore,
+        hierarchy: HierarchyStore,
         *,
         classification_vocabulary: tuple[str, ...],
-        rbac_store: RbacStore | None = None,
-        api_key_store: ApiKeyWriter | None = None,
-        credential_store: CredentialStore | None = None,
-        session_store: SessionStore | None = None,
-        principal_store: PrincipalStore | None = None,
+        rbac_store: RbacStore,
     ):
-        """Wire the repository over a raw store and the tier's storage ports.
+        """Wire the repository over its raw store, hierarchy store and RBAC storage port.
 
         Construction initializes the raw store's directory layout, so the
         data root must be writable and its staging and ``organization``
-        directories must sit on one filesystem. Each repository gets its own
-        fresh in-memory store for every port that is not injected: a shared
-        default instance would leak role bindings and API keys across every
-        test and every repository built without one, so the defaults are
-        created per instance, never at import time.
+        directories must sit on one filesystem.
 
         Args:
             raw_store: The POSIX store that holds every durable generation
                 and release-tag document; it is initialized here.
+            hierarchy: Durable storage for the organization/project/dataset/
+                release hierarchy and its idempotency claims.
             classification_vocabulary: The data-classification codes a
                 project may declare; ``create_project`` refuses any other.
             rbac_store: Storage for role bindings, service accounts and
-                policies; a fresh ``InMemoryRbacStore`` when omitted.
-            api_key_store: Storage for API keys; a fresh ``MemoryApiKeyStore``
-                when omitted.
-            credential_store: Storage for password credentials; a fresh
-                ``MemoryCredentialStore`` when omitted.
-            session_store: Storage for browser sessions; a fresh
-                ``MemorySessionStore`` when omitted.
-            principal_store: Storage for principals; a fresh
-                ``MemoryPrincipalStore`` when omitted.
+                policies.
         """
         self.raw_store = raw_store
         self.raw_store.initialize()
+        self._hierarchy = hierarchy
         self._classification_vocabulary = frozenset(classification_vocabulary)
-        self.organizations: dict[UUID, Organization] = {}
-        self.projects: dict[UUID, Project] = {}
-        self.datasets: dict[UUID, Dataset] = {}
-        self.revisions: dict[tuple[UUID, int], RevisionSeed] = {}
-        self.releases: dict[tuple[UUID, str], Release] = {}
-        # Each repository gets its own fresh in-memory store when one isn't
-        # injected - a shared default instance would leak role bindings and
-        # API keys across every test and every HierarchyRepository built
-        # without one.
-        self._rbac_store: RbacStore = rbac_store if rbac_store is not None else InMemoryRbacStore()
-        self.api_keys: ApiKeyWriter = (
-            api_key_store if api_key_store is not None else MemoryApiKeyStore()
-        )
-        self.credentials: CredentialStore = (
-            credential_store if credential_store is not None else MemoryCredentialStore()
-        )
-        self.sessions: SessionStore = (
-            session_store if session_store is not None else MemorySessionStore()
-        )
-        self.principals: PrincipalStore = (
-            principal_store if principal_store is not None else MemoryPrincipalStore()
-        )
-        self._idempotency: dict[str, tuple[str, object]] = {}
-        self._lock = RLock()
+        self._rbac_store = rbac_store
 
     @property
     def data_root(self) -> PurePosixPath:
@@ -187,13 +138,33 @@ class HierarchyRepository:
         """
         return PurePosixPath(self.raw_store.root)
 
-    def create_organization(
+    async def _claimed_result[RecordT](
         self,
-        *,
-        slug: str,
-        title: str,
-        description: str,
-        idempotency_key: str,
+        writer: HierarchyWriter,
+        claim: IdempotencyClaim,
+        read: Callable[[UUID], Awaitable[RecordT]],
+    ) -> RecordT | None:
+        """Stake a write's idempotency claim, returning what a prior identical claim produced.
+
+        Args:
+            writer: The open transaction's writer.
+            claim: The claim this write is staking.
+            read: Given the id ``claim`` was originally remembered under,
+                returns the resource it named. A release ignores the id,
+                since its own read is keyed by dataset and tag instead.
+
+        Returns:
+            The resource an earlier, identical request already created, or
+            ``None`` when no live claim exists and this transaction is the
+            one to perform the write.
+        """
+        replay = await writer.claim(claim)
+        if replay is None:
+            return None
+        return await read(replay.resource_id)
+
+    async def create_organization(
+        self, *, slug: str, title: str, description: str, claim: IdempotencyClaim
     ) -> Organization:
         """Create an organization and write its first generation document.
 
@@ -201,14 +172,11 @@ class HierarchyRepository:
         reserved root slug (``validate_org_slug`` raises ``PathRuleViolation``
         otherwise); it is immutable afterwards because it names the
         organization's storage directory. Creation is idempotent per
-        ``idempotency_key``: the request is fingerprinted over the slug,
-        title and description, replaying the key with the same fingerprint
-        returns the organization created the first time without touching
-        storage, and replaying it with a different fingerprint is refused
-        with ``IdempotencyKeyReused``. The key is remembered only once the
-        organization exists, so a refused attempt may be retried under the
-        same key. Generation ``1`` is written to the raw store before the
-        record becomes visible.
+        ``claim``: staking an identical claim returns the organization
+        created the first time without touching storage, and staking one
+        whose key was used for a different request is refused with
+        ``IdempotencyKeyReused``. Generation ``1`` is written to the raw
+        store after the row is inserted and before the transaction commits.
 
         Args:
             slug: The URL and path segment identifying the organization; 2 to
@@ -217,58 +185,126 @@ class HierarchyRepository:
                 and not one of the reserved root slugs.
             title: The human-readable name.
             description: Free-text description; may be empty.
-            idempotency_key: The caller's ``Idempotency-Key``, scoping replay.
+            claim: The caller's idempotency claim for this request.
 
         Returns:
             The stored organization, at generation and version ``1``.
-
-        Raises:
-            SlugExists: If another organization already uses ``slug``.
         """
         validate_org_slug(slug)
-        fingerprint = _fingerprint("organization", slug, title, description)
-        with self._lock:
-            replay = self._replay(idempotency_key, fingerprint)
-            if replay is not None:
-                return _expect_type(replay, Organization)
-            if any(item.slug == slug for item in self.organizations.values()):
-                raise SlugExists(f"organization slug already exists: {slug}")
+        async with self._hierarchy.transaction() as writer:
+            replayed = await self._claimed_result(
+                writer, claim, lambda resource_id: self.organization(resource_id, Visibility.ALL)
+            )
+            if replayed is not None:
+                return replayed
             item = Organization(uuid7(), slug, title, description, 1, 1, datetime.now(UTC))
-            self._write_generation(organization_dir(self.data_root, item), item)
-            self.organizations[item.id] = item
-            self._remember(idempotency_key, fingerprint, item)
+            await writer.insert_organization(item)
+            await asyncify(self._write_generation)(organization_dir(self.data_root, item), item)
+            await writer.remember(claim, Replay(kind="organization", resource_id=item.id))
             return item
 
-    def create_project(
+    async def patch_organization(
         self,
         organization_id: UUID,
+        visibility: Visibility,
+        *,
+        expected_version: int,
+        slug: str | None,
+        title: str | None,
+        description: str | None,
+    ) -> Organization:
+        """Apply a partial update to an organization under a version precondition.
+
+        The organization is read with ``visibility``, so an invisible or
+        absent id is ``ResourceNotFound`` before the version is even
+        compared. ``expected_version`` is the version the caller last saw -
+        the route derives it from the ``If-Match`` header - and the patch
+        applies only while it still matches. A ``slug`` that differs from
+        the current one is refused before the version is compared: the slug
+        is baked into the organization's storage path, so no role may
+        change it; passing the current slug, or ``None``, is accepted.
+        ``title`` and ``description`` replace the stored values when given
+        and are left alone when ``None``; a patch naming no change - both
+        left ``None`` or already equal to what is stored - is a no-op that
+        opens no transaction, writes no document and returns the record
+        unchanged. Otherwise ``generation`` and ``version`` each advance by
+        one, and the new generation document is written before the
+        transaction commits.
+
+        Args:
+            organization_id: The organization to update.
+            visibility: The caller's discovery rights.
+            expected_version: The version the caller believes is current.
+            slug: The current slug or ``None``; any other value is refused.
+            title: A replacement title, or ``None`` to keep the current one.
+            description: A replacement description, or ``None`` to keep it.
+
+        Returns:
+            The organization, unchanged if the patch named no change, or
+            with version and generation advanced.
+
+        Raises:
+            SlugImmutable: If ``slug`` names a different slug.
+            PreconditionFailed: If ``expected_version`` is not the current
+                version.
+        """
+        item = await self.organization(organization_id, visibility)
+        if slug is not None and slug != item.slug:
+            raise SlugImmutable("organization slugs cannot be changed")
+        if item.version != expected_version:
+            raise PreconditionFailed(
+                f"expected version {expected_version}, current version is {item.version}"
+            )
+        if (title is None or title == item.title) and (
+            description is None or description == item.description
+        ):
+            return item
+        successor = dataclasses.replace(
+            item,
+            title=item.title if title is None else title,
+            description=item.description if description is None else description,
+            generation=item.generation + 1,
+            version=item.version + 1,
+        )
+        async with self._hierarchy.transaction() as writer:
+            await writer.update_organization(successor, expected_version=item.version)
+            await asyncify(self._write_generation)(
+                organization_dir(self.data_root, successor), successor
+            )
+        return successor
+
+    async def create_project(
+        self,
+        organization_id: UUID,
+        visibility: Visibility,
         *,
         slug: str,
         title: str,
         description: str,
         data_classification: str,
-        idempotency_key: str,
+        claim: IdempotencyClaim,
     ) -> Project:
         """Create a project under an organization and write its first generation.
 
         ``data_classification`` must be one of the codes in the
-        classification vocabulary the repository was built with; that check
-        runs before the replay lookup, so an unknown classification is
-        refused even on a replay. The slug is validated by ``validate_slug``
-        (which raises ``PathRuleViolation``) and is immutable afterwards
-        because it names the project's storage directory; it must be unique
-        within the organization only, so two organizations may each have a
-        project with the same slug. The organization must exist
-        (``get_organization`` raises ``ResourceNotFound``). Creation is
-        idempotent per ``idempotency_key``: the fingerprint covers the
-        organization, slug, title and description - not the classification -
-        so replaying the key with the same fingerprint returns the original
-        project without writing, and replaying it with a different one is
-        refused with ``IdempotencyKeyReused``. Generation ``1`` is written to
-        the raw store before the record becomes visible.
+        classification vocabulary the repository was built with, checked
+        before the transaction opens. The slug is validated by
+        ``validate_slug`` (which raises ``PathRuleViolation``) and is
+        immutable afterwards because it names the project's storage
+        directory; it must be unique within the organization only, so two
+        organizations may each have a project with the same slug. The
+        organization is read with ``visibility``, so an invisible or absent
+        organization is ``ResourceNotFound``. Creation is idempotent per
+        ``claim``: staking an identical claim returns the original project
+        without writing, and staking one whose key was used for a different
+        request is refused with ``IdempotencyKeyReused``. Generation ``1``
+        is written to the raw store after the row is inserted and before
+        the transaction commits.
 
         Args:
             organization_id: The owning organization.
+            visibility: The caller's discovery rights, used to resolve
+                ``organization_id``.
             slug: The path segment identifying the project within its
                 organization; 2 to 62 characters of lowercase letters, digits
                 and hyphens, with no doubled hyphen.
@@ -277,7 +313,7 @@ class HierarchyRepository:
             data_classification: A code from the configured vocabulary; it
                 cannot be changed afterwards, since ``patch_project`` takes
                 none.
-            idempotency_key: The caller's ``Idempotency-Key``, scoping replay.
+            claim: The caller's idempotency claim for this request.
 
         Returns:
             The stored project, at generation and version ``1``.
@@ -285,23 +321,17 @@ class HierarchyRepository:
         Raises:
             ClassificationUnknown: If ``data_classification`` is not in the
                 vocabulary.
-            SlugExists: If the organization already has a project with
-                ``slug``.
         """
         validate_slug(slug, 62)
         if data_classification not in self._classification_vocabulary:
             raise ClassificationUnknown(f"unknown data classification: {data_classification}")
-        organization = self.get_organization(organization_id)
-        fingerprint = _fingerprint("project", str(organization_id), slug, title, description)
-        with self._lock:
-            replay = self._replay(idempotency_key, fingerprint)
-            if replay is not None:
-                return _expect_type(replay, Project)
-            if any(
-                item.organization_id == organization_id and item.slug == slug
-                for item in self.projects.values()
-            ):
-                raise SlugExists(f"project slug already exists: {slug}")
+        async with self._hierarchy.transaction() as writer:
+            organization = await self._hierarchy.organization(organization_id, visibility)
+            replayed = await self._claimed_result(
+                writer, claim, lambda resource_id: self.project(resource_id, Visibility.ALL)
+            )
+            if replayed is not None:
+                return replayed
             item = Project(
                 uuid7(),
                 organization_id,
@@ -313,17 +343,85 @@ class HierarchyRepository:
                 1,
                 datetime.now(UTC),
             )
-            self._write_generation(
-                project_dir(self.data_root, organization, item),
-                item,
+            await writer.insert_project(item)
+            await asyncify(self._write_generation)(
+                project_dir(self.data_root, organization, item), item
             )
-            self.projects[item.id] = item
-            self._remember(idempotency_key, fingerprint, item)
+            await writer.remember(claim, Replay(kind="project", resource_id=item.id))
             return item
 
-    def create_dataset(
+    async def patch_project(
         self,
         project_id: UUID,
+        visibility: Visibility,
+        *,
+        expected_version: int,
+        slug: str | None,
+        title: str | None,
+        description: str | None,
+    ) -> Project:
+        """Apply a partial update to a project under a version precondition.
+
+        The project is read with ``visibility``, so an invisible or absent
+        id is ``ResourceNotFound`` before the version is even compared. A
+        ``slug`` that differs from the current one is refused before the
+        version is compared: the slug is baked into the project's storage
+        path, so no role may change it; the data classification has no
+        parameter here and so cannot change. ``title`` and ``description``
+        replace the stored values when given and are left alone when
+        ``None``; a patch naming no change is a no-op that opens no
+        transaction, writes no document and returns the record unchanged.
+        Otherwise ``generation`` and ``version`` each advance by one.
+
+        Args:
+            project_id: The project to update.
+            visibility: The caller's discovery rights.
+            expected_version: The version the caller believes is current.
+            slug: The current slug or ``None``; any other value is refused.
+            title: A replacement title, or ``None`` to keep the current one.
+            description: A replacement description, or ``None`` to keep it.
+
+        Returns:
+            The project, unchanged if the patch named no change, or with
+            version and generation advanced.
+
+        Raises:
+            SlugImmutable: If ``slug`` names a different slug.
+            PreconditionFailed: If ``expected_version`` is not the current
+                version.
+        """
+        item = await self.project(project_id, visibility)
+        if slug is not None and slug != item.slug:
+            raise SlugImmutable("project slugs cannot be changed")
+        if item.version != expected_version:
+            raise PreconditionFailed(
+                f"expected version {expected_version}, current version is {item.version}"
+            )
+        if (title is None or title == item.title) and (
+            description is None or description == item.description
+        ):
+            return item
+        successor = dataclasses.replace(
+            item,
+            title=item.title if title is None else title,
+            description=item.description if description is None else description,
+            generation=item.generation + 1,
+            version=item.version + 1,
+        )
+        async with self._hierarchy.transaction() as writer:
+            await writer.update_project(successor, expected_version=item.version)
+            organization = await self._hierarchy.organization(
+                successor.organization_id, Visibility.ALL
+            )
+            await asyncify(self._write_generation)(
+                project_dir(self.data_root, organization, successor), successor
+            )
+        return successor
+
+    async def create_dataset(
+        self,
+        project_id: UUID,
+        visibility: Visibility,
         *,
         slug: str,
         title: str,
@@ -331,7 +429,7 @@ class HierarchyRepository:
         profile_name: str,
         profile_version: str,
         entry_layer: str = Layer.RAW.value,
-        idempotency_key: str,
+        claim: IdempotencyClaim,
     ) -> Dataset:
         """Create a dataset under a project and write its first generation.
 
@@ -342,19 +440,21 @@ class HierarchyRepository:
         the project. ``entry_layer`` is parsed by ``parse_entry_layer``,
         which raises ``LayerWorkflowError`` for an unknown layer and for
         gold: every gold version needs a derivation record, so nothing may
-        enter there directly. The project and its organization must exist
-        (``ResourceNotFound`` otherwise). Every dataset starts in the
-        ``ACTIVE`` lifecycle state.
-        Creation is idempotent per ``idempotency_key``: the fingerprint
-        covers the project, slug, title, profile name, profile version and
-        entry layer - not the description - so replaying the key with the
-        same fingerprint returns the original dataset without writing, and
-        replaying it with a different one is refused with
+        enter there directly. The project is read with ``visibility``, so
+        an invisible or absent project is ``ResourceNotFound``; its
+        organization is then read with unrestricted visibility purely to
+        build the storage path. Every dataset starts in the ``ACTIVE``
+        lifecycle state and inherits its project's data classification.
+        Creation is idempotent per ``claim``: staking an identical claim
+        returns the original dataset without writing, and staking one whose
+        key was used for a different request is refused with
         ``IdempotencyKeyReused``. Generation ``1`` is written to the raw
-        store before the record becomes visible.
+        store after the row is inserted and before the transaction commits.
 
         Args:
             project_id: The owning project.
+            visibility: The caller's discovery rights, used to resolve
+                ``project_id``.
             slug: The path segment identifying the dataset within its
                 project; 2 to 80 characters of lowercase letters, digits and
                 hyphens, with no doubled hyphen.
@@ -366,30 +466,23 @@ class HierarchyRepository:
             entry_layer: The layer at which the dataset's data first arrives:
                 ``raw`` (the default), ``bronze`` or ``silver``, never
                 ``gold``.
-            idempotency_key: The caller's ``Idempotency-Key``, scoping replay.
+            claim: The caller's idempotency claim for this request.
 
         Returns:
             The stored dataset, ``ACTIVE`` at generation and version ``1``.
-
-        Raises:
-            SlugExists: If the project already has a dataset with ``slug``.
         """
         validate_slug(slug, 80)
         entry = parse_entry_layer(entry_layer)
-        project = self.get_project(project_id)
-        organization = self.get_organization(project.organization_id)
-        fingerprint = _fingerprint(
-            "dataset", str(project_id), slug, title, profile_name, profile_version, entry.value
-        )
-        with self._lock:
-            replay = self._replay(idempotency_key, fingerprint)
-            if replay is not None:
-                return _expect_type(replay, Dataset)
-            if any(
-                item.project_id == project_id and item.slug == slug
-                for item in self.datasets.values()
-            ):
-                raise SlugExists(f"dataset slug already exists: {slug}")
+        async with self._hierarchy.transaction() as writer:
+            project = await self._hierarchy.project(project_id, visibility)
+            organization = await self._hierarchy.organization(
+                project.organization_id, Visibility.ALL
+            )
+            replayed = await self._claimed_result(
+                writer, claim, lambda resource_id: self.dataset(resource_id, Visibility.ALL)
+            )
+            if replayed is not None:
+                return replayed
             item = Dataset(
                 uuid7(),
                 project_id,
@@ -404,17 +497,17 @@ class HierarchyRepository:
                 1,
                 datetime.now(UTC),
             )
-            self._write_generation(
-                dataset_dir(self.data_root, organization, project, item),
-                item,
+            await writer.insert_dataset(item, data_classification=project.data_classification)
+            await asyncify(self._write_generation)(
+                dataset_dir(self.data_root, organization, project, item), item
             )
-            self.datasets[item.id] = item
-            self._remember(idempotency_key, fingerprint, item)
+            await writer.remember(claim, Replay(kind="dataset", resource_id=item.id))
             return item
 
-    def patch_dataset(
+    async def patch_dataset(
         self,
         dataset_id: UUID,
+        visibility: Visibility,
         *,
         expected_version: int,
         slug: str | None,
@@ -423,64 +516,72 @@ class HierarchyRepository:
     ) -> Dataset:
         """Apply a partial update to a dataset under a version precondition.
 
-        ``expected_version`` is the version the caller last saw - the route
-        derives it from the ``If-Match`` header - and the patch is applied
-        only while it still matches, so two editors working from the same
-        view cannot silently overwrite each other. The dataset must exist
-        (``get_dataset`` raises ``ResourceNotFound``). A ``slug`` that
-        differs from the current one is refused before the version is even
-        compared: the slug is baked into the dataset's storage path, so no
-        role may change it; passing the current slug, or ``None``, is
-        accepted. ``title`` and ``description`` replace the stored values
-        when given and are left alone when ``None``. Every accepted patch,
-        including one that names no field, advances both ``generation`` and
-        ``version`` by one; the in-memory record is updated in place under
-        the repository lock and the new generation document is written
-        before it is returned.
+        The dataset is read with ``visibility``, so an invisible or absent
+        id is ``ResourceNotFound`` before the version is even compared. A
+        ``slug`` that differs from the current one is refused before the
+        version is compared: the slug is baked into the dataset's storage
+        path, so no role may change it. ``title`` and ``description``
+        replace the stored values when given and are left alone when
+        ``None``; a patch naming no change is a no-op that opens no
+        transaction, writes no document and returns the record unchanged.
+        Otherwise ``generation`` and ``version`` each advance by one.
 
         Args:
             dataset_id: The dataset to update.
+            visibility: The caller's discovery rights.
             expected_version: The version the caller believes is current.
             slug: The current slug or ``None``; any other value is refused.
             title: A replacement title, or ``None`` to keep the current one.
             description: A replacement description, or ``None`` to keep it.
 
         Returns:
-            The same dataset record, with version and generation advanced.
+            The dataset, unchanged if the patch named no change, or with
+            version and generation advanced.
 
         Raises:
             SlugImmutable: If ``slug`` names a different slug.
             PreconditionFailed: If ``expected_version`` is not the current
                 version.
         """
-        with self._lock:
-            item = self.get_dataset(dataset_id)
-            if slug is not None and slug != item.slug:
-                raise SlugImmutable("dataset slugs cannot be changed")
-            if item.version != expected_version:
-                raise PreconditionFailed(
-                    f"expected version {expected_version}, current version is {item.version}"
-                )
-            if title is not None:
-                item.title = title
-            if description is not None:
-                item.description = description
-            item.generation += 1
-            item.version += 1
-            project = self.get_project(item.project_id)
-            organization = self.get_organization(project.organization_id)
-            self._write_generation(dataset_dir(self.data_root, organization, project, item), item)
+        item = await self.dataset(dataset_id, visibility)
+        if slug is not None and slug != item.slug:
+            raise SlugImmutable("dataset slugs cannot be changed")
+        if item.version != expected_version:
+            raise PreconditionFailed(
+                f"expected version {expected_version}, current version is {item.version}"
+            )
+        if (title is None or title == item.title) and (
+            description is None or description == item.description
+        ):
             return item
+        successor = dataclasses.replace(
+            item,
+            title=item.title if title is None else title,
+            description=item.description if description is None else description,
+            generation=item.generation + 1,
+            version=item.version + 1,
+        )
+        async with self._hierarchy.transaction() as writer:
+            await writer.update_dataset(successor, expected_version=item.version)
+            project = await self._hierarchy.project(successor.project_id, Visibility.ALL)
+            organization = await self._hierarchy.organization(
+                project.organization_id, Visibility.ALL
+            )
+            await asyncify(self._write_generation)(
+                dataset_dir(self.data_root, organization, project, successor), successor
+            )
+        return successor
 
-    def create_release(
+    async def create_release(
         self,
         dataset_id: UUID,
+        visibility: Visibility,
         *,
         tag: str,
         revision_number: int,
         title: str | None,
         created_by: str,
-        idempotency_key: str,
+        claim: IdempotencyClaim,
     ) -> Release:
         """Pin a release tag to a registered revision of a dataset.
 
@@ -488,54 +589,50 @@ class HierarchyRepository:
         ``PathRuleViolation`` otherwise) and is unique within the dataset for
         all time: the release is stored as a write-once file under the
         dataset's ``releases/`` directory, so a tag is refused both when the
-        in-memory map already holds it and when the file already exists on
-        disk. The revision is resolved from the seeds ``register_revision``
-        published, and the release records that revision's id and number.
-        The dataset, its project and its organization must exist
-        (``ResourceNotFound`` otherwise). Creation is idempotent per
-        ``idempotency_key``: the fingerprint covers the dataset, tag,
-        revision number and title (a missing title fingerprints as empty),
-        replaying the key with the same fingerprint returns the original
-        release without writing, and replaying it with a different one is
-        refused with ``IdempotencyKeyReused``. The tag file is written before
-        the record becomes visible.
+        store already holds it and when the file already exists on disk.
+        The dataset is read with ``visibility``, so an invisible or absent
+        dataset is ``ResourceNotFound``; its project and organization are
+        then read with unrestricted visibility purely to build the storage
+        path, and the revision is resolved by ``revision_number`` - an
+        unregistered number is ``ResourceNotFound``. Creation is idempotent
+        per ``claim``: staking an identical claim returns the original
+        release without writing, and staking one whose key was used for a
+        different request is refused with ``IdempotencyKeyReused``. The tag
+        file is written after the row is inserted and before the
+        transaction commits.
 
         Args:
             dataset_id: The dataset the tag belongs to.
+            visibility: The caller's discovery rights, used to resolve
+                ``dataset_id``.
             tag: The release tag; 2 to 63 characters of lowercase letters,
                 digits, dots, underscores and hyphens.
             revision_number: The number of a revision already registered for
                 the dataset.
             title: An optional human-readable name for the release.
             created_by: The subject of the principal creating the release.
-            idempotency_key: The caller's ``Idempotency-Key``, scoping replay.
+            claim: The caller's idempotency claim for this request.
 
         Returns:
             The stored release, pinned to the revision's id and number.
 
         Raises:
             TagExists: If the dataset already has a release with ``tag``,
-                in memory or on disk.
-            ResourceNotFound: If no revision ``revision_number`` is
-                registered for the dataset (the same error propagates when
-                the dataset itself does not exist).
+                in the store or on disk.
         """
         validate_tag(tag)
-        dataset = self.get_dataset(dataset_id)
-        project = self.get_project(dataset.project_id)
-        organization = self.get_organization(project.organization_id)
-        fingerprint = _fingerprint(
-            "release", str(dataset_id), tag, str(revision_number), title or ""
-        )
-        with self._lock:
-            replay = self._replay(idempotency_key, fingerprint)
-            if replay is not None:
-                return _expect_type(replay, Release)
-            if (dataset_id, tag) in self.releases:
-                raise TagExists(f"release tag already exists: {tag}")
-            revision = self.revisions.get((dataset_id, revision_number))
-            if revision is None:
-                raise ResourceNotFound(f"revision {revision_number} does not exist")
+        async with self._hierarchy.transaction() as writer:
+            dataset = await self._hierarchy.dataset(dataset_id, visibility)
+            project = await self._hierarchy.project(dataset.project_id, Visibility.ALL)
+            organization = await self._hierarchy.organization(
+                project.organization_id, Visibility.ALL
+            )
+            revision = await self._hierarchy.revision_ref(dataset_id, revision_number)
+            replayed = await self._claimed_result(
+                writer, claim, lambda _: self.release(dataset_id, tag, Visibility.ALL)
+            )
+            if replayed is not None:
+                return replayed
             item = Release(
                 uuid7(),
                 dataset_id,
@@ -546,316 +643,203 @@ class HierarchyRepository:
                 created_by,
                 datetime.now(UTC),
             )
+            await writer.insert_release(item)
             payload = canonical_bytes(jsonable(item))
             tag_path = release_tag_file(self.data_root, organization, project, dataset, tag)
             try:
-                self.raw_store.write_tag_once(tag_path, payload)
+                await asyncify(self.raw_store.write_tag_once)(tag_path, payload)
             except FileExistsError as exc:
                 raise TagExists(f"release tag already exists: {tag}") from exc
-            self.releases[(dataset_id, tag)] = item
-            self._remember(idempotency_key, fingerprint, item)
+            await writer.remember(claim, Replay(kind="release", resource_id=item.id))
             return item
 
-    def resolve_release(self, dataset_id: UUID, tag: str) -> Release:
-        """Return the release a dataset publishes under a tag.
+    async def organization(self, organization_id: UUID, visibility: Visibility) -> Organization:
+        """Return one organization, if ``visibility`` admits it.
 
-        Lookup is by the exact ``(dataset_id, tag)`` pair, so a dataset that
-        does not exist is indistinguishable from a dataset without that tag.
+        Args:
+            organization_id: The organization's id.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The stored organization record. The store raises
+            ``ResourceNotFound`` when no organization has
+            ``organization_id``, or ``visibility`` does not admit it.
+        """
+        return await self._hierarchy.organization(organization_id, visibility)
+
+    async def project(self, project_id: UUID, visibility: Visibility) -> Project:
+        """Return one project, if ``visibility`` admits it.
+
+        Args:
+            project_id: The project's id.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The stored project record. The store raises
+            ``ResourceNotFound`` when no project has ``project_id``, or
+            ``visibility`` does not admit it.
+        """
+        return await self._hierarchy.project(project_id, visibility)
+
+    async def dataset(self, dataset_id: UUID, visibility: Visibility) -> Dataset:
+        """Return one dataset, if ``visibility`` admits it.
+
+        Args:
+            dataset_id: The dataset's id.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The stored dataset record. The store raises
+            ``ResourceNotFound`` when no dataset has ``dataset_id``, or
+            ``visibility`` does not admit it.
+        """
+        return await self._hierarchy.dataset(dataset_id, visibility)
+
+    async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
+        """Return the release a dataset publishes under a tag, if ``visibility`` admits the dataset.
 
         Args:
             dataset_id: The dataset the tag belongs to.
             tag: The release tag to resolve.
+            visibility: The caller's discovery rights.
 
         Returns:
-            The release created under that tag.
-
-        Raises:
-            ResourceNotFound: If the dataset has no release with ``tag``.
+            The release created under that tag. The store raises
+            ``ResourceNotFound`` when the dataset has no release with
+            ``tag``, or ``visibility`` does not admit the dataset.
         """
-        item = self.releases.get((dataset_id, tag))
-        if item is None:
-            raise ResourceNotFound(f"release tag does not exist: {tag}")
-        return item
+        return await self._hierarchy.release(dataset_id, tag, visibility)
 
-    def register_revision(self, revision: RevisionSeed) -> None:
-        """Make a committed revision known so a release tag can be pinned to it.
-
-        There is no HTTP route for this: an ingest pipeline that has
-        committed a revision publishes its seed through the repository it
-        shares with the application, and ``create_release`` resolves
-        ``revision_number`` against these seeds. Seeds are keyed by
-        ``(dataset_id, number)``; registering the same pair again replaces
-        the earlier seed. The dataset's existence is not checked here.
+    async def organizations(
+        self, visibility: Visibility, *, limit: int, after: tuple[str, UUID] | None
+    ) -> Window[Organization]:
+        """Return a window of organizations ordered by ``(slug, id)``.
 
         Args:
-            revision: The committed revision's id, dataset, number and
-                manifest digest.
+            visibility: The caller's discovery rights; only admitted
+                organizations are counted toward ``limit``.
+            limit: The maximum number of organizations to return.
+            after: The ``(slug, id)`` of the last organization already
+                seen, excluded from the window, or ``None`` to start from
+                the beginning.
+
+        Returns:
+            The next window of admitted organizations.
         """
-        with self._lock:
-            self.revisions[(revision.dataset_id, revision.number)] = revision
+        return await self._hierarchy.organizations(visibility, limit=limit, after=after)
 
-    def get_organization(self, item_id: UUID) -> Organization:
-        """Return one organization by id.
+    async def projects(
+        self,
+        organization_id: UUID,
+        visibility: Visibility,
+        *,
+        limit: int,
+        after: tuple[str, UUID] | None,
+    ) -> Window[Project]:
+        """Return a window of one organization's projects ordered by ``(slug, id)``.
 
-        The result is the live record the repository holds, not a copy;
-        callers read it and leave mutation to ``patch_organization``.
+        The organization is read with ``visibility`` first, so an invisible
+        or absent organization is ``ResourceNotFound`` rather than an empty
+        window.
 
         Args:
-            item_id: The organization's id.
+            organization_id: The owning organization.
+            visibility: The caller's discovery rights; only admitted
+                projects are counted toward ``limit``.
+            limit: The maximum number of projects to return.
+            after: The ``(slug, id)`` of the last project already seen,
+                excluded from the window, or ``None`` to start from the
+                beginning.
 
         Returns:
-            The stored organization record.
-
-        Raises:
-            ResourceNotFound: If no organization has ``item_id``.
+            The next window of admitted projects.
         """
-        try:
-            return self.organizations[item_id]
-        except KeyError as exc:
-            raise ResourceNotFound(f"organization does not exist: {item_id}") from exc
+        await self._hierarchy.organization(organization_id, visibility)
+        return await self._hierarchy.projects(organization_id, visibility, limit=limit, after=after)
 
-    def get_project(self, item_id: UUID) -> Project:
-        """Return one project by id.
+    async def datasets(
+        self,
+        project_id: UUID,
+        visibility: Visibility,
+        *,
+        limit: int,
+        after: tuple[str, UUID] | None,
+    ) -> Window[Dataset]:
+        """Return a window of one project's datasets ordered by ``(slug, id)``.
 
-        The result is the live record the repository holds, not a copy;
-        callers read it and leave mutation to ``patch_project``.
+        The project is read with ``visibility`` first, so an invisible or
+        absent project is ``ResourceNotFound`` rather than an empty window.
 
         Args:
-            item_id: The project's id.
+            project_id: The owning project.
+            visibility: The caller's discovery rights; only admitted
+                datasets are counted toward ``limit``.
+            limit: The maximum number of datasets to return.
+            after: The ``(slug, id)`` of the last dataset already seen,
+                excluded from the window, or ``None`` to start from the
+                beginning.
 
         Returns:
-            The stored project record.
-
-        Raises:
-            ResourceNotFound: If no project has ``item_id``.
+            The next window of admitted datasets.
         """
-        try:
-            return self.projects[item_id]
-        except KeyError as exc:
-            raise ResourceNotFound(f"project does not exist: {item_id}") from exc
+        await self._hierarchy.project(project_id, visibility)
+        return await self._hierarchy.datasets(project_id, visibility, limit=limit, after=after)
 
-    def get_dataset(self, item_id: UUID) -> Dataset:
-        """Return one dataset by id.
+    async def releases(
+        self, dataset_id: UUID, visibility: Visibility, *, limit: int, after: tuple[str] | None
+    ) -> Window[Release]:
+        """Return a window of one dataset's releases ordered by ``tag``.
 
-        The result is the live record the repository holds, not a copy;
-        callers read it and leave mutation to ``patch_dataset``.
-
-        Args:
-            item_id: The dataset's id.
-
-        Returns:
-            The stored dataset record.
-
-        Raises:
-            ResourceNotFound: If no dataset has ``item_id``.
-        """
-        try:
-            return self.datasets[item_id]
-        except KeyError as exc:
-            raise ResourceNotFound(f"dataset does not exist: {item_id}") from exc
-
-    def list_organizations(self) -> list[Organization]:
-        """Return every organization, ordered by ``(slug, id)``.
-
-        The order is the key the listing route pages by. The result is a
-        fresh list, so later creations do not appear in it, but its elements
-        are the live records the repository holds, not copies.
-
-        Returns:
-            All organizations, sorted by slug and then id.
-        """
-        return sorted(list(self.organizations.values()), key=lambda item: (item.slug, item.id))
-
-    def list_projects(self, organization_id: UUID) -> list[Project]:
-        """Return every project of one organization, ordered by ``(slug, id)``.
-
-        ``ResourceNotFound`` propagates from ``get_organization`` when the
-        organization does not exist, so a caller cannot read an empty list
-        as "no projects" when it means "no such organization".
-
-        Args:
-            organization_id: The organization whose projects to list.
-
-        Returns:
-            The organization's projects, sorted by slug and then id.
-        """
-        self.get_organization(organization_id)
-        return sorted(
-            (
-                item
-                for item in list(self.projects.values())
-                if item.organization_id == organization_id
-            ),
-            key=lambda item: (item.slug, item.id),
-        )
-
-    def list_datasets(self, project_id: UUID) -> list[Dataset]:
-        """Return every dataset of one project, ordered by ``(slug, id)``.
-
-        ``ResourceNotFound`` propagates from ``get_project`` when the project
-        does not exist, so an empty list always means "no datasets" and never
-        "no such project".
-
-        Args:
-            project_id: The project whose datasets to list.
-
-        Returns:
-            The project's datasets, sorted by slug and then id.
-        """
-        self.get_project(project_id)
-        return sorted(
-            (item for item in list(self.datasets.values()) if item.project_id == project_id),
-            key=lambda item: (item.slug, item.id),
-        )
-
-    def list_releases(self, dataset_id: UUID) -> list[Release]:
-        """Return every release of one dataset, ordered by tag.
-
-        Tags are unique within a dataset, so the tag alone is a total order
-        and the key the listing route pages by. ``ResourceNotFound``
-        propagates from ``get_dataset`` when the dataset does not exist, so
-        an empty list always means "no releases" and never "no such dataset".
+        The dataset is read with ``visibility`` first, so an invisible or
+        absent dataset is ``ResourceNotFound`` rather than an empty window.
 
         Args:
             dataset_id: The dataset whose releases to list.
+            visibility: The caller's discovery rights, checked against the
+                dataset itself.
+            limit: The maximum number of releases to return.
+            after: The tag of the last release already seen, excluded from
+                the window, or ``None`` to start from the beginning.
 
         Returns:
-            The dataset's releases, sorted by tag.
+            The next window of the dataset's releases.
         """
-        self.get_dataset(dataset_id)
-        return sorted(
-            (
-                item
-                for (item_dataset_id, _), item in list(self.releases.items())
-                if item_dataset_id == dataset_id
-            ),
-            key=lambda item: item.tag,
-        )
+        await self._hierarchy.dataset(dataset_id, visibility)
+        return await self._hierarchy.releases(dataset_id, visibility, limit=limit, after=after)
 
-    def patch_organization(
-        self,
-        organization_id: UUID,
-        *,
-        expected_version: int,
-        slug: str | None,
-        title: str | None,
-        description: str | None,
-    ) -> Organization:
-        """Apply a partial update to an organization under a version precondition.
+    async def project_visibilities(self) -> list[ProjectVisibility]:
+        """Return every project's identity, owning organization and classification.
 
-        ``expected_version`` is the version the caller last saw - the route
-        derives it from the ``If-Match`` header - and the patch is applied
-        only while it still matches, so two editors working from the same
-        view cannot silently overwrite each other. The organization must
-        exist (``get_organization`` raises ``ResourceNotFound``). A ``slug``
-        that differs from the current one is refused before the version is
-        even compared: the slug is baked into the organization's storage
-        path, so no role may change it; passing the current slug, or
-        ``None``, is accepted. ``title`` and ``description`` replace the
-        stored values when given and are left alone when ``None``. Every
-        accepted patch, including one that names no field, advances both
-        ``generation`` and ``version`` by one; the in-memory record is
-        updated in place under the repository lock and the new generation
-        document is written before it is returned.
+        This is the input the per-request visibility computation reduces
+        role bindings against; it applies no filtering of its own.
+
+        Returns:
+            Every project, in no particular order.
+        """
+        return await self._hierarchy.project_visibilities()
+
+    async def dataset_parents(self, dataset_ids: frozenset[UUID]) -> dict[UUID, UUID]:
+        """Return each requested dataset's owning project id.
+
+        This is the second input the per-request visibility computation
+        needs: which project's classification and bindings a dataset-scope
+        grant is evaluated against.
 
         Args:
-            organization_id: The organization to update.
-            expected_version: The version the caller believes is current.
-            slug: The current slug or ``None``; any other value is refused.
-            title: A replacement title, or ``None`` to keep the current one.
-            description: A replacement description, or ``None`` to keep it.
+            dataset_ids: The datasets to resolve.
 
         Returns:
-            The same organization record, with version and generation
-            advanced.
-
-        Raises:
-            SlugImmutable: If ``slug`` names a different slug.
-            PreconditionFailed: If ``expected_version`` is not the current
-                version.
+            A mapping from dataset id to project id, holding an entry for
+            every id in ``dataset_ids`` that exists; an id that names no
+            dataset is simply absent, not an error.
         """
-        with self._lock:
-            item = self.get_organization(organization_id)
-            if slug is not None and slug != item.slug:
-                raise SlugImmutable("organization slugs cannot be changed")
-            if item.version != expected_version:
-                raise PreconditionFailed(
-                    f"expected version {expected_version}, current version is {item.version}"
-                )
-            if title is not None:
-                item.title = title
-            if description is not None:
-                item.description = description
-            item.generation += 1
-            item.version += 1
-            self._write_generation(organization_dir(self.data_root, item), item)
-            return item
-
-    def patch_project(
-        self,
-        project_id: UUID,
-        *,
-        expected_version: int,
-        slug: str | None,
-        title: str | None,
-        description: str | None,
-    ) -> Project:
-        """Apply a partial update to a project under a version precondition.
-
-        ``expected_version`` is the version the caller last saw - the route
-        derives it from the ``If-Match`` header - and the patch is applied
-        only while it still matches, so two editors working from the same
-        view cannot silently overwrite each other. The project must exist
-        (``get_project`` raises ``ResourceNotFound``). A ``slug`` that
-        differs from the current one is refused before the version is even
-        compared: the slug is baked into the project's storage path, so no
-        role may change it; passing the current slug, or ``None``, is
-        accepted. ``title`` and ``description`` replace the stored values
-        when given and are left alone when ``None``; the data classification
-        has no parameter here and so cannot change. Every accepted patch,
-        including one that names no field, advances both ``generation`` and
-        ``version`` by one; the in-memory record is updated in place under
-        the repository lock and the new generation document is written
-        before it is returned.
-
-        Args:
-            project_id: The project to update.
-            expected_version: The version the caller believes is current.
-            slug: The current slug or ``None``; any other value is refused.
-            title: A replacement title, or ``None`` to keep the current one.
-            description: A replacement description, or ``None`` to keep it.
-
-        Returns:
-            The same project record, with version and generation advanced.
-
-        Raises:
-            SlugImmutable: If ``slug`` names a different slug.
-            PreconditionFailed: If ``expected_version`` is not the current
-                version.
-        """
-        with self._lock:
-            item = self.get_project(project_id)
-            if slug is not None and slug != item.slug:
-                raise SlugImmutable("project slugs cannot be changed")
-            if item.version != expected_version:
-                raise PreconditionFailed(
-                    f"expected version {expected_version}, current version is {item.version}"
-                )
-            if title is not None:
-                item.title = title
-            if description is not None:
-                item.description = description
-            item.generation += 1
-            item.version += 1
-            organization = self.get_organization(item.organization_id)
-            self._write_generation(project_dir(self.data_root, organization, item), item)
-            return item
+        return await self._hierarchy.dataset_parents(dataset_ids)
 
     # -- RBAC ------------------------------------------------------------
     # Every method below delegates to ``self._rbac_store``; the only logic
-    # kept here is what depends on the in-memory organization/project/dataset
-    # hierarchy the RBAC store deliberately knows nothing about (existence
-    # checks, and the service-account subject derived from the org slug).
+    # kept here is what depends on the hierarchy the RBAC store deliberately
+    # knows nothing about (existence checks, and the service-account
+    # subject derived from the org slug).
 
     async def grant_role(
         self,
@@ -892,7 +876,7 @@ class HierarchyRepository:
         Returns:
             The stored binding, with its generated id and timestamp.
         """
-        self._require_scope(scope_type, scope_id)
+        await self._require_scope(scope_type, scope_id)
         return await self._rbac_store.grant_role(
             principal=principal,
             role_code=role_code,
@@ -955,8 +939,9 @@ class HierarchyRepository:
 
         Only bindings stored at this scope are returned; inheritance from
         enclosing scopes is ``decide()``'s concern, not a listing's. The
-        scope's existence is not checked here - an unknown ``scope_id``
-        simply has no bindings.
+        scope's existence is checked first, through ``_require_scope``, so
+        an unknown ``scope_id`` is ``ResourceNotFound`` rather than an
+        empty list.
 
         Args:
             scope_type: The level to list.
@@ -966,6 +951,7 @@ class HierarchyRepository:
         Returns:
             The bindings at that scope, ordered by ``(principal, role_code)``.
         """
+        await self._require_scope(scope_type, scope_id)
         return await self._rbac_store.bindings_at(scope_type, scope_id)
 
     async def create_service_account(
@@ -975,9 +961,11 @@ class HierarchyRepository:
 
         ``name`` is validated as a slug with the organization/project length
         limit (``validate_slug`` raises ``PathRuleViolation`` otherwise) and
-        the organization must exist (``get_organization`` raises
-        ``ResourceNotFound``). The account's subject is
-        ``{organization slug}/{name}``: that is what its API keys
+        the organization must exist, read with unrestricted visibility since
+        this is RBAC provisioning rather than a discovery decision - the
+        granting principal's own visibility is already checked by the
+        ``require_*`` guard before the handler runs. The account's subject
+        is ``{organization slug}/{name}``: that is what its API keys
         authenticate as, and it is stable for the account's lifetime because
         organization slugs are immutable. The store refuses a second account
         with the same name in the same organization with
@@ -992,9 +980,11 @@ class HierarchyRepository:
 
         Returns:
             The stored account, with its generated principal id and subject.
+            ``organization_id`` not naming an organization surfaces here as
+            the ``ResourceNotFound`` the read raises.
         """
         validate_slug(name, 62)
-        organization = self.get_organization(organization_id)
+        organization = await self.organization(organization_id, Visibility.ALL)
         subject = f"{organization.slug}/{name}"
         return await self._rbac_store.create_service_account(
             organization_id, name=name, subject=subject, created_by=created_by
@@ -1032,8 +1022,9 @@ class HierarchyRepository:
     async def list_service_accounts(self, organization_id: UUID) -> list[ServiceAccount]:
         """Return every service account of one organization, ordered by name.
 
-        The organization's existence is not checked here; an unknown
-        organization simply has no accounts.
+        The organization's existence is checked first, through
+        ``_require_scope``, so an unknown organization is
+        ``ResourceNotFound`` rather than an empty list.
 
         Args:
             organization_id: The organization whose accounts to list.
@@ -1041,6 +1032,7 @@ class HierarchyRepository:
         Returns:
             The organization's accounts, sorted by name.
         """
+        await self._require_scope(ScopeType.ORGANIZATION, organization_id)
         return await self._rbac_store.list_service_accounts(organization_id)
 
     async def disable_service_account(
@@ -1111,7 +1103,7 @@ class HierarchyRepository:
         Returns:
             The stored attachment, with its timestamp.
         """
-        self._require_scope(scope_type, scope_id)
+        await self._require_scope(scope_type, scope_id)
         return await self._rbac_store.attach_policy(
             policy_id, scope_type=scope_type, scope_id=scope_id, attached_by=attached_by
         )
@@ -1127,7 +1119,7 @@ class HierarchyRepository:
         """
         return await self._rbac_store.list_policies()
 
-    def _require_scope(self, scope_type: ScopeType, scope_id: UUID | None) -> None:
+    async def _require_scope(self, scope_type: ScopeType, scope_id: UUID | None) -> None:
         """Reject an internally inconsistent scope/id pair.
 
         No request can produce one of these - each binding route passes
@@ -1135,11 +1127,14 @@ class HierarchyRepository:
         literally - so this is a caller bug, not a client contract, and its
         honest answer is the 500 the unhandled-exception path produces.
 
-        A consistent pair is then checked for existence: the organization,
-        project or dataset ``scope_id`` names must be known, and the
-        matching getter raises ``ResourceNotFound`` when it is not. That
-        one is a client contract - a grant or attachment cannot point at
-        nothing. ``SYSTEM`` scope has nothing to look up.
+        A consistent pair is then checked for existence, with unrestricted
+        visibility: the organization, project or dataset ``scope_id`` names
+        must be known, and the matching read raises ``ResourceNotFound``
+        when it is not. That one is a client contract - a grant or
+        attachment cannot point at nothing - and it is independent of the
+        granting principal's own visibility, which the ``require_*`` guard
+        already checked before the handler ran. ``SYSTEM`` scope has
+        nothing to look up.
 
         Args:
             scope_type: The level a grant or attachment applies at.
@@ -1157,11 +1152,11 @@ class HierarchyRepository:
         if scope_id is None:
             raise ValueError(f"{scope_type.value} scope requires a scope_id")
         if scope_type is ScopeType.ORGANIZATION:
-            self.get_organization(scope_id)
+            await self._hierarchy.organization(scope_id, Visibility.ALL)
         elif scope_type is ScopeType.PROJECT:
-            self.get_project(scope_id)
+            await self._hierarchy.project(scope_id, Visibility.ALL)
         else:
-            self.get_dataset(scope_id)
+            await self._hierarchy.dataset(scope_id, Visibility.ALL)
 
     def _write_generation(
         self, entity_path: PurePosixPath, item: Organization | Project | Dataset
@@ -1171,11 +1166,18 @@ class HierarchyRepository:
         The record is rendered with ``jsonable``, stamped with the
         ``urn:huron:generation:1`` schema and serialized canonically, then
         handed to the raw store, which writes
-        ``generations/{generation:06d}.json`` exactly once and atomically
-        repoints ``CURRENT.json`` at it. The caller must already have
-        advanced ``item.generation`` to a number not yet written: the store
-        refuses an existing generation file with ``FileExistsError`` and a
-        number outside ``1..999999`` with ``ValueError``.
+        ``generations/{generation:06d}.json`` and atomically repoints
+        ``CURRENT.json`` at it. The caller must already have advanced
+        ``item.generation`` to the number this write acknowledges: the
+        store replaces a generation file that already exists at that
+        number rather than refusing it, because an acknowledged generation
+        is made immutable by the hierarchy store advancing ``version`` only
+        through a committed update, not by the file being write-once - a
+        file already on disk at a generation number that has not yet been
+        acknowledged can only be a crashed attempt, and replacing it loses
+        nothing. A number outside ``1..999999`` raises ``ValueError``.
+        Always called through ``asyncify``, since it may block on the raw
+        store's filesystem.
 
         Args:
             entity_path: The entity's directory under the data root, as
@@ -1186,84 +1188,30 @@ class HierarchyRepository:
         document["schema"] = "urn:huron:generation:1"
         self.raw_store.write_generation(entity_path, item.generation, canonical_bytes(document))
 
-    def _replay(self, key: str, fingerprint: str) -> object | None:
-        """Return the result remembered under an idempotency key, if any.
 
-        Keys are global to the repository rather than per resource kind, so
-        the fingerprint - which starts with the kind - is what tells a
-        legitimate replay from a reused key. Must be called with the
-        repository lock held.
-
-        Args:
-            key: The caller's ``Idempotency-Key``.
-            fingerprint: The digest of the request being attempted.
-
-        Returns:
-            The record created under ``key`` when its fingerprint matches,
-            or ``None`` when the key has not been seen.
-
-        Raises:
-            IdempotencyKeyReused: If ``key`` was used for a request with a
-                different fingerprint.
-        """
-        stored = self._idempotency.get(key)
-        if stored is None:
-            return None
-        if stored[0] != fingerprint:
-            raise IdempotencyKeyReused("idempotency key was reused with a different request")
-        return stored[1]
-
-    def _remember(self, key: str, fingerprint: str, result: object) -> None:
-        """Record the result a creation produced under an idempotency key.
-
-        Called only once a creation has fully succeeded, so a refused or
-        failed attempt leaves the key free to be retried. Must be called
-        with the repository lock held.
-
-        Args:
-            key: The caller's ``Idempotency-Key``.
-            fingerprint: The digest of the request that produced ``result``.
-            result: The record to hand back on replay.
-        """
-        self._idempotency[key] = (fingerprint, result)
+#: A control character that can never appear in a slug, title, tag or other
+#: legitimate field this module fingerprints, used so an omitted (``None``)
+#: field digests differently from one explicitly given as the empty string.
+_ABSENT_FIELD = "\x01"
 
 
-def _fingerprint(*parts: str) -> str:
-    """Digest the identifying fields of a create request.
+def request_sha256(operation: str, *parts: str | None) -> str:
+    """Digest the identifying fields of a request, for idempotency-claim comparison.
 
-    The parts are joined with a NUL byte before hashing so adjacent parts
-    cannot run together: ``("ab", "c")`` and ``("a", "bc")`` digest
-    differently. Every caller passes the resource kind first, which keeps
-    the fingerprints of different kinds distinct even for identical fields.
+    The operation name and every part are joined with a NUL byte before
+    hashing, so adjacent parts cannot run together (``("ab", "c")`` and
+    ``("a", "bc")`` digest differently) and a request naming a field
+    ``None`` never collides with one naming it the empty string.
 
     Args:
-        *parts: The resource kind followed by the request's fields, all as
-            strings.
+        operation: The resource kind and action the request performs, kept
+            first so requests of different kinds never collide even with
+            identical field values.
+        *parts: The request's settable fields, in a fixed order, as
+            strings; ``None`` for a field the request omits.
 
     Returns:
-        The SHA-256 hex digest of the joined parts.
+        The SHA-256 hex digest of the joined operation and fields.
     """
-    return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
-
-
-def _expect_type[T](value: object, expected: type[T]) -> T:
-    """Narrow a replayed idempotency result to the record type its caller returns.
-
-    Every fingerprint starts with the resource kind, so a key can only ever
-    replay a record of the kind that stored it; a mismatch means the
-    idempotency map itself is corrupt, which is an invariant failure rather
-    than a client error.
-
-    Args:
-        value: The result stored under an idempotency key.
-        expected: The record class the calling creation method returns.
-
-    Returns:
-        ``value``, typed as ``expected``.
-
-    Raises:
-        RuntimeError: If ``value`` is not an instance of ``expected``.
-    """
-    if not isinstance(value, expected):
-        raise RuntimeError("idempotency record has an unexpected result type")
-    return value
+    fields = (operation, *(_ABSENT_FIELD if part is None else part for part in parts))
+    return hashlib.sha256("\x00".join(fields).encode()).hexdigest()

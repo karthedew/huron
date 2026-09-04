@@ -18,7 +18,16 @@ from uuid import UUID
 import asyncpg
 
 from huron.pkg.auth import ApiKeyRecord, CredentialRecord, PrincipalRecord, SessionRecord
-from huron.service.api.records import Policy, RoleBindingRecord, ServiceAccount
+from huron.pkg.catalog.models import RevisionRef
+from huron.service.api.records import (
+    Dataset,
+    Organization,
+    Policy,
+    Project,
+    Release,
+    RoleBindingRecord,
+    ServiceAccount,
+)
 
 
 def binding_record(row: asyncpg.Record) -> RoleBindingRecord:
@@ -181,6 +190,136 @@ def principal_record(row: asyncpg.Record) -> PrincipalRecord:
         idp_subject=row["idp_subject"],
         disabled_at=row["disabled_at"],
         created_at=row["created_at"],
+    )
+
+
+def organization(row: asyncpg.Record) -> Organization:
+    """Decode one ``organizations`` row.
+
+    Args:
+        row: A row selecting ``id, slug, title, description, generation,
+            version, created_at``.
+
+    Returns:
+        The organization as the API tier stores it.
+    """
+    return Organization(
+        id=row["id"],
+        slug=row["slug"],
+        title=row["title"],
+        description=row["description"],
+        generation=row["generation"],
+        version=row["version"],
+        created_at=row["created_at"],
+    )
+
+
+def project(row: asyncpg.Record) -> Project:
+    """Decode one ``projects`` row.
+
+    ``classification_default`` becomes ``Project.data_classification``:
+    the column and the record field are the same value under different
+    names, the column's naming a fact about the table, the field's a fact
+    about what the rest of the tier calls it.
+
+    Args:
+        row: A row selecting ``id, organization_id, slug, title,
+            description, classification_default, generation, version,
+            created_at``.
+
+    Returns:
+        The project as the API tier stores it.
+    """
+    return Project(
+        id=row["id"],
+        organization_id=row["organization_id"],
+        slug=row["slug"],
+        title=row["title"],
+        description=row["description"],
+        data_classification=row["classification_default"],
+        generation=row["generation"],
+        version=row["version"],
+        created_at=row["created_at"],
+    )
+
+
+def dataset(row: asyncpg.Record) -> Dataset:
+    """Decode one ``datasets`` row.
+
+    The row's own ``data_classification`` column is not decoded here:
+    nothing in the ``HierarchyStore`` port ever reads a dataset's
+    classification back, only its owning project's.
+
+    Args:
+        row: A row selecting ``id, project_id, slug, title, description,
+            profile_name, profile_version, entry_layer, lifecycle_state,
+            generation, version, created_at``.
+
+    Returns:
+        The dataset as the API tier stores it.
+    """
+    return Dataset(
+        id=row["id"],
+        project_id=row["project_id"],
+        slug=row["slug"],
+        title=row["title"],
+        description=row["description"],
+        profile_name=row["profile_name"],
+        profile_version=row["profile_version"],
+        entry_layer=row["entry_layer"],
+        lifecycle_state=row["lifecycle_state"],
+        generation=row["generation"],
+        version=row["version"],
+        created_at=row["created_at"],
+    )
+
+
+def release(row: asyncpg.Record) -> Release:
+    """Decode one ``releases`` row joined to its revision's number.
+
+    ``revision_number`` is not a column of ``releases``; the query this
+    decodes joins to ``dataset_revisions`` on ``revision_id`` to bring it
+    in, since a release names its revision both ways.
+
+    Args:
+        row: A row selecting ``id, dataset_id, tag, revision_id,
+            revision_number, title, created_by, created_at``, the last
+            four columns except ``revision_number`` from ``releases`` and
+            ``revision_number`` from the joined ``dataset_revisions`` row.
+
+    Returns:
+        The release, with ``title`` as stored - including ``None`` when
+        the column is null.
+    """
+    return Release(
+        id=row["id"],
+        dataset_id=row["dataset_id"],
+        tag=row["tag"],
+        revision_id=row["revision_id"],
+        revision_number=row["revision_number"],
+        title=row["title"],
+        created_by=row["created_by"],
+        created_at=row["created_at"],
+    )
+
+
+def revision_ref(row: asyncpg.Record) -> RevisionRef:
+    """Decode one ``dataset_revisions`` row into the catalog's revision identity.
+
+    ``revision_number`` becomes ``RevisionRef.number``.
+
+    Args:
+        row: A row selecting ``id, dataset_id, revision_number,
+            manifest_sha256``.
+
+    Returns:
+        The revision's identity and manifest digest.
+    """
+    return RevisionRef(
+        id=row["id"],
+        dataset_id=row["dataset_id"],
+        number=row["revision_number"],
+        manifest_sha256=row["manifest_sha256"],
     )
 
 

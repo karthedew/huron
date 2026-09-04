@@ -18,6 +18,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from huron.pkg.auth import Principal, create_api_key
+from huron.pkg.catalog.errors import ResourceNotFound
 from huron.service.api.authorization import require_organization
 from huron.service.api.errors import Forbidden
 from huron.service.api.problems import problem_response
@@ -29,7 +30,7 @@ from huron.service.api.routes.v1.schema.service_accounts import (
     IssuedServiceAccountKey,
     ServiceAccountView,
 )
-from huron.service.api.runtime import Repository
+from huron.service.api.runtime import ApiKeys, Repository
 
 _manage = require_organization("service_account.manage")
 router = APIRouter(
@@ -50,7 +51,9 @@ async def _account_in_organization(
 
     The router's guard proved the caller administers service accounts in
     *this* organization and nothing about any other, so an account owned
-    elsewhere is refused even though it exists.
+    elsewhere must be indistinguishable from one that does not exist at
+    all: the caller cannot tell "wrong organization" from "no such
+    account" by the status code alone.
 
     Args:
         repository: The wired hierarchy repository.
@@ -61,11 +64,11 @@ async def _account_in_organization(
         The account, owned by ``organization_id``.
 
     Raises:
-        Forbidden: If the account belongs to a different organization.
+        ResourceNotFound: If the account belongs to a different organization.
     """
     account = await repository.get_service_account(principal_id)
     if account.organization_id != organization_id:
-        raise Forbidden("service account belongs to a different organization")
+        raise ResourceNotFound("service account belongs to a different organization")
     return account
 
 
@@ -149,21 +152,24 @@ async def issue_service_account_key(
     principal_id: UUID,
     body: CreateApiKey,
     repository: Repository,
+    api_keys: ApiKeys,
 ) -> IssuedServiceAccountKey:
     """Issue an API key that authenticates as a service account.
 
     Requires ``service_account.manage`` on the organization. The key
     authenticates AS the service account: it carries the account's
-    intrinsic authority and nothing of the caller's own. An account owned
-    by a different organization, or one that has been disabled, is refused
-    with 403; an unknown account is 404. The response is the only time the
-    key's secret is shown; it is never stored and cannot be recovered.
+    intrinsic authority and nothing of the caller's own. An account that
+    has been disabled is refused with 403; an unknown account, or one
+    owned by a different organization, is 404. The response is the only
+    time the key's secret is shown; it is never stored and cannot be
+    recovered.
     \f
     Args:
         organization_id: The organization that owns the account.
         principal_id: The service account the key is issued for.
         body: The key's name, scopes and lifetime in days.
         repository: The wired hierarchy repository.
+        api_keys: The wired API-key store.
 
     Returns:
         The issued key with its cleartext secret and the subject it
@@ -182,7 +188,7 @@ async def issue_service_account_key(
         ttl=timedelta(days=body.expires_in_days),
         owner_kind="service_account",
     )
-    await repository.api_keys.add(record)
+    await api_keys.add(record)
     return IssuedServiceAccountKey(
         id=record.key_id,
         name=record.name,
@@ -200,6 +206,7 @@ async def disable_service_account(
     organization_id: UUID,
     principal_id: UUID,
     repository: Repository,
+    api_keys: ApiKeys,
 ) -> ServiceAccountView:
     """Disable a service account and revoke every key it holds.
 
@@ -207,14 +214,14 @@ async def disable_service_account(
     no key issued to the account authenticates and no new key can be issued
     for it; the API offers no way to re-enable it. Disabling is idempotent:
     calling it again on an already-disabled account reports the original
-    ``disabled_at`` and does not revoke keys a second time. An account
-    owned by a different organization is refused with 403; an unknown
-    account is 404.
+    ``disabled_at`` and does not revoke keys a second time. An unknown
+    account, or one owned by a different organization, is 404.
     \f
     Args:
         organization_id: The organization that owns the account.
         principal_id: The service account to disable.
         repository: The wired hierarchy repository.
+        api_keys: The wired API-key store.
 
     Returns:
         The account as the API renders it, with ``disabled_at`` set.
@@ -227,5 +234,5 @@ async def disable_service_account(
         # original disable and must not be re-processed with a later,
         # wrong timestamp.
         return ServiceAccountView.model_validate(account)
-    await repository.api_keys.revoke_all_for(account.subject, disabled_at)
+    await api_keys.revoke_all_for(account.subject, disabled_at)
     return ServiceAccountView.model_validate(account)

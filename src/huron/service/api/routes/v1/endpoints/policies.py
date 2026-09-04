@@ -130,7 +130,7 @@ async def attach_to_organization(
         attached it and when.
     """
     attachment = await repository.attach_policy(
-        UUID(body.policy_id),
+        body.policy_id,
         scope_type=ScopeType.ORGANIZATION,
         scope_id=organization_id,
         attached_by=actor.subject,
@@ -169,7 +169,7 @@ async def attach_to_project(
         attached it and when.
     """
     attachment = await repository.attach_policy(
-        UUID(body.policy_id),
+        body.policy_id,
         scope_type=ScopeType.PROJECT,
         scope_id=project_id,
         attached_by=actor.subject,
@@ -208,7 +208,7 @@ async def attach_to_dataset(
         attached it and when.
     """
     attachment = await repository.attach_policy(
-        UUID(body.policy_id),
+        body.policy_id,
         scope_type=ScopeType.DATASET,
         scope_id=dataset_id,
         attached_by=actor.subject,

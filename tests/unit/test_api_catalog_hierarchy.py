@@ -1,31 +1,39 @@
 """The read surface over organizations, projects and datasets, plus two dataset write routes.
 
 Drives the FastAPI app through a TestClient over an in-memory
-``HierarchyRepository`` with dev-header auth and ``root`` bootstrapped as
+``HierarchyStore`` with dev-header auth and ``root`` bootstrapped as
 platform owner. Covers list and get-by-id for all three hierarchy levels,
 plus the two dataset write routes exercised nowhere else: patching a
 dataset, and creating a release once a revision has been registered
-directly against the repository (``POST .../releases`` cannot drive
-ingest itself - there is no HTTP route that registers a revision yet).
+directly against the hierarchy store (``POST .../releases`` cannot drive
+ingest itself - there is no HTTP route that registers a revision yet). Also
+covers, at the HTTP boundary, that reusing an ``Idempotency-Key`` for a
+changed request is refused on every creation route, and that a patch naming
+no field is a no-op that writes nothing new.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import dataclasses
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from huron.pkg.catalog.ids import uuid7
-from huron.pkg.rawstore import PosixRawStore
+from huron.pkg.catalog.models import RevisionRef
+from huron.pkg.catalog.paths import dataset_dir
 from huron.service.api.app import create_app
-from huron.service.api.repository import HierarchyRepository, RevisionSeed
 from huron.service.api.settings import ApiSettings, ClassificationValue
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
+
+    from huron.service.api.runtime import ApiStores
+    from huron.service.api.stores import InMemoryHierarchyStore
 
 pytestmark = pytest.mark.unit
 
@@ -61,16 +69,14 @@ def _headers(subject: str = "root") -> dict[str, str]:
 
 
 @pytest.fixture
-def repository(tmp_path: Path) -> HierarchyRepository:
-    """A fresh ``HierarchyRepository`` writing raw bytes under ``tmp_path``."""
-    return HierarchyRepository(
-        PosixRawStore(str(tmp_path / "data")), classification_vocabulary=("open",)
-    )
+def stores() -> ApiStores:
+    """A fresh in-memory store bundle, held so a test can seed its hierarchy store directly."""
+    return memory_stores()
 
 
 @pytest.fixture
-def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClient]:
-    """A dev-header TestClient over ``repository``, with ``root`` as platform owner."""
+def client(tmp_path: Path, stores: ApiStores) -> Iterator[TestClient]:
+    """A dev-header TestClient over a freshly wired in-memory repository, ``root`` bootstrapped."""
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -79,7 +85,7 @@ def client(tmp_path: Path, repository: HierarchyRepository) -> Iterator[TestClie
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
         bootstrap_platform_owner="root",
     )
-    with TestClient(create_app(settings=settings, repository=repository)) as client:
+    with TestClient(create_app(settings=settings, stores=stores)) as client:
         yield client
 
 
@@ -117,6 +123,31 @@ def _dataset(client: TestClient, project_id: str, slug: str = "run-0001") -> str
     )
     assert response.status_code == 201, response.text
     return str(response.json()["id"])
+
+
+async def _register_revision(
+    stores: ApiStores, dataset_id: str, *, manifest_sha256: str, number: int = 1
+) -> None:
+    """Register a revision directly on the injected in-memory hierarchy store."""
+    hierarchy = cast("InMemoryHierarchyStore", stores.hierarchy)
+    await hierarchy.register_revision(
+        RevisionRef(
+            id=uuid7(), dataset_id=UUID(dataset_id), number=number, manifest_sha256=manifest_sha256
+        )
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class _Ref:
+    """The id and slug a path constructor from ``huron.pkg.catalog.paths`` needs."""
+
+    id: UUID
+    slug: str
+
+
+def _generation_files(entity_dir: PurePosixPath) -> list[Path]:
+    """List the generation documents written under a hierarchy entity's directory."""
+    return sorted((Path(str(entity_dir)) / "generations").glob("*.json"))
 
 
 # -- organizations ------------------------------------------------------
@@ -345,6 +376,38 @@ def test_create_project_rejects_a_classification_outside_the_configured_vocabula
     assert response.json()["code"] == "CLASSIFICATION_UNKNOWN"
 
 
+def test_create_project_replay_with_a_changed_classification_is_refused(tmp_path: Path) -> None:
+    """Reusing an ``Idempotency-Key`` with a different ``data_classification`` 409s."""
+    settings = ApiSettings(
+        env="development",
+        auth_mode="dev-headers",
+        data_root=str(tmp_path / "data"),
+        database_url="postgresql://unused",
+        classification_vocabulary=[
+            ClassificationValue(code="open", order=0, discoverable=True),
+            ClassificationValue(code="restricted", order=1, discoverable=False),
+        ],
+        bootstrap_platform_owner="root",
+    )
+    with TestClient(create_app(settings=settings, stores=memory_stores())) as client:
+        organization_id = _organization(client)
+        headers = _headers()
+        payload = {"slug": "sims", "title": "Sims", "data_classification": "open"}
+
+        first = client.post(
+            f"/api/v1/organizations/{organization_id}/projects", json=payload, headers=headers
+        )
+        assert first.status_code == 201
+
+        second = client.post(
+            f"/api/v1/organizations/{organization_id}/projects",
+            json={**payload, "data_classification": "restricted"},
+            headers=headers,
+        )
+        assert second.status_code == 409
+        assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
 # -- datasets ---------------------------------------------------------------
 
 
@@ -436,6 +499,31 @@ def test_list_datasets_rejects_a_malformed_cursor(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_create_dataset_replay_with_a_changed_description_is_refused(client: TestClient) -> None:
+    """Reusing an ``Idempotency-Key`` for ``create_dataset`` with a different description 409s."""
+    organization_id = _organization(client)
+    project_id = _project(client, organization_id)
+    headers = _headers()
+    payload = {
+        "slug": "run-0001",
+        "title": "Run 1",
+        "description": "first pass",
+        "profile_name": "mcnp-run",
+        "profile_version": "1.0",
+    }
+
+    first = client.post(f"/api/v1/projects/{project_id}/datasets", json=payload, headers=headers)
+    assert first.status_code == 201
+
+    second = client.post(
+        f"/api/v1/projects/{project_id}/datasets",
+        json={**payload, "description": "second pass"},
+        headers=headers,
+    )
+    assert second.status_code == 409
+    assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
 def test_get_dataset_returns_the_created_dataset(client: TestClient) -> None:
     """Getting a dataset by id returns the dataset that was created."""
     organization_id = _organization(client)
@@ -470,8 +558,29 @@ def test_patch_dataset_updates_title_and_description(client: TestClient) -> None
     assert body["version"] == 2
 
 
+def test_patch_dataset_with_an_empty_body_is_a_no_op(client: TestClient, tmp_path: Path) -> None:
+    """A PATCH naming no field returns 200 with the same version and writes no new generation."""
+    organization_id = _organization(client, "astro")
+    project_id = _project(client, organization_id, "sims")
+    dataset_id = _dataset(client, project_id, "run-0001")
+    entity_dir = dataset_dir(
+        PurePosixPath(str(tmp_path / "data")),
+        _Ref(id=UUID(organization_id), slug="astro"),
+        _Ref(id=UUID(project_id), slug="sims"),
+        _Ref(id=UUID(dataset_id), slug="run-0001"),
+    )
+    before = _generation_files(entity_dir)
+
+    response = client.patch(
+        f"/api/v1/datasets/{dataset_id}", json={}, headers={**_headers(), "If-Match": "1"}
+    )
+    assert response.status_code == 200
+    assert response.json()["version"] == 1
+    assert _generation_files(entity_dir) == before
+
+
 def test_patch_dataset_rejects_a_malformed_if_match_header(client: TestClient) -> None:
-    """Patching a dataset with a malformed ``If-Match`` header 412s as ``PRECONDITION_FAILED``."""
+    """Patching a dataset with an unparseable ``If-Match`` header 422s as ``REQUEST_INVALID``."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
@@ -481,28 +590,26 @@ def test_patch_dataset_rejects_a_malformed_if_match_header(client: TestClient) -
         json={"title": "Renamed Run"},
         headers={**_headers(), "If-Match": "not-an-integer"},
     )
-    assert response.status_code == 412
-    assert response.json()["code"] == "PRECONDITION_FAILED"
+    assert response.status_code == 422
+    assert response.json()["code"] == "REQUEST_INVALID"
 
 
 # -- releases -----------------------------------------------------------
 
 
-def test_create_release_succeeds_once_a_revision_is_registered_directly(
-    client: TestClient, repository: HierarchyRepository
+async def test_create_release_succeeds_once_a_revision_is_registered_directly(
+    client: TestClient, stores: ApiStores
 ) -> None:
-    """Creating a release succeeds once its revision is registered directly on the repository.
+    """Creating a release succeeds once its revision is registered directly on the hierarchy store.
 
-    ``register_revision`` is called on the repository directly - there is
-    no HTTP route for it yet - the same seam a future ingest pipeline will
-    drive through ``create_app``'s injected repository.
+    ``register_revision`` is called on the hierarchy store directly -
+    there is no HTTP route for it yet - the same seam a future ingest
+    pipeline will drive through the store the lifespan wires.
     """
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    repository.register_revision(
-        RevisionSeed(id=uuid7(), dataset_id=UUID(dataset_id), number=1, manifest_sha256="a" * 64)
-    )
+    await _register_revision(stores, dataset_id, manifest_sha256="a" * 64)
 
     response = client.post(
         f"/api/v1/datasets/{dataset_id}/releases",
@@ -529,16 +636,14 @@ def test_create_release_404s_without_a_registered_revision(client: TestClient) -
     assert response.status_code == 404
 
 
-def test_create_release_replay_returns_the_identical_body_with_no_replay_indicator(
-    client: TestClient, repository: HierarchyRepository
+async def test_create_release_replay_returns_the_identical_body_with_no_replay_indicator(
+    client: TestClient, stores: ApiStores
 ) -> None:
     """Replaying a release creation with the same idempotency key returns an identical body."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    repository.register_revision(
-        RevisionSeed(id=uuid7(), dataset_id=UUID(dataset_id), number=1, manifest_sha256="d" * 64)
-    )
+    await _register_revision(stores, dataset_id, manifest_sha256="d" * 64)
     headers = _headers()
     payload = {"tag": "v1", "revision_number": 1}
 
@@ -550,16 +655,37 @@ def test_create_release_replay_returns_the_identical_body_with_no_replay_indicat
     assert "replayed" not in second.json()
 
 
-def test_dataset_and_release_responses_carry_no_etag_header(
-    client: TestClient, repository: HierarchyRepository
+async def test_create_release_replay_with_a_changed_title_is_refused(
+    client: TestClient, stores: ApiStores
+) -> None:
+    """Reusing an ``Idempotency-Key`` for ``create_release`` with a different title 409s."""
+    organization_id = _organization(client)
+    project_id = _project(client, organization_id)
+    dataset_id = _dataset(client, project_id)
+    await _register_revision(stores, dataset_id, manifest_sha256="9" * 64)
+    headers = _headers()
+    payload = {"tag": "v1", "revision_number": 1, "title": "First"}
+
+    first = client.post(f"/api/v1/datasets/{dataset_id}/releases", json=payload, headers=headers)
+    assert first.status_code == 201
+
+    second = client.post(
+        f"/api/v1/datasets/{dataset_id}/releases",
+        json={**payload, "title": "Second"},
+        headers=headers,
+    )
+    assert second.status_code == 409
+    assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
+async def test_dataset_and_release_responses_carry_no_etag_header(
+    client: TestClient, stores: ApiStores
 ) -> None:
     """No ``ETag`` header appears on either response, and the dataset's version stays 1."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    repository.register_revision(
-        RevisionSeed(id=uuid7(), dataset_id=UUID(dataset_id), number=1, manifest_sha256="e" * 64)
-    )
+    await _register_revision(stores, dataset_id, manifest_sha256="e" * 64)
 
     release = client.post(
         f"/api/v1/datasets/{dataset_id}/releases",
@@ -574,16 +700,14 @@ def test_dataset_and_release_responses_carry_no_etag_header(
     assert dataset_response.json()["version"] == 1
 
 
-def test_list_releases_and_resolve_release_return_what_was_created(
-    client: TestClient, repository: HierarchyRepository
+async def test_list_releases_and_resolve_release_return_what_was_created(
+    client: TestClient, stores: ApiStores
 ) -> None:
     """Listing and resolving releases both return the release with its full documented shape."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    repository.register_revision(
-        RevisionSeed(id=uuid7(), dataset_id=UUID(dataset_id), number=1, manifest_sha256="b" * 64)
-    )
+    await _register_revision(stores, dataset_id, manifest_sha256="b" * 64)
     created = client.post(
         f"/api/v1/datasets/{dataset_id}/releases",
         json={"tag": "v1", "revision_number": 1},
@@ -615,14 +739,12 @@ def test_list_releases_and_resolve_release_return_what_was_created(
     assert resolved.json().keys() == expected_keys
 
 
-def test_list_releases_orders_by_tag(client: TestClient, repository: HierarchyRepository) -> None:
+async def test_list_releases_orders_by_tag(client: TestClient, stores: ApiStores) -> None:
     """Listed releases are ordered by tag rather than creation order."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    repository.register_revision(
-        RevisionSeed(id=uuid7(), dataset_id=UUID(dataset_id), number=1, manifest_sha256="c" * 64)
-    )
+    await _register_revision(stores, dataset_id, manifest_sha256="c" * 64)
     for tag in ("v2", "v1"):
         response = client.post(
             f"/api/v1/datasets/{dataset_id}/releases",
@@ -636,16 +758,14 @@ def test_list_releases_orders_by_tag(client: TestClient, repository: HierarchyRe
     assert [item["tag"] for item in listed.json()["items"]] == ["v1", "v2"]
 
 
-def test_list_releases_cursor_walk_visits_every_item_exactly_once(
-    client: TestClient, repository: HierarchyRepository
+async def test_list_releases_cursor_walk_visits_every_item_exactly_once(
+    client: TestClient, stores: ApiStores
 ) -> None:
     """A cursor walk with ``limit=1`` visits every release exactly once, in tag order."""
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    repository.register_revision(
-        RevisionSeed(id=uuid7(), dataset_id=UUID(dataset_id), number=1, manifest_sha256="f" * 64)
-    )
+    await _register_revision(stores, dataset_id, manifest_sha256="f" * 64)
     tags = ["zeta", "astro", "mid", "beta"]
     for tag in tags:
         response = client.post(

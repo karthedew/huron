@@ -256,6 +256,60 @@ async def test_discover_raises_when_the_issuer_rejects_the_request() -> None:
                 )
 
 
+_COMPLETE_DISCOVERY_DOCUMENT: dict[str, object] = {
+    "issuer": ISSUER,
+    "authorization_endpoint": f"{ISSUER}/authorize",
+    "token_endpoint": f"{ISSUER}/token",
+    "jwks_uri": f"{ISSUER}/jwks",
+    "end_session_endpoint": f"{ISSUER}/logout",
+}
+
+
+@pytest.mark.parametrize(
+    "missing_field", ["issuer", "authorization_endpoint", "token_endpoint", "jwks_uri"]
+)
+async def test_discover_raises_when_the_document_is_missing_a_required_field(
+    missing_field: str,
+) -> None:
+    """A discovery document missing any of the four required fields raises AuthError naming it."""
+    document = {
+        field: value
+        for field, value in _COMPLETE_DISCOVERY_DOCUMENT.items()
+        if field != missing_field
+    }
+    with respx.mock:
+        respx.get(f"{ISSUER}/.well-known/openid-configuration").mock(
+            return_value=Response(200, json=document)
+        )
+        async with AsyncClient() as http:
+            with pytest.raises(AuthError, match=missing_field):
+                await OidcClient.discover(
+                    http,
+                    ISSUER,
+                    client_id=CLIENT_ID,
+                    client_secret="shh",
+                    redirect_url="https://app.example/callback",
+                )
+
+
+async def test_discover_raises_when_the_document_issuer_does_not_match() -> None:
+    """A discovery document whose ``issuer`` differs from the requested issuer raises AuthError."""
+    document = {**_COMPLETE_DISCOVERY_DOCUMENT, "issuer": "https://impostor.example"}
+    with respx.mock:
+        respx.get(f"{ISSUER}/.well-known/openid-configuration").mock(
+            return_value=Response(200, json=document)
+        )
+        async with AsyncClient() as http:
+            with pytest.raises(AuthError, match=ISSUER):
+                await OidcClient.discover(
+                    http,
+                    ISSUER,
+                    client_id=CLIENT_ID,
+                    client_secret="shh",
+                    redirect_url="https://app.example/callback",
+                )
+
+
 # -- OidcClient.exchange_code ----------------------------------------------
 
 

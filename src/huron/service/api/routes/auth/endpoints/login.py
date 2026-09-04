@@ -8,19 +8,29 @@ requires a credential.
 
 from __future__ import annotations
 
+import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from anyio import CapacityLimiter
 from asyncer import asyncify
 from fastapi import APIRouter, Depends, Response
 
-from huron.pkg.auth import AuthError, create_session, verify_password
+from huron.pkg.auth import (
+    AuthError,
+    CredentialRecord,
+    create_session,
+    hash_password,
+    needs_rehash,
+    verify_password,
+)
 from huron.service.api.authorization import CurrentSession, current_principal, session_cookie
 from huron.service.api.problems import problem_response
 from huron.service.api.routes.auth.schema.login import LoginResult, PasswordLogin, SignOut
-from huron.service.api.runtime import Repository, Settings
+from huron.service.api.runtime import Credentials, Principals, Sessions, Settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Argon2id hashing is CPU- and memory-amplifying and this route is
 # unauthenticated, so it gets its own queue instead of sharing the 40-token
@@ -30,12 +40,49 @@ router = APIRouter()
 _password_hash_limiter = CapacityLimiter(4)
 
 
+async def _rehash_credential(
+    credentials: Credentials, credential: CredentialRecord, password: str, *, subject: str
+) -> None:
+    """Replace an outdated stored hash with a fresh one of the same password, best-effort.
+
+    Called only once :func:`verify_password` has already confirmed
+    ``password`` against the outdated hash, so failing to store the
+    replacement costs nothing but the next login's chance to upgrade it -
+    it is logged rather than raised, on the same worker pool the
+    verification itself ran on. Only ``password_hash`` changes:
+    ``updated_at`` and ``updated_by`` are carried over unchanged from
+    ``credential``, since logging in is never the administrative act that
+    set the password - a rehash must not reassign who is credited with
+    setting it, or when.
+
+    Args:
+        credentials: The wired credential store.
+        credential: The outdated credential a fresh hash replaces.
+        password: The plaintext already verified against the old hash.
+        subject: The principal's own subject, used only to identify the
+            credential in the failure log.
+    """
+    try:
+        refreshed = replace(
+            credential,
+            password_hash=await asyncify(hash_password, limiter=_password_hash_limiter)(password),
+        )
+        await credentials.upsert(refreshed)
+    except Exception:
+        logger.warning("failed to rehash the password credential for %s", subject, exc_info=True)
+
+
 @router.post(
     "/login",
     responses={401: problem_response("password login is disabled, or the credential is wrong")},
 )
 async def password_login(
-    response: Response, body: PasswordLogin, settings: Settings, repository: Repository
+    response: Response,
+    body: PasswordLogin,
+    settings: Settings,
+    principals: Principals,
+    credentials: Credentials,
+    sessions: Sessions,
 ) -> LoginResult:
     """Verify username and password, then start a session.
 
@@ -54,15 +101,20 @@ async def password_login(
     same wall-clock time and return the same message. The lookup's result is
     only dereferenced once ``verify_password`` has already said yes. The
     Argon2 comparison runs off the event loop, in a worker pool bounded to
-    a handful of concurrent hashes.
+    a handful of concurrent hashes. Once verified, a hash left over from a
+    weaker Argon2 cost is replaced with a fresh one of the same password, on
+    the same worker pool; the write is best-effort and its failure is logged,
+    never raised, because the caller already proved they hold the password
+    and a housekeeping write is not a reason to refuse the login it follows.
 
     Args:
         response: The response the session cookie is set on.
         body: The username and password to verify.
         settings: The wired API settings; supplies the password-login
             switch and the cookie attributes.
-        repository: The wired repository; supplies the principal,
-            credential and session stores.
+        principals: The wired principal store.
+        credentials: The wired credential store.
+        sessions: The wired session store.
 
     Returns:
         The subject, display name and CSRF token of the session just started.
@@ -73,17 +125,22 @@ async def password_login(
     """
     if not settings.password_login_enabled:
         raise AuthError("password login is disabled")
-    principal_row = await repository.principals.get_user_by_subject(body.username)
-    credential = (
-        await repository.credentials.get(principal_row.id) if principal_row is not None else None
-    )
+    principal_row = await principals.get_user_by_subject(body.username)
+    credential = await credentials.get(principal_row.id) if principal_row is not None else None
     verified = await asyncify(verify_password, limiter=_password_hash_limiter)(
         credential, body.password
     )
-    if not verified or principal_row is None:
+    # verify_password only returns True once it has compared against a
+    # stored hash, so a verified login always has one; the redundant
+    # credential check here is what lets the type checker see that too.
+    if not verified or principal_row is None or credential is None:
         raise AuthError("invalid username or password")
+    if needs_rehash(credential):
+        await _rehash_credential(
+            credentials, credential, body.password, subject=principal_row.subject
+        )
     record, token = create_session(principal_row.subject, authentication_method="password")
-    await repository.sessions.add(record)
+    await sessions.add(record)
     session_cookie(settings).issue(response, token)
     return LoginResult(
         subject=principal_row.subject,
@@ -100,7 +157,7 @@ async def password_login(
 async def logout(
     response: Response,
     settings: Settings,
-    repository: Repository,
+    sessions: Sessions,
     session: CurrentSession,
 ) -> SignOut:
     """Revoke the session behind this request, if any, and clear the cookie.
@@ -119,7 +176,7 @@ async def logout(
     Args:
         response: The response the session cookie is cleared on.
         settings: The wired API settings; supplies the cookie attributes.
-        repository: The wired repository; supplies the session store.
+        sessions: The wired session store.
         session: The session the credential resolved to, or ``None`` for a
             bearer caller.
 
@@ -127,6 +184,6 @@ async def logout(
         The ``signed-out`` acknowledgement.
     """
     if session is not None:
-        await repository.sessions.revoke(session.id, datetime.now(UTC))
+        await sessions.revoke(session.id, datetime.now(UTC))
     session_cookie(settings).revoke(response)
     return SignOut(status="signed-out")

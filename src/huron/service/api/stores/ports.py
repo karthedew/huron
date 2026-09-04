@@ -1,12 +1,13 @@
 """What the API tier needs from a storage backend, and nothing about how it is stored.
 
-Two Protocols, consumer-owned in the sense that matters: no implementation
+Four Protocols, consumer-owned in the sense that matters: no implementation
 in this package names one in its bases, and conformance is structural.
 ``HierarchyRepository`` declares ``RbacStore``; ``HierarchyRepository`` and
-``authorization.credentials`` declare ``ApiKeyWriter``. The other three
-stores here satisfy ``CredentialStore``, ``SessionStore`` and
-``PrincipalStore``, which belong to ``huron.pkg.auth`` and are declared
-there, beside their in-process implementations.
+``authorization.credentials`` declare ``ApiKeyWriter``; ``HierarchyRepository``
+declares ``HierarchyStore`` and, through it, the ``HierarchyWriter`` one
+transaction exposes. The other three stores here satisfy ``CredentialStore``,
+``SessionStore`` and ``PrincipalStore``, which belong to ``huron.pkg.auth``
+and are declared there, beside their in-process implementations.
 
 Every method is a contract: what an implementation must guarantee, what it
 returns, and which domain error it raises - the same for the in-memory
@@ -15,13 +16,25 @@ store the unit tests run against and the Postgres store a deployment wires.
 
 from __future__ import annotations
 
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 from huron.pkg.auth import ApiKeyRecord, ApiKeyStore
-from huron.pkg.rbac import Binding, ScopeType
-from huron.service.api.records import Policy, PolicyAttachment, RoleBindingRecord, ServiceAccount
+from huron.pkg.catalog.models import RevisionRef
+from huron.pkg.rbac import Binding, ProjectVisibility, ScopeType, Visibility
+from huron.service.api.records import (
+    Dataset,
+    Organization,
+    Policy,
+    PolicyAttachment,
+    Project,
+    Release,
+    RoleBindingRecord,
+    ServiceAccount,
+)
 
 
 class RbacStore(Protocol):
@@ -341,5 +354,409 @@ class ApiKeyWriter(ApiKeyStore, Protocol):
 
         Returns:
             How many keys this call revoked.
+        """
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class Window[ItemT]:
+    """``limit`` items after a keyset position, and whether more follow.
+
+    Attributes:
+        items: At most ``limit`` items, ordered by the store's cursor key.
+        has_more: Whether at least one further visible item follows the
+            last one in ``items``.
+    """
+
+    items: list[ItemT]
+    has_more: bool
+
+
+@dataclass(frozen=True, slots=True)
+class IdempotencyClaim:
+    """One principal's bid to run a write exactly once, keyed by an ``Idempotency-Key`` header.
+
+    Attributes:
+        principal: The acting principal's subject, e.g. ``"user:alice"``.
+        key: The ``Idempotency-Key`` header value the caller supplied.
+        request_sha256: A hex digest over the operation name and its
+            arguments, so a replayed key attached to a different request
+            is distinguishable from a genuine retry.
+    """
+
+    principal: str
+    key: str
+    request_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class Replay:
+    """What one idempotent write produced, kept so a later replay of its claim can return it.
+
+    Attributes:
+        kind: Which hierarchy level the claimed write created.
+        resource_id: The id of the resource that write created.
+    """
+
+    kind: Literal["organization", "project", "dataset", "release"]
+    resource_id: UUID
+
+
+class HierarchyWriter(Protocol):
+    """One transaction's write surface; obtained from ``HierarchyStore.transaction()``.
+
+    Every method runs inside the same transaction; nothing is visible to a
+    reader until the ``async with`` block exits without an exception. No
+    method here validates a slug, a tag, a classification code or an entry
+    layer, and none writes a file: everything a write refuses, it refuses
+    because the database refused it, and every other rule belongs to the
+    caller assembling the item this writer is given.
+    """
+
+    async def claim(self, claim: IdempotencyClaim) -> Replay | None:
+        """Stake this transaction's claim to a principal-scoped idempotency key.
+
+        A key with no live claim for ``(claim.principal, claim.key)``, or
+        one whose previous claim has expired, is silently taken over and
+        this call returns ``None`` - the caller goes on to perform the
+        write and later calls ``remember``. A live claim for the same
+        pair with an identical ``request_sha256`` returns the ``Replay``
+        already recorded for it, so the caller can skip the write and
+        return the original resource instead. A live claim for the same
+        pair with a different ``request_sha256`` raises
+        ``IdempotencyKeyReused``, because the same key is being reused
+        for a different request.
+
+        Args:
+            claim: The principal, key and request digest to stake.
+
+        Returns:
+            The replay already remembered for an identical live claim,
+            or ``None`` when the claim is now this transaction's to
+            fulfil.
+        """
+        ...
+
+    async def remember(self, claim: IdempotencyClaim, replay: Replay) -> None:
+        """Record what this transaction's write produced, for a later replay of the same claim.
+
+        Called once, after the write ``claim`` authorized has succeeded
+        and before the transaction commits. A claim that is never
+        remembered - because the transaction raised before reaching this
+        call - leaves no trace: a retry with the same principal, key and
+        request digest finds no live claim and starts over.
+
+        Args:
+            claim: The claim staked earlier in this transaction by
+                ``claim``.
+            replay: What the write produced, to return on a future
+                replay of the same claim.
+        """
+        ...
+
+    async def insert_organization(self, item: Organization) -> None:
+        """Insert one organization row.
+
+        A second organization with the same ``item.slug`` raises
+        ``SlugExists``; the database's own uniqueness key is what is
+        enforced, not a precondition this method checks itself.
+
+        Args:
+            item: The organization to insert, fully formed.
+        """
+        ...
+
+    async def insert_project(self, item: Project) -> None:
+        """Insert one project row under its organization.
+
+        A second project with the same ``item.slug`` under
+        ``item.organization_id`` raises ``SlugExists``.
+
+        Args:
+            item: The project to insert, fully formed.
+        """
+        ...
+
+    async def insert_dataset(self, item: Dataset, *, data_classification: str) -> None:
+        """Insert one dataset row under its project.
+
+        A second dataset with the same ``item.slug`` under
+        ``item.project_id`` raises ``SlugExists``. ``data_classification``
+        is stored beside the row but is not a field of ``Dataset`` itself;
+        the caller has already resolved it from the owning project.
+
+        Args:
+            item: The dataset to insert, fully formed.
+            data_classification: The classification code inherited from
+                the owning project at creation time.
+        """
+        ...
+
+    async def insert_release(self, item: Release) -> None:
+        """Insert one release row, tagging a dataset revision.
+
+        A second release with the same ``item.tag`` under
+        ``item.dataset_id`` raises ``TagExists``. A release naming a
+        revision that ``revision_ref`` cannot resolve for
+        ``item.dataset_id`` raises ``ResourceNotFound``; a caller that
+        resolved the revision through ``revision_ref`` first will not
+        observe this.
+
+        Args:
+            item: The release to insert, fully formed.
+        """
+        ...
+
+    async def update_organization(self, item: Organization, *, expected_version: int) -> None:
+        """Apply an update to one organization, guarded by optimistic concurrency.
+
+        The write lands only when the stored ``version`` equals
+        ``expected_version``; it then advances to ``item.version``. Any
+        other stored version - including the organization not
+        existing - raises ``PreconditionFailed``.
+
+        Args:
+            item: The organization as it should read after the update.
+            expected_version: The version the caller last read; the
+                update is refused unless this still matches what is
+                stored.
+        """
+        ...
+
+    async def update_project(self, item: Project, *, expected_version: int) -> None:
+        """Apply an update to one project, guarded by optimistic concurrency.
+
+        The write lands only when the stored ``version`` equals
+        ``expected_version``; it then advances to ``item.version``. Any
+        other stored version - including the project not existing -
+        raises ``PreconditionFailed``.
+
+        Args:
+            item: The project as it should read after the update.
+            expected_version: The version the caller last read; the
+                update is refused unless this still matches what is
+                stored.
+        """
+        ...
+
+    async def update_dataset(self, item: Dataset, *, expected_version: int) -> None:
+        """Apply an update to one dataset, guarded by optimistic concurrency.
+
+        The write lands only when the stored ``version`` equals
+        ``expected_version``; it then advances to ``item.version``. Any
+        other stored version - including the dataset not existing -
+        raises ``PreconditionFailed``.
+
+        Args:
+            item: The dataset as it should read after the update.
+            expected_version: The version the caller last read; the
+                update is refused unless this still matches what is
+                stored.
+        """
+        ...
+
+
+class HierarchyStore(Protocol):
+    """The hierarchy's durable state: one write transaction, and visibility-filtered reads.
+
+    A point read raises ``ResourceNotFound`` both when the id names
+    nothing and when it names something the caller's ``visibility`` does
+    not admit - the two cases are indistinguishable to a caller with no
+    grant on the resource, by design. A window is ordered by its level's
+    cursor key, filtered by ``visibility`` before ``limit`` is applied, and
+    ``after`` - when given - excludes the row it names, so a cursor walk
+    never repeats or skips a row.
+    """
+
+    def transaction(self) -> AbstractAsyncContextManager[HierarchyWriter]:
+        """Open one write transaction.
+
+        Every write the returned ``HierarchyWriter`` performs is invisible
+        to every read on this store until the ``async with`` block exits
+        without raising; an exception inside the block discards every
+        write made through it.
+
+        Returns:
+            An async context manager yielding the transaction's writer.
+        """
+        ...
+
+    async def organization(self, organization_id: UUID, visibility: Visibility) -> Organization:
+        """Return one organization, if ``visibility`` admits it.
+
+        Args:
+            organization_id: The organization to read.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The stored organization.
+        """
+        ...
+
+    async def project(self, project_id: UUID, visibility: Visibility) -> Project:
+        """Return one project, if ``visibility`` admits it.
+
+        Args:
+            project_id: The project to read.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The stored project.
+        """
+        ...
+
+    async def dataset(self, dataset_id: UUID, visibility: Visibility) -> Dataset:
+        """Return one dataset, if ``visibility`` admits it.
+
+        Args:
+            dataset_id: The dataset to read.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The stored dataset.
+        """
+        ...
+
+    async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
+        """Return one release by its dataset and tag, if ``visibility`` admits the dataset.
+
+        Args:
+            dataset_id: The dataset the release belongs to.
+            tag: The release's tag, unique within the dataset.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The stored release.
+        """
+        ...
+
+    async def revision_ref(self, dataset_id: UUID, revision_number: int) -> RevisionRef:
+        """Return the identity of one committed revision by its dataset and sequential number.
+
+        Unlike the other point reads, this one carries no ``visibility``:
+        a revision is resolved only in service of a release the caller has
+        already been authorized to create on ``dataset_id``.
+
+        Args:
+            dataset_id: The dataset the revision belongs to.
+            revision_number: The revision's 1-based position within the
+                dataset.
+
+        Returns:
+            The revision's identity and manifest digest.
+        """
+        ...
+
+    async def organizations(
+        self, visibility: Visibility, *, limit: int, after: tuple[str, UUID] | None
+    ) -> Window[Organization]:
+        """Return a window of organizations ordered by ``(slug, id)``.
+
+        Args:
+            visibility: The caller's discovery rights; only admitted
+                organizations are counted toward ``limit``.
+            limit: The maximum number of organizations to return.
+            after: The ``(slug, id)`` of the last organization already
+                seen, excluded from the window, or ``None`` to start from
+                the beginning.
+
+        Returns:
+            The next window of admitted organizations.
+        """
+        ...
+
+    async def projects(
+        self,
+        organization_id: UUID,
+        visibility: Visibility,
+        *,
+        limit: int,
+        after: tuple[str, UUID] | None,
+    ) -> Window[Project]:
+        """Return a window of one organization's projects ordered by ``(slug, id)``.
+
+        Args:
+            organization_id: The owning organization.
+            visibility: The caller's discovery rights; only admitted
+                projects are counted toward ``limit``.
+            limit: The maximum number of projects to return.
+            after: The ``(slug, id)`` of the last project already seen,
+                excluded from the window, or ``None`` to start from the
+                beginning.
+
+        Returns:
+            The next window of admitted projects.
+        """
+        ...
+
+    async def datasets(
+        self,
+        project_id: UUID,
+        visibility: Visibility,
+        *,
+        limit: int,
+        after: tuple[str, UUID] | None,
+    ) -> Window[Dataset]:
+        """Return a window of one project's datasets ordered by ``(slug, id)``.
+
+        Args:
+            project_id: The owning project.
+            visibility: The caller's discovery rights; only admitted
+                datasets are counted toward ``limit``.
+            limit: The maximum number of datasets to return.
+            after: The ``(slug, id)`` of the last dataset already seen,
+                excluded from the window, or ``None`` to start from the
+                beginning.
+
+        Returns:
+            The next window of admitted datasets.
+        """
+        ...
+
+    async def releases(
+        self, dataset_id: UUID, visibility: Visibility, *, limit: int, after: tuple[str] | None
+    ) -> Window[Release]:
+        """Return a window of one dataset's releases ordered by ``tag``.
+
+        Args:
+            dataset_id: The dataset the releases belong to.
+            visibility: The caller's discovery rights, checked against the
+                dataset itself; every release of an admitted dataset is
+                returned.
+            limit: The maximum number of releases to return.
+            after: The tag of the last release already seen, excluded
+                from the window, or ``None`` to start from the beginning.
+
+        Returns:
+            The next window of the dataset's releases.
+        """
+        ...
+
+    async def project_visibilities(self) -> list[ProjectVisibility]:
+        """Return every project's identity, owning organization and classification.
+
+        This is the input a caller reduces bindings against to compute a
+        principal's ``Visibility``; the store applies no filtering of its
+        own here.
+
+        Returns:
+            Every project, in no particular order.
+        """
+        ...
+
+    async def dataset_parents(self, dataset_ids: frozenset[UUID]) -> dict[UUID, UUID]:
+        """Return each requested dataset's owning project id.
+
+        This is the second input a caller needs to compute
+        ``Visibility.dataset_ids``: which project's classification and
+        bindings a dataset-scope grant is evaluated against.
+
+        Args:
+            dataset_ids: The datasets to resolve.
+
+        Returns:
+            A mapping from dataset id to project id, holding an entry for
+            every id in ``dataset_ids`` that exists; an id that names no
+            dataset is simply absent, not an error.
         """
         ...

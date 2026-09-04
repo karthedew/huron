@@ -10,6 +10,7 @@ minted key.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -19,12 +20,11 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from huron.pkg.auth.apikeys import ApiKeyRecord, MemoryApiKeyStore
-from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
-from huron.service.api.repository import HierarchyRepository
 from huron.service.api.routes.v1.schema.service_accounts import IssuedServiceAccountKey
 from huron.service.api.settings import ApiSettings, ClassificationValue
 from huron.service.api.stores import InMemoryRbacStore
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -52,11 +52,7 @@ def _settings(tmp_path: Path) -> ApiSettings:
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A TestClient with root bootstrapped as platform owner, backed by a fresh repository."""
     settings = _settings(tmp_path)
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-    )
-    with TestClient(create_app(settings=settings, repository=repository)) as client:
+    with TestClient(create_app(settings=settings, stores=memory_stores())) as client:
         yield client
 
 
@@ -136,12 +132,8 @@ def test_the_boundary_orders_service_accounts_whatever_order_the_store_returns(
 ) -> None:
     """The route re-sorts by name whatever order the RBAC store returns its accounts in."""
     settings = _settings(tmp_path)
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-        rbac_store=_ReversedOrderRbacStore(),
-    )
-    with TestClient(create_app(settings=settings, repository=repository)) as client:
+    stores = dataclasses.replace(memory_stores(), rbac=_ReversedOrderRbacStore())
+    with TestClient(create_app(settings=settings, stores=stores)) as client:
         organization_id = _organization(client, "astro-org")
         for name in ["charlie", "alpha", "bravo"]:
             response = client.post(
@@ -162,7 +154,7 @@ def test_the_boundary_orders_service_accounts_whatever_order_the_store_returns(
 def test_issuing_a_key_refuses_a_service_account_from_a_different_organization(
     client: TestClient,
 ) -> None:
-    """Issuing a key via the wrong organization's path for the account is refused with 403."""
+    """Issuing a key via the wrong organization's path for the account is refused with 404."""
     home_organization_id = _organization(client, "astro-org")
     other_organization_id = _organization(client, "geo-org")
     account = client.post(
@@ -177,7 +169,7 @@ def test_issuing_a_key_refuses_a_service_account_from_a_different_organization(
         json={"name": "ci"},
         headers=_headers("root"),
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_issuing_a_key_refuses_a_disabled_service_account(client: TestClient) -> None:
@@ -206,7 +198,7 @@ def test_issuing_a_key_refuses_a_disabled_service_account(client: TestClient) ->
 def test_disabling_a_service_account_refuses_one_from_a_different_organization(
     client: TestClient,
 ) -> None:
-    """Disabling a service account through the wrong organization's path is refused with 403."""
+    """Disabling a service account through the wrong organization's path is refused with 404."""
     home_organization_id = _organization(client, "astro-org")
     other_organization_id = _organization(client, "geo-org")
     account = client.post(
@@ -220,7 +212,7 @@ def test_disabling_a_service_account_refuses_one_from_a_different_organization(
         f"service-accounts/{account['principal_id']}/disable",
         headers=_headers("root"),
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_disabling_a_service_account_twice_keeps_the_original_disabled_at(
@@ -269,12 +261,8 @@ def test_disabling_an_already_disabled_service_account_does_not_revoke_keys_agai
     """A second disable call skips revocation - the account's keys were revoked at the first."""
     settings = _settings(tmp_path)
     api_keys = _CountingApiKeyStore()
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-        api_key_store=api_keys,
-    )
-    with TestClient(create_app(settings=settings, repository=repository)) as client:
+    stores = dataclasses.replace(memory_stores(), api_keys=api_keys)
+    with TestClient(create_app(settings=settings, stores=stores)) as client:
         organization_id = _organization(client, "astro-org")
         account = client.post(
             f"/api/v1/organizations/{organization_id}/service-accounts",

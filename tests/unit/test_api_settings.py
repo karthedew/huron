@@ -30,7 +30,7 @@ def _kwargs(**overrides: object) -> dict[str, object]:
 def test_defaults_construct_a_working_development_configuration() -> None:
     """The default constructor kwargs produce a working development configuration."""
     settings = ApiSettings(**_kwargs())
-    assert settings.store_backend == "memory"
+    assert "store_backend" not in ApiSettings.model_fields
     assert settings.password_login_enabled is True
     assert settings.session_cookie_name == "huron_session"
     assert settings.oidc is None

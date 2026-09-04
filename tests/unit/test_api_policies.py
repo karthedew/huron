@@ -8,6 +8,7 @@ listing, and the ``spec`` byte ceiling enforced on creation alone.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -15,12 +16,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from huron.pkg.catalog.manifest import MAX_SAFE_INT, canonical_bytes
-from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
-from huron.service.api.repository import HierarchyRepository
 from huron.service.api.routes.v1.schema.policies import MAX_POLICY_SPEC_BYTES
 from huron.service.api.settings import ApiSettings, ClassificationValue
 from huron.service.api.stores import InMemoryRbacStore
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from huron.service.api.records import Policy
+    from huron.service.api.repository import HierarchyRepository
 
 pytestmark = pytest.mark.unit
 
@@ -46,19 +47,9 @@ def _settings(tmp_path: Path) -> ApiSettings:
 
 
 @pytest.fixture
-def repository(tmp_path: Path) -> HierarchyRepository:
-    """A HierarchyRepository backed by a PosixRawStore under the test's tmp_path."""
-    settings = _settings(tmp_path)
-    return HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-    )
-
-
-@pytest.fixture
-def app(tmp_path: Path, repository: HierarchyRepository) -> FastAPI:
-    """The FastAPI app wired to `repository`, so tests can reach in and inspect stored state."""
-    return create_app(settings=_settings(tmp_path), repository=repository)
+def app(tmp_path: Path) -> FastAPI:
+    """The FastAPI app wired to a fresh in-memory store set."""
+    return create_app(settings=_settings(tmp_path), stores=memory_stores())
 
 
 @pytest.fixture
@@ -66,6 +57,12 @@ def client(app: FastAPI) -> Iterator[TestClient]:
     """A TestClient over `app`, for tests that only need to drive the HTTP surface."""
     with TestClient(app) as client:
         yield client
+
+
+@pytest.fixture
+def repository(client: TestClient) -> HierarchyRepository:
+    """The repository the running app's lifespan built, reachable for direct seeding."""
+    return client.app.state.runtime.repository
 
 
 def _headers(subject: str) -> dict[str, str]:
@@ -183,12 +180,8 @@ async def test_the_boundary_orders_policies_whatever_order_the_store_returns(
 ) -> None:
     """The route re-sorts by name whatever order the RBAC store hands its policies back in."""
     settings = _settings(tmp_path)
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-        rbac_store=_ReversedOrderRbacStore(),
-    )
-    with TestClient(create_app(settings=settings, repository=repository)) as client:
+    stores = dataclasses.replace(memory_stores(), rbac=_ReversedOrderRbacStore())
+    with TestClient(create_app(settings=settings, stores=stores)) as client:
         for name in ["charlie", "alpha", "bravo"]:
             _create_policy(client, name=name)
         response = client.get("/api/v1/policies", headers=_headers("root"))
@@ -258,24 +251,98 @@ def test_a_spec_with_an_integer_outside_the_canonicalization_range_is_rejected(
     assert response.status_code == 422
 
 
-def test_a_policy_can_be_attached_to_a_project(client: TestClient) -> None:
-    """Attaching a policy to a project needs the capability and reports scope_type PROJECT."""
-    organization_id = client.post(
-        "/api/v1/organizations", json={"slug": "geo-org", "title": "Geo"}, headers=_headers("root")
-    ).json()["id"]
-    project_id = client.post(
+def _create_organization(client: TestClient) -> str:
+    """Creates an organization and returns its id, failing loudly if refused."""
+    response = client.post(
+        "/api/v1/organizations",
+        json={"slug": "geo-org", "title": "Geo"},
+        headers=_headers("root"),
+    )
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
+
+
+def _create_project(client: TestClient, organization_id: str) -> str:
+    """Creates a project under `organization_id` and returns its id, failing loudly if refused."""
+    response = client.post(
         f"/api/v1/organizations/{organization_id}/projects",
         json={"slug": "sims-proj", "title": "Sims", "data_classification": "open"},
         headers=_headers("root"),
-    ).json()["id"]
+    )
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
+
+
+def _create_dataset(client: TestClient, project_id: str) -> str:
+    """Creates a dataset under `project_id` and returns its id, failing loudly if refused."""
+    response = client.post(
+        f"/api/v1/projects/{project_id}/datasets",
+        json={"slug": "run-0001", "title": "Run", "profile_name": "p", "profile_version": "1"},
+        headers=_headers("root"),
+    )
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
+
+
+def test_attaching_to_an_organization_with_a_malformed_policy_id_is_rejected_as_invalid(
+    client: TestClient,
+) -> None:
+    """A malformed ``policy_id`` is a schema violation (422), never an internal error."""
+    organization_id = _create_organization(client)
+    response = client.post(
+        f"/api/v1/organizations/{organization_id}/policy-attachments",
+        json={"policy_id": "not-a-uuid"},
+        headers=_headers("root"),
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "REQUEST_INVALID"
+
+
+def test_attaching_to_a_project_with_a_malformed_policy_id_is_rejected_as_invalid(
+    client: TestClient,
+) -> None:
+    """A malformed ``policy_id`` is a schema violation (422), never an internal error."""
+    organization_id = _create_organization(client)
+    project_id = _create_project(client, organization_id)
+    response = client.post(
+        f"/api/v1/projects/{project_id}/policy-attachments",
+        json={"policy_id": "not-a-uuid"},
+        headers=_headers("root"),
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "REQUEST_INVALID"
+
+
+def test_attaching_to_a_dataset_with_a_malformed_policy_id_is_rejected_as_invalid(
+    client: TestClient,
+) -> None:
+    """A malformed ``policy_id`` is a schema violation (422), never an internal error."""
+    organization_id = _create_organization(client)
+    project_id = _create_project(client, organization_id)
+    dataset_id = _create_dataset(client, project_id)
+    response = client.post(
+        f"/api/v1/datasets/{dataset_id}/policy-attachments",
+        json={"policy_id": "not-a-uuid"},
+        headers=_headers("root"),
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "REQUEST_INVALID"
+
+
+def test_a_policy_can_be_attached_to_a_project(client: TestClient) -> None:
+    """Attaching a policy to a project needs the capability and reports scope_type PROJECT."""
+    organization_id = _create_organization(client)
+    project_id = _create_project(client, organization_id)
     policy_id = _create_policy(client)
 
+    # mallory holds no bindings anywhere, so the project is outside her
+    # visibility too: 404, not 403.
     denied = client.post(
         f"/api/v1/projects/{project_id}/policy-attachments",
         json={"policy_id": policy_id},
         headers=_headers("mallory"),
     )
-    assert denied.status_code == 403
+    assert denied.status_code == 404
 
     attached = client.post(
         f"/api/v1/projects/{project_id}/policy-attachments",
@@ -290,27 +357,19 @@ def test_a_policy_can_be_attached_to_a_project(client: TestClient) -> None:
 
 def test_a_policy_can_be_attached_to_a_dataset(client: TestClient) -> None:
     """Attaching a policy to a dataset needs the capability and reports scope_type DATASET."""
-    organization_id = client.post(
-        "/api/v1/organizations", json={"slug": "geo-org", "title": "Geo"}, headers=_headers("root")
-    ).json()["id"]
-    project_id = client.post(
-        f"/api/v1/organizations/{organization_id}/projects",
-        json={"slug": "sims-proj", "title": "Sims", "data_classification": "open"},
-        headers=_headers("root"),
-    ).json()["id"]
-    dataset_id = client.post(
-        f"/api/v1/projects/{project_id}/datasets",
-        json={"slug": "run-0001", "title": "Run", "profile_name": "p", "profile_version": "1"},
-        headers=_headers("root"),
-    ).json()["id"]
+    organization_id = _create_organization(client)
+    project_id = _create_project(client, organization_id)
+    dataset_id = _create_dataset(client, project_id)
     policy_id = _create_policy(client)
 
+    # mallory holds no bindings anywhere, so the dataset is outside her
+    # visibility too: 404, not 403.
     denied = client.post(
         f"/api/v1/datasets/{dataset_id}/policy-attachments",
         json={"policy_id": policy_id},
         headers=_headers("mallory"),
     )
-    assert denied.status_code == 403
+    assert denied.status_code == 404
 
     attached = client.post(
         f"/api/v1/datasets/{dataset_id}/policy-attachments",

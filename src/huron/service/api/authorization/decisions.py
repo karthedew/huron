@@ -1,10 +1,13 @@
-"""Bindings, the per-request cache, and the allow/deny call.
+"""Bindings, the per-request cache, the allow/deny call, and the caller's visibility.
 
 Role bindings are cached for exactly one request and never wider:
 ``request_binding_cache`` is a ``Depends``-cached provider, so FastAPI
 builds one dict per request and every guard and handler in that request
 shares it. A mid-request role change cannot apply retroactively, and no
-cache may outlive the principal it was built for.
+cache may outlive the principal it was built for. ``current_visibility``
+computes the same caller's ``Visibility`` once per request, through
+FastAPI's own dependency cache, so every guard and listing that declares it
+shares one computation.
 """
 
 from __future__ import annotations
@@ -15,11 +18,21 @@ from fastapi import Depends
 
 from huron.pkg.auth import Principal
 from huron.pkg.catalog.errors import DomainError
-from huron.pkg.rbac import Binding, Decision, Scope, decide
+from huron.pkg.rbac import (
+    Binding,
+    DatasetVisibility,
+    Decision,
+    Scope,
+    ScopeType,
+    Visibility,
+    decide,
+)
 from huron.pkg.rbac import Principal as RbacPrincipal
 from huron.pkg.rbac.roles import PRINCIPAL_KIND_SERVICE_ACCOUNT, service_account_bindings
 
 from ..errors import Forbidden
+from ..runtime import Repository, Runtime
+from .credentials import CurrentPrincipal
 
 if TYPE_CHECKING:
     from ..repository import HierarchyRepository
@@ -175,3 +188,51 @@ async def check(
         raise Forbidden(
             f"{capability}{suffix} denied for {principal.subject} at {scope.scope_type.value} scope"
         )
+
+
+async def current_visibility(
+    cache: BindingCache, repository: Repository, principal: CurrentPrincipal, runtime: Runtime
+) -> Visibility:
+    """Compute the caller's discovery rights once per request.
+
+    Reduces the caller's bindings against the hierarchy's shape exactly
+    once: ``project_visibilities`` names every project's classification and
+    owning organization, and ``dataset_parents`` is fetched only when the
+    caller holds at least one DATASET-scope binding, since that is the only
+    way a dataset can appear in the result at all. FastAPI's own per-request
+    dependency cache is what keeps this to one computation no matter how
+    many guards and handlers in the request declare ``CurrentVisibility``.
+
+    Args:
+        cache: The request's binding cache.
+        repository: Source of the caller's bindings and the hierarchy's
+            projects and dataset parents.
+        principal: The authenticated caller.
+        runtime: The published wiring, for the classification-aware
+            authorizer that computes the result.
+
+    Returns:
+        The organization, project and dataset ids the caller may discover,
+        and whether discovery is unrestricted.
+    """
+    actor = as_rbac_principal(principal)
+    bindings = await bindings_for_principal(cache, repository, actor)
+    dataset_scoped = frozenset(
+        binding.scope_id
+        for binding in bindings
+        if binding.scope_type is ScopeType.DATASET and binding.scope_id is not None
+    )
+    projects = await repository.project_visibilities()
+    parents = await repository.dataset_parents(dataset_scoped) if dataset_scoped else {}
+    return runtime.authorizer.visibility(
+        actor,
+        bindings,
+        projects,
+        [
+            DatasetVisibility(dataset_id=dataset_id, project_id=project_id)
+            for dataset_id, project_id in parents.items()
+        ],
+    )
+
+
+CurrentVisibility = Annotated[Visibility, Depends(current_visibility)]

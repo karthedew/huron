@@ -129,7 +129,7 @@ src/huron/
 
               catalog/       the manifest, the hierarchy, the Raw/Bronze/Silver/Gold
                              interaction logic, the invariants — and, in ports.py, the
-                             Protocols it depends on: RawStore, ObjectRepoStore, Metastore,
+                             Protocols it depends on: RawStore, Metastore,
                              SearchProjection, CredentialVendor, JobDispatcher,
                              PrincipalResolver, Clock
               rbac/          role-binding evaluation and discovery gating — pure
@@ -167,15 +167,23 @@ implementing package does not import the declaring one either, which is what let
 <code>pkg/*</code> be genuinely independent rather than merely tidy. mypy checks conformance at
 the wiring site, where the concrete object meets the Protocol.</p>
 
-<p>Five import-linter contracts hold this in place, and all five are checked in CI:
+<p>Seven import-linter contracts hold this in place, checked by <code>make lint</code>
+(<code>lint-imports</code>); there is no CI today — the workflow that runs the gate is P1 plan
+M6.2. The five architectural ones:
 a <em>layers</em> contract for service → pkg → schema; an <em>independence</em> contract across
-the eleven packages; an <em>independence</em> contract across the twelve services; a
+the packages that exist today (<code>pkg/auth</code>, <code>pkg/catalog</code>,
+<code>pkg/rawstore</code>, <code>pkg/rbac</code>); an <em>independence</em> contract across the
+services that exist today (<code>service/api</code> alone), each deployable re-added to the list
+as it gains code; a
 <em>forbidden</em> contract keeping web frameworks, database drivers and storage SDKs out of
 <code>catalog/</code> and <code>rbac/</code>; and a narrower <em>forbidden</em> contract
 keeping web frameworks and database drivers out of <code>auth/</code> — an IO package that
 legitimately uses HTTP, JWT and password-hashing libraries. Data-modeling and validation libraries are
 deliberately not on that forbidden list: <code>schema/</code> is built on them, and
-<code>catalog/</code> validates against <code>schema/</code> rather than restating formats.</p>
+<code>catalog/</code> validates against <code>schema/</code> rather than restating formats.
+The remaining two are <em>forbidden</em> contracts that keep the API service's
+<code>authorization/</code> and <code>stores/</code> packages entered through their public
+surfaces.</p>
 
 <p>Two consequences worth stating, because they are the ones that bite in review. Cross-cutting
 concerns do not get a shared import: a package that wants to log uses the standard library, and
@@ -215,18 +223,33 @@ volumes from a clean checkout.</td></tr>
 <code>catalog/paths.py</code> (construction + parsing, per-resource slug limits); manifest/JCS
 module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
 <code>pkg/rawstore/</code>; migrations (hierarchy, role_bindings, api_keys, audit, outbox);
-<code>RoleBindingAuthorizer</code> with discovery gating; API-key + OIDC
-resolvers.
+<code>RoleBindingAuthorizer</code> with discovery gating — the pure authorizer is delivered, but
+its gating function (<code>visible_project_ids</code>) has no caller yet: the list and get
+operations pass unfiltered results through, and P1 plan M1/M5 wires the visibility value into
+every hierarchy read; API-key + OIDC resolvers.
 Per-item status for this row's HTTP deliverables, because the <span class="tag">partial</span> tag
-alone cannot be audited: org/project/dataset CRUD with generation documents <span class="tag">done</span>; release
-tags <span class="tag">done</span> — both verified route by route against the built route table and
-against <a href="api.html">API</a> §2. Browse with keyset pagination <span class="tag">todo</span>:
-the collections page, but <code>page()</code> in <code>routes/v1/common.py</code> returns
-<code>next_cursor: null</code> unconditionally, so no cursor is ever issued and the
+alone cannot be audited: org/project/dataset CRUD and release tags over HTTP, with generation
+documents at the documented paths <span class="tag">done</span> — verified route by route against
+the built route table and against <a href="api.html">API</a> §2 — but the hierarchy itself has
+<strong>no persistent store</strong>: <code>HierarchyRepository</code> holds it in process and
+nothing reads or writes the <code>organizations</code>, <code>projects</code>,
+<code>datasets</code> or <code>releases</code> tables <code>0001</code> creates, so every
+organization is forgotten on restart and cannot own a service account or scope an API key in
+Postgres mode. The hierarchy store, visibility filtered in SQL before <code>LIMIT</code>, and a
+Postgres-only composition root are the open deliverables <span class="tag">todo</span>, owned by
+<code>P1_DESIGN.md</code> (Designs 1–4) and executed by <code>P1_IMPLEMENTATION_PLAN.md</code>
+§ "3. Milestone sequence" (M1–M6, fifteen tasks, every task <code>Status: pending</code>; no task
+is gated — all nine decisions were answered 2026-09-03). Browse with keyset pagination
+<span class="tag">partial</span>: keyset cursors are issued in-process today
+(<code>routes/v1/pagination.py</code>); the store-side window is P1 plan M5, and the
 filter-then-paginate rule belongs to milestone 3. OpenAPI published, TS + Python client cores
 generated <span class="tag">todo</span>: the app emits a live schema, but
 <code>openapi/v1.json</code> is not a committed artifact and neither client core exists — T0
-milestone 1 owns both and marks them <span class="tag">todo</span> independently. Where this row
+milestone 1 owns both and marks them <span class="tag">todo</span> independently. The
+verification debts — property tests over the pure core, a CI that runs the gate, and the
+write-back of this row — are P1 plan M6; the release-tag half of the gate is proven against a
+contract-test revision row until P2's revision writer exists, because no HTTP path can yet create
+the revision a tag resolves to. Where this row
 and the code disagree, the code wins.
 Withdrawn: the audit table was delivered without the pre-created partitions this row once
 claimed — <code>audit_events</code> shipped declared <code>PARTITION BY RANGE (created_at)</code>
@@ -244,7 +267,7 @@ same tag is <code>409 TAG_EXISTS</code>; slug-change attempts 409; API-key auth 
 scoped to project A gets full-size pages with zero rows from B and no evidence of B in counts or
 cursors; import-linter green.</td></tr>
 
-<tr><td class="k">Schema conformance — <code>0008</code><br><span class="tag">todo</span></td>
+<tr><td class="k">Schema conformance — <code>0008</code><br><span class="tag">done</span></td>
 <td>One Alembic revision, <code>0008_schema_conformance</code>, bringing the P1 metastore into
 conformance with the PostgreSQL table-design skill: cross-parent referential integrity,
 foreign-key access paths and referential actions, closed state and event-<code>kind</code>
@@ -261,14 +284,15 @@ that <code>make lint</code> checks. Target design: <code>SCHEMA_DESIGN.md</code>
 S1–S8 plus S7a. Execution order: <code>SCHEMA_IMPLEMENTATION_PLAN.md</code> § "4. Milestone sequence"
 (M1–M10). No milestone is gated: the two decisions the plan waited on — the
 <code>audit_events</code> partitioning and the reservation semantics above — were both settled
-2026-08-31, per that plan's § "2. Gates".</td>
+2026-08-31, per that plan's § "2. Gates". Shipped in <code>da03ece</code>, applied and
+round-tripped 2026-09-01 (<code>P1_DESIGN.md</code> § "Roadmap Drift", Drift 4).</td>
 <td>Per <code>SCHEMA_IMPLEMENTATION_PLAN.md</code> § "7. Definition of done": every constraint,
 referential action and trigger the revision adds is pinned by a write that must fail and a write
 that must succeed, in the contract suites against a live <code>postgres:16</code>; upgrade →
 downgrade → upgrade round-trips on a clean database; <code>make lint</code> fails when the schema
 map's <code>Reflects:</code> stamp does not match the Alembic head.</td></tr>
 
-<tr id="api-sweep"><td class="k">API tier clean sweep<br><span class="tag">todo</span></td>
+<tr id="api-sweep"><td class="k">API tier clean sweep<br><span class="tag">done</span></td>
 <td>A cross-cutting rework of <code>src/huron/service/api</code> — no new product surface, no
 migration, no frontend. It brings the tier P1 shipped up to the standard the rest of this roadmap
 assumes: blocking work off the event loop under one stated rule; a typed composition root with
@@ -281,13 +305,12 @@ code table; and the binding surface completed. Target design:
 <code>API_DESIGN.md</code>, § "Design 1" through § "Design 8", with the ten findings its
 § "Roadmap Drift" records against this page, <a href="api.html">API</a>,
 <a href="auth.html">Authentication</a> and the two shipped plans. Execution order:
-<code>API_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M1–M10, 23 tasks).
-<strong>Nothing here has been implemented — every task is <code>Status: pending</code>.</strong>
-Unlike <code>0008</code> above, this work is <strong>gated</strong>: § "2. Human decision register"
-holds sixteen decisions <code>D-1</code>–<code>D-16</code> awaiting an owner's answer, and no gated
-task may start until its decision is recorded there. Six of them (<code>D-3</code>,
+<code>API_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M1–M11, twenty-seven tasks).
+<strong>Shipped as <code>600ff2a</code> on 2026-09-02 — every task is <code>Status: done</code>.</strong>
+Its § "2. Human decision register" holds seventeen decisions <code>D-1</code>–<code>D-17</code>,
+all answered 2026-09-01. Six of them (<code>D-3</code>,
 <code>D-4</code>, <code>D-6</code>, <code>D-7</code>, <code>D-12</code>, <code>D-16</code>) are
-visible contract breaks intended to ship as one grouped release. Sequencing: it precedes T0
+visible contract breaks, shipped together as one grouped release. Sequencing: it precedes T0
 milestone 1, whose committed <code>openapi/v1.json</code> and generated TypeScript client would
 otherwise be generated from the envelope and error shapes this sweep replaces; it does not block
 any backend phase.</td>

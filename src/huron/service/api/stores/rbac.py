@@ -21,11 +21,24 @@ import asyncpg
 from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.rbac import Binding, Effect, ScopeType
-from huron.pkg.rbac.roles import LAYER_SCOPED_CAPABILITIES, compile_binding
-from huron.service.api.errors import AttachmentExists, BindingExists, ServiceAccountExists
+from huron.pkg.rbac.roles import LAYER_SCOPED_CAPABILITIES, ScopeNotBindable, compile_binding
+from huron.service.api.errors import (
+    AttachmentExists,
+    BindingExists,
+    ServiceAccountExists,
+    UsernameTaken,
+)
 from huron.service.api.records import Policy, PolicyAttachment, RoleBindingRecord, ServiceAccount
 
 from .rows import binding_record, policy, service_account
+
+#: Postgres's name for ``service_accounts``' table-level UNIQUE constraint,
+#: absent an explicit ``CONSTRAINT`` clause in the migration.
+_SERVICE_ACCOUNT_NAME_CONSTRAINT = "service_accounts_organization_id_name_key"
+
+#: Postgres's name for ``principals.subject``'s column-level UNIQUE
+#: constraint, absent an explicit ``CONSTRAINT`` clause in the migration.
+_PRINCIPAL_SUBJECT_CONSTRAINT = "principals_subject_key"
 
 
 class InMemoryRbacStore:
@@ -687,9 +700,15 @@ class PostgresRbacStore:
         Raises:
             ResourceNotFound: If ``organization_id`` names no organization
                 (the foreign key refused the row).
-            ServiceAccountExists: If a unique constraint refused the rows -
-                the organization already has an account with this ``name``,
-                or some principal already holds ``subject``.
+            ServiceAccountExists: If the organization already has an
+                account with this ``name`` (the ``service_accounts``
+                unique constraint refused the row).
+            UsernameTaken: If some other principal - a password user, an
+                OIDC login, or another organization's service account -
+                already holds ``subject`` (the ``principals.subject``
+                unique constraint refused the row).
+            asyncpg.UniqueViolationError: If some other unique constraint
+                refused the row - not expected against the current schema.
         """
         principal_id = uuid7()
         created_at = datetime.now(UTC)
@@ -724,7 +743,12 @@ class PostgresRbacStore:
         except asyncpg.ForeignKeyViolationError as exc:
             raise ResourceNotFound(f"organization does not exist: {organization_id}") from exc
         except asyncpg.UniqueViolationError as exc:
-            raise ServiceAccountExists(f"service account already exists: {name}") from exc
+            constraint = getattr(exc, "constraint_name", None)
+            if constraint == _SERVICE_ACCOUNT_NAME_CONSTRAINT:
+                raise ServiceAccountExists(f"service account already exists: {name}") from exc
+            if constraint == _PRINCIPAL_SUBJECT_CONSTRAINT:
+                raise UsernameTaken(f"a principal already exists for subject: {subject}") from exc
+            raise
         return ServiceAccount(principal_id, organization_id, name, subject, created_by, created_at)
 
     async def get_service_account(self, principal_id: UUID) -> ServiceAccount:
@@ -857,6 +881,12 @@ class PostgresRbacStore:
 
         Returns:
             The policy as inserted, with a fresh id and creation time.
+
+        Raises:
+            ValueError: If ``policy_type`` fails the column's identifier
+                CHECK - unreachable through the API, where
+                ``schema/policies.py``'s field pattern already enforces the
+                same shape before a request ever reaches this store.
         """
         record = Policy(
             id=uuid7(),
@@ -866,18 +896,21 @@ class PostgresRbacStore:
             created_by=created_by,
             created_at=datetime.now(UTC),
         )
-        await self._pool.execute(
-            """
-            INSERT INTO policies (id, policy_type, name, spec, created_by, created_at)
-            VALUES ($1, $2, $3, $4::jsonb, $5, $6)
-            """,
-            record.id,
-            record.policy_type,
-            record.name,
-            json.dumps(record.spec),
-            record.created_by,
-            record.created_at,
-        )
+        try:
+            await self._pool.execute(
+                """
+                INSERT INTO policies (id, policy_type, name, spec, created_by, created_at)
+                VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+                """,
+                record.id,
+                record.policy_type,
+                record.name,
+                json.dumps(record.spec),
+                record.created_by,
+                record.created_at,
+            )
+        except asyncpg.exceptions.CheckViolationError as exc:
+            raise ValueError(f"invalid policy_type: {policy_type!r}") from exc
         return record
 
     async def attach_policy(
@@ -904,6 +937,10 @@ class PostgresRbacStore:
                 key refused the row).
             AttachmentExists: If the policy is already attached at exactly
                 this scope (the primary key refused the row).
+            ScopeNotBindable: If ``scope_type`` is SYSTEM (the column's
+                CHECK allows only ORGANIZATION, PROJECT and DATASET) -
+                unreachable through the API, where every route that attaches
+                a policy passes a fixed, already-valid scope type.
         """
         attached_at = datetime.now(UTC)
         try:
@@ -923,6 +960,10 @@ class PostgresRbacStore:
             raise ResourceNotFound(f"policy does not exist: {policy_id}") from exc
         except asyncpg.UniqueViolationError as exc:
             raise AttachmentExists("policy is already attached at this scope") from exc
+        except asyncpg.exceptions.CheckViolationError as exc:
+            raise ScopeNotBindable(
+                f"a policy cannot be attached at {scope_type.value} scope"
+            ) from exc
         return PolicyAttachment(policy_id, scope_type.value, scope_id, attached_by, attached_at)
 
     async def list_policies(self) -> list[Policy]:

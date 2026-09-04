@@ -2,11 +2,13 @@
 
 A page is a window over an ordering, so the cursor is the ordering key of the
 last item in the window rather than an offset: an insert between two requests
-shifts an offset and does not shift a key. The window is applied here, at the
-HTTP boundary, because the hierarchy lives in process dictionaries and the
-query methods return the whole ordered sequence; when the hierarchy gets a
-persistent store, ``limit`` and ``after`` descend into those methods and this
-module becomes the encoder alone.
+shifts an offset and does not shift a key. Two functions render that cursor
+into a page, one per way a caller's collection is already shaped: ``page``
+renders a ``Window`` a store has already limited and visibility-filtered, for
+the hierarchy, whose store takes ``limit`` and the cursor itself; ``paginate``
+windows a whole ordered sequence in process, for the ``RbacStore``-backed
+listings - bindings, policies, service accounts - whose store returns every
+matching row and has no windowed query of its own.
 """
 
 from __future__ import annotations
@@ -14,11 +16,13 @@ from __future__ import annotations
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Callable, Sequence
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Query
 from pydantic import BaseModel
 
 from huron.pkg.catalog.errors import InvalidCursor
+from huron.service.api.stores import Window
 
 #: Bumped when the meaning of an encoded key changes, so a cursor minted by an
 #: older deployment is refused rather than silently misread.
@@ -87,6 +91,101 @@ def decode_cursor(cursor: str) -> tuple[str, ...]:
     except (ValueError, UnicodeDecodeError) as exc:
         raise InvalidCursor("cursor is not a keyset position") from exc
     return tuple(decoded.split(_KEY_SEPARATOR))
+
+
+def page[RecordT, ViewT: BaseModel](
+    window: Window[RecordT], view: type[ViewT], *, key: Callable[[RecordT], tuple[str, ...]]
+) -> Page[ViewT]:
+    """Render a store's already-limited ``Window`` as the page a client receives.
+
+    Unlike ``paginate``, the window has already been filtered by visibility
+    and cut to the caller's ``limit``; this function only renders each item
+    through ``view`` and names the cursor to resume from.
+
+    Args:
+        window: The items a store has already windowed, and whether a
+            further visible item follows them.
+        view: The response model each item in the window is rendered
+            through, via ``model_validate``.
+        key: Maps an item to its ordering key, the same tuple of strings
+            the store orders and filters by.
+
+    Returns:
+        The rendered window and the cursor to continue from, ``None`` if
+        nothing follows.
+    """
+    return Page(
+        items=[view.model_validate(item) for item in window.items],
+        next_cursor=encode_cursor(key(window.items[-1])) if window.has_more else None,
+    )
+
+
+def after_key(cursor: str | None) -> tuple[str, ...] | None:
+    """Decode a client's cursor into the ordering key a store windows after.
+
+    Args:
+        cursor: The ``after`` value a client sent, or ``None`` to start
+            from the beginning of the collection.
+
+    Returns:
+        The key ``encode_cursor`` was given, or ``None`` when ``cursor``
+        is ``None``.
+    """
+    return None if cursor is None else decode_cursor(cursor)
+
+
+def slug_cursor_key(cursor: str | None) -> tuple[str, UUID] | None:
+    """Decode a client's cursor into the ``(slug, id)`` key a slug-ordered window resumes after.
+
+    The arity and id checks live here, once, so every caller of this
+    decoder gets them for free rather than repeating them at each call
+    site.
+
+    Args:
+        cursor: The ``after`` value a client sent, or ``None`` to start
+            from the beginning of the collection.
+
+    Returns:
+        The slug and id the window resumes after, or ``None`` when
+        ``cursor`` is ``None``.
+
+    Raises:
+        InvalidCursor: If the decoded cursor does not have exactly a slug
+            and an id, or its second part is not a valid UUID.
+    """
+    parts = after_key(cursor)
+    if parts is None:
+        return None
+    if len(parts) != 2:
+        raise InvalidCursor(f"cursor names {len(parts)} parts, expected a slug and an id")
+    slug, raw_id = parts
+    try:
+        return slug, UUID(raw_id)
+    except ValueError as exc:
+        raise InvalidCursor(f"cursor id is not a valid UUID: {raw_id!r}") from exc
+
+
+def tag_cursor_key(cursor: str | None) -> tuple[str] | None:
+    """Decode a client's cursor into the one-part ``(tag,)`` key a tag-ordered window resumes after.
+
+    Args:
+        cursor: The ``after`` value a client sent, or ``None`` to start
+            from the beginning of the collection.
+
+    Returns:
+        The tag the window resumes after, as a one-tuple, or ``None``
+        when ``cursor`` is ``None``.
+
+    Raises:
+        InvalidCursor: If the decoded cursor does not have exactly one
+            part.
+    """
+    parts = after_key(cursor)
+    if parts is None:
+        return None
+    if len(parts) != 1:
+        raise InvalidCursor(f"cursor names {len(parts)} parts, expected a single tag")
+    return (parts[0],)
 
 
 def paginate[RecordT, ViewT: BaseModel](

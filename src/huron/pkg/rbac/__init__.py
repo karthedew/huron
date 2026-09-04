@@ -19,7 +19,12 @@ deny-by-default, lets any applicable DENY win, and otherwise allows when a
 covering ALLOW binding admits the requested layer.
 :class:`RoleBindingAuthorizer` adds the classification vocabulary that
 discovery needs: a project is listed only when its classification is
-discoverable or the principal is cleared up to it.
+discoverable or the principal is cleared up to it. It also computes a
+principal's whole :class:`Visibility` - the organization, project and
+dataset ids it may discover, given the projects and
+:class:`DatasetVisibility` entries the caller loaded - in the one place
+that already evaluates deny-overrides, the scope walk and classification
+clearance.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -305,6 +310,61 @@ class ProjectVisibility:
 
 
 @dataclass(frozen=True, slots=True)
+class DatasetVisibility:
+    """One dataset a DATASET-scope binding names, with the project that owns it.
+
+    :meth:`RoleBindingAuthorizer.visibility` builds the dataset's own scope
+    from ``project_id`` together with that project's
+    :class:`ProjectVisibility`, so a binding attached above the dataset -
+    at its project, its organization, or the whole system - still covers
+    it.
+
+    Attributes:
+        dataset_id: The dataset being evaluated for discovery.
+        project_id: The project that owns it.
+    """
+
+    dataset_id: UUID
+    project_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class Visibility:
+    """What one principal may discover, as three id sets plus a shortcut flag.
+
+    :meth:`RoleBindingAuthorizer.visibility` is the only place that
+    computes one. ``unrestricted`` short-circuits every other field: it is
+    true only for a principal holding ``dataset.discover`` at ``SYSTEM``
+    scope, and every resource is then discoverable regardless of the id
+    sets. Membership in ``organization_ids`` alone does not extend to that
+    organization's projects or datasets - those are exactly what
+    ``project_ids`` and ``dataset_ids`` admit.
+
+    Attributes:
+        organization_ids: Organizations discoverable through an
+            organization-scope binding, independent of what its projects
+            or datasets admit.
+        project_ids: Projects discoverable by binding and classification.
+        dataset_ids: Datasets discoverable through a dataset-scope binding
+            whose owning project's classification the principal clears.
+        unrestricted: Whether the principal may discover everything.
+    """
+
+    organization_ids: frozenset[UUID] = frozenset()
+    project_ids: frozenset[UUID] = frozenset()
+    dataset_ids: frozenset[UUID] = frozenset()
+    unrestricted: bool = False
+
+    #: A dataclass can't reference its own name in a field default, so the
+    #: shared "discovers everything" instance is built once, right after
+    #: the class exists, and assigned onto the class itself.
+    ALL: ClassVar[Visibility]
+
+
+Visibility.ALL = Visibility(unrestricted=True)
+
+
+@dataclass(frozen=True, slots=True)
 class RoleBindingAuthorizer:
     """The decision engine paired with a classification vocabulary.
 
@@ -410,6 +470,63 @@ class RoleBindingAuthorizer:
             ):
                 visible.append(project.project_id)
         return visible
+
+    def visibility(
+        self,
+        principal: Principal,
+        bindings: tuple[Binding, ...] | list[Binding],
+        projects: tuple[ProjectVisibility, ...] | list[ProjectVisibility],
+        datasets: tuple[DatasetVisibility, ...] | list[DatasetVisibility],
+        *,
+        now: datetime | None = None,
+    ) -> Visibility:
+        """Return everything ``principal`` may discover, as three id sets and a flag.
+
+        ``unrestricted`` is true only when some binding grants
+        ``dataset.discover`` at ``SYSTEM`` scope. ``project_ids`` is
+        exactly :meth:`visible_project_ids`. ``organization_ids`` holds
+        the id of every unexpired ``ORGANIZATION``-scope binding matching
+        ``principal`` whose own organization scope also decides
+        ``dataset.discover`` ``ALLOW`` - membership here does not by
+        itself admit that organization's projects or datasets.
+        ``dataset_ids`` holds the id of every dataset in ``datasets``
+        whose own scope decides ``dataset.discover`` ``ALLOW`` and whose
+        owning project's classification is in the vocabulary and either
+        discoverable or cleared; a dataset whose project is absent from
+        ``projects`` is never admitted.
+
+        Args:
+            principal: The actor asking.
+            bindings: Every binding loaded for the principal's
+                identifiers.
+            projects: Every project's identity, owning organization and
+                classification.
+            datasets: The datasets named by DATASET-scope bindings, each
+                paired with the id of the project that owns it.
+            now: The instant expiries are judged at; the current UTC time
+                when None.
+
+        Returns:
+            The organization, project and dataset ids the principal may
+            discover, and whether it holds unrestricted, platform-wide
+            discovery.
+        """
+        current_time = now or datetime.now(UTC)
+        unrestricted = (
+            decide(bindings, principal, "dataset.discover", Scope.system(), now=current_time)
+            is Decision.ALLOW
+        )
+        vocabulary = {item.code: item for item in self.classifications}
+        return Visibility(
+            organization_ids=_organization_ids(bindings, principal, current_time),
+            project_ids=frozenset(
+                self.visible_project_ids(principal, projects, bindings, now=current_time)
+            ),
+            dataset_ids=_dataset_ids(
+                bindings, principal, projects, datasets, vocabulary, current_time
+            ),
+            unrestricted=unrestricted,
+        )
 
 
 def _applicable_bindings(
@@ -566,9 +683,160 @@ def _has_clearance(
     return False
 
 
+def _organization_visible(
+    bindings: tuple[Binding, ...] | list[Binding],
+    principal: Principal,
+    binding: Binding,
+    now: datetime,
+) -> bool:
+    """Return whether an ORGANIZATION-scope binding also grants discovery of its own scope.
+
+    Args:
+        bindings: Every binding loaded for the principal's identifiers.
+        principal: The actor asking.
+        binding: The organization-scope binding under evaluation.
+        now: The instant expiries are judged at.
+
+    Returns:
+        True when ``binding`` matches ``principal``, is unexpired, and its
+        own organization scope decides ``dataset.discover`` ``ALLOW``.
+    """
+    return (
+        binding.matches(principal)
+        and not binding.is_expired(now)
+        and decide(
+            bindings,
+            principal,
+            "dataset.discover",
+            Scope(ScopeType.ORGANIZATION, binding.scope_id, organization_id=binding.scope_id),
+            now=now,
+        )
+        is Decision.ALLOW
+    )
+
+
+def _organization_ids(
+    bindings: tuple[Binding, ...] | list[Binding],
+    principal: Principal,
+    now: datetime,
+) -> frozenset[UUID]:
+    """Return the id of every organization an ORGANIZATION-scope binding admits.
+
+    Args:
+        bindings: Every binding loaded for the principal's identifiers.
+        principal: The actor asking.
+        now: The instant expiries are judged at.
+
+    Returns:
+        The ``scope_id`` of every ORGANIZATION-scope binding for which
+        :func:`_organization_visible` holds.
+    """
+    return frozenset(
+        binding.scope_id
+        for binding in bindings
+        if binding.scope_type is ScopeType.ORGANIZATION
+        and binding.scope_id is not None
+        and _organization_visible(bindings, principal, binding, now)
+    )
+
+
+def _dataset_scope(dataset: DatasetVisibility, project: ProjectVisibility) -> Scope:
+    """Build the DATASET scope covering ``dataset``, with its full ancestry set.
+
+    Args:
+        dataset: The dataset being evaluated for discovery.
+        project: The project that owns it, supplying the organization
+            ancestry a binding attached above the dataset needs in order
+            to cover it.
+
+    Returns:
+        A scope covered by bindings attached at the dataset, its project,
+        its organization, or ``SYSTEM``.
+    """
+    return Scope(
+        ScopeType.DATASET,
+        dataset.dataset_id,
+        organization_id=project.organization_id,
+        project_id=dataset.project_id,
+        dataset_id=dataset.dataset_id,
+    )
+
+
+def _dataset_visible(
+    bindings: tuple[Binding, ...] | list[Binding],
+    principal: Principal,
+    dataset: DatasetVisibility,
+    project: ProjectVisibility,
+    vocabulary: dict[str, Classification],
+    now: datetime,
+) -> bool:
+    """Return whether ``dataset`` is discoverable, given the project that owns it.
+
+    Args:
+        bindings: Every binding loaded for the principal's identifiers.
+        principal: The actor asking.
+        dataset: The dataset being evaluated.
+        project: The project that owns ``dataset``.
+        vocabulary: The classification vocabulary keyed by code.
+        now: The instant expiries are judged at.
+
+    Returns:
+        True when a covering ALLOW binding grants ``dataset.discover`` at
+        the dataset's scope and the project's classification is in the
+        vocabulary and either discoverable or the principal is cleared
+        for it.
+    """
+    scope = _dataset_scope(dataset, project)
+    if decide(bindings, principal, "dataset.discover", scope, now=now) is not Decision.ALLOW:
+        return False
+    classification = vocabulary.get(project.classification)
+    if classification is None:
+        return False
+    return classification.discoverable or _has_clearance(
+        bindings, principal, scope, classification.order, vocabulary, now
+    )
+
+
+def _dataset_ids(
+    bindings: tuple[Binding, ...] | list[Binding],
+    principal: Principal,
+    projects: tuple[ProjectVisibility, ...] | list[ProjectVisibility],
+    datasets: tuple[DatasetVisibility, ...] | list[DatasetVisibility],
+    vocabulary: dict[str, Classification],
+    now: datetime,
+) -> frozenset[UUID]:
+    """Return the id of every dataset in ``datasets`` that :func:`_dataset_visible` admits.
+
+    A dataset whose ``project_id`` names no entry in ``projects`` is
+    skipped rather than evaluated, so an unseeded project never leaks a
+    dataset.
+
+    Args:
+        bindings: Every binding loaded for the principal's identifiers.
+        principal: The actor asking.
+        projects: Every project's identity, owning organization and
+            classification.
+        datasets: The datasets named by DATASET-scope bindings, each
+            paired with the id of the project that owns it.
+        vocabulary: The classification vocabulary keyed by code.
+        now: The instant expiries are judged at.
+
+    Returns:
+        The ``dataset_id`` of every admitted dataset.
+    """
+    projects_by_id = {project.project_id: project for project in projects}
+    return frozenset(
+        dataset.dataset_id
+        for dataset in datasets
+        if (project := projects_by_id.get(dataset.project_id)) is not None
+        and _dataset_visible(bindings, principal, dataset, project, vocabulary, now)
+    )
+
+
 __all__ = [
     "Binding",
     "Classification",
+    "DatasetVisibility",
     "Decision",
     "Effect",
     "Principal",
@@ -576,5 +844,6 @@ __all__ = [
     "RoleBindingAuthorizer",
     "Scope",
     "ScopeType",
+    "Visibility",
     "decide",
 ]

@@ -15,6 +15,7 @@ import asyncpg
 
 from huron.pkg.auth import CredentialRecord
 from huron.pkg.catalog.errors import ResourceNotFound
+from huron.service.api.errors import PrincipalKindMismatch
 
 from .rows import credential_record
 
@@ -70,10 +71,13 @@ class PostgresCredentialStore:
         looks the principal up itself, so an unknown ``principal_id`` is
         reported by that trigger's RAISE, not a foreign-key violation - the
         FK constraint never gets a chance to run. The trigger raises the
-        same way for a principal that exists but is a service account, and
-        this store reports that case identically; the user routes check the
-        principal's kind before calling, so through the API it is refused
-        earlier as a kind mismatch.
+        same generic message for a principal that exists but is a service
+        account, so on failure this store repeats the trigger's own lookup
+        to tell the two cases apart. The user routes already check the
+        principal's kind before calling ``upsert``, so through the API a
+        service-account id is refused there first, earlier and with a
+        cheaper query; this fallback lookup only matters for a caller that
+        skips that check.
 
         Args:
             record: The credential to store, its hash already computed by
@@ -81,7 +85,9 @@ class PostgresCredentialStore:
 
         Raises:
             ResourceNotFound: If the guard trigger refused the row because
-                ``record.principal_id`` names no user principal.
+                ``record.principal_id`` names no principal at all.
+            PrincipalKindMismatch: If ``record.principal_id`` names a real
+                principal that is not a user.
         """
         try:
             await self._pool.execute(
@@ -99,8 +105,12 @@ class PostgresCredentialStore:
                 record.updated_by,
             )
         except asyncpg.exceptions.RaiseError as exc:
-            # local_credentials_kind_guard fires BEFORE INSERT OR UPDATE and
-            # looks the principal up itself, so an unknown principal_id is
-            # reported by that trigger's RAISE, not a foreign-key violation -
-            # the FK constraint never gets a chance to run.
-            raise ResourceNotFound(f"principal does not exist: {record.principal_id}") from exc
+            # local_credentials_kind_guard raises the same message whether
+            # principal_id names no principal at all or a service account,
+            # so the two cases are told apart here rather than in SQL.
+            kind = await self._pool.fetchval(
+                "SELECT kind FROM principals WHERE id = $1", record.principal_id
+            )
+            if kind is None:
+                raise ResourceNotFound(f"principal does not exist: {record.principal_id}") from exc
+            raise PrincipalKindMismatch(f"principal is not a user: {record.principal_id}") from exc

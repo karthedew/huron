@@ -2,19 +2,29 @@
 
 Creating an organization needs ``organization.create`` at SYSTEM scope,
 editing one needs ``organization.update`` on that organization, and reading
-needs only a credential. Slugs are chosen once, at creation, and never change.
+needs only a credential and the caller's visibility. Slugs are chosen once,
+at creation, and never change.
 """
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from huron.service.api.authorization import require_organization, require_system
+from huron.pkg.auth import Principal
+from huron.service.api.authorization import CurrentVisibility, require_organization, require_system
 from huron.service.api.problems import problem_response
 from huron.service.api.records import Organization
-from huron.service.api.routes.v1.pagination import Page, PageCursor, PageLimit, paginate
+from huron.service.api.repository import request_sha256
+from huron.service.api.routes.v1.pagination import (
+    Page,
+    PageCursor,
+    PageLimit,
+    page,
+    slug_cursor_key,
+)
 from huron.service.api.routes.v1.preconditions import (
     IdempotencyHeader,
     IfMatchHeader,
@@ -26,6 +36,7 @@ from huron.service.api.routes.v1.schema.organizations import (
     PatchOrganization,
 )
 from huron.service.api.runtime import Repository
+from huron.service.api.stores import IdempotencyClaim
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
@@ -37,13 +48,13 @@ def _key(item: Organization) -> tuple[str, str]:
 @router.post(
     "",
     status_code=201,
-    dependencies=[Depends(require_system("organization.create"))],
     responses={409: problem_response("organization slug already exists")},
 )
-def create_organization(
+async def create_organization(
     body: CreateOrganization,
     idempotency_key: IdempotencyHeader,
     repository: Repository,
+    actor: Annotated[Principal, Depends(require_system("organization.create"))],
 ) -> OrganizationView:
     """Create an organization.
 
@@ -53,32 +64,35 @@ def create_organization(
     request returns the original organization instead of a 409; reusing the
     key for a different request is refused with 409.
     \f
-    The durable write is blocking, so the operation runs in the threadpool
-    rather than on the event loop.
-
     Args:
         body: The slug, title and description to store.
         idempotency_key: The caller's ``Idempotency-Key`` header.
         repository: The wired hierarchy repository.
+        actor: The caller, whose subject scopes the idempotency claim.
 
     Returns:
         The organization as the API renders it.
     """
+    claim = IdempotencyClaim(
+        principal=actor.subject,
+        key=idempotency_key,
+        request_sha256=request_sha256("organization", body.slug, body.title, body.description),
+    )
     return OrganizationView.model_validate(
-        repository.create_organization(
-            slug=body.slug,
-            title=body.title,
-            description=body.description,
-            idempotency_key=idempotency_key,
+        await repository.create_organization(
+            slug=body.slug, title=body.title, description=body.description, claim=claim
         )
     )
 
 
 @router.get("", responses={400: problem_response("cursor is not a valid continuation")})
 async def list_organizations(
-    repository: Repository, limit: PageLimit = 50, after: PageCursor = None
+    repository: Repository,
+    visibility: CurrentVisibility,
+    limit: PageLimit = 50,
+    after: PageCursor = None,
 ) -> Page[OrganizationView]:
-    """List every organization.
+    """List every organization the caller may discover.
 
     Organizations are ordered by slug. ``after`` continues from the cursor a
     previous page returned; a cursor that is not a valid continuation is
@@ -86,72 +100,79 @@ async def list_organizations(
     \f
     Args:
         repository: The wired hierarchy repository.
+        visibility: The caller's discovery rights.
         limit: The most organizations to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
 
     Returns:
         One page of organizations and the cursor to the next, if any.
     """
-    return paginate(
-        repository.list_organizations(), OrganizationView, key=_key, limit=limit, after=after
-    )
+    window = await repository.organizations(visibility, limit=limit, after=slug_cursor_key(after))
+    return page(window, OrganizationView, key=_key)
 
 
 @router.get("/{organization_id}", responses={404: problem_response("no such organization")})
-async def get_organization(organization_id: UUID, repository: Repository) -> OrganizationView:
+async def get_organization(
+    organization_id: UUID, repository: Repository, visibility: CurrentVisibility
+) -> OrganizationView:
     """Fetch one organization by id.
 
-    An unknown id is 404.
+    An id that is absent or not discoverable by the caller is 404.
     \f
     Args:
         organization_id: The organization to fetch.
         repository: The wired hierarchy repository.
+        visibility: The caller's discovery rights.
 
     Returns:
         The organization as the API renders it, including the ``version``
         that ``If-Match`` carries back on a PATCH.
     """
-    return OrganizationView.model_validate(repository.get_organization(organization_id))
+    organization = await repository.organization(organization_id, visibility)
+    return OrganizationView.model_validate(organization)
 
 
 @router.patch(
     "/{organization_id}",
-    dependencies=[Depends(require_organization("organization.update"))],
     responses={
         404: problem_response("no such organization"),
         409: problem_response("the slug on an existing organization cannot change"),
         412: problem_response("If-Match does not match the current version"),
     },
 )
-def patch_organization(
+async def patch_organization(
     organization_id: UUID,
     body: PatchOrganization,
     if_match: IfMatchHeader,
     repository: Repository,
+    visibility: CurrentVisibility,
+    _actor: Annotated[Principal, Depends(require_organization("organization.update"))],
 ) -> OrganizationView:
     """Update an organization's title or description.
 
     Requires ``organization.update`` on the organization. ``If-Match`` must
-    carry the organization's current ``version``; a stale or malformed value
-    is refused with 412 and nothing changes. Slugs are immutable: a ``slug``
-    that differs from the current one is refused with 409. Every successful
-    update advances ``version`` by one. An unknown organization is 404.
+    carry the organization's current ``version``; a stale value is refused
+    with 412 and nothing changes, and a header that does not name a version
+    at all is refused with 422. Slugs are immutable: a ``slug`` that differs
+    from the current one is refused with 409. Every successful update
+    advances ``version`` by one. An id that is absent or not discoverable by
+    the caller is 404.
     \f
-    The durable rewrite is blocking, so the operation runs in the threadpool
-    rather than on the event loop.
-
     Args:
         organization_id: The organization to update.
         body: The fields to change; a field left out or null keeps its value.
         if_match: The caller's ``If-Match`` header.
         repository: The wired hierarchy repository.
+        visibility: The caller's discovery rights.
+        _actor: The caller, held only as proof the capability check passed.
 
     Returns:
         The updated organization as the API renders it.
     """
     return OrganizationView.model_validate(
-        repository.patch_organization(
+        await repository.patch_organization(
             organization_id,
+            visibility,
             expected_version=expected_version(if_match),
             slug=body.slug,
             title=body.title,

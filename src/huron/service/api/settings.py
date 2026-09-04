@@ -76,16 +76,6 @@ class ApiSettings(BaseSettings):
     #: fresh deployment has exactly one way in. Unset it once real bindings
     #: exist.
     bootstrap_platform_owner: str | None = None
-    #: "memory" (default) keeps role bindings, service accounts, API keys,
-    #: credentials and sessions in process memory alongside the
-    #: organization/project/dataset hierarchy, which is not Postgres-backed
-    #: yet. "postgres" wires the Postgres-backed RBAC and auth stores
-    #: together - they share a pool and the same "FK targets must be real
-    #: rows" caveat - instead, which is only safe once the rows their
-    #: foreign keys target (organizations, projects) are real Postgres rows,
-    #: which requires choosing it explicitly rather than inferring it from
-    #: "no repository was injected".
-    store_backend: Literal["memory", "postgres"] = "memory"
     classification_vocabulary: list[ClassificationValue]
     #: The configured identity provider. Required when auth_mode="oidc".
     oidc: OidcSettings | None = None

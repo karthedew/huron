@@ -9,12 +9,23 @@ from __future__ import annotations
 from base64 import urlsafe_b64encode
 from dataclasses import dataclass
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from huron.pkg.catalog.errors import InvalidCursor
-from huron.service.api.routes.v1.pagination import Page, decode_cursor, encode_cursor, paginate
+from huron.service.api.routes.v1.pagination import (
+    Page,
+    after_key,
+    decode_cursor,
+    encode_cursor,
+    page,
+    paginate,
+    slug_cursor_key,
+    tag_cursor_key,
+)
+from huron.service.api.stores import Window
 
 pytestmark = pytest.mark.unit
 
@@ -99,3 +110,82 @@ def test_page_has_no_from_attributes_and_cannot_be_filled_from_a_bare_object() -
     bare = SimpleNamespace(items=[], next_cursor=None)
     with pytest.raises(ValidationError):
         Page[_View].model_validate(bare)
+
+
+def test_page_encodes_the_cursor_of_the_last_item_when_more_items_follow() -> None:
+    """A window whose store reports more items encodes the last item's key as next_cursor."""
+    window = Window(items=[_Record("a"), _Record("b")], has_more=True)
+    result = page(window, _View, key=_key)
+    assert [item.value for item in result.items] == ["a", "b"]
+    assert result.next_cursor == encode_cursor(("b",))
+
+
+def test_page_returns_a_null_cursor_when_no_further_item_follows() -> None:
+    """A window whose store reports no further item returns a null next_cursor."""
+    window = Window(items=[_Record("a"), _Record("b")], has_more=False)
+    result = page(window, _View, key=_key)
+    assert result.next_cursor is None
+
+
+def test_page_over_an_empty_window_returns_an_empty_page() -> None:
+    """An empty window returns an empty page with a null cursor."""
+    window = Window[_Record](items=[], has_more=False)
+    result = page(window, _View, key=_key)
+    assert result.items == []
+    assert result.next_cursor is None
+
+
+def test_after_key_returns_none_for_a_none_cursor() -> None:
+    """A None cursor decodes to None, the start of the collection."""
+    assert after_key(None) is None
+
+
+def test_after_key_round_trips_what_encode_cursor_was_given() -> None:
+    """A cursor decodes to exactly the key encode_cursor was given."""
+    assert after_key(encode_cursor(("astro", "0123"))) == ("astro", "0123")
+
+
+def test_slug_cursor_key_returns_none_for_a_none_cursor() -> None:
+    """A None cursor decodes to None, the start of the collection."""
+    assert slug_cursor_key(None) is None
+
+
+def test_slug_cursor_key_decodes_a_valid_slug_and_id() -> None:
+    """A two-part cursor of a slug and a UUID string decodes to the slug and the UUID."""
+    dataset_id = uuid4()
+    cursor = encode_cursor(("astro", str(dataset_id)))
+    assert slug_cursor_key(cursor) == ("astro", dataset_id)
+
+
+def test_slug_cursor_key_rejects_a_one_part_cursor() -> None:
+    """A cursor naming only a slug, with no id, raises InvalidCursor."""
+    with pytest.raises(InvalidCursor, match="expected a slug and an id"):
+        slug_cursor_key(encode_cursor(("astro",)))
+
+
+def test_slug_cursor_key_rejects_a_three_part_cursor() -> None:
+    """A cursor naming three parts raises InvalidCursor."""
+    with pytest.raises(InvalidCursor, match="expected a slug and an id"):
+        slug_cursor_key(encode_cursor(("astro", str(uuid4()), "extra")))
+
+
+def test_slug_cursor_key_rejects_a_non_uuid_second_part() -> None:
+    """A two-part cursor whose second part is not a valid UUID raises InvalidCursor."""
+    with pytest.raises(InvalidCursor, match="not a valid UUID"):
+        slug_cursor_key(encode_cursor(("astro", "not-a-uuid")))
+
+
+def test_tag_cursor_key_returns_none_for_a_none_cursor() -> None:
+    """A None cursor decodes to None, the start of the collection."""
+    assert tag_cursor_key(None) is None
+
+
+def test_tag_cursor_key_decodes_a_valid_tag() -> None:
+    """A one-part cursor decodes to the tag as a one-tuple."""
+    assert tag_cursor_key(encode_cursor(("v1.0",))) == ("v1.0",)
+
+
+def test_tag_cursor_key_rejects_a_two_part_cursor() -> None:
+    """A cursor naming two parts raises InvalidCursor."""
+    with pytest.raises(InvalidCursor, match="expected a single tag"):
+        tag_cursor_key(encode_cursor(("v1.0", "extra")))

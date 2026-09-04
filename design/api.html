@@ -102,7 +102,7 @@ fail CI.</p>
 
 <table>
 <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-<tr><td>POST/GET</td><td><code>/organizations</code></td><td>platform_admin creates; slug immutable</td></tr>
+<tr><td>POST/GET</td><td><code>/organizations</code></td><td>platform_owner creates; slug immutable</td></tr>
 <tr><td>GET/PATCH</td><td><code>/organizations/{id}</code></td><td>PATCH: title/description; new generation; <code>If-Match</code></td></tr>
 <tr><td>POST/GET</td><td><code>/organizations/{id}/projects</code></td><td>org_admin or project_creator; template-governed</td></tr>
 <tr><td>GET/PATCH</td><td><code>/projects/{id}</code></td><td>settings incl. retention policy, quota, dataset_creation mode</td></tr>
@@ -228,7 +228,7 @@ client code path, degraded transport.</li>
 <tr><td>ILLEGAL_INGEST_TRANSITION</td><td>409</td><td>live</td><td>ingest session state machine refused the transition</td></tr>
 <tr><td>LAYER_WORKFLOW_VIOLATION</td><td>409</td><td>live</td><td>unknown layer, or a derivation the workflow forbids</td></tr>
 <tr><td>LAYER_WRITE_FORBIDDEN</td><td>403</td><td>live</td><td>this principal kind may never write this layer</td></tr>
-<tr><td>PRECONDITION_FAILED</td><td>412</td><td>live</td><td><code>If-Match</code> version did not match</td></tr>
+<tr><td>PRECONDITION_FAILED</td><td>412</td><td>live</td><td><code>If-Match</code> version did not match; the header is <code>"N"</code>, <code>W/"N"</code>, or a bare integer (a legacy form kept for existing callers), and any other value is <code>REQUEST_INVALID</code></td></tr>
 <tr><td>FILE_TOO_LARGE</td><td>413</td><td>live</td><td>one file exceeds the configured limit</td></tr>
 <tr><td>TOO_MANY_FILES</td><td>413</td><td>live</td><td>revision exceeds the file-count limit</td></tr>
 <tr><td>REVISION_TOO_LARGE</td><td>413</td><td>live</td><td>revision exceeds the byte limit</td></tr>

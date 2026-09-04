@@ -19,8 +19,13 @@ from huron.service.api.stores.rows import (
     api_key_record,
     binding_record,
     credential_record,
+    dataset,
+    organization,
     policy,
     principal_record,
+    project,
+    release,
+    revision_ref,
     service_account,
     session_record,
 )
@@ -184,6 +189,117 @@ def test_principal_record_maps_every_column() -> None:
     assert record.id == principal_id
     assert record.kind == "user"
     assert record.idp_subject == "idp-sub-1"
+
+
+def test_organization_maps_every_column() -> None:
+    """``organization`` maps every column of a row onto the record."""
+    organization_id = uuid4()
+    now = datetime.now(UTC)
+    row = {
+        "id": organization_id,
+        "slug": "helio",
+        "title": "Heliophysics",
+        "description": "Solar and space physics",
+        "generation": 1,
+        "version": 1,
+        "created_at": now,
+    }
+    record = organization(row)
+    assert record.id == organization_id
+    assert record.slug == "helio"
+    assert record.generation == 1
+    assert record.created_at == now
+
+
+def test_project_maps_classification_default_to_data_classification() -> None:
+    """``project`` renames the ``classification_default`` column to ``data_classification``."""
+    project_id = uuid4()
+    organization_id = uuid4()
+    now = datetime.now(UTC)
+    row = {
+        "id": project_id,
+        "organization_id": organization_id,
+        "slug": "corona",
+        "title": "Corona",
+        "description": "",
+        "classification_default": "restricted",
+        "generation": 2,
+        "version": 3,
+        "created_at": now,
+    }
+    record = project(row)
+    assert record.id == project_id
+    assert record.organization_id == organization_id
+    assert record.data_classification == "restricted"
+    assert record.generation == 2
+    assert record.version == 3
+
+
+def test_dataset_maps_every_column_and_ignores_data_classification() -> None:
+    """``dataset`` maps every ``Dataset`` field and never reads back a classification column."""
+    dataset_id = uuid4()
+    project_id = uuid4()
+    now = datetime.now(UTC)
+    row = {
+        "id": dataset_id,
+        "project_id": project_id,
+        "slug": "flare-catalog",
+        "title": "Flare Catalog",
+        "description": "",
+        "profile_name": "timeseries",
+        "profile_version": "1.0",
+        "entry_layer": "raw",
+        "lifecycle_state": "ACTIVE",
+        "generation": 1,
+        "version": 1,
+        "created_at": now,
+    }
+    record = dataset(row)
+    assert record.id == dataset_id
+    assert record.project_id == project_id
+    assert record.profile_name == "timeseries"
+    assert record.entry_layer == "raw"
+    assert record.lifecycle_state == "ACTIVE"
+
+
+def test_release_maps_the_joined_revision_number_and_a_null_title() -> None:
+    """``release`` maps the joined ``revision_number`` column, and a null ``title`` to None."""
+    release_id = uuid4()
+    dataset_id = uuid4()
+    revision_id = uuid4()
+    now = datetime.now(UTC)
+    row = {
+        "id": release_id,
+        "dataset_id": dataset_id,
+        "tag": "v1",
+        "revision_id": revision_id,
+        "revision_number": 1,
+        "title": None,
+        "created_by": "user:alice",
+        "created_at": now,
+    }
+    record = release(row)
+    assert record.id == release_id
+    assert record.revision_id == revision_id
+    assert record.revision_number == 1
+    assert record.title is None
+
+
+def test_revision_ref_maps_revision_number_to_number() -> None:
+    """``revision_ref`` renames the ``revision_number`` column to ``RevisionRef.number``."""
+    revision_id = uuid4()
+    dataset_id = uuid4()
+    row = {
+        "id": revision_id,
+        "dataset_id": dataset_id,
+        "revision_number": 3,
+        "manifest_sha256": "a" * 64,
+    }
+    record = revision_ref(row)
+    assert record.id == revision_id
+    assert record.dataset_id == dataset_id
+    assert record.number == 3
+    assert record.manifest_sha256 == "a" * 64
 
 
 @pytest.mark.parametrize(

@@ -14,6 +14,7 @@ respx-mocked provider, exactly like ``test_api_app.py``'s discovery tests.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlsplit
@@ -28,10 +29,9 @@ from httpx import Response
 from jwt.algorithms import RSAAlgorithm
 
 from huron.pkg.auth import MemoryPrincipalStore, MemorySessionStore, PrincipalRecord
-from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
-from huron.service.api.repository import HierarchyRepository
 from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -122,13 +122,9 @@ def _oidc_settings(tmp_path: Path, *, env: str = "development") -> ApiSettings:
 def client(tmp_path: Path, serve_jwks: None) -> Iterator[TestClient]:
     """A TestClient wired for the oidc auth mode, with discovery mocked against the fake issuer."""
     settings = _oidc_settings(tmp_path)
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-    )
     with respx.mock:
         _mock_discovery()
-        with TestClient(create_app(settings=settings, repository=repository)) as client:
+        with TestClient(create_app(settings=settings, stores=memory_stores())) as client:
             yield client
 
 
@@ -173,13 +169,9 @@ def test_oidc_start_flow_cookie_omits_secure_in_development(client: TestClient) 
 def test_oidc_start_flow_cookie_is_secure_outside_development(tmp_path: Path) -> None:
     """The flow cookie carries the Secure attribute outside a development environment."""
     settings = _oidc_settings(tmp_path, env="production")
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-    )
     with respx.mock:
         _mock_discovery()
-        with TestClient(create_app(settings=settings, repository=repository)) as production_client:
+        with TestClient(create_app(settings=settings, stores=memory_stores())) as production_client:
             cookie = _start(production_client).headers["set-cookie"]
     assert "Secure" in cookie
 
@@ -215,11 +207,7 @@ def test_oidc_start_404s_when_oidc_is_not_configured(tmp_path: Path) -> None:
         database_url="postgresql://unused",
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
     )
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-    )
-    with TestClient(create_app(settings=settings, repository=repository)) as unconfigured:
+    with TestClient(create_app(settings=settings, stores=memory_stores())) as unconfigured:
         response = unconfigured.get("/auth/oidc/start", follow_redirects=False)
     assert response.status_code == 404
 
@@ -294,15 +282,14 @@ def test_oidc_callback_refuses_a_disabled_principal_and_starts_no_session(
         created_at=datetime.now(UTC),
     )
     sessions = MemorySessionStore()
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-        principal_store=MemoryPrincipalStore({disabled.id: disabled}),
-        session_store=sessions,
+    stores = dataclasses.replace(
+        memory_stores(),
+        principals=MemoryPrincipalStore({disabled.id: disabled}),
+        sessions=sessions,
     )
     with respx.mock:
         _mock_discovery()
-        with TestClient(create_app(settings=settings, repository=repository)) as disabled_client:
+        with TestClient(create_app(settings=settings, stores=stores)) as disabled_client:
             start = _start(disabled_client)
             query = parse_qs(urlsplit(start.headers["location"]).query)
             state, nonce = query["state"][0], query["nonce"][0]
@@ -334,15 +321,14 @@ def test_oidc_callback_refuses_a_subject_a_local_account_already_holds(
         created_at=datetime.now(UTC),
     )
     sessions = MemorySessionStore()
-    repository = HierarchyRepository(
-        PosixRawStore(settings.data_root),
-        classification_vocabulary=tuple(value.code for value in settings.classification_vocabulary),
-        principal_store=MemoryPrincipalStore({local_user.id: local_user}),
-        session_store=sessions,
+    stores = dataclasses.replace(
+        memory_stores(),
+        principals=MemoryPrincipalStore({local_user.id: local_user}),
+        sessions=sessions,
     )
     with respx.mock:
         _mock_discovery()
-        with TestClient(create_app(settings=settings, repository=repository)) as taken_client:
+        with TestClient(create_app(settings=settings, stores=stores)) as taken_client:
             start = _start(taken_client)
             query = parse_qs(urlsplit(start.headers["location"]).query)
             state, nonce = query["state"][0], query["nonce"][0]

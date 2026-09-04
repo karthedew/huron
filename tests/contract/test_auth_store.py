@@ -28,7 +28,13 @@ tables:
    constraint: a subject already claimed by a password user, an OIDC login,
    or a service account must all be refused as
    :class:`~huron.pkg.auth.PrincipalSubjectExists`, the same way regardless
-   of what kind of principal is already holding the name.
+   of what kind of principal is already holding the name;
+5. ``local_credentials_kind_guard`` raises the same message whether
+   ``principal_id`` names no principal at all or an existing service
+   account, and ``PostgresCredentialStore.upsert`` must tell the two apart:
+   an unknown id stays :class:`~huron.pkg.catalog.errors.ResourceNotFound`,
+   a real service account becomes
+   :class:`~huron.service.api.errors.PrincipalKindMismatch`.
 
 Requires Docker (testcontainers spins up a real PostgreSQL). Checked against
 a database migrated with the project's own Alembic revisions.
@@ -55,6 +61,7 @@ from huron.pkg.auth.principals import PrincipalSubjectExists
 from huron.pkg.auth.sessions import SessionRecord
 from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
+from huron.service.api.errors import PrincipalKindMismatch
 from huron.service.api.stores import (
     PostgresApiKeyStore,
     PostgresCredentialStore,
@@ -90,6 +97,7 @@ async def _assert_against(dsn: str) -> None:
     try:
         await _assert_credential_round_trip(pool)
         await _assert_credential_upsert_reports_a_missing_principal(pool)
+        await _assert_credential_upsert_reports_a_service_account_as_kind_mismatch(pool)
         await _assert_local_credentials_kind_guard_rejects_a_service_account(pool)
         await _assert_local_credentials_check_rejects_a_non_argon2id_hash(pool)
         await _assert_session_round_trip_touch_and_revoke(pool)
@@ -205,6 +213,30 @@ async def _assert_credential_upsert_reports_a_missing_principal(pool: asyncpg.Po
         updated_by="admin",
     )
     with pytest.raises(ResourceNotFound):
+        await store.upsert(record)
+
+
+async def _assert_credential_upsert_reports_a_service_account_as_kind_mismatch(
+    pool: asyncpg.Pool,
+) -> None:
+    """``upsert()`` reports an existing service account as PrincipalKindMismatch, not not-found.
+
+    The guard trigger raises the same generic message whether
+    ``principal_id`` names nothing at all or a real service account; the
+    store must tell the two apart rather than reporting both as
+    ResourceNotFound.
+    """
+    store = PostgresCredentialStore(pool)
+    principal_id = await _insert_service_account_principal(
+        pool, subject="contract-sa-upsert-kind-mismatch"
+    )
+    record = CredentialRecord(
+        principal_id=principal_id,
+        password_hash=VALID_HASH,
+        updated_at=datetime.now(UTC),
+        updated_by="admin",
+    )
+    with pytest.raises(PrincipalKindMismatch):
         await store.upsert(record)
 
 

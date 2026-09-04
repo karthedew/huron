@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from huron.service.api.app import create_app
 from huron.service.api.authorization import decisions
 from huron.service.api.settings import ApiSettings, ClassificationValue
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -54,7 +55,7 @@ def test_a_route_two_routers_below_v1_still_requires_a_credential(tmp_path: Path
     credential requirement propagates through two levels of ``include_router``
     rather than needing a guard written at the leaf.
     """
-    with TestClient(create_app(settings=_settings(tmp_path))) as client:
+    with TestClient(create_app(settings=_settings(tmp_path), stores=memory_stores())) as client:
         response = client.get(
             f"/api/v1/organizations/{uuid4()}/bindings",
         )
@@ -91,7 +92,7 @@ def test_a_capability_bound_on_both_the_router_and_a_parameter_decides_once(
     settings = _settings(tmp_path, bootstrap_platform_owner="root")
     with (
         patch.object(decisions, "decide", counting_decide),
-        TestClient(create_app(settings=settings)) as client,
+        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
     ):
         response = client.post(
             "/api/v1/users",
@@ -129,7 +130,7 @@ def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decid
 
     settings = _settings(tmp_path, bootstrap_platform_owner="root")
     headers = {"X-Huron-Subject": "root", "Idempotency-Key": str(uuid4())}
-    with TestClient(create_app(settings=settings)) as client:
+    with TestClient(create_app(settings=settings, stores=memory_stores())) as client:
         organization_id = client.post(
             "/api/v1/organizations", json={"slug": "astro-org", "title": "Astro"}, headers=headers
         ).json()["id"]
@@ -166,7 +167,7 @@ def test_the_openapi_document_carries_twelve_resource_grained_tags(tmp_path: Pat
     nothing is tagged ``auth`` any more - the unversioned surface carries
     ``authentication`` instead.
     """
-    app = create_app(settings=_settings(tmp_path))
+    app = create_app(settings=_settings(tmp_path), stores=memory_stores())
     schema = app.openapi()
     tags: set[str] = set()
     for methods in schema["paths"].values():
@@ -200,7 +201,7 @@ def test_a_credential_field_appears_only_on_the_two_key_issuance_responses(
     document may declare ``secret`` or the stored hash it is never
     derived from.
     """
-    schema = create_app(settings=_settings(tmp_path)).openapi()
+    schema = create_app(settings=_settings(tmp_path), stores=memory_stores()).openapi()
     schemas = schema["components"]["schemas"]
     carrying_secret = {
         name for name, definition in schemas.items() if "secret" in definition.get("properties", {})
@@ -218,7 +219,7 @@ def test_the_problem_schema_is_registered_exactly_once(tmp_path: Path) -> None:
     and every declared error response must resolve its ``$ref`` against
     that one entry, not a per-operation copy.
     """
-    schema = create_app(settings=_settings(tmp_path)).openapi()
+    schema = create_app(settings=_settings(tmp_path), stores=memory_stores()).openapi()
     schemas = schema["components"]["schemas"]
     assert list(schemas).count("Problem") == 1
     assert schemas["Problem"]["required"] == ["type", "title", "status", "code", "detail"]
@@ -226,7 +227,7 @@ def test_the_problem_schema_is_registered_exactly_once(tmp_path: Path) -> None:
 
 def test_every_declared_error_response_refs_the_shared_problem_schema(tmp_path: Path) -> None:
     """Every declared 4xx/5xx response across the document refs the shared Problem schema."""
-    schema = create_app(settings=_settings(tmp_path)).openapi()
+    schema = create_app(settings=_settings(tmp_path), stores=memory_stores()).openapi()
     for methods in schema["paths"].values():
         for operation in methods.values():
             for status, response in operation["responses"].items():
@@ -249,7 +250,7 @@ def test_router_level_responses_are_inherited_two_levels_deep(tmp_path: Path) ->
     mirrors this: ``oidc.router`` under ``auth.router`` inherits ``422``/
     ``500`` with no declaration at either the endpoint router or operation.
     """
-    schema = create_app(settings=_settings(tmp_path)).openapi()
+    schema = create_app(settings=_settings(tmp_path), stores=memory_stores()).openapi()
     binding_create = schema["paths"]["/api/v1/organizations/{organization_id}/bindings"]["post"]
     assert {401, 403, 422, 500} <= {int(status) for status in binding_create["responses"]}
 
@@ -267,7 +268,7 @@ def test_per_operation_responses_add_to_the_inherited_set_rather_than_replace_it
     ``/api/v1`` router's inherited ``401``/``403``/``422``/``500``, not one
     or the other.
     """
-    schema = create_app(settings=_settings(tmp_path)).openapi()
+    schema = create_app(settings=_settings(tmp_path), stores=memory_stores()).openapi()
     create_organization = schema["paths"]["/api/v1/organizations"]["post"]
     assert {int(status) for status in create_organization["responses"]} == {
         201,

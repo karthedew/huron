@@ -19,7 +19,12 @@ against a database migrated with the project's own Alembic revisions:
    independently reject the same invalid rows the stores refuse in Python,
    exercised here through raw INSERTs that deliberately bypass the store,
    proving the triggers are a working backstop and not the only thing
-   standing between a bad row and a stored grant.
+   standing between a bad row and a stored grant;
+4. ``create_service_account`` inserts a principal and a service-account row
+   in one transaction, so it can hit either of two different UNIQUE
+   constraints - the organization already has this name, or some other
+   principal already holds the derived subject - and each must come back as
+   its own error rather than one misreporting the other.
 
 The organization/project hierarchy has no Postgres-backed store of its own
 yet, so the rows ``service_accounts.organization_id`` and
@@ -62,6 +67,7 @@ from huron.pkg.rbac.roles import (
     ScopeNotBindable,
     compile_binding,
 )
+from huron.service.api.errors import UsernameTaken
 from huron.service.api.records import Policy, RoleBindingRecord, ServiceAccount
 from huron.service.api.routes.v1.pagination import paginate
 from huron.service.api.stores import (
@@ -117,6 +123,7 @@ async def _assert_against(dsn: str) -> None:
         await _assert_grant_role_round_trips_through_bindings_for_and_bindings_at(pool)
         await _assert_service_account_round_trip(pool)
         await _assert_create_service_account_reports_a_missing_organization(pool)
+        await _assert_create_service_account_reports_a_subject_collision(pool)
         await _assert_disable_service_account_is_idempotent(pool)
         await _assert_policy_round_trip(pool)
         await _assert_api_key_round_trip(pool)
@@ -156,6 +163,20 @@ async def _insert_organization(pool: asyncpg.Pool, *, slug: str) -> UUID:
         now,
     )
     return organization_id
+
+
+async def _insert_user_principal(pool: asyncpg.Pool, *, subject: str) -> UUID:
+    """Inserts a principal row of kind 'user' directly, standing in for the auth store."""
+    principal_id = uuid7()
+    await pool.execute(
+        """
+        INSERT INTO principals (id, kind, subject, display_name, created_at)
+        VALUES ($1, 'user', $2, $2, now())
+        """,
+        principal_id,
+        subject,
+    )
+    return principal_id
 
 
 async def _insert_project(pool: asyncpg.Pool, *, organization_id: UUID, slug: str) -> UUID:
@@ -336,6 +357,27 @@ async def _assert_create_service_account_reports_a_missing_organization(
     with pytest.raises(ResourceNotFound):
         await store.create_service_account(
             uuid4(), name="orphan", subject="nowhere/orphan", created_by="contract-test"
+        )
+
+
+async def _assert_create_service_account_reports_a_subject_collision(pool: asyncpg.Pool) -> None:
+    """A subject some other principal already holds is refused as UsernameTaken.
+
+    The derived subject is ``{organization slug}/{name}``; a password user
+    provisioned with exactly that username collides with it on the
+    ``principals.subject`` constraint - a different conflict from another
+    service account in the same organization sharing this ``name``, and
+    reported with a different code.
+    """
+    store = PostgresRbacStore(pool)
+    organization_id = await _insert_organization(pool, slug="astro-subject")
+    await _insert_user_principal(pool, subject="astro-subject/taken")
+    with pytest.raises(UsernameTaken):
+        await store.create_service_account(
+            organization_id,
+            name="taken",
+            subject="astro-subject/taken",
+            created_by="contract-test",
         )
 
 
