@@ -510,7 +510,7 @@ dataset + `silver` → `404`.
 **Verify.** `grep -n "Forbidden" src/huron/service/api/routes/v1/endpoints/service_accounts.py` is
 empty; full gate.
 
-Superseded 2026-09-03 — absorbed by `P1_IMPLEMENTATION_PLAN.md` (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
+Superseded 2026-09-03 — delivered by `P1_IMPLEMENTATION_PLAN.md` Task M5.2 (B11: `dataset_layer_writer` resolves the scope before the layer rule) and Task M5.3 (B10: `_account_in_organization` raises `ResourceNotFound`) (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
 
 **Status: superseded**
 
@@ -598,7 +598,7 @@ field, each `IdempotencyKeyReused`; the route-level twins in `test_api_catalog_h
 
 **Verify.** Full gate.
 
-Superseded 2026-09-03 — absorbed by `P1_IMPLEMENTATION_PLAN.md` (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
+Superseded 2026-09-03 — delivered by `P1_IMPLEMENTATION_PLAN.md` Task M5.2, whose `request_sha256` digest covers every settable field the three fingerprints omitted (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
 
 **Status: superseded**
 
@@ -622,7 +622,7 @@ record, the same generation file count, and the same `If-Match` still succeeds a
 
 **Verify.** Full gate.
 
-Superseded 2026-09-03 — absorbed by `P1_IMPLEMENTATION_PLAN.md` (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
+Superseded 2026-09-03 — delivered by `P1_IMPLEMENTATION_PLAN.md` Task M5.2, whose patch methods write the document inside the same store transaction as the row update and return the current record unchanged for a no-op patch (D-7) (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
 
 **Status: superseded**
 
@@ -643,7 +643,7 @@ to expect `ResourceNotFound`.
 
 **Verify.** Full gate.
 
-Superseded 2026-09-03 — absorbed by `P1_IMPLEMENTATION_PLAN.md` (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
+Superseded 2026-09-03 — delivered by `P1_IMPLEMENTATION_PLAN.md` Task M5.2 (`bindings_at`/`list_service_accounts` resolve their scope through the store and raise `ResourceNotFound` for an unknown one) and Task M2.1 (`register_revision` refuses an unknown dataset or a duplicate number, D-8) (see `P1_DESIGN.md` § "Status addendum — 2026-09-03"); D-7/D-8/D-11 remain binding there.
 
 **Status: superseded**
 

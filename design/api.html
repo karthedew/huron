@@ -83,7 +83,9 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 <p class="sub">FastAPI, <code>/api/v1</code>. Conventions, uniform across the surface: UUIDv7 IDs,
 RFC 3339 timestamps, versioned keyset cursors, <code>application/problem+json</code> errors with
 stable codes, <code>If-Match</code> preconditions on the resource <code>version</code>,
-<code>Idempotency-Key</code> on mutating posts. OpenAPI
+<code>Idempotency-Key</code> on mutating posts. An <code>Idempotency-Key</code> is scoped to the
+acting principal, replays the original response for 24 hours, and a reuse of the same key with a
+different request is <code>409 IDEMPOTENCY_KEY_REUSED</code>. OpenAPI
 is the published contract and generates the TypeScript and Python client cores; breaking changes
 fail CI.</p>
 

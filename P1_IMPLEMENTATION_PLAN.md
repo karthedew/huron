@@ -1072,7 +1072,7 @@ its own when present.
 
 **Dependencies.** M3.2 (the contract stage must have the hierarchy module to run), M5.3.
 
-**Status: pending**
+**Status: done**
 
 #### Task M6.3 — Documentation write-back
 

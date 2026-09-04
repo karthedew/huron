@@ -432,6 +432,8 @@ invariant it serves.
 
 ## 4. Milestone sequence
 
+`0008_schema_conformance` shipped in commit `da03ece`, and every milestone below is marked done.
+
 | # | Milestone | Touches a migration | Discharges |
 |---|---|---|---|
 | M1 | The schema-map obligation and the enforcement notation | no | S8; S9 (`migrations/schema.sql` half); drifts 4 and 10 |
@@ -522,7 +524,7 @@ the 30-line window `scripts/check_schema_map.py` reads. **The `Scope:` sentence 
 mid-line in S8's block** ("serve, never as standalone DDL. PostgreSQL structural state only - no"),
 so the insertion splits that line; that is the intended edit, not a transcription error.
 Dependencies: none.
-Status: pending
+Status: done
 
 **T1.2 — Add `scripts/check_schema_map.py`.**
 Intent: make "the map was updated" a machine-checkable property of a commit.
@@ -537,7 +539,7 @@ success; `uv run ruff check scripts/check_schema_map.py` clean. Structure it as 
 `reflected_revision(text: str) -> str` plus a `main() -> int` so T1.4 can test the parser
 without a subprocess.
 Dependencies: T1.1 (the stamp it reads must exist).
-Status: pending
+Status: done
 
 **T1.3 — Wire the check into `make lint` and pre-commit.**
 Intent: the obligation runs where the repository's declared static checks run.
@@ -550,7 +552,7 @@ declared dependency.
 Verification: `make lint` exits 0 and its output shows the new command running; the hook's
 1:1 correspondence with a `make lint` line holds for all five hooks.
 Dependencies: T1.2.
-Status: pending
+Status: done
 
 **T1.4 — Pin the check's contract.**
 Intent: prove the check fails for the drift class that actually occurred.
@@ -576,7 +578,7 @@ of the real file is not lost: `uv run python scripts/check_schema_map.py` runs i
 from T1.3 on, and every map-touching task from T3.5 onward lists it.
 Verification: the gate. The three assertions are the mechanical acceptance criteria.
 Dependencies: T1.2.
-Status: pending
+Status: done
 
 **T1.5 — Mark the map's own annotations, and close Drift 10.**
 Intent: the file that now carries the marker rule in its header obeys it, and the bare adjective
@@ -637,7 +639,7 @@ ten markers this task adds: every object name they carry appears in `migrations/
 the one `grep` § "S9 — … ### Currency" says would have falsified Drift 6, and it proves the object
 was written, not that it survived a later revision.
 Dependencies: T1.1 (the header rule must exist before the body obeys it).
-Status: pending
+Status: done
 
 ---
 
@@ -658,7 +660,7 @@ Design: § "S2 — … #### The `pkg/` `StrEnum` companions" (members and eviden
 Verification: the gate, with `mypy --strict` and `ty` covering the new module and
 `lint-imports` still green (`huron.pkg.catalog` is framework-free; a `StrEnum` adds no import).
 Dependencies: none.
-Status: pending
+Status: done
 
 **T2.2 — Type the repository's dataset lifecycle.**
 Intent: replace the two bare strings that are the entire application-side footprint of S2.
@@ -671,7 +673,7 @@ Verification: the gate. Acceptance: no API response shape changes — `DatasetLi
 `str` subclass, so serialization is byte-identical; `web/src/lib/api/types.ts` is not edited and
 the existing unit suite passes unmodified.
 Dependencies: T2.1.
-Status: pending
+Status: done
 
 **T2.3 — Pin the vocabulary.**
 Intent: the enum's members are a contract, not an implementation detail.
@@ -682,7 +684,7 @@ equals its name; a newly created dataset's `lifecycle_state` **is** `DatasetLife
 and compares equal to `"ACTIVE"`.
 Verification: the gate, with `src/huron/pkg/catalog/lifecycle.py` at 100% line coverage.
 Dependencies: T2.1, T2.2.
-Status: pending
+Status: done
 
 ---
 
@@ -708,7 +710,7 @@ alembic.script import ScriptDirectory; print(ScriptDirectory.from_config(Config(
 .get_current_head())"` prints `0008_schema_conformance`; exactly one `DDL` constant and no
 `op.create_check_constraint` / `op.create_index` call appears in the file.
 Dependencies: M1 (the stamp check now demands T3.5 in the same change).
-Status: pending
+Status: done
 
 **T3.2 — The S1 DDL block.**
 Intent: a release can only cite a revision of its own dataset.
@@ -725,7 +727,7 @@ head) passes — proving the block applies and the dropped name existed. Accepta
 migration, `pg_constraint` holds `releases_revision_dataset_fk` and
 `dataset_revisions_id_dataset_id_unique`, and holds no `releases_revision_id_fkey`.
 Dependencies: T3.1.
-Status: pending
+Status: done
 
 **T3.3 — Introduce `tests/contract/test_catalog_store.py`.**
 Intent: the catalog hierarchy gets the contract-test surface it has never had, and M5–M9 write
@@ -741,7 +743,7 @@ couple three modules' schema assumptions to one helper set for no runtime saving
 does not scan `tests/`, so the duplication costs nothing in the gate.
 Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` passes.
 Dependencies: T3.2.
-Status: pending
+Status: done
 
 **T3.4 — Pin the composite foreign key.**
 Intent: the audit's F1 proof must now fail, and the legitimate write must still succeed.
@@ -754,7 +756,7 @@ Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` p
 refused case fails against `0007` and passes against `0008` (check by running the module once
 with `down_revision`-level migration if in doubt — this is the audit's proven insert).
 Dependencies: T3.3.
-Status: pending
+Status: done
 
 **T3.5 — Update the map and move the stamp.**
 Intent: keep `make lint` green and put the map's diff beside the migration's.
@@ -765,7 +767,7 @@ Design: § "S8 — … ### Explicit contracts", "What this obligates in `0008`";
 ### Deletions", final bullet.
 Verification: `uv run python scripts/check_schema_map.py` exits 0; `make lint` passes.
 Dependencies: T3.1, T3.2.
-Status: pending
+Status: done
 
 ---
 
@@ -795,7 +797,7 @@ Acceptance, by catalog query on a migrated database: `pg_indexes` lists
 **not** list `role_bindings_principal_scope`; `pg_constraint` shows `confdeltype = 'c'` for
 `role_capabilities_role_code_fkey` and `'a'` for the other two re-declared keys.
 Dependencies: M3 (block 1 precedes block 2; S1 owns the `releases` index).
-Status: pending
+Status: done
 
 **T4.2 — Pin the referential actions.**
 Intent: prove the role catalog's delete behaviour, which is the only place in the schema where a
@@ -813,7 +815,7 @@ Verification: `uv run pytest -m contract tests/contract/test_rbac_store.py` pass
 deleted seed rows within the test's own container or perform the deletes on a purpose-made role
 so the seed-diff assertions in the same module still hold.
 Dependencies: T4.1.
-Status: pending
+Status: done
 
 **T4.3 — Update the map.**
 Files: `migrations/schema.sql` — `role_bindings`, `role_capabilities`, `api_keys` (§3),
@@ -825,7 +827,7 @@ places `products` in §1; it is wrong — the map carries `products` in §5
 and are the ones to edit against.
 Verification: `make lint` passes (the stamp is already `0008_schema_conformance`).
 Dependencies: T4.1.
-Status: pending
+Status: done
 
 ---
 
@@ -891,7 +893,7 @@ known divergence and is settled: the constraint goes on `state`.
 Verification: both contract suites pass. Acceptance: `pg_constraint` holds the eight
 `*_vocabulary` names, all with `convalidated = true`.
 Dependencies: M4 (block order); M2 (the `datasets` vocabulary is already typed in `pkg/`).
-Status: pending
+Status: done
 
 **T5.2 — The folded-in digest format CHECK.**
 Intent: the one `*_sha256` column in the schema without the house format constraint acquires it.
@@ -903,7 +905,7 @@ digests", for the pattern every sibling column already carries.
 Verification: both contract suites pass. Acceptance: `pg_constraint` holds
 `science_profiles_document_sha256_format`.
 Dependencies: T5.1.
-Status: pending
+Status: done
 
 **T5.3 — Pin the nine constraints.**
 Intent: nine refused writes, nine permitted writes.
@@ -916,7 +918,7 @@ refusal is paired with a permitted write of a member of that column's set. The d
 the same treatment: a 63-character or uppercase digest refused, a valid 64-hex digest accepted.
 Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` passes.
 Dependencies: T5.1, T5.2, M3 (the fixture helpers).
-Status: pending
+Status: done
 
 **T5.4 — Update the map.**
 Files: `migrations/schema.sql` — the `lifecycle_state`, `state` and `severity` lines in §1, §2,
@@ -924,7 +926,7 @@ Files: `migrations/schema.sql` — the `lifecycle_state`, `state` and `severity`
 deliberately unconstrained; `science_profiles.document_sha256` gains its format annotation.
 Verification: `make lint` passes.
 Dependencies: T5.1, T5.2.
-Status: pending
+Status: done
 
 ---
 
@@ -962,7 +964,7 @@ correction is Drift 8's, handed to the write-back phase in § 1.
 Verification: both contract suites pass. Acceptance: `pg_constraint` holds the four names;
 `audit_events` carries no new constraint yet.
 Dependencies: M5 (block order).
-Status: pending
+Status: done
 
 **T6.2 — Pin the four constraints, including the open verdict.**
 Intent: prove both the enumeration and the deliberate non-enumeration.
@@ -976,14 +978,14 @@ must be refused on both ends. The permitted set includes a `gold_version → gol
 supersession edge.
 Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` passes.
 Dependencies: T6.1.
-Status: pending
+Status: done
 
 **T6.3 — Update the map.**
 Files: `migrations/schema.sql` — the `kind` annotations on `jobs`, `outbox_events` (§6) and
 `lineage_edges` (§5).
 Verification: `make lint` passes.
 Dependencies: T6.1.
-Status: pending
+Status: done
 
 ---
 
@@ -1010,7 +1012,7 @@ Verification: both contract suites pass. Acceptance: `pg_constraint` holds the f
 and still holds `snapshots_provenance_states_an_origin` and
 `snapshots_provenance_gold_is_derivation` unchanged.
 Dependencies: M6 (block order).
-Status: pending
+Status: done
 
 **T7.2 — Pin the fourteen constraints.**
 Intent: fourteen refused writes, fourteen permitted writes, and four cases that carry the
@@ -1030,7 +1032,7 @@ with the converse on any object column; and `'null'::jsonb` refused on
 Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` and
 `… test_rbac_store.py` both pass.
 Dependencies: T7.1.
-Status: pending
+Status: done
 
 **T7.3 — Update the map.**
 Files: `migrations/schema.sql` — every jsonb line in §1 (`projects`, `revision_amendments`),
@@ -1040,7 +1042,7 @@ Files: `migrations/schema.sql` — every jsonb line in §1 (`projects`, `revisio
 (`-- shape varies by policy_type`, `-- urn:huron:snapshot-provenance:1`) stay.
 Verification: `make lint` passes.
 Dependencies: T7.1.
-Status: pending
+Status: done
 
 ---
 
@@ -1083,7 +1085,7 @@ Verification: both contract suites pass; `migrations/_ddl.py`'s splitter handles
 dollar-quoted body (it already does for `0005`'s guards). Acceptance: `pg_trigger` holds
 `ingest_sessions_revision_guard` on `ingest_sessions` with a `WHEN` clause naming `'COMMITTED'`.
 Dependencies: M7 (block order).
-Status: pending
+Status: done
 
 **T8.2 — Pin the guard, including the paths it must not block.**
 Intent: prove the invariant and prove that ABORTED/FAILED remain representable.
@@ -1097,7 +1099,7 @@ revision the session reserved, which must succeed), and the terminal-state contr
 both of which must succeed).
 Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` passes.
 Dependencies: T8.1, M3 (the `_insert_dataset_revision` helper).
-Status: pending
+Status: done
 
 **T8.4 — The S7a reservation lifecycle.**
 Intent: a revision number reserved by a session that ended `ABORTED` or `FAILED` returns to the
@@ -1132,7 +1134,7 @@ holds no `ingest_sessions_dataset_id_revision_number_key`; `pg_indexes` lists
 `one_claim_per_revision_number` and still lists `one_open_ingest_per_dataset`; the new index's
 `pg_index.indpred` is not null.
 Dependencies: T8.1 (block order; the two blocks are otherwise independent).
-Status: pending
+Status: done
 
 **T8.5 — Pin the reservation lifecycle, including the write that must now succeed.**
 Intent: prove that a retry after an abort works, that a committed number is still spent, and that
@@ -1174,7 +1176,7 @@ under `0007` — and the module shares one container with T10.1's round trip. De
 these assertions create before the test returns, per R2.
 Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` passes.
 Dependencies: T8.4, M3 (the fixture helpers).
-Status: pending
+Status: done
 
 **T8.3 — Update the map.**
 Files: `migrations/schema.sql` — the `ingest_sessions` block in §2 gains a
@@ -1200,7 +1202,7 @@ Verification: `make lint` passes. Acceptance, mechanical:
 `[db 0008]` marker; and no line of the file matches
 `UNIQUE (dataset_id, revision_number)` for `ingest_sessions` either before or after this task.
 Dependencies: T8.1, T8.4.
-Status: pending
+Status: done
 
 ---
 
@@ -1256,7 +1258,7 @@ in both runs and is therefore not the acceptance criterion. The same run re-conf
 S5's constraints apply cleanly to the rebuilt table in T9.2's order, and that upgrade-then-downgrade
 is byte-identical to a pristine `0001`–`0007` database across a nine-row catalog comparison.
 Dependencies: M8 (block order).
-Status: pending
+Status: done
 
 **T9.2 — The two held-back constraints, after the rebuild.**
 Intent: the audit kind is shape-constrained without being enumerated, and the payload is an
@@ -1277,7 +1279,7 @@ Verification: both contract suites pass. Acceptance: `pg_constraint` holds
 `audit_events_kind_format` and `audit_events_payload_is_an_object`, **exactly one row each**
 (the relation has no children), both `convalidated`.
 Dependencies: T9.1.
-Status: pending
+Status: done
 
 **T9.3 — Pin the audit rules.**
 Files: `tests/contract/test_catalog_store.py`.
@@ -1292,7 +1294,7 @@ Plus the assertion that pins what the rebuild bought: two rows sharing an `id` w
 partitioned shape allowed, and the guarantee the composite key could not make.
 Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` passes.
 Dependencies: T9.2.
-Status: pending
+Status: done
 
 **T9.4 — Update the map.**
 Files: `migrations/schema.sql` §6 — the `audit_events` block: the
@@ -1300,7 +1302,7 @@ Files: `migrations/schema.sql` §6 — the `audit_events` block: the
 becomes `id PK`, and the `(created_at, id)` index is annotated.
 Verification: `make lint` passes.
 Dependencies: T9.1, T9.2.
-Status: pending
+Status: done
 
 ---
 
@@ -1340,7 +1342,7 @@ Downgrade only to `0007`: § "S2 — … #### DDL", "Downgrade ordering matters"
 further is fine but is `0006`'s concern, not this revision's.
 Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` passes.
 Dependencies: M9.
-Status: pending
+Status: done
 
 **T10.2 — Pin the one audit proof that still succeeds.**
 Intent: record `jobs.state`'s deferral as a tested decision rather than an oversight.
@@ -1352,7 +1354,7 @@ Design: § "S3 — … ### Negative-write tests", final paragraph; § "S2 — �
 item 3.
 Verification: `uv run pytest -m contract tests/contract/test_catalog_store.py` passes.
 Dependencies: M6 (`jobs_kind_vocabulary` must exist for the row's `kind` to be legal).
-Status: pending
+Status: done
 
 **T10.3 — Final map and gate reconciliation, including the three map omissions the grill proved.**
 Intent: the map is accurate as a whole, not merely stamped.
@@ -1398,7 +1400,7 @@ lines**: the map writes `generation integer NOT NULL, version integer NOT NULL,`
 line count returns four and would pass on a half-done edit; and
 `grep -A 6 'CREATE TABLE capabilities' migrations/schema.sql | grep -c 'description'` returns `1`.
 Dependencies: T10.1, T10.2.
-Status: pending
+Status: done
 
 **T10.4 — Drop the `[db 0008]` qualifiers.**
 Intent: `0008` has landed, so the markers that said "committed, not installed" now say something
@@ -1427,7 +1429,7 @@ annotation losing its object name in the edit (`grep -- '-- \[db\]' migrations/s
 each line still naming a constraint, index or trigger). `make lint` passes and
 `uv run python scripts/check_schema_map.py` exits 0.
 Dependencies: T10.3.
-Status: pending
+Status: done
 
 ---
 

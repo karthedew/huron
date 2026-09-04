@@ -1,7 +1,7 @@
 ---
 description: Execute a markdown implementation plan for a Python project through serial implementation and verification agents with a strict validation gate, bounded fix loops, and configurable models
 agent: build
-model: anthropic/claude-fable-5
+model: claude-fable-5
 ---
 
 You are orchestrating a disciplined, senior-engineer implementation workflow for a Python project from the markdown implementation plan at:

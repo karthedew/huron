@@ -2819,7 +2819,7 @@ OQ3. No orphan task, no uncarried deletion.
 |---|---|---|
 | 11 milestones | `grep -c '^## M'` | **11** |
 | 27 tasks | `grep -c '^### Task M'` | **27** |
-| 27 pending | `grep -c '^\*\*Status: pending\*\*'` | **27** |
+| 0 pending, 27 done | `grep -c '^\*\*Status: pending\*\*'` / `grep -c '^\*\*Status: done'` | **0** / **27** |
 | 17 decisions | `grep -c '^\| \*\*D-'` | **17** — D-1…D-17, `:1999` says "seventeen" |
 | 40 open questions | counted per `### Open questions` | D1 3, D2 3, D3 4, D4 3, D5 4, D5b 4, D6 4, D7 4, D8 4, D9 3, D10 4 = **40** |
 | 23 + 16 + 1 = 40 | §2 arithmetic | **reconciles** |

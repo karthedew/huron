@@ -168,8 +168,8 @@ implementing package does not import the declaring one either, which is what let
 the wiring site, where the concrete object meets the Protocol.</p>
 
 <p>Seven import-linter contracts hold this in place, checked by <code>make lint</code>
-(<code>lint-imports</code>); there is no CI today — the workflow that runs the gate is P1 plan
-M6.2. The five architectural ones:
+(<code>lint-imports</code>), which <a href="https://github.com/karthedew/huron/blob/main/.github/workflows/ci.yml"><code>.github/workflows/ci.yml</code></a>'s <code>lint</code> job runs on every push
+and pull request. The five architectural ones:
 a <em>layers</em> contract for service → pkg → schema; an <em>independence</em> contract across
 the packages that exist today (<code>pkg/auth</code>, <code>pkg/catalog</code>,
 <code>pkg/rawstore</code>, <code>pkg/rbac</code>); an <em>independence</em> contract across the
@@ -223,33 +223,34 @@ volumes from a clean checkout.</td></tr>
 <code>catalog/paths.py</code> (construction + parsing, per-resource slug limits); manifest/JCS
 module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
 <code>pkg/rawstore/</code>; migrations (hierarchy, role_bindings, api_keys, audit, outbox);
-<code>RoleBindingAuthorizer</code> with discovery gating — the pure authorizer is delivered, but
-its gating function (<code>visible_project_ids</code>) has no caller yet: the list and get
-operations pass unfiltered results through, and P1 plan M1/M5 wires the visibility value into
-every hierarchy read; API-key + OIDC resolvers.
+<code>RoleBindingAuthorizer</code> with discovery gating — the authorizer computes a
+<code>Visibility</code> per request from the caller's role bindings, and every hierarchy read,
+window and mutation resolves it through <code>CurrentVisibility</code> before it reaches the
+store; API-key + OIDC resolvers.
 Per-item status for this row's HTTP deliverables, because the <span class="tag">partial</span> tag
 alone cannot be audited: org/project/dataset CRUD and release tags over HTTP, with generation
 documents at the documented paths <span class="tag">done</span> — verified route by route against
-the built route table and against <a href="api.html">API</a> §2 — but the hierarchy itself has
-<strong>no persistent store</strong>: <code>HierarchyRepository</code> holds it in process and
-nothing reads or writes the <code>organizations</code>, <code>projects</code>,
-<code>datasets</code> or <code>releases</code> tables <code>0001</code> creates, so every
-organization is forgotten on restart and cannot own a service account or scope an API key in
-Postgres mode. The hierarchy store, visibility filtered in SQL before <code>LIMIT</code>, and a
-Postgres-only composition root are the open deliverables <span class="tag">todo</span>, owned by
-<code>P1_DESIGN.md</code> (Designs 1–4) and executed by <code>P1_IMPLEMENTATION_PLAN.md</code>
-§ "3. Milestone sequence" (M1–M6, fifteen tasks, every task <code>Status: pending</code>; no task
-is gated — all nine decisions were answered 2026-09-03). Browse with keyset pagination
-<span class="tag">partial</span>: keyset cursors are issued in-process today
-(<code>routes/v1/pagination.py</code>); the store-side window is P1 plan M5, and the
-filter-then-paginate rule belongs to milestone 3. OpenAPI published, TS + Python client cores
-generated <span class="tag">todo</span>: the app emits a live schema, but
-<code>openapi/v1.json</code> is not a committed artifact and neither client core exists — T0
-milestone 1 owns both and marks them <span class="tag">todo</span> independently. The
-verification debts — property tests over the pure core, a CI that runs the gate, and the
-write-back of this row — are P1 plan M6; the release-tag half of the gate is proven against a
-contract-test revision row until P2's revision writer exists, because no HTTP path can yet create
-the revision a tag resolves to. Where this row
+the built route table and against <a href="api.html">API</a> §2. The hierarchy is persisted in
+PostgreSQL <span class="tag">done</span>: <code>PostgresHierarchyStore</code>
+(<code>service/api/stores/hierarchy.py</code>) is the only production wiring
+<code>create_app</code> builds, so an organization created over HTTP survives a restart and can own
+a service account or scope an API key in the one deployment shape that exists. Discovery gating
+<span class="tag">done</span>: every hierarchy read, window and mutation resolves the caller's
+<code>Visibility</code> before it reaches the store, the predicate is applied in SQL before
+<code>LIMIT</code>, and an id the caller cannot discover answers 404 from every read, guard and
+mutation. Browse with keyset pagination <span class="tag">done</span>: the store itself windows by
+the keyset (<code>slug_cursor_key</code>/<code>tag_cursor_key</code> in
+<code>routes/v1/pagination.py</code> decode the cursor into it), filtered by visibility before the
+window, so a walk at <code>limit=1</code> enumerates every visible row exactly once. OpenAPI
+published, TS + Python client cores generated <span class="tag">todo</span>: the app emits a live
+schema, but <code>openapi/v1.json</code> is not a committed artifact and neither client core
+exists — T0 milestone 1 owns both, marks them <span class="tag">todo</span> independently, and is
+this row's only remaining open item. The verification debts — property tests over the pure core, a
+CI that runs the gate, and this write-back — are closed:
+<code>P1_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M1–M6, fifteen tasks) is done; the
+release-tag half of the gate is proven against a revision row the contract test inserts by SQL,
+because no HTTP path yet writes <code>dataset_revisions</code> — P2's ingest path is what makes
+that clause reachable over real HTTP. Where this row
 and the code disagree, the code wins.
 Withdrawn: the audit table was delivered without the pre-created partitions this row once
 claimed — <code>audit_events</code> shipped declared <code>PARTITION BY RANGE (created_at)</code>
@@ -265,7 +266,9 @@ Reasoning, rejected alternative and live-database proof:
 at the exact documented paths; a release tag resolves to one revision and a second write of the
 same tag is <code>409 TAG_EXISTS</code>; slug-change attempts 409; API-key auth round-trip; a principal
 scoped to project A gets full-size pages with zero rows from B and no evidence of B in counts or
-cursors; import-linter green.</td></tr>
+cursors; import-linter green. The release-tag clause is proven against a revision row a contract
+test inserts by SQL, not one created over HTTP, until P2's ingest path writes
+<code>dataset_revisions</code>.</td></tr>
 
 <tr><td class="k">Schema conformance — <code>0008</code><br><span class="tag">done</span></td>
 <td>One Alembic revision, <code>0008_schema_conformance</code>, bringing the P1 metastore into
@@ -324,8 +327,8 @@ and the table diverge; a cursor walk at <code>limit=1</code> enumerates every co
 once, ending at <code>next_cursor: null</code>; <code>/readyz</code> answers <code>503</code> when a
 dependency is unavailable, never <code>4xx</code>; all four binding scope roots support create, list
 and revoke and no update verb exists at any scope; no file under <code>migrations/</code> or
-<code>src/huron/schema</code> modified in the whole run; and all sixteen decisions recorded with the
-owner's answer — an unanswered decision means its milestone is not done regardless of gate
+<code>src/huron/schema</code> modified in the whole run; and all seventeen decisions recorded with
+the owner's answer — an unanswered decision means its milestone is not done regardless of gate
 state.</td></tr>
 
 <tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">partial</span></td>
@@ -779,8 +782,9 @@ and the outbox/projection machinery it builds is the same event backbone P6–P9
 open it would stall adoption; the grant flow is the product moment.</li>
 <li><strong>P10 last:</strong> Polaris mirrors published tabular Gold — there is nothing to mirror
 before P9, and nothing blocks on it (its failure posture is "degrade external engines only").</li>
-<li><strong>Cross-cutting, never a phase:</strong> FIPS smoke and the OpenAPI-contract check run
-from P0 onward; instrumentation (unchanged-byte ratio, layer sizes per project, ingest durations,
+<li><strong>Cross-cutting, never a phase:</strong> FIPS smoke and the OpenAPI-contract check are meant
+to run from P0 onward and neither exists yet <span class="tag">todo</span>; instrumentation
+(unchanged-byte ratio, layer sizes per project, ingest durations,
 projection lag, grant issuance rates) ships with the code that emits it, because the
 full-copy-vs-delta and TTL-length decisions get revisited with data, not opinion.</li>
 <li><strong>The <a href="#api-sweep">API tier clean sweep</a> before T0 milestone 1:</strong> that
@@ -788,7 +792,7 @@ milestone commits <code>openapi/v1.json</code> and generates the TypeScript clie
 sweep is what replaces the pagination envelope, the response models and the error contract that
 document would otherwise pin. Generating a client first means regenerating it, and deleting
 <code>types.ts</code> against a contract that is about to break. The sweep blocks no backend phase;
-it is gated instead on the sixteen decisions in <code>API_IMPLEMENTATION_PLAN.md</code> § "2. Human
+it is gated instead on the seventeen decisions in <code>API_IMPLEMENTATION_PLAN.md</code> § "2. Human
 decision register", six of which are visible contract breaks that ship as one grouped release.</li>
 <li><strong>T0 in strict order (contract → session → visibility):</strong> the generated client
 first, then the browser session, then the visibility layer, so every later listing endpoint is
