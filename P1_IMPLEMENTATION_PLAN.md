@@ -1120,14 +1120,14 @@ document's tag vocabulary `done` / `partial` / `todo`):
 **Verification.**
 
 - `grep -n "common.py\|platform_admin\|eleven packages\|twelve services\|ObjectRepoStore" design/roadmap.html design/api.html` returns nothing.
-- `grep -c "Status: pending" SCHEMA_IMPLEMENTATION_PLAN.md` is 0; `grep -c "^\*\*Status: superseded\*\*" FINDINGS_IMPLEMENTATION_PLAN.md` is 4; `grep -c "^\*\*Status: pending\*\*" FINDINGS_IMPLEMENTATION_PLAN.md` is 19.
+- `grep -c "Status: pending" SCHEMA_IMPLEMENTATION_PLAN.md` is 0; `grep -c "^\*\*Status: superseded\*\*" FINDINGS_IMPLEMENTATION_PLAN.md` is 4; `grep -c "^\*\*Status: pending\*\*" FINDINGS_IMPLEMENTATION_PLAN.md` is 14.
 - `grep -n "Schema conformance" -A 1 design/roadmap.html` shows the `done` tag.
 - `make docs` builds with `--strict`.
 - Full gate (unchanged code; proves the tree is still green at the end of the plan).
 
 **Dependencies.** M6.2 (the CI link must point at a workflow that exists and has run), M5.3.
 
-**Status: pending**
+**Status: done**
 
 ---
 

@@ -2,9 +2,16 @@
 
 Huron is a datalake for scientific projects. `design/` is the authoritative architecture record; `design/roadmap.html` is the living, cross-phase roadmap.
 
-## Development lifecycle: design → implement → review
+## Development lifecycle: grill -> design → implement → review
+
+When starting fresh on a session, we should look for a phase that is part of the roadmap. The first step in the development lifecycle should be to use the /grill-with-docs skill found in ./.claude/skills/grill-with-docs/ to determine the details of what to build.
 
 Non-trivial work in this repo goes through three Claude Code slash commands, defined in `.claude/commands/` and backed by skills in `.claude/skills/`. Don't hand-implement a multi-file change without going through this loop.
+
+1. `/grill-with-docs <prompt-from-roadmap-description>`
+   - Just follow the grill-with-docs process.
+   - The prompt-from-roadmap-description should provide the basis to explain what is being built.
+   - The results of this skill should feed into the design-plan and be recorded into a unique GRILL.md file.
 
 1. `/design-plan <target-path> [design-file] [plan-file] [design-goal] [roadmap-file] [escalation-context]`
    - Planning only — never edits application code.
@@ -29,7 +36,7 @@ Non-trivial work in this repo goes through three Claude Code slash commands, def
 ### The loop
 
 ```text
-/design-plan  ──►  /implement-markdown  ──► success: next phase ──► back to /design-plan
+/grill-with-docs -> /design-plan  ──►  /implement-markdown  ──► success: next phase ──► back to /design-plan
                           │
                           └─ 3x verification failure
                                    │
@@ -48,6 +55,12 @@ Non-trivial work in this repo goes through three Claude Code slash commands, def
 - Every module, class, function and method carries a Google-style docstring whose `Args`/`Returns`/`Yields`/`Raises` match the signature — enforced by ruff's `D` rules and `pydoclint` in the gate; tests carry a one-line summary of what they prove. The standard is `docs/getting-started/docstrings.md`.
 - Subagents run serially, never in parallel, within each command.
 - Commands and skills live in `.claude/commands/` and `.claude/skills/<name>/SKILL.md` respectively, both committed to the repo so the workflow travels with it.
+
+### Code Design
+
+The codebase that is developed should follow Object Oriented Design unless otherwise stated in the skills uploaded.
+
+They OOP designs should be based on if a section of code relates to creational, structural, or behavior block.
 
 ### Skills
 

@@ -218,7 +218,7 @@ stages.</td>
 from another each fail their contract; the compose stack boots and bootstraps buckets and
 volumes from a clean checkout.</td></tr>
 
-<tr><td class="k">P1 — Foundations<br><span class="tag">partial</span></td>
+<tr><td class="k">P1 — Foundations<br><span class="tag">done</span></td>
 <td>Domain model for the three-level hierarchy in <code>pkg/catalog/</code>;
 <code>catalog/paths.py</code> (construction + parsing, per-resource slug limits); manifest/JCS
 module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
@@ -227,8 +227,8 @@ module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
 <code>Visibility</code> per request from the caller's role bindings, and every hierarchy read,
 window and mutation resolves it through <code>CurrentVisibility</code> before it reaches the
 store; API-key + OIDC resolvers.
-Per-item status for this row's HTTP deliverables, because the <span class="tag">partial</span> tag
-alone cannot be audited: org/project/dataset CRUD and release tags over HTTP, with generation
+Per-item status for this row's HTTP deliverables: org/project/dataset CRUD and release tags over
+HTTP, with generation
 documents at the documented paths <span class="tag">done</span> — verified route by route against
 the built route table and against <a href="api.html">API</a> §2. The hierarchy is persisted in
 PostgreSQL <span class="tag">done</span>: <code>PostgresHierarchyStore</code>
@@ -241,11 +241,8 @@ a service account or scope an API key in the one deployment shape that exists. D
 mutation. Browse with keyset pagination <span class="tag">done</span>: the store itself windows by
 the keyset (<code>slug_cursor_key</code>/<code>tag_cursor_key</code> in
 <code>routes/v1/pagination.py</code> decode the cursor into it), filtered by visibility before the
-window, so a walk at <code>limit=1</code> enumerates every visible row exactly once. OpenAPI
-published, TS + Python client cores generated <span class="tag">todo</span>: the app emits a live
-schema, but <code>openapi/v1.json</code> is not a committed artifact and neither client core
-exists — T0 milestone 1 owns both, marks them <span class="tag">todo</span> independently, and is
-this row's only remaining open item. The verification debts — property tests over the pure core, a
+window, so a walk at <code>limit=1</code> enumerates every visible row exactly once. The verification
+debts — property tests over the pure core, a
 CI that runs the gate, and this write-back — are closed:
 <code>P1_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M1–M6, fifteen tasks) is done; the
 release-tag half of the gate is proven against a revision row the contract test inserts by SQL,
@@ -335,16 +332,44 @@ state.</td></tr>
 <td>Session state machine (dataset-scoped lock), upload plan with hardlink dedup, streaming
 in-flight hashing, the POSIX commit protocol (staging → fsync → atomic rename), sealing, download
 capabilities, <code>INDEX.json</code>.
-Domain logic and the commit primitives are implemented and unit-tested
-(<code>pkg/catalog/ingest.py</code>, <code>pkg/rawstore/</code>); the HTTP surface is
-milestone 8 in §3.</td>
+Per-item status for this row's deliverables, because the <span class="tag">partial</span> tag
+alone cannot be audited: session state machine <span class="tag">partial</span> —
+<code>pkg/catalog/ingest.py</code> holds the transition table and the lease; only the lease
+arithmetic is tested, the transition table is not. The dataset-scoped lock
+<span class="tag">partial</span>: the <code>0008</code> DDL and the reservation semantics exist and
+are contract-tested, but no <code>begin_ingest</code> allocator exists anywhere — the port declares
+it and nothing implements it. Upload plan with hardlink dedup <span class="tag">partial</span>:
+<code>compute_upload_plan</code> and <code>hardlink_from_parent</code> exist, untested. Streaming
+in-flight hashing <span class="tag">todo</span>: <code>write_part</code> buffers the whole part as a
+list of chunks and the <code>RawStore</code> port does not declare it; nothing streams from a request
+body. The POSIX commit protocol <span class="tag">partial</span>: <code>commit_envelope</code> and
+<code>fsync_tree</code> exist, untested; and <code>P2_DESIGN.md</code> § "Design 2" proved that
+<a href="layer-raw.html">Raw</a> §5's seal-directories-then-rename order cannot execute as written
+— a <code>0555</code> directory cannot be renamed into another parent by a non-root user — so the
+corrected sequence seals the envelope's contents before the rename and its root after; that section
+holds it, and <code>P2_IMPLEMENTATION_PLAN.md</code> M10.1 writes it back to Raw §5. Sealing
+<span class="tag">partial</span>: <code>seal</code> exists, untested. Download capabilities
+<span class="tag">todo</span>: no code issues or checks one; ownership is open —
+<code>P2_IMPLEMENTATION_PLAN.md</code> § "2. Decision register" <code>D-13</code>, default: added to
+milestone 8's "Adds" as a per-request <code>data.read@raw</code> check on the download routes.
+<code>INDEX.json</code> <span class="tag">todo</span>: no code; ownership is open —
+<code>D-12</code>, default: P2 writes it best-effort at commit and P3's reconciler regenerates it.
+The HTTP surface <span class="tag">todo</span>: milestone 8 in §3. Target design:
+<code>P2_DESIGN.md</code>, § "Design 1" through § "Design 7". Execution order:
+<code>P2_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M0–M10, twenty-one tasks),
+verified 2026-09-05; its § "2. Decision register" holds twenty-three decisions
+<code>D-1</code>–<code>D-23</code>, nine resolved within the design and fourteen open with a stated
+default — every task is written against the defaults. Nothing has shipped.</td>
 <td>Round trip: a tree with NFC/NFD pairs, a zero-byte file, 8-level nesting, and a 9 GiB file
 ingests and downloads byte-identically. Crash matrix: kill after every protocol step; staging
 crashes invisible and swept; post-rename crash imported as an orphan with no duplicate on retry.
 Resume re-sends only incomplete files. Two racing <code>BeginIngest</code> calls: exactly one wins;
 100 sequential ingests number 1..100 gap-free. Replayed commit returns the same revision. Dedup:
 1 changed file of 500 uploads exactly 1; the other 499 hardlink; the new revision is independently
-complete. Every path-rejection rule produces its documented error code.</td></tr>
+complete. Every path-rejection rule produces its documented error code. Per
+<code>P2_DESIGN.md</code> § "Design 7" › "Excluded clauses", "staging crashes … swept" and
+"post-rename crash imported as an orphan" are proven by P3's sweeper and reconciler, not here; P2
+proves the on-disk state each crash leaves.</td></tr>
 
 <tr><td class="k">P3 — Integrity services<br><span class="tag">todo</span></td>
 <td>Staging-only sweeper with fraction guard and dry-run; reconciler implementing the findings
@@ -455,7 +480,7 @@ endpoint is born authorization-filtered rather than retrofitted.</p>
 <table>
 <tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
-<tr><td class="k">1 — OpenAPI contract &amp; generated TS client<br><span class="tag">todo</span></td>
+<tr><td class="k">1 — OpenAPI contract &amp; generated clients<br><span class="tag">todo</span></td>
 <td>Built: the app emits a live schema; hierarchy CRUD already returns generation documents; the
 frontend's only hand-written shapes sit behind <code>web/src/lib/api/</code>. Adds:
 <code>openapi/v1.json</code> as a committed artifact with a CI drift check; the
@@ -463,10 +488,11 @@ frontend's only hand-written shapes sit behind <code>web/src/lib/api/</code>. Ad
 error envelope, opaque keyset cursors, <code>ETag</code> from generation documents,
 <code>If-Match</code> on mutations (412 on mismatch), <code>Idempotency-Key</code> on creating
 POSTs; a generated TypeScript client replacing <code>types.ts</code> and
-<code>fixtures.ts</code>, with pagination, error, and ETag handling as shared interceptors.</td>
+<code>fixtures.ts</code>, plus a generated Python client core, with pagination, error, and ETag
+handling as shared interceptors.</td>
 <td><code>web/</code> builds green with <code>types.ts</code> and <code>fixtures.ts</code>
-deleted and zero edits outside <code>src/lib/api/</code>; CI fails when the live schema and
-<code>openapi/v1.json</code> diverge.</td></tr>
+deleted and zero edits outside <code>src/lib/api/</code>; both generated clients build; CI fails
+when the live schema and <code>openapi/v1.json</code> diverge.</td></tr>
 
 <tr><td class="k">2 — Authentication &amp; browser sessions<br><span class="tag">todo</span></td>
 <td>Built: the full <a href="auth.html">auth</a> stack — <code>/auth</code> login, logout, OIDC
@@ -554,19 +580,27 @@ tombstone and re-tagging the same name is refused.</td></tr>
 <tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
 <tr><td class="k">8 — Raw ingestion<br><span class="tag">todo</span><br>backend P2</td>
-<td>The HTTP surface over backend P2's shipped domain logic (session state machine, upload
-planning, hashing/dedup, staging + atomic-rename commit, all unit-tested).
+<td>Built: the domain logic and commit primitives exist untested (<span class="tag">partial</span>
+per the P2 row in §2).
 Adds: <code>/ingest-sessions</code> routes — create (reserving the dataset lock), metadata and
-manifest submission, heartbeat, verify, commit, abort, and an expiry sweep; dataset-creation-at-
-intake for authorized principals (humans with <code>dataset.create</code>, or an organization
-service account, whose dataset-CRUD authority is intrinsic) so intake never dead-ends; resumable multipart upload with
-per-part progress feeding the dedup/hardlink plan; idempotent retries via
+manifest submission, heartbeat, verify, commit, abort — and an expiry sweep that is a
+lifespan-owned task in every API replica, not a service (<code>P2_DESIGN.md</code> § "Design 6");
+dataset-creation-at-intake for authorized principals (humans with <code>dataset.create</code>; an
+organization service account's dataset-CRUD authority is intrinsic, but whether it may then upload
+to <code>raw</code> is open — <code>D-9</code>: today the layer rule refuses service accounts on
+<code>raw</code>, and the default keeps that refusal) so intake never dead-ends; resumable multipart
+upload with per-part progress feeding the dedup/hardlink plan; idempotent retries via
 <code>Idempotency-Key</code>; commit persists the revision and emits the audit and outbox events
-milestones 6 and 18 consume; the ingestion flow wired end-to-end with progress and failure
-recovery.</td>
+milestones 6 and 18 consume; authorized raw-file downloads (<code>GET /revisions/{id}/manifest</code>,
+<code>GET /revisions/{id}/files/{path}</code>) re-authorized per request under
+<code>data.read@raw</code> — nothing is minted, the authorized response is the capability — open,
+<code>D-13</code>, default: added here; the ingestion flow wired end-to-end with progress and failure
+recovery. Milestones M5–M8 of <code>P2_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence"
+deliver this row.</td>
 <td>An interrupted multi-GB upload resumes without re-sending completed parts; two sessions
 racing one dataset serialize on the lock; a committed revision appears in the catalog, the
-search projection, and the audit stream.</td></tr>
+search projection, and the audit stream. Per <code>P2_DESIGN.md</code> § "Design 7" › "Excluded
+clauses", "appears in … the search projection" is P4's consumer; P2 proves the outbox row.</td></tr>
 
 <tr><td class="k">9 — Automatic bronze builds<br><span class="tag">deferred</span><br>backend P6</td>
 <td><em>Deferred with the auto-builder (<a href="layer-bronze.html#auto-builder">Bronze
