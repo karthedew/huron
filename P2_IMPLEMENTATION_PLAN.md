@@ -1827,3 +1827,8 @@ than on the design's literal text.
   storage rebuild test is `…rebuilds_only_when_marker_metadata_and_session_agree`.
   `tests/unit/test_schema_loading.py` covers `load_schema`'s two error branches, which the
   100%-on-touched-files rule required once `schema/__init__.py`'s docstring changed.
+- **Execution shape, revised (owner's decision, 2026-09-06, after M4.1).** The parallel shape above
+  is withdrawn: a workflow-run implementer stalled repeatedly, so M4.1 finished through the
+  ordinary single-subagent path. From M5.1 onward every task runs serially in the main tree —
+  one implementer, then one verifier, fix loop capped at three — as rule 6 originally required.
+  The final whole-plan verification pass over the finished tree stays.
