@@ -916,7 +916,7 @@ key → same session" assertion of the in-project test.
 
 **Dependencies.** M2.2, M3.3, M4.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M5.2 — Upload transport: routes 5 and 6, the body bridge, `ClientDisconnect`, resume
 

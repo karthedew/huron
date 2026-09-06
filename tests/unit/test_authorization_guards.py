@@ -1,9 +1,12 @@
 """The dependencies a route declares, proved against a real repository and granted RBAC roles.
 
-Covers the four ``require_*`` factories and the layer-write two-stage
-rule, including that an unknown or invisible scope answers 404 before any
-binding or layer check runs. Exercising these also drives ``scopes.py``'s
-three resolvers, which have no test module of their own.
+Covers the four ``require_*`` factories and the ingest-session guards
+(``dataset_raw_writer``, ``project_intake``, ``session_overseer``,
+``session_owner``), including that an unknown or invisible scope answers
+404 before any binding or layer check runs, and that a principal's kind
+refuses a raw write before any binding is even consulted. Exercising these
+also drives ``scopes.py``'s three resolvers, which have no test module of
+their own.
 """
 
 from __future__ import annotations
@@ -15,20 +18,29 @@ import pytest
 
 from huron.pkg.auth import Principal
 from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.catalog.layers import Layer, LayerWriteForbidden
+from huron.pkg.catalog.layers import LayerWriteForbidden
+from huron.pkg.catalog.manifest import ManifestEntry
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import ScopeType, Visibility
 from huron.service.api.authorization.guards import (
-    LayerWrite,
-    dataset_layer_writer,
+    dataset_raw_writer,
+    project_intake,
     require_dataset,
     require_organization,
     require_project,
     require_system,
+    session_overseer,
+    session_owner,
 )
 from huron.service.api.errors import Forbidden
+from huron.service.api.ingest import IngestService
 from huron.service.api.repository import HierarchyRepository, request_sha256
-from huron.service.api.stores import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
+from huron.service.api.stores import (
+    IdempotencyClaim,
+    InMemoryHierarchyStore,
+    InMemoryRbacStore,
+    SystemClock,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,6 +58,16 @@ def _repository(tmp_path: Path) -> HierarchyRepository:
         classification_vocabulary=("open",),
         rbac_store=InMemoryRbacStore(),
     )
+
+
+def _stack(tmp_path: Path) -> tuple[HierarchyRepository, IngestService]:
+    """A repository and an ingest service sharing one raw store and hierarchy store."""
+    hierarchy = InMemoryHierarchyStore()
+    raw_store = PosixRawStore(str(tmp_path / "raw"))
+    repository = HierarchyRepository(
+        raw_store, hierarchy, classification_vocabulary=("open",), rbac_store=InMemoryRbacStore()
+    )
+    return repository, IngestService(raw_store, hierarchy, clock=SystemClock())
 
 
 def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
@@ -407,13 +429,13 @@ async def test_require_dataset_raises_not_found_for_a_dataset_the_caller_cannot_
         )
 
 
-# -- dataset_layer_writer: the scope, then the layer rule, then the binding ------
+# -- dataset_raw_writer: the scope, then the layer rule, then the binding -------
 
 
-async def test_dataset_layer_writer_returns_a_layer_write_when_both_stages_pass(
+async def test_dataset_raw_writer_returns_the_principal_when_both_stages_pass(
     tmp_path: Path,
 ) -> None:
-    """``dataset_layer_writer`` returns a LayerWrite once the scope, layer rule and binding pass."""
+    """``dataset_raw_writer`` returns the principal once the scope, layer rule and binding pass."""
     repository = _repository(tmp_path)
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
@@ -427,47 +449,45 @@ async def test_dataset_layer_writer_returns_a_layer_write_when_both_stages_pass(
     )
     alice = Principal(subject="alice")
 
-    result = await dataset_layer_writer(
+    result = await dataset_raw_writer(
         dataset_id=dataset.id,
-        layer="raw",
         principal=alice,
         repository=repository,
         cache={},
         visibility=Visibility.ALL,
     )
 
-    assert result == LayerWrite(principal=alice, layer=Layer.RAW)
+    assert result is alice
 
 
-async def test_dataset_layer_writer_refuses_a_human_principal_on_silver_regardless_of_bindings(
+async def test_dataset_raw_writer_refuses_a_service_account_before_any_binding_is_checked(
     tmp_path: Path,
 ) -> None:
-    """A human principal is refused on silver by the layer rule, after the scope resolves.
+    """A service account is refused by the kind rule, whatever bindings it might otherwise hold.
 
     The layer rule is defense in depth: even a mis-seeded binding must not
-    let a human commit to silver.
+    let a service account commit to raw.
     """
     repository = _repository(tmp_path)
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
     dataset = await _dataset(repository, project.id)
-    alice = Principal(subject="alice")
+    pipeline = Principal(subject="pipeline", kind="service_account")
 
     with pytest.raises(LayerWriteForbidden):
-        await dataset_layer_writer(
+        await dataset_raw_writer(
             dataset_id=dataset.id,
-            layer="silver",
-            principal=alice,
+            principal=pipeline,
             repository=repository,
             cache={},
             visibility=Visibility.ALL,
         )
 
 
-async def test_dataset_layer_writer_refuses_a_writable_layer_with_no_binding(
+async def test_dataset_raw_writer_refuses_a_human_with_no_covering_binding(
     tmp_path: Path,
 ) -> None:
-    """A writable layer with no covering binding raises Forbidden, not LayerWriteForbidden."""
+    """A human principal who is not the kind rule's problem is still refused with no binding."""
     repository = _repository(tmp_path)
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
@@ -475,9 +495,8 @@ async def test_dataset_layer_writer_refuses_a_writable_layer_with_no_binding(
     alice = Principal(subject="alice")
 
     with pytest.raises(Forbidden):
-        await dataset_layer_writer(
+        await dataset_raw_writer(
             dataset_id=dataset.id,
-            layer="raw",
             principal=alice,
             repository=repository,
             cache={},
@@ -485,25 +504,258 @@ async def test_dataset_layer_writer_refuses_a_writable_layer_with_no_binding(
         )
 
 
-async def test_dataset_layer_writer_raises_not_found_for_an_unknown_dataset_before_the_layer_rule(
+async def test_dataset_raw_writer_raises_not_found_for_an_unknown_dataset_before_the_layer_rule(
     tmp_path: Path,
 ) -> None:
-    """An unknown dataset is 404 from the scope resolution, before the layer rule ever runs.
+    """An unknown dataset is 404 from the scope resolution, before the kind rule ever runs.
 
-    A layer name a human may never write (``silver``) would raise
-    ``LayerWriteForbidden`` if the layer rule ran first; resolving the
-    scope first means an unknown dataset is 404 instead, regardless of the
-    layer named.
+    A service-account caller would raise ``LayerWriteForbidden`` if the
+    kind rule ran first; resolving the scope first means an unknown
+    dataset is 404 instead, regardless of the caller's kind.
     """
     repository = _repository(tmp_path)
-    alice = Principal(subject="alice")
+    pipeline = Principal(subject="pipeline", kind="service_account")
 
     with pytest.raises(ResourceNotFound):
-        await dataset_layer_writer(
+        await dataset_raw_writer(
             dataset_id=uuid4(),
-            layer="silver",
+            principal=pipeline,
+            repository=repository,
+            cache={},
+            visibility=Visibility.ALL,
+        )
+
+
+# -- project_intake: the layer rule, then the raw-write binding, then dataset.create --
+
+
+async def test_project_intake_returns_the_principal_when_every_stage_passes(tmp_path: Path) -> None:
+    """A developer, who holds both ``data.write@raw`` and ``dataset.create``, may intake."""
+    repository = _repository(tmp_path)
+    organization = await _organization(repository)
+    project = await _project(repository, organization.id)
+    await repository.grant_role(
+        principal="user:alice",
+        role_code="developer",
+        scope_type=ScopeType.PROJECT,
+        scope_id=project.id,
+        created_by="admin",
+    )
+    alice = Principal(subject="alice")
+
+    result = await project_intake(
+        project_id=project.id,
+        principal=alice,
+        repository=repository,
+        cache={},
+        visibility=Visibility.ALL,
+    )
+
+    assert result is alice
+
+
+async def test_project_intake_refuses_a_service_account_before_dataset_create_is_checked(
+    tmp_path: Path,
+) -> None:
+    """A service account is refused by the kind rule before ``dataset.create`` is ever asked.
+
+    A service account's dataset-CRUD authority is intrinsic (it may mint a
+    dataset directly), so if ``dataset.create`` ran first it would pass;
+    the kind rule running first means it never mints a raw-entry dataset
+    it could not then fill.
+    """
+    repository = _repository(tmp_path)
+    organization = await _organization(repository)
+    project = await _project(repository, organization.id)
+    pipeline = Principal(subject="pipeline", kind="service_account")
+
+    with pytest.raises(LayerWriteForbidden):
+        await project_intake(
+            project_id=project.id,
+            principal=pipeline,
+            repository=repository,
+            cache={},
+            visibility=Visibility.ALL,
+        )
+
+
+async def test_project_intake_refuses_a_human_with_no_covering_binding(tmp_path: Path) -> None:
+    """A human with no raw-write binding is refused, never reaching the ``dataset.create`` check."""
+    repository = _repository(tmp_path)
+    organization = await _organization(repository)
+    project = await _project(repository, organization.id)
+    alice = Principal(subject="alice")
+
+    with pytest.raises(Forbidden):
+        await project_intake(
+            project_id=project.id,
             principal=alice,
             repository=repository,
             cache={},
             visibility=Visibility.ALL,
         )
+
+
+async def test_project_intake_raises_not_found_for_an_unknown_project_before_the_layer_rule(
+    tmp_path: Path,
+) -> None:
+    """An unknown project is 404 from the scope resolution, before the kind rule ever runs."""
+    repository = _repository(tmp_path)
+    pipeline = Principal(subject="pipeline", kind="service_account")
+
+    with pytest.raises(ResourceNotFound):
+        await project_intake(
+            project_id=uuid4(),
+            principal=pipeline,
+            repository=repository,
+            cache={},
+            visibility=Visibility.ALL,
+        )
+
+
+# -- session_overseer and session_owner: the owner, or a project admin who may only read ---
+
+
+async def _opened_session(
+    repository: HierarchyRepository, ingest: IngestService, dataset: Dataset, *, created_by: str
+) -> UUID:
+    """Open a session as ``created_by`` on ``dataset`` and return its id."""
+    files = (ManifestEntry(path="payload/a.bin", size=5, sha256="a" * 64),)
+    claim = IdempotencyClaim(
+        principal=created_by,
+        key=f"open-{dataset.id}",
+        request_sha256=request_sha256("ingest_session", str(dataset.id)),
+    )
+    ledger = await ingest.create(dataset, files=files, created_by=created_by, claim=claim)
+    return ledger.id
+
+
+async def test_session_overseer_lets_the_owner_and_a_project_admin_read(tmp_path: Path) -> None:
+    """The owner and a project admin both resolve, with ``owner`` distinguishing the two."""
+    repository, ingest = _stack(tmp_path)
+    organization = await _organization(repository)
+    project = await _project(repository, organization.id)
+    dataset = await _dataset(repository, project.id)
+    await repository.grant_role(
+        principal="user:carl",
+        role_code="project_admin",
+        scope_type=ScopeType.PROJECT,
+        scope_id=project.id,
+        created_by="admin",
+    )
+    session_id = await _opened_session(repository, ingest, dataset, created_by="alice")
+
+    as_owner = await session_overseer(
+        session_id=session_id,
+        principal=Principal(subject="alice"),
+        repository=repository,
+        ingest=ingest,
+        cache={},
+        visibility=Visibility.ALL,
+    )
+    assert as_owner.owner is True
+
+    as_admin = await session_overseer(
+        session_id=session_id,
+        principal=Principal(subject="carl"),
+        repository=repository,
+        ingest=ingest,
+        cache={},
+        visibility=Visibility.ALL,
+    )
+    assert as_admin.owner is False
+
+
+async def test_session_overseer_refuses_a_non_owner_without_project_update(tmp_path: Path) -> None:
+    """A non-owner developer, who lacks ``project.update``, is refused."""
+    repository, ingest = _stack(tmp_path)
+    organization = await _organization(repository)
+    project = await _project(repository, organization.id)
+    dataset = await _dataset(repository, project.id)
+    await repository.grant_role(
+        principal="user:carl",
+        role_code="developer",
+        scope_type=ScopeType.PROJECT,
+        scope_id=project.id,
+        created_by="admin",
+    )
+    session_id = await _opened_session(repository, ingest, dataset, created_by="alice")
+
+    with pytest.raises(Forbidden):
+        await session_overseer(
+            session_id=session_id,
+            principal=Principal(subject="carl"),
+            repository=repository,
+            ingest=ingest,
+            cache={},
+            visibility=Visibility.ALL,
+        )
+
+
+async def test_session_overseer_raises_not_found_for_an_unknown_session(tmp_path: Path) -> None:
+    """An id naming no session is 404, not a domain error about a missing dataset."""
+    repository, ingest = _stack(tmp_path)
+
+    with pytest.raises(ResourceNotFound):
+        await session_overseer(
+            session_id=uuid4(),
+            principal=Principal(subject="alice"),
+            repository=repository,
+            ingest=ingest,
+            cache={},
+            visibility=Visibility.ALL,
+        )
+
+
+async def test_session_owner_refuses_a_project_admin_who_is_not_the_owner(tmp_path: Path) -> None:
+    """A project admin may overseer a session but may not drive it: administering is not driving."""
+    repository, ingest = _stack(tmp_path)
+    organization = await _organization(repository)
+    project = await _project(repository, organization.id)
+    dataset = await _dataset(repository, project.id)
+    await repository.grant_role(
+        principal="user:carl",
+        role_code="project_admin",
+        scope_type=ScopeType.PROJECT,
+        scope_id=project.id,
+        created_by="admin",
+    )
+    session_id = await _opened_session(repository, ingest, dataset, created_by="alice")
+
+    with pytest.raises(Forbidden):
+        await session_owner(
+            session_id=session_id,
+            principal=Principal(subject="carl"),
+            repository=repository,
+            ingest=ingest,
+            cache={},
+            visibility=Visibility.ALL,
+        )
+
+
+async def test_session_owner_returns_the_drive_for_the_owner(tmp_path: Path) -> None:
+    """The owner, whose raw-write binding still stands, may drive their own session."""
+    repository, ingest = _stack(tmp_path)
+    organization = await _organization(repository)
+    project = await _project(repository, organization.id)
+    dataset = await _dataset(repository, project.id)
+    await repository.grant_role(
+        principal="user:alice",
+        role_code="developer",
+        scope_type=ScopeType.PROJECT,
+        scope_id=project.id,
+        created_by="admin",
+    )
+    session_id = await _opened_session(repository, ingest, dataset, created_by="alice")
+
+    drive = await session_owner(
+        session_id=session_id,
+        principal=Principal(subject="alice"),
+        repository=repository,
+        ingest=ingest,
+        cache={},
+        visibility=Visibility.ALL,
+    )
+
+    assert drive.owner is True
+    assert drive.ledger.id == session_id

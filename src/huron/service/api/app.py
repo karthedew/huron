@@ -23,6 +23,7 @@ from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import Classification, RoleBindingAuthorizer, ScopeType
 
 from .errors import DependencyUnavailable
+from .ingest import IngestService
 from .problems import Problem, install_error_handlers, problem_response
 from .repository import HierarchyRepository
 from .routes import auth as auth_routes
@@ -36,24 +37,29 @@ from .stores import (
     PostgresPrincipalStore,
     PostgresRbacStore,
     PostgresSessionStore,
+    SystemClock,
 )
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
+    from huron.pkg.catalog.ports import Clock
 
-def _postgres_stores(pool: asyncpg.Pool) -> ApiStores:
+
+def _postgres_stores(pool: asyncpg.Pool, clock: Clock) -> ApiStores:
     """Wire the Postgres-backed RBAC and authentication stores over one shared pool.
 
     Args:
         pool: The already-open pool every store shares. The caller owns
             the pool and closes it at shutdown; the stores never do.
+        clock: The source of the current time for the hierarchy store's
+            idempotency and lease arithmetic.
 
     Returns:
         The six stores, each a thin wrapper around the pool.
     """
     return ApiStores(
-        hierarchy=PostgresHierarchyStore(pool),
+        hierarchy=PostgresHierarchyStore(pool, clock=clock),
         rbac=PostgresRbacStore(pool),
         api_keys=PostgresApiKeyStore(pool),
         credentials=PostgresCredentialStore(pool),
@@ -215,19 +221,22 @@ def create_app(
         pool: asyncpg.Pool | None = None
         http: httpx.AsyncClient | None = None
         try:
+            clock = SystemClock()
             if stores is not None:
                 wired = stores
             else:
                 pool = await asyncpg.create_pool(settings.database_url)
-                wired = _postgres_stores(pool)
+                wired = _postgres_stores(pool, clock)
+            raw_store = PosixRawStore(settings.data_root)
             repository = HierarchyRepository(
-                PosixRawStore(settings.data_root),
+                raw_store,
                 wired.hierarchy,
                 classification_vocabulary=tuple(
                     value.code for value in settings.classification_vocabulary
                 ),
                 rbac_store=wired.rbac,
             )
+            ingest = IngestService(raw_store, wired.hierarchy, clock=clock)
             authorizer = RoleBindingAuthorizer(
                 classifications=tuple(
                     Classification(value.code, value.order, value.discoverable)
@@ -238,6 +247,7 @@ def create_app(
             app.state.runtime = ApiRuntime(
                 settings=settings,
                 repository=repository,
+                ingest=ingest,
                 authorizer=authorizer,
                 api_keys=wired.api_keys,
                 credentials=wired.credentials,

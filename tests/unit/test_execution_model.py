@@ -1,10 +1,10 @@
 """The event-loop/threadpool boundary: which operations block, and where the loop must never stall.
 
-Pins which of the 52 operations run on the event loop directly (they only
+Pins which of the 56 operations run on the event loop directly (they only
 ``await``) versus which wrap a blocking call in ``asyncify``: every
-hierarchy operation now awaits the store, so all 52 are coroutine
-functions, and the tripwire this module keeps is that the raw store's
-filesystem calls stay off the loop thread.
+hierarchy and ingest operation now awaits its store, so all 56 are
+coroutine functions, and the tripwire this module keeps is that the raw
+store's filesystem calls stay off the loop thread.
 """
 
 from __future__ import annotations
@@ -71,7 +71,11 @@ EXPECTED_COROUTINE_FUNCTION = {
     "list_releases": True,
     "resolve_release": True,
     "list_layers": True,
-    "create_write_intent": True,
+    "create_dataset_ingest_session": True,
+    "create_project_ingest_session": True,
+    "get_ingest_session": True,
+    "heartbeat_ingest_session": True,
+    "abort_ingest_session": True,
     "list_roles": True,
     "list_system_bindings": True,
     "create_system_binding": True,
@@ -143,7 +147,7 @@ def _operations(app: FastAPI) -> Iterator[Callable[..., object]]:
 def test_the_route_table_has_exactly_the_operations_this_service_defines(
     tmp_path: Path,
 ) -> None:
-    """Registered operations minus the four documentation routes equal exactly the 52 expected."""
+    """Registered operations minus the four documentation routes equal exactly the 56 expected."""
     names = {op.__name__ for op in _operations(_built_app(tmp_path))}
     assert names - DOCUMENTATION_ENDPOINTS == set(EXPECTED_COROUTINE_FUNCTION)
 

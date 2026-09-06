@@ -3,8 +3,9 @@
 Exercises the whole chain: dev-header / API-key credential -> principal ->
 role bindings -> capability decision -> route. The scenario is the one the
 platform is built around: a platform owner seeds an organization, delegates
-to an organization admin, who delegates to a developer and creates the
-pipeline service account that alone may write silver and gold.
+to an organization admin, who delegates to a developer and creates a
+pipeline service account whose layer capabilities show silver and gold as
+its write-eligible layers, never raw or bronze.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
+
+_EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
 @pytest.fixture
@@ -53,7 +56,11 @@ def _headers(subject: str, groups: str = "") -> dict[str, str]:
 
 
 def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
-    """Delegation gates each step; a developer writes raw/bronze, a service account silver/gold."""
+    """Delegation gates each step; a developer opens raw ingest, a service account cannot.
+
+    ``list_layers`` shows the service account's write eligibility landing
+    on silver and gold only, the opposite of the developer's.
+    """
     # Unbound users can authenticate but not act.
     denied = client.post(
         "/api/v1/organizations",
@@ -119,22 +126,23 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
     assert dataset.status_code == 201
     dataset_id = dataset.json()["id"]
 
-    # bob may commit to raw and bronze, and to nothing above them.
-    for layer, expected in (("raw", 201), ("bronze", 201), ("silver", 403), ("gold", 403)):
-        response = client.post(
-            f"/api/v1/datasets/{dataset_id}/layers/{layer}/write-intents",
-            headers=_headers("bob"),
-        )
-        assert response.status_code == expected, layer
-
-    # alice administers the org but holds no write anywhere.
-    assert (
-        client.post(
-            f"/api/v1/datasets/{dataset_id}/layers/raw/write-intents",
-            headers=_headers("alice"),
-        ).status_code
-        == 403
+    # bob may open a raw ingest session; alice, who administers the org
+    # but holds no write anywhere, may not.
+    manifest_body = {"files": [{"path": "payload/a.bin", "size": 0, "sha256": _EMPTY_SHA256}]}
+    opened = client.post(
+        f"/api/v1/datasets/{dataset_id}/ingest-sessions",
+        json=manifest_body,
+        headers=_headers("bob"),
     )
+    assert opened.status_code == 201, opened.text
+
+    forbidden = client.post(
+        f"/api/v1/datasets/{dataset_id}/ingest-sessions",
+        json=manifest_body,
+        headers=_headers("alice"),
+    )
+    assert forbidden.status_code == 403
+    assert forbidden.json()["code"] == "FORBIDDEN"
 
     # alice creates the pipeline service account and mints its key.
     account = client.post(
@@ -168,12 +176,24 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
     service_headers = {"Authorization": f"Bearer {token}"}
     session_info = client.get("/auth/session", headers=service_headers)
     assert session_info.json()["kind"] == "service_account"
-    for layer, expected in (("silver", 201), ("gold", 201), ("bronze", 403), ("raw", 403)):
-        response = client.post(
-            f"/api/v1/datasets/{dataset_id}/layers/{layer}/write-intents",
-            headers=service_headers,
-        )
-        assert response.status_code == expected, layer
+    forbidden_sa = client.post(
+        f"/api/v1/datasets/{dataset_id}/ingest-sessions",
+        json=manifest_body,
+        headers={**service_headers, "Idempotency-Key": str(uuid4())},
+    )
+    assert forbidden_sa.status_code == 403
+    assert forbidden_sa.json()["code"] == "LAYER_WRITE_FORBIDDEN"
+
+    # Its intrinsic authority lands on silver and gold instead - the layer
+    # listing is where that write eligibility becomes visible, since the
+    # account never has an occasion to actually write either layer here.
+    layers = {
+        item["layer"]: item["caller_may"]["write"]
+        for item in client.get(
+            f"/api/v1/datasets/{dataset_id}/layers", headers=service_headers
+        ).json()
+    }
+    assert layers == {"raw": False, "bronze": False, "silver": True, "gold": True}
 
     # Dataset CRUD is part of that intrinsic authority (direct entry mints
     # the dataset a feed is about to fill) - org-wide, so this project too.

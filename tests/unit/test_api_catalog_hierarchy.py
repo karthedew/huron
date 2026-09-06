@@ -890,31 +890,3 @@ def test_list_layers_marks_write_true_only_for_the_layers_a_binding_covers(
     assert layers["bronze"]["caller_may"] == {"read": True, "write": True}
     assert layers["silver"]["caller_may"] == {"read": True, "write": False}
     assert layers["gold"]["caller_may"] == {"read": True, "write": False}
-
-
-# -- write intents ------------------------------------------------------
-
-
-def test_create_write_intent_returns_the_grant_it_authorized(client: TestClient) -> None:
-    """Creating a write intent returns the exact capability grant it authorized."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    binding = client.post(
-        f"/api/v1/projects/{project_id}/bindings",
-        json={"principal": "user:bob", "role": "developer"},
-        headers=_headers(),
-    )
-    assert binding.status_code == 201
-
-    response = client.post(
-        f"/api/v1/datasets/{dataset_id}/layers/raw/write-intents", headers=_headers("bob")
-    )
-    assert response.status_code == 201
-    assert response.json() == {
-        "dataset_id": dataset_id,
-        "layer": "raw",
-        "granted_to": "bob",
-        "principal_kind": "user",
-        "capability": "data.write@raw",
-    }
