@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -86,17 +86,46 @@ class ApiSettings(BaseSettings):
     #: Where /auth/oidc/callback lands the browser after login.
     web_app_url: str = "http://localhost:5173"
 
+    @field_validator("classification_vocabulary")
+    @classmethod
+    def _refuse_ambiguous_vocabulary(
+        cls, vocabulary: list[ClassificationValue]
+    ) -> list[ClassificationValue]:
+        """Refuse a classification vocabulary that could not rank projects unambiguously.
+
+        A repeated code or order would make classification comparisons
+        ambiguous, and an empty vocabulary would leave every project
+        unclassifiable.
+
+        Args:
+            vocabulary: The configured classification levels.
+
+        Returns:
+            The vocabulary unchanged, once every check passed.
+
+        Raises:
+            ValueError: If two values share a code; if two share an order;
+                or if the vocabulary is empty.
+        """
+        codes = [value.code for value in vocabulary]
+        orders = [value.order for value in vocabulary]
+        if len(codes) != len(set(codes)):
+            raise ValueError("classification codes must be unique")
+        if len(orders) != len(set(orders)):
+            raise ValueError("classification orders must be unique")
+        if not codes:
+            raise ValueError("classification vocabulary may not be empty")
+        return vocabulary
+
     @model_validator(mode="after")
-    def refuse_unsafe_combinations(self) -> Self:
-        """Refuse a configuration that would weaken authentication or discovery.
+    def _refuse_unsafe_authentication(self) -> Self:
+        """Refuse an authentication configuration that would weaken the deploy.
 
         Each check guards a failure that would otherwise surface only at
         request time: dev-headers outside development would let any client
         name its own subject, OIDC without a provider would leave every
-        bearer token unverifiable, an empty ``login_flow_secret`` would
-        leave the pending-login cookie unsigned, and a vocabulary with
-        repeated codes or orders (or none at all) would make classification
-        comparisons ambiguous.
+        bearer token unverifiable, and an empty ``login_flow_secret`` would
+        leave the pending-login cookie unsigned.
 
         Returns:
             The settings unchanged, once every combination passed.
@@ -104,9 +133,8 @@ class ApiSettings(BaseSettings):
         Raises:
             ValueError: If ``auth_mode`` is ``dev-headers`` while ``env`` is
                 not ``development``; if ``auth_mode`` is ``oidc`` and
-                ``oidc`` is unset; if ``login_flow_secret`` is empty outside
-                development; if two classification values share a code; if
-                two share an order; or if the vocabulary is empty.
+                ``oidc`` is unset; or if ``login_flow_secret`` is empty
+                outside development.
         """
         if self.auth_mode == "dev-headers" and self.env != "development":
             raise ValueError("dev-headers auth is refused outside development")
@@ -114,14 +142,6 @@ class ApiSettings(BaseSettings):
             raise ValueError("auth_mode=oidc requires the HURON_OIDC__* settings")
         if self.env != "development" and not self.login_flow_secret:
             raise ValueError("login_flow_secret is required outside development")
-        codes = [value.code for value in self.classification_vocabulary]
-        orders = [value.order for value in self.classification_vocabulary]
-        if len(codes) != len(set(codes)):
-            raise ValueError("classification codes must be unique")
-        if len(orders) != len(set(orders)):
-            raise ValueError("classification orders must be unique")
-        if not codes:
-            raise ValueError("classification vocabulary may not be empty")
         return self
 
 

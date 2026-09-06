@@ -18,7 +18,15 @@ from uuid import UUID
 import asyncpg
 
 from huron.pkg.auth import ApiKeyRecord, CredentialRecord, PrincipalRecord, SessionRecord
-from huron.pkg.catalog.models import RevisionRef
+from huron.pkg.catalog.ingest import (
+    FileState,
+    IngestFile,
+    IngestLease,
+    IngestSession,
+    IngestState,
+    UploadAction,
+)
+from huron.pkg.catalog.models import RevisionRecord, RevisionRef
 from huron.service.api.records import (
     Dataset,
     Organization,
@@ -320,6 +328,83 @@ def revision_ref(row: asyncpg.Record) -> RevisionRef:
         dataset_id=row["dataset_id"],
         number=row["revision_number"],
         manifest_sha256=row["manifest_sha256"],
+    )
+
+
+def revision_record(row: asyncpg.Record) -> RevisionRecord:
+    """Decode one ``dataset_revisions`` row into the catalog's committed-revision record.
+
+    ``revision_number`` becomes ``RevisionRecord.number``.
+
+    Args:
+        row: A row selecting ``id, dataset_id, revision_number,
+            manifest_sha256, metadata_sha256, revision_path, file_count,
+            total_bytes, committed_by, committed_at``.
+
+    Returns:
+        The revision exactly as the catalog records it.
+    """
+    return RevisionRecord(
+        id=row["id"],
+        dataset_id=row["dataset_id"],
+        number=row["revision_number"],
+        manifest_sha256=row["manifest_sha256"],
+        metadata_sha256=row["metadata_sha256"],
+        revision_path=row["revision_path"],
+        committed_by=row["committed_by"],
+        committed_at=row["committed_at"],
+        file_count=row["file_count"],
+        total_bytes=row["total_bytes"],
+    )
+
+
+def ingest_session(row: asyncpg.Record) -> IngestSession:
+    """Decode one ``ingest_sessions`` row into the catalog's session state.
+
+    Args:
+        row: A row selecting ``id, dataset_id, revision_id, revision_number,
+            manifest_sha256, state, etag, expires_at, created_by,
+            parent_revision_id``.
+
+    Returns:
+        The session exactly as the catalog records it.
+    """
+    return IngestSession(
+        lease=IngestLease(
+            ingest_id=row["id"],
+            dataset_id=row["dataset_id"],
+            revision_id=row["revision_id"],
+            revision_number=row["revision_number"],
+            expires_at=row["expires_at"],
+        ),
+        state=IngestState(row["state"]),
+        manifest_sha256=row["manifest_sha256"],
+        created_by=row["created_by"],
+        parent_revision_id=row["parent_revision_id"],
+        etag=row["etag"],
+    )
+
+
+def ingest_file(row: asyncpg.Record) -> IngestFile:
+    """Decode one ``ingest_files`` row into the catalog's per-file ledger entry.
+
+    Args:
+        row: A row selecting ``file_id, path, size, expected_sha256, action,
+            part_count, state, completed_parts``.
+
+    Returns:
+        The file exactly as the catalog records it, ``completed_parts``
+        decoded from its stored JSON array.
+    """
+    return IngestFile(
+        file_id=row["file_id"],
+        path=row["path"],
+        size=row["size"],
+        expected_sha256=row["expected_sha256"],
+        action=UploadAction(row["action"]),
+        part_count=row["part_count"],
+        state=FileState(row["state"]),
+        completed_parts=frozenset(json.loads(row["completed_parts"])),
     )
 
 

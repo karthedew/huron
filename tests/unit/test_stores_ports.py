@@ -13,7 +13,8 @@ from uuid import uuid4
 import pytest
 
 import huron.service.api.stores as stores_package
-from huron.service.api.stores.ports import IdempotencyClaim, Replay, Window
+from huron.service.api.stores.ports import IdempotencyClaim, LedgerEntry, Replay, Window
+from tests.unit.support import ingest_file
 
 pytestmark = pytest.mark.unit
 
@@ -34,13 +35,25 @@ def test_window_idempotency_claim_and_replay_reject_attribute_assignment() -> No
         replay.kind = "project"
 
 
+def test_ledger_entry_pairs_a_file_with_the_session_it_belongs_to() -> None:
+    """``LedgerEntry`` holds one ingest file beside the id of its owning session."""
+    session_id = uuid4()
+    file = ingest_file()
+    entry = LedgerEntry(ingest_id=session_id, file=file)
+    assert entry.ingest_id == session_id
+    assert entry.file is file
+
+
 def test_stores_package_exports_the_hierarchy_port_and_its_values() -> None:
     """The package's public surface names every hierarchy-port symbol a consumer imports."""
     assert {
+        "AuditEvent",
         "HierarchyStore",
         "HierarchyWriter",
         "IdempotencyClaim",
+        "LedgerEntry",
         "Replay",
+        "SystemClock",
         "Visibility",
         "Window",
     } <= set(stores_package.__all__)

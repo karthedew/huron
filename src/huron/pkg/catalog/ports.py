@@ -1,8 +1,8 @@
 """Consumer-owned protocols; implementing packages conform structurally.
 
 Every capability the catalog needs from outside - a clock, the raw store,
-the metastore, the search projection, credential vending, job dispatch,
-principal resolution - is declared here as a :class:`typing.Protocol`, in
+the search projection, credential vending, job dispatch, principal
+resolution - is declared here as a :class:`typing.Protocol`, in
 terms of what the catalog needs and nothing more. The packages that provide
 these capabilities never import this module: they satisfy a protocol by
 shape, and a service composes the two. That is what keeps ``pkg/catalog``
@@ -18,12 +18,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from datetime import datetime
-    from pathlib import PurePosixPath
+    from pathlib import Path, PurePosixPath
     from uuid import UUID
-
-    from .ingest import IngestLease
-    from .models import OutboxEvent, RevisionRecord, RevisionRef
 
 
 class Clock(Protocol):
@@ -40,28 +38,109 @@ class Clock(Protocol):
 
 
 class RawStore(Protocol):
-    """The raw evidence tier: staging, hard-linking, atomic commit, sealing, write-once tags.
+    """Everything the service asks of the raw filesystem.
 
-    An implementation owns one data root laid out by
-    :mod:`huron.pkg.catalog.paths`; the catalog hands it paths from that
-    module and never composes its own.
+    One root, private envelopes, durable parts and links, documents,
+    publication by rename, sealing and write-once tags. An implementation
+    owns one data root laid out by :mod:`huron.pkg.catalog.paths`; the
+    catalog hands it paths from that module and never composes its own.
     """
 
-    def create_staging(self, ingest_id: UUID) -> PurePosixPath:
-        """Create the private staging envelope for one ingest session.
-
-        The envelope must be on the same filesystem as the final revision
-        directories, because :meth:`commit_envelope` publishes it with a
-        rename and :meth:`hardlink_from_parent` links into it. It must be
-        fresh: a second call for the same session must fail rather than
-        hand back a directory another driver may be writing.
-
-        Args:
-            ingest_id: The session the envelope belongs to.
+    @property
+    def root(self) -> Path:
+        """Return the data root every other path is derived from.
 
         Returns:
-            The envelope's directory, holding an empty ``payload/`` child
-            ready for uploads and links.
+            The directory ``.staging/`` and ``organization/`` sit under as
+            direct children; nothing links or renames a path across
+            different roots.
+        """
+        ...
+
+    def initialize(self) -> None:
+        """Create the store's directory skeleton and prove it can commit.
+
+        Creates ``.staging`` and ``organization`` if they are missing; the
+        call is idempotent, and both directories must end up on one
+        filesystem, because :meth:`commit_envelope` publishes an envelope
+        with a rename between them. A cross-device layout is refused as a
+        ``CrossDeviceCommitError``.
+        """
+        ...
+
+    def create_staging(self, staging: PurePosixPath) -> None:
+        """Claim a fresh, private envelope for one ingest session.
+
+        The envelope and its ``payload`` child are created at mode
+        ``0o700``, visible to nobody but the store's own process until the
+        envelope is published. A ``staging`` whose parent is not
+        ``root/.staging`` is refused as a ``ValueError``; a name already
+        claimed fails as a ``FileExistsError`` rather than handing back a
+        directory another driver may be writing.
+
+        Args:
+            staging: The envelope's path, from
+                :func:`huron.pkg.catalog.paths.staging_dir`.
+        """
+        ...
+
+    def write_part(
+        self,
+        staging_payload: PurePosixPath,
+        rel_path: str,
+        chunks: Iterable[bytes],
+        *,
+        offset: int,
+        length: int,
+    ) -> str:
+        """Stream one range of a payload file into place, hashing as it goes.
+
+        Exactly ``length`` bytes are pulled from ``chunks``, in order, and
+        written to ``[offset, offset + length)`` of the file at
+        ``rel_path``; nothing outside that range is touched, so parts of
+        one file may arrive in any order and a resend overwrites only its
+        own bytes. An unsafe ``rel_path`` is refused as a ``ValueError``
+        before anything opens; a stream that ends short or runs long is
+        refused as a ``PartLengthMismatchError`` before any success is
+        reported. The file and every directory from its parent up to
+        ``staging_payload`` must be durable before the digest is returned.
+
+        Args:
+            staging_payload: The envelope's ``payload`` directory.
+            rel_path: The file's path relative to ``staging_payload``.
+            chunks: The range's bytes, consumed once, in order.
+            offset: The first byte position the range writes to.
+            length: The exact number of bytes the range must contain.
+
+        Returns:
+            The hex SHA-256 of the bytes written.
+        """
+        ...
+
+    def finish_file(self, staging_payload: PurePosixPath, rel_path: str) -> tuple[int, str]:
+        """Report a payload file exactly as it is on disk.
+
+        Reads the file in one sequential pass; nothing about it is cached
+        from an earlier call. A missing file is refused as a
+        ``FileNotFoundError``.
+
+        Args:
+            staging_payload: The envelope's ``payload`` directory.
+            rel_path: The file's path relative to ``staging_payload``.
+
+        Returns:
+            The file's size in bytes and the hex SHA-256 of its content.
+        """
+        ...
+
+    def discard_file(self, staging_payload: PurePosixPath, rel_path: str) -> None:
+        """Remove a payload file the ledger no longer vouches for.
+
+        A missing file is success.
+
+        Args:
+            staging_payload: The envelope's ``payload`` directory.
+            rel_path: The file's path relative to ``staging_payload``.
         """
         ...
 
@@ -74,7 +153,9 @@ class RawStore(Protocol):
         same relative path under ``staging_payload``, creating intermediate
         directories as needed. A hard link is the intent; an implementation
         that cannot link may copy, but the result must be byte-identical
-        and must not disturb the parent.
+        and must not disturb the parent. Success is a no-op when the target
+        is already the parent's inode; anything else there is replaced. A
+        missing source file is refused as a ``FileNotFoundError``.
 
         Args:
             parent_payload: The committed parent revision's ``payload``
@@ -84,31 +165,80 @@ class RawStore(Protocol):
         """
         ...
 
-    def commit_envelope(self, staging: PurePosixPath, final: PurePosixPath) -> None:
-        """Publish a complete staging envelope at its final path, all or nothing.
+    def read_document(self, path: PurePosixPath) -> bytes:
+        """Return a stored document's bytes exactly as written.
 
-        After this returns, ``final`` holds everything ``staging`` held and
-        is durable; if it raises, ``final`` does not exist and ``staging``
-        is untouched. A reader can never observe a half-published revision.
-        Committing an envelope that is already published at ``final``, with
-        no staging directory left, must succeed silently so a crashed
-        driver can retry; any other pre-existing ``final`` must be refused.
+        A path storage does not hold is refused as a ``FileNotFoundError``.
 
         Args:
-            staging: The envelope to publish, complete and marked committed.
-            final: The revision directory to publish it as.
+            path: The document's path.
+
+        Returns:
+            The document's content.
+        """
+        ...
+
+    def write_document(self, staging: PurePosixPath, name: str, payload: bytes) -> None:
+        """Durably place a control document at the envelope root.
+
+        ``name`` must be a single path component and none of the reserved
+        names, refused otherwise as a ``ValueError``; the file is written
+        read-only, and a second call with the same name replaces its bytes
+        wholesale, never leaving a mix of an earlier attempt's content and
+        the new one.
+
+        Args:
+            staging: The envelope's root directory.
+            name: The document's file name.
+            payload: The document's complete content.
+        """
+        ...
+
+    def atomic_replace(self, path: PurePosixPath, payload: bytes) -> None:
+        """Replace a file's content in one step, durable when this returns.
+
+        A reader sees the old bytes or the new, never a mix; for pointers
+        and other derived aids that move rather than write once.
+
+        Args:
+            path: The file to replace; created if it does not exist yet.
+            payload: The complete new content.
         """
         ...
 
     def seal(self, revision_dir: PurePosixPath) -> None:
-        """Make a published revision read-only, recursively.
+        """Make everything below a directory read-only, the directory itself untouched.
 
-        Every file and directory under ``revision_dir`` loses write
-        permission, so nothing short of an administrator undoing the seal
-        can alter committed evidence.
+        Every file below ``revision_dir`` becomes ``0o444`` and every
+        directory below it ``0o555``; ``revision_dir`` itself is left alone
+        so it can still be renamed by whatever publishes it next.
+        Idempotent. A ``revision_dir`` that is not a directory is refused
+        as a ``FileNotFoundError``.
 
         Args:
-            revision_dir: The published revision directory.
+            revision_dir: The directory whose contents are sealed.
+        """
+        ...
+
+    def commit_envelope(self, staging: PurePosixPath, final: PurePosixPath) -> None:
+        """Publish a complete staging envelope at its final path, all or nothing.
+
+        The envelope is fsynced, revealed by one rename, and then ``final``
+        itself is sealed; the rename is the only step that changes what is
+        visible at ``final``, so a reader can never observe a half-
+        published revision. After this returns, ``final`` holds everything
+        ``staging`` held and ``staging`` is gone; if it raises, ``final``
+        does not exist and ``staging`` is untouched. Committing an envelope
+        that is already published at ``final``, with no staging directory
+        left, succeeds silently so a crashed driver can retry; any other
+        pre-existing ``final`` is refused as a ``FileExistsError``, a
+        ``staging`` that is not a directory as a ``FileNotFoundError``, one
+        without a ``COMMITTED`` marker as a ``ValueError``, and a
+        cross-device pair as a ``CrossDeviceCommitError``.
+
+        Args:
+            staging: The envelope to publish, complete and marked committed.
+            final: The revision directory to publish it as.
         """
         ...
 
@@ -127,61 +257,20 @@ class RawStore(Protocol):
         """
         ...
 
+    def write_generation(self, entity_dir: PurePosixPath, generation: int, payload: bytes) -> Path:
+        """Record one generation of an entity document and point ``CURRENT.json`` at it.
 
-class Metastore(Protocol):
-    """The transactional record of ingests, revisions and release tags.
-
-    The metastore is the source of truth for what has been committed; the
-    raw store holds the bytes, the metastore says which of them are a
-    revision.
-    """
-
-    async def begin_ingest(self, dataset_id: UUID, manifest_sha256: str) -> IngestLease:
-        """Open an ingest session and reserve the revision it will commit as.
-
-        The revision id and number are allocated here, before any byte is
-        uploaded, so the number is unique within the dataset for the life
-        of the session even if the session is later aborted; numbers are
-        not reused. The manifest identity is recorded with the session so
-        the commit can be checked against what was declared.
+        A ``generation`` outside ``1..999_999`` is refused as a
+        ``ValueError``.
 
         Args:
-            dataset_id: The dataset the revision is being added to.
-            manifest_sha256: The content identity of the declared manifest.
+            entity_dir: The organization, project or dataset directory.
+            generation: The document's generation number, ``1`` to
+                ``999_999``.
+            payload: The canonical bytes of the document.
 
         Returns:
-            The lease: the session id, the reserved revision id and number,
-            and when the lease lapses unless renewed.
-        """
-        ...
-
-    async def record_revision(self, revision: RevisionRecord, outbox: list[OutboxEvent]) -> None:
-        """Record a published revision and its outbox events in one transaction.
-
-        Either the revision row and every event are durable together, or
-        none of them is: a consumer of the outbox can never see an event
-        for a revision the metastore does not know, and a recorded revision
-        can never go unannounced.
-
-        Args:
-            revision: The committed revision as the raw store published it.
-            outbox: The events announcing it, delivered after the commit.
-        """
-        ...
-
-    async def resolve_tag(self, dataset_id: UUID, tag: str) -> RevisionRef:
-        """Look up the revision a release tag names.
-
-        A tag resolves to the same revision for as long as it exists; the
-        manifest identity travels with the answer so a caller can verify
-        the revision it then reads.
-
-        Args:
-            dataset_id: The dataset the tag belongs to.
-            tag: The release tag.
-
-        Returns:
-            The revision's id, dataset, number and manifest identity.
+            The path of the generation file that was written.
         """
         ...
 

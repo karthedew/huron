@@ -325,7 +325,7 @@ No public signature changes; no new module.
 
 **Dependencies.** None.
 
-**Status: pending**
+**Status: done**
 
 ### M1 — Domain
 
@@ -381,7 +381,7 @@ M1.2) the Design 1 › Tests rows `test_part_received_records_the_part_and_is_id
 
 **Dependencies.** M0.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M1.2 — `IngestSession`'s named operations, `TRANSITIONS`, the revision factories; `Metastore` deleted
 
@@ -438,7 +438,7 @@ paragraph and Deletions (`Metastore` in full).
 
 **Dependencies.** M1.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M1.3 — Property tests over the state machine and the upload plan
 
@@ -462,7 +462,7 @@ paragraph and Deletions (`Metastore` in full).
 
 **Dependencies.** M1.2.
 
-**Status: pending**
+**Status: done**
 
 ### M2 — Raw store
 
@@ -500,7 +500,7 @@ block (`commit.commit_envelope` gains one step; `:1698-1701`), "The commit seque
 
 **Dependencies.** M0.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M2.2 — The `RawStore` port and `PosixRawStore`'s streaming, document and commit contract
 
@@ -554,7 +554,7 @@ specification, `:1598-1649`), "`PosixRawStore` — changed and added methods" (`
 
 **Dependencies.** M2.1.
 
-**Status: pending**
+**Status: done**
 
 ### M3 — Persistence
 
@@ -615,7 +615,7 @@ Design 3 › Deletions (`schema.sql:87-89` and `:160-162`); Tests › `test_cata
 
 **Dependencies.** M0.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M3.2 — Revisions, audit and outbox on the port and both adapters; `register_revision` retired; one `FakeClock`
 
@@ -682,7 +682,7 @@ Fixtures (`FakeClock`, `memory_stores(*, clock=None)`); Collisions 1 and 6. § 3
 
 **Dependencies.** M1.2, M3.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M3.3 — Sessions and files on the port and both adapters; scenarios 10–16; the race
 
@@ -1793,3 +1793,23 @@ row now states the `LayerWorkflowError` facts and "expected to flip nothing"; N3
 `PART_BYTES` at call time (Collision 4); N5 — M5.3's Design list cites Design 5 › Requirements on
 Design 4 (a); N6 — M3.3's Postgres statements bind `ids.uuid7()` as parameters. No `Status` line
 changed; 21 tasks remain `pending`.
+
+## Execution notes — 2026-09-06
+
+Recorded by the orchestrator as tasks verified, so later tasks build on what shipped rather
+than on the design's literal text.
+
+- **M2.2 / Design 2.** The part-length exception is `PartLengthMismatchError`, not
+  `PartLengthMismatch`: ruff's `N818` applies to `src/huron/pkg/rawstore/store.py` (no per-file
+  exemption, and the exemptions that exist cover names that mirror wire error codes, which this
+  one never is), and the package's own `CrossDeviceCommitError` already carries the suffix. M5.2
+  maps `PartLengthMismatchError` → `ManifestMismatch`.
+- **M2.2 / Design 2 › Tests.** `_safe_relative` cannot refuse `"a/./b"` or `"a//b"`:
+  `PurePosixPath` normalises both to `('a', 'b')` before the guard sees them, and neither escapes
+  `staging_payload`. The test pins the normalising behaviour; the design row was wrong about
+  `pathlib`, not about the guard.
+- **M3.2 / Design 3 › Tests.** The rollback test is
+  `test_a_rolled_back_transaction_leaves_no_revision_audit_or_outbox_row`: the design's 91-character
+  name cannot fit an `async def` line under ruff's 100-column limit. The body raises inside the open
+  transaction after all three inserts, so the pinned behaviour is unchanged. `radon mi -s
+  stores/hierarchy.py` read A (25.61) after M3.2; M3.3 measures again for D-22.

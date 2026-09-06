@@ -22,33 +22,43 @@ from uuid import UUID
 import asyncpg
 
 from huron.pkg.catalog.errors import (
+    DuplicateContent,
     IdempotencyKeyReused,
     PreconditionFailed,
     ResourceNotFound,
     TagExists,
 )
+from huron.pkg.catalog.models import RevisionRef
 from huron.pkg.rbac import ProjectVisibility
 from huron.service.api.errors import SlugExists
 
 from . import rows
+from .ingest import (
+    InMemoryIngestReader,
+    InMemoryIngestWriter,
+    PostgresIngestReader,
+    PostgresIngestWriter,
+    latest_revision,
+)
 from .ports import Replay, Window
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Callable, Iterable
 
-    from huron.pkg.catalog.models import RevisionRef
+    from huron.pkg.catalog.ingest import IngestSession
+    from huron.pkg.catalog.models import OutboxEvent, RevisionRecord
     from huron.pkg.catalog.ports import Clock
     from huron.pkg.rbac import Visibility
-    from huron.service.api.records import Dataset, Organization, Project, Release
+    from huron.service.api.records import AuditEvent, Dataset, Organization, Project, Release
 
-    from .ports import HierarchyWriter, IdempotencyClaim
+    from .ports import HierarchyWriter, IdempotencyClaim, LedgerEntry
 
 #: How long an idempotency claim stands before it may be taken over by a
 #: fresh request reusing the same ``(principal, key)``.
 _CLAIM_TTL = timedelta(hours=24)
 
 
-class _SystemClock:
+class SystemClock:
     """The default clock: the operating system's UTC time."""
 
     def now(self) -> datetime:
@@ -60,8 +70,27 @@ class _SystemClock:
         return datetime.now(UTC)
 
 
+def _find_revision(
+    revisions: Iterable[RevisionRecord], dataset_id: UUID, number: int
+) -> RevisionRecord | None:
+    """Return the revision at ``(dataset_id, number)`` among ``revisions``, or None.
+
+    Args:
+        revisions: The revisions to search, live rows and staged ones alike.
+        dataset_id: The dataset the wanted revision belongs to.
+        number: The revision's 1-based position within that dataset.
+
+    Returns:
+        The matching revision, or None if none of ``revisions`` matches.
+    """
+    for revision in revisions:
+        if revision.dataset_id == dataset_id and revision.number == number:
+            return revision
+    return None
+
+
 @dataclass(slots=True)
-class _TransactionBuffer:
+class TransactionBuffer:
     """Everything staged by one open transaction, applied atomically or not at all.
 
     Attributes:
@@ -69,6 +98,11 @@ class _TransactionBuffer:
         projects: Projects to insert or replace, by id.
         datasets: Datasets to insert or replace, by id.
         releases: Releases to insert, by ``(dataset_id, tag)``.
+        revisions: Revisions to insert, by id.
+        sessions: Ingest sessions to insert or replace, by id.
+        files: Ingest ledger entries to insert or replace, by file id.
+        audit: Audit rows to append, in call order.
+        outbox: Outbox rows to append, in call order.
         idempotency: Idempotency records to insert or replace, by
             ``(principal, key)``.
     """
@@ -77,12 +111,17 @@ class _TransactionBuffer:
     projects: dict[UUID, Project] = field(default_factory=dict)
     datasets: dict[UUID, Dataset] = field(default_factory=dict)
     releases: dict[tuple[UUID, str], Release] = field(default_factory=dict)
+    revisions: dict[UUID, RevisionRecord] = field(default_factory=dict)
+    sessions: dict[UUID, IngestSession] = field(default_factory=dict)
+    files: dict[UUID, LedgerEntry] = field(default_factory=dict)
+    audit: list[AuditEvent] = field(default_factory=list)
+    outbox: list[OutboxEvent] = field(default_factory=list)
     idempotency: dict[tuple[str, str], tuple[str, Replay | None, datetime]] = field(
         default_factory=dict
     )
 
 
-class _TransactionWriter:
+class _TransactionWriter(InMemoryIngestWriter):
     """The write surface of one in-memory transaction, staged until commit.
 
     Every ``insert_*``/``update_*`` here writes into ``buffer``, never into
@@ -90,7 +129,7 @@ class _TransactionWriter:
     the buffer once this writer's block exits without raising.
     """
 
-    def __init__(self, store: InMemoryHierarchyStore, buffer: _TransactionBuffer) -> None:
+    def __init__(self, store: InMemoryHierarchyStore, buffer: TransactionBuffer) -> None:
         """Bind the writer to the store it stages writes for and its buffer.
 
         Args:
@@ -227,11 +266,55 @@ class _TransactionWriter:
         key = (item.dataset_id, item.tag)
         if key in self._store._releases or key in self._buffer.releases:
             raise TagExists(f"release tag already exists: {item.tag!r}")
-        if (item.dataset_id, item.revision_number) not in self._store._revisions:
+        found = _find_revision(
+            chain(self._store._revisions.values(), self._buffer.revisions.values()),
+            item.dataset_id,
+            item.revision_number,
+        )
+        if found is None:
             raise ResourceNotFound(
                 f"revision does not exist: dataset={item.dataset_id} number={item.revision_number}"
             )
         self._buffer.releases[key] = item
+
+    async def insert_revision(self, record: RevisionRecord) -> None:
+        """Insert the row a COMMITTING session publishes when its commit lands.
+
+        Args:
+            record: The revision to insert, fully formed.
+
+        Raises:
+            DuplicateContent: If the dataset, live or already staged in
+                this transaction, already holds a revision with
+                ``record.manifest_sha256``.
+        """
+        duplicate = any(
+            revision.dataset_id == record.dataset_id
+            and revision.manifest_sha256 == record.manifest_sha256
+            for revision in chain(self._store._revisions.values(), self._buffer.revisions.values())
+        )
+        if duplicate:
+            raise DuplicateContent(
+                f"dataset already holds this manifest: dataset={record.dataset_id} "
+                f"manifest_sha256={record.manifest_sha256}"
+            )
+        self._buffer.revisions[record.id] = record
+
+    async def insert_audit_event(self, event: AuditEvent) -> None:
+        """Append one audit row.
+
+        Args:
+            event: The audit row to append, fully formed.
+        """
+        self._buffer.audit.append(event)
+
+    async def insert_outbox_event(self, event: OutboxEvent) -> None:
+        """Append one outbox row, unprocessed.
+
+        Args:
+            event: The event to append, fully formed.
+        """
+        self._buffer.outbox.append(event)
 
     async def update_organization(self, item: Organization, *, expected_version: int) -> None:
         """Apply an update to one organization, guarded by optimistic concurrency.
@@ -386,8 +469,8 @@ def _window[ItemT](
     return Window(items=page[:limit], has_more=len(page) > limit)
 
 
-class InMemoryHierarchyStore:
-    """The reference ``HierarchyStore``: five dicts held in process memory.
+class InMemoryHierarchyStore(InMemoryIngestReader):
+    """The reference ``HierarchyStore``: dicts and lists held in process memory.
 
     Every write goes through :meth:`transaction`, which serializes on one
     ``asyncio.Lock`` and buffers its writes until the block exits cleanly;
@@ -407,12 +490,16 @@ class InMemoryHierarchyStore:
             clock: The source of the current time, used for idempotency
                 TTLs. Defaults to the system's UTC clock.
         """
-        self._clock: Clock = clock if clock is not None else _SystemClock()
+        self._clock: Clock = clock if clock is not None else SystemClock()
         self._organizations: dict[UUID, Organization] = {}
         self._projects: dict[UUID, Project] = {}
         self._datasets: dict[UUID, Dataset] = {}
         self._releases: dict[tuple[UUID, str], Release] = {}
-        self._revisions: dict[tuple[UUID, int], RevisionRef] = {}
+        self._revisions: dict[UUID, RevisionRecord] = {}
+        self._sessions: dict[UUID, IngestSession] = {}
+        self._files: dict[UUID, LedgerEntry] = {}
+        self._audit: list[AuditEvent] = []
+        self._outbox: list[OutboxEvent] = []
         self._idempotency: dict[tuple[str, str], tuple[str, Replay | None, datetime]] = {}
         self._lock = asyncio.Lock()
 
@@ -425,12 +512,17 @@ class InMemoryHierarchyStore:
             until this block exits.
         """
         async with self._lock:
-            buffer = _TransactionBuffer()
+            buffer = TransactionBuffer()
             yield _TransactionWriter(self, buffer)
             self._organizations.update(buffer.organizations)
             self._projects.update(buffer.projects)
             self._datasets.update(buffer.datasets)
             self._releases.update(buffer.releases)
+            self._revisions.update(buffer.revisions)
+            self._sessions.update(buffer.sessions)
+            self._files.update(buffer.files)
+            self._audit.extend(buffer.audit)
+            self._outbox.extend(buffer.outbox)
             self._idempotency.update(buffer.idempotency)
 
     async def organization(self, organization_id: UUID, visibility: Visibility) -> Organization:
@@ -528,12 +620,17 @@ class InMemoryHierarchyStore:
             ResourceNotFound: If no revision has ``(dataset_id,
                 revision_number)``.
         """
-        try:
-            return self._revisions[(dataset_id, revision_number)]
-        except KeyError as exc:
+        found = _find_revision(self._revisions.values(), dataset_id, revision_number)
+        if found is None:
             raise ResourceNotFound(
                 f"revision does not exist: dataset={dataset_id} number={revision_number}"
-            ) from exc
+            )
+        return RevisionRef(
+            id=found.id,
+            dataset_id=found.dataset_id,
+            number=found.number,
+            manifest_sha256=found.manifest_sha256,
+        )
 
     async def organizations(
         self, visibility: Visibility, *, limit: int, after: tuple[str, UUID] | None
@@ -697,34 +794,38 @@ class InMemoryHierarchyStore:
             if dataset.id in dataset_ids
         }
 
-    async def register_revision(self, revision: RevisionRef) -> None:
-        """Make a committed revision known so a release tag can be pinned to it.
-
-        There is no HTTP route for this: an ingest pipeline that has
-        committed a revision publishes its reference through this store
-        directly, and ``insert_release`` resolves ``revision_number``
-        against it. This is not part of ``HierarchyStore``; it is this
-        store's own seeding surface, mirrored by a real ``INSERT`` in a
-        durable backend.
+    async def revision(self, revision_id: UUID) -> RevisionRecord:
+        """Return one revision row in any state.
 
         Args:
-            revision: The committed revision's id, dataset, number and
-                manifest digest.
+            revision_id: The revision to read.
+
+        Returns:
+            The stored revision.
 
         Raises:
-            ResourceNotFound: If ``revision.dataset_id`` names no dataset.
-            RuntimeError: If ``(revision.dataset_id, revision.number)`` is
-                already registered.
+            ResourceNotFound: If no revision has ``revision_id``.
         """
-        if revision.dataset_id not in self._datasets:
-            raise ResourceNotFound(f"dataset does not exist: {revision.dataset_id}")
-        key = (revision.dataset_id, revision.number)
-        if key in self._revisions:
-            raise RuntimeError(
-                f"revision already registered: dataset={revision.dataset_id} "
-                f"number={revision.number}"
-            )
-        self._revisions[key] = revision
+        found = self._revisions.get(revision_id)
+        if found is None:
+            raise ResourceNotFound(f"revision does not exist: {revision_id}")
+        return found
+
+    async def latest_committed_revision(self, dataset_id: UUID) -> RevisionRecord | None:
+        """Return the dataset's highest-numbered committed revision.
+
+        Every revision this store holds is COMMITTED - nothing here ever
+        writes another state - so the highest-numbered one is simply the
+        one with the greatest ``number``.
+
+        Args:
+            dataset_id: The dataset to read.
+
+        Returns:
+            The dataset's highest-numbered revision, or None if it has
+            never committed one.
+        """
+        return latest_revision(self._revisions.values(), dataset_id)
 
 
 #: Postgres's name for ``organizations``' slug UNIQUE constraint.
@@ -743,6 +844,16 @@ _RELEASE_TAG_CONSTRAINT = "releases_dataset_id_tag_key"
 #: revision of its own dataset.
 _RELEASE_REVISION_FK_CONSTRAINT = "releases_revision_dataset_fk"
 
+#: Postgres's name for ``dataset_revisions``' per-dataset manifest UNIQUE constraint.
+_REVISION_MANIFEST_CONSTRAINT = "dataset_revisions_dataset_id_manifest_sha256_key"
+
+#: Every column ``revision_record`` decodes, shared by ``revision`` and
+#: ``latest_committed_revision`` so the two SELECTs stay in lockstep.
+_REVISION_COLUMNS = (
+    "id, dataset_id, revision_number, manifest_sha256, metadata_sha256, revision_path, "
+    "file_count, total_bytes, committed_by, committed_at"
+)
+
 
 def _trim_window[ItemT](items: list[ItemT], *, limit: int) -> Window[ItemT]:
     """Split a ``limit + 1`` row fetch into a page and a "further row" flag.
@@ -758,7 +869,7 @@ def _trim_window[ItemT](items: list[ItemT], *, limit: int) -> Window[ItemT]:
     return Window(items=items[:limit], has_more=len(items) > limit)
 
 
-class _PostgresTransactionWriter:
+class _PostgresTransactionWriter(PostgresIngestWriter):
     """The write surface of one Postgres transaction, bound to the connection that opened it.
 
     Every statement here runs on ``connection``, inside the transaction
@@ -1017,6 +1128,84 @@ class _PostgresTransactionWriter:
                 f"revision does not exist: dataset={item.dataset_id} revision={item.revision_id}"
             ) from exc
 
+    async def insert_revision(self, record: RevisionRecord) -> None:
+        """Insert the row a COMMITTING session publishes when its commit lands.
+
+        Args:
+            record: The revision to insert, fully formed.
+
+        Raises:
+            DuplicateContent: If the dataset already holds a revision with
+                ``record.manifest_sha256``.
+            asyncpg.UniqueViolationError: If some other unique constraint
+                refused the row - unreachable under the allocator, which
+                reserves ``record.number`` and ``record.revision_path``
+                before this insert ever runs.
+        """
+        try:
+            await self._connection.execute(
+                f"""
+                INSERT INTO dataset_revisions ({_REVISION_COLUMNS})
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                """,
+                record.id,
+                record.dataset_id,
+                record.number,
+                record.manifest_sha256,
+                record.metadata_sha256,
+                record.revision_path,
+                record.file_count,
+                record.total_bytes,
+                record.committed_by,
+                record.committed_at,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            if getattr(exc, "constraint_name", None) != _REVISION_MANIFEST_CONSTRAINT:
+                raise
+            raise DuplicateContent(
+                f"dataset already holds this manifest: dataset={record.dataset_id} "
+                f"manifest_sha256={record.manifest_sha256}"
+            ) from exc
+
+    async def insert_audit_event(self, event: AuditEvent) -> None:
+        """Append one audit row.
+
+        Args:
+            event: The audit row to append, fully formed.
+        """
+        await self._connection.execute(
+            """
+            INSERT INTO audit_events (id, kind, actor, subject_kind, subject_id, payload,
+                                       created_at)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+            """,
+            event.id,
+            event.kind,
+            event.actor,
+            event.subject_kind,
+            event.subject_id,
+            json.dumps(event.payload),
+            event.created_at,
+        )
+
+    async def insert_outbox_event(self, event: OutboxEvent) -> None:
+        """Append one outbox row, unprocessed.
+
+        Args:
+            event: The event to append, fully formed.
+        """
+        await self._connection.execute(
+            """
+            INSERT INTO outbox_events (id, kind, subject_id, payload, created_at)
+            VALUES ($1, $2, $3, $4::jsonb, $5)
+            """,
+            event.id,
+            event.kind,
+            event.subject_id,
+            json.dumps(event.payload),
+            event.created_at,
+        )
+
     async def update_organization(self, item: Organization, *, expected_version: int) -> None:
         """Apply an update to one organization, guarded by optimistic concurrency.
 
@@ -1108,7 +1297,7 @@ class _PostgresTransactionWriter:
             raise PreconditionFailed(f"dataset version conflict: {item.id}")
 
 
-class PostgresHierarchyStore:
+class PostgresHierarchyStore(PostgresIngestReader):
     """Real storage for the hierarchy tables ``migrations/versions/0001_foundations.py`` creates.
 
     Every read applies its level's visibility predicate in SQL before any
@@ -1134,7 +1323,7 @@ class PostgresHierarchyStore:
                 ``updated_at``. Defaults to the system's UTC clock.
         """
         self._pool = pool
-        self._clock: Clock = clock if clock is not None else _SystemClock()
+        self._clock: Clock = clock if clock is not None else SystemClock()
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[HierarchyWriter]:
@@ -1521,3 +1710,42 @@ class PostgresHierarchyStore:
             list(dataset_ids),
         )
         return {row["id"]: row["project_id"] for row in fetched}
+
+    async def revision(self, revision_id: UUID) -> RevisionRecord:
+        """Return one revision row in any state.
+
+        Args:
+            revision_id: The revision to read.
+
+        Returns:
+            The stored revision.
+
+        Raises:
+            ResourceNotFound: If no revision has ``revision_id``.
+        """
+        row = await self._pool.fetchrow(
+            f"SELECT {_REVISION_COLUMNS} FROM dataset_revisions WHERE id = $1", revision_id
+        )
+        if row is None:
+            raise ResourceNotFound(f"revision does not exist: {revision_id}")
+        return rows.revision_record(row)
+
+    async def latest_committed_revision(self, dataset_id: UUID) -> RevisionRecord | None:
+        """Return the dataset's highest-numbered committed revision.
+
+        Args:
+            dataset_id: The dataset to read.
+
+        Returns:
+            The dataset's highest-numbered revision in state COMMITTED, or
+            None if it has never committed one.
+        """
+        row = await self._pool.fetchrow(
+            f"""
+            SELECT {_REVISION_COLUMNS} FROM dataset_revisions
+            WHERE dataset_id = $1 AND state = 'COMMITTED'
+            ORDER BY revision_number DESC LIMIT 1
+            """,
+            dataset_id,
+        )
+        return rows.revision_record(row) if row is not None else None

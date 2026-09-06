@@ -1,6 +1,6 @@
 """The record types the API tier stores and serializes.
 
-Eight dataclasses with no behavior and no project imports. This module is the
+Nine dataclasses with no behavior and no project imports. This module is the
 leaf the rest of the tier depends on: a storage adapter needs a record type,
 not the application service that happens to have declared it, and keeping
 the records here is what lets ``stores`` import them without importing
@@ -175,6 +175,25 @@ class Policy:
     name: str
     spec: dict[str, object]
     created_by: str
+    created_at: datetime
+
+
+@dataclass(slots=True)
+class AuditEvent:
+    """One append-only audit row: who did what to which subject, and when.
+
+    ``subject_kind`` and ``subject_id`` name what the event is about -
+    typically an ingest session or a revision - while ``actor`` is the
+    principal subject that caused it, or ``"system:sweep"`` for an event
+    the expiry sweep raises on nobody's request.
+    """
+
+    id: UUID
+    kind: str
+    actor: str
+    subject_kind: str
+    subject_id: UUID | None
+    payload: dict[str, object]
     created_at: datetime
 
 

@@ -3874,8 +3874,8 @@ ingest_sweep_limit: int = Field(default=100, ge=1)
 `HURON_INGEST_SWEEP_INTERVAL_SECONDS`, `HURON_INGEST_SWEEP_LIMIT`. Seconds as a float rather
 than a `timedelta`, because pydantic-settings will not parse a bare `"90"` from the environment
 into a `timedelta` (**proved**: only ISO 8601 `PT1M` is accepted) and `READINESS_TIMEOUT_SECONDS`
-(`app.py:403`) already sets the tier's unit. No change to `refuse_unsafe_combinations`: both
-bounds are single-field.
+(`app.py:403`) already sets the tier's unit. No new validator beside
+`_refuse_unsafe_authentication`: both bounds are single-field.
 
 **Wiring** (`app.py` lifespan, after Design 4's additions):
 

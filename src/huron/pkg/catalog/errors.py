@@ -80,7 +80,13 @@ class IngestSessionExpired(DomainError):
 
 
 class ManifestMismatch(DomainError):
-    """The uploaded content does not match the manifest the ingest session declared."""
+    """The uploaded content does not match the manifest the ingest session declared.
+
+    Raised when a file's whole-file observation does not match the size or
+    digest the manifest declared for it; ``context`` then carries that
+    file's ``path``, ``expected_size``, ``observed_size``,
+    ``expected_sha256`` and ``observed_sha256``.
+    """
 
     code, status_code = "MANIFEST_MISMATCH", 400
 
@@ -303,7 +309,11 @@ class PathRuleViolation(DomainError):
 
 
 class IllegalIngestTransition(DomainError):
-    """The ingest state machine has no edge from the session's current state to the target."""
+    """The session, or one of its files, is not in a state that permits the operation.
+
+    ``context`` carries ``state`` (the current state that refused the
+    operation) and ``operation`` (the name of the operation attempted).
+    """
 
     code = "ILLEGAL_INGEST_TRANSITION"
     status_code = 409

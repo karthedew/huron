@@ -54,7 +54,7 @@ class RevisionRef:
 
 @dataclass(frozen=True, slots=True)
 class RevisionRecord:
-    """A committed raw revision as the metastore records it.
+    """A committed raw revision as the catalog records it.
 
     Built once the envelope is published and never updated: a revision is
     immutable, so its record is too.
@@ -64,6 +64,8 @@ class RevisionRecord:
         dataset_id: The dataset the revision belongs to.
         number: The revision's 1-based position within its dataset.
         manifest_sha256: The content identity of the committed manifest.
+        metadata_sha256: The content identity of the committed
+            ``metadata.json`` document.
         revision_path: The revision directory in the raw store, as
             :func:`huron.pkg.catalog.paths.revision_dir` builds it.
         committed_by: The principal whose ingest session committed it.
@@ -76,6 +78,7 @@ class RevisionRecord:
     dataset_id: UUID
     number: int
     manifest_sha256: str
+    metadata_sha256: str
     revision_path: str
     committed_by: str
     committed_at: datetime
@@ -92,11 +95,16 @@ class OutboxEvent:
     not durably recorded, and a recorded revision can never go unannounced.
 
     Attributes:
+        id: The event's identifier, minted at the raise site.
         kind: The event type a consumer dispatches on.
         subject_id: The id of the entity the event is about.
         payload: The event body, as JSON-compatible values.
+        created_at: When the event was recorded, alongside the change it
+            announces.
     """
 
+    id: UUID
     kind: str
     subject_id: UUID
     payload: dict[str, object]
+    created_at: datetime

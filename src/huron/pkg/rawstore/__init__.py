@@ -7,10 +7,11 @@ primitives it is built on: :func:`commit_envelope`,
 """
 
 from .commit import CrossDeviceCommitError, assert_same_filesystem, commit_envelope
-from .store import PosixRawStore
+from .store import PartLengthMismatchError, PosixRawStore
 
 __all__ = [
     "CrossDeviceCommitError",
+    "PartLengthMismatchError",
     "PosixRawStore",
     "assert_same_filesystem",
     "commit_envelope",

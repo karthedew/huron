@@ -15,7 +15,6 @@ import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 import pytest
 
@@ -27,13 +26,13 @@ from huron.pkg.catalog.errors import (
     SlugImmutable,
     TagExists,
 )
-from huron.pkg.catalog.models import RevisionRef
 from huron.pkg.catalog.paths import dataset_dir, organization_dir, project_dir, release_tag_file
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import Visibility
 from huron.service.api.errors import SlugExists
 from huron.service.api.repository import HierarchyRepository, request_sha256
 from huron.service.api.stores import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
+from tests.hierarchy_contract import committed_revision
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -631,21 +630,20 @@ async def test_a_failing_document_write_during_patch_leaves_the_stored_record_un
 # -- create_release -------------------------------------------------------
 
 
-async def _register_revision(
+async def _commit_revision(
     repository: HierarchyRepository, dataset_id: UUID, *, number: int = 1
 ) -> None:
-    """Register one revision directly on the in-memory hierarchy store."""
-    store: InMemoryHierarchyStore = repository._hierarchy
-    await store.register_revision(
-        RevisionRef(id=uuid4(), dataset_id=dataset_id, number=number, manifest_sha256="a" * 64)
-    )
+    """Commit one revision directly through the hierarchy store's writer."""
+    revision = committed_revision(dataset_id, number, manifest_sha256="a" * 64)
+    async with repository._hierarchy.transaction() as writer:
+        await writer.insert_revision(revision)
 
 
 async def test_create_release_replays_an_identical_request(tmp_path: Path) -> None:
     """Replaying ``create_release`` with the same idempotency claim returns the identical object."""
     repository = _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
-    await _register_revision(repository, dataset_id)
+    await _commit_revision(repository, dataset_id)
     claim = _claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1")
     first = await repository.create_release(
         dataset_id,
@@ -672,7 +670,7 @@ async def test_create_release_rejects_a_duplicate_tag(tmp_path: Path) -> None:
     """A second release with an already-used tag raises ``TagExists`` under a new key too."""
     repository = _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
-    await _register_revision(repository, dataset_id)
+    await _commit_revision(repository, dataset_id)
     await repository.create_release(
         dataset_id,
         Visibility.ALL,
@@ -704,7 +702,7 @@ async def test_create_release_translates_a_raw_store_collision_into_tag_exists(
     """
     repository = _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
-    await _register_revision(repository, dataset_id)
+    await _commit_revision(repository, dataset_id)
     organization = await repository.organization(organization_id, Visibility.ALL)
     project = await repository.project(project_id, Visibility.ALL)
     dataset = await repository.dataset(dataset_id, Visibility.ALL)
@@ -730,7 +728,7 @@ async def test_create_release_persists_a_tag_document_with_no_withdrawal_keys(
     """A release's tag document on disk has exactly these keys and no fields for withdrawal."""
     repository = _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
-    await _register_revision(repository, dataset_id)
+    await _commit_revision(repository, dataset_id)
     await repository.create_release(
         dataset_id,
         Visibility.ALL,
@@ -764,7 +762,7 @@ async def test_create_release_replay_with_a_title_of_none_differs_from_the_empty
     """A missing title and an explicit empty-string title no longer digest the same way."""
     repository = _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
-    await _register_revision(repository, dataset_id)
+    await _commit_revision(repository, dataset_id)
     await repository.create_release(
         dataset_id,
         Visibility.ALL,
@@ -792,7 +790,7 @@ async def test_create_release_replay_with_a_different_created_by_is_a_reuse(
     """Reusing a release-create key with only ``created_by`` changed is a reuse."""
     repository = _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
-    await _register_revision(repository, dataset_id)
+    await _commit_revision(repository, dataset_id)
     await repository.create_release(
         dataset_id,
         Visibility.ALL,
@@ -818,7 +816,7 @@ async def test_create_release_under_an_invisible_dataset_is_not_found(tmp_path: 
     """A dataset the caller cannot discover is 404, before the revision is ever resolved."""
     repository = _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
-    await _register_revision(repository, dataset_id)
+    await _commit_revision(repository, dataset_id)
     with pytest.raises(ResourceNotFound):
         await repository.create_release(
             dataset_id,

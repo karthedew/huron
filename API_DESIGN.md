@@ -1813,8 +1813,8 @@ tier. A caller who omits `settings=` gets a `TypeError` at `create_app` — at c
 test that made the mistake, not as a 200 for `X-Huron-Subject: alice` in production.
 
 **Authentication fails closed everywhere.** `current_principal` reaches `DevHeaderResolver` only
-when `runtime.settings.auth_mode == "dev-headers"`, which `ApiSettings.refuse_unsafe_combinations`
-(`settings.py:67-68`) already refuses outside `env="development"`. No missing-state path exists that
+when `runtime.settings.auth_mode == "dev-headers"`, which `ApiSettings._refuse_unsafe_authentication`
+already refuses outside `env="development"`. No missing-state path exists that
 could enable it. The bearer-JWT branch keeps its explicit `oidc_resolver is None` → `AuthError`
 refusal, and `oidc.py` keeps its `oidc_client is None` → 404; both were already fail-closed and both
 now read a declared optional field instead of a `getattr` default.

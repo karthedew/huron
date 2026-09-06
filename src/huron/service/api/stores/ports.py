@@ -19,13 +19,15 @@ from __future__ import annotations
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from huron.pkg.auth import ApiKeyRecord, ApiKeyStore
-from huron.pkg.catalog.models import RevisionRef
+from huron.pkg.catalog.ingest import IngestFile, IngestSession
+from huron.pkg.catalog.models import OutboxEvent, RevisionRecord, RevisionRef
 from huron.pkg.rbac import Binding, ProjectVisibility, ScopeType, Visibility
 from huron.service.api.records import (
+    AuditEvent,
     Dataset,
     Organization,
     Policy,
@@ -35,6 +37,9 @@ from huron.service.api.records import (
     RoleBindingRecord,
     ServiceAccount,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class RbacStore(Protocol):
@@ -389,16 +394,29 @@ class IdempotencyClaim:
     request_sha256: str
 
 
+@dataclass(slots=True)
+class LedgerEntry:
+    """One ingest file together with the session whose ledger it belongs to.
+
+    Attributes:
+        ingest_id: The session the file was planned under.
+        file: The file's progress through that session's ledger.
+    """
+
+    ingest_id: UUID
+    file: IngestFile
+
+
 @dataclass(frozen=True, slots=True)
 class Replay:
     """What one idempotent write produced, kept so a later replay of its claim can return it.
 
     Attributes:
-        kind: Which hierarchy level the claimed write created.
+        kind: Which hierarchy level, or ingest step, the claimed write created.
         resource_id: The id of the resource that write created.
     """
 
-    kind: Literal["organization", "project", "dataset", "release"]
+    kind: Literal["organization", "project", "dataset", "release", "ingest_session", "revision"]
     resource_id: UUID
 
 
@@ -555,9 +573,154 @@ class HierarchyWriter(Protocol):
         """
         ...
 
+    async def insert_revision(self, record: RevisionRecord) -> None:
+        """Insert the row a COMMITTING session publishes when its commit lands.
+
+        Refuses with ``DuplicateContent`` when the dataset already holds a
+        revision with ``record.manifest_sha256``.
+
+        Args:
+            record: The revision to insert, fully formed.
+        """
+        ...
+
+    async def insert_audit_event(self, event: AuditEvent) -> None:
+        """Append one audit row.
+
+        Args:
+            event: The audit row to append, fully formed.
+        """
+        ...
+
+    async def insert_outbox_event(self, event: OutboxEvent) -> None:
+        """Append one outbox row, unprocessed.
+
+        Args:
+            event: The event to append, fully formed.
+        """
+        ...
+
+    async def begin_ingest(
+        self,
+        dataset_id: UUID,
+        manifest_sha256: str,
+        *,
+        created_by: str,
+        parent_revision_id: UUID | None,
+        files: Sequence[IngestFile],
+    ) -> IngestSession:
+        """Open an ingest session in ``PREPARING`` and reserve the revision it will commit as.
+
+        The revision id and number are allocated here, before any byte is
+        uploaded, so the final storage path is known from the start. The number
+        is ``max(committed) + 1`` for the dataset, taken under the per-dataset
+        ingest lock: exactly one non-terminal session may exist per dataset, and
+        the number is held only while the session is open or committed. A session
+        that ends ``ABORTED`` or ``FAILED`` never redeemed its reservation, so its
+        number returns to the pool and the next session takes it again; the dead
+        row stays as the record of the attempt. This is what keeps a dataset's
+        numbering gap-free across retries. The manifest identity is recorded with
+        the session so the commit can be checked against what was declared.
+        Refuses with ``DatasetLocked`` while another session for the dataset is
+        not yet terminal, whether or not its lease has lapsed, and with
+        ``DuplicateContent`` when the dataset already holds a committed
+        revision with this manifest identity.
+
+        Args:
+            dataset_id: The dataset the revision is being added to.
+            manifest_sha256: The content identity of the declared manifest.
+            created_by: The principal opening the session; the only one, besides a
+                project admin aborting it, allowed to drive it.
+            parent_revision_id: The committed revision the upload plan was computed
+                against, or None for a dataset's first revision.
+            files: The upload plan's per-file ledger entries, in the order the
+                manifest declares them, reserved alongside the session.
+
+        Returns:
+            The session in ``PREPARING`` with its lease: the reserved revision id
+            and number, and when the lease lapses unless renewed.
+        """
+        ...
+
+    async def update_ingest_session(self, session: IngestSession, *, expected_etag: int) -> None:
+        """Persist one state edge, guarded by optimistic concurrency on the session's etag.
+
+        The write lands only when the stored etag equals ``expected_etag``; it
+        then advances to ``session.etag``. The store is agnostic to which edge
+        this is - the domain's ``TRANSITIONS`` already decided that - so it
+        persists whatever state and etag the caller hands it. Any other stored
+        etag - including no session at all - raises ``PreconditionFailed``.
+
+        Args:
+            session: The session as it should read after the edge, with its
+                etag already bumped by the domain operation that produced it.
+            expected_etag: The etag the caller last read; the write is refused
+                unless this still matches what is stored.
+        """
+        ...
+
+    async def renew_ingest_session(self, session: IngestSession) -> None:
+        """Move a session's lease forward, never backward, leaving its state and etag untouched.
+
+        The stored ``expires_at`` becomes the later of itself and
+        ``session.lease.expires_at``, so two concurrent renewals - or a renewal
+        racing an older instant - are commutative and never move the lease
+        backward. A session that does not exist, or is already terminal,
+        raises ``IngestSessionExpired``.
+
+        Args:
+            session: The session carrying the candidate new lease; only its
+                ``lease.ingest_id`` and ``lease.expires_at`` are consulted.
+        """
+        ...
+
+    async def expire_ingest_session(
+        self, session: IngestSession, *, expected_etag: int, now: datetime
+    ) -> None:
+        """Persist the sweep's ``expire`` edge, fenced on both the etag and the lease.
+
+        Lands only when the stored etag equals ``expected_etag``, the stored
+        state is still PREPARING, UPLOADING or VERIFYING, and the stored lease
+        is still lapsed at ``now`` - so a session renewed or flipped after the
+        sweep read it is left untouched rather than expired out from under
+        whatever happened next. Failing any of those raises
+        ``PreconditionFailed``.
+
+        Args:
+            session: The session as it should read after the edge, already
+                advanced to ABORTED by the domain's ``expire`` operation.
+            expected_etag: The etag the sweep last read; the write is refused
+                unless this still matches what is stored.
+            now: The instant the sweep is running at, re-checked against the
+                stored lease so a renewal that landed after the read wins.
+        """
+        ...
+
+    async def update_ingest_file(
+        self, ingest_id: UUID, file: IngestFile, *, expected_parts: frozenset[int]
+    ) -> None:
+        """Persist one ledger step, fenced on the file still being PENDING with expected parts.
+
+        Fencing on ``completed_parts`` rather than the session's etag is what
+        lets parts of different files - and even different parts of the same
+        file - land without serializing on a single counter; a write that
+        raises never leaves the ledger short of an accepted byte, because the
+        caller re-reads and re-applies the same step. No PENDING file
+        matching ``file.file_id`` under ``ingest_id`` with exactly
+        ``expected_parts`` recorded raises ``PreconditionFailed``.
+
+        Args:
+            ingest_id: The session the file's ledger row belongs to.
+            file: The file as it should read after the step, already advanced
+                by the domain operation that produced it.
+            expected_parts: The parts the caller last read for this file; the
+                write is refused unless the stored row still agrees.
+        """
+        ...
+
 
 class HierarchyStore(Protocol):
-    """The hierarchy's durable state: one write transaction, and visibility-filtered reads.
+    """The hierarchy's durable state and the ingest workflow that extends it.
 
     A point read raises ``ResourceNotFound`` both when the id names
     nothing and when it names something the caller's ``visibility`` does
@@ -758,5 +921,91 @@ class HierarchyStore(Protocol):
             A mapping from dataset id to project id, holding an entry for
             every id in ``dataset_ids`` that exists; an id that names no
             dataset is simply absent, not an error.
+        """
+        ...
+
+    async def revision(self, revision_id: UUID) -> RevisionRecord:
+        """Return one revision row in any state.
+
+        Unlike the other point reads, this one carries no ``visibility``:
+        a revision is read only in service of an operation the caller has
+        already been authorized to perform.
+
+        Args:
+            revision_id: The revision to read.
+
+        Returns:
+            The stored revision.
+        """
+        ...
+
+    async def latest_committed_revision(self, dataset_id: UUID) -> RevisionRecord | None:
+        """Return the dataset's highest-numbered committed revision.
+
+        This is the hardlink parent a new ingest session's upload plan is
+        computed against.
+
+        Args:
+            dataset_id: The dataset to read.
+
+        Returns:
+            The dataset's highest-numbered revision in state COMMITTED, or
+            None if it has never committed one.
+        """
+        ...
+
+    async def ingest_session(self, session_id: UUID) -> IngestSession:
+        """Return one session by id, in whatever state it currently holds.
+
+        An id that names no session raises ``ResourceNotFound``.
+
+        Args:
+            session_id: The session to read.
+
+        Returns:
+            The stored session.
+        """
+        ...
+
+    async def ingest_files(self, session_id: UUID) -> tuple[IngestFile, ...]:
+        """Return a session's ledger, one entry per planned file, in manifest order.
+
+        Args:
+            session_id: The session whose ledger to read.
+
+        Returns:
+            The session's files ordered by path; empty if the session names
+            no files or does not exist.
+        """
+        ...
+
+    async def ingest_file(self, file_id: UUID) -> LedgerEntry:
+        """Return one ledger entry together with the id of the session it belongs to.
+
+        An id that names no file raises ``ResourceNotFound``.
+
+        Args:
+            file_id: The file to read.
+
+        Returns:
+            The file's current ledger state and the id of its session.
+        """
+        ...
+
+    async def lapsed_ingest_sessions(
+        self, now: datetime, *, limit: int
+    ) -> tuple[IngestSession, ...]:
+        """Return the oldest lapsed, still-open sessions, for the expiry sweep to reap.
+
+        Never returns a COMMITTING session: once a commit has begun, storage
+        leads and only the driver that started it may finish or fail it.
+
+        Args:
+            now: The instant a session's lease is judged lapsed against.
+            limit: The maximum number of sessions to return.
+
+        Returns:
+            Up to ``limit`` sessions in PREPARING, UPLOADING or VERIFYING
+            whose lease has lapsed at or before ``now``, oldest lease first.
         """
         ...
