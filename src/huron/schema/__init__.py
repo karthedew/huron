@@ -6,6 +6,11 @@ so it holds only contracts: the Draft 2020-12 documents packaged under
 is addressed by its file name, and the name carries the version
 (``manifest-v1.json``, ``generation-v1.json``), so a change of contract is a
 new file rather than an edit under an existing caller's feet.
+
+``format: date-time`` is not a no-op here: ``rfc3339-validator``, pulled in
+by the ``jsonschema[format-nongpl]`` extra, backs the ``FormatChecker``
+below, so an instant that is not RFC 3339 (a naive spelling, "yesterday")
+fails validation instead of passing through unchecked.
 """
 
 from __future__ import annotations

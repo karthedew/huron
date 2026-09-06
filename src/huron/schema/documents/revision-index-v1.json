@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:huron:revision-index:1",
+  "type": "object",
+  "required": ["schema", "dataset_id", "revisions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "urn:huron:revision-index:1"},
+    "dataset_id": {"type": "string", "format": "uuid"},
+    "revisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["number", "revision_id", "directory", "manifest_sha256", "metadata_sha256",
+                     "file_count", "total_bytes", "committed_at"],
+        "properties": {
+          "number": {"type": "integer", "minimum": 1, "maximum": 999999},
+          "revision_id": {"type": "string", "format": "uuid"},
+          "directory": {"type": "string", "pattern": "^[0-9]{6}--[0-9a-f]{32}$"},
+          "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "metadata_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "file_count": {"type": "integer", "minimum": 1},
+          "total_bytes": {"type": "integer", "minimum": 0},
+          "committed_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}
