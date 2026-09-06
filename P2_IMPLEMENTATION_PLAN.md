@@ -742,7 +742,7 @@ Collision 5; Techniques › "Racing `begin_ingest`" (`:4255-4269`); Open questio
 
 **Dependencies.** M3.2.
 
-**Status: pending**
+**Status: done**
 
 ### M4 — Documents
 
@@ -803,7 +803,7 @@ Under D-15 (B): the `format-nongpl` extra, the `uv.lock` change and
 
 **Dependencies.** M1.2.
 
-**Status: pending**
+**Status: done**
 
 ### M5 — The ingest surface
 
@@ -1398,7 +1398,7 @@ The plan is complete when all of the following hold on the final tree:
    `test_file_download_refuses_traversal_and_non_nfc_spellings_before_touching_storage` and
    `test_create_refuses_every_manifest_rule_with_its_documented_code`), P2 (the same R3 test,
    `test_a_zero_byte_file_is_one_part_that_completes_on_the_empty_digest`,
-   `test_decode_manifest_round_trips_nfc_zero_byte_and_eight_level_entries_with_the_same_identity`),
+   `test_decode_manifest_round_trips_nfc_zero_byte_and_deep_paths_with_the_same_identity`),
    P3 (the same R3 test, `test_write_part_fsyncs_the_file_and_every_directory_up_to_the_payload_root`),
    P4 (`test_a_nine_gib_file_round_trips_byte_identically_after_an_interrupted_upload_resumes`,
    collected; run by the nightly workflow), P5
@@ -1813,3 +1813,17 @@ than on the design's literal text.
   name cannot fit an `async def` line under ruff's 100-column limit. The body raises inside the open
   transaction after all three inserts, so the pinned behaviour is unchanged. `radon mi -s
   stores/hierarchy.py` read A (25.61) after M3.2; M3.3 measures again for D-22.
+- **Execution shape from M3.3 onward (owner's decision, 2026-09-06).** The owner asked for
+  multi-agent orchestration, so independent tasks now run in parallel where the dependency
+  table allows — M3.3's verification beside M4.1; M6.1 beside M7.1; M8.1–M8.3 together — each
+  in its own git worktree and branch off `p2/raw-ingest`, merged back as it passes. The M5 chain
+  and M9–M10 stay serial. Per-task verification keeps the plan's three-attempt cap; a final
+  whole-plan verification pass runs over the merged tree against § 6. This supersedes rule 6
+  ("subagents run serially") for the remainder of this plan only.
+- **M4.1 / Design 5 › Tests.** Two 93-character test names cannot fit a `def` line under 100
+  columns once `ruff format` has its way: the P2 gate-clause test is
+  `test_decode_manifest_round_trips_nfc_zero_byte_and_deep_paths_with_the_same_identity` (it
+  still walks eight directory levels below `payload/`; § 6 item 3 now cites this name), and the
+  storage rebuild test is `…rebuilds_only_when_marker_metadata_and_session_agree`.
+  `tests/unit/test_schema_loading.py` covers `load_schema`'s two error branches, which the
+  100%-on-touched-files rule required once `schema/__init__.py`'s docstring changed.
