@@ -18,7 +18,7 @@ dependencies = [
     "alembic",
     "aiobotocore",
     "rfc8785",
-    "jsonschema",
+    "jsonschema[format-nongpl]",
     "pyyaml",
     "httpx",
     "structlog",
