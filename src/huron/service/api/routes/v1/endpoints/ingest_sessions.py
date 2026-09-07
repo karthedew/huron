@@ -16,7 +16,7 @@ from asyncer import syncify
 from fastapi import APIRouter, Depends, Header, Request, Response
 
 from huron.pkg.auth import Principal
-from huron.pkg.catalog import ManifestEntry, validate_manifest
+from huron.pkg.catalog import ManifestEntry, content_identity, validate_manifest
 from huron.service.api.authorization import (
     CurrentVisibility,
     IngestDrive,
@@ -31,14 +31,20 @@ from huron.service.api.ingest import IngestService
 from huron.service.api.problems import problem_response
 from huron.service.api.records import Dataset
 from huron.service.api.repository import request_sha256
-from huron.service.api.routes.v1.preconditions import IdempotencyHeader
+from huron.service.api.routes.v1.preconditions import (
+    IdempotencyHeader,
+    IfMatchHeader,
+    expected_version,
+)
 from huron.service.api.routes.v1.schema.ingest_sessions import (
+    CommitIngestSession,
     CreateIngestSession,
     CreateIngestSessionInProject,
     IngestFileView,
     IngestSessionView,
     ManifestFile,
 )
+from huron.service.api.routes.v1.schema.revisions import RevisionView
 from huron.service.api.runtime import Ingest, Repository
 from huron.service.api.stores import IdempotencyClaim
 
@@ -465,3 +471,98 @@ async def complete_upload(
     """
     file = await ingest.complete_file(target.ledger, target.file)
     return IngestFileView.model_validate(file)
+
+
+@router.post(
+    "/{session_id}/verify",
+    responses={
+        400: problem_response("not every planned file is complete"),
+        404: problem_response("no such ingest session"),
+        409: problem_response("the session's lease has lapsed, or it is not UPLOADING"),
+        412: problem_response("the session moved under the caller"),
+    },
+)
+async def verify_ingest_session(
+    drive: Annotated[IngestDrive, Depends(session_owner)], ingest: Ingest, response: Response
+) -> IngestSessionView:
+    """Link every unchanged file from the parent and move the session to VERIFYING.
+
+    Every planned file must already be COMPLETE, whether uploaded or
+    linked here from the session's parent revision; anything still pending
+    is refused with the incomplete paths named. The owner alone may drive
+    it, and only while their raw-write binding stands.
+    \f
+    Args:
+        drive: The caller's resolved standing on the session.
+        ingest: The wired ingest service.
+        response: The response the session's ``ETag`` is set on.
+
+    Returns:
+        The session's view, in state VERIFYING.
+    """
+    ledger = await ingest.verify(drive.ledger)
+    response.headers["ETag"] = f'"{ledger.etag}"'
+    return IngestSessionView.model_validate(ledger)
+
+
+@router.post(
+    "/{session_id}/commit",
+    status_code=201,
+    responses={
+        400: problem_response("the declared manifest digest disagrees with the session's"),
+        404: problem_response("no such ingest session"),
+        409: problem_response(
+            "the session's lease has lapsed, it is not VERIFYING or COMMITTING, the "
+            "metadata submission violates the registered schema, the idempotency key was "
+            "reused for a different request, or the dataset already holds this manifest"
+        ),
+        412: problem_response("the If-Match version disagrees with the session's current etag"),
+        422: problem_response("the If-Match header is malformed"),
+    },
+)
+async def commit_ingest_session(
+    session_id: UUID,
+    body: CommitIngestSession,
+    if_match: IfMatchHeader,
+    idempotency_key: IdempotencyHeader,
+    drive: Annotated[IngestDrive, Depends(session_owner)],
+    ingest: Ingest,
+) -> RevisionView:
+    """Publish a verified session's envelope as a committed revision.
+
+    Requires the current ``If-Match`` version, unless the session is
+    already COMMITTED, in which case the original revision is returned
+    unchanged. Replaying the same ``Idempotency-Key`` with the same
+    ``manifest_sha256`` and metadata returns the original revision instead
+    of a second commit; reusing the key for a different request is
+    refused. The owner alone may drive it, and only while their raw-write
+    binding stands.
+    \f
+    Args:
+        session_id: The session being committed.
+        body: The declared manifest digest and the descriptive metadata.
+        if_match: The caller's ``If-Match`` header.
+        idempotency_key: The caller's ``Idempotency-Key`` header.
+        drive: The caller's resolved standing on the session.
+        ingest: The wired ingest service.
+
+    Returns:
+        The committed revision's view.
+    """
+    metadata = body.metadata.model_dump(exclude_none=True)
+    claim = IdempotencyClaim(
+        principal=drive.principal.subject,
+        key=idempotency_key,
+        request_sha256=request_sha256(
+            "revision", str(session_id), body.manifest_sha256, content_identity(metadata)
+        ),
+    )
+    record = await ingest.commit(
+        drive.ledger,
+        expected_etag=expected_version(if_match),
+        manifest_sha256=body.manifest_sha256,
+        metadata=metadata,
+        committed_by=drive.principal.subject,
+        claim=claim,
+    )
+    return RevisionView.model_validate(record)

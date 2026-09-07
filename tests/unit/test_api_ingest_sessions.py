@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import stat
 import unicodedata
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -29,7 +30,12 @@ from huron.pkg.catalog import (
     RevisionRecord,
     validate_manifest,
 )
-from huron.pkg.catalog.documents import manifest_bytes
+from huron.pkg.catalog.documents import (
+    CommitRecord,
+    MetadataDocument,
+    decode_manifest,
+    manifest_bytes,
+)
 from huron.pkg.catalog.errors import IllegalIngestTransition
 from huron.pkg.catalog.manifest import DEFAULT_MAX_FILE_BYTES
 from huron.pkg.catalog.paths import revision_dir, staging_dir
@@ -37,7 +43,7 @@ from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
 from huron.service.api.ingest import IngestService
 from huron.service.api.settings import ApiSettings, ClassificationValue
-from huron.service.api.stores import SystemClock
+from huron.service.api.stores import IdempotencyClaim, Replay, SystemClock
 from tests.ingest_client import IngestClient, declared_file, manifest_file
 from tests.unit.support import crash_on, memory_stores
 
@@ -589,7 +595,7 @@ def test_abort_releases_the_lock_for_the_owner_and_a_project_admin(
 
 
 def test_every_session_route_hides_an_invisible_dataset(client: TestClient) -> None:
-    """GET, upload, complete, heartbeat and abort all 404 for a caller invisible to the dataset.
+    """GET, upload, complete, verify, commit, heartbeat and abort all 404 for an outsider.
 
     A binding is what makes a scope discoverable at all - the project's
     classification only refines what an already-covering binding reveals
@@ -619,6 +625,17 @@ def test_every_session_route_hides_an_invisible_dataset(client: TestClient) -> N
         f"/api/v1/transfer/uploads/{file_id}/complete", headers=outsider
     )
     assert complete_response.status_code == 404
+    verify_response = client.post(f"/api/v1/ingest-sessions/{session_id}/verify", headers=outsider)
+    assert verify_response.status_code == 404
+    commit_response = client.post(
+        f"/api/v1/ingest-sessions/{session_id}/commit",
+        json={
+            "manifest_sha256": created["manifest_sha256"],
+            "metadata": {"title": "x", "creators": ["eve"]},
+        },
+        headers={**outsider, "If-Match": '"2"'},
+    )
+    assert commit_response.status_code == 404
     abort_response = client.post(f"/api/v1/ingest-sessions/{session_id}/abort", headers=outsider)
     assert abort_response.status_code == 404
 
@@ -1305,3 +1322,330 @@ async def test_a_second_concurrent_complete_retries_past_the_first_then_refuses(
 
     with pytest.raises(IllegalIngestTransition):
         await service.complete_file(stale_ledger, stale_file)
+
+
+# -- verify and commit ---------------------------------------------------------
+
+
+def test_verify_links_parent_files_and_moves_to_verifying(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify links every unchanged file from the parent and moves a full session to VERIFYING.
+
+    A retry after a link failure only touches the files still PENDING:
+    the file linked before the crash is not visited again.
+    """
+    ingest = IngestClient(client)
+    _, dataset_id = ingest.developer_dataset()
+    first_unchanged = b"unchanged one"
+    second_unchanged = b"unchanged two"
+    ingest.upload_revision(
+        dataset_id, [("payload/a.bin", first_unchanged), ("payload/c.bin", second_unchanged)]
+    )
+
+    changed = b"new content"
+    session = ingest.create(
+        dataset_id,
+        [
+            manifest_file("payload/a.bin", first_unchanged),
+            manifest_file("payload/b.bin", changed),
+            manifest_file("payload/c.bin", second_unchanged),
+        ],
+    ).json()
+    files_by_path = {item["path"]: item for item in session["files"]}
+    assert files_by_path["payload/a.bin"]["action"] == "hardlink"
+    assert files_by_path["payload/a.bin"]["part_count"] == 0
+    assert files_by_path["payload/c.bin"]["action"] == "hardlink"
+    assert files_by_path["payload/b.bin"]["action"] == "upload"
+    ingest.put_part(files_by_path["payload/b.bin"]["file_id"], 1, changed)
+
+    monkeypatch.setattr(
+        client.app.state.runtime.repository.raw_store, "hardlink_fallback_copy", False
+    )
+    crash_on(monkeypatch, "link", call=2)
+    failed = ingest.verify(session["id"])
+    assert failed.status_code == 500
+
+    after_crash = ingest.get(session["id"]).json()
+    files_after_crash = {item["path"]: item for item in after_crash["files"]}
+    assert after_crash["state"] == "UPLOADING"
+    assert files_after_crash["payload/a.bin"]["state"] == "COMPLETE"
+    assert files_after_crash["payload/c.bin"]["state"] == "PENDING"
+
+    verified = ingest.verify(session["id"])
+
+    assert verified.status_code == 200, verified.text
+    body = verified.json()
+    assert body["state"] == "VERIFYING"
+    verified_by_path = {item["path"]: item for item in body["files"]}
+    assert verified_by_path["payload/a.bin"]["state"] == "COMPLETE"
+    assert verified_by_path["payload/c.bin"]["state"] == "COMPLETE"
+
+    staging = staging_dir(PurePosixPath(str(tmp_path / "data")), UUID(session["id"]))
+    for name in ("a.bin", "c.bin"):
+        assert (Path(staging) / "payload" / name).stat().st_nlink == 2
+
+
+def test_verify_refuses_while_a_file_is_pending(client: TestClient) -> None:
+    """Verify refuses, naming the incomplete paths, while a planned file is still pending."""
+    ingest = IngestClient(client)
+    _, dataset_id = ingest.developer_dataset()
+    session = ingest.create(dataset_id, [manifest_file("payload/a.bin", b"hello")]).json()
+
+    response = ingest.verify(session["id"])
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "MANIFEST_MISMATCH"
+    assert body["context"]["incomplete"] == ["payload/a.bin"]
+    unchanged = ingest.get(session["id"]).json()
+    assert unchanged["state"] == "UPLOADING"
+
+
+def test_commit_publishes_the_revision_and_its_events(
+    client: TestClient, stores: ApiStores, tmp_path: Path
+) -> None:
+    """A commit publishes the envelope's three documents, seals the root, and records its events."""
+    ingest = IngestClient(client)
+    _, dataset_id = ingest.developer_dataset()
+    data = b"hello world"
+    session = ingest.create(dataset_id, [manifest_file("payload/a.bin", data)]).json()
+    ingest.put_part(session["files"][0]["file_id"], 1, data)
+    verified = ingest.verify(session["id"]).json()
+
+    response = ingest.commit(
+        session["id"], verified["etag"], {"title": "Run 1", "creators": ["bob"]}
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["number"] == 1
+    assert body["file_count"] == 1
+    assert body["total_bytes"] == len(data)
+    assert body["committed_by"] == "bob"
+
+    record = stores.hierarchy._revisions[UUID(body["id"])]
+    revision_path = Path(record.revision_path)
+    assert revision_path.name.startswith("000001--")
+    assert stat.S_IMODE(revision_path.stat().st_mode) == 0o555
+    assert sorted(item.name for item in revision_path.iterdir()) == [
+        "COMMITTED",
+        "manifest.json",
+        "metadata.json",
+        "payload",
+    ]
+
+    manifest = decode_manifest((revision_path / "manifest.json").read_bytes())
+    assert manifest.sha256 == body["manifest_sha256"]
+    metadata_doc = MetadataDocument.decode((revision_path / "metadata.json").read_bytes())
+    assert metadata_doc.sha256 == body["metadata_sha256"]
+    assert metadata_doc.committed_by == "bob"
+    marker = CommitRecord.decode((revision_path / "COMMITTED").read_bytes())
+    assert marker.revision_record(revision_path=str(revision_path)) == record
+
+    staging = staging_dir(PurePosixPath(str(tmp_path / "data")), UUID(session["id"]))
+    assert not Path(staging).exists()
+
+    assert stores.hierarchy._sessions[UUID(session["id"])].state is IngestState.COMMITTED
+    committed_events = [e for e in stores.hierarchy._audit if e.kind == "revision.committed"]
+    assert len(committed_events) == 1
+    assert committed_events[0].subject_id == UUID(body["id"])
+    outbox_kinds = [e.kind for e in stores.hierarchy._outbox]
+    assert outbox_kinds.count("revision.committed") == 1
+
+    release = client.post(
+        f"/api/v1/datasets/{dataset_id}/releases",
+        json={"tag": "v1", "revision_number": 1},
+        headers=_headers("bob"),
+    )
+    assert release.status_code == 201, release.text
+
+
+def test_commit_requires_the_current_etag_and_the_declared_digest(
+    client: TestClient, stores: ApiStores
+) -> None:
+    """Commit refuses the wrong session state, a stale or malformed etag, and the wrong digest."""
+    ingest = IngestClient(client)
+    _, dataset_id = ingest.developer_dataset()
+    data = b"hello"
+    metadata = {"title": "Run", "creators": ["bob"]}
+    session = ingest.create(dataset_id, [manifest_file("payload/a.bin", data)]).json()
+    file_id = session["files"][0]["file_id"]
+
+    from_uploading = ingest.commit(session["id"], session["etag"], metadata)
+    assert from_uploading.status_code == 409
+    assert from_uploading.json()["code"] == "ILLEGAL_INGEST_TRANSITION"
+
+    ingest.put_part(file_id, 1, data)
+    verified = ingest.verify(session["id"]).json()
+
+    stale = ingest.commit(session["id"], verified["etag"] - 1, metadata)
+    assert stale.status_code == 412
+    assert stale.json()["code"] == "PRECONDITION_FAILED"
+
+    malformed = client.post(
+        f"/api/v1/ingest-sessions/{session['id']}/commit",
+        json={"manifest_sha256": session["manifest_sha256"], "metadata": metadata},
+        headers={**_headers("bob"), "If-Match": "not-an-integer"},
+    )
+    assert malformed.status_code == 422
+    assert malformed.json()["code"] == "REQUEST_INVALID"
+
+    wrong_digest = client.post(
+        f"/api/v1/ingest-sessions/{session['id']}/commit",
+        json={"manifest_sha256": "a" * 64, "metadata": metadata},
+        headers={**_headers("bob"), "If-Match": f'"{verified["etag"]}"'},
+    )
+    assert wrong_digest.status_code == 400
+    assert wrong_digest.json()["code"] == "MANIFEST_MISMATCH"
+
+    session_id = UUID(session["id"])
+    stored = stores.hierarchy._sessions[session_id]
+    stores.hierarchy._sessions[session_id] = replace(
+        stored, lease=replace(stored.lease, expires_at=datetime.now(UTC) - timedelta(hours=1))
+    )
+    lapsed = ingest.commit(session["id"], verified["etag"], metadata)
+    assert lapsed.status_code == 409
+    assert lapsed.json()["code"] == "INGEST_SESSION_EXPIRED"
+
+
+def test_a_commit_whose_staged_manifest_disagrees_with_the_session_is_a_server_error(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A staged manifest that no longer matches the session's declared identity is a server error.
+
+    This is storage and the catalog disagreeing with each other, never a
+    client mistake, so the reconciler owns it rather than the caller.
+    """
+    ingest = IngestClient(client)
+    _, dataset_id = ingest.developer_dataset()
+    data = b"hello"
+    session = ingest.create(dataset_id, [manifest_file("payload/a.bin", data)]).json()
+    ingest.put_part(session["files"][0]["file_id"], 1, data)
+    verified = ingest.verify(session["id"]).json()
+
+    staging = staging_dir(PurePosixPath(str(tmp_path / "data")), UUID(session["id"]))
+    manifest_path = Path(staging) / "manifest.json"
+    other = validate_manifest([ManifestEntry(path="payload/other.bin", size=3, sha256="b" * 64)])
+    manifest_path.chmod(0o644)
+    manifest_path.write_bytes(manifest_bytes(other))
+
+    response = ingest.commit(session["id"], verified["etag"], {"title": "Run", "creators": ["bob"]})
+
+    assert response.status_code == 500
+
+
+async def test_a_commit_race_that_loses_its_claim_returns_the_winner_s_revision(
+    client: TestClient, stores: ApiStores, tmp_path: Path
+) -> None:
+    """A commit whose idempotency claim was already remembered returns the recorded revision.
+
+    Proves the facade's own defence against two concurrent attempts at the
+    same commit racing past the envelope's publication and into the
+    transaction together: whichever loses the claim returns what the
+    winner recorded instead of raising or double-publishing.
+    """
+    ingest = IngestClient(client)
+    _, dataset_id = ingest.developer_dataset()
+    data = b"hello"
+    session = ingest.create(dataset_id, [manifest_file("payload/a.bin", data)]).json()
+    ingest.put_part(session["files"][0]["file_id"], 1, data)
+    verified = ingest.verify(session["id"]).json()
+
+    service = IngestService(
+        PosixRawStore(str(tmp_path / "data")), stores.hierarchy, clock=SystemClock()
+    )
+    ledger = await service.ledger(UUID(session["id"]))
+    metadata = {"title": "Run", "creators": ["bob"]}
+    claim = IdempotencyClaim(
+        principal="user:bob",
+        key=str(uuid4()),
+        request_sha256="already-claimed-by-the-winner",
+    )
+    winner = RevisionRecord(
+        id=uuid4(),
+        dataset_id=UUID(dataset_id),
+        number=verified["revision_number"],
+        manifest_sha256=verified["manifest_sha256"],
+        metadata_sha256=_ZERO_SHA,
+        revision_path="/wherever/the/winner/published",
+        committed_by="bob",
+        committed_at=datetime.now(UTC),
+        file_count=1,
+        total_bytes=len(data),
+    )
+    async with stores.hierarchy.transaction() as writer:
+        assert await writer.claim(claim) is None
+        await writer.insert_revision(winner)
+        await writer.remember(claim, Replay(kind="revision", resource_id=winner.id))
+
+    record = await service.commit(
+        ledger,
+        expected_etag=verified["etag"],
+        manifest_sha256=verified["manifest_sha256"],
+        metadata=metadata,
+        committed_by="bob",
+        claim=claim,
+    )
+
+    assert record == winner
+    assert stores.hierarchy._sessions[UUID(session["id"])].state is IngestState.COMMITTING
+
+
+def test_a_replayed_commit_returns_the_same_revision(client: TestClient) -> None:
+    """A replayed commit under the same key, even with a stale etag, returns the same revision.
+
+    Reusing the key for a distinct, not-yet-committed session's commit is
+    refused instead of silently publishing a second revision under it.
+    """
+    ingest = IngestClient(client)
+    _, dataset_id = ingest.developer_dataset()
+    key = str(uuid4())
+    data = b"hello"
+    metadata = {"title": "Run", "creators": ["bob"]}
+    session = ingest.create(dataset_id, [manifest_file("payload/a.bin", data)]).json()
+    ingest.put_part(session["files"][0]["file_id"], 1, data)
+    verified = ingest.verify(session["id"]).json()
+
+    first = ingest.commit(session["id"], verified["etag"], metadata, key=key)
+    assert first.status_code == 201, first.text
+
+    replay = ingest.commit(session["id"], verified["etag"] - 1, metadata, key=key)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == first.json()["id"]
+
+    second_session = ingest.create(dataset_id, [manifest_file("payload/b.bin", b"other")]).json()
+    ingest.put_part(second_session["files"][0]["file_id"], 1, b"other")
+    second_verified = ingest.verify(second_session["id"]).json()
+
+    reused = ingest.commit(
+        second_session["id"],
+        second_verified["etag"],
+        {"title": "Other", "creators": ["bob"]},
+        key=key,
+    )
+
+    assert reused.status_code == 409
+    assert reused.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+    still_committing = ingest.get(second_session["id"]).json()
+    assert still_committing["state"] == "COMMITTING"
+
+
+def test_create_refuses_a_manifest_the_dataset_already_holds(client: TestClient) -> None:
+    """Opening a session for a manifest the dataset already committed is refused."""
+    ingest = IngestClient(client)
+    _, dataset_id = ingest.developer_dataset()
+    data = b"hello"
+    files = [manifest_file("payload/a.bin", data)]
+    session = ingest.create(dataset_id, files).json()
+    ingest.put_part(session["files"][0]["file_id"], 1, data)
+    verified = ingest.verify(session["id"]).json()
+    committed = ingest.commit(
+        session["id"], verified["etag"], {"title": "Run", "creators": ["bob"]}
+    )
+    assert committed.status_code == 201, committed.text
+
+    duplicate = ingest.create(dataset_id, files)
+
+    assert duplicate.status_code == 409
+    assert duplicate.json()["code"] == "DUPLICATE_CONTENT"

@@ -12,20 +12,24 @@ pool connection or the per-dataset lock a transaction would otherwise hold.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 from asyncer import asyncify
 
 from huron.pkg.catalog import (
+    CommitRecord,
     FileState,
     IngestFile,
     IngestSession,
     IngestState,
     Manifest,
     ManifestEntry,
+    MetadataDocument,
+    RevisionIndex,
     RevisionRecord,
     UploadAction,
     UploadPlanEntry,
@@ -33,6 +37,9 @@ from huron.pkg.catalog import (
     decode_manifest,
     ingest,
     manifest_bytes,
+    revision_committed,
+    revision_from_storage,
+    revision_record,
     uuid7,
     validate_manifest,
 )
@@ -43,8 +50,10 @@ from huron.pkg.catalog.errors import (
     ResourceNotFound,
 )
 from huron.pkg.catalog.layers import Layer, LayerWorkflowError
-from huron.pkg.catalog.paths import staging_dir
+from huron.pkg.catalog.manifest import JsonValue
+from huron.pkg.catalog.paths import revision_dir, staging_dir
 from huron.pkg.rawstore import PartLengthMismatchError
+from huron.pkg.rbac import Visibility
 
 from .records import AuditEvent, jsonable
 from .stores import Replay
@@ -59,6 +68,8 @@ if TYPE_CHECKING:
     from .stores import HierarchyStore, IdempotencyClaim, LedgerEntry
 
 __all__ = ["IngestService", "SessionLedger"]
+
+logger = logging.getLogger(__name__)
 
 
 class _MeasuredChunks:
@@ -728,6 +739,367 @@ class IngestService:
                 current = entry.file
                 continue
             return updated
+
+    async def verify(self, ledger: SessionLedger) -> SessionLedger:
+        """Link every unchanged file from the parent and move to VERIFYING.
+
+        Every planned file must already be COMPLETE except a hardlink one
+        still PENDING, which this links from the parent revision before the
+        session-wide check runs. Linking is idempotent per file, so a retry
+        after a partial run - one file linked, the next raising - only ever
+        touches the files still PENDING.
+
+        Args:
+            ledger: The session's ledger, as last read by the caller.
+
+        Returns:
+            The session's ledger, freshly read after the transition.
+        """
+        now = self._clock.now()
+        ledger.session.require(IngestState.UPLOADING, now=now)
+        pending_links = [
+            file
+            for file in ledger.files
+            if file.action is UploadAction.HARDLINK and file.state is FileState.PENDING
+        ]
+        linked_by_id: dict[UUID, IngestFile] = {}
+        if pending_links and ledger.parent_revision_id is not None:
+            parent = await self._hierarchy.revision(ledger.parent_revision_id)
+            parent_payload = PurePosixPath(parent.revision_path) / "payload"
+            staging_payload = staging_dir(self._root, ledger.id) / "payload"
+            for file in pending_links:
+                await asyncify(self._raw_store.hardlink_from_parent)(
+                    parent_payload, staging_payload, file.path
+                )
+                linked = file.linked()
+                async with self._hierarchy.transaction() as writer:
+                    await writer.update_ingest_file(
+                        ledger.id, linked, expected_parts=file.completed_parts
+                    )
+                linked_by_id[file.file_id] = linked
+        files = tuple(linked_by_id.get(file.file_id, file) for file in ledger.files)
+        verified = ledger.session.verify(files, now=now)
+        async with self._hierarchy.transaction() as writer:
+            await writer.update_ingest_session(verified, expected_etag=ledger.session.etag)
+        return await self.ledger(ledger.id)
+
+    async def _read_declared_manifest(self, ledger: SessionLedger, final: PurePosixPath) -> bytes:
+        """Read the session's declared manifest from wherever it currently sits.
+
+        Ordinarily that is the staging envelope; a retry landing after the
+        rename finds no staging left at all, only the envelope already
+        published at ``final``, so the read falls back there.
+
+        Args:
+            ledger: The session's ledger, as last read by the caller.
+            final: The revision directory the envelope publishes as.
+
+        Returns:
+            The manifest's bytes, exactly as stored.
+        """
+        try:
+            return await asyncify(self._raw_store.read_document)(
+                staging_dir(self._root, ledger.id) / "manifest.json"
+            )
+        except FileNotFoundError:
+            return await asyncify(self._raw_store.read_document)(final / "manifest.json")
+
+    async def _compose_commit(
+        self,
+        ledger: SessionLedger,
+        metadata: Mapping[str, object],
+        committed_by: str,
+        now: datetime,
+    ) -> tuple[Manifest, MetadataDocument, PurePosixPath]:
+        """Read back the declared manifest and compose the commit's metadata document.
+
+        Args:
+            ledger: The session's ledger, as last read by the caller.
+            metadata: The committer's descriptive metadata submission.
+            committed_by: The principal driving the commit.
+            now: The instant the commit began.
+
+        Returns:
+            The manifest, read back from wherever it currently is and
+            revalidated against its own bytes; the composed metadata
+            document; and the revision directory the envelope publishes
+            as, built once from the dataset's real hierarchy records.
+
+        Raises:
+            RuntimeError: If the manifest's identity does not match what
+                the session declared - storage and the catalog disagree.
+        """
+        dataset = await self._hierarchy.dataset(ledger.dataset_id, Visibility.ALL)
+        project = await self._hierarchy.project(dataset.project_id, Visibility.ALL)
+        organization = await self._hierarchy.organization(project.organization_id, Visibility.ALL)
+        final = revision_dir(
+            self._root, organization, project, dataset, ledger.revision_number, ledger.revision_id
+        )
+        payload = await self._read_declared_manifest(ledger, final)
+        manifest = decode_manifest(payload)
+        if manifest.sha256 != ledger.manifest_sha256:
+            raise RuntimeError(
+                f"staged manifest {manifest.sha256} does not match the session's declared "
+                f"identity {ledger.manifest_sha256}"
+            )
+        doc = MetadataDocument.compose(
+            cast("Mapping[str, JsonValue]", metadata),
+            manifest=manifest,
+            organization=organization,
+            project=project,
+            dataset=dataset,
+            revision_number=ledger.revision_number,
+            committed_by=committed_by,
+            committed_at=now,
+            data_classification=project.data_classification,
+        )
+        return manifest, doc, final
+
+    async def _fence_commit(
+        self, session: IngestSession, manifest_sha256: str, now: datetime
+    ) -> IngestSession:
+        """Move the session into COMMITTING, in its own transaction.
+
+        Args:
+            session: The session as last read by the caller; must be
+                VERIFYING, or already COMMITTING for a retry re-entering
+                past the rename.
+            manifest_sha256: The manifest identity the caller is
+                committing.
+            now: The instant to judge the session's lease against, unless
+                it is already COMMITTING.
+
+        Returns:
+            The session in COMMITTING, its etag advanced.
+        """
+        committing = session.begin_commit(manifest_sha256=manifest_sha256, now=now)
+        async with self._hierarchy.transaction() as writer:
+            await writer.update_ingest_session(committing, expected_etag=session.etag)
+        return committing
+
+    async def _published_marker(self, final: PurePosixPath) -> bytes | None:
+        """Return the ``COMMITTED`` marker's bytes if the envelope is already published.
+
+        Args:
+            final: The revision directory the envelope publishes as.
+
+        Returns:
+            The marker's bytes, or None if nothing is published there yet.
+        """
+        try:
+            return await asyncify(self._raw_store.read_document)(final / "COMMITTED")
+        except FileNotFoundError:
+            return None
+
+    async def _publish_envelope(
+        self,
+        committing: IngestSession,
+        manifest: Manifest,
+        doc: MetadataDocument,
+        final: PurePosixPath,
+        *,
+        committed_by: str,
+        now: datetime,
+    ) -> RevisionRecord:
+        """Publish the envelope's documents and seal, or reseal one already published.
+
+        The record is built before any disk write in the publishing
+        branch, because the ``COMMITTED`` marker's own bytes are its
+        canonical form: the marker cannot be written until the record it
+        describes exists. A failure of any of the six steps that leaves no
+        marker behind fails the session outright, since nothing was
+        published; one that leaves a marker behind - a crash after the
+        rename - is left exactly as it is for the client's retry to read
+        back, because storage, not this failed attempt, now leads. A
+        retry that finds the marker already there still runs
+        ``commit_envelope`` once more before reading anything back: a
+        crash between the rename and the root's own seal leaves the
+        published root writable, and this is the only call left to close
+        that gap. That reseal (or its silent no-op once the root is
+        already sealed) is never wrapped in the failure mapping below,
+        because publication has already happened by the time the marker
+        is visible - a fault here must leave the session COMMITTING for
+        the client to retry again, never fail it outright.
+
+        Args:
+            committing: The session driving the commit, already fenced
+                into COMMITTING.
+            manifest: The manifest being committed.
+            doc: The composed metadata document.
+            final: The revision directory the envelope publishes as.
+            committed_by: The principal driving the commit.
+            now: The instant the commit began.
+
+        Returns:
+            The published revision record, freshly built or rebuilt from
+            an envelope a previous attempt already published.
+
+        Raises:
+            OSError: If the reseal of an already-published envelope
+                fails, re-raised unchanged with the session left
+                COMMITTING; or if one of the publishing steps fails, once
+                the session has been failed if no marker was left behind,
+                re-raised unchanged either way since a marker left behind
+                means the client must retry rather than see this
+                attempt's failure.
+            ValueError: If ``commit_envelope`` found the staged envelope
+                unmarked; handled the same way as an ``OSError`` here.
+        """
+        staging = staging_dir(self._root, committing.lease.ingest_id)
+        published = await self._published_marker(final)
+        if published is not None:
+            await asyncify(self._raw_store.commit_envelope)(staging, final)
+            metadata_bytes = await asyncify(self._raw_store.read_document)(final / "metadata.json")
+            return revision_from_storage(
+                published, metadata_bytes, session=committing, revision_path=str(final)
+            )
+        record = revision_record(
+            committing,
+            manifest,
+            metadata_sha256=doc.sha256,
+            revision_path=str(final),
+            committed_by=committed_by,
+            committed_at=now,
+        )
+        try:
+            await asyncify(self._raw_store.write_document)(
+                staging, "manifest.json", manifest_bytes(manifest)
+            )
+            await asyncify(self._raw_store.write_document)(staging, "metadata.json", doc.canonical)
+            await asyncify(self._raw_store.seal)(staging)
+            await asyncify(self._raw_store.write_document)(
+                staging, "COMMITTED", CommitRecord.of(record).canonical
+            )
+            await asyncify(self._raw_store.commit_envelope)(staging, final)
+        except (OSError, ValueError):
+            if await self._published_marker(final) is None:
+                await self._fail(committing, actor=committed_by)
+            raise
+        return record
+
+    async def _record_revision(
+        self,
+        committing: IngestSession,
+        record: RevisionRecord,
+        claim: IdempotencyClaim,
+        now: datetime,
+    ) -> RevisionRecord:
+        """Record the published revision and its events in one short transaction.
+
+        Runs only after the envelope's rename is durable, so nothing here
+        touches a file or holds a lock across I/O; the transaction is the
+        catalog catching up with what storage already made true.
+
+        Args:
+            committing: The session driving the commit, in COMMITTING.
+            record: The revision the envelope already publishes.
+            claim: The caller's idempotency claim for this request.
+            now: The instant the commit's outbox event is stamped with.
+
+        Returns:
+            The revision an identical earlier claim already recorded, or
+            ``record`` itself once freshly recorded.
+        """
+        async with self._hierarchy.transaction() as writer:
+            replay = await writer.claim(claim)
+            if replay is not None:
+                return await self._hierarchy.revision(replay.resource_id)
+            await writer.insert_revision(record)
+            committed = committing.commit()
+            await writer.update_ingest_session(committed, expected_etag=committing.etag)
+            await writer.insert_audit_event(
+                self._audit(
+                    "revision.committed",
+                    actor=record.committed_by,
+                    subject_kind="revision",
+                    subject_id=record.id,
+                    payload=jsonable(record),
+                )
+            )
+            await writer.insert_outbox_event(
+                revision_committed(record, event_id=uuid7(), created_at=now)
+            )
+            await writer.remember(claim, Replay(kind="revision", resource_id=record.id))
+        return record
+
+    async def _write_index(self, record: RevisionRecord) -> None:
+        """Extend the dataset's revision index with the freshly published revision.
+
+        Best-effort: a reader can always rebuild ``INDEX.json`` from the
+        revision directories themselves, so a failure here must never turn
+        an already-successful commit into a failed response.
+
+        Args:
+            record: The revision the index gains an entry for.
+        """
+        index_path = PurePosixPath(record.revision_path).parent / "INDEX.json"
+        try:
+            try:
+                existing = await asyncify(self._raw_store.read_document)(index_path)
+                index = RevisionIndex.decode(existing)
+            except FileNotFoundError:
+                index = RevisionIndex.empty(record.dataset_id)
+            await asyncify(self._raw_store.atomic_replace)(
+                index_path, index.including(record).canonical
+            )
+        except Exception:
+            logger.exception(
+                "failed to update the revision index for dataset %s", record.dataset_id
+            )
+
+    async def commit(
+        self,
+        ledger: SessionLedger,
+        *,
+        expected_etag: int,
+        manifest_sha256: str,
+        metadata: Mapping[str, object],
+        committed_by: str,
+        claim: IdempotencyClaim,
+    ) -> RevisionRecord:
+        """Publish a verified session's envelope as a committed revision.
+
+        A session already COMMITTED returns its revision unchanged, ahead
+        of the etag check and the idempotency claim, so a retry whose key
+        has lapsed and whose etag has gone stale still recovers the same
+        result. Otherwise the etag must match before anything else runs:
+        the commit's documents are composed and validated, the session is
+        fenced into COMMITTING (accepting a retry already there), the
+        envelope is published - or, for a retry past the rename, read back
+        from what is already published - and the result recorded in one
+        short transaction. The index update that follows is best-effort
+        and never affects what is returned.
+
+        Args:
+            ledger: The session's ledger, as last read by the caller.
+            expected_etag: The version the caller's ``If-Match`` names.
+            manifest_sha256: The manifest identity the caller is
+                committing.
+            metadata: The committer's descriptive metadata submission.
+            committed_by: The principal driving the commit.
+            claim: The caller's idempotency claim for this request.
+
+        Returns:
+            The committed revision: freshly published, recovered from a
+            replayed claim, or rebuilt from a retry past the rename.
+
+        Raises:
+            PreconditionFailed: If the session is not already COMMITTED
+                and ``expected_etag`` does not match its current etag.
+        """
+        if ledger.state is IngestState.COMMITTED:
+            return await self._hierarchy.revision(ledger.revision_id)
+        if expected_etag != ledger.etag:
+            raise PreconditionFailed(f"ingest session version conflict: {ledger.id}")
+        now = self._clock.now()
+        manifest, doc, final = await self._compose_commit(ledger, metadata, committed_by, now)
+        committing = await self._fence_commit(ledger.session, manifest_sha256, now)
+        record = await self._publish_envelope(
+            committing, manifest, doc, final, committed_by=committed_by, now=now
+        )
+        published = await self._record_revision(committing, record, claim, now)
+        await self._write_index(published)
+        return published
 
     def _audit(
         self,

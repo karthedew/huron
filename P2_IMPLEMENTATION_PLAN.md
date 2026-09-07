@@ -1073,7 +1073,7 @@ Under the non-default answers: D-12 (B) removes step 8 and the index test; D-14 
 
 **Dependencies.** M5.2.
 
-**Status: pending**
+**Status: done**
 
 ### M6 — The read side
 
@@ -1832,3 +1832,16 @@ than on the design's literal text.
   ordinary single-subagent path. From M5.1 onward every task runs serially in the main tree —
   one implementer, then one verifier, fix loop capped at three — as rule 6 originally required.
   The final whole-plan verification pass over the finished tree stays.
+- **M5.3 / Design 4 › "`/commit`, end to end" (found in verification, 2026-09-07).** On a retry past
+  the rename the staging directory is gone, so step 3 reads `final/manifest.json` when
+  `staging/manifest.json` is absent (the bytes are identical by construction), and step 5's
+  read-back branch still runs `commit_envelope` so the published root is resealed. M10.1 writes
+  both into the design's step text.
+- **M5.3 / `pkg/catalog` docstrings (defect for M10.1).** `paths.py`'s `Slugged` docstring and
+  `EntityRef`'s docstring both claim `EntityRef` satisfies `Slugged` structurally; mypy refuses a
+  frozen dataclass against a Protocol declaring plain attributes. The repair is `Slugged`
+  declaring `id` and `slug` as read-only properties, which M10.1 applies with the docstring
+  correction; M5.3 passes the already-computed path instead of rebuilding a reference.
+- **M5.3 residual for M10.1.** Route 8's OpenAPI `responses` documents 400, 404, 409, 412 and 422
+  but not the 500 the design lists for storage and catalog disagreeing; the behaviour is pinned by
+  a test. M10.1 decides whether the route table or the `responses` map moves.

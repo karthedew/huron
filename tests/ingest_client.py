@@ -9,6 +9,7 @@ The client assumes ``root`` is bootstrapped as platform owner on the
 from __future__ import annotations
 
 import hashlib
+import io
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -260,6 +261,87 @@ class IngestClient:
                     assert response.status_code == 200, response.text
                     issued += 1
         return issued
+
+    def verify(self, session_id: str) -> Response:
+        """Link every unchanged file from the parent and move to VERIFYING.
+
+        Args:
+            session_id: The session to verify.
+
+        Returns:
+            The raw HTTP response.
+        """
+        return self._client.post(
+            f"/api/v1/ingest-sessions/{session_id}/verify", headers=_headers(self.subject)
+        )
+
+    def commit(
+        self,
+        session_id: str,
+        etag: int,
+        metadata: Mapping[str, Any],
+        *,
+        key: str | None = None,
+    ) -> Response:
+        """Commit a verified session, publishing its revision.
+
+        The session's currently declared manifest digest is read back with
+        a ``GET`` first, so a caller need only carry the etag and the
+        metadata it wants to submit.
+
+        Args:
+            session_id: The session to commit.
+            etag: The version to send as ``If-Match``.
+            metadata: The descriptive metadata submission.
+            key: The ``Idempotency-Key`` to send, or None for a fresh one.
+
+        Returns:
+            The raw HTTP response.
+        """
+        manifest_sha256 = self.get(session_id).json()["manifest_sha256"]
+        return self._client.post(
+            f"/api/v1/ingest-sessions/{session_id}/commit",
+            json={"manifest_sha256": manifest_sha256, "metadata": metadata},
+            headers={**_headers(self.subject, key=key), "If-Match": f'"{etag}"'},
+        )
+
+    def upload_revision(
+        self, dataset_id: str, files: Sequence[tuple[str, bytes]]
+    ) -> dict[str, Any]:
+        """Ingest one revision end to end: create, upload, complete, verify and commit it.
+
+        Every declared file is uploaded from its bytes, using whatever
+        plan the create response returns - a file the parent already
+        holds is skipped, exactly as :meth:`upload` does; a multipart
+        upload file is completed once every part has landed.
+
+        Args:
+            dataset_id: The dataset the revision is added to.
+            files: Each file's manifest path paired with its complete
+                bytes.
+
+        Returns:
+            The committed revision's view, as JSON.
+        """
+        sources = dict(files)
+        session = self.create(dataset_id, [manifest_file(path, data) for path, data in files])
+        assert session.status_code == 201, session.text
+        body = session.json()
+        self.upload(body, lambda path: io.BytesIO(sources[path]))
+        for file in body["files"]:
+            if file["action"] == "upload" and file["part_count"] > 1:
+                completion = self.complete(file["file_id"])
+                assert completion.status_code == 200, completion.text
+        verified = self.verify(body["id"])
+        assert verified.status_code == 200, verified.text
+        verified_body = verified.json()
+        committed = self.commit(
+            verified_body["id"],
+            verified_body["etag"],
+            {"title": "Revision", "creators": [self.subject]},
+        )
+        assert committed.status_code == 201, committed.text
+        return committed.json()
 
 
 def _byte_length(body: bytes | Iterable[bytes]) -> int | None:

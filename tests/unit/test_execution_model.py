@@ -1,8 +1,8 @@
 """The event-loop/threadpool boundary: which operations block, and where the loop must never stall.
 
-Pins which of the 58 operations run on the event loop directly (they only
+Pins which of the 60 operations run on the event loop directly (they only
 ``await``) versus which wrap a blocking call in ``asyncify``: every
-hierarchy and ingest operation now awaits its store, so all 58 are
+hierarchy and ingest operation now awaits its store, so all 60 are
 coroutine functions, and the tripwire this module keeps is that the raw
 store's filesystem calls stay off the loop thread.
 """
@@ -79,6 +79,8 @@ EXPECTED_COROUTINE_FUNCTION = {
     "heartbeat_ingest_session": True,
     "upload_part": True,
     "complete_upload": True,
+    "verify_ingest_session": True,
+    "commit_ingest_session": True,
     "abort_ingest_session": True,
     "list_roles": True,
     "list_system_bindings": True,
@@ -151,7 +153,7 @@ def _operations(app: FastAPI) -> Iterator[Callable[..., object]]:
 def test_the_route_table_has_exactly_the_operations_this_service_defines(
     tmp_path: Path,
 ) -> None:
-    """Registered operations minus the four documentation routes equal exactly the 58 expected."""
+    """Registered operations minus the four documentation routes equal exactly the 60 expected."""
     names = {op.__name__ for op in _operations(_built_app(tmp_path))}
     assert names - DOCUMENTATION_ENDPOINTS == set(EXPECTED_COROUTINE_FUNCTION)
 
@@ -278,6 +280,44 @@ def test_the_upload_route_s_write_part_executes_off_the_event_loop_thread(tmp_pa
         response = ingest.put_part(file_id, 1, b"hello")
 
     assert response.status_code == 200, response.text
+    assert ran_on_the_event_loop == [False]
+
+
+def test_the_commit_route_s_envelope_publication_executes_off_the_event_loop_thread(
+    tmp_path: Path,
+) -> None:
+    """The commit route's envelope publication still executes off the event-loop thread.
+
+    ``commit_ingest_session`` is ``async def`` - it also awaits the
+    recording transaction - so the off-loop guarantee for the envelope's
+    rename comes only from the ``asyncify`` wrapping inside
+    ``IngestService``, which this pins directly by driving one real commit
+    through the route.
+    """
+    ran_on_the_event_loop: list[bool] = []
+    real_commit_envelope = PosixRawStore.commit_envelope
+
+    def _tracking_commit_envelope(self: PosixRawStore, *args: object, **kwargs: object) -> None:
+        ran_on_the_event_loop.append(_event_loop_is_running())
+        real_commit_envelope(self, *args, **kwargs)
+
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with (
+        patch.object(PosixRawStore, "commit_envelope", _tracking_commit_envelope),
+        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
+    ):
+        ingest = IngestClient(client)
+        _, dataset_id = ingest.developer_dataset()
+        data = b"hello"
+        session = ingest.create(dataset_id, [manifest_file("payload/a.bin", data)]).json()
+        ingest.put_part(session["files"][0]["file_id"], 1, data)
+        verified = ingest.verify(session["id"]).json()
+
+        response = ingest.commit(
+            session["id"], verified["etag"], {"title": "Run", "creators": ["bob"]}
+        )
+
+    assert response.status_code == 201, response.text
     assert ran_on_the_event_loop == [False]
 
 
