@@ -27,23 +27,21 @@ from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
 
 from huron.pkg.catalog.documents import CommitRecord
 from huron.pkg.catalog.ingest import IngestState
 from huron.pkg.catalog.paths import revision_dir, staging_dir
 from huron.pkg.rawstore import PosixRawStore
-from huron.service.api.app import create_app
-from huron.service.api.settings import ApiSettings, ClassificationValue
-from tests.ingest_client import IngestClient, manifest_file
-from tests.unit.support import crash_on, fsync_log, memory_stores
+from tests.ingest_client import IngestClient, dev_headers, manifest_file
+from tests.unit.support import crash_on, fsync_log
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Iterator
+    from collections.abc import AsyncIterator, Callable
 
+    from fastapi.testclient import TestClient
     from httpx import Response
 
     from huron.pkg.catalog.models import RevisionRecord
@@ -53,34 +51,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 _DATA = b"crash matrix payload"
-
-
-def _headers(subject: str, *, key: str | None = None) -> dict[str, str]:
-    """Dev-header credentials for ``subject``, paired with an idempotency key."""
-    return {"X-Huron-Subject": subject, "Idempotency-Key": key if key is not None else str(uuid4())}
-
-
-@pytest.fixture
-def stores() -> ApiStores:
-    """A fresh in-memory store bundle, held so a test can seed its hierarchy store directly."""
-    return memory_stores()
-
-
-@pytest.fixture
-def client(tmp_path: Path, stores: ApiStores) -> Iterator[TestClient]:
-    """A dev-header TestClient over a freshly wired in-memory repository, ``root`` bootstrapped."""
-    settings = ApiSettings(
-        env="development",
-        auth_mode="dev-headers",
-        data_root=str(tmp_path / "data"),
-        database_url="postgresql://unused",
-        classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
-        bootstrap_platform_owner="root",
-    )
-    with TestClient(
-        create_app(settings=settings, stores=stores), raise_server_exceptions=False
-    ) as client:
-        yield client
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,12 +77,12 @@ def _final_path(
     Returns:
         The directory the revision publishes as.
     """
-    dataset = client.get(f"/api/v1/datasets/{dataset_id}", headers=_headers("bob")).json()
+    dataset = client.get(f"/api/v1/datasets/{dataset_id}", headers=dev_headers("bob")).json()
     project = client.get(
-        f"/api/v1/projects/{dataset['project_id']}", headers=_headers("bob")
+        f"/api/v1/projects/{dataset['project_id']}", headers=dev_headers("bob")
     ).json()
     organization = client.get(
-        f"/api/v1/organizations/{project['organization_id']}", headers=_headers("bob")
+        f"/api/v1/organizations/{project['organization_id']}", headers=dev_headers("bob")
     ).json()
     return Path(
         revision_dir(
@@ -141,7 +111,7 @@ def _second_dataset(client: TestClient, project_id: str, slug: str) -> str:
     response = client.post(
         f"/api/v1/projects/{project_id}/datasets",
         json={"slug": slug, "title": slug, "profile_name": "mcnp-run", "profile_version": "1.0"},
-        headers=_headers("bob"),
+        headers=dev_headers("bob"),
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
@@ -451,7 +421,7 @@ def _assert_fails_and_a_retry_retakes_the_number(
     assert "ingest.failed" in [event.kind for event in ctx.stores.hierarchy._audit]
 
     missing = ctx.client.get(
-        f"/api/v1/revisions/{ctx.reserved_revision_id}", headers=_headers(ctx.ingest.subject)
+        f"/api/v1/revisions/{ctx.reserved_revision_id}", headers=dev_headers(ctx.ingest.subject)
     )
     assert missing.status_code == 404
     assert not _revisions_for(ctx.stores, ctx.dataset_id)

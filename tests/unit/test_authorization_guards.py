@@ -616,9 +616,7 @@ async def test_project_intake_raises_not_found_for_an_unknown_project_before_the
 # -- session_overseer and session_owner: the owner, or a project admin who may only read ---
 
 
-async def _opened_session(
-    repository: HierarchyRepository, ingest: IngestService, dataset: Dataset, *, created_by: str
-) -> UUID:
+async def _opened_session(ingest: IngestService, dataset: Dataset, *, created_by: str) -> UUID:
     """Open a session as ``created_by`` on ``dataset`` and return its id."""
     files = (ManifestEntry(path="payload/a.bin", size=5, sha256="a" * 64),)
     claim = IdempotencyClaim(
@@ -643,7 +641,7 @@ async def test_session_overseer_lets_the_owner_and_a_project_admin_read(tmp_path
         scope_id=project.id,
         created_by="admin",
     )
-    session_id = await _opened_session(repository, ingest, dataset, created_by="alice")
+    session_id = await _opened_session(ingest, dataset, created_by="alice")
 
     as_owner = await session_overseer(
         session_id=session_id,
@@ -679,7 +677,7 @@ async def test_session_overseer_refuses_a_non_owner_without_project_update(tmp_p
         scope_id=project.id,
         created_by="admin",
     )
-    session_id = await _opened_session(repository, ingest, dataset, created_by="alice")
+    session_id = await _opened_session(ingest, dataset, created_by="alice")
 
     with pytest.raises(Forbidden):
         await session_overseer(
@@ -720,7 +718,7 @@ async def test_session_owner_refuses_a_project_admin_who_is_not_the_owner(tmp_pa
         scope_id=project.id,
         created_by="admin",
     )
-    session_id = await _opened_session(repository, ingest, dataset, created_by="alice")
+    session_id = await _opened_session(ingest, dataset, created_by="alice")
 
     with pytest.raises(Forbidden):
         await session_owner(
@@ -746,7 +744,7 @@ async def test_session_owner_returns_the_drive_for_the_owner(tmp_path: Path) -> 
         scope_id=project.id,
         created_by="admin",
     )
-    session_id = await _opened_session(repository, ingest, dataset, created_by="alice")
+    session_id = await _opened_session(ingest, dataset, created_by="alice")
 
     drive = await session_owner(
         session_id=session_id,

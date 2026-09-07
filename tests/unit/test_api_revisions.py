@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 
 from huron.pkg.catalog.documents import (
     CommitRecord,
@@ -32,47 +31,16 @@ from huron.pkg.catalog.documents import (
     decode_manifest,
 )
 from huron.pkg.rawstore import PosixRawStore
-from huron.service.api.app import create_app
-from huron.service.api.settings import ApiSettings, ClassificationValue
-from tests.ingest_client import IngestClient, manifest_file
-from tests.unit.support import memory_stores
+from tests.ingest_client import IngestClient, dev_headers, manifest_file
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from fastapi.testclient import TestClient
 
     from huron.service.api.runtime import ApiStores
 
 pytestmark = pytest.mark.unit
 
 _ADMIN = "root"
-
-
-def _headers(subject: str, *, key: str | None = None) -> dict[str, str]:
-    """Dev-header credentials for ``subject``, paired with an idempotency key."""
-    return {"X-Huron-Subject": subject, "Idempotency-Key": key if key is not None else str(uuid4())}
-
-
-@pytest.fixture
-def stores() -> ApiStores:
-    """A fresh in-memory store bundle, held so a test can seed its hierarchy store directly."""
-    return memory_stores()
-
-
-@pytest.fixture
-def client(tmp_path: Path, stores: ApiStores) -> Iterator[TestClient]:
-    """A dev-header TestClient over a freshly wired in-memory repository, ``root`` bootstrapped."""
-    settings = ApiSettings(
-        env="development",
-        auth_mode="dev-headers",
-        data_root=str(tmp_path / "data"),
-        database_url="postgresql://unused",
-        classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
-        bootstrap_platform_owner="root",
-    )
-    with TestClient(
-        create_app(settings=settings, stores=stores), raise_server_exceptions=False
-    ) as client:
-        yield client
 
 
 def _committed(
@@ -161,7 +129,7 @@ def test_commit_refuses_a_metadata_submission_the_schema_rejects_before_any_edge
             "manifest_sha256": session["manifest_sha256"],
             "metadata": {"title": "Run", "creators": ["bob"], "committed_by": "eve"},
         },
-        headers={**_headers("bob"), "If-Match": f'"{verified["etag"]}"'},
+        headers={**dev_headers("bob"), "If-Match": f'"{verified["etag"]}"'},
     )
     assert forbidden_member.status_code == 422
     assert forbidden_member.json()["code"] == "REQUEST_INVALID"
@@ -173,10 +141,10 @@ def test_metadata_carries_the_project_s_classification_and_the_hierarchy_refs(
     """The composed metadata document sources its classification and refs from the hierarchy."""
     ingest = IngestClient(client)
     project_id, dataset_id = ingest.developer_dataset()
-    dataset = client.get(f"/api/v1/datasets/{dataset_id}", headers=_headers("bob")).json()
-    project = client.get(f"/api/v1/projects/{project_id}", headers=_headers("bob")).json()
+    dataset = client.get(f"/api/v1/datasets/{dataset_id}", headers=dev_headers("bob")).json()
+    project = client.get(f"/api/v1/projects/{project_id}", headers=dev_headers("bob")).json()
     organization = client.get(
-        f"/api/v1/organizations/{project['organization_id']}", headers=_headers("bob")
+        f"/api/v1/organizations/{project['organization_id']}", headers=dev_headers("bob")
     ).json()
 
     view = _committed(ingest, dataset_id, "payload/a.bin", b"hello", "Run")
@@ -245,7 +213,7 @@ def test_get_revision_returns_the_view_and_hides_an_invisible_one(client: TestCl
     ingest = IngestClient(client)
     _, revision_id = ingest.committed([("payload/a.bin", b"hello")])
 
-    response = client.get(f"/api/v1/revisions/{revision_id}", headers=_headers("bob"))
+    response = client.get(f"/api/v1/revisions/{revision_id}", headers=dev_headers("bob"))
     assert response.status_code == 200, response.text
     body = response.json()
     assert set(body) == {
@@ -264,11 +232,11 @@ def test_get_revision_returns_the_view_and_hides_an_invisible_one(client: TestCl
     _, sibling_revision_id = owner.committed(
         [("payload/a.bin", b"secret")], organization_slug="vault", project_slug="sealed"
     )
-    hidden = client.get(f"/api/v1/revisions/{sibling_revision_id}", headers=_headers("bob"))
+    hidden = client.get(f"/api/v1/revisions/{sibling_revision_id}", headers=dev_headers("bob"))
     assert hidden.status_code == 404
     assert hidden.json()["code"] == "NOT_FOUND"
 
-    unknown = client.get(f"/api/v1/revisions/{uuid4()}", headers=_headers("bob"))
+    unknown = client.get(f"/api/v1/revisions/{uuid4()}", headers=dev_headers("bob"))
     assert unknown.status_code == 404
 
 
@@ -281,7 +249,7 @@ def test_manifest_download_streams_the_stored_bytes_with_the_identity_as_etag(
     record = stores.hierarchy._revisions[UUID(revision_id)]
     stored = (Path(record.revision_path) / "manifest.json").read_bytes()
 
-    response = client.get(f"/api/v1/revisions/{revision_id}/manifest", headers=_headers("bob"))
+    response = client.get(f"/api/v1/revisions/{revision_id}/manifest", headers=dev_headers("bob"))
 
     assert response.status_code == 200, response.text
     assert response.content == stored
@@ -403,37 +371,37 @@ def test_download_authorization_requires_data_read_on_raw_and_hides_invisible_da
     account = client.post(
         f"/api/v1/organizations/{ingest.organization_id}/service-accounts",
         json={"name": "canonicalizer"},
-        headers=_headers(_ADMIN),
+        headers=dev_headers(_ADMIN),
     ).json()
     key = client.post(
         f"/api/v1/organizations/{ingest.organization_id}/service-accounts/"
         f"{account['principal_id']}/api-keys",
         json={"name": "ci"},
-        headers=_headers(_ADMIN),
+        headers=dev_headers(_ADMIN),
     ).json()
     sa_headers = {"Authorization": f"Bearer {key['secret']}"}
 
-    reader_view = client.get(f"/api/v1/revisions/{revision_id}", headers=_headers("carol"))
+    reader_view = client.get(f"/api/v1/revisions/{revision_id}", headers=dev_headers("carol"))
     assert reader_view.status_code == 200
     for suffix in ("manifest", "files/payload/a.bin"):
         url = f"/api/v1/revisions/{revision_id}/{suffix}"
-        allowed = client.get(url, headers=_headers("carol"))
+        allowed = client.get(url, headers=dev_headers("carol"))
         assert allowed.status_code == 200, allowed.text
         refused = client.get(url, headers=sa_headers)
         assert refused.status_code == 403
         assert refused.json()["code"] == "FORBIDDEN"
-        unbound = client.get(url, headers=_headers("erin"))
+        unbound = client.get(url, headers=dev_headers("erin"))
         assert unbound.status_code == 404
 
     owner = IngestClient(client, subject="alice")
     _, sibling_revision_id = owner.committed(
         [("payload/a.bin", b"secret")], organization_slug="vault", project_slug="sealed"
     )
-    invisible = client.get(f"/api/v1/revisions/{sibling_revision_id}", headers=_headers("bob"))
+    invisible = client.get(f"/api/v1/revisions/{sibling_revision_id}", headers=dev_headers("bob"))
     assert invisible.status_code == 404
     for suffix in ("manifest", "files/payload/a.bin"):
         outsider = client.get(
-            f"/api/v1/revisions/{sibling_revision_id}/{suffix}", headers=_headers("bob")
+            f"/api/v1/revisions/{sibling_revision_id}/{suffix}", headers=dev_headers("bob")
         )
         assert outsider.status_code == 404
 
@@ -457,11 +425,11 @@ def test_download_is_re_authorized_on_every_request(client: TestClient) -> None:
     assert first.status_code == 200, first.text
 
     bindings = client.get(
-        f"/api/v1/projects/{ingest.project_id}/bindings", headers=_headers(_ADMIN)
+        f"/api/v1/projects/{ingest.project_id}/bindings", headers=dev_headers(_ADMIN)
     ).json()
     binding_id = next(item["id"] for item in bindings["items"] if item["principal"] == "user:carol")
     revoked = client.delete(
-        f"/api/v1/projects/{ingest.project_id}/bindings/{binding_id}", headers=_headers(_ADMIN)
+        f"/api/v1/projects/{ingest.project_id}/bindings/{binding_id}", headers=dev_headers(_ADMIN)
     )
     assert revoked.status_code == 204
 

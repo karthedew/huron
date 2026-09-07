@@ -400,7 +400,7 @@ class IngestService:
             )
             opened = session.open(now=self._clock.now())
             async with self._hierarchy.transaction() as writer:
-                await writer.update_ingest_session(opened, expected_etag=1)
+                await writer.update_ingest_session(opened, expected_etag=session.etag)
         except Exception:
             await self._fail(session, actor=session.created_by)
             raise

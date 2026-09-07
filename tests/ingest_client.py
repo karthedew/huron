@@ -5,7 +5,9 @@ mechanics of opening, reading and giving up a session are written once. Any
 ``httpx.Client``-compatible object works, including ``TestClient`` (itself
 an ``httpx.Client`` subclass) and a plain ``httpx.Client`` bound to a real
 socket. The client assumes ``root`` is bootstrapped as platform owner on the
-client it wraps, the way every ingest test's fixture wires it.
+client it wraps, the way every ingest test's fixture wires it. ``dev_headers``
+is exported alongside the client for tests that issue a request the client
+has no method for.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ _ZERO_CHUNK_BYTES = 64 * 1024**2
 _UPLOAD_CHUNK_BYTES = 8 * 1024**2
 
 
-def _headers(subject: str, *, key: str | None = None) -> dict[str, str]:
+def dev_headers(subject: str, *, key: str | None = None) -> dict[str, str]:
     """Dev-header credentials for ``subject``, paired with an idempotency key.
 
     Args:
@@ -154,7 +156,7 @@ class IngestClient:
         organization = self._client.post(
             "/api/v1/organizations",
             json={"slug": organization_slug, "title": organization_slug.title()},
-            headers=_headers(_ADMIN),
+            headers=dev_headers(_ADMIN),
         )
         assert organization.status_code == 201, organization.text
         self.organization_id = organization.json()["id"]
@@ -165,14 +167,14 @@ class IngestClient:
                 "title": project_slug.title(),
                 "data_classification": classification,
             },
-            headers=_headers(_ADMIN),
+            headers=dev_headers(_ADMIN),
         )
         assert project.status_code == 201, project.text
         self.project_id = project.json()["id"]
         binding = self._client.post(
             f"/api/v1/projects/{self.project_id}/bindings",
             json={"principal": f"user:{self.subject}", "role": "developer"},
-            headers=_headers(_ADMIN),
+            headers=dev_headers(_ADMIN),
         )
         assert binding.status_code == 201, binding.text
         dataset = self._client.post(
@@ -183,7 +185,7 @@ class IngestClient:
                 "profile_name": "mcnp-run",
                 "profile_version": "1.0",
             },
-            headers=_headers(self.subject),
+            headers=dev_headers(self.subject),
         )
         assert dataset.status_code == 201, dataset.text
         return self.project_id, dataset.json()["id"]
@@ -201,7 +203,7 @@ class IngestClient:
         response = self._client.post(
             f"/api/v1/projects/{self.project_id}/bindings",
             json={"principal": f"user:{subject}", "role": "reader"},
-            headers=_headers(_ADMIN),
+            headers=dev_headers(_ADMIN),
         )
         assert response.status_code == 201, response.text
 
@@ -221,7 +223,7 @@ class IngestClient:
         return self._client.post(
             f"/api/v1/datasets/{dataset_id}/ingest-sessions",
             json={"files": [file.model_dump() for file in files]},
-            headers=_headers(self.subject, key=key),
+            headers=dev_headers(self.subject, key=key),
         )
 
     def get(self, session_id: str) -> Response:
@@ -234,7 +236,7 @@ class IngestClient:
             The raw HTTP response.
         """
         return self._client.get(
-            f"/api/v1/ingest-sessions/{session_id}", headers=_headers(self.subject)
+            f"/api/v1/ingest-sessions/{session_id}", headers=dev_headers(self.subject)
         )
 
     def heartbeat(self, session_id: str) -> Response:
@@ -247,7 +249,7 @@ class IngestClient:
             The raw HTTP response.
         """
         return self._client.post(
-            f"/api/v1/ingest-sessions/{session_id}/heartbeat", headers=_headers(self.subject)
+            f"/api/v1/ingest-sessions/{session_id}/heartbeat", headers=dev_headers(self.subject)
         )
 
     def abort(self, session_id: str) -> Response:
@@ -260,7 +262,7 @@ class IngestClient:
             The raw HTTP response.
         """
         return self._client.post(
-            f"/api/v1/ingest-sessions/{session_id}/abort", headers=_headers(self.subject)
+            f"/api/v1/ingest-sessions/{session_id}/abort", headers=dev_headers(self.subject)
         )
 
     def put_part(
@@ -286,7 +288,7 @@ class IngestClient:
         Returns:
             The raw HTTP response.
         """
-        headers = _headers(self.subject)
+        headers = dev_headers(self.subject)
         length = content_length if content_length is not None else _byte_length(body)
         if length is not None:
             headers["Content-Length"] = str(length)
@@ -305,7 +307,7 @@ class IngestClient:
             The raw HTTP response.
         """
         return self._client.post(
-            f"/api/v1/transfer/uploads/{file_id}/complete", headers=_headers(self.subject)
+            f"/api/v1/transfer/uploads/{file_id}/complete", headers=dev_headers(self.subject)
         )
 
     def upload(
@@ -369,7 +371,7 @@ class IngestClient:
             The raw HTTP response.
         """
         return self._client.post(
-            f"/api/v1/ingest-sessions/{session_id}/verify", headers=_headers(self.subject)
+            f"/api/v1/ingest-sessions/{session_id}/verify", headers=dev_headers(self.subject)
         )
 
     def commit(
@@ -399,7 +401,7 @@ class IngestClient:
         return self._client.post(
             f"/api/v1/ingest-sessions/{session_id}/commit",
             json={"manifest_sha256": manifest_sha256, "metadata": metadata},
-            headers={**_headers(self.subject, key=key), "If-Match": f'"{etag}"'},
+            headers={**dev_headers(self.subject, key=key), "If-Match": f'"{etag}"'},
         )
 
     def upload_revision(
@@ -485,7 +487,7 @@ class IngestClient:
         Returns:
             The raw HTTP response, its body already read.
         """
-        request_headers = {**_headers(self.subject), **(headers or {})}
+        request_headers = {**dev_headers(self.subject), **(headers or {})}
         with self._client.stream(
             "GET", f"/api/v1/revisions/{revision_id}/files/{path}", headers=request_headers
         ) as response:
@@ -511,7 +513,9 @@ class IngestClient:
         digest = hashlib.sha256()
         total = 0
         with self._client.stream(
-            "GET", f"/api/v1/revisions/{revision_id}/files/{path}", headers=_headers(self.subject)
+            "GET",
+            f"/api/v1/revisions/{revision_id}/files/{path}",
+            headers=dev_headers(self.subject),
         ) as response:
             if response.status_code != 200:
                 response.read()

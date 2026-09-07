@@ -8,9 +8,10 @@ is, and never a third thing. ``ingest_files_state_vocabulary`` closes it. Alongs
 ``part_count`` records what the upload plan already decided about a file when the session opened -
 zero for a hardlink, at least one for an upload - and ``ingest_files_part_count_matches_action``
 ties the two columns together so a row cannot claim a part count its own action rules out.
-``part_count`` lands ``NOT NULL`` without a default: the table has no writer anywhere under
-``src/`` yet, so it is empty in every real deployment, and the one row-inserting caller left is a
-raw-SQL test fixture, updated in the same change to supply ``part_count``.
+``part_count`` lands ``NOT NULL`` without a default: the table had no writer anywhere under
+``src/`` when this migration was written, so it was empty in every deployment it ran against, and
+the one row-inserting caller left is a raw-SQL test fixture, updated in the same change to supply
+``part_count``.
 
 ``ingest_sessions`` gains the third piece of what an upload plan needs recorded: the revision its
 dedup plan was computed against, the dataset's highest committed revision at the moment the session

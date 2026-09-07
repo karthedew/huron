@@ -1891,3 +1891,16 @@ than on the design's literal text.
   milestone 12 says `GET /bindings` and `GET /datasets/{id}/bindings` "answer 405 today"; both
   operations are in the route dump and both predate this branch on `main`. Not a P2 row, so M10.1
   leaves it; a later write-back should correct it.
+- **Whole-plan verification (Fable 5.1, 2026-09-07) — follow-ups for P3, not defects in P2.**
+  (1) The in-memory adapter's `update_ingest_session`, `renew_ingest_session`,
+  `expire_ingest_session` and `update_ingest_file` fence against the store, never the
+  transaction buffer, while PostgreSQL sees its own writes inside a transaction; no shipped
+  caller writes one row twice in a transaction, so no scenario exposes it. (2) In-memory
+  `latest_revision` ignores `dataset_revisions.state`; the PostgreSQL twin filters
+  `state = 'COMMITTED'` — harmless while ingest is the only writer, divergent once P3 writes
+  `PURGED`/`EXPIRED`. Both want a scenario on each backend. (3) Untested claims: the HTTP-level
+  two-chunk memory bound (a design-time measurement; only the store's one-chunk pull is pinned);
+  the sweep being cancelled before `pool.close()` (in-memory stores have no pool); a part recorded
+  on a session aborted between the guard's read and `update_ingest_file` (the file fence checks
+  only PENDING and parts). (4) The M5.3 retry correction (read `final/manifest.json`, reseal)
+  lives in `design/layer-raw.html` §5; `P2_DESIGN.md` is the planning record and was not edited.

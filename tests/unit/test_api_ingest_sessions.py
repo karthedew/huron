@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 
 import huron.pkg.catalog.ingest as ingest_module
 from huron.pkg.catalog import (
@@ -40,16 +39,16 @@ from huron.pkg.catalog.errors import IllegalIngestTransition
 from huron.pkg.catalog.manifest import DEFAULT_MAX_FILE_BYTES
 from huron.pkg.catalog.paths import revision_dir, staging_dir
 from huron.pkg.rawstore import PosixRawStore
-from huron.service.api.app import create_app
 from huron.service.api.ingest import IngestService
-from huron.service.api.settings import ApiSettings, ClassificationValue
 from huron.service.api.stores import IdempotencyClaim, Replay, SystemClock
-from tests.ingest_client import IngestClient, declared_file, manifest_file
-from tests.unit.support import crash_on, memory_stores
+from tests.ingest_client import IngestClient, declared_file, dev_headers, manifest_file
+from tests.unit.support import crash_on
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
     from typing import BinaryIO
+
+    from fastapi.testclient import TestClient
 
     from huron.service.api.routes.v1.schema.ingest_sessions import ManifestFile
     from huron.service.api.runtime import ApiStores
@@ -57,34 +56,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 _ZERO_SHA = "a" * 64
-
-
-def _headers(subject: str, *, key: str | None = None) -> dict[str, str]:
-    """Dev-header credentials for ``subject``, paired with an idempotency key."""
-    return {"X-Huron-Subject": subject, "Idempotency-Key": key if key is not None else str(uuid4())}
-
-
-@pytest.fixture
-def stores() -> ApiStores:
-    """A fresh in-memory store bundle, held so a test can seed its hierarchy store directly."""
-    return memory_stores()
-
-
-@pytest.fixture
-def client(tmp_path: Path, stores: ApiStores) -> Iterator[TestClient]:
-    """A dev-header TestClient over a freshly wired in-memory repository, ``root`` bootstrapped."""
-    settings = ApiSettings(
-        env="development",
-        auth_mode="dev-headers",
-        data_root=str(tmp_path / "data"),
-        database_url="postgresql://unused",
-        classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
-        bootstrap_platform_owner="root",
-    )
-    with TestClient(
-        create_app(settings=settings, stores=stores), raise_server_exceptions=False
-    ) as client:
-        yield client
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,7 +169,7 @@ def test_create_refuses_every_manifest_rule_with_its_documented_code(
     response = client.post(
         f"/api/v1/datasets/{dataset_id}/ingest-sessions",
         json={"files": files},
-        headers=_headers("bob"),
+        headers=dev_headers("bob"),
     )
 
     assert response.status_code == status, response.text
@@ -208,18 +179,20 @@ def test_create_refuses_every_manifest_rule_with_its_documented_code(
 def test_create_refuses_a_dataset_whose_entry_layer_is_not_raw(client: TestClient) -> None:
     """A dataset that declares a bronze or silver entry layer refuses a raw ingest session."""
     organization = client.post(
-        "/api/v1/organizations", json={"slug": "astro", "title": "Astro"}, headers=_headers("root")
+        "/api/v1/organizations",
+        json={"slug": "astro", "title": "Astro"},
+        headers=dev_headers("root"),
     ).json()
     project = client.post(
         f"/api/v1/organizations/{organization['id']}/projects",
         json={"slug": "sims", "title": "Sims", "data_classification": "open"},
-        headers=_headers("root"),
+        headers=dev_headers("root"),
     ).json()
     assert (
         client.post(
             f"/api/v1/projects/{project['id']}/bindings",
             json={"principal": "user:bob", "role": "developer"},
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 201
     )
@@ -232,13 +205,13 @@ def test_create_refuses_a_dataset_whose_entry_layer_is_not_raw(client: TestClien
             "profile_version": "1.0",
             "entry_layer": "bronze",
         },
-        headers=_headers("bob"),
+        headers=dev_headers("bob"),
     ).json()
 
     response = client.post(
         f"/api/v1/datasets/{dataset['id']}/ingest-sessions",
         json={"files": [{"path": "payload/a.bin", "size": 1, "sha256": _ZERO_SHA}]},
-        headers=_headers("bob"),
+        headers=dev_headers("bob"),
     )
 
     assert response.status_code == 409
@@ -251,18 +224,20 @@ def test_create_refuses_a_dataset_whose_entry_layer_is_not_raw(client: TestClien
 def test_create_in_project_mints_the_dataset_then_opens_the_session(client: TestClient) -> None:
     """Minting a dataset at intake opens raw, and one key covers both idempotent writes."""
     organization = client.post(
-        "/api/v1/organizations", json={"slug": "astro", "title": "Astro"}, headers=_headers("root")
+        "/api/v1/organizations",
+        json={"slug": "astro", "title": "Astro"},
+        headers=dev_headers("root"),
     ).json()
     project = client.post(
         f"/api/v1/organizations/{organization['id']}/projects",
         json={"slug": "sims", "title": "Sims", "data_classification": "open"},
-        headers=_headers("root"),
+        headers=dev_headers("root"),
     ).json()
     assert (
         client.post(
             f"/api/v1/projects/{project['id']}/bindings",
             json={"principal": "user:bob", "role": "developer"},
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 201
     )
@@ -280,11 +255,11 @@ def test_create_in_project_mints_the_dataset_then_opens_the_session(client: Test
     first = client.post(
         f"/api/v1/projects/{project['id']}/ingest-sessions",
         json=body,
-        headers=_headers("bob", key=key),
+        headers=dev_headers("bob", key=key),
     )
     assert first.status_code == 201, first.text
     dataset = client.get(
-        f"/api/v1/datasets/{first.json()['dataset_id']}", headers=_headers("bob")
+        f"/api/v1/datasets/{first.json()['dataset_id']}", headers=dev_headers("bob")
     ).json()
     assert dataset["entry_layer"] == "raw"
     assert dataset["slug"] == "feed-01"
@@ -292,7 +267,7 @@ def test_create_in_project_mints_the_dataset_then_opens_the_session(client: Test
     replay = client.post(
         f"/api/v1/projects/{project['id']}/ingest-sessions",
         json=body,
-        headers=_headers("bob", key=key),
+        headers=dev_headers("bob", key=key),
     )
     assert replay.status_code == 201
     assert replay.json()["id"] == first.json()["id"]
@@ -301,30 +276,32 @@ def test_create_in_project_mints_the_dataset_then_opens_the_session(client: Test
     reused = client.post(
         f"/api/v1/projects/{project['id']}/ingest-sessions",
         json=changed,
-        headers=_headers("bob", key=key),
+        headers=dev_headers("bob", key=key),
     )
     assert reused.status_code == 409
     assert reused.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
-    datasets = client.get(f"/api/v1/projects/{project['id']}/datasets", headers=_headers("bob"))
+    datasets = client.get(f"/api/v1/projects/{project['id']}/datasets", headers=dev_headers("bob"))
     assert len(datasets.json()["items"]) == 1
 
 
 def test_intake_authorization_matrix(client: TestClient) -> None:
     """A developer opens sessions on both routes; a project admin and a service account cannot."""
     organization = client.post(
-        "/api/v1/organizations", json={"slug": "astro", "title": "Astro"}, headers=_headers("root")
+        "/api/v1/organizations",
+        json={"slug": "astro", "title": "Astro"},
+        headers=dev_headers("root"),
     ).json()
     project = client.post(
         f"/api/v1/organizations/{organization['id']}/projects",
         json={"slug": "sims", "title": "Sims", "data_classification": "open"},
-        headers=_headers("root"),
+        headers=dev_headers("root"),
     ).json()
     for subject, role in (("bob", "developer"), ("alice", "project_admin")):
         assert (
             client.post(
                 f"/api/v1/projects/{project['id']}/bindings",
                 json={"principal": f"user:{subject}", "role": role},
-                headers=_headers("root"),
+                headers=dev_headers("root"),
             ).status_code
             == 201
         )
@@ -336,18 +313,18 @@ def test_intake_authorization_matrix(client: TestClient) -> None:
             "profile_name": "mcnp-run",
             "profile_version": "1.0",
         },
-        headers=_headers("bob"),
+        headers=dev_headers("bob"),
     ).json()
     account = client.post(
         f"/api/v1/organizations/{organization['id']}/service-accounts",
         json={"name": "canonicalizer"},
-        headers=_headers("root"),
+        headers=dev_headers("root"),
     ).json()
     key = client.post(
         f"/api/v1/organizations/{organization['id']}/service-accounts/"
         f"{account['principal_id']}/api-keys",
         json={"name": "ci"},
-        headers=_headers("root"),
+        headers=dev_headers("root"),
     ).json()
     sa_headers = {"Authorization": f"Bearer {key['secret']}", "Idempotency-Key": str(uuid4())}
     files = [{"path": "payload/a.bin", "size": 1, "sha256": _ZERO_SHA}]
@@ -355,14 +332,14 @@ def test_intake_authorization_matrix(client: TestClient) -> None:
     dev_route1 = client.post(
         f"/api/v1/datasets/{dataset['id']}/ingest-sessions",
         json={"files": files},
-        headers=_headers("bob"),
+        headers=dev_headers("bob"),
     )
     assert dev_route1.status_code == 201, dev_route1.text
 
     pa_route1 = client.post(
         f"/api/v1/datasets/{dataset['id']}/ingest-sessions",
         json={"files": files},
-        headers=_headers("alice"),
+        headers=dev_headers("alice"),
     )
     assert pa_route1.status_code == 403
     assert pa_route1.json()["code"] == "FORBIDDEN"
@@ -379,7 +356,7 @@ def test_intake_authorization_matrix(client: TestClient) -> None:
         client.post(
             f"/api/v1/datasets/{uuid4()}/ingest-sessions",
             json={"files": files},
-            headers=_headers("bob"),
+            headers=dev_headers("bob"),
         ).status_code
         == 404
     )
@@ -395,7 +372,7 @@ def test_intake_authorization_matrix(client: TestClient) -> None:
     }
 
     pa_route2 = client.post(
-        f"/api/v1/projects/{project['id']}/ingest-sessions", json=body, headers=_headers("alice")
+        f"/api/v1/projects/{project['id']}/ingest-sessions", json=body, headers=dev_headers("alice")
     )
     assert pa_route2.status_code == 403
     assert pa_route2.json()["code"] == "FORBIDDEN"
@@ -407,13 +384,13 @@ def test_intake_authorization_matrix(client: TestClient) -> None:
     assert sa_route2.json()["code"] == "LAYER_WRITE_FORBIDDEN"
 
     dev_route2 = client.post(
-        f"/api/v1/projects/{project['id']}/ingest-sessions", json=body, headers=_headers("bob")
+        f"/api/v1/projects/{project['id']}/ingest-sessions", json=body, headers=dev_headers("bob")
     )
     assert dev_route2.status_code == 201, dev_route2.text
 
     assert (
         client.post(
-            f"/api/v1/projects/{uuid4()}/ingest-sessions", json=body, headers=_headers("bob")
+            f"/api/v1/projects/{uuid4()}/ingest-sessions", json=body, headers=dev_headers("bob")
         ).status_code
         == 404
     )
@@ -438,25 +415,25 @@ def test_get_shows_progress_and_the_etag(client: TestClient) -> None:
         client.post(
             f"/api/v1/projects/{project_id}/bindings",
             json={"principal": "user:eve", "role": "reader"},
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 201
     )
-    outsider = client.get(f"/api/v1/ingest-sessions/{session_id}", headers=_headers("eve"))
+    outsider = client.get(f"/api/v1/ingest-sessions/{session_id}", headers=dev_headers("eve"))
     assert outsider.status_code == 403
 
     assert (
         client.post(
             f"/api/v1/projects/{project_id}/bindings",
             json={"principal": "user:alice", "role": "project_admin"},
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 201
     )
-    as_admin = client.get(f"/api/v1/ingest-sessions/{session_id}", headers=_headers("alice"))
+    as_admin = client.get(f"/api/v1/ingest-sessions/{session_id}", headers=dev_headers("alice"))
     assert as_admin.status_code == 200
 
-    unknown = client.get(f"/api/v1/ingest-sessions/{uuid4()}", headers=_headers("bob"))
+    unknown = client.get(f"/api/v1/ingest-sessions/{uuid4()}", headers=dev_headers("bob"))
     assert unknown.status_code == 404
 
 
@@ -503,12 +480,12 @@ def test_heartbeat_is_forbidden_once_the_owners_raw_write_binding_is_revoked(
         client.post(
             f"/api/v1/projects/{project_id}/bindings",
             json={"principal": "user:bob", "role": "reader"},
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 201
     )
     bindings = client.get(
-        f"/api/v1/projects/{project_id}/bindings", headers=_headers("root")
+        f"/api/v1/projects/{project_id}/bindings", headers=dev_headers("root")
     ).json()
     developer_binding_id = next(
         item["id"]
@@ -518,7 +495,7 @@ def test_heartbeat_is_forbidden_once_the_owners_raw_write_binding_is_revoked(
     assert (
         client.delete(
             f"/api/v1/projects/{project_id}/bindings/{developer_binding_id}",
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 204
     )
@@ -552,12 +529,12 @@ def test_abort_releases_the_lock_for_the_owner_and_a_project_admin(
         client.post(
             f"/api/v1/projects/{project_id}/bindings",
             json={"principal": "user:alice", "role": "project_admin"},
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 201
     )
     forced = client.post(
-        f"/api/v1/ingest-sessions/{second.json()['id']}/abort", headers=_headers("alice")
+        f"/api/v1/ingest-sessions/{second.json()['id']}/abort", headers=dev_headers("alice")
     )
     assert forced.status_code == 200
     assert forced.json()["state"] == "ABORTED"
@@ -567,13 +544,13 @@ def test_abort_releases_the_lock_for_the_owner_and_a_project_admin(
         client.post(
             f"/api/v1/projects/{project_id}/bindings",
             json={"principal": "user:carl", "role": "developer"},
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 201
     )
     third = ingest.create(dataset_id, [manifest_file("payload/a.bin", b"hello")]).json()
     not_owner = client.post(
-        f"/api/v1/ingest-sessions/{third['id']}/abort", headers=_headers("carl")
+        f"/api/v1/ingest-sessions/{third['id']}/abort", headers=dev_headers("carl")
     )
     assert not_owner.status_code == 403
 
@@ -608,7 +585,7 @@ def test_every_session_route_hides_an_invisible_dataset(client: TestClient) -> N
     session_id = created["id"]
     file_id = created["files"][0]["file_id"]
 
-    outsider = _headers("eve")
+    outsider = dev_headers("eve")
     get_response = client.get(f"/api/v1/ingest-sessions/{session_id}", headers=outsider)
     assert get_response.status_code == 404
     heartbeat_response = client.post(
@@ -650,12 +627,12 @@ def test_create_plans_hardlinks_against_the_latest_committed_revision(
     ingest = IngestClient(client)
     _, dataset_id = ingest.developer_dataset()
 
-    dataset_view = client.get(f"/api/v1/datasets/{dataset_id}", headers=_headers("bob")).json()
+    dataset_view = client.get(f"/api/v1/datasets/{dataset_id}", headers=dev_headers("bob")).json()
     project_view = client.get(
-        f"/api/v1/projects/{dataset_view['project_id']}", headers=_headers("bob")
+        f"/api/v1/projects/{dataset_view['project_id']}", headers=dev_headers("bob")
     ).json()
     organization = client.get(
-        f"/api/v1/organizations/{project_view['organization_id']}", headers=_headers("bob")
+        f"/api/v1/organizations/{project_view['organization_id']}", headers=dev_headers("bob")
     ).json()
 
     unchanged = manifest_file("payload/a.bin", b"hello")
@@ -763,12 +740,12 @@ def _seed_committed_revision(
     Returns:
         The seeded revision's identifier.
     """
-    dataset_view = client.get(f"/api/v1/datasets/{dataset_id}", headers=_headers("bob")).json()
+    dataset_view = client.get(f"/api/v1/datasets/{dataset_id}", headers=dev_headers("bob")).json()
     project_view = client.get(
-        f"/api/v1/projects/{dataset_view['project_id']}", headers=_headers("bob")
+        f"/api/v1/projects/{dataset_view['project_id']}", headers=dev_headers("bob")
     ).json()
     organization = client.get(
-        f"/api/v1/organizations/{project_view['organization_id']}", headers=_headers("bob")
+        f"/api/v1/organizations/{project_view['organization_id']}", headers=dev_headers("bob")
     ).json()
     manifest = validate_manifest(
         [ManifestEntry(path=item.path, size=item.size, sha256=item.sha256) for item in files]
@@ -1128,7 +1105,7 @@ def test_upload_refusals_happen_before_the_body_is_read(
         client.post(
             f"/api/v1/projects/{project_id}/bindings",
             json={"principal": "user:carl", "role": "developer"},
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 201
     )
@@ -1149,12 +1126,12 @@ def test_upload_refusals_happen_before_the_body_is_read(
         client.post(
             f"/api/v1/projects/{project_id}/bindings",
             json={"principal": "user:bob", "role": "reader"},
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 201
     )
     bindings = client.get(
-        f"/api/v1/projects/{project_id}/bindings", headers=_headers("root")
+        f"/api/v1/projects/{project_id}/bindings", headers=dev_headers("root")
     ).json()
     developer_binding_id = next(
         item["id"]
@@ -1164,7 +1141,7 @@ def test_upload_refusals_happen_before_the_body_is_read(
     assert (
         client.delete(
             f"/api/v1/projects/{project_id}/bindings/{developer_binding_id}",
-            headers=_headers("root"),
+            headers=dev_headers("root"),
         ).status_code
         == 204
     )
@@ -1456,7 +1433,7 @@ def test_commit_publishes_the_revision_and_its_events(
     release = client.post(
         f"/api/v1/datasets/{dataset_id}/releases",
         json={"tag": "v1", "revision_number": 1},
-        headers=_headers("bob"),
+        headers=dev_headers("bob"),
     )
     assert release.status_code == 201, release.text
 
@@ -1486,7 +1463,7 @@ def test_commit_requires_the_current_etag_and_the_declared_digest(
     malformed = client.post(
         f"/api/v1/ingest-sessions/{session['id']}/commit",
         json={"manifest_sha256": session["manifest_sha256"], "metadata": metadata},
-        headers={**_headers("bob"), "If-Match": "not-an-integer"},
+        headers={**dev_headers("bob"), "If-Match": "not-an-integer"},
     )
     assert malformed.status_code == 422
     assert malformed.json()["code"] == "REQUEST_INVALID"
@@ -1494,7 +1471,7 @@ def test_commit_requires_the_current_etag_and_the_declared_digest(
     wrong_digest = client.post(
         f"/api/v1/ingest-sessions/{session['id']}/commit",
         json={"manifest_sha256": "a" * 64, "metadata": metadata},
-        headers={**_headers("bob"), "If-Match": f'"{verified["etag"]}"'},
+        headers={**dev_headers("bob"), "If-Match": f'"{verified["etag"]}"'},
     )
     assert wrong_digest.status_code == 400
     assert wrong_digest.json()["code"] == "MANIFEST_MISMATCH"

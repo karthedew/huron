@@ -285,8 +285,9 @@ async def get_ingest_session(
 ) -> IngestSessionView:
     """Fetch one ingest session and its ledger.
 
-    The owner, or a project admin, may read a session; anyone else, and
-    an id that is absent or whose dataset is not discoverable, is 404.
+    The owner, or a project admin, may read a session. An id that is
+    absent, or whose dataset is not discoverable, is 404; a visible
+    caller who is neither the owner nor a project admin is 403.
     \f
     Args:
         drive: The caller's resolved standing on the session.

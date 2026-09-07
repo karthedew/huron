@@ -84,7 +84,7 @@ CREATE TABLE datasets (
 );
 
 CREATE TABLE dataset_revisions (
-    -- [app] service.api.stores.hierarchy begin_ingest: linear and gap-free -
+    -- [app] service.api.stores.ingest begin_ingest: linear and gap-free -
     -- max(revision_number) + 1 over every row, taken under
     -- SELECT ... FOR UPDATE on the datasets row; immutable (invariant E) -
     -- no constraint or trigger holds that; contrast releases_immutable below.
