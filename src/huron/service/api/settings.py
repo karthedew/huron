@@ -85,6 +85,12 @@ class ApiSettings(BaseSettings):
     session_cookie_name: str = "huron_session"
     #: Where /auth/oidc/callback lands the browser after login.
     web_app_url: str = "http://localhost:5173"
+    #: Seconds between two passes of this replica's ingest expiry sweep. A
+    #: lapsed session holds its dataset lock for at most the lease TTL
+    #: plus this.
+    ingest_sweep_interval_seconds: float = Field(default=60.0, gt=0)
+    #: Lapsed sessions one pass flips at most; a backlog drains oldest first.
+    ingest_sweep_limit: int = Field(default=100, ge=1)
 
     @field_validator("classification_vocabulary")
     @classmethod

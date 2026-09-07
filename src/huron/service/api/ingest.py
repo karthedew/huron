@@ -55,7 +55,7 @@ from huron.pkg.catalog.paths import revision_dir, staging_dir
 from huron.pkg.rawstore import PartLengthMismatchError
 from huron.pkg.rbac import Visibility
 
-from .records import AuditEvent, jsonable
+from .records import AuditEvent, jsonable, jsonable_value
 from .stores import Replay
 
 if TYPE_CHECKING:
@@ -67,9 +67,29 @@ if TYPE_CHECKING:
     from .records import Dataset
     from .stores import HierarchyStore, IdempotencyClaim, LedgerEntry
 
-__all__ = ["IngestService", "SessionLedger"]
+__all__ = ["SWEEP_ACTOR", "ExpiryReport", "IngestService", "SessionLedger"]
 
 logger = logging.getLogger(__name__)
+
+#: The actor recorded on every ``ingest.expired`` audit row; no ingest
+#: session is ever opened, driven or aborted by a human under this name.
+SWEEP_ACTOR = "system:sweep"
+
+
+@dataclass(frozen=True, slots=True)
+class ExpiryReport:
+    """What one expiry sweep pass did.
+
+    Attributes:
+        listed: How many lapsed sessions the pass read.
+        expired: How many of those were flipped to ABORTED.
+        skipped: How many lost the race to a renewal or another writer,
+            leaving ``listed == expired + skipped`` always true.
+    """
+
+    listed: int
+    expired: int
+    skipped: int
 
 
 class _MeasuredChunks:
@@ -479,6 +499,52 @@ class IngestService:
                 )
             )
         return await self.ledger(ledger.session.lease.ingest_id)
+
+    async def expire_lapsed(self, *, limit: int) -> ExpiryReport:
+        """Flip up to ``limit`` lapsed sessions to ABORTED, oldest lease first.
+
+        The current instant is read once for the whole pass, so the
+        listing, each flip's fence, ``session.expire``'s own guard and the
+        audit row's timestamp all judge the same moment. A session lapsed
+        at that instant but renewed, or flipped by another writer, before
+        its own transaction here lands is left exactly as the winner left
+        it: its transaction's fence refuses the write, and the row is
+        counted as skipped rather than expired.
+
+        Args:
+            limit: The maximum number of sessions to flip in this pass.
+
+        Returns:
+            How many sessions were read, how many were flipped, and how
+            many lost their race to another writer.
+        """
+        now = self._clock.now()
+        lapsed = await self._hierarchy.lapsed_ingest_sessions(now, limit=limit)
+        expired = skipped = 0
+        for session in lapsed:
+            aborted = session.expire(now=now)
+            try:
+                async with self._hierarchy.transaction() as writer:
+                    await writer.expire_ingest_session(aborted, expected_etag=session.etag, now=now)
+                    await writer.insert_audit_event(
+                        self._audit(
+                            "ingest.expired",
+                            actor=SWEEP_ACTOR,
+                            subject_kind="ingest_session",
+                            subject_id=session.lease.ingest_id,
+                            payload={
+                                "state": session.state.value,
+                                "expires_at": jsonable_value(session.lease.expires_at),
+                                "dataset_id": jsonable_value(session.lease.dataset_id),
+                            },
+                            now=now,
+                        )
+                    )
+            except PreconditionFailed:
+                skipped += 1
+            else:
+                expired += 1
+        return ExpiryReport(listed=len(lapsed), expired=expired, skipped=skipped)
 
     async def receive_part(
         self,
@@ -1109,8 +1175,9 @@ class IngestService:
         subject_kind: str,
         subject_id: UUID,
         payload: Mapping[str, object],
+        now: datetime | None = None,
     ) -> AuditEvent:
-        """Build one audit row, stamped with this service's clock.
+        """Build one audit row, stamped with ``now`` or a fresh read of this service's clock.
 
         Args:
             kind: The audit kind, such as ``"ingest.started"``.
@@ -1120,6 +1187,10 @@ class IngestService:
                 ``"ingest_session"`` or ``"revision"``.
             subject_id: The session or revision the event is about.
             payload: The event's JSON-safe payload.
+            now: The instant to stamp the row with. Defaults to a fresh
+                clock read; the expiry sweep passes the instant its own
+                pass already read, so the row's timestamp matches the
+                fence it was written under exactly.
 
         Returns:
             The audit row, ready to insert inside the same transaction as
@@ -1132,7 +1203,7 @@ class IngestService:
             subject_kind=subject_kind,
             subject_id=subject_id,
             payload=dict(payload),
-            created_at=self._clock.now(),
+            created_at=now if now is not None else self._clock.now(),
         )
 
     async def _fail(self, session: IngestSession, *, actor: str) -> None:

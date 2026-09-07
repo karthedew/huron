@@ -213,6 +213,24 @@ class PolicyAttachment:
     attached_at: datetime
 
 
+def jsonable_value(value: object) -> object:
+    """Render one field's value in the same JSON-ready form ``jsonable`` gives it.
+
+    Args:
+        value: The value to render.
+
+    Returns:
+        The value's string form for a UUID, its ISO 8601 form with a
+        ``Z`` suffix in place of ``+00:00`` for a datetime, and the value
+        unchanged for anything else.
+    """
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    return value
+
+
 def jsonable(item: DataclassInstance) -> dict[str, object]:
     """Render one record as the JSON-ready mapping persisted to storage.
 
@@ -229,12 +247,4 @@ def jsonable(item: DataclassInstance) -> dict[str, object]:
         datetime values rendered as strings and every other value passed
         through unchanged.
     """
-    result: dict[str, object] = {}
-    for key, value in asdict(item).items():
-        if isinstance(value, UUID):
-            result[key] = str(value)
-        elif isinstance(value, datetime):
-            result[key] = value.isoformat().replace("+00:00", "Z")
-        else:
-            result[key] = value
-    return result
+    return {key: jsonable_value(value) for key, value in asdict(item).items()}

@@ -1180,7 +1180,7 @@ Under the non-default answers: D-16 changes the default literal and the defaults
 
 **Dependencies.** M5.3.
 
-**Status: pending**
+**Status: done**
 
 ### M8 — Gate suites
 
@@ -1853,3 +1853,9 @@ than on the design's literal text.
   on the next request, not 403; (3) role-compiled bindings never set `maximum_classification`, so a
   non-discoverable project is visible only to a SYSTEM-scope principal and nobody can commit into
   it — the "restricted project" rows use a sibling open project the outsider holds no binding on.
+- **M7.1 / `app.py` (note for M10.1).** The lifespan's runtime assembly moved into `_build_runtime`
+  to keep `create_app` under pyscn's function-length limit; as a consequence the raw store's
+  `initialize()` (the data-root skeleton, run by `HierarchyRepository.__init__`) now happens after
+  OIDC discovery rather than before it. Nothing pins the old order and startup's outcome is
+  identical; `docs/getting-started/local-development.md`'s startup description, if it orders
+  those steps, should follow the code.
