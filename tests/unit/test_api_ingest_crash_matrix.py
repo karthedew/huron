@@ -498,8 +498,14 @@ def _marker_present_no_rename(ctx: _CrashContext) -> None:
     assert not ctx.final.exists()
 
 
-def _nothing_beyond_the_shared_check(ctx: _CrashContext) -> None:
-    """The rename never starts; the shared staging/final check already proves this row."""
+def _sealed_and_marked_no_rename(ctx: _CrashContext) -> None:
+    """The envelope is complete and durable in staging; the rename itself never lands."""
+    assert (ctx.staging / "COMMITTED").is_file()
+    assert (ctx.staging / "manifest.json").is_file()
+    assert (ctx.staging / "metadata.json").is_file()
+    payload = ctx.staging / "payload" / "a.bin"
+    assert payload.stat().st_mode & 0o777 == 0o444
+    assert (ctx.staging / "payload").stat().st_mode & 0o777 == 0o555
 
 
 def _assert_publication_recovers_on_retry(ctx: _CrashContext) -> None:
@@ -598,9 +604,7 @@ _ROWS = (
     _CrashRow(
         "rename",
         _crash_on_rename,
-        partial(
-            _assert_fails_and_a_retry_retakes_the_number, disk=_nothing_beyond_the_shared_check
-        ),
+        partial(_assert_fails_and_a_retry_retakes_the_number, disk=_sealed_and_marked_no_rename),
     ),
     _CrashRow(
         "parent-fsync-after-rename", _crash_after_the_rename, _assert_publication_recovers_on_retry

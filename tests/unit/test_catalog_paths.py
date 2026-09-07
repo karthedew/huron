@@ -24,6 +24,7 @@ from huron.pkg.catalog.paths import (
     dataset_dir,
     dataset_layer_dir,
     generation_file,
+    organization_dir,
     parse_revision_dir,
     product_dir,
     project_dir,
@@ -67,6 +68,13 @@ def test_revision_dir_nests_raw_and_revision_under_the_dataset() -> None:
         / f"000042--{revision_id.hex}"
     )
     assert path == expected_tail
+
+
+def test_organization_dir_accepts_a_frozen_entity_ref() -> None:
+    """``organization_dir`` builds the slug--uuid directory from a frozen ``EntityRef``."""
+    organization = _entity("nuclear-engineering")
+    path = organization_dir(ROOT, organization)
+    assert path == ROOT / "organization" / f"{organization.slug}--{organization.id.hex}"
 
 
 def test_parse_revision_dir_round_trips_through_revision_dir() -> None:

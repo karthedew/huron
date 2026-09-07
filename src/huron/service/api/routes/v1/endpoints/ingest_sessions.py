@@ -518,6 +518,7 @@ async def verify_ingest_session(
         ),
         412: problem_response("the If-Match version disagrees with the session's current etag"),
         422: problem_response("the If-Match header is malformed"),
+        500: problem_response("storage and the catalog disagree about a committed revision"),
     },
 )
 async def commit_ingest_session(

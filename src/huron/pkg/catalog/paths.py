@@ -67,13 +67,23 @@ RESERVED_ROOT_SLUGS = frozenset(
 class Slugged(Protocol):
     """Anything with an id and a slug: all a path constructor needs to know about an entity.
 
-    Satisfied structurally by the catalog's ``EntityRef`` and by the API's
-    organization, project, dataset and product records alike, so a path can
-    be built from whichever the caller holds.
+    Satisfied structurally by the catalog's frozen ``EntityRef`` and by the
+    API's organization, project, dataset and product records alike, so a
+    path can be built from whichever the caller holds. Read-only
+    properties, not plain attributes: a path constructor only ever reads
+    ``id``/``slug``, and a settable-attribute protocol would refuse a
+    frozen dataclass, whose fields can never satisfy "settable".
     """
 
-    id: UUID
-    slug: str
+    @property
+    def id(self) -> UUID:
+        """The entity's identifier."""
+        ...
+
+    @property
+    def slug(self) -> str:
+        """The entity's URL- and path-safe name."""
+        ...
 
 
 class RevisionPath(NamedTuple):

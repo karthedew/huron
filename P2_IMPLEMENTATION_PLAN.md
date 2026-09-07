@@ -1368,7 +1368,7 @@ and moves the three revision routes out of milestone 8's "Adds".
 
 **Dependencies.** M9.2.
 
-**Status: pending**
+**Status: done**
 
 ---
 
@@ -1887,3 +1887,7 @@ than on the design's literal text.
   behind the unchanged port, not re-exported. After the split `hierarchy.py` reads A (25.94) and
   `ingest.py` A (44.47); M9.2 recorded the same readings and changed nothing. `fail_under` is 94
   after M9.1 (measured 94.49%, ≈ 24 statements of headroom).
+- **Out of scope, for the owner (found in M10.1 verification).** `design/roadmap.html`'s
+  milestone 12 says `GET /bindings` and `GET /datasets/{id}/bindings` "answer 405 today"; both
+  operations are in the route dump and both predate this branch on `main`. Not a P2 row, so M10.1
+  leaves it; a later write-back should correct it.

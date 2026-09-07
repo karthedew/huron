@@ -2,13 +2,17 @@
 
 ``design/api.html`` §7 and the exception classes the service can actually
 raise name the same codes; each documented status matches the class that
-answers with it; all seven error handlers answer in the same shape; and the
-base class enforcing all of this stays impossible to raise directly.
+answers with it; every documented disposition matches whether the tree
+actually raises the code anywhere; all seven error handlers answer in the
+same shape; and the base class enforcing all of this stays impossible to
+raise directly.
 """
 
 from __future__ import annotations
 
+import ast
 from html.parser import HTMLParser
+from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +25,7 @@ from huron.pkg.auth import AuthError
 from huron.pkg.catalog.errors import DomainError, ResourceNotFound
 from huron.pkg.rbac.roles import RoleError, UnknownRole
 from huron.service.api.problems import (
+    FRAMEWORK_STATUSES,
     PROBLEM_MEDIA_TYPE,
     install_error_handlers,
     wire_error_codes,
@@ -131,6 +136,86 @@ def test_domain_error_rows_document_their_class_status_code() -> None:
         if row.code in status_by_code and row.status != status_by_code[row.code]
     ]
     assert not mismatched, f"§7 status disagrees with the raising class: {mismatched}"
+
+
+def _class_name_by_code() -> dict[str, str]:
+    """Map every code a live ``DomainError``, ``AuthError`` or ``RoleError`` subclass declares.
+
+    Walks each hierarchy's live subclass tree the same way
+    ``wire_error_codes`` does, so a §7 row is matched to the class that
+    actually answers it - never by CamelCasing the code back into a class
+    name, which does not round-trip (``NOT_FOUND`` is ``ResourceNotFound``,
+    not ``NotFound``).
+
+    Returns:
+        The declared ``code`` string mapped to the name of the class that
+        declares it; a code no live class declares is absent.
+    """
+    mapping: dict[str, str] = {}
+    for base in (DomainError, AuthError, RoleError):
+        stack = [base]
+        while stack:
+            cls = stack.pop()
+            code = cls.__dict__.get("code")
+            if isinstance(code, str):
+                mapping[code] = cls.__name__
+            stack.extend(cls.__subclasses__())
+    return mapping
+
+
+def _raise_site_class_names() -> frozenset[str]:
+    """Collect the callee name of every ``raise <name>(...)`` statement under ``src/huron``.
+
+    An ``ast`` walk of the source tree rather than a runtime probe, so a
+    class with no raise site anywhere - reachable by this test run or not
+    - cannot hide behind a documented row: every module's source is read,
+    not only the ones this process happened to import.
+
+    Returns:
+        The set of names appearing as the callee of a ``raise name(...)``
+        or ``raise module.name(...)`` statement anywhere under
+        ``src/huron``.
+    """
+    root = Path(__file__).parents[2] / "src" / "huron"
+    names: set[str] = set()
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
+                continue
+            func = node.exc.func
+            if isinstance(func, ast.Name):
+                names.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                names.add(func.attr)
+    return frozenset(names)
+
+
+def test_live_rows_have_a_raise_site_and_reserved_rows_have_none() -> None:
+    """A §7 row's disposition matches whether its class is actually raised anywhere in the tree.
+
+    Framework-status rows (``FRAMEWORK_STATUSES``) are exempt: they answer
+    from the router or the body-reading machinery, never from a raised
+    class, so disposition has nothing to check them against.
+    """
+    class_by_code = _class_name_by_code()
+    raise_sites = _raise_site_class_names()
+    framework_codes = {HTTPStatus(status).name for status in FRAMEWORK_STATUSES}
+    live_without_site = []
+    reserved_with_site = []
+    for row in _documented_rows():
+        if row.code in framework_codes:
+            continue
+        class_name = class_by_code.get(row.code)
+        if class_name is None:
+            continue
+        has_site = class_name in raise_sites
+        if row.disposition == "live" and not has_site:
+            live_without_site.append(row.code)
+        elif row.disposition == "reserved" and has_site:
+            reserved_with_site.append(row.code)
+    assert not live_without_site, f"§7 live rows with no raise site: {live_without_site}"
+    assert not reserved_with_site, f"§7 reserved rows with a raise site: {reserved_with_site}"
 
 
 def test_every_auth_error_row_answers_401_and_every_role_error_row_answers_422() -> None:

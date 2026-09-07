@@ -23,7 +23,9 @@ class EntityRef:
 
     An id plus a slug is exactly what the path constructors in
     :mod:`huron.pkg.catalog.paths` take (they spell ``{slug}--{id}``), so
-    this value satisfies their ``Slugged`` protocol without the full record.
+    this frozen value satisfies their ``Slugged`` protocol - whose ``id``
+    and ``slug`` are read-only properties, not settable attributes -
+    without the full record.
 
     Attributes:
         id: The entity's identifier.
