@@ -1209,7 +1209,7 @@ one revision). P6's assertions (`final` absent, `GET /revisions/{id}` 404,
 
 **Dependencies.** M6.1 (row 9 and P6 use `GET /revisions/{id}`).
 
-**Status: pending**
+**Status: done**
 
 #### Task M8.2 — Dedup 1-of-500 and the independently complete revision
 
@@ -1859,3 +1859,7 @@ than on the design's literal text.
   OIDC discovery rather than before it. Nothing pins the old order and startup's outcome is
   identical; `docs/getting-started/local-development.md`'s startup description, if it orders
   those steps, should follow the code.
+- **M8.1 residual for the final verification pass.** Crash-matrix row 6 (the rename) asserts that
+  staging is still a directory where the design's column says "staging intact and complete"; the
+  marker and documents' presence after the failed rename is not asserted. Minor, recorded so the
+  whole-plan pass can decide whether to strengthen it.
