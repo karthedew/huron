@@ -9,7 +9,8 @@ bindings a caller is judged by, ``check`` - the one allow-or-403 call - and
 ``current_visibility``, the caller's ``Visibility`` computed once per
 request) and ``guards`` (the ``require_*`` factories and the ingest-session
 guards, ``dataset_raw_writer``, ``project_intake``, ``session_overseer``,
-``session_owner`` and ``upload_owner``, that routes declare). Routes import
+``session_owner`` and ``upload_owner``, plus ``revision_raw_reader`` for
+downloading a revision's raw bytes, that routes declare). Routes import
 from here, never from the modules.
 """
 
@@ -25,6 +26,7 @@ from .decisions import (
 )
 from .guards import (
     IngestDrive,
+    RevisionRead,
     UploadTarget,
     dataset_raw_writer,
     project_intake,
@@ -32,6 +34,7 @@ from .guards import (
     require_organization,
     require_project,
     require_system,
+    revision_raw_reader,
     session_overseer,
     session_owner,
     upload_owner,
@@ -45,6 +48,7 @@ __all__ = [
     "CurrentSession",
     "CurrentVisibility",
     "IngestDrive",
+    "RevisionRead",
     "UploadTarget",
     "as_rbac_principal",
     "bindings_for_principal",
@@ -61,6 +65,7 @@ __all__ = [
     "require_organization",
     "require_project",
     "require_system",
+    "revision_raw_reader",
     "session_cookie",
     "session_overseer",
     "session_owner",

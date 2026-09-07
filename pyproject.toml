@@ -248,6 +248,7 @@ allow_indirect_imports = true
 source_modules = [
     "huron.service.api.repository",
     "huron.service.api.ingest",
+    "huron.service.api.revisions",
     "huron.service.api.app",
     "huron.service.api.authorization.**",
     "huron.service.api.routes.**",

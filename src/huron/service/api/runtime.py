@@ -20,6 +20,7 @@ from huron.pkg.rbac import RoleBindingAuthorizer
 
 from .ingest import IngestService
 from .repository import HierarchyRepository
+from .revisions import RevisionService
 from .settings import ApiSettings
 from .stores import ApiKeyWriter, HierarchyStore, RbacStore
 
@@ -67,6 +68,7 @@ class ApiRuntime:
     settings: ApiSettings
     repository: HierarchyRepository
     ingest: IngestService
+    revisions: RevisionService
     authorizer: RoleBindingAuthorizer
     api_keys: ApiKeyWriter
     credentials: CredentialStore
@@ -130,6 +132,18 @@ async def api_ingest(runtime: Runtime) -> IngestService:
         The one ``IngestService`` every request in this process shares.
     """
     return runtime.ingest
+
+
+async def api_revisions(runtime: Runtime) -> RevisionService:
+    """Return the revision-read service the service was wired with.
+
+    Args:
+        runtime: The published wiring, resolved by ``api_runtime``.
+
+    Returns:
+        The one ``RevisionService`` every request in this process shares.
+    """
+    return runtime.revisions
 
 
 async def api_settings(runtime: Runtime) -> ApiSettings:
@@ -197,6 +211,7 @@ async def api_principals(runtime: Runtime) -> PrincipalStore:
 
 Repository = Annotated[HierarchyRepository, Depends(api_repository)]
 Ingest = Annotated[IngestService, Depends(api_ingest)]
+Revisions = Annotated[RevisionService, Depends(api_revisions)]
 Settings = Annotated[ApiSettings, Depends(api_settings)]
 ApiKeys = Annotated[ApiKeyWriter, Depends(api_api_keys)]
 Credentials = Annotated[CredentialStore, Depends(api_credentials)]
@@ -211,6 +226,7 @@ __all__ = [
     "Ingest",
     "Principals",
     "Repository",
+    "Revisions",
     "Runtime",
     "Sessions",
     "Settings",
@@ -219,6 +235,7 @@ __all__ = [
     "api_ingest",
     "api_principals",
     "api_repository",
+    "api_revisions",
     "api_runtime",
     "api_sessions",
     "api_settings",

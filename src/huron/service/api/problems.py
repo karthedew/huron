@@ -37,8 +37,10 @@ PROBLEM_MEDIA_TYPE = "application/problem+json"
 #: from the status so a status the router starts answering cannot arrive
 #: without a code. 404 and 405 are the two Starlette's router raises; 400 is
 #: FastAPI's own body-reading exception, raised inside a matched route when
-#: the request body cannot be read (for example, a client disconnect).
-FRAMEWORK_STATUSES = (400, 404, 405)
+#: the request body cannot be read (for example, a client disconnect); 416
+#: is ``FileResponse`` answering an unsatisfiable ``Range`` itself, with an
+#: empty body and ``Content-Range``, never a problem document.
+FRAMEWORK_STATUSES = (400, 404, 405, 416)
 
 #: Raised by no class either: FastAPI's own body/query/path validation, and
 #: the outermost handler.

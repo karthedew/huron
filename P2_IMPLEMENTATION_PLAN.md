@@ -1134,7 +1134,7 @@ the P2 gate's download clauses are proved by reading the sealed tree in
 
 **Dependencies.** M5.3.
 
-**Status: pending**
+**Status: done**
 
 ### M7 — Expiry sweep
 
@@ -1845,3 +1845,11 @@ than on the design's literal text.
 - **M5.3 residual for M10.1.** Route 8's OpenAPI `responses` documents 400, 404, 409, 412 and 422
   but not the 500 the design lists for storage and catalog disagreeing; the behaviour is pinned by
   a test. M10.1 decides whether the route table or the `responses` map moves.
+- **M6.1 / Design 5 › Tests (role vocabulary facts for M10.1).** Every human role carries
+  unrestricted `data.read`, so (1) the "org admin without a data role → 403" download sub-case is
+  unreachable; a service account is the one principal that is visible yet refused, and its 403
+  comes from the `SERVICE_ACCOUNT_LAYERS` restriction, not from an absent capability; (2) revoking
+  a human's only binding removes visibility with the grant, so the re-authorization test pins 404
+  on the next request, not 403; (3) role-compiled bindings never set `maximum_classification`, so a
+  non-discoverable project is visible only to a SYSTEM-scope principal and nobody can commit into
+  it — the "restricted project" rows use a sibling open project the outsider holds no binding on.

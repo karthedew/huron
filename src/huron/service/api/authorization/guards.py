@@ -2,10 +2,11 @@
 
 Holding a ``Principal`` returned by a ``require_*`` dependency is proof the
 capability check passed; holding an ``IngestDrive`` is proof the caller may
-act on one ingest session, and whether they own it. Every factory returns a
-**new** closure per call, so a capability declared both on a router and as a
-parameter must share one bound closure or the check runs twice; routes never
-re-check permissions.
+act on one ingest session, and whether they own it; holding a
+``RevisionRead`` is proof the caller may read one revision's raw bytes.
+Every factory returns a **new** closure per call, so a capability declared
+both on a router and as a parameter must share one bound closure or the
+check runs twice; routes never re-check permissions.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from huron.pkg.catalog.layers import (
 from huron.pkg.rbac import Scope
 
 from ..errors import Forbidden
-from ..runtime import Ingest, Repository
+from ..runtime import Ingest, Repository, Revisions
 from .credentials import CurrentPrincipal
 from .decisions import BindingCache, CurrentVisibility, check
 from .scopes import dataset_scope, organization_scope, project_scope
@@ -32,7 +33,7 @@ from .scopes import dataset_scope, organization_scope, project_scope
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from huron.pkg.catalog import IngestFile
+    from huron.pkg.catalog import IngestFile, RevisionRecord
 
     from ..ingest import SessionLedger
     from ..repository import HierarchyRepository
@@ -450,3 +451,52 @@ async def upload_owner(
         raise Forbidden(f"{principal.subject} does not own ingest session {ledger.id}")
     await _raw_write(cache, repository, principal, scope)
     return UploadTarget(principal=principal, ledger=ledger, file=file)
+
+
+@dataclass(frozen=True, slots=True)
+class RevisionRead:
+    """Proof that the caller may read one revision's raw bytes.
+
+    ``record`` is read fresh by the guard, so a route handler never
+    re-reads it before serving the revision's manifest or a payload file.
+    """
+
+    principal: Principal
+    record: RevisionRecord
+
+
+async def revision_raw_reader(
+    revision_id: UUID,
+    principal: CurrentPrincipal,
+    revisions: Revisions,
+    repository: Repository,
+    cache: BindingCache,
+    visibility: CurrentVisibility,
+) -> RevisionRead:
+    """Guard downloading a revision's raw bytes: resolve it, then require ``data.read@raw``.
+
+    The revision is resolved - and its dataset's visibility checked -
+    before any binding is read, so an absent or invisible revision is 404
+    ahead of 403, exactly as :func:`require_dataset` orders the two. The
+    capability is re-checked on every call, so a revoked binding refuses
+    the very next request for the same file.
+
+    Args:
+        revision_id: The path parameter naming the revision.
+        principal: The authenticated caller.
+        revisions: Resolves the revision by id.
+        repository: Resolves the revision's dataset scope and the
+            caller's bindings.
+        cache: The request's binding cache.
+        visibility: The caller's discovery rights, used to resolve
+            ``revision_id`` and the dataset scope.
+
+    Returns:
+        Proof of the caller's standing to read the revision, paired with
+        the resolved record.
+    """
+    record = await revisions.revision(revision_id, visibility)
+    scope = await dataset_scope(repository, record.dataset_id, visibility)
+    capability, layer = required_capability(LayerAction.READ, Layer.RAW)
+    await check(cache, repository, principal, capability, scope, layer=layer)
+    return RevisionRead(principal, record)

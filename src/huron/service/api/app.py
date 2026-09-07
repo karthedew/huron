@@ -26,6 +26,7 @@ from .errors import DependencyUnavailable
 from .ingest import IngestService
 from .problems import Problem, install_error_handlers, problem_response
 from .repository import HierarchyRepository
+from .revisions import RevisionService
 from .routes import auth as auth_routes
 from .routes import v1
 from .runtime import ApiRuntime, ApiStores, Runtime
@@ -236,6 +237,7 @@ def create_app(
                 ),
                 rbac_store=wired.rbac,
             )
+            revisions = RevisionService(raw_store, wired.hierarchy)
             ingest = IngestService(raw_store, wired.hierarchy, clock=clock)
             authorizer = RoleBindingAuthorizer(
                 classifications=tuple(
@@ -248,6 +250,7 @@ def create_app(
                 settings=settings,
                 repository=repository,
                 ingest=ingest,
+                revisions=revisions,
                 authorizer=authorizer,
                 api_keys=wired.api_keys,
                 credentials=wired.credentials,

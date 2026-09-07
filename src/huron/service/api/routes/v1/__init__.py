@@ -20,6 +20,7 @@ from .endpoints import (
     organizations,
     policies,
     projects,
+    revisions,
     roles,
     search,
     service_accounts,
@@ -36,6 +37,7 @@ router.include_router(projects.organization_projects)
 router.include_router(projects.router)
 router.include_router(datasets.project_datasets)
 router.include_router(datasets.router)
+router.include_router(revisions.router)
 router.include_router(ingest_sessions.dataset_ingest_sessions)
 router.include_router(ingest_sessions.project_ingest_sessions)
 router.include_router(ingest_sessions.router)

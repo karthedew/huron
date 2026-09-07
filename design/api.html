@@ -261,6 +261,7 @@ client code path, degraded transport.</li>
 <tr><td>NOT_FOUND</td><td>404</td><td>live</td><td>no such resource, or no such route</td></tr>
 <tr><td>OIDC_NOT_CONFIGURED</td><td>404</td><td>live</td><td>the OIDC routes are mounted but no identity provider is configured</td></tr>
 <tr><td>METHOD_NOT_ALLOWED</td><td>405</td><td>live</td><td>path exists, method does not</td></tr>
+<tr><td>REQUESTED_RANGE_NOT_SATISFIABLE</td><td>416</td><td>live</td><td>a Range header names bytes outside the file; answered by the file response with an empty body and Content-Range, not a problem document</td></tr>
 <tr><td>SLUG_EXISTS</td><td>409</td><td>live</td><td>an organization, project or dataset already holds this slug</td></tr>
 <tr><td>BINDING_EXISTS</td><td>409</td><td>live</td><td>an identical role binding already exists</td></tr>
 <tr><td>SERVICE_ACCOUNT_EXISTS</td><td>409</td><td>live</td><td>that service-account name is taken in this organization</td></tr>

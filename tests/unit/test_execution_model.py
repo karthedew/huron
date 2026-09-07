@@ -1,10 +1,10 @@
 """The event-loop/threadpool boundary: which operations block, and where the loop must never stall.
 
-Pins which of the 60 operations run on the event loop directly (they only
+Pins which of the 63 operations run on the event loop directly (they only
 ``await``) versus which wrap a blocking call in ``asyncify``: every
-hierarchy and ingest operation now awaits its store, so all 60 are
-coroutine functions, and the tripwire this module keeps is that the raw
-store's filesystem calls stay off the loop thread.
+hierarchy, ingest and revision operation now awaits its store, so all 63
+are coroutine functions, and the tripwire this module keeps is that the
+raw store's filesystem calls stay off the loop thread.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 import huron.service.api as api_package
 import huron.service.api.app as app_module
+import huron.service.api.revisions as revisions_module
 from huron.pkg.auth import make_credential as real_make_credential
 from huron.pkg.auth import verify_password as real_verify_password
 from huron.pkg.rawstore import PosixRawStore
@@ -31,6 +32,7 @@ from tests.ingest_client import IngestClient, manifest_file
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
+    import os
     from collections.abc import Callable, Iterator
     from uuid import UUID
 
@@ -46,7 +48,7 @@ pytestmark = pytest.mark.unit
 #: mapped to whether the handler is a coroutine function. The four
 #: documentation routes (``/docs``, ``/docs/oauth2-redirect``,
 #: ``/openapi.json``, ``/redoc``) are framework-provided and excluded - the
-#: table covers the 58 this service defines.
+#: table covers the 63 this service defines.
 EXPECTED_COROUTINE_FUNCTION = {
     "healthz": True,
     "readyz": True,
@@ -69,6 +71,9 @@ EXPECTED_COROUTINE_FUNCTION = {
     "list_datasets": True,
     "get_dataset": True,
     "patch_dataset": True,
+    "get_revision": True,
+    "get_revision_manifest": True,
+    "get_revision_file": True,
     "create_release": True,
     "list_releases": True,
     "resolve_release": True,
@@ -318,6 +323,34 @@ def test_the_commit_route_s_envelope_publication_executes_off_the_event_loop_thr
         )
 
     assert response.status_code == 201, response.text
+    assert ran_on_the_event_loop == [False]
+
+
+def test_the_file_download_s_stat_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
+    """The file-download route's stat still executes off the event-loop thread via asyncify.
+
+    ``get_revision_file`` is ``async def`` - it also awaits the manifest
+    read - so the off-loop guarantee for the payload file's stat comes
+    only from the ``asyncify`` wrapping inside ``RevisionService``, which
+    this pins directly by driving one real download through the route.
+    """
+    ran_on_the_event_loop: list[bool] = []
+    real_stat = revisions_module._stat
+
+    def _tracking_stat(path: Path) -> os.stat_result:
+        ran_on_the_event_loop.append(_event_loop_is_running())
+        return real_stat(path)
+
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with (
+        patch.object(revisions_module, "_stat", _tracking_stat),
+        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
+    ):
+        ingest = IngestClient(client)
+        _, revision_id = ingest.committed([("payload/a.bin", b"hello")])
+        response = ingest.download(revision_id, "payload/a.bin")
+
+    assert response.status_code == 200, response.text
     assert ran_on_the_event_loop == [False]
 
 

@@ -71,6 +71,10 @@ class IngestClient:
     Attributes:
         subject: The dev-header subject every request is sent as.
         put_count: How many part uploads this client has issued.
+        organization_id: The organization :meth:`developer_dataset` last
+            created, or None before it has run.
+        project_id: The project :meth:`developer_dataset` last created, or
+            None before it has run.
     """
 
     def __init__(self, client: TestClient, *, subject: str = "bob") -> None:
@@ -84,35 +88,53 @@ class IngestClient:
         self._client = client
         self.subject = subject
         self.put_count = 0
+        self.organization_id: str | None = None
+        self.project_id: str | None = None
 
-    def developer_dataset(self) -> tuple[str, str]:
+    def developer_dataset(
+        self,
+        *,
+        classification: str = "open",
+        organization_slug: str = "astro",
+        project_slug: str = "sims",
+    ) -> tuple[str, str]:
         """Create an organization, a project and a raw dataset, binding ``subject`` as developer.
+
+        Args:
+            classification: The project's ``data_classification``.
+            organization_slug: The organization's slug; vary it to create
+                a second, independent hierarchy on the same client.
+            project_slug: The project's slug; vary it the same way.
 
         Returns:
             The project's id and the dataset's id, both as strings.
         """
         organization = self._client.post(
             "/api/v1/organizations",
-            json={"slug": "astro", "title": "Astro"},
+            json={"slug": organization_slug, "title": organization_slug.title()},
             headers=_headers(_ADMIN),
         )
         assert organization.status_code == 201, organization.text
-        organization_id = organization.json()["id"]
+        self.organization_id = organization.json()["id"]
         project = self._client.post(
-            f"/api/v1/organizations/{organization_id}/projects",
-            json={"slug": "sims", "title": "Sims", "data_classification": "open"},
+            f"/api/v1/organizations/{self.organization_id}/projects",
+            json={
+                "slug": project_slug,
+                "title": project_slug.title(),
+                "data_classification": classification,
+            },
             headers=_headers(_ADMIN),
         )
         assert project.status_code == 201, project.text
-        project_id = project.json()["id"]
+        self.project_id = project.json()["id"]
         binding = self._client.post(
-            f"/api/v1/projects/{project_id}/bindings",
+            f"/api/v1/projects/{self.project_id}/bindings",
             json={"principal": f"user:{self.subject}", "role": "developer"},
             headers=_headers(_ADMIN),
         )
         assert binding.status_code == 201, binding.text
         dataset = self._client.post(
-            f"/api/v1/projects/{project_id}/datasets",
+            f"/api/v1/projects/{self.project_id}/datasets",
             json={
                 "slug": "run-0001",
                 "title": "Run 1",
@@ -122,7 +144,24 @@ class IngestClient:
             headers=_headers(self.subject),
         )
         assert dataset.status_code == 201, dataset.text
-        return project_id, dataset.json()["id"]
+        return self.project_id, dataset.json()["id"]
+
+    def reader(self, subject: str) -> None:
+        """Bind ``subject`` as a reader on the project ``developer_dataset`` last created.
+
+        A reader holds ``data.read`` on every layer, raw included, at
+        project scope.
+
+        Args:
+            subject: The dev-header subject to bind as a reader.
+        """
+        assert self.project_id is not None, "call developer_dataset (or committed) first"
+        response = self._client.post(
+            f"/api/v1/projects/{self.project_id}/bindings",
+            json={"principal": f"user:{subject}", "role": "reader"},
+            headers=_headers(_ADMIN),
+        )
+        assert response.status_code == 201, response.text
 
     def create(
         self, dataset_id: str, files: Sequence[ManifestFile], *, key: str | None = None
@@ -342,6 +381,58 @@ class IngestClient:
         )
         assert committed.status_code == 201, committed.text
         return committed.json()
+
+    def committed(
+        self,
+        files: Sequence[tuple[str, bytes]],
+        *,
+        classification: str = "open",
+        organization_slug: str = "astro",
+        project_slug: str = "sims",
+    ) -> tuple[str, str]:
+        """Create a dataset and commit one revision from ``files``, in a single call.
+
+        Args:
+            files: Each file's manifest path paired with its complete
+                bytes.
+            classification: The owning project's ``data_classification``.
+            organization_slug: The organization's slug; vary it to create
+                a second, independent hierarchy on the same client.
+            project_slug: The project's slug; vary it the same way.
+
+        Returns:
+            The dataset's id and the committed revision's id, both as
+            strings.
+        """
+        _, dataset_id = self.developer_dataset(
+            classification=classification,
+            organization_slug=organization_slug,
+            project_slug=project_slug,
+        )
+        view = self.upload_revision(dataset_id, files)
+        return dataset_id, view["id"]
+
+    def download(
+        self, revision_id: str, path: str, *, headers: Mapping[str, str] | None = None
+    ) -> Response:
+        """Stream one revision file's bytes.
+
+        Args:
+            revision_id: The revision the file belongs to.
+            path: The file's manifest path, exactly as declared - or, in a
+                test of the path rules themselves, exactly as sent.
+            headers: Extra headers beyond the dev-header credential, such
+                as ``Range``.
+
+        Returns:
+            The raw HTTP response, its body already read.
+        """
+        request_headers = {**_headers(self.subject), **(headers or {})}
+        with self._client.stream(
+            "GET", f"/api/v1/revisions/{revision_id}/files/{path}", headers=request_headers
+        ) as response:
+            response.read()
+        return response
 
 
 def _byte_length(body: bytes | Iterable[bytes]) -> int | None:
