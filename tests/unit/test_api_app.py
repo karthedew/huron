@@ -15,6 +15,7 @@ import asyncio
 import dataclasses
 import shutil
 import time
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import asyncpg
@@ -34,7 +35,8 @@ from huron.service.api.stores import (
     PostgresRbacStore,
     PostgresSessionStore,
 )
-from tests.unit.support import memory_stores
+from tests.hierarchy_contract import seed_hierarchy
+from tests.unit.support import FakeClock, memory_stores
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -541,3 +543,40 @@ def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_raw_store(
     checks = body["context"]["checks"]
     assert checks.keys() == {"raw_store"}
     assert checks["raw_store"] == "did not answer within 0.05s"
+
+
+async def test_the_lifespan_sweeps_lapsed_sessions_before_serving_the_first_request(
+    tmp_path: Path,
+) -> None:
+    """The lifespan's first sweep pass reaps an already-lapsed session before any request lands."""
+    now = datetime.now(UTC)
+    clock = FakeClock(now - timedelta(hours=3))
+    stores = memory_stores(clock=clock)
+    ids = await seed_hierarchy(stores.hierarchy)
+    dataset_id = ids.datasets["run-0001"]
+    async with stores.hierarchy.transaction() as writer:
+        reserved = await writer.begin_ingest(
+            dataset_id, "a" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    opened = reserved.open(now=clock.now())
+    async with stores.hierarchy.transaction() as writer:
+        await writer.update_ingest_session(opened, expected_etag=reserved.etag)
+
+    settings = ApiSettings(
+        env="development",
+        auth_mode="dev-headers",
+        data_root=str(tmp_path / "data"),
+        database_url="postgresql://unused",
+        classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
+        bootstrap_platform_owner="alice",
+    )
+    with TestClient(create_app(settings=settings, stores=stores)) as client:
+        response = client.get(
+            f"/api/v1/ingest-sessions/{opened.lease.ingest_id}",
+            headers={"X-Huron-Subject": "alice"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "ABORTED"
+    expired_events = [event for event in stores.hierarchy._audit if event.kind == "ingest.expired"]
+    assert len(expired_events) == 1

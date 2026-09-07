@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,79}$")
 TAG = re.compile(r"^[a-z0-9][a-z0-9._-]{1,62}$")
+_REVISION_COMPONENT = re.compile(r"^([0-9]{6})--([0-9a-f]{32})$")
 ORG_PROJECT_SLUG_MAX = 62
 DATASET_SLUG_MAX = 80
 
@@ -66,13 +67,23 @@ RESERVED_ROOT_SLUGS = frozenset(
 class Slugged(Protocol):
     """Anything with an id and a slug: all a path constructor needs to know about an entity.
 
-    Satisfied structurally by the catalog's ``EntityRef`` and by the API's
-    organization, project, dataset and product records alike, so a path can
-    be built from whichever the caller holds.
+    Satisfied structurally by the catalog's frozen ``EntityRef`` and by the
+    API's organization, project, dataset and product records alike, so a
+    path can be built from whichever the caller holds. Read-only
+    properties, not plain attributes: a path constructor only ever reads
+    ``id``/``slug``, and a settable-attribute protocol would refuse a
+    frozen dataclass, whose fields can never satisfy "settable".
     """
 
-    id: UUID
-    slug: str
+    @property
+    def id(self) -> UUID:
+        """The entity's identifier."""
+        ...
+
+    @property
+    def slug(self) -> str:
+        """The entity's URL- and path-safe name."""
+        ...
 
 
 class RevisionPath(NamedTuple):
@@ -445,6 +456,52 @@ def _split(component: str, max_len: int) -> tuple[str, UUID]:
     return slug, UUID(hex=hex_id)
 
 
+def _validate_revision_layout(relative: PurePosixPath) -> None:
+    """Refuse anything but the nine-segment raw revision layout.
+
+    Args:
+        relative: The candidate revision directory, relative to the data
+            root.
+
+    Raises:
+        PathRuleViolation: If the segment count or any fixed-kind segment
+            does not match
+            ``organization/{X}/project/{Y}/dataset/{Z}/raw/revision/{W}``.
+    """
+    parts = relative.parts
+    if (
+        len(parts) != 9
+        or parts[0] != "organization"
+        or parts[2] != "project"
+        or parts[4] != "dataset"
+        or parts[6] != "raw"
+        or parts[7] != "revision"
+    ):
+        raise PathRuleViolation(f"unexpected layout: {relative}")
+
+
+def _parse_revision_component(component: str) -> tuple[int, UUID]:
+    """Recover the revision number and id from the final ``{NNNNNN}--{hex}`` segment.
+
+    Args:
+        component: The last path segment of a revision directory.
+
+    Returns:
+        The revision number and the revision id the component encodes.
+
+    Raises:
+        PathRuleViolation: If ``component`` does not match the
+            ``NNNNNN--hex`` shape or the number falls outside 1..999,999.
+    """
+    match = _REVISION_COMPONENT.fullmatch(component)
+    if match is None:
+        raise PathRuleViolation(f"invalid revision component: {component!r}")
+    number = int(match.group(1))
+    if number == 0:
+        raise PathRuleViolation(f"invalid revision component: {component!r}")
+    return number, UUID(hex=match.group(2))
+
+
 def parse_revision_dir(root: PurePosixPath, path: PurePosixPath) -> RevisionPath:
     """Recover the complete identity tuple from an exact revision directory.
 
@@ -478,29 +535,12 @@ def parse_revision_dir(root: PurePosixPath, path: PurePosixPath) -> RevisionPath
         relative = path.relative_to(root)
     except ValueError as exc:
         raise PathRuleViolation(f"path is outside the data root: {path}") from exc
+    _validate_revision_layout(relative)
     parts = relative.parts
-    if (
-        len(parts) != 9
-        or parts[0] != "organization"
-        or parts[2] != "project"
-        or parts[4] != "dataset"
-        or parts[6] != "raw"
-        or parts[7] != "revision"
-    ):
-        raise PathRuleViolation(f"unexpected layout: {relative}")
     org_slug, org_id = _split(parts[1], ORG_PROJECT_SLUG_MAX)
     project_slug, project_id = _split(parts[3], ORG_PROJECT_SLUG_MAX)
     dataset_slug, dataset_id = _split(parts[5], DATASET_SLUG_MAX)
-    number_text, separator, revision_hex = parts[8].partition("--")
-    if (
-        not separator
-        or not re.fullmatch(r"[0-9]{6}", number_text)
-        or not 1 <= int(number_text) <= 999_999
-        or len(revision_hex) != 32
-        or revision_hex.lower() != revision_hex
-        or not re.fullmatch(r"[0-9a-f]{32}", revision_hex)
-    ):
-        raise PathRuleViolation(f"invalid revision component: {parts[8]!r}")
+    revision_number, revision_id = _parse_revision_component(parts[8])
     return RevisionPath(
         org_slug,
         org_id,
@@ -508,6 +548,6 @@ def parse_revision_dir(root: PurePosixPath, path: PurePosixPath) -> RevisionPath
         project_id,
         dataset_slug,
         dataset_id,
-        int(number_text),
-        UUID(hex=revision_hex),
+        revision_number,
+        revision_id,
     )

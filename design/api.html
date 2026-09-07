@@ -124,15 +124,16 @@ the authorization predicate ahead of <code>LIMIT</code>. No free-text parameters
 
 <table>
 <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-<tr><td>POST</td><td><code>/ingest-sessions</code></td><td>body: dataset ref (or new dataset slug), metadata draft, manifest → <code>UploadPlan</code> (actions <code>upload | hardlink</code>); locks the dataset</td></tr>
+<tr><td>POST</td><td><code>/datasets/{id}/ingest-sessions</code></td><td>body: manifest → session with <code>UploadPlan</code> (files: <code>upload | hardlink</code>, <code>part_count</code>, <code>part_bytes</code>); locks the dataset; <code>Idempotency-Key</code></td></tr>
+<tr><td>POST</td><td><code>/projects/{id}/ingest-sessions</code></td><td>creates the dataset (raw entry) under <code>dataset.create</code> + <code>data.write@raw</code>, then as above</td></tr>
 <tr><td>GET</td><td><code>/ingest-sessions/{id}</code></td><td>state, per-file progress, ETag</td></tr>
-<tr><td>POST</td><td><code>/ingest-sessions/{id}:heartbeat</code></td><td>extends TTL</td></tr>
-<tr><td>PUT</td><td><code>/transfer/uploads/{file_id}/parts/{n}</code></td><td>streamed, hashed in flight; resumable</td></tr>
-<tr><td>POST</td><td><code>/transfer/uploads/{file_id}:complete</code></td><td></td></tr>
-<tr><td>POST</td><td><code>/ingest-sessions/{id}:verify</code> / <code>:commit</code> / <code>:abort</code></td><td>commit: <code>If-Match</code> + <code>Idempotency-Key</code> → 201 Revision</td></tr>
+<tr><td>POST</td><td><code>/ingest-sessions/{id}/heartbeat</code></td><td>extends TTL</td></tr>
+<tr><td>PUT</td><td><code>/transfer/uploads/{file_id}/parts/{n}</code></td><td>streamed, hashed in flight; resumable; <code>Content-Length</code> must equal the part's planned length; parts are 64 MiB; <code>completed_parts</code> in <code>GET</code> is the resume set</td></tr>
+<tr><td>POST</td><td><code>/transfer/uploads/{file_id}/complete</code></td><td></td></tr>
+<tr><td>POST</td><td><code>/ingest-sessions/{id}/verify</code> / <code>/commit</code> / <code>/abort</code></td><td>verify links unchanged files from the parent; commit body <code>{manifest_sha256, metadata}</code>, <code>If-Match</code> + <code>Idempotency-Key</code> → 201 Revision</td></tr>
 <tr><td>GET</td><td><code>/datasets/{id}/revisions</code>, <code>/revisions/{id}</code></td><td>revision detail includes effective metadata (base + folded amendments), the tags pointing at it, and materialization states</td></tr>
 <tr><td>GET</td><td><code>/revisions/{id}/manifest</code></td><td>streamed from NFS</td></tr>
-<tr><td>GET</td><td><code>/revisions/{id}/files/{path}</code></td><td>issues a short-lived download capability; re-authorized per file (<code>dataset.read_raw</code>)</td></tr>
+<tr><td>GET</td><td><code>/revisions/{id}/files/{path}</code></td><td>authorised per request against <code>data.read@raw</code>; the response is the capability, nothing is minted</td></tr>
 <tr><td>POST</td><td><code>/revisions/{id}:amend</code></td><td>project_admin; field allow-list; reclassification separately permissioned</td></tr>
 </table>
 
@@ -210,7 +211,9 @@ client code path, degraded transport.</li>
 
 <h2 id="errors">7. Error codes</h2>
 
-<p>Stable codes clients use for control flow:</p>
+<p>Stable codes clients use for control flow. <code>live</code> means at least one shipped path
+operation can answer with the code; <code>reserved</code> means the code is part of the contract
+but no shipped route raises it yet.</p>
 
 <table id="error-codes">
 <tr><th>Code</th><th>HTTP status</th><th>Live/reserved</th><th>Meaning</th></tr>
@@ -235,17 +238,17 @@ client code path, degraded transport.</li>
 <tr><td>TOO_MANY_FILES</td><td>413</td><td>live</td><td>revision exceeds the file-count limit</td></tr>
 <tr><td>REVISION_TOO_LARGE</td><td>413</td><td>live</td><td>revision exceeds the byte limit</td></tr>
 <tr><td>PROJECTION_UNAVAILABLE</td><td>503</td><td>live</td><td>the search projection is not configured or is down</td></tr>
-<tr><td>MANIFEST_MISMATCH</td><td>400</td><td>reserved</td><td>uploaded content does not match the declared manifest (§3 ingest)</td></tr>
+<tr><td>MANIFEST_MISMATCH</td><td>400</td><td>live</td><td>uploaded content does not match the declared manifest (§3 ingest)</td></tr>
 <tr><td>PROFILE_UNKNOWN</td><td>400</td><td>reserved</td><td>unknown dataset profile (§2 dataset profiles)</td></tr>
-<tr><td>INGEST_SESSION_EXPIRED</td><td>409</td><td>reserved</td><td>ingest session passed its idle or absolute TTL (§3 ingest)</td></tr>
-<tr><td>DATASET_LOCKED</td><td>409</td><td>reserved</td><td>dataset is locked against concurrent ingest (§3 ingest)</td></tr>
-<tr><td>DUPLICATE_CONTENT</td><td>409</td><td>reserved</td><td>identical content already ingested (§3 ingest)</td></tr>
+<tr><td>INGEST_SESSION_EXPIRED</td><td>409</td><td>live</td><td>ingest session passed its idle TTL, or is terminal and cannot be renewed (§3 ingest)</td></tr>
+<tr><td>DATASET_LOCKED</td><td>409</td><td>live</td><td>dataset is locked against concurrent ingest (§3 ingest)</td></tr>
+<tr><td>DUPLICATE_CONTENT</td><td>409</td><td>live</td><td>identical content already ingested (§3 ingest)</td></tr>
 <tr><td>LAYER_NOT_MATERIALIZED</td><td>409</td><td>reserved</td><td>referenced layer has not been materialized (§4 layers)</td></tr>
 <tr><td>SNAPSHOT_NOT_PUBLISHED</td><td>409</td><td>reserved</td><td>referenced snapshot has not been published (§4 snapshots)</td></tr>
 <tr><td>PRODUCT_VERSION_EXISTS</td><td>409</td><td>reserved</td><td>product version already published (§4 products)</td></tr>
 <tr><td>PRODUCT_STALE_INPUT</td><td>409</td><td>reserved</td><td>product input is stale relative to its pinned sources (§4 products)</td></tr>
 <tr><td>VALIDATION_REQUIRED</td><td>409</td><td>reserved</td><td>validation evidence is required before publishing (§4 validation)</td></tr>
-<tr><td>CONTRACT_MISMATCH</td><td>409</td><td>reserved</td><td>payload violates its registered schema contract (§6 schema registry)</td></tr>
+<tr><td>CONTRACT_MISMATCH</td><td>409</td><td>live</td><td>payload violates its registered schema contract (§6 schema registry) — in P2 the registered contract is the packaged <code>metadata-v1.json</code></td></tr>
 <tr><td>RETENTION_HOLD_PRESENT</td><td>409</td><td>reserved</td><td>a retention hold blocks the operation (§6 retention)</td></tr>
 <tr><td>TAG_WITHDRAWN</td><td>410</td><td>reserved</td><td>release tag was withdrawn (§2 <code>POST /datasets/{id}/releases/{tag}:withdraw</code>)</td></tr>
 <tr><td>VALIDATION_FAILED</td><td>422</td><td>reserved</td><td>validation evidence did not pass (§4 validation)</td></tr>
@@ -261,6 +264,7 @@ client code path, degraded transport.</li>
 <tr><td>NOT_FOUND</td><td>404</td><td>live</td><td>no such resource, or no such route</td></tr>
 <tr><td>OIDC_NOT_CONFIGURED</td><td>404</td><td>live</td><td>the OIDC routes are mounted but no identity provider is configured</td></tr>
 <tr><td>METHOD_NOT_ALLOWED</td><td>405</td><td>live</td><td>path exists, method does not</td></tr>
+<tr><td>REQUESTED_RANGE_NOT_SATISFIABLE</td><td>416</td><td>live</td><td>a Range header names bytes outside the file; answered by the file response with an empty body and Content-Range, not a problem document</td></tr>
 <tr><td>SLUG_EXISTS</td><td>409</td><td>live</td><td>an organization, project or dataset already holds this slug</td></tr>
 <tr><td>BINDING_EXISTS</td><td>409</td><td>live</td><td>an identical role binding already exists</td></tr>
 <tr><td>SERVICE_ACCOUNT_EXISTS</td><td>409</td><td>live</td><td>that service-account name is taken in this organization</td></tr>

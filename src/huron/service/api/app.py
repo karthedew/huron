@@ -23,8 +23,11 @@ from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import Classification, RoleBindingAuthorizer, ScopeType
 
 from .errors import DependencyUnavailable
+from .expiry import ExpirySweep
+from .ingest import IngestService
 from .problems import Problem, install_error_handlers, problem_response
 from .repository import HierarchyRepository
+from .revisions import RevisionService
 from .routes import auth as auth_routes
 from .routes import v1
 from .runtime import ApiRuntime, ApiStores, Runtime
@@ -36,29 +39,86 @@ from .stores import (
     PostgresPrincipalStore,
     PostgresRbacStore,
     PostgresSessionStore,
+    SystemClock,
 )
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
+    from huron.pkg.catalog.ports import Clock
 
-def _postgres_stores(pool: asyncpg.Pool) -> ApiStores:
+
+def _postgres_stores(pool: asyncpg.Pool, clock: Clock) -> ApiStores:
     """Wire the Postgres-backed RBAC and authentication stores over one shared pool.
 
     Args:
         pool: The already-open pool every store shares. The caller owns
             the pool and closes it at shutdown; the stores never do.
+        clock: The source of the current time for the hierarchy store's
+            idempotency and lease arithmetic.
 
     Returns:
         The six stores, each a thin wrapper around the pool.
     """
     return ApiStores(
-        hierarchy=PostgresHierarchyStore(pool),
+        hierarchy=PostgresHierarchyStore(pool, clock=clock),
         rbac=PostgresRbacStore(pool),
         api_keys=PostgresApiKeyStore(pool),
         credentials=PostgresCredentialStore(pool),
         sessions=PostgresSessionStore(pool),
         principals=PostgresPrincipalStore(pool),
+    )
+
+
+def _build_runtime(
+    settings: ApiSettings,
+    wired: ApiStores,
+    clock: Clock,
+    pool: asyncpg.Pool | None,
+    oidc: tuple[OidcResolver | None, OidcClient | None],
+) -> ApiRuntime:
+    """Compose the repository, the facades and the authorizer into one published runtime.
+
+    Args:
+        settings: The validated configuration; read for ``data_root`` and
+            the classification vocabulary every facade shares.
+        wired: The RBAC and authentication stores, injected or freshly
+            wired to Postgres.
+        clock: The source of the current time for the ingest facade; the
+            hierarchy store's own clock was already set when ``wired`` was
+            built.
+        pool: The database pool this instance opened, or None when
+            ``wired`` was injected; published unchanged for ``/readyz``.
+        oidc: The resolver and client ``_configure_oidc`` produced.
+
+    Returns:
+        The runtime every injected route reads through
+        ``huron.service.api.runtime``.
+    """
+    raw_store = PosixRawStore(settings.data_root)
+    classifications = tuple(value.code for value in settings.classification_vocabulary)
+    repository = HierarchyRepository(
+        raw_store, wired.hierarchy, classification_vocabulary=classifications, rbac_store=wired.rbac
+    )
+    oidc_resolver, oidc_client = oidc
+    return ApiRuntime(
+        settings=settings,
+        repository=repository,
+        ingest=IngestService(raw_store, wired.hierarchy, clock=clock),
+        revisions=RevisionService(raw_store, wired.hierarchy),
+        authorizer=RoleBindingAuthorizer(
+            classifications=tuple(
+                Classification(value.code, value.order, value.discoverable)
+                for value in settings.classification_vocabulary
+            )
+        ),
+        api_keys=wired.api_keys,
+        credentials=wired.credentials,
+        sessions=wired.sessions,
+        principals=wired.principals,
+        oidc_resolver=oidc_resolver,
+        oidc_client=oidc_client,
+        database_pool=pool,
     )
 
 
@@ -196,11 +256,15 @@ def create_app(
         classification vocabulary the settings declare. The bearer-JWT
         resolver follows the same injected-first rule as the stores.
         Opening the pool, discovering the OIDC provider, running the
-        bootstrap grant and suspending at ``yield`` all happen inside one
-        block whose ``finally`` closes the pool and the HTTP client, so a
-        failure at any point after the pool opens releases it before the
-        error surfaces - including a discovery failure that happens after
-        the pool is already open.
+        bootstrap grant, running the ingest expiry sweep and suspending at
+        ``yield`` all happen inside one block whose ``finally`` closes the
+        pool and the HTTP client, so a failure at any point after the pool
+        opens releases it before the error surfaces - including a
+        discovery failure that happens after the pool is already open.
+        The sweep's task starts only once the runtime is published and the
+        bootstrap grant has run, and is cancelled and awaited before the
+        ``finally`` closes the pool, so no pass ever runs against a
+        connection that has already gone away.
 
         Args:
             app: The application whose ``state.runtime`` is set for the
@@ -215,40 +279,22 @@ def create_app(
         pool: asyncpg.Pool | None = None
         http: httpx.AsyncClient | None = None
         try:
+            clock = SystemClock()
             if stores is not None:
                 wired = stores
             else:
                 pool = await asyncpg.create_pool(settings.database_url)
-                wired = _postgres_stores(pool)
-            repository = HierarchyRepository(
-                PosixRawStore(settings.data_root),
-                wired.hierarchy,
-                classification_vocabulary=tuple(
-                    value.code for value in settings.classification_vocabulary
-                ),
-                rbac_store=wired.rbac,
-            )
-            authorizer = RoleBindingAuthorizer(
-                classifications=tuple(
-                    Classification(value.code, value.order, value.discoverable)
-                    for value in settings.classification_vocabulary
-                )
-            )
+                wired = _postgres_stores(pool, clock)
             oidc_resolver, oidc_client, http = await _configure_oidc(settings, oidc_verify)
-            app.state.runtime = ApiRuntime(
-                settings=settings,
-                repository=repository,
-                authorizer=authorizer,
-                api_keys=wired.api_keys,
-                credentials=wired.credentials,
-                sessions=wired.sessions,
-                principals=wired.principals,
-                oidc_resolver=oidc_resolver,
-                oidc_client=oidc_client,
-                database_pool=pool,
-            )
-            await _bootstrap(repository, settings)
-            yield
+            runtime = _build_runtime(settings, wired, clock, pool, (oidc_resolver, oidc_client))
+            app.state.runtime = runtime
+            await _bootstrap(runtime.repository, settings)
+            async with ExpirySweep(
+                runtime.ingest,
+                interval_seconds=settings.ingest_sweep_interval_seconds,
+                limit=settings.ingest_sweep_limit,
+            ):
+                yield
         finally:
             if pool is not None:
                 await pool.close()

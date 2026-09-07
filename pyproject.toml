@@ -18,7 +18,7 @@ dependencies = [
     "alembic",
     "aiobotocore",
     "rfc8785",
-    "jsonschema",
+    "jsonschema[format-nongpl]",
     "pyyaml",
     "httpx",
     "structlog",
@@ -247,6 +247,8 @@ type = "forbidden"
 allow_indirect_imports = true
 source_modules = [
     "huron.service.api.repository",
+    "huron.service.api.ingest",
+    "huron.service.api.revisions",
     "huron.service.api.app",
     "huron.service.api.authorization.**",
     "huron.service.api.routes.**",
@@ -260,4 +262,4 @@ include = ["src/huron"]
 # Ratchet floor: the measured value at the last raise, rounded down. Never
 # lower it; raise it as coverage climbs. New or touched files are covered in
 # full.
-fail_under = 89
+fail_under = 94

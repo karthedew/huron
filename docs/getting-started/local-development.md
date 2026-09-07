@@ -165,6 +165,8 @@ single-quoted so uv, Docker Compose and podman-compose all read it byte for byte
 | `HURON_PASSWORD_LOGIN_ENABLED` | no | Defaults to `true` |
 | `HURON_SESSION_COOKIE_NAME` | no | Defaults to `huron_session` |
 | `HURON_WEB_APP_URL` | no | Where `/auth/oidc/callback` lands the browser after login; defaults to `http://localhost:5173` |
+| `HURON_INGEST_SWEEP_INTERVAL_SECONDS` | no | Seconds between two passes of a replica's ingest expiry sweep; defaults to `60` |
+| `HURON_INGEST_SWEEP_LIMIT` | no | Lapsed sessions one sweep pass flips at most; defaults to `100` |
 
 ### Authenticating in development
 

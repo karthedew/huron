@@ -2,9 +2,11 @@
 
 Covers ``revision_dir``/``parse_revision_dir`` (round trip, and rejection of
 paths outside the root, old-layout paths, wrong-kind segments, bad revision
-numbers and malformed ids), ``dataset_layer_dir``, single-source vs. fused
-``product_dir`` placement, ``release_tag_file``, ``staging_dir``, and
-``validate_org_slug``'s reserved-route rule.
+numbers and malformed ids in every component), ``dataset_layer_dir``,
+single-source vs. fused ``product_dir`` placement, ``release_tag_file`` and
+its tag rule, ``generation_file``'s range and zero-padding, ``staging_dir``,
+``validate_slug``'s pattern rule and ``validate_org_slug``'s reserved-route
+rule.
 """
 
 from __future__ import annotations
@@ -18,8 +20,11 @@ from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.layers import Layer
 from huron.pkg.catalog.models import EntityRef
 from huron.pkg.catalog.paths import (
+    ORG_PROJECT_SLUG_MAX,
     dataset_dir,
     dataset_layer_dir,
+    generation_file,
+    organization_dir,
     parse_revision_dir,
     product_dir,
     project_dir,
@@ -27,6 +32,7 @@ from huron.pkg.catalog.paths import (
     revision_dir,
     staging_dir,
     validate_org_slug,
+    validate_slug,
 )
 
 pytestmark = pytest.mark.unit
@@ -62,6 +68,13 @@ def test_revision_dir_nests_raw_and_revision_under_the_dataset() -> None:
         / f"000042--{revision_id.hex}"
     )
     assert path == expected_tail
+
+
+def test_organization_dir_accepts_a_frozen_entity_ref() -> None:
+    """``organization_dir`` builds the slug--uuid directory from a frozen ``EntityRef``."""
+    organization = _entity("nuclear-engineering")
+    path = organization_dir(ROOT, organization)
+    assert path == ROOT / "organization" / f"{organization.slug}--{organization.id.hex}"
 
 
 def test_parse_revision_dir_round_trips_through_revision_dir() -> None:
@@ -252,3 +265,88 @@ def test_validate_org_slug_reserves_root_routes(slug: str) -> None:
 def test_validate_org_slug_accepts_an_ordinary_slug() -> None:
     """An ordinary, non-reserved organization slug passes validation without raising."""
     validate_org_slug("nuclear-engineering")
+
+
+@pytest.mark.parametrize(
+    "slug",
+    [
+        "Bad Slug",  # breaks the lower-case pattern
+        "a--b",  # contains the slug/id separator
+        "a" * (ORG_PROJECT_SLUG_MAX + 1),  # longer than max_len
+    ],
+)
+def test_validate_slug_rejects_a_slug_that_could_not_serve_as_a_path_component(slug: str) -> None:
+    """A slug breaking the pattern, holding the separator, or over length is refused."""
+    with pytest.raises(PathRuleViolation):
+        validate_slug(slug, ORG_PROJECT_SLUG_MAX)
+
+
+def test_release_tag_file_rejects_a_tag_that_could_not_be_a_file_name() -> None:
+    """A tag that fails the tag pattern is refused before any release path is built."""
+    hierarchy = Hierarchy()
+    with pytest.raises(PathRuleViolation):
+        release_tag_file(
+            ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, "NOT A TAG"
+        )
+
+
+@pytest.mark.parametrize("number", [0, 1_000_000])
+def test_revision_dir_rejects_a_revision_number_outside_the_legal_range(number: int) -> None:
+    """revision_dir refuses a revision number outside 1 to 999,999."""
+    hierarchy = Hierarchy()
+    with pytest.raises(PathRuleViolation):
+        revision_dir(
+            ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, number, uuid7()
+        )
+
+
+@pytest.mark.parametrize("generation", [0, 1_000_000])
+def test_generation_file_rejects_a_generation_outside_the_legal_range(generation: int) -> None:
+    """generation_file refuses a generation number outside 1 to 999,999."""
+    hierarchy = Hierarchy()
+    entity_dir = dataset_dir(ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset)
+    with pytest.raises(PathRuleViolation):
+        generation_file(entity_dir, generation)
+
+
+def test_generation_file_zero_pads_a_valid_generation_number() -> None:
+    """A valid generation number returns the entity's zero-padded generations file path."""
+    hierarchy = Hierarchy()
+    entity_dir = dataset_dir(ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset)
+    assert generation_file(entity_dir, 42) == entity_dir / "generations" / "000042.json"
+
+
+def test_parse_revision_dir_rejects_an_organization_component_with_no_separator() -> None:
+    """An organization component with no ``--`` separator is refused, not just the revision one."""
+    hierarchy = Hierarchy()
+    path = revision_dir(
+        ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, 1, uuid7()
+    )
+    relative_parts = list(path.relative_to(ROOT).parts)
+    relative_parts[1] = "no-separator-here"
+    mangled = ROOT.joinpath(*relative_parts)
+    with pytest.raises(PathRuleViolation):
+        parse_revision_dir(ROOT, mangled)
+
+
+@pytest.mark.parametrize(
+    "organization_id_hex",
+    [
+        "a" * 31,  # too short
+        "A" * 32,  # uppercase
+        "g" * 32,  # not hex
+    ],
+)
+def test_parse_revision_dir_rejects_an_organization_component_with_a_malformed_id(
+    organization_id_hex: str,
+) -> None:
+    """An organization component whose id half is not 32 lower-case hex digits is refused."""
+    hierarchy = Hierarchy()
+    path = revision_dir(
+        ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, 1, uuid7()
+    )
+    relative_parts = list(path.relative_to(ROOT).parts)
+    relative_parts[1] = f"{hierarchy.organization.slug}--{organization_id_hex}"
+    mangled = ROOT.joinpath(*relative_parts)
+    with pytest.raises(PathRuleViolation):
+        parse_revision_dir(ROOT, mangled)

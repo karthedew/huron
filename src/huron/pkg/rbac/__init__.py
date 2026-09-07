@@ -35,6 +35,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from uuid import UUID
 
 
@@ -152,6 +153,20 @@ class Scope:
         return cls(ScopeType.SYSTEM)
 
 
+#: The :class:`Scope` field a binding at each non-``SYSTEM`` level is
+#: compared against: an organization binding reaches through
+#: ``organization_id``, a project binding through ``project_id``, a dataset
+#: binding through ``dataset_id``. ``SYSTEM`` needs no entry because it
+#: covers every scope unconditionally. Typed as attribute accessors rather
+#: than field-name strings, so renaming a `Scope` attribute is a type error
+#: here instead of a silent change to authorization coverage.
+_ANCESTOR_FIELD: dict[ScopeType, Callable[[Scope], UUID | None]] = {
+    ScopeType.ORGANIZATION: lambda scope: scope.organization_id,
+    ScopeType.PROJECT: lambda scope: scope.project_id,
+    ScopeType.DATASET: lambda scope: scope.dataset_id,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class Binding:
     """One grant or denial of a set of capabilities to a principal identifier at a scope.
@@ -231,16 +246,9 @@ class Binding:
             return True
         if self.scope_id is None:
             return False
-        if self.scope_type is ScopeType.ORGANIZATION:
-            return self.scope_id == scope.organization_id or (
-                scope.scope_type is ScopeType.ORGANIZATION and self.scope_id == scope.scope_id
-            )
-        if self.scope_type is ScopeType.PROJECT:
-            return self.scope_id == scope.project_id or (
-                scope.scope_type is ScopeType.PROJECT and self.scope_id == scope.scope_id
-            )
-        return self.scope_id == scope.dataset_id or (
-            scope.scope_type is ScopeType.DATASET and self.scope_id == scope.scope_id
+        ancestor_id = _ANCESTOR_FIELD[self.scope_type](scope)
+        return self.scope_id == ancestor_id or (
+            scope.scope_type is self.scope_type and self.scope_id == scope.scope_id
         )
 
     def is_expired(self, now: datetime) -> bool:

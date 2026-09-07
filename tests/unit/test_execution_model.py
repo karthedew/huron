@@ -1,10 +1,10 @@
 """The event-loop/threadpool boundary: which operations block, and where the loop must never stall.
 
-Pins which of the 52 operations run on the event loop directly (they only
+Pins which of the 63 operations run on the event loop directly (they only
 ``await``) versus which wrap a blocking call in ``asyncify``: every
-hierarchy operation now awaits the store, so all 52 are coroutine
-functions, and the tripwire this module keeps is that the raw store's
-filesystem calls stay off the loop thread.
+hierarchy, ingest and revision operation now awaits its store, so all 63
+are coroutine functions, and the tripwire this module keeps is that the
+raw store's filesystem calls stay off the loop thread.
 """
 
 from __future__ import annotations
@@ -20,15 +20,19 @@ from fastapi.testclient import TestClient
 
 import huron.service.api as api_package
 import huron.service.api.app as app_module
+import huron.service.api.revisions as revisions_module
 from huron.pkg.auth import make_credential as real_make_credential
 from huron.pkg.auth import verify_password as real_verify_password
+from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
 from huron.service.api.routes.auth.endpoints import login
 from huron.service.api.routes.v1.endpoints import users
 from huron.service.api.settings import ApiSettings, ClassificationValue
+from tests.ingest_client import IngestClient, manifest_file
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
+    import os
     from collections.abc import Callable, Iterator
     from uuid import UUID
 
@@ -44,7 +48,7 @@ pytestmark = pytest.mark.unit
 #: mapped to whether the handler is a coroutine function. The four
 #: documentation routes (``/docs``, ``/docs/oauth2-redirect``,
 #: ``/openapi.json``, ``/redoc``) are framework-provided and excluded - the
-#: table covers the 52 this service defines.
+#: table covers the 63 this service defines.
 EXPECTED_COROUTINE_FUNCTION = {
     "healthz": True,
     "readyz": True,
@@ -67,11 +71,22 @@ EXPECTED_COROUTINE_FUNCTION = {
     "list_datasets": True,
     "get_dataset": True,
     "patch_dataset": True,
+    "get_revision": True,
+    "get_revision_manifest": True,
+    "get_revision_file": True,
     "create_release": True,
     "list_releases": True,
     "resolve_release": True,
     "list_layers": True,
-    "create_write_intent": True,
+    "create_dataset_ingest_session": True,
+    "create_project_ingest_session": True,
+    "get_ingest_session": True,
+    "heartbeat_ingest_session": True,
+    "upload_part": True,
+    "complete_upload": True,
+    "verify_ingest_session": True,
+    "commit_ingest_session": True,
+    "abort_ingest_session": True,
     "list_roles": True,
     "list_system_bindings": True,
     "create_system_binding": True,
@@ -143,7 +158,7 @@ def _operations(app: FastAPI) -> Iterator[Callable[..., object]]:
 def test_the_route_table_has_exactly_the_operations_this_service_defines(
     tmp_path: Path,
 ) -> None:
-    """Registered operations minus the four documentation routes equal exactly the 52 expected."""
+    """Registered operations minus the four documentation routes equal exactly the 60 expected."""
     names = {op.__name__ for op in _operations(_built_app(tmp_path))}
     assert names - DOCUMENTATION_ENDPOINTS == set(EXPECTED_COROUTINE_FUNCTION)
 
@@ -239,6 +254,103 @@ def test_readyz_s_raw_store_stat_executes_off_the_event_loop_thread(tmp_path: Pa
         response = client.get("/readyz")
 
     assert response.status_code == 200
+    assert ran_on_the_event_loop == [False]
+
+
+def test_the_upload_route_s_write_part_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
+    """The upload route's positional write still executes off the event-loop thread.
+
+    ``upload_part`` is ``async def`` - it also awaits the ledger update -
+    so the off-loop guarantee for the raw store's write comes only from
+    the ``asyncify`` wrapping inside ``IngestService``, which this pins
+    directly by driving one real upload through the route.
+    """
+    ran_on_the_event_loop: list[bool] = []
+    real_write_part = PosixRawStore.write_part
+
+    def _tracking_write_part(self: PosixRawStore, *args: object, **kwargs: object) -> str:
+        ran_on_the_event_loop.append(_event_loop_is_running())
+        return real_write_part(self, *args, **kwargs)
+
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with (
+        patch.object(PosixRawStore, "write_part", _tracking_write_part),
+        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
+    ):
+        ingest = IngestClient(client)
+        _, dataset_id = ingest.developer_dataset()
+        session = ingest.create(dataset_id, [manifest_file("payload/a.bin", b"hello")]).json()
+        file_id = session["files"][0]["file_id"]
+
+        response = ingest.put_part(file_id, 1, b"hello")
+
+    assert response.status_code == 200, response.text
+    assert ran_on_the_event_loop == [False]
+
+
+def test_the_commit_route_s_envelope_publication_executes_off_the_event_loop_thread(
+    tmp_path: Path,
+) -> None:
+    """The commit route's envelope publication still executes off the event-loop thread.
+
+    ``commit_ingest_session`` is ``async def`` - it also awaits the
+    recording transaction - so the off-loop guarantee for the envelope's
+    rename comes only from the ``asyncify`` wrapping inside
+    ``IngestService``, which this pins directly by driving one real commit
+    through the route.
+    """
+    ran_on_the_event_loop: list[bool] = []
+    real_commit_envelope = PosixRawStore.commit_envelope
+
+    def _tracking_commit_envelope(self: PosixRawStore, *args: object, **kwargs: object) -> None:
+        ran_on_the_event_loop.append(_event_loop_is_running())
+        real_commit_envelope(self, *args, **kwargs)
+
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with (
+        patch.object(PosixRawStore, "commit_envelope", _tracking_commit_envelope),
+        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
+    ):
+        ingest = IngestClient(client)
+        _, dataset_id = ingest.developer_dataset()
+        data = b"hello"
+        session = ingest.create(dataset_id, [manifest_file("payload/a.bin", data)]).json()
+        ingest.put_part(session["files"][0]["file_id"], 1, data)
+        verified = ingest.verify(session["id"]).json()
+
+        response = ingest.commit(
+            session["id"], verified["etag"], {"title": "Run", "creators": ["bob"]}
+        )
+
+    assert response.status_code == 201, response.text
+    assert ran_on_the_event_loop == [False]
+
+
+def test_the_file_download_s_stat_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
+    """The file-download route's stat still executes off the event-loop thread via asyncify.
+
+    ``get_revision_file`` is ``async def`` - it also awaits the manifest
+    read - so the off-loop guarantee for the payload file's stat comes
+    only from the ``asyncify`` wrapping inside ``RevisionService``, which
+    this pins directly by driving one real download through the route.
+    """
+    ran_on_the_event_loop: list[bool] = []
+    real_stat = revisions_module._stat
+
+    def _tracking_stat(path: Path) -> os.stat_result:
+        ran_on_the_event_loop.append(_event_loop_is_running())
+        return real_stat(path)
+
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with (
+        patch.object(revisions_module, "_stat", _tracking_stat),
+        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
+    ):
+        ingest = IngestClient(client)
+        _, revision_id = ingest.committed([("payload/a.bin", b"hello")])
+        response = ingest.download(revision_id, "payload/a.bin")
+
+    assert response.status_code == 200, response.text
     assert ran_on_the_event_loop == [False]
 
 

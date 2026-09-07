@@ -329,37 +329,80 @@ the owner's answer — an unanswered decision means its milestone is not done re
 state.</td></tr>
 
 <tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">partial</span></td>
-<td>Session state machine (dataset-scoped lock), upload plan with hardlink dedup, streaming
-in-flight hashing, the POSIX commit protocol (staging → fsync → atomic rename), sealing, download
-capabilities, <code>INDEX.json</code>.
-Per-item status for this row's deliverables, because the <span class="tag">partial</span> tag
-alone cannot be audited: session state machine <span class="tag">partial</span> —
-<code>pkg/catalog/ingest.py</code> holds the transition table and the lease; only the lease
-arithmetic is tested, the transition table is not. The dataset-scoped lock
-<span class="tag">partial</span>: the <code>0008</code> DDL and the reservation semantics exist and
-are contract-tested, but no <code>begin_ingest</code> allocator exists anywhere — the port declares
-it and nothing implements it. Upload plan with hardlink dedup <span class="tag">partial</span>:
-<code>compute_upload_plan</code> and <code>hardlink_from_parent</code> exist, untested. Streaming
-in-flight hashing <span class="tag">todo</span>: <code>write_part</code> buffers the whole part as a
-list of chunks and the <code>RawStore</code> port does not declare it; nothing streams from a request
-body. The POSIX commit protocol <span class="tag">partial</span>: <code>commit_envelope</code> and
-<code>fsync_tree</code> exist, untested; and <code>P2_DESIGN.md</code> § "Design 2" proved that
-<a href="layer-raw.html">Raw</a> §5's seal-directories-then-rename order cannot execute as written
-— a <code>0555</code> directory cannot be renamed into another parent by a non-root user — so the
-corrected sequence seals the envelope's contents before the rename and its root after; that section
-holds it, and <code>P2_IMPLEMENTATION_PLAN.md</code> M10.1 writes it back to Raw §5. Sealing
-<span class="tag">partial</span>: <code>seal</code> exists, untested. Download capabilities
-<span class="tag">todo</span>: no code issues or checks one; ownership is open —
-<code>P2_IMPLEMENTATION_PLAN.md</code> § "2. Decision register" <code>D-13</code>, default: added to
-milestone 8's "Adds" as a per-request <code>data.read@raw</code> check on the download routes.
-<code>INDEX.json</code> <span class="tag">todo</span>: no code; ownership is open —
-<code>D-12</code>, default: P2 writes it best-effort at commit and P3's reconciler regenerates it.
-The HTTP surface <span class="tag">todo</span>: milestone 8 in §3. Target design:
-<code>P2_DESIGN.md</code>, § "Design 1" through § "Design 7". Execution order:
-<code>P2_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M0–M10, twenty-one tasks),
-verified 2026-09-05; its § "2. Decision register" holds twenty-three decisions
-<code>D-1</code>–<code>D-23</code>, nine resolved within the design and fourteen open with a stated
-default — every task is written against the defaults. Nothing has shipped.</td>
+<td>Delivers, each item named with the module it lives in and the test module that pins it
+(Drift 1's "unit-tested" is true by inspection): the session state machine and lease
+(<code>pkg/catalog/ingest.py</code> — <code>tests/unit/test_catalog_ingest.py</code>,
+<code>tests/unit/test_catalog_properties.py</code>); the dataset-scoped lock and gap-free
+allocator, migration <code>0009_ingest_ledger</code>
+(<code>service/api/stores/ingest.py</code> — <code>tests/unit/test_hierarchy_store_memory.py</code>,
+<code>tests/contract/test_hierarchy_store.py</code>); the upload plan with hardlink dedup
+(<code>pkg/catalog/ingest.py</code>'s <code>compute_upload_plan</code> —
+<code>tests/unit/test_catalog_ingest.py</code>, <code>tests/unit/test_api_ingest_dedup.py</code>);
+streaming in-flight hashing (<code>pkg/rawstore/store.py</code>'s <code>write_part</code> —
+<code>tests/unit/test_rawstore_store.py</code>, <code>tests/unit/test_api_ingest_sessions.py</code>);
+the POSIX commit protocol and sealing (<code>pkg/rawstore/commit.py</code>,
+<code>pkg/rawstore/store.py</code>'s <code>seal</code> —
+<code>tests/unit/test_rawstore_commit.py</code>,
+<code>tests/unit/test_api_ingest_crash_matrix.py</code>); the HTTP surface, nine ingest
+operations and three revision read routes (<code>service/api/ingest.py</code>,
+<code>service/api/revisions.py</code>, <code>service/api/routes/v1/endpoints/ingest_sessions.py</code>,
+<code>.../revisions.py</code> — <code>tests/unit/test_api_ingest_sessions.py</code>,
+<code>tests/unit/test_api_revisions.py</code>); the expiry sweep
+(<code>service/api/expiry.py</code> — <code>tests/unit/test_api_expiry.py</code>,
+<code>tests/unit/test_api_ingest_expiry.py</code>); download capabilities as a per-request
+<code>data.read@raw</code> check, nothing minted (<code>D-13</code>) — every human role carries
+unrestricted <code>data.read</code>, so a download's 403 is reachable only for a service account
+(the <code>SERVICE_ACCOUNT_LAYERS</code> restriction, not an absent capability); revoking a
+human's sole binding removes visibility with the grant, so the next request answers 404, not
+403; role-compiled bindings never set <code>maximum_classification</code>, so a project whose
+classification is not discoverable is visible only to a SYSTEM-scope principal and nobody can
+commit into it — the restricted-project download rows therefore use a sibling open project the
+outsider holds no binding on; <code>INDEX.json</code> written best-effort at commit
+(<code>pkg/catalog/documents.py</code>'s <code>RevisionIndex</code> — <code>D-12</code>).
+A session whose driver crashed in <code>COMMITTING</code> holds its dataset lock until the P3 reconciler; the owner's abort cannot release it (<code>D-1</code>).
+<code>Slugged</code>'s <code>id</code> and <code>slug</code> are read-only properties, so a
+frozen <code>EntityRef</code> satisfies it structurally (<code>pkg/catalog/paths.py</code>); the
+protocol's read-only properties are enforced by mypy on <code>src/huron</code> only where a
+caller passes an <code>EntityRef</code> where a <code>Slugged</code> is expected, and no shipped
+caller does yet, so no gate step pins the protocol shape today.
+Excluded (<code>P2_DESIGN.md</code> § "Design 7" › "Excluded clauses"): the staging sweeper and
+the post-rename orphan importer are P3's (P7, P8); the search projection consuming the
+<code>revision.committed</code> outbox row is P4's (M4).
+Decision register, <code>D-1</code>–<code>D-23</code>, each with the answer the tree implements:
+D-1 the <code>COMMITTING</code>-lock gap above, with a <code>COMMITTING → COMMITTING</code>
+re-entry against the current etag (D-11, the same decision); D-2/D-6 multipart at
+<code>PART_BYTES = 64 MiB</code>; D-3 the metadata document travels with <code>/commit</code>, no
+draft column; D-4 no absolute TTL — a heartbeating client is alive; D-5 a post-rename retry reads
+back <code>final/COMMITTED</code> and <code>metadata.json</code>, no persisted commit instant;
+D-7 no purge in P2, the total unique index and total max stand; D-8 <code>Idempotency-Key</code>
+kept on <code>/commit</code>; D-9 a service account may mint a dataset but never upload to
+<code>raw</code>; D-10 route 2's dataset half claims
+<code>IdempotencyClaim(key=f"{key}/dataset")</code>; D-12 P2 writes <code>INDEX.json</code>
+best-effort, P3 owns regeneration; D-13 R1–R3 shipped, the capability is per-request
+<code>data.read@raw</code>; D-14 <code>data_classification</code> is server-sourced from the
+project; D-15 <code>jsonschema[format-nongpl]</code> added, <code>date-time</code> enforced;
+D-16 the sweep interval defaults to 60 s; D-17 no per-replica disable, <code>gt=0</code>;
+D-18 a nightly <code>acceptance.yml</code> plus manual dispatch; D-19 <em>amended in
+verification</em> — the in-process app over <code>memory_stores()</code> and the real
+<code>PosixRawStore</code> stands, but serves over a loopback <code>uvicorn</code> socket rather
+than <code>TestClient</code>/<code>ASGITransport</code>, which both materialize a whole response
+body in memory (a 9 GiB download would need ≈18.5 GiB and be killed on a 16 GB runner); D-20 the
+four pre-existing <code>radon</code> C-grade items reduced to B before any P2 task ran; D-21 the
+dedup test stays in <code>unit</code> at 500 files; it runs ≈10.5 s against the design's ≤10 s
+budget, and the real cause is not the count but <code>RevisionService.payload_file</code>
+re-reading, schema-validating and re-canonicalizing the whole manifest on every file request — a
+read quadratic in file count, a production characteristic the test surfaced, and a candidate for
+caching the decoded manifest per revision in a later phase, not for this plan; D-22 measured B
+(10.27) after M3.3 with the session and file methods in place, so the split ran there — both
+adapters' ingest methods live in <code>service/api/stores/ingest.py</code> as four mixin bases
+behind the unchanged port, and <code>stores/hierarchy.py</code> reads A (25.94),
+<code>stores/ingest.py</code> A (44.47) after it; D-23
+<code>RevisionRecord.metadata_sha256</code> is the digest of <code>metadata.json</code>'s
+canonical bytes, no column change.
+The tag stays <span class="tag">partial</span>: every clause above is shipped and unit-tested, but
+no acceptance-workflow run exists yet — <code>.github/workflows/acceptance.yml</code> is
+scheduled and <code>workflow_dispatch</code>-able, and the tag flips to
+<span class="tag">done</span> only once a run's URL is recorded here.</td>
 <td>Round trip: a tree with NFC/NFD pairs, a zero-byte file, 8-level nesting, and a 9 GiB file
 ingests and downloads byte-identically. Crash matrix: kill after every protocol step; staging
 crashes invisible and swept; post-rename crash imported as an orphan with no duplicate on retry.
@@ -579,28 +622,31 @@ tombstone and re-tagging the same name is refused.</td></tr>
 <table>
 <tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
-<tr><td class="k">8 — Raw ingestion<br><span class="tag">todo</span><br>backend P2</td>
-<td>Built: the domain logic and commit primitives exist untested (<span class="tag">partial</span>
-per the P2 row in §2).
-Adds: <code>/ingest-sessions</code> routes — create (reserving the dataset lock), metadata and
-manifest submission, heartbeat, verify, commit, abort — and an expiry sweep that is a
-lifespan-owned task in every API replica, not a service (<code>P2_DESIGN.md</code> § "Design 6");
-dataset-creation-at-intake for authorized principals (humans with <code>dataset.create</code>; an
-organization service account's dataset-CRUD authority is intrinsic, but whether it may then upload
-to <code>raw</code> is open — <code>D-9</code>: today the layer rule refuses service accounts on
-<code>raw</code>, and the default keeps that refusal) so intake never dead-ends; resumable multipart
-upload with per-part progress feeding the dedup/hardlink plan; idempotent retries via
-<code>Idempotency-Key</code>; commit persists the revision and emits the audit and outbox events
-milestones 6 and 18 consume; authorized raw-file downloads (<code>GET /revisions/{id}/manifest</code>,
-<code>GET /revisions/{id}/files/{path}</code>) re-authorized per request under
-<code>data.read@raw</code> — nothing is minted, the authorized response is the capability — open,
-<code>D-13</code>, default: added here; the ingestion flow wired end-to-end with progress and failure
-recovery. Milestones M5–M8 of <code>P2_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence"
-deliver this row.</td>
-<td>An interrupted multi-GB upload resumes without re-sending completed parts; two sessions
-racing one dataset serialize on the lock; a committed revision appears in the catalog, the
-search projection, and the audit stream. Per <code>P2_DESIGN.md</code> § "Design 7" › "Excluded
-clauses", "appears in … the search projection" is P4's consumer; P2 proves the outbox row.</td></tr>
+<tr><td class="k">8 — Raw ingestion<br><span class="tag">partial</span><br>backend P2</td>
+<td>Delivers: the nine ingest operations over HTTP — create on an existing raw dataset or minting
+one at intake, get, heartbeat, upload part, complete, verify, commit, abort — and the three
+revision read routes (<code>GET /revisions/{id}</code>, <code>/manifest</code>,
+<code>/files/{path}</code>), every one unit-tested: a nine-row crash matrix proves the on-disk and
+catalog state after a fault at each protocol step, the dedup gate proves 1 changed file of 500
+uploads exactly one and links the rest, and a hundred sequential ingests number 1..100 gap-free.
+Dataset-creation-at-intake is open to humans with <code>dataset.create</code> and
+<code>data.write@raw</code>; an organization service account may mint the dataset but
+cannot upload to <code>raw</code> (<code>D-9</code>). An expiry sweep is a lifespan-owned task
+in every
+API replica, not a service (<code>P2_DESIGN.md</code> § "Design 6"), reaping leases past the
+lease TTL plus one sweep interval. Commit persists the revision and emits the audit and outbox
+events milestones 6 and 18 consume, and writes <code>INDEX.json</code> best-effort
+(<code>D-12</code>). Raw-file downloads are re-authorized per request under
+<code>data.read@raw</code> — nothing is minted, the authorized response is the capability itself
+(<code>D-13</code>). Milestones M0–M10 of <code>P2_IMPLEMENTATION_PLAN.md</code> § "3. Milestone
+sequence" deliver this row; per the P2 row in §2, the one open item is the nightly acceptance
+workflow's first recorded run.</td>
+<td>An interrupted multi-GB upload resumes without re-sending completed parts — proven at the
+real 64&nbsp;MiB part size by <code>tests/acceptance/test_raw_ingest_gate.py</code>, collected and
+scheduled by <code>.github/workflows/acceptance.yml</code>, not yet by a recorded run; two
+sessions racing one dataset serialize on the lock; a committed revision appears in the catalog and
+the audit stream. Per <code>P2_DESIGN.md</code> § "Design 7" › "Excluded clauses", "appears in …
+the search projection" is P4's consumer; P2 proves the outbox row.</td></tr>
 
 <tr><td class="k">9 — Automatic bronze builds<br><span class="tag">deferred</span><br>backend P6</td>
 <td><em>Deferred with the auto-builder (<a href="layer-bronze.html#auto-builder">Bronze

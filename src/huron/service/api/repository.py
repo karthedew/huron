@@ -44,7 +44,7 @@ from huron.pkg.catalog.paths import (
     validate_slug,
     validate_tag,
 )
-from huron.pkg.rawstore import PosixRawStore
+from huron.pkg.catalog.ports import RawStore
 from huron.pkg.rbac import Binding, ProjectVisibility, ScopeType, Visibility
 
 from .records import (
@@ -93,12 +93,12 @@ class HierarchyRepository:
       and reusing a claim's key for a different request is refused.
 
     Attributes:
-        raw_store: The POSIX raw store holding the durable documents.
+        raw_store: The raw store holding the durable documents.
     """
 
     def __init__(
         self,
-        raw_store: PosixRawStore,
+        raw_store: RawStore,
         hierarchy: HierarchyStore,
         *,
         classification_vocabulary: tuple[str, ...],
@@ -111,7 +111,7 @@ class HierarchyRepository:
         directories must sit on one filesystem.
 
         Args:
-            raw_store: The POSIX store that holds every durable generation
+            raw_store: The store that holds every durable generation
                 and release-tag document; it is initialized here.
             hierarchy: Durable storage for the organization/project/dataset/
                 release hierarchy and its idempotency claims.

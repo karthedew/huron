@@ -18,9 +18,12 @@ from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import RoleBindingAuthorizer
 from huron.service.api.authorization import current_principal
 from huron.service.api.authorization.credentials import _enforce_csrf
+from huron.service.api.ingest import IngestService
 from huron.service.api.repository import HierarchyRepository
+from huron.service.api.revisions import RevisionService
 from huron.service.api.runtime import ApiRuntime
 from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
+from huron.service.api.stores import SystemClock
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -56,6 +59,16 @@ def _repository(tmp_path: Path, stores: ApiStores) -> HierarchyRepository:
     )
 
 
+def _ingest(repository: HierarchyRepository, stores: ApiStores) -> IngestService:
+    """An IngestService sharing ``repository``'s raw store and ``stores``' hierarchy store."""
+    return IngestService(repository.raw_store, stores.hierarchy, clock=SystemClock())
+
+
+def _revisions(repository: HierarchyRepository, stores: ApiStores) -> RevisionService:
+    """A RevisionService sharing ``repository``'s raw store and ``stores``' hierarchy store."""
+    return RevisionService(repository.raw_store, stores.hierarchy)
+
+
 def _runtime(
     *, repository: HierarchyRepository, stores: ApiStores, settings: ApiSettings
 ) -> ApiRuntime:
@@ -63,6 +76,8 @@ def _runtime(
     return ApiRuntime(
         settings=settings,
         repository=repository,
+        ingest=_ingest(repository, stores),
+        revisions=_revisions(repository, stores),
         authorizer=RoleBindingAuthorizer(),
         api_keys=stores.api_keys,
         credentials=stores.credentials,
@@ -225,6 +240,8 @@ async def test_current_principal_resolves_a_bearer_jwt_through_the_configured_ve
     runtime = ApiRuntime(
         settings=_settings(env="production"),
         repository=repository,
+        ingest=_ingest(repository, stores),
+        revisions=_revisions(repository, stores),
         authorizer=RoleBindingAuthorizer(),
         api_keys=stores.api_keys,
         credentials=stores.credentials,

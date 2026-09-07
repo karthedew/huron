@@ -1,6 +1,6 @@
 """The shared error contract: ``Problem``, ``problem()``, and the installed handlers.
 
-Covers the six handlers ``install_error_handlers`` wires onto an app and
+Covers the seven handlers ``install_error_handlers`` wires onto an app and
 ``wire_error_codes`` - the walker that keeps the wire's code set honest
 without a hand-maintained list that could fall out of sync with it.
 """
@@ -12,6 +12,7 @@ import logging
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect
 
 from huron.pkg.auth import AuthError
 from huron.pkg.rbac.roles import UnknownRole
@@ -56,6 +57,10 @@ def _app() -> FastAPI:
     def _query(n: int) -> dict[str, int]:
         return {"n": n}
 
+    @app.get("/disconnect")
+    def _disconnect() -> None:
+        raise ClientDisconnect()
+
     return app
 
 
@@ -94,6 +99,14 @@ def test_role_error_answers_422(client: TestClient) -> None:
     response = client.get("/role")
     assert response.status_code == 422
     _assert_problem_shape(response.json(), status=422, code="UNKNOWN_ROLE")
+
+
+def test_a_client_disconnect_answers_400_with_the_framework_code(client: TestClient) -> None:
+    """A raised ClientDisconnect answers 400 with the framework's BAD_REQUEST code."""
+    response = client.get("/disconnect")
+    assert response.status_code == 400
+    assert response.headers["content-type"] == PROBLEM_MEDIA_TYPE
+    _assert_problem_shape(response.json(), status=400, code="BAD_REQUEST")
 
 
 def test_an_unrouted_path_answers_404_with_a_code(client: TestClient) -> None:

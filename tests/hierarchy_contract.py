@@ -13,31 +13,46 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from datetime import UTC, datetime
+import hashlib
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 
 from huron.pkg.catalog.errors import (
+    DatasetLocked,
+    DuplicateContent,
     IdempotencyKeyReused,
+    IngestSessionExpired,
     PreconditionFailed,
     ResourceNotFound,
     TagExists,
 )
 from huron.pkg.catalog.ids import uuid7
+from huron.pkg.catalog.ingest import (
+    LEASE_TTL,
+    FileState,
+    IngestFile,
+    IngestState,
+    UploadAction,
+    compute_upload_plan,
+)
 from huron.pkg.catalog.layers import Layer
 from huron.pkg.catalog.lifecycle import DatasetLifecycle
-from huron.pkg.catalog.models import RevisionRef
+from huron.pkg.catalog.manifest import Manifest, ManifestEntry
+from huron.pkg.catalog.models import OutboxEvent, RevisionRecord, RevisionRef
 from huron.pkg.rbac import Visibility
 from huron.service.api.errors import SlugExists
-from huron.service.api.records import Dataset, Organization, Project, Release
+from huron.service.api.records import AuditEvent, Dataset, Organization, Project, Release
 from huron.service.api.stores.ports import IdempotencyClaim, Replay
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
     from uuid import UUID
 
+    from huron.pkg.catalog.ingest import IngestSession
     from huron.service.api.stores.ports import HierarchyStore
+    from tests.unit.support import FakeClock
 
 
 class _AbortedError(Exception):
@@ -105,17 +120,54 @@ def _dataset(*, project_id: UUID, slug: str) -> Dataset:
     )
 
 
-def _release(*, dataset_id: UUID, tag: str, revision: RevisionRef) -> Release:
-    """Build a ``Release`` citing ``revision``, ready to insert."""
+def _release(*, dataset_id: UUID, tag: str, revision_id: UUID, revision_number: int) -> Release:
+    """Build a ``Release`` citing one revision, ready to insert."""
     return Release(
         id=uuid7(),
         dataset_id=dataset_id,
         tag=tag,
-        revision_id=revision.id,
-        revision_number=revision.number,
+        revision_id=revision_id,
+        revision_number=revision_number,
         title=None,
         created_by="user:test",
         created_at=datetime.now(UTC),
+    )
+
+
+def committed_revision(
+    dataset_id: UUID,
+    number: int,
+    *,
+    revision_id: UUID | None = None,
+    manifest_sha256: str | None = None,
+) -> RevisionRecord:
+    """Build a ``RevisionRecord`` ready to insert through ``insert_revision``.
+
+    Args:
+        dataset_id: The dataset the revision belongs to.
+        number: The revision's 1-based position within its dataset.
+        revision_id: The revision's identifier, or None to mint a fresh one.
+        manifest_sha256: The manifest's content identity, or None to derive
+            one from ``revision_id`` so two calls with distinct ids never
+            collide by accident.
+
+    Returns:
+        A revision record with arbitrary but valid values for every field
+        a scenario does not care about.
+    """
+    revision_id = revision_id if revision_id is not None else uuid7()
+    digest = manifest_sha256 if manifest_sha256 is not None else revision_id.hex.ljust(64, "0")
+    return RevisionRecord(
+        id=revision_id,
+        dataset_id=dataset_id,
+        number=number,
+        manifest_sha256=digest,
+        metadata_sha256=digest,
+        revision_path=f"revisions/{number:06d}--{revision_id}",
+        committed_by="user:test",
+        committed_at=datetime.now(UTC),
+        file_count=1,
+        total_bytes=1,
     )
 
 
@@ -158,11 +210,8 @@ async def seed_hierarchy(
     return SeededHierarchy(organizations=organizations, projects=projects, datasets=datasets)
 
 
-async def scenario_1_write_invisible_until_commit(
-    store: HierarchyStore, seed_revision: Callable[[RevisionRef], Awaitable[None]]
-) -> None:
+async def scenario_1_write_invisible_until_commit(store: HierarchyStore) -> None:
     """A write is invisible to a reader until commit, and never lands if the transaction raises."""
-    del seed_revision
     organization = _organization(slug="astro")
     async with store.transaction() as writer:
         await writer.insert_organization(organization)
@@ -180,9 +229,7 @@ async def scenario_1_write_invisible_until_commit(
         await store.organization(doomed.id, Visibility.ALL)
 
 
-async def scenario_2_uniqueness(
-    store: HierarchyStore, seed_revision: Callable[[RevisionRef], Awaitable[None]]
-) -> None:
+async def scenario_2_uniqueness(store: HierarchyStore) -> None:
     """A duplicate slug or tag under the same parent is refused; a different parent is not."""
     organization_a = _organization(slug="org-a")
     organization_b = _organization(slug="org-b")
@@ -221,23 +268,33 @@ async def scenario_2_uniqueness(
                 _dataset(project_id=project_a.id, slug="run-0001"), data_classification="open"
             )
 
-    revision = RevisionRef(id=uuid7(), dataset_id=dataset_a.id, number=1, manifest_sha256="a" * 64)
-    await seed_revision(revision)
+    revision = committed_revision(dataset_a.id, 1, manifest_sha256="a" * 64)
     async with store.transaction() as writer:
-        await writer.insert_release(_release(dataset_id=dataset_a.id, tag="v1", revision=revision))
+        await writer.insert_revision(revision)
+    async with store.transaction() as writer:
+        await writer.insert_release(
+            _release(
+                dataset_id=dataset_a.id,
+                tag="v1",
+                revision_id=revision.id,
+                revision_number=revision.number,
+            )
+        )
 
     with pytest.raises(TagExists):
         async with store.transaction() as writer:
             await writer.insert_release(
-                _release(dataset_id=dataset_a.id, tag="v1", revision=revision)
+                _release(
+                    dataset_id=dataset_a.id,
+                    tag="v1",
+                    revision_id=revision.id,
+                    revision_number=revision.number,
+                )
             )
 
 
-async def scenario_3_optimistic_concurrency(
-    store: HierarchyStore, seed_revision: Callable[[RevisionRef], Awaitable[None]]
-) -> None:
+async def scenario_3_optimistic_concurrency(store: HierarchyStore) -> None:
     """update_* stores the successor at the current version and refuses a stale one, unchanged."""
-    del seed_revision
     organization = _organization(slug="astro")
     async with store.transaction() as writer:
         await writer.insert_organization(organization)
@@ -303,11 +360,8 @@ async def scenario_3_optimistic_concurrency(
     assert (await store.dataset(dataset.id, Visibility.ALL)).title == "Run 1"
 
 
-async def scenario_4_idempotency(
-    store: HierarchyStore, seed_revision: Callable[[RevisionRef], Awaitable[None]]
-) -> None:
+async def scenario_4_idempotency(store: HierarchyStore) -> None:
     """A claim replays inside its TTL, rejects a mismatch, and leaves no trace on rollback."""
-    del seed_revision
     claim = IdempotencyClaim(principal="user:alice", key="create-astro", request_sha256="a" * 64)
     async with store.transaction() as writer:
         assert await writer.claim(claim) is None
@@ -365,37 +419,45 @@ async def scenario_4_idempotency(
     assert sum(1 for item in window.items if item.slug == "race") == 1
 
 
-async def scenario_5_revisions(
-    store: HierarchyStore, seed_revision: Callable[[RevisionRef], Awaitable[None]]
-) -> None:
-    """revision_ref resolves a seeded revision and insert_release enforces that it exists."""
+async def scenario_5_revisions(store: HierarchyStore) -> None:
+    """revision_ref resolves a committed revision and insert_release enforces that it exists."""
     hierarchy = await seed_hierarchy(store)
     dataset_id = hierarchy.datasets["run-0001"]
 
     with pytest.raises(ResourceNotFound):
         await store.revision_ref(dataset_id, 1)
 
-    revision = RevisionRef(id=uuid7(), dataset_id=dataset_id, number=1, manifest_sha256="b" * 64)
-    await seed_revision(revision)
-    assert await store.revision_ref(dataset_id, 1) == revision
+    revision = committed_revision(dataset_id, 1, manifest_sha256="b" * 64)
+    async with store.transaction() as writer:
+        await writer.insert_revision(revision)
+    assert await store.revision_ref(dataset_id, 1) == RevisionRef(
+        id=revision.id,
+        dataset_id=revision.dataset_id,
+        number=revision.number,
+        manifest_sha256=revision.manifest_sha256,
+    )
 
-    unseeded = RevisionRef(id=uuid7(), dataset_id=dataset_id, number=99, manifest_sha256="c" * 64)
     with pytest.raises(ResourceNotFound):
         async with store.transaction() as writer:
             await writer.insert_release(
-                _release(dataset_id=dataset_id, tag="v1", revision=unseeded)
+                _release(dataset_id=dataset_id, tag="v1", revision_id=uuid7(), revision_number=99)
             )
 
     async with store.transaction() as writer:
-        await writer.insert_release(_release(dataset_id=dataset_id, tag="v1", revision=revision))
+        await writer.insert_release(
+            _release(
+                dataset_id=dataset_id,
+                tag="v1",
+                revision_id=revision.id,
+                revision_number=revision.number,
+            )
+        )
     release = await store.release(dataset_id, "v1", Visibility.ALL)
     assert release.revision_id == revision.id
     assert release.revision_number == revision.number
 
 
-async def scenario_6_ordering(
-    store: HierarchyStore, seed_revision: Callable[[RevisionRef], Awaitable[None]]
-) -> None:
+async def scenario_6_ordering(store: HierarchyStore) -> None:
     """Organizations, projects, datasets and releases sort by (slug, id) or tag, not insertion.
 
     Six slugs - three hyphenated, three not - sort one way under Python's
@@ -424,25 +486,30 @@ async def scenario_6_ordering(
     assert [item.slug for item in datasets.items] == expected
 
     dataset_id = hierarchy.datasets["a-1"]
-    revision = RevisionRef(id=uuid7(), dataset_id=dataset_id, number=1, manifest_sha256="d" * 64)
-    await seed_revision(revision)
+    revision = committed_revision(dataset_id, 1, manifest_sha256="d" * 64)
+    async with store.transaction() as writer:
+        await writer.insert_revision(revision)
     async with store.transaction() as writer:
         for tag in slugs:
-            await writer.insert_release(_release(dataset_id=dataset_id, tag=tag, revision=revision))
+            await writer.insert_release(
+                _release(
+                    dataset_id=dataset_id,
+                    tag=tag,
+                    revision_id=revision.id,
+                    revision_number=revision.number,
+                )
+            )
     releases = await store.releases(dataset_id, Visibility.ALL, limit=200, after=None)
     assert [item.tag for item in releases.items] == expected
 
 
-async def scenario_7_windows(
-    store: HierarchyStore, seed_revision: Callable[[RevisionRef], Awaitable[None]]
-) -> None:
+async def scenario_7_windows(store: HierarchyStore) -> None:
     """A window returns at most limit items, has_more tracks what remains, and after is exclusive.
 
     Five organizations are seeded - enough for a partial page, a full page
     and a limit=1 walk without being unwieldy - and every window and walk
     below is asserted against Python's own ``sorted`` order on their slugs.
     """
-    del seed_revision
     slugs = ("org-1", "org-2", "org-3", "org-4", "org-5")
     await seed_hierarchy(store, {slug: {} for slug in slugs})
     ordered = sorted(slugs)
@@ -497,9 +564,7 @@ class VisibleIds:
     releases: frozenset[UUID]
 
 
-async def scenario_8_visibility(
-    store: HierarchyStore, seed_revision: Callable[[RevisionRef], Awaitable[None]]
-) -> dict[str, VisibleIds]:
+async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     """The three visibility rules, evaluated at every level against one fixture.
 
     Unlike every other scenario in this module, this one returns a value:
@@ -516,8 +581,6 @@ async def scenario_8_visibility(
 
     Args:
         store: The store to seed and query.
-        seed_revision: Registers a committed revision so the fixture's one
-            release can cite it.
 
     Returns:
         One ``VisibleIds`` per evaluated ``Visibility``, keyed by
@@ -546,9 +609,12 @@ async def scenario_8_visibility(
     b1ds_id = hierarchy.datasets["b1-ds"]
     c1ds_id = hierarchy.datasets["c1-ds"]
 
-    revision = RevisionRef(id=uuid7(), dataset_id=a1ds_id, number=1, manifest_sha256="e" * 64)
-    await seed_revision(revision)
-    release = _release(dataset_id=a1ds_id, tag="v1", revision=revision)
+    revision = committed_revision(a1ds_id, 1, manifest_sha256="e" * 64)
+    async with store.transaction() as writer:
+        await writer.insert_revision(revision)
+    release = _release(
+        dataset_id=a1ds_id, tag="v1", revision_id=revision.id, revision_number=revision.number
+    )
     async with store.transaction() as writer:
         await writer.insert_release(release)
 
@@ -706,9 +772,7 @@ async def scenario_8_visibility(
     return results
 
 
-async def scenario_9_visibility_inputs(
-    store: HierarchyStore, seed_revision: Callable[[RevisionRef], Awaitable[None]]
-) -> None:
+async def scenario_9_visibility_inputs(store: HierarchyStore) -> None:
     """project_visibilities and dataset_parents supply the visibility computation with its inputs.
 
     Two projects under one organization prove ``project_visibilities``
@@ -716,7 +780,6 @@ async def scenario_9_visibility_inputs(
     classification; ``dataset_parents`` resolves a known dataset id and
     silently omits an id that names nothing.
     """
-    del seed_revision
     hierarchy = await seed_hierarchy(
         store, {"astro": {"sims": ("run-0001",), "obs": ("run-0002",)}}
     )
@@ -731,3 +794,577 @@ async def scenario_9_visibility_inputs(
     known_dataset_id = hierarchy.datasets["run-0001"]
     parents = await store.dataset_parents(frozenset({known_dataset_id, uuid7()}))
     assert parents == {known_dataset_id: hierarchy.projects["sims"]}
+
+
+def _manifest(paths: Sequence[str]) -> Manifest:
+    """Build a manifest with one small, uniquely identified file per path.
+
+    Args:
+        paths: The payload paths to declare, each becoming one file.
+
+    Returns:
+        A manifest whose files hash distinctly by path, suitable for
+        ``begin_ingest`` and ``compute_upload_plan``.
+    """
+    return Manifest(
+        files=tuple(
+            ManifestEntry(path=path, size=10, sha256=hashlib.sha256(path.encode()).hexdigest())
+            for path in paths
+        )
+    )
+
+
+def planned_files(
+    manifest: Manifest, parent_manifest: Manifest | None = None
+) -> tuple[IngestFile, ...]:
+    """Build the ledger rows an upload plan reserves for a manifest.
+
+    Args:
+        manifest: The manifest being ingested.
+        parent_manifest: The parent revision's manifest, or None for a
+            dataset's first revision.
+
+    Returns:
+        One freshly identified, PENDING ``IngestFile`` per plan entry, in
+        the plan's order.
+    """
+    plan = compute_upload_plan(manifest, parent_manifest)
+    return tuple(
+        IngestFile(
+            file_id=uuid7(),
+            path=entry.file.path,
+            size=entry.file.size,
+            expected_sha256=entry.file.sha256,
+            action=entry.action,
+            part_count=entry.part_count,
+        )
+        for entry in plan
+    )
+
+
+def _complete_file() -> IngestFile:
+    """Build an arbitrary already-COMPLETE file, for driving a session to VERIFYING.
+
+    Returns:
+        A one-part upload file recorded as fully received, not tied to any
+        session's real ledger.
+    """
+    return IngestFile(
+        file_id=uuid7(),
+        path="payload/complete.bin",
+        size=1,
+        expected_sha256="a" * 64,
+        action=UploadAction.UPLOAD,
+        part_count=1,
+        state=FileState.COMPLETE,
+        completed_parts=frozenset({1}),
+    )
+
+
+def _walk_to_committing(
+    session: IngestSession, *, manifest_sha256: str, now: datetime
+) -> IngestSession:
+    """Advance a PREPARING session straight to COMMITTING.
+
+    Skips persisting the intermediate UPLOADING and VERIFYING edges, which
+    the numbering and commit-transaction scenarios below have no need to
+    observe.
+
+    Args:
+        session: The session to advance, currently PREPARING.
+        manifest_sha256: The manifest identity to commit, checked against
+            the session's declared one.
+        now: The instant every edge is judged against.
+
+    Returns:
+        The session in COMMITTING, three edges and etags ahead.
+    """
+    uploading = session.open(now=now)
+    verifying = uploading.verify((_complete_file(),), now=now)
+    return verifying.begin_commit(manifest_sha256=manifest_sha256, now=now)
+
+
+async def scenario_10_begin_ingest_reserves_and_locks(
+    store: HierarchyStore, clock: FakeClock
+) -> None:
+    """begin_ingest reserves a gap-free number and locks the dataset until the session ends."""
+    hierarchy = await seed_hierarchy(store, {"astro": {"sims": ("run-0001", "run-0002")}})
+    locked_dataset_id = hierarchy.datasets["run-0001"]
+    manifest = _manifest(("payload/a.bin", "payload/b.bin"))
+    files = planned_files(manifest)
+
+    async with store.transaction() as writer:
+        session = await writer.begin_ingest(
+            locked_dataset_id,
+            manifest.sha256,
+            created_by="user:alice",
+            parent_revision_id=None,
+            files=files,
+        )
+    assert session.lease.revision_number == 1
+    assert session.state is IngestState.PREPARING
+    assert session.etag == 1
+    assert session.lease.expires_at == clock.now() + LEASE_TTL
+    stored_files = await store.ingest_files(session.lease.ingest_id)
+    assert [file.state for file in stored_files] == [FileState.PENDING, FileState.PENDING]
+    assert [file.part_count for file in stored_files] == [file.part_count for file in files]
+
+    with pytest.raises(DatasetLocked) as excinfo:
+        async with store.transaction() as writer:
+            await writer.begin_ingest(
+                locked_dataset_id,
+                "b" * 64,
+                created_by="user:bob",
+                parent_revision_id=None,
+                files=(),
+            )
+    assert excinfo.value.context["session_id"] == str(session.lease.ingest_id)
+    assert excinfo.value.context["state"] == "PREPARING"
+    assert excinfo.value.context["expires_at"] == session.lease.expires_at.isoformat()
+
+    clock.advance(LEASE_TTL * 2)
+    with pytest.raises(DatasetLocked):
+        async with store.transaction() as writer:
+            await writer.begin_ingest(
+                locked_dataset_id,
+                "c" * 64,
+                created_by="user:bob",
+                parent_revision_id=None,
+                files=(),
+            )
+
+    with pytest.raises(ResourceNotFound):
+        async with store.transaction() as writer:
+            await writer.begin_ingest(
+                uuid7(), "d" * 64, created_by="user:carol", parent_revision_id=None, files=()
+            )
+
+    open_dataset_id = hierarchy.datasets["run-0002"]
+    committed = committed_revision(open_dataset_id, 1, manifest_sha256="e" * 64)
+    async with store.transaction() as writer:
+        await writer.insert_revision(committed)
+
+    with pytest.raises(DuplicateContent) as duplicate_excinfo:
+        async with store.transaction() as writer:
+            await writer.begin_ingest(
+                open_dataset_id,
+                "e" * 64,
+                created_by="user:dana",
+                parent_revision_id=committed.id,
+                files=(),
+            )
+    assert duplicate_excinfo.value.context["revision_id"] == str(committed.id)
+
+    with pytest.raises(DatasetLocked) as stale_excinfo:
+        async with store.transaction() as writer:
+            await writer.begin_ingest(
+                open_dataset_id,
+                "f" * 64,
+                created_by="user:dana",
+                parent_revision_id=None,
+                files=(),
+            )
+    assert stale_excinfo.value.context == {
+        "reason": "parent_superseded",
+        "latest_revision_id": str(committed.id),
+    }
+
+
+async def scenario_11_a_dead_session_frees_its_number_and_a_commit_spends_it(
+    store: HierarchyStore, clock: FakeClock
+) -> None:
+    """An aborted session's number returns to the pool; a committed one keeps it spent."""
+    hierarchy = await seed_hierarchy(store)
+    dataset_id = hierarchy.datasets["run-0001"]
+
+    async with store.transaction() as writer:
+        first = await writer.begin_ingest(
+            dataset_id, "a" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    assert first.lease.revision_number == 1
+    async with store.transaction() as writer:
+        await writer.update_ingest_session(first.abort(), expected_etag=first.etag)
+    assert (await store.ingest_session(first.lease.ingest_id)).state is IngestState.ABORTED
+
+    async with store.transaction() as writer:
+        retry = await writer.begin_ingest(
+            dataset_id, "b" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    assert retry.lease.revision_number == 1
+
+    committing = _walk_to_committing(retry, manifest_sha256="b" * 64, now=clock.now())
+    revision = committed_revision(
+        dataset_id,
+        retry.lease.revision_number,
+        revision_id=retry.lease.revision_id,
+        manifest_sha256="b" * 64,
+    )
+    async with store.transaction() as writer:
+        await writer.insert_revision(revision)
+        await writer.update_ingest_session(committing.commit(), expected_etag=retry.etag)
+
+    async with store.transaction() as writer:
+        second = await writer.begin_ingest(
+            dataset_id,
+            "c" * 64,
+            created_by="user:alice",
+            parent_revision_id=revision.id,
+            files=(),
+        )
+    assert second.lease.revision_number == 2
+
+    second_committing = _walk_to_committing(second, manifest_sha256="c" * 64, now=clock.now())
+    async with store.transaction() as writer:
+        await writer.update_ingest_session(second_committing.fail(), expected_etag=second.etag)
+
+    async with store.transaction() as writer:
+        third = await writer.begin_ingest(
+            dataset_id,
+            "d" * 64,
+            created_by="user:alice",
+            parent_revision_id=revision.id,
+            files=(),
+        )
+    assert third.lease.revision_number == 2
+
+
+async def scenario_12_state_edges_cas_on_etag_and_renew_does_not(
+    store: HierarchyStore, clock: FakeClock
+) -> None:
+    """update_ingest_session CASes on etag; renew_ingest_session moves the lease, not the etag.
+
+    A COMMITTING session still renews - only a terminal one refuses.
+    """
+    hierarchy = await seed_hierarchy(store)
+    dataset_id = hierarchy.datasets["run-0001"]
+    async with store.transaction() as writer:
+        session = await writer.begin_ingest(
+            dataset_id, "a" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.update_ingest_session(session.open(now=clock.now()), expected_etag=99)
+    unchanged = await store.ingest_session(session.lease.ingest_id)
+    assert unchanged.state is IngestState.PREPARING
+    assert unchanged.etag == session.etag
+
+    phantom = dataclasses.replace(
+        session, lease=dataclasses.replace(session.lease, ingest_id=uuid7())
+    )
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.update_ingest_session(phantom.open(now=clock.now()), expected_etag=1)
+
+    opened = session.open(now=clock.now())
+    async with store.transaction() as writer:
+        await writer.update_ingest_session(opened, expected_etag=session.etag)
+    stored = await store.ingest_session(session.lease.ingest_id)
+    assert stored.state is IngestState.UPLOADING
+    assert stored.etag == opened.etag
+
+    later = session.lease.expires_at + timedelta(hours=1)
+    renewed_candidate = dataclasses.replace(
+        opened, lease=dataclasses.replace(opened.lease, expires_at=later)
+    )
+    async with store.transaction() as writer:
+        await writer.renew_ingest_session(renewed_candidate)
+    renewed = await store.ingest_session(session.lease.ingest_id)
+    assert renewed.lease.expires_at == later
+    assert renewed.etag == opened.etag
+
+    earlier_candidate = dataclasses.replace(
+        opened, lease=dataclasses.replace(opened.lease, expires_at=session.lease.expires_at)
+    )
+    async with store.transaction() as writer:
+        await writer.renew_ingest_session(earlier_candidate)
+    unmoved = await store.ingest_session(session.lease.ingest_id)
+    assert unmoved.lease.expires_at == later
+
+    with pytest.raises(IngestSessionExpired):
+        async with store.transaction() as writer:
+            await writer.renew_ingest_session(phantom)
+
+    aborted = renewed.abort()
+    async with store.transaction() as writer:
+        await writer.update_ingest_session(aborted, expected_etag=renewed.etag)
+    with pytest.raises(IngestSessionExpired):
+        async with store.transaction() as writer:
+            await writer.renew_ingest_session(aborted)
+
+    async with store.transaction() as writer:
+        second = await writer.begin_ingest(
+            dataset_id, "b" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    committing = _walk_to_committing(second, manifest_sha256="b" * 64, now=clock.now())
+    async with store.transaction() as writer:
+        await writer.update_ingest_session(committing, expected_etag=second.etag)
+
+    still_later = committing.lease.expires_at + timedelta(hours=1)
+    renewed_committing_candidate = dataclasses.replace(
+        committing, lease=dataclasses.replace(committing.lease, expires_at=still_later)
+    )
+    async with store.transaction() as writer:
+        await writer.renew_ingest_session(renewed_committing_candidate)
+    renewed_committing = await store.ingest_session(second.lease.ingest_id)
+    assert renewed_committing.state is IngestState.COMMITTING
+    assert renewed_committing.lease.expires_at == still_later
+    assert renewed_committing.etag == committing.etag
+
+
+async def scenario_13_file_ledger_updates_fence_on_pending_and_parts(
+    store: HierarchyStore, clock: FakeClock
+) -> None:
+    """update_ingest_file fences on the file being PENDING with exactly the expected parts."""
+    hierarchy = await seed_hierarchy(store)
+    dataset_id = hierarchy.datasets["run-0001"]
+    manifest = _manifest(("payload/a.bin",))
+    files = planned_files(manifest)
+    async with store.transaction() as writer:
+        session = await writer.begin_ingest(
+            dataset_id,
+            manifest.sha256,
+            created_by="user:alice",
+            parent_revision_id=None,
+            files=files,
+        )
+    file_id = files[0].file_id
+
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.update_ingest_file(
+                session.lease.ingest_id, files[0].part_received(1), expected_parts=frozenset({1})
+            )
+
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.update_ingest_file(
+                session.lease.ingest_id,
+                dataclasses.replace(files[0], file_id=uuid7()).part_received(1),
+                expected_parts=frozenset(),
+            )
+
+    advanced = files[0].part_received(1)
+    async with store.transaction() as writer:
+        await writer.update_ingest_file(
+            session.lease.ingest_id, advanced, expected_parts=frozenset()
+        )
+    entry = await store.ingest_file(file_id)
+    assert entry.ingest_id == session.lease.ingest_id
+    assert entry.file.completed_parts == frozenset({1})
+    assert entry.file.state is FileState.PENDING
+
+    completed = advanced.completed(observed_size=10, observed_sha256=manifest.files[0].sha256)
+    async with store.transaction() as writer:
+        await writer.update_ingest_file(
+            session.lease.ingest_id, completed, expected_parts=frozenset({1})
+        )
+    stored = await store.ingest_file(file_id)
+    assert stored.file.state is FileState.COMPLETE
+
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.update_ingest_file(
+                session.lease.ingest_id, completed, expected_parts=frozenset({1})
+            )
+
+
+async def scenario_14_the_commit_transaction_is_atomic_and_replays(
+    store: HierarchyStore, clock: FakeClock
+) -> None:
+    """The commit transaction is atomic and a replayed claim returns the same revision."""
+    hierarchy = await seed_hierarchy(store)
+    dataset_id = hierarchy.datasets["run-0001"]
+    async with store.transaction() as writer:
+        session = await writer.begin_ingest(
+            dataset_id, "a" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    committing = _walk_to_committing(session, manifest_sha256="a" * 64, now=clock.now())
+    async with store.transaction() as writer:
+        await writer.update_ingest_session(committing, expected_etag=session.etag)
+
+    revision = committed_revision(
+        dataset_id,
+        session.lease.revision_number,
+        revision_id=session.lease.revision_id,
+        manifest_sha256="a" * 64,
+    )
+    claim = IdempotencyClaim(principal="user:alice", key="commit-1", request_sha256="1" * 64)
+
+    with pytest.raises(_AbortedError):
+        async with store.transaction() as writer:
+            assert await writer.claim(claim) is None
+            await writer.insert_revision(revision)
+            raise _AbortedError
+
+    with pytest.raises(ResourceNotFound):
+        await store.revision(revision.id)
+    rolled_back = await store.ingest_session(session.lease.ingest_id)
+    assert rolled_back.state is IngestState.COMMITTING
+    assert rolled_back.etag == committing.etag
+
+    now = clock.now()
+    audit = AuditEvent(
+        id=uuid7(),
+        kind="revision.committed",
+        actor="user:alice",
+        subject_kind="revision",
+        subject_id=revision.id,
+        payload={},
+        created_at=now,
+    )
+    outbox = OutboxEvent(
+        id=uuid7(), kind="revision.committed", subject_id=revision.id, payload={}, created_at=now
+    )
+    async with store.transaction() as writer:
+        assert await writer.claim(claim) is None
+        await writer.insert_revision(revision)
+        await writer.update_ingest_session(committing.commit(), expected_etag=committing.etag)
+        await writer.insert_audit_event(audit)
+        await writer.insert_outbox_event(outbox)
+        await writer.remember(claim, Replay(kind="revision", resource_id=revision.id))
+
+    async with store.transaction() as writer:
+        replay = await writer.claim(claim)
+    assert replay == Replay(kind="revision", resource_id=revision.id)
+
+    assert await store.revision(revision.id) == revision
+    assert await store.latest_committed_revision(dataset_id) == revision
+    assert await store.revision_ref(dataset_id, revision.number) == RevisionRef(
+        id=revision.id,
+        dataset_id=dataset_id,
+        number=revision.number,
+        manifest_sha256=revision.manifest_sha256,
+    )
+
+    duplicate = committed_revision(dataset_id, revision.number + 1, manifest_sha256="a" * 64)
+    with pytest.raises(DuplicateContent):
+        async with store.transaction() as writer:
+            await writer.insert_revision(duplicate)
+
+
+async def scenario_15_expiry_flips_lapsed_sessions_only(
+    store: HierarchyStore, clock: FakeClock
+) -> None:
+    """lapsed_ingest_sessions lists only open, lapsed sessions, oldest first; expire flips one."""
+    hierarchy = await seed_hierarchy(
+        store, {"astro": {"sims": ("run-0001", "run-0002", "run-0003", "run-0004")}}
+    )
+    dataset_a = hierarchy.datasets["run-0001"]
+    dataset_b = hierarchy.datasets["run-0002"]
+    dataset_c = hierarchy.datasets["run-0003"]
+    dataset_d = hierarchy.datasets["run-0004"]
+    start = clock.now()
+
+    assert await store.lapsed_ingest_sessions(start, limit=10) == ()
+
+    async with store.transaction() as writer:
+        session_a = await writer.begin_ingest(
+            dataset_a, "a" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    clock.set(start + timedelta(seconds=30))
+    async with store.transaction() as writer:
+        session_d = await writer.begin_ingest(
+            dataset_d, "d" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    clock.set(start + timedelta(minutes=1))
+    async with store.transaction() as writer:
+        session_b = await writer.begin_ingest(
+            dataset_b, "b" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    async with store.transaction() as writer:
+        session_c = await writer.begin_ingest(
+            dataset_c, "c" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    committing_c = _walk_to_committing(session_c, manifest_sha256="c" * 64, now=clock.now())
+    async with store.transaction() as writer:
+        await writer.update_ingest_session(committing_c, expected_etag=session_c.etag)
+
+    clock.set(start + LEASE_TTL + timedelta(seconds=30))
+    renewed_b = session_b.renew(now=clock.now())
+    async with store.transaction() as writer:
+        await writer.renew_ingest_session(renewed_b)
+
+    clock.set(start + LEASE_TTL + timedelta(minutes=2))
+    lapsed = await store.lapsed_ingest_sessions(clock.now(), limit=10)
+    assert [s.lease.ingest_id for s in lapsed] == [
+        session_a.lease.ingest_id,
+        session_d.lease.ingest_id,
+    ]
+
+    bounded = await store.lapsed_ingest_sessions(clock.now(), limit=1)
+    assert [s.lease.ingest_id for s in bounded] == [session_a.lease.ingest_id]
+
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.expire_ingest_session(
+                session_b.expire(now=clock.now()), expected_etag=session_b.etag, now=clock.now()
+            )
+
+    phantom_id = uuid7()
+    phantom_expired = dataclasses.replace(
+        session_a, lease=dataclasses.replace(session_a.lease, ingest_id=phantom_id)
+    ).expire(now=clock.now())
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.expire_ingest_session(phantom_expired, expected_etag=1, now=clock.now())
+
+    expired_a = session_a.expire(now=clock.now())
+    async with store.transaction() as writer:
+        await writer.expire_ingest_session(expired_a, expected_etag=session_a.etag, now=clock.now())
+    assert (await store.ingest_session(session_a.lease.ingest_id)).state is IngestState.ABORTED
+
+    async with store.transaction() as writer:
+        retaken = await writer.begin_ingest(
+            dataset_a, "e" * 64, created_by="user:alice", parent_revision_id=None, files=()
+        )
+    assert retaken.lease.revision_number == session_a.lease.revision_number
+
+
+async def scenario_16_a_hundred_sequential_ingests_number_gap_free(
+    store: HierarchyStore, clock: FakeClock
+) -> None:
+    """100 sequential ingests number 1..100 gap-free, even with a failed attempt every tenth."""
+    hierarchy = await seed_hierarchy(store)
+    dataset_id = hierarchy.datasets["run-0001"]
+    parent_revision_id: UUID | None = None
+
+    for number in range(1, 101):
+        manifest_sha256 = format(number, "064x")
+        if number % 10 == 0:
+            async with store.transaction() as writer:
+                doomed = await writer.begin_ingest(
+                    dataset_id,
+                    manifest_sha256,
+                    created_by="user:alice",
+                    parent_revision_id=parent_revision_id,
+                    files=(),
+                )
+            assert doomed.lease.revision_number == number
+            async with store.transaction() as writer:
+                await writer.update_ingest_session(doomed.fail(), expected_etag=doomed.etag)
+
+        async with store.transaction() as writer:
+            session = await writer.begin_ingest(
+                dataset_id,
+                manifest_sha256,
+                created_by="user:alice",
+                parent_revision_id=parent_revision_id,
+                files=(),
+            )
+        assert session.lease.revision_number == number
+        committing = _walk_to_committing(session, manifest_sha256=manifest_sha256, now=clock.now())
+        revision = committed_revision(
+            dataset_id,
+            number,
+            revision_id=session.lease.revision_id,
+            manifest_sha256=manifest_sha256,
+        )
+        async with store.transaction() as writer:
+            await writer.insert_revision(revision)
+            await writer.update_ingest_session(committing.commit(), expected_etag=session.etag)
+        parent_revision_id = revision.id
+
+    latest = await store.latest_committed_revision(dataset_id)
+    assert latest is not None
+    assert latest.number == 100

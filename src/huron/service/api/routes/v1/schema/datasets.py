@@ -119,13 +119,3 @@ class LayerView(BaseModel):
     is_entry_layer: bool
     produced_by: str
     caller_may: LayerCapabilities
-
-
-class WriteIntent(BaseModel):
-    """An authorization to commit to one layer, granted and not yet used."""
-
-    dataset_id: UUID
-    layer: Layer
-    granted_to: str
-    principal_kind: str
-    capability: str

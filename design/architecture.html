@@ -162,7 +162,7 @@ API-proxied chunk reads — same client code, degraded transport — so no capab
 <tr><th>Service</th><th>Kind</th><th>Replicas</th><th>Responsibility</th><th>Writes to</th></tr>
 <tr><td class="k">API</td><td>FastAPI/uvicorn</td><td>≥2, stateless</td>
 <td>All control-plane routes; streams raw uploads with in-flight SHA-256; issues access grants;
-enforces RBAC on every request.</td><td>NFS staging, PostgreSQL</td></tr>
+enforces RBAC on every request; reaps lapsed ingest leases.</td><td>NFS staging, PostgreSQL</td></tr>
 <tr><td class="k">Prepare worker</td><td>Deployment</td><td>1–N</td>
 <td>Materializes hardlink dedup for unchanged files during ingest, concurrent with client uploads.</td>
 <td>NFS staging</td></tr>

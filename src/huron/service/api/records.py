@@ -1,6 +1,6 @@
 """The record types the API tier stores and serializes.
 
-Eight dataclasses with no behavior and no project imports. This module is the
+Nine dataclasses with no behavior and no project imports. This module is the
 leaf the rest of the tier depends on: a storage adapter needs a record type,
 not the application service that happens to have declared it, and keeping
 the records here is what lets ``stores`` import them without importing
@@ -179,6 +179,25 @@ class Policy:
 
 
 @dataclass(slots=True)
+class AuditEvent:
+    """One append-only audit row: who did what to which subject, and when.
+
+    ``subject_kind`` and ``subject_id`` name what the event is about -
+    typically an ingest session or a revision - while ``actor`` is the
+    principal subject that caused it, or ``"system:sweep"`` for an event
+    the expiry sweep raises on nobody's request.
+    """
+
+    id: UUID
+    kind: str
+    actor: str
+    subject_kind: str
+    subject_id: UUID | None
+    payload: dict[str, object]
+    created_at: datetime
+
+
+@dataclass(slots=True)
 class PolicyAttachment:
     """One policy applied at one scope.
 
@@ -192,6 +211,24 @@ class PolicyAttachment:
     scope_id: UUID
     attached_by: str
     attached_at: datetime
+
+
+def jsonable_value(value: object) -> object:
+    """Render one field's value in the same JSON-ready form ``jsonable`` gives it.
+
+    Args:
+        value: The value to render.
+
+    Returns:
+        The value's string form for a UUID, its ISO 8601 form with a
+        ``Z`` suffix in place of ``+00:00`` for a datetime, and the value
+        unchanged for anything else.
+    """
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    return value
 
 
 def jsonable(item: DataclassInstance) -> dict[str, object]:
@@ -210,12 +247,4 @@ def jsonable(item: DataclassInstance) -> dict[str, object]:
         datetime values rendered as strings and every other value passed
         through unchanged.
     """
-    result: dict[str, object] = {}
-    for key, value in asdict(item).items():
-        if isinstance(value, UUID):
-            result[key] = str(value)
-        elif isinstance(value, datetime):
-            result[key] = value.isoformat().replace("+00:00", "Z")
-        else:
-            result[key] = value
-    return result
+    return {key: jsonable_value(value) for key, value in asdict(item).items()}

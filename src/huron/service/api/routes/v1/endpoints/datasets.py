@@ -1,12 +1,10 @@
-"""Datasets, release tags, and the layer-scoped data-plane guards.
+"""Datasets, release tags, and the layer workflow's read side.
 
 Creating a dataset hangs under its project and needs ``dataset.create``
 there; everything else is addressed by dataset id. Reading a dataset, its
 releases or its layer workflow needs only a credential and the caller's
-visibility, editing needs ``dataset.update``, tagging a release needs
-``release.create``, and a write intent is granted only where both the layer
-rule and the caller's ``data.write`` bindings allow it. Slugs are chosen
-once, at creation, and never change.
+visibility, editing needs ``dataset.update``, and tagging a release needs
+``release.create``. Slugs are chosen once, at creation, and never change.
 """
 
 from __future__ import annotations
@@ -29,10 +27,8 @@ from huron.service.api.authorization import (
     BindingCache,
     CurrentPrincipal,
     CurrentVisibility,
-    LayerWrite,
     as_rbac_principal,
     bindings_for_principal,
-    dataset_layer_writer,
     dataset_scope,
     require_dataset,
     require_project,
@@ -61,7 +57,6 @@ from huron.service.api.routes.v1.schema.datasets import (
     LayerView,
     PatchDataset,
     ReleaseView,
-    WriteIntent,
 )
 from huron.service.api.runtime import Repository
 from huron.service.api.stores import IdempotencyClaim
@@ -431,41 +426,3 @@ async def list_layers(
         )
         for layer in LAYER_ORDER
     ]
-
-
-@router.post(
-    "/{dataset_id}/layers/{layer}/write-intents",
-    status_code=201,
-    responses={404: problem_response("no such dataset")},
-)
-async def create_write_intent(
-    dataset_id: UUID,
-    grant: Annotated[LayerWrite, Depends(dataset_layer_writer)],
-) -> WriteIntent:
-    """Authorize a commit to one layer of one dataset.
-
-    A write intent is granted only when the layer rule and the caller's
-    role bindings both allow the write: human principals may write ``raw``
-    and ``bronze`` only, service accounts ``silver`` and ``gold`` only, and
-    either needs ``data.write`` on the dataset covering that layer. A dataset
-    id that is absent or not discoverable by the caller is 404, before a
-    layer the workflow does not define is refused with 409 or one this kind
-    of principal may never write with 403. The ingest/commit machinery and
-    the credential vendor hang their work off this authorization.
-    \f
-    Args:
-        dataset_id: The dataset to write to.
-        grant: Proof that the layer rule and the binding check both passed
-            for the requested layer.
-
-    Returns:
-        The granted intent: the dataset, the layer, who it was granted to
-        and the capability it was granted under.
-    """
-    return WriteIntent(
-        dataset_id=dataset_id,
-        layer=grant.layer,
-        granted_to=grant.principal.subject,
-        principal_kind=grant.principal.kind,
-        capability=f"data.write@{grant.layer.value}",
-    )

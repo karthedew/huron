@@ -106,17 +106,19 @@ def commit_envelope(staging: Path, final: Path) -> None:
     The envelope is a directory the caller has finished writing and marked
     with a ``COMMITTED`` file. Publication is: every file and directory in
     it is fsynced, the directory is renamed to ``final`` in one
-    ``os.rename``, and ``final``'s parent is fsynced so the new name is as
-    durable as its contents. Nothing is visible under ``final`` before the
-    rename and the rename is the only step that changes what is visible
-    there, so a crash at any point leaves either the staging directory as
-    it was or the complete published envelope, never a partial one.
+    ``os.rename``, ``final``'s parent is fsynced so the new name is as
+    durable as its contents, and then ``final`` itself is made ``0o555``
+    and fsynced. Nothing is visible under ``final`` before the rename and
+    the rename is the only step that changes what is visible there, so a
+    crash at any point leaves either the staging directory as it was or
+    the complete published envelope, never a partial one.
 
     An existing ``final`` is never overwritten. The one case that is not
     refused is the retry: when ``staging`` is already gone and ``final``
     carries ``COMMITTED``, this same commit has evidently completed, and
-    the call returns silently so a caller that crashed between the rename
-    and its own bookkeeping can safely run again.
+    the call reseals ``final`` and returns silently, so a caller that
+    crashed between the rename and its own bookkeeping - or between the
+    rename and the seal - can safely run again.
 
     Args:
         staging: The finished envelope; must be a directory containing a
@@ -138,6 +140,11 @@ def commit_envelope(staging: Path, final: Path) -> None:
     """
     if final.exists():
         if not staging.exists() and (final / "COMMITTED").is_file():
+            # A crash between the rename and the seal publishes an envelope
+            # that is never resealed by anything else, so the retry finishes
+            # the seal itself before returning.
+            os.chmod(final, 0o555)
+            fsync_dir(final)
             return
         raise FileExistsError(final)
     if not staging.is_dir():
@@ -155,3 +162,9 @@ def commit_envelope(staging: Path, final: Path) -> None:
             raise CrossDeviceCommitError(exc.errno, str(exc)) from exc
         raise
     fsync_dir(final.parent)
+    # Sealing before the rename would make the root un-renameable by a
+    # non-root user - rename(2) needs write access on the directory being
+    # moved to update its own `..` entry - so the seal happens only once
+    # publication is already durable.
+    os.chmod(final, 0o555)
+    fsync_dir(final)

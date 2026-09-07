@@ -325,7 +325,7 @@ No public signature changes; no new module.
 
 **Dependencies.** None.
 
-**Status: pending**
+**Status: done**
 
 ### M1 — Domain
 
@@ -381,7 +381,7 @@ M1.2) the Design 1 › Tests rows `test_part_received_records_the_part_and_is_id
 
 **Dependencies.** M0.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M1.2 — `IngestSession`'s named operations, `TRANSITIONS`, the revision factories; `Metastore` deleted
 
@@ -438,7 +438,7 @@ paragraph and Deletions (`Metastore` in full).
 
 **Dependencies.** M1.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M1.3 — Property tests over the state machine and the upload plan
 
@@ -462,7 +462,7 @@ paragraph and Deletions (`Metastore` in full).
 
 **Dependencies.** M1.2.
 
-**Status: pending**
+**Status: done**
 
 ### M2 — Raw store
 
@@ -500,7 +500,7 @@ block (`commit.commit_envelope` gains one step; `:1698-1701`), "The commit seque
 
 **Dependencies.** M0.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M2.2 — The `RawStore` port and `PosixRawStore`'s streaming, document and commit contract
 
@@ -554,7 +554,7 @@ specification, `:1598-1649`), "`PosixRawStore` — changed and added methods" (`
 
 **Dependencies.** M2.1.
 
-**Status: pending**
+**Status: done**
 
 ### M3 — Persistence
 
@@ -615,7 +615,7 @@ Design 3 › Deletions (`schema.sql:87-89` and `:160-162`); Tests › `test_cata
 
 **Dependencies.** M0.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M3.2 — Revisions, audit and outbox on the port and both adapters; `register_revision` retired; one `FakeClock`
 
@@ -682,7 +682,7 @@ Fixtures (`FakeClock`, `memory_stores(*, clock=None)`); Collisions 1 and 6. § 3
 
 **Dependencies.** M1.2, M3.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M3.3 — Sessions and files on the port and both adapters; scenarios 10–16; the race
 
@@ -742,7 +742,7 @@ Collision 5; Techniques › "Racing `begin_ingest`" (`:4255-4269`); Open questio
 
 **Dependencies.** M3.2.
 
-**Status: pending**
+**Status: done**
 
 ### M4 — Documents
 
@@ -803,7 +803,7 @@ Under D-15 (B): the `format-nongpl` extra, the `uv.lock` change and
 
 **Dependencies.** M1.2.
 
-**Status: pending**
+**Status: done**
 
 ### M5 — The ingest surface
 
@@ -916,7 +916,7 @@ key → same session" assertion of the in-project test.
 
 **Dependencies.** M2.2, M3.3, M4.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M5.2 — Upload transport: routes 5 and 6, the body bridge, `ClientDisconnect`, resume
 
@@ -987,7 +987,7 @@ Design 2 › Tests › `test_execution_model.py` (`:2012-2014`).
 
 **Dependencies.** M5.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M5.3 — Verify and commit: routes 7 and 8, the six on-disk steps, the six-statement transaction, `INDEX.json`, the first two crash rows
 
@@ -1073,7 +1073,7 @@ Under the non-default answers: D-12 (B) removes step 8 and the index test; D-14 
 
 **Dependencies.** M5.2.
 
-**Status: pending**
+**Status: done**
 
 ### M6 — The read side
 
@@ -1134,7 +1134,7 @@ the P2 gate's download clauses are proved by reading the sealed tree in
 
 **Dependencies.** M5.3.
 
-**Status: pending**
+**Status: done**
 
 ### M7 — Expiry sweep
 
@@ -1180,7 +1180,7 @@ Under the non-default answers: D-16 changes the default literal and the defaults
 
 **Dependencies.** M5.3.
 
-**Status: pending**
+**Status: done**
 
 ### M8 — Gate suites
 
@@ -1209,7 +1209,7 @@ one revision). P6's assertions (`final` absent, `GET /revisions/{id}` 404,
 
 **Dependencies.** M6.1 (row 9 and P6 use `GET /revisions/{id}`).
 
-**Status: pending**
+**Status: done**
 
 #### Task M8.2 — Dedup 1-of-500 and the independently complete revision
 
@@ -1233,7 +1233,7 @@ Under D-21 (B) the module moves to `tests/acceptance/` with the `acceptance` mar
 
 **Dependencies.** M6.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M8.3 — The acceptance suite, its nightly workflow and `make test-acceptance`
 
@@ -1270,7 +1270,7 @@ test targets the Compose stack through `httpx` and moves to `tests/integration/`
 
 **Dependencies.** M6.1.
 
-**Status: pending**
+**Status: done**
 
 ### M9 — Ratchet and maintainability
 
@@ -1291,7 +1291,7 @@ line reports on the tree after M8.3, rounded down to an integer. Never lower tha
 
 **Dependencies.** M8.3.
 
-**Status: pending**
+**Status: done**
 
 #### Task M9.2 — `stores/hierarchy.py`'s maintainability rank
 
@@ -1315,7 +1315,7 @@ exported names; the module docstrings of both files say which half each holds. I
 
 **Dependencies.** M9.1.
 
-**Status: pending**
+**Status: done**
 
 ### M10 — Documentation write-back
 
@@ -1368,7 +1368,7 @@ and moves the three revision routes out of milestone 8's "Adds".
 
 **Dependencies.** M9.2.
 
-**Status: pending**
+**Status: done**
 
 ---
 
@@ -1398,7 +1398,7 @@ The plan is complete when all of the following hold on the final tree:
    `test_file_download_refuses_traversal_and_non_nfc_spellings_before_touching_storage` and
    `test_create_refuses_every_manifest_rule_with_its_documented_code`), P2 (the same R3 test,
    `test_a_zero_byte_file_is_one_part_that_completes_on_the_empty_digest`,
-   `test_decode_manifest_round_trips_nfc_zero_byte_and_eight_level_entries_with_the_same_identity`),
+   `test_decode_manifest_round_trips_nfc_zero_byte_and_deep_paths_with_the_same_identity`),
    P3 (the same R3 test, `test_write_part_fsyncs_the_file_and_every_directory_up_to_the_payload_root`),
    P4 (`test_a_nine_gib_file_round_trips_byte_identically_after_an_interrupted_upload_resumes`,
    collected; run by the nightly workflow), P5
@@ -1793,3 +1793,114 @@ row now states the `LayerWorkflowError` facts and "expected to flip nothing"; N3
 `PART_BYTES` at call time (Collision 4); N5 — M5.3's Design list cites Design 5 › Requirements on
 Design 4 (a); N6 — M3.3's Postgres statements bind `ids.uuid7()` as parameters. No `Status` line
 changed; 21 tasks remain `pending`.
+
+## Execution notes — 2026-09-06
+
+Recorded by the orchestrator as tasks verified, so later tasks build on what shipped rather
+than on the design's literal text.
+
+- **M2.2 / Design 2.** The part-length exception is `PartLengthMismatchError`, not
+  `PartLengthMismatch`: ruff's `N818` applies to `src/huron/pkg/rawstore/store.py` (no per-file
+  exemption, and the exemptions that exist cover names that mirror wire error codes, which this
+  one never is), and the package's own `CrossDeviceCommitError` already carries the suffix. M5.2
+  maps `PartLengthMismatchError` → `ManifestMismatch`.
+- **M2.2 / Design 2 › Tests.** `_safe_relative` cannot refuse `"a/./b"` or `"a//b"`:
+  `PurePosixPath` normalises both to `('a', 'b')` before the guard sees them, and neither escapes
+  `staging_payload`. The test pins the normalising behaviour; the design row was wrong about
+  `pathlib`, not about the guard.
+- **M3.2 / Design 3 › Tests.** The rollback test is
+  `test_a_rolled_back_transaction_leaves_no_revision_audit_or_outbox_row`: the design's 91-character
+  name cannot fit an `async def` line under ruff's 100-column limit. The body raises inside the open
+  transaction after all three inserts, so the pinned behaviour is unchanged. `radon mi -s
+  stores/hierarchy.py` read A (25.61) after M3.2; M3.3 measures again for D-22.
+- **Execution shape from M3.3 onward (owner's decision, 2026-09-06).** The owner asked for
+  multi-agent orchestration, so independent tasks now run in parallel where the dependency
+  table allows — M3.3's verification beside M4.1; M6.1 beside M7.1; M8.1–M8.3 together — each
+  in its own git worktree and branch off `p2/raw-ingest`, merged back as it passes. The M5 chain
+  and M9–M10 stay serial. Per-task verification keeps the plan's three-attempt cap; a final
+  whole-plan verification pass runs over the merged tree against § 6. This supersedes rule 6
+  ("subagents run serially") for the remainder of this plan only.
+- **M4.1 / Design 5 › Tests.** Two 93-character test names cannot fit a `def` line under 100
+  columns once `ruff format` has its way: the P2 gate-clause test is
+  `test_decode_manifest_round_trips_nfc_zero_byte_and_deep_paths_with_the_same_identity` (it
+  still walks eight directory levels below `payload/`; § 6 item 3 now cites this name), and the
+  storage rebuild test is `…rebuilds_only_when_marker_metadata_and_session_agree`.
+  `tests/unit/test_schema_loading.py` covers `load_schema`'s two error branches, which the
+  100%-on-touched-files rule required once `schema/__init__.py`'s docstring changed.
+- **Execution shape, revised (owner's decision, 2026-09-06, after M4.1).** The parallel shape above
+  is withdrawn: a workflow-run implementer stalled repeatedly, so M4.1 finished through the
+  ordinary single-subagent path. From M5.1 onward every task runs serially in the main tree —
+  one implementer, then one verifier, fix loop capped at three — as rule 6 originally required.
+  The final whole-plan verification pass over the finished tree stays.
+- **M5.3 / Design 4 › "`/commit`, end to end" (found in verification, 2026-09-07).** On a retry past
+  the rename the staging directory is gone, so step 3 reads `final/manifest.json` when
+  `staging/manifest.json` is absent (the bytes are identical by construction), and step 5's
+  read-back branch still runs `commit_envelope` so the published root is resealed. M10.1 writes
+  both into the design's step text.
+- **M5.3 / `pkg/catalog` docstrings (defect for M10.1).** `paths.py`'s `Slugged` docstring and
+  `EntityRef`'s docstring both claim `EntityRef` satisfies `Slugged` structurally; mypy refuses a
+  frozen dataclass against a Protocol declaring plain attributes. The repair is `Slugged`
+  declaring `id` and `slug` as read-only properties, which M10.1 applies with the docstring
+  correction; M5.3 passes the already-computed path instead of rebuilding a reference.
+- **M5.3 residual for M10.1.** Route 8's OpenAPI `responses` documents 400, 404, 409, 412 and 422
+  but not the 500 the design lists for storage and catalog disagreeing; the behaviour is pinned by
+  a test. M10.1 decides whether the route table or the `responses` map moves.
+- **M6.1 / Design 5 › Tests (role vocabulary facts for M10.1).** Every human role carries
+  unrestricted `data.read`, so (1) the "org admin without a data role → 403" download sub-case is
+  unreachable; a service account is the one principal that is visible yet refused, and its 403
+  comes from the `SERVICE_ACCOUNT_LAYERS` restriction, not from an absent capability; (2) revoking
+  a human's only binding removes visibility with the grant, so the re-authorization test pins 404
+  on the next request, not 403; (3) role-compiled bindings never set `maximum_classification`, so a
+  non-discoverable project is visible only to a SYSTEM-scope principal and nobody can commit into
+  it — the "restricted project" rows use a sibling open project the outsider holds no binding on.
+- **M7.1 / `app.py` (note for M10.1).** The lifespan's runtime assembly moved into `_build_runtime`
+  to keep `create_app` under pyscn's function-length limit; as a consequence the raw store's
+  `initialize()` (the data-root skeleton, run by `HierarchyRepository.__init__`) now happens after
+  OIDC discovery rather than before it. Nothing pins the old order and startup's outcome is
+  identical; `docs/getting-started/local-development.md`'s startup description, if it orders
+  those steps, should follow the code.
+- **M8.1 residual for the final verification pass.** Crash-matrix row 6 (the rename) asserts that
+  staging is still a directory where the design's column says "staging intact and complete"; the
+  marker and documents' presence after the failed rename is not asserted. Minor, recorded so the
+  whole-plan pass can decide whether to strengthen it.
+- **M8.2 / D-21 (recorded, owner's attention).** `test_the_linked_revision_survives_the_parent_s_names_being_removed`
+  runs ≈ 10.5 s against the design's ≤ 10 s budget (P14's test runs ≈ 1.1 s). Profiled: the 500
+  fsyncing writes cost 39 ms in total; the time is the read side — `RevisionService.payload_file`
+  re-reads, schema-validates and canonicalises the whole 500-entry manifest on every file
+  request, so a full-revision read is quadratic in file count. Option A stands (the test stays in
+  `unit` at 500; sampling would weaken P15, and a non-streamed download is no cheaper). The
+  quadratic read is a production characteristic the test surfaced, not a test artifact; it is a
+  candidate for a later phase (cache the decoded manifest per revision), not for this plan.
+- **M8.3 / D-19 amended (orchestrator's decision, 2026-09-07, found in verification).** Starlette's
+  `TestClient` and `httpx.ASGITransport` both accumulate a whole response body in memory (measured:
+  a 512 MiB body costs ≈ 1.05 GiB peak RSS), so option A's in-process download of a 9 GiB file
+  would need ≈ 18.5 GiB and be killed on a 16 GB runner; the design's "never materialised" claim
+  is false under `TestClient`. The acceptance test keeps option A's substance — the same
+  in-process app over `memory_stores()` and the real `PosixRawStore`, no Compose stack, no
+  PostgreSQL — but serves it over a loopback `uvicorn` socket on a free port and drives uploads
+  and the download with `httpx` streaming (a loopback server streams 2 GiB at ≈ 0.8 GiB peak,
+  bounded). Option B's Compose target and `tests/integration/` move are not taken. M10.1 writes
+  the amendment into D-19 and the technique's memory sentence.
+- **M3.3 / D-22 (recorded late).** M3.3 measured `stores/hierarchy.py` at B (10.27) with the nine
+  session and file methods in place and performed the split then: both adapters' ingest methods
+  live in `src/huron/service/api/stores/ingest.py` as four mixin bases the store classes inherit,
+  behind the unchanged port, not re-exported. After the split `hierarchy.py` reads A (25.94) and
+  `ingest.py` A (44.47); M9.2 recorded the same readings and changed nothing. `fail_under` is 94
+  after M9.1 (measured 94.49%, ≈ 24 statements of headroom).
+- **Out of scope, for the owner (found in M10.1 verification).** `design/roadmap.html`'s
+  milestone 12 says `GET /bindings` and `GET /datasets/{id}/bindings` "answer 405 today"; both
+  operations are in the route dump and both predate this branch on `main`. Not a P2 row, so M10.1
+  leaves it; a later write-back should correct it.
+- **Whole-plan verification (Fable 5.1, 2026-09-07) — follow-ups for P3, not defects in P2.**
+  (1) The in-memory adapter's `update_ingest_session`, `renew_ingest_session`,
+  `expire_ingest_session` and `update_ingest_file` fence against the store, never the
+  transaction buffer, while PostgreSQL sees its own writes inside a transaction; no shipped
+  caller writes one row twice in a transaction, so no scenario exposes it. (2) In-memory
+  `latest_revision` ignores `dataset_revisions.state`; the PostgreSQL twin filters
+  `state = 'COMMITTED'` — harmless while ingest is the only writer, divergent once P3 writes
+  `PURGED`/`EXPIRED`. Both want a scenario on each backend. (3) Untested claims: the HTTP-level
+  two-chunk memory bound (a design-time measurement; only the store's one-chunk pull is pinned);
+  the sweep being cancelled before `pool.close()` (in-memory stores have no pool); a part recorded
+  on a session aborted between the guard's read and `update_ingest_file` (the file fence checks
+  only PENDING and parts). (4) The M5.3 retry correction (read `final/manifest.json`, reseal)
+  lives in `design/layer-raw.html` §5; `P2_DESIGN.md` is the planning record and was not edited.

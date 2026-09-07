@@ -4,36 +4,34 @@ Drives the FastAPI app through a TestClient over an in-memory
 ``HierarchyStore`` with dev-header auth and ``root`` bootstrapped as
 platform owner. Covers list and get-by-id for all three hierarchy levels,
 plus the two dataset write routes exercised nowhere else: patching a
-dataset, and creating a release once a revision has been registered
-directly against the hierarchy store (``POST .../releases`` cannot drive
-ingest itself - there is no HTTP route that registers a revision yet). Also
-covers, at the HTTP boundary, that reusing an ``Idempotency-Key`` for a
-changed request is refused on every creation route, and that a patch naming
-no field is a no-op that writes nothing new.
+dataset, and creating a release once a revision has been committed
+directly through the hierarchy store's writer (``POST .../releases``
+cannot drive ingest itself - there is no HTTP route that commits a
+revision yet). Also covers, at the HTTP boundary, that reusing an
+``Idempotency-Key`` for a changed request is refused on every creation
+route, and that a patch naming no field is a no-op that writes nothing new.
 """
 
 from __future__ import annotations
 
 import dataclasses
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.catalog.models import RevisionRef
 from huron.pkg.catalog.paths import dataset_dir
 from huron.service.api.app import create_app
 from huron.service.api.settings import ApiSettings, ClassificationValue
+from tests.hierarchy_contract import committed_revision
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from huron.service.api.runtime import ApiStores
-    from huron.service.api.stores import InMemoryHierarchyStore
 
 pytestmark = pytest.mark.unit
 
@@ -125,16 +123,14 @@ def _dataset(client: TestClient, project_id: str, slug: str = "run-0001") -> str
     return str(response.json()["id"])
 
 
-async def _register_revision(
+async def _commit_revision(
     stores: ApiStores, dataset_id: str, *, manifest_sha256: str, number: int = 1
 ) -> None:
-    """Register a revision directly on the injected in-memory hierarchy store."""
-    hierarchy = cast("InMemoryHierarchyStore", stores.hierarchy)
-    await hierarchy.register_revision(
-        RevisionRef(
-            id=uuid7(), dataset_id=UUID(dataset_id), number=number, manifest_sha256=manifest_sha256
+    """Commit a revision directly through the injected hierarchy store's writer."""
+    async with stores.hierarchy.transaction() as writer:
+        await writer.insert_revision(
+            committed_revision(UUID(dataset_id), number, manifest_sha256=manifest_sha256)
         )
-    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -597,19 +593,19 @@ def test_patch_dataset_rejects_a_malformed_if_match_header(client: TestClient) -
 # -- releases -----------------------------------------------------------
 
 
-async def test_create_release_succeeds_once_a_revision_is_registered_directly(
+async def test_create_release_succeeds_once_a_revision_is_committed_directly(
     client: TestClient, stores: ApiStores
 ) -> None:
-    """Creating a release succeeds once its revision is registered directly on the hierarchy store.
+    """Creating a release succeeds once its revision is committed directly on the hierarchy store.
 
-    ``register_revision`` is called on the hierarchy store directly -
-    there is no HTTP route for it yet - the same seam a future ingest
-    pipeline will drive through the store the lifespan wires.
+    ``insert_revision`` is called on the hierarchy store's writer directly -
+    there is no HTTP route that commits a revision yet - the same seam a
+    future ingest pipeline will drive through the store the lifespan wires.
     """
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    await _register_revision(stores, dataset_id, manifest_sha256="a" * 64)
+    await _commit_revision(stores, dataset_id, manifest_sha256="a" * 64)
 
     response = client.post(
         f"/api/v1/datasets/{dataset_id}/releases",
@@ -643,7 +639,7 @@ async def test_create_release_replay_returns_the_identical_body_with_no_replay_i
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    await _register_revision(stores, dataset_id, manifest_sha256="d" * 64)
+    await _commit_revision(stores, dataset_id, manifest_sha256="d" * 64)
     headers = _headers()
     payload = {"tag": "v1", "revision_number": 1}
 
@@ -662,7 +658,7 @@ async def test_create_release_replay_with_a_changed_title_is_refused(
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    await _register_revision(stores, dataset_id, manifest_sha256="9" * 64)
+    await _commit_revision(stores, dataset_id, manifest_sha256="9" * 64)
     headers = _headers()
     payload = {"tag": "v1", "revision_number": 1, "title": "First"}
 
@@ -685,7 +681,7 @@ async def test_dataset_and_release_responses_carry_no_etag_header(
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    await _register_revision(stores, dataset_id, manifest_sha256="e" * 64)
+    await _commit_revision(stores, dataset_id, manifest_sha256="e" * 64)
 
     release = client.post(
         f"/api/v1/datasets/{dataset_id}/releases",
@@ -707,7 +703,7 @@ async def test_list_releases_and_resolve_release_return_what_was_created(
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    await _register_revision(stores, dataset_id, manifest_sha256="b" * 64)
+    await _commit_revision(stores, dataset_id, manifest_sha256="b" * 64)
     created = client.post(
         f"/api/v1/datasets/{dataset_id}/releases",
         json={"tag": "v1", "revision_number": 1},
@@ -744,7 +740,7 @@ async def test_list_releases_orders_by_tag(client: TestClient, stores: ApiStores
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    await _register_revision(stores, dataset_id, manifest_sha256="c" * 64)
+    await _commit_revision(stores, dataset_id, manifest_sha256="c" * 64)
     for tag in ("v2", "v1"):
         response = client.post(
             f"/api/v1/datasets/{dataset_id}/releases",
@@ -765,7 +761,7 @@ async def test_list_releases_cursor_walk_visits_every_item_exactly_once(
     organization_id = _organization(client)
     project_id = _project(client, organization_id)
     dataset_id = _dataset(client, project_id)
-    await _register_revision(stores, dataset_id, manifest_sha256="f" * 64)
+    await _commit_revision(stores, dataset_id, manifest_sha256="f" * 64)
     tags = ["zeta", "astro", "mid", "beta"]
     for tag in tags:
         response = client.post(
@@ -894,31 +890,3 @@ def test_list_layers_marks_write_true_only_for_the_layers_a_binding_covers(
     assert layers["bronze"]["caller_may"] == {"read": True, "write": True}
     assert layers["silver"]["caller_may"] == {"read": True, "write": False}
     assert layers["gold"]["caller_may"] == {"read": True, "write": False}
-
-
-# -- write intents ------------------------------------------------------
-
-
-def test_create_write_intent_returns_the_grant_it_authorized(client: TestClient) -> None:
-    """Creating a write intent returns the exact capability grant it authorized."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    binding = client.post(
-        f"/api/v1/projects/{project_id}/bindings",
-        json={"principal": "user:bob", "role": "developer"},
-        headers=_headers(),
-    )
-    assert binding.status_code == 201
-
-    response = client.post(
-        f"/api/v1/datasets/{dataset_id}/layers/raw/write-intents", headers=_headers("bob")
-    )
-    assert response.status_code == 201
-    assert response.json() == {
-        "dataset_id": dataset_id,
-        "layer": "raw",
-        "granted_to": "bob",
-        "principal_kind": "user",
-        "capability": "data.write@raw",
-    }

@@ -1,6 +1,6 @@
 """One error shape for the whole service, and the handlers that produce it.
 
-``install_error_handlers`` registers six handlers, and the last is
+``install_error_handlers`` registers seven handlers, and the last is
 registered for ``Exception``: every request that does not return a response
 leaves through one of them, so there is no status at or above 400 that
 answers in a shape other than ``application/problem+json``.
@@ -19,6 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
 
 from huron.pkg.auth import AuthError
 from huron.pkg.catalog import manifest as catalog_manifest
@@ -36,8 +37,10 @@ PROBLEM_MEDIA_TYPE = "application/problem+json"
 #: from the status so a status the router starts answering cannot arrive
 #: without a code. 404 and 405 are the two Starlette's router raises; 400 is
 #: FastAPI's own body-reading exception, raised inside a matched route when
-#: the request body cannot be read (for example, a client disconnect).
-FRAMEWORK_STATUSES = (400, 404, 405)
+#: the request body cannot be read (for example, a client disconnect); 416
+#: is ``FileResponse`` answering an unsatisfiable ``Range`` itself, with an
+#: empty body and ``Content-Range``, never a problem document.
+FRAMEWORK_STATUSES = (400, 404, 405, 416)
 
 #: Raised by no class either: FastAPI's own body/query/path validation, and
 #: the outermost handler.
@@ -95,15 +98,16 @@ def problem(status: int, code: str, detail: str, **context: object) -> JSONRespo
 
 
 def install_error_handlers(app: FastAPI) -> None:
-    """Register the six handlers that keep every failure in the problem shape.
+    """Register the seven handlers that keep every failure in the problem shape.
 
     Typed failures map to their own status: a ``DomainError`` to the status
     it declares, an ``AuthError`` to 401, a ``RoleError`` to 422. The
     framework's own failures are covered too - Starlette's HTTP exceptions
     keep their status and headers, FastAPI's request validation answers 422
-    with the validation errors attached - and the ``Exception`` handler
-    catches everything else as a 500 that logs the traceback and puts
-    nothing about it on the wire.
+    with the validation errors attached, a client disconnecting mid-body
+    answers 400 without touching whatever the route was writing - and the
+    ``Exception`` handler catches everything else as a 500 that logs the
+    traceback and puts nothing about it on the wire.
 
     Args:
         app: The application to register the handlers on.
@@ -197,6 +201,26 @@ def install_error_handlers(app: FastAPI) -> None:
             "the request did not satisfy the declared schema",
             errors=jsonable_encoder(exc.errors()),
         )
+
+    @app.exception_handler(ClientDisconnect)
+    async def client_disconnect(_request: Request, _exc: ClientDisconnect) -> JSONResponse:
+        """Answer 400 when the client disconnects before a request body finishes.
+
+        Raised only mid-stream, after every check that can refuse a
+        request has already passed, so nothing this handler needs to
+        report was ever left half-applied: a partially written upload
+        part simply keeps its planned range available for the client's
+        re-send.
+
+        Args:
+            _request: The failing request; unused.
+            _exc: Starlette's own signal that the connection dropped;
+                carries no message of its own.
+
+        Returns:
+            A 400 with the framework's own ``BAD_REQUEST`` code.
+        """
+        return problem(400, "BAD_REQUEST", "the client disconnected before the request completed")
 
     @app.exception_handler(Exception)
     async def unhandled(_request: Request, exc: Exception) -> JSONResponse:
