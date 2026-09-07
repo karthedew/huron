@@ -1233,7 +1233,7 @@ Under D-21 (B) the module moves to `tests/acceptance/` with the `acceptance` mar
 
 **Dependencies.** M6.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M8.3 — The acceptance suite, its nightly workflow and `make test-acceptance`
 
@@ -1863,3 +1863,11 @@ than on the design's literal text.
   staging is still a directory where the design's column says "staging intact and complete"; the
   marker and documents' presence after the failed rename is not asserted. Minor, recorded so the
   whole-plan pass can decide whether to strengthen it.
+- **M8.2 / D-21 (recorded, owner's attention).** `test_the_linked_revision_survives_the_parent_s_names_being_removed`
+  runs ≈ 10.5 s against the design's ≤ 10 s budget (P14's test runs ≈ 1.1 s). Profiled: the 500
+  fsyncing writes cost 39 ms in total; the time is the read side — `RevisionService.payload_file`
+  re-reads, schema-validates and canonicalises the whole 500-entry manifest on every file
+  request, so a full-revision read is quadratic in file count. Option A stands (the test stays in
+  `unit` at 500; sampling would weaken P15, and a non-streamed download is no cheaper). The
+  quadratic read is a production characteristic the test surfaced, not a test artifact; it is a
+  candidate for a later phase (cache the decoded manifest per revision), not for this plan.
