@@ -1270,7 +1270,7 @@ test targets the Compose stack through `httpx` and moves to `tests/integration/`
 
 **Dependencies.** M6.1.
 
-**Status: pending**
+**Status: done**
 
 ### M9 — Ratchet and maintainability
 
@@ -1871,3 +1871,13 @@ than on the design's literal text.
   `unit` at 500; sampling would weaken P15, and a non-streamed download is no cheaper). The
   quadratic read is a production characteristic the test surfaced, not a test artifact; it is a
   candidate for a later phase (cache the decoded manifest per revision), not for this plan.
+- **M8.3 / D-19 amended (orchestrator's decision, 2026-09-07, found in verification).** Starlette's
+  `TestClient` and `httpx.ASGITransport` both accumulate a whole response body in memory (measured:
+  a 512 MiB body costs ≈ 1.05 GiB peak RSS), so option A's in-process download of a 9 GiB file
+  would need ≈ 18.5 GiB and be killed on a 16 GB runner; the design's "never materialised" claim
+  is false under `TestClient`. The acceptance test keeps option A's substance — the same
+  in-process app over `memory_stores()` and the real `PosixRawStore`, no Compose stack, no
+  PostgreSQL — but serves it over a loopback `uvicorn` socket on a free port and drives uploads
+  and the download with `httpx` streaming (a loopback server streams 2 GiB at ≈ 0.8 GiB peak,
+  bounded). Option B's Compose target and `tests/integration/` move are not taken. M10.1 writes
+  the amendment into D-19 and the technique's memory sentence.

@@ -1,9 +1,11 @@
-"""A small client over the ingest-session routes, driving one ``TestClient`` as one subject.
+"""A small client over the ingest-session routes, driving one ``httpx.Client`` as one subject.
 
-Shared by the ``unit`` ingest tests and, later, the acceptance suite, so the
-HTTP mechanics of opening, reading and giving up a session are written once.
-The client assumes ``root`` is bootstrapped as platform owner on the
-``TestClient`` it wraps, the way every ingest test's fixture wires it.
+Shared by the ``unit`` ingest tests and the acceptance suite, so the HTTP
+mechanics of opening, reading and giving up a session are written once. Any
+``httpx.Client``-compatible object works, including ``TestClient`` (itself
+an ``httpx.Client`` subclass) and a plain ``httpx.Client`` bound to a real
+socket. The client assumes ``root`` is bootstrapped as platform owner on the
+client it wraps, the way every ingest test's fixture wires it.
 """
 
 from __future__ import annotations
@@ -16,13 +18,15 @@ from uuid import uuid4
 from huron.service.api.routes.v1.schema.ingest_sessions import ManifestFile
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+    from pathlib import Path
     from typing import Any, BinaryIO
 
-    from fastapi.testclient import TestClient
-    from httpx import Response
+    from httpx import Client, Response
 
 _ADMIN = "root"
+_ZERO_CHUNK_BYTES = 64 * 1024**2
+_UPLOAD_CHUNK_BYTES = 8 * 1024**2
 
 
 def _headers(subject: str, *, key: str | None = None) -> dict[str, str]:
@@ -65,8 +69,45 @@ def declared_file(path: str, size: int, sha256: str) -> ManifestFile:
     return ManifestFile(path=path, size=size, sha256=sha256)
 
 
+def sparse_file(path: Path, size: int) -> Path:
+    """Create a file that reads as ``size`` zero bytes without allocating them on disk.
+
+    Args:
+        path: Where to create the file.
+        size: The file's apparent size in bytes.
+
+    Returns:
+        ``path``, for chaining into a manifest declaration.
+    """
+    with path.open("wb") as handle:
+        if size:
+            handle.seek(size - 1)
+            handle.write(b"\0")
+    return path
+
+
+def zeros_sha256(size: int) -> str:
+    """Hash ``size`` zero bytes, one 64 MiB chunk at a time.
+
+    Args:
+        size: How many zero bytes to hash.
+
+    Returns:
+        The SHA-256 hex digest of ``size`` zero bytes.
+    """
+    digest = hashlib.sha256()
+    chunk = b"\0" * _ZERO_CHUNK_BYTES
+    remaining = size
+    while remaining >= _ZERO_CHUNK_BYTES:
+        digest.update(chunk)
+        remaining -= _ZERO_CHUNK_BYTES
+    if remaining:
+        digest.update(chunk[:remaining])
+    return digest.hexdigest()
+
+
 class IngestClient:
-    """Opens, reads and gives up ingest sessions as one subject, over one ``TestClient``.
+    """Opens, reads and gives up ingest sessions as one subject, over one ``httpx.Client``.
 
     Attributes:
         subject: The dev-header subject every request is sent as.
@@ -77,11 +118,12 @@ class IngestClient:
             None before it has run.
     """
 
-    def __init__(self, client: TestClient, *, subject: str = "bob") -> None:
-        """Bind the client to one ``TestClient`` and one acting subject.
+    def __init__(self, client: Client, *, subject: str = "bob") -> None:
+        """Bind the client to one ``httpx.Client`` and one acting subject.
 
         Args:
-            client: The ``TestClient`` every request is sent through.
+            client: The ``httpx.Client`` (or subclass, such as
+                ``TestClient``) every request is sent through.
             subject: The dev-header subject the client acts as; the owner
                 of every session it opens.
         """
@@ -266,17 +308,28 @@ class IngestClient:
             f"/api/v1/transfer/uploads/{file_id}/complete", headers=_headers(self.subject)
         )
 
-    def upload(self, session: Mapping[str, Any], source: Callable[[str], BinaryIO]) -> int:
-        """Send every missing part of every ``PENDING`` upload file the session's view lists.
+    def upload(
+        self,
+        session: Mapping[str, Any],
+        source: Callable[[str], BinaryIO],
+        *,
+        last_part: int | None = None,
+    ) -> int:
+        """Send every missing part through ``last_part`` of every ``PENDING`` upload file.
 
         A file already ``COMPLETE``, or planned as a hardlink, is skipped
         entirely; a file with some parts already recorded sends only the
-        parts ``completed_parts`` does not already list.
+        parts ``completed_parts`` does not already list. Each part is sent
+        as a generator body read from ``source`` in bounded chunks at the
+        part's offset, with an explicit ``Content-Length``, so sending a
+        part never holds more than one chunk of it in memory.
 
         Args:
             session: A session view, as returned by ``create`` or ``get``.
             source: Given a manifest path, opens the file to read that
                 path's bytes from; closed once its parts are read.
+            last_part: The highest 1-based part number to send for each
+                file, or None to send through the file's last part.
 
         Returns:
             The number of ``PUT`` requests this call issued.
@@ -287,16 +340,21 @@ class IngestClient:
             if file["action"] != "upload" or file["state"] == "COMPLETE":
                 continue
             completed = set(file["completed_parts"])
-            missing = [p for p in range(1, file["part_count"] + 1) if p not in completed]
+            lower = 1
+            upper = last_part if last_part is not None else file["part_count"]
+            missing = [p for p in range(lower, upper + 1) if p not in completed]
             if not missing:
                 continue
             with source(file["path"]) as handle:
                 for part in missing:
                     offset = (part - 1) * part_bytes
                     length = part_bytes if part < file["part_count"] else file["size"] - offset
-                    handle.seek(offset)
-                    data = handle.read(length)
-                    response = self.put_part(file["file_id"], part, data)
+                    response = self.put_part(
+                        file["file_id"],
+                        part,
+                        _part_body(handle, offset, length),
+                        content_length=length,
+                    )
                     assert response.status_code == 200, response.text
                     issued += 1
         return issued
@@ -433,6 +491,62 @@ class IngestClient:
         ) as response:
             response.read()
         return response
+
+    def download_sha256(
+        self, revision_id: str, path: str, *, chunk_size: int
+    ) -> tuple[str, int, int | None]:
+        """Stream one revision file's bytes, hashing them without holding the body in memory.
+
+        Args:
+            revision_id: The revision the file belongs to.
+            path: The file's manifest path, exactly as declared.
+            chunk_size: The largest chunk read from the response stream at
+                once.
+
+        Returns:
+            The downloaded bytes' SHA-256 hex digest, the number of bytes
+            read, and the response's declared ``Content-Length`` (None if
+            the header was absent).
+        """
+        digest = hashlib.sha256()
+        total = 0
+        with self._client.stream(
+            "GET", f"/api/v1/revisions/{revision_id}/files/{path}", headers=_headers(self.subject)
+        ) as response:
+            if response.status_code != 200:
+                response.read()
+            assert response.status_code == 200, response.text
+            content_length = response.headers.get("content-length")
+            for chunk in response.iter_bytes(chunk_size=chunk_size):
+                digest.update(chunk)
+                total += len(chunk)
+        return (
+            digest.hexdigest(),
+            total,
+            int(content_length) if content_length is not None else None,
+        )
+
+
+def _part_body(handle: BinaryIO, offset: int, length: int) -> Iterator[bytes]:
+    """Yield one part's bytes from ``handle``, read in bounded chunks from ``offset``.
+
+    Args:
+        handle: The open source file to read the part's bytes from.
+        offset: The byte offset the part begins at.
+        length: How many bytes the part covers.
+
+    Yields:
+        Successive chunks of the part's bytes, each at most
+        ``_UPLOAD_CHUNK_BYTES`` long, totalling exactly ``length`` bytes.
+    """
+    handle.seek(offset)
+    remaining = length
+    while remaining > 0:
+        chunk = handle.read(min(_UPLOAD_CHUNK_BYTES, remaining))
+        if not chunk:
+            return
+        remaining -= len(chunk)
+        yield chunk
 
 
 def _byte_length(body: bytes | Iterable[bytes]) -> int | None:

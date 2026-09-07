@@ -1,4 +1,4 @@
-.PHONY: help up down stack check hosts logs keycloak-reset bootstrap migrate api test lint docs docs-serve web-install web web-build web-check web-test
+.PHONY: help up down stack check hosts logs keycloak-reset bootstrap migrate api test test-acceptance lint docs docs-serve web-install web web-build web-check web-test
 
 .DEFAULT_GOAL := help
 
@@ -51,6 +51,9 @@ api: ## Run the API on the host with autoreload, configured by dev.env, against 
 
 test: ## Run the fast unit suite.
 	uv run pytest -m unit
+
+test-acceptance: ## Run the acceptance suite (needs ≥ 10 GiB free disk).
+	uv run pytest -m acceptance
 
 lint: ## Run every static check the validation gate enforces.
 	uv run ruff check .
