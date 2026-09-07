@@ -8,9 +8,9 @@ credential into a principal), ``scopes`` (path identifier to RBAC scope,
 bindings a caller is judged by, ``check`` - the one allow-or-403 call - and
 ``current_visibility``, the caller's ``Visibility`` computed once per
 request) and ``guards`` (the ``require_*`` factories and the ingest-session
-guards, ``dataset_raw_writer``, ``project_intake``, ``session_overseer`` and
-``session_owner``, that routes declare). Routes import from here, never
-from the modules.
+guards, ``dataset_raw_writer``, ``project_intake``, ``session_overseer``,
+``session_owner`` and ``upload_owner``, that routes declare). Routes import
+from here, never from the modules.
 """
 
 from .cookies import CookieSpec, login_flow_cookie, session_cookie
@@ -25,6 +25,7 @@ from .decisions import (
 )
 from .guards import (
     IngestDrive,
+    UploadTarget,
     dataset_raw_writer,
     project_intake,
     require_dataset,
@@ -33,6 +34,7 @@ from .guards import (
     require_system,
     session_overseer,
     session_owner,
+    upload_owner,
 )
 from .scopes import dataset_scope, organization_scope, project_scope
 
@@ -43,6 +45,7 @@ __all__ = [
     "CurrentSession",
     "CurrentVisibility",
     "IngestDrive",
+    "UploadTarget",
     "as_rbac_principal",
     "bindings_for_principal",
     "check",
@@ -61,4 +64,5 @@ __all__ = [
     "session_cookie",
     "session_overseer",
     "session_owner",
+    "upload_owner",
 ]

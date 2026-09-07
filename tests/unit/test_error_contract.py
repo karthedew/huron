@@ -2,7 +2,7 @@
 
 ``design/api.html`` §7 and the exception classes the service can actually
 raise name the same codes; each documented status matches the class that
-answers with it; all six error handlers answer in the same shape; and the
+answers with it; all seven error handlers answer in the same shape; and the
 base class enforcing all of this stays impossible to raise directly.
 """
 
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect
 
 from huron.pkg.auth import AuthError
 from huron.pkg.catalog.errors import DomainError, ResourceNotFound
@@ -174,6 +175,10 @@ def _uniform_shape_app() -> FastAPI:
     def _boom() -> None:
         raise RuntimeError("kaboom")
 
+    @app.get("/disconnect")
+    def _disconnect() -> None:
+        raise ClientDisconnect()
+
     return app
 
 
@@ -220,3 +225,10 @@ def test_a_request_validation_failure_answers_uniformly(client: TestClient) -> N
 def test_an_unhandled_exception_answers_uniformly(client: TestClient) -> None:
     """An unhandled exception still answers as a uniform 500 problem document."""
     _assert_uniform_problem(client.get("/boom"), status=500)
+
+
+def test_a_client_disconnect_answers_uniformly(client: TestClient) -> None:
+    """A ``ClientDisconnect`` still answers as a uniform 400 problem document."""
+    response = client.get("/disconnect")
+    _assert_uniform_problem(response, status=400)
+    assert response.json()["code"] == "BAD_REQUEST"

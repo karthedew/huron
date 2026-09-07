@@ -160,12 +160,13 @@ def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decid
     assert calls == ["rbac.binding_manage"]
 
 
-def test_the_openapi_document_carries_thirteen_resource_grained_tags(tmp_path: Path) -> None:
+def test_the_openapi_document_carries_fourteen_resource_grained_tags(tmp_path: Path) -> None:
     """The OpenAPI document tags one per resource rather than one per module.
 
-    ``role-bindings`` and ``service-accounts`` are distinct groups, and
-    nothing is tagged ``auth`` any more - the unversioned surface carries
-    ``authentication`` instead.
+    ``role-bindings`` and ``service-accounts`` are distinct groups, the
+    part-upload transport carries its own ``transfer`` tag apart from
+    ``ingest-sessions``, and nothing is tagged ``auth`` any more - the
+    unversioned surface carries ``authentication`` instead.
     """
     app = create_app(settings=_settings(tmp_path), stores=memory_stores())
     schema = app.openapi()
@@ -173,13 +174,14 @@ def test_the_openapi_document_carries_thirteen_resource_grained_tags(tmp_path: P
     for methods in schema["paths"].values():
         for operation in methods.values():
             tags.update(operation.get("tags", []))
-    assert len(tags) == 13
+    assert len(tags) == 14
     assert "auth" not in tags
     assert tags == {
         "organizations",
         "projects",
         "datasets",
         "ingest-sessions",
+        "transfer",
         "roles",
         "role-bindings",
         "service-accounts",

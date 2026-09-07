@@ -1,27 +1,31 @@
 """Ingest sessions: open one, read it, keep its lease alive, or give it up.
 
 Two routers open a session - on an existing raw dataset, or by minting one
-at intake - and a third addresses a session already open by id. Every
-session-view response carries the session's current ``etag`` as its
-``ETag`` header, the value a later ``/commit`` names in ``If-Match``.
+at intake - a third addresses a session already open by id, and a fourth
+carries the part-upload transport. Every session-view response carries the
+session's current ``etag`` as its ``ETag`` header, the value a later
+``/commit`` names in ``If-Match``.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from asyncer import syncify
+from fastapi import APIRouter, Depends, Header, Request, Response
 
 from huron.pkg.auth import Principal
 from huron.pkg.catalog import ManifestEntry, validate_manifest
 from huron.service.api.authorization import (
     CurrentVisibility,
     IngestDrive,
+    UploadTarget,
     dataset_raw_writer,
     project_intake,
     session_overseer,
     session_owner,
+    upload_owner,
 )
 from huron.service.api.ingest import IngestService
 from huron.service.api.problems import problem_response
@@ -31,11 +35,15 @@ from huron.service.api.routes.v1.preconditions import IdempotencyHeader
 from huron.service.api.routes.v1.schema.ingest_sessions import (
     CreateIngestSession,
     CreateIngestSessionInProject,
+    IngestFileView,
     IngestSessionView,
     ManifestFile,
 )
 from huron.service.api.runtime import Ingest, Repository
 from huron.service.api.stores import IdempotencyClaim
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 dataset_ingest_sessions = APIRouter(
     prefix="/datasets/{dataset_id}/ingest-sessions", tags=["ingest-sessions"]
@@ -44,6 +52,9 @@ project_ingest_sessions = APIRouter(
     prefix="/projects/{project_id}/ingest-sessions", tags=["ingest-sessions"]
 )
 router = APIRouter(prefix="/ingest-sessions", tags=["ingest-sessions"])
+transfer = APIRouter(prefix="/transfer", tags=["transfer"])
+
+ContentLengthHeader = Annotated[int, Header(alias="Content-Length")]
 
 _MANIFEST_ERRORS = problem_response("the manifest is empty or breaks a path rule")
 _SIZE_ERRORS = problem_response("a file, or the revision as a whole, exceeds the configured limit")
@@ -338,3 +349,119 @@ async def abort_ingest_session(
     ledger = await ingest.abort(drive.ledger, actor=drive.principal.subject, forced=not drive.owner)
     response.headers["ETag"] = f'"{ledger.etag}"'
     return IngestSessionView.model_validate(ledger)
+
+
+_UPLOAD_ERRORS = problem_response(
+    "the content length disagreed with the plan, the stream ended short or long, the "
+    "file's observation disagreed with the manifest, or the client disconnected mid-body"
+)
+
+
+def _body_chunks(request: Request) -> Iterator[bytes]:
+    """Pull the request body one chunk at a time, safe to iterate from a worker thread.
+
+    Bridges FastAPI's async body stream to the synchronous ``Iterable[bytes]``
+    the raw store's ``write_part`` consumes on its own worker thread: each
+    call blocks on ``syncify``, hopping back to the event loop to pull the
+    next chunk, so a part is never buffered beyond the one chunk in flight.
+    Empty chunks are skipped; the stream ends when the body is exhausted,
+    and a client disconnect propagates as ``ClientDisconnect``.
+
+    Args:
+        request: The request whose body is streamed.
+
+    Yields:
+        Each non-empty chunk of the request body, in order.
+    """
+    body = request.stream().__aiter__()
+
+    async def _next_chunk() -> bytes:
+        """Await the body's next chunk, so ``syncify`` sees a plain coroutine function.
+
+        Returns:
+            The next chunk from the request body.
+        """
+        return await body.__anext__()
+
+    pull = syncify(_next_chunk)
+    while True:
+        try:
+            chunk = pull()
+        except StopAsyncIteration:
+            return
+        if chunk:
+            yield chunk
+
+
+@transfer.put(
+    "/uploads/{file_id}/parts/{part}",
+    responses={
+        400: _UPLOAD_ERRORS,
+        404: problem_response("no such file, or the part is outside its planned range"),
+        409: problem_response(
+            "the session's lease has lapsed, it is not UPLOADING, or the file cannot "
+            "receive a part in its current state"
+        ),
+    },
+)
+async def upload_part(
+    part: int,
+    request: Request,
+    content_length: ContentLengthHeader,
+    target: Annotated[UploadTarget, Depends(upload_owner)],
+    ingest: Ingest,
+) -> IngestFileView:
+    """Stream one part's bytes into its range of the file's payload.
+
+    ``Content-Length`` must equal the part's planned length; a request with
+    no ``Content-Length`` - a chunked body - is refused before a byte is
+    read, since the part's length must be known up front. The owner alone
+    may drive an upload, and only while their raw-write binding stands.
+    \f
+    Args:
+        part: The 1-based part number being uploaded.
+        request: The request whose body carries the part's bytes.
+        content_length: The declared length of the part.
+        target: The caller's resolved standing on the file.
+        ingest: The wired ingest service.
+
+    Returns:
+        The file's view once the part is recorded.
+    """
+    chunks = _body_chunks(request)
+    file = await ingest.receive_part(
+        target.ledger, target.file, part, chunks, content_length=content_length
+    )
+    return IngestFileView.model_validate(file)
+
+
+@transfer.post(
+    "/uploads/{file_id}/complete",
+    responses={
+        400: problem_response(
+            "the assembled bytes disagree with the manifest; every part must be re-sent"
+        ),
+        409: problem_response(
+            "the session's lease has lapsed, it is not UPLOADING, or the file is not "
+            "fully received, is a hardlink, or is already complete"
+        ),
+    },
+)
+async def complete_upload(
+    target: Annotated[UploadTarget, Depends(upload_owner)], ingest: Ingest
+) -> IngestFileView:
+    """Assemble and verify one file's uploaded parts.
+
+    Every part the plan calls for must already be recorded before this
+    succeeds; a mismatch against the manifest discards the assembled bytes
+    and resets the file to no parts recorded. The owner alone may drive it.
+    \f
+    Args:
+        target: The caller's resolved standing on the file.
+        ingest: The wired ingest service.
+
+    Returns:
+        The file's view once it is COMPLETE.
+    """
+    file = await ingest.complete_file(target.ledger, target.file)
+    return IngestFileView.model_validate(file)

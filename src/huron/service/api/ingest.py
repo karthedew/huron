@@ -12,7 +12,7 @@ pool connection or the per-dataset lock a transaction would otherwise hold.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -20,12 +20,14 @@ from uuid import UUID
 from asyncer import asyncify
 
 from huron.pkg.catalog import (
+    FileState,
     IngestFile,
     IngestSession,
     IngestState,
     Manifest,
     ManifestEntry,
     RevisionRecord,
+    UploadAction,
     UploadPlanEntry,
     compute_upload_plan,
     decode_manifest,
@@ -34,14 +36,21 @@ from huron.pkg.catalog import (
     uuid7,
     validate_manifest,
 )
+from huron.pkg.catalog.errors import (
+    IllegalIngestTransition,
+    ManifestMismatch,
+    PreconditionFailed,
+    ResourceNotFound,
+)
 from huron.pkg.catalog.layers import Layer, LayerWorkflowError
 from huron.pkg.catalog.paths import staging_dir
+from huron.pkg.rawstore import PartLengthMismatchError
 
 from .records import AuditEvent, jsonable
 from .stores import Replay
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from datetime import datetime
 
     from huron.pkg.catalog.ports import Clock, RawStore
@@ -50,6 +59,45 @@ if TYPE_CHECKING:
     from .stores import HierarchyStore, IdempotencyClaim, LedgerEntry
 
 __all__ = ["IngestService", "SessionLedger"]
+
+
+class _MeasuredChunks:
+    """An iterator over a byte stream that records the total length it has yielded.
+
+    Wraps the generator bridging a request body into :meth:`RawStore.write_part`
+    so a stream that ends short or long can report exactly how many bytes it
+    delivered, without the store's own exception needing to carry that count.
+    """
+
+    __slots__ = ("_source", "total")
+
+    def __init__(self, source: Iterable[bytes]) -> None:
+        """Wrap ``source``, tracking the total length of every chunk it yields.
+
+        Args:
+            source: The byte stream to measure while passing it through.
+        """
+        self._source = iter(source)
+        self.total = 0
+
+    def __iter__(self) -> _MeasuredChunks:
+        """Return this object, since it is already an iterator.
+
+        Returns:
+            This same object.
+        """
+        return self
+
+    def __next__(self) -> bytes:
+        """Return the next chunk, adding its length to ``total``.
+
+        Returns:
+            The next chunk from the wrapped source; the wrapped source's
+            own ``StopIteration`` ends this iterator in turn.
+        """
+        chunk = next(self._source)
+        self.total += len(chunk)
+        return chunk
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,6 +468,266 @@ class IngestService:
                 )
             )
         return await self.ledger(ledger.session.lease.ingest_id)
+
+    async def receive_part(
+        self,
+        ledger: SessionLedger,
+        file: IngestFile,
+        part: int,
+        chunks: Iterable[bytes],
+        *,
+        content_length: int,
+    ) -> IngestFile:
+        """Stream one part's bytes into its range of the payload file.
+
+        Every refusal but a stream that ends short or long, or a client
+        disconnect, is raised before ``chunks`` is ever pulled from. The
+        ledger records the part only once its bytes are durable, and is
+        never touched at all when a single-part file's whole-file
+        observation turns out not to match the manifest.
+
+        Args:
+            ledger: The file's session, as last read by the caller.
+            file: The planned file the part belongs to, as last read.
+            part: The 1-based part number the client is sending.
+            chunks: The part's bytes, pulled from the request body.
+            content_length: The request's declared ``Content-Length``.
+
+        Returns:
+            The file as persisted: the part recorded, and completed if
+            this was its only part and the observation matched the
+            manifest.
+        """
+        now = self._clock.now()
+        offset, length = self._authorize_part(
+            ledger, file, part, content_length=content_length, now=now
+        )
+        digest = await self._observe_part(ledger, file, part, chunks, offset=offset, length=length)
+        updated = await self._record_part(ledger, file, part, length=length, digest=digest)
+        renewed = ledger.session.renew(now=now)
+        async with self._hierarchy.transaction() as writer:
+            await writer.renew_ingest_session(renewed)
+        return updated
+
+    def _authorize_part(
+        self,
+        ledger: SessionLedger,
+        file: IngestFile,
+        part: int,
+        *,
+        content_length: int,
+        now: datetime,
+    ) -> tuple[int, int]:
+        """Refuse everything a part upload can reject before its first byte is read.
+
+        Args:
+            ledger: The file's session, as last read by the caller.
+            file: The planned file the part belongs to, as last read.
+            part: The 1-based part number the client is sending.
+            content_length: The request's declared ``Content-Length``.
+            now: The instant to judge the session's lease against.
+
+        Returns:
+            The byte range, ``(offset, length)``, this part must occupy.
+
+        Raises:
+            IllegalIngestTransition: If the session is not UPLOADING, or
+                the file is a hardlink or already COMPLETE.
+            ResourceNotFound: If ``part`` is outside the file's plan.
+            ManifestMismatch: If ``content_length`` disagrees with the
+                part's planned length.
+        """
+        ledger.session.require(IngestState.UPLOADING, now=now)
+        if file.action is UploadAction.HARDLINK or file.state is FileState.COMPLETE:
+            raise IllegalIngestTransition(
+                f"{file.path} cannot receive a part in its current state",
+                context={"state": file.state, "operation": "receive_part"},
+            )
+        if part < 1 or part > file.part_count:
+            raise ResourceNotFound(f"part {part} is outside the plan for {file.path}")
+        part_bytes = ingest.PART_BYTES
+        offset = (part - 1) * part_bytes
+        length = part_bytes if part < file.part_count else file.size - offset
+        if content_length != length:
+            raise ManifestMismatch(
+                f"{file.path} part {part}'s Content-Length disagrees with the plan",
+                context={
+                    "path": file.path,
+                    "part": part,
+                    "expected_length": length,
+                    "content_length": content_length,
+                },
+            )
+        return offset, length
+
+    async def _observe_part(
+        self,
+        ledger: SessionLedger,
+        file: IngestFile,
+        part: int,
+        chunks: Iterable[bytes],
+        *,
+        offset: int,
+        length: int,
+    ) -> str:
+        """Write one part's range into the payload file, on a worker thread.
+
+        Args:
+            ledger: The file's session, as last read by the caller.
+            file: The planned file the part belongs to.
+            part: The 1-based part number being written.
+            chunks: The part's bytes, pulled from the request body.
+            offset: The first byte position the range writes to.
+            length: The exact number of bytes the range must contain.
+
+        Returns:
+            The hex SHA-256 of the bytes written.
+
+        Raises:
+            ManifestMismatch: If the stream delivered a different number
+                of bytes than ``length``.
+        """
+        payload = staging_dir(self._root, ledger.id) / "payload"
+        measured = _MeasuredChunks(chunks)
+        try:
+            return await asyncify(self._raw_store.write_part)(
+                payload, file.path, measured, offset=offset, length=length
+            )
+        except PartLengthMismatchError as exc:
+            raise ManifestMismatch(
+                f"{file.path} part {part} delivered a different number of bytes than planned",
+                context={
+                    "path": file.path,
+                    "part": part,
+                    "expected_length": length,
+                    "observed_length": measured.total,
+                },
+            ) from exc
+
+    async def _record_part(
+        self, ledger: SessionLedger, file: IngestFile, part: int, *, length: int, digest: str
+    ) -> IngestFile:
+        """Apply one part's arrival to the ledger, retrying past a write that raced it.
+
+        Args:
+            ledger: The file's session, as last read by the caller.
+            file: The file as last read, before this part arrived.
+            part: The 1-based part number that was durably written.
+            length: The observed length of the bytes just written.
+            digest: The observed SHA-256 of the bytes just written.
+
+        Returns:
+            The file as persisted: the part recorded, and completed if
+            this was its only part and the observation matched the
+            manifest.
+
+        Raises:
+            ManifestMismatch: If this is a single-part file and the
+                whole-file observation does not match the manifest; the
+                payload is discarded and the ledger is left exactly as it
+                was, so the same part can be re-sent immediately.
+        """
+        payload = staging_dir(self._root, ledger.id) / "payload"
+        current = file
+        while True:
+            updated = current.part_received(part)
+            if updated.part_count == 1:
+                try:
+                    updated = updated.completed(observed_size=length, observed_sha256=digest)
+                except ManifestMismatch:
+                    await asyncify(self._raw_store.discard_file)(payload, file.path)
+                    raise
+            try:
+                async with self._hierarchy.transaction() as writer:
+                    await writer.update_ingest_file(
+                        ledger.id, updated, expected_parts=current.completed_parts
+                    )
+            except PreconditionFailed:
+                entry = await self._hierarchy.ingest_file(file.file_id)
+                current = entry.file
+                continue
+            return updated
+
+    async def complete_file(self, ledger: SessionLedger, file: IngestFile) -> IngestFile:
+        """Assemble and verify one file's uploaded parts.
+
+        Args:
+            ledger: The file's session, as last read by the caller.
+            file: The file to complete, as last read; every part it plans
+                for must already be recorded.
+
+        Returns:
+            The file as persisted, in state COMPLETE.
+
+        Raises:
+            IllegalIngestTransition: If the file is not fully received, is
+                a hardlink, or is already COMPLETE.
+        """
+        now = self._clock.now()
+        ledger.session.require(IngestState.UPLOADING, now=now)
+        if file.state is FileState.COMPLETE or not file.received:
+            raise IllegalIngestTransition(
+                f"{file.path} is not ready to be completed",
+                context={"state": file.state, "operation": "complete_file"},
+            )
+        payload = staging_dir(self._root, ledger.id) / "payload"
+        size, digest = await asyncify(self._raw_store.finish_file)(payload, file.path)
+        updated = await self._finish_file(ledger, file, payload, size=size, digest=digest)
+        renewed = ledger.session.renew(now=now)
+        async with self._hierarchy.transaction() as writer:
+            await writer.renew_ingest_session(renewed)
+        return updated
+
+    async def _finish_file(
+        self,
+        ledger: SessionLedger,
+        file: IngestFile,
+        payload: PurePosixPath,
+        *,
+        size: int,
+        digest: str,
+    ) -> IngestFile:
+        """Prove a file's assembled bytes against the manifest, retrying past a race.
+
+        Args:
+            ledger: The file's session, as last read by the caller.
+            file: The file as last read, before this call proves it.
+            payload: The envelope's ``payload`` directory.
+            size: The whole-file size the store measured.
+            digest: The whole-file SHA-256 the store measured.
+
+        Returns:
+            The file as persisted, in state COMPLETE.
+
+        Raises:
+            ManifestMismatch: If the observation does not match the
+                manifest; the payload is discarded and the ledger is
+                persisted with no parts recorded, so every part must be
+                re-sent.
+        """
+        current = file
+        while True:
+            try:
+                updated = current.completed(observed_size=size, observed_sha256=digest)
+            except ManifestMismatch:
+                await asyncify(self._raw_store.discard_file)(payload, file.path)
+                async with self._hierarchy.transaction() as writer:
+                    await writer.update_ingest_file(
+                        ledger.id,
+                        replace(current, completed_parts=frozenset()),
+                        expected_parts=current.completed_parts,
+                    )
+                raise
+            try:
+                async with self._hierarchy.transaction() as writer:
+                    await writer.update_ingest_file(
+                        ledger.id, updated, expected_parts=current.completed_parts
+                    )
+            except PreconditionFailed:
+                entry = await self._hierarchy.ingest_file(file.file_id)
+                current = entry.file
+                continue
+            return updated
 
     def _audit(
         self,

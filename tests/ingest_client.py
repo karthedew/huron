@@ -15,7 +15,8 @@ from uuid import uuid4
 from huron.service.api.routes.v1.schema.ingest_sessions import ManifestFile
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from typing import Any, BinaryIO
 
     from fastapi.testclient import TestClient
     from httpx import Response
@@ -179,3 +180,96 @@ class IngestClient:
         return self._client.post(
             f"/api/v1/ingest-sessions/{session_id}/abort", headers=_headers(self.subject)
         )
+
+    def put_part(
+        self,
+        file_id: str,
+        part: int,
+        body: bytes | Iterable[bytes],
+        *,
+        content_length: int | None = None,
+    ) -> Response:
+        """Upload one part's bytes.
+
+        Args:
+            file_id: The file the part belongs to.
+            part: The 1-based part number being sent.
+            body: The part's bytes, or an iterable yielding them in
+                chunks.
+            content_length: The ``Content-Length`` to declare. Defaults to
+                ``len(body)`` for a plain bytes body; a generator body with
+                no explicit value is sent with no ``Content-Length``
+                header at all, which the route refuses before reading it.
+
+        Returns:
+            The raw HTTP response.
+        """
+        headers = _headers(self.subject)
+        length = content_length if content_length is not None else _byte_length(body)
+        if length is not None:
+            headers["Content-Length"] = str(length)
+        self.put_count += 1
+        return self._client.put(
+            f"/api/v1/transfer/uploads/{file_id}/parts/{part}", content=body, headers=headers
+        )
+
+    def complete(self, file_id: str) -> Response:
+        """Assemble and verify one file's uploaded parts.
+
+        Args:
+            file_id: The file to complete.
+
+        Returns:
+            The raw HTTP response.
+        """
+        return self._client.post(
+            f"/api/v1/transfer/uploads/{file_id}/complete", headers=_headers(self.subject)
+        )
+
+    def upload(self, session: Mapping[str, Any], source: Callable[[str], BinaryIO]) -> int:
+        """Send every missing part of every ``PENDING`` upload file the session's view lists.
+
+        A file already ``COMPLETE``, or planned as a hardlink, is skipped
+        entirely; a file with some parts already recorded sends only the
+        parts ``completed_parts`` does not already list.
+
+        Args:
+            session: A session view, as returned by ``create`` or ``get``.
+            source: Given a manifest path, opens the file to read that
+                path's bytes from; closed once its parts are read.
+
+        Returns:
+            The number of ``PUT`` requests this call issued.
+        """
+        issued = 0
+        part_bytes = session["part_bytes"]
+        for file in session["files"]:
+            if file["action"] != "upload" or file["state"] == "COMPLETE":
+                continue
+            completed = set(file["completed_parts"])
+            missing = [p for p in range(1, file["part_count"] + 1) if p not in completed]
+            if not missing:
+                continue
+            with source(file["path"]) as handle:
+                for part in missing:
+                    offset = (part - 1) * part_bytes
+                    length = part_bytes if part < file["part_count"] else file["size"] - offset
+                    handle.seek(offset)
+                    data = handle.read(length)
+                    response = self.put_part(file["file_id"], part, data)
+                    assert response.status_code == 200, response.text
+                    issued += 1
+        return issued
+
+
+def _byte_length(body: bytes | Iterable[bytes]) -> int | None:
+    """Return a plain bytes body's length, or None for anything else.
+
+    Args:
+        body: The candidate part body.
+
+    Returns:
+        ``len(body)`` when ``body`` is bytes, otherwise None - a generator
+        body's true length is not known without consuming it.
+    """
+    return len(body) if isinstance(body, bytes) else None

@@ -32,6 +32,8 @@ from .scopes import dataset_scope, organization_scope, project_scope
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from huron.pkg.catalog import IngestFile
+
     from ..ingest import SessionLedger
     from ..repository import HierarchyRepository
     from .decisions import BindingCacheMap
@@ -393,3 +395,58 @@ async def session_owner(
     scope = await dataset_scope(repository, drive.ledger.dataset_id, visibility)
     await _raw_write(cache, repository, principal, scope)
     return drive
+
+
+@dataclass(frozen=True, slots=True)
+class UploadTarget:
+    """Proof that the caller owns the session one planned file belongs to.
+
+    ``ledger`` and ``file`` are both read fresh by the guard, so the route
+    handler never re-reads either before driving the upload.
+    """
+
+    principal: Principal
+    ledger: SessionLedger
+    file: IngestFile
+
+
+async def upload_owner(
+    file_id: UUID,
+    principal: CurrentPrincipal,
+    repository: Repository,
+    ingest: Ingest,
+    cache: BindingCache,
+    visibility: CurrentVisibility,
+) -> UploadTarget:
+    """Guard driving one file's upload: the owner alone, while their raw-write binding stands.
+
+    Resolves exactly as :func:`session_owner` does - the owner alone, and
+    only while their raw-write binding stands - starting from the planned
+    file rather than the session, so the route need not read the file a
+    second time.
+
+    Args:
+        file_id: The path parameter naming the file.
+        principal: The authenticated caller.
+        repository: Resolves the session's dataset scope and the caller's
+            bindings.
+        ingest: The ingest service the file and its session's ledger are
+            read from.
+        cache: The request's binding cache.
+        visibility: The caller's discovery rights, used to resolve the
+            session's dataset.
+
+    Returns:
+        Proof of the caller's standing to drive the file's upload, paired
+        with the file itself.
+
+    Raises:
+        Forbidden: If the caller does not own the session the file
+            belongs to.
+    """
+    ledger, file = await ingest.entry(file_id)
+    scope = await dataset_scope(repository, ledger.dataset_id, visibility)
+    if ledger.created_by != principal.subject:
+        raise Forbidden(f"{principal.subject} does not own ingest session {ledger.id}")
+    await _raw_write(cache, repository, principal, scope)
+    return UploadTarget(principal=principal, ledger=ledger, file=file)

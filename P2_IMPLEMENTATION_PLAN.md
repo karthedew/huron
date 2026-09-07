@@ -987,7 +987,7 @@ Design 2 › Tests › `test_execution_model.py` (`:2012-2014`).
 
 **Dependencies.** M5.1.
 
-**Status: pending**
+**Status: done**
 
 #### Task M5.3 — Verify and commit: routes 7 and 8, the six on-disk steps, the six-statement transaction, `INDEX.json`, the first two crash rows
 

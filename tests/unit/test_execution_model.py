@@ -1,8 +1,8 @@
 """The event-loop/threadpool boundary: which operations block, and where the loop must never stall.
 
-Pins which of the 56 operations run on the event loop directly (they only
+Pins which of the 58 operations run on the event loop directly (they only
 ``await``) versus which wrap a blocking call in ``asyncify``: every
-hierarchy and ingest operation now awaits its store, so all 56 are
+hierarchy and ingest operation now awaits its store, so all 58 are
 coroutine functions, and the tripwire this module keeps is that the raw
 store's filesystem calls stay off the loop thread.
 """
@@ -22,10 +22,12 @@ import huron.service.api as api_package
 import huron.service.api.app as app_module
 from huron.pkg.auth import make_credential as real_make_credential
 from huron.pkg.auth import verify_password as real_verify_password
+from huron.pkg.rawstore import PosixRawStore
 from huron.service.api.app import create_app
 from huron.service.api.routes.auth.endpoints import login
 from huron.service.api.routes.v1.endpoints import users
 from huron.service.api.settings import ApiSettings, ClassificationValue
+from tests.ingest_client import IngestClient, manifest_file
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -44,7 +46,7 @@ pytestmark = pytest.mark.unit
 #: mapped to whether the handler is a coroutine function. The four
 #: documentation routes (``/docs``, ``/docs/oauth2-redirect``,
 #: ``/openapi.json``, ``/redoc``) are framework-provided and excluded - the
-#: table covers the 52 this service defines.
+#: table covers the 58 this service defines.
 EXPECTED_COROUTINE_FUNCTION = {
     "healthz": True,
     "readyz": True,
@@ -75,6 +77,8 @@ EXPECTED_COROUTINE_FUNCTION = {
     "create_project_ingest_session": True,
     "get_ingest_session": True,
     "heartbeat_ingest_session": True,
+    "upload_part": True,
+    "complete_upload": True,
     "abort_ingest_session": True,
     "list_roles": True,
     "list_system_bindings": True,
@@ -147,7 +151,7 @@ def _operations(app: FastAPI) -> Iterator[Callable[..., object]]:
 def test_the_route_table_has_exactly_the_operations_this_service_defines(
     tmp_path: Path,
 ) -> None:
-    """Registered operations minus the four documentation routes equal exactly the 56 expected."""
+    """Registered operations minus the four documentation routes equal exactly the 58 expected."""
     names = {op.__name__ for op in _operations(_built_app(tmp_path))}
     assert names - DOCUMENTATION_ENDPOINTS == set(EXPECTED_COROUTINE_FUNCTION)
 
@@ -243,6 +247,37 @@ def test_readyz_s_raw_store_stat_executes_off_the_event_loop_thread(tmp_path: Pa
         response = client.get("/readyz")
 
     assert response.status_code == 200
+    assert ran_on_the_event_loop == [False]
+
+
+def test_the_upload_route_s_write_part_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
+    """The upload route's positional write still executes off the event-loop thread.
+
+    ``upload_part`` is ``async def`` - it also awaits the ledger update -
+    so the off-loop guarantee for the raw store's write comes only from
+    the ``asyncify`` wrapping inside ``IngestService``, which this pins
+    directly by driving one real upload through the route.
+    """
+    ran_on_the_event_loop: list[bool] = []
+    real_write_part = PosixRawStore.write_part
+
+    def _tracking_write_part(self: PosixRawStore, *args: object, **kwargs: object) -> str:
+        ran_on_the_event_loop.append(_event_loop_is_running())
+        return real_write_part(self, *args, **kwargs)
+
+    settings = _settings(tmp_path, bootstrap_platform_owner="root")
+    with (
+        patch.object(PosixRawStore, "write_part", _tracking_write_part),
+        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
+    ):
+        ingest = IngestClient(client)
+        _, dataset_id = ingest.developer_dataset()
+        session = ingest.create(dataset_id, [manifest_file("payload/a.bin", b"hello")]).json()
+        file_id = session["files"][0]["file_id"]
+
+        response = ingest.put_part(file_id, 1, b"hello")
+
+    assert response.status_code == 200, response.text
     assert ran_on_the_event_loop == [False]
 
 
