@@ -1291,7 +1291,7 @@ line reports on the tree after M8.3, rounded down to an integer. Never lower tha
 
 **Dependencies.** M8.3.
 
-**Status: pending**
+**Status: done**
 
 #### Task M9.2 — `stores/hierarchy.py`'s maintainability rank
 
@@ -1315,7 +1315,7 @@ exported names; the module docstrings of both files say which half each holds. I
 
 **Dependencies.** M9.1.
 
-**Status: pending**
+**Status: done**
 
 ### M10 — Documentation write-back
 
@@ -1881,3 +1881,9 @@ than on the design's literal text.
   and the download with `httpx` streaming (a loopback server streams 2 GiB at ≈ 0.8 GiB peak,
   bounded). Option B's Compose target and `tests/integration/` move are not taken. M10.1 writes
   the amendment into D-19 and the technique's memory sentence.
+- **M3.3 / D-22 (recorded late).** M3.3 measured `stores/hierarchy.py` at B (10.27) with the nine
+  session and file methods in place and performed the split then: both adapters' ingest methods
+  live in `src/huron/service/api/stores/ingest.py` as four mixin bases the store classes inherit,
+  behind the unchanged port, not re-exported. After the split `hierarchy.py` reads A (25.94) and
+  `ingest.py` A (44.47); M9.2 recorded the same readings and changed nothing. `fail_under` is 94
+  after M9.1 (measured 94.49%, ≈ 24 statements of headroom).
