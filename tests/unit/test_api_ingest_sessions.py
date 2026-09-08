@@ -36,7 +36,6 @@ from huron.pkg.catalog.documents import (
     decode_manifest,
     manifest_bytes,
 )
-from huron.pkg.catalog.errors import IllegalIngestTransition
 from huron.pkg.catalog.manifest import DEFAULT_MAX_FILE_BYTES
 from huron.pkg.catalog.paths import revision_dir, staging_dir
 from huron.pkg.metastore import IdempotencyClaim, Replay, SystemClock
@@ -899,7 +898,7 @@ def test_a_mismatched_single_part_file_is_discarded_and_back_to_pending(
     assert "observed_sha256" in body["context"]
 
     staging = staging_dir(PurePosixPath(str(tmp_path / "data")), UUID(session["id"]))
-    assert not (Path(staging) / "payload" / "a.bin").exists()
+    assert not (Path(staging) / "envelope" / "payload" / "a.bin").exists()
     assert ingest.get(session["id"]).json()["files"][0]["completed_parts"] == []
 
     retry = ingest.put_part(file_id, 1, data)
@@ -930,7 +929,7 @@ def test_a_mismatched_multipart_file_is_discarded_at_complete(
     assert after["completed_parts"] == []
     assert after["state"] == "PENDING"
     staging = staging_dir(PurePosixPath(str(tmp_path / "data")), UUID(session["id"]))
-    assert not (Path(staging) / "payload" / "a.bin").exists()
+    assert not (Path(staging) / "envelope" / "payload" / "a.bin").exists()
 
     for part, chunk in ((1, data[0:4]), (2, data[4:8]), (3, data[8:10])):
         assert ingest.put_part(file_id, part, chunk).status_code == 200
@@ -957,10 +956,10 @@ def test_complete_refuses_a_file_that_has_not_received_every_part(
     assert response.json()["code"] == "ILLEGAL_INGEST_TRANSITION"
 
 
-def test_a_repeated_complete_is_refused_without_rehashing_the_file(
+def test_a_repeated_complete_validates_the_installed_file(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A second complete on an already-COMPLETE file is refused before its bytes are touched."""
+    """A second complete validates and returns the same installed file."""
     monkeypatch.setattr(ingest_module, "PART_BYTES", 4)
     ingest = IngestClient(client)
     _, dataset_id = ingest.developer_dataset()
@@ -973,12 +972,14 @@ def test_a_repeated_complete_is_refused_without_rehashing_the_file(
     assert first.status_code == 200, first.text
 
     staging = staging_dir(PurePosixPath(str(tmp_path / "data")), UUID(session["id"]))
-    (Path(staging) / "payload" / "a.bin").unlink()
+    installed = Path(staging) / "envelope" / "payload" / "a.bin"
+    inode = installed.stat().st_ino
 
     second = ingest.complete(file_id)
 
-    assert second.status_code == 409, second.text
-    assert second.json()["code"] == "ILLEGAL_INGEST_TRANSITION"
+    assert second.status_code == 200, second.text
+    assert second.json() == first.json()
+    assert installed.stat().st_ino == inode
 
 
 def test_upload_refusals_happen_before_the_body_is_read(
@@ -1204,7 +1205,7 @@ async def test_two_parts_of_one_file_landing_at_once_both_persist_via_the_retry(
     assert sorted(view["files"][0]["completed_parts"]) == [1, 2]
 
 
-async def test_a_second_concurrent_complete_retries_past_the_first_then_refuses(
+async def test_a_second_concurrent_complete_returns_the_same_installed_result(
     client: TestClient, stores: ApiStores, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A second complete driven from a stale read retries the race, then finds the file done."""
@@ -1224,8 +1225,7 @@ async def test_a_second_concurrent_complete_retries_past_the_first_then_refuses(
     first = await service.complete_file(stale_ledger, stale_file)
     assert first.state == FileState.COMPLETE
 
-    with pytest.raises(IllegalIngestTransition):
-        await service.complete_file(stale_ledger, stale_file)
+    assert await service.complete_file(stale_ledger, stale_file) == first
 
 
 # -- verify and commit ---------------------------------------------------------
@@ -1289,7 +1289,7 @@ def test_commit_publishes_the_revision_and_its_events(
     assert marker.revision_record(revision_path=str(revision_path)) == record
 
     staging = staging_dir(PurePosixPath(str(tmp_path / "data")), UUID(session["id"]))
-    assert not Path(staging).exists()
+    assert not (Path(staging) / "envelope").exists()
 
     assert stores.hierarchy._sessions[UUID(session["id"])].state is IngestState.COMMITTED
     committed_events = [e for e in stores.hierarchy._audit if e.kind == "revision.committed"]
@@ -1370,7 +1370,7 @@ def test_a_commit_whose_staged_manifest_disagrees_with_the_session_is_a_server_e
     verified = ingest.verify(session["id"]).json()
 
     staging = staging_dir(PurePosixPath(str(tmp_path / "data")), UUID(session["id"]))
-    manifest_path = Path(staging) / "manifest.json"
+    manifest_path = Path(staging) / "envelope" / "manifest.json"
     other = validate_manifest([ManifestEntry(path="payload/other.bin", size=3, sha256="b" * 64)])
     manifest_path.chmod(0o644)
     manifest_path.write_bytes(manifest_bytes(other))

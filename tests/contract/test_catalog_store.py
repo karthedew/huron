@@ -1,4 +1,4 @@
-"""PostgreSQL catalog constraints and reversible migration contracts.
+"""PostgreSQL catalog constraints and guarded migration contracts.
 
 Checks authoritative ancestry, lifecycle vocabulary, reservations, audit indexes,
 and independent Raw uploads against a disposable PostgreSQL database. Downgrade
@@ -48,7 +48,7 @@ def test_postgres_catalog_store_against_a_migrated_database() -> None:
     with PostgresContainer("postgres:16") as postgres:
         asyncpg_sqlalchemy_url = postgres.get_connection_url(driver="asyncpg")
         dsn = postgres.get_connection_url(driver=None)
-        _migrate(asyncpg_sqlalchemy_url)
+        command.upgrade(_config(asyncpg_sqlalchemy_url), "0010_independent_raw")
         asyncio.run(_assert_against(dsn))
         _assert_round_trip(asyncpg_sqlalchemy_url, dsn)
 
@@ -1778,9 +1778,9 @@ def _assert_round_trip(asyncpg_sqlalchemy_url: str, dsn: str) -> None:
     """``downgrade()`` undoes exactly what ``upgrade()`` added, at two grains.
 
     First downgrade to ``0008`` to remove the current ledger additions, then
-    upgrade to head and check the column and two surviving indexes.
+    upgrade to ``0010`` and check the column and two surviving indexes.
     Then the broader trip across all nine of ``0008``'s ``DDL`` blocks:
-    downgrading to ``0007_roleless_service_accounts`` and upgrading to head
+    downgrading to ``0007_roleless_service_accounts`` and upgrading to ``0010``
     again, against the one container this module's other assertions already
     populated. Alembic's ``command.downgrade``/``command.upgrade`` block the
     thread they run on, so they run here, between short-lived asyncpg pools,
@@ -1791,13 +1791,13 @@ def _assert_round_trip(asyncpg_sqlalchemy_url: str, dsn: str) -> None:
     asyncio.run(_assert_ingest_ledger_additions_present(dsn))
     command.downgrade(config, "0008_schema_conformance")
     asyncio.run(_assert_ingest_ledger_additions_absent(dsn))
-    command.upgrade(config, "head")
+    command.upgrade(config, "0010_independent_raw")
     asyncio.run(_assert_ingest_ledger_additions_present(dsn))
 
     event_id = asyncio.run(_prepare_round_trip(dsn))
     command.downgrade(config, "0007_roleless_service_accounts")
     asyncio.run(_assert_round_trip_downgraded(dsn, event_id))
-    command.upgrade(config, "head")
+    command.upgrade(config, "0010_independent_raw")
     asyncio.run(_assert_round_trip_reupgraded(dsn, event_id))
 
 
@@ -1844,13 +1844,119 @@ def test_independent_raw_migration_refuses_legacy_links_and_lossy_downgrades() -
         command.upgrade(config, "0009_ingest_ledger")
         file_id, dataset_id = asyncio.run(_seed_legacy_link(dsn))
         with pytest.raises(DBAPIError, match="Legacy hardlinks"):
-            command.upgrade(config, "head")
+            command.upgrade(config, "0010_independent_raw")
         asyncio.run(_remove_legacy_fixture(dsn, file_id))
-        command.upgrade(config, "head")
+        command.upgrade(config, "0010_independent_raw")
         first, second = asyncio.run(_seed_identical_revisions(dsn, dataset_id))
         with pytest.raises(DBAPIError, match="dataset_revisions_dataset_id_manifest_sha256_key"):
             command.downgrade(config, "0009_ingest_ledger")
         asyncio.run(_assert_failed_downgrade_preserves_revisions(dsn, first, second))
+
+
+def test_postgres_catalog_constraints_at_head() -> None:
+    """Existing catalog constraints also hold after a clean upgrade to head."""
+    with PostgresContainer("postgres:16") as postgres:
+        _migrate(postgres.get_connection_url(driver="asyncpg"))
+        asyncio.run(_assert_against(postgres.get_connection_url(driver=None)))
+
+
+@pytest.mark.parametrize("state", ["PREPARING", "UPLOADING", "VERIFYING", "COMMITTING"])
+def test_verified_raw_migration_guards_are_atomic(state: str) -> None:
+    """Each unfinished legacy state blocks upgrade; resolved data upgrades but cannot downgrade."""
+    with PostgresContainer("postgres:16") as postgres:
+        config = _config(postgres.get_connection_url(driver="asyncpg"))
+        command.upgrade(config, "0010_independent_raw")
+        asyncio.run(
+            _assert_verified_raw_migration(config, postgres.get_connection_url(driver=None), state)
+        )
+
+
+async def _assert_verified_raw_migration(config: Config, dsn: str, state: str) -> None:
+    """Verify cutover refusal, unchanged evidence, terminal-session upgrade and rollback refusal."""
+    from sqlalchemy.exc import DBAPIError
+
+    pool = await asyncpg.create_pool(dsn)
+    try:
+        organization = await _insert_organization(pool, slug="verified-raw")
+        project = await _insert_project(pool, organization_id=organization, slug="verified")
+        dataset = await _insert_dataset(pool, project_id=project, slug="verified")
+        revision = await _insert_dataset_revision(
+            pool, dataset_id=dataset, revision_number=1, manifest_sha256="a" * 64
+        )
+        for terminal in ("COMMITTED", "ABORTED", "FAILED"):
+            await _insert_ingest_session_claiming(
+                pool,
+                dataset_id=dataset,
+                revision_number=1,
+                revision_id=revision if terminal == "COMMITTED" else uuid7(),
+                manifest_sha256="a" * 64,
+                state=terminal,
+            )
+        session = await _insert_ingest_session_claiming(
+            pool,
+            dataset_id=dataset,
+            revision_number=2,
+            revision_id=uuid7(),
+            manifest_sha256="b" * 64,
+            state=state,
+        )
+        await _insert_ingest_file(pool, ingest_id=session)
+        before = await _verified_raw_migration_snapshot(pool)
+        with pytest.raises(DBAPIError, match="Nonterminal legacy ingests require fenced offline"):
+            await asyncio.to_thread(command.upgrade, config, "0011_verified_raw")
+        assert await _verified_raw_migration_snapshot(pool) == before
+        for relation in ("ingest_commit_intents", "ingest_recoveries"):
+            assert await pool.fetchval("SELECT to_regclass($1)", relation) is None
+        assert (
+            await pool.fetchval("SELECT to_regprocedure('reject_commit_intent_mutation()')") is None
+        )
+        with pytest.raises(asyncpg.CheckViolationError, match="ingest_sessions_state_check"):
+            await _set_ingest_session_state(pool, session_id=session, state="RECOVERING")
+
+        await _set_ingest_session_state(pool, session_id=session, state="FAILED")
+        resolved = await _verified_raw_migration_snapshot(pool)
+        await asyncio.to_thread(command.upgrade, config, "0011_verified_raw")
+        upgraded = await _verified_raw_migration_snapshot(pool)
+        assert upgraded["version"] == "0011_verified_raw"
+        for table in ("ingest_sessions", "ingest_files", "dataset_revisions"):
+            assert upgraded[table] == resolved[table]
+        for relation in ("ingest_commit_intents", "ingest_recoveries"):
+            assert await pool.fetchval("SELECT to_regclass($1)::text", relation) == relation
+            assert await pool.fetchval(f"SELECT count(*) FROM {relation}") == 0
+        assert await pool.fetchval("SELECT to_regprocedure('reject_commit_intent_mutation()')")
+        await _set_ingest_session_state(pool, session_id=session, state="RECOVERING")
+        before_downgrade = await _verified_raw_migration_snapshot(pool)
+        with pytest.raises(
+            RuntimeError, match="verified Raw publication cannot be downgraded online"
+        ):
+            await asyncio.to_thread(command.downgrade, config, "0010_independent_raw")
+        assert await _verified_raw_migration_snapshot(pool) == before_downgrade
+    finally:
+        await pool.close()
+
+
+async def _verified_raw_migration_snapshot(pool: asyncpg.Pool) -> dict[str, object]:
+    """Capture persisted legacy rows, migration version and schema objects for atomicity checks."""
+    snapshot: dict[str, object] = {
+        "version": await pool.fetchval("SELECT version_num FROM alembic_version"),
+        "columns": await pool.fetch(
+            "SELECT * FROM information_schema.columns WHERE table_schema = 'public' "
+            "ORDER BY table_name, ordinal_position"
+        ),
+        "constraints": await pool.fetch(
+            "SELECT conrelid, conname, pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE connamespace = 'public'::regnamespace ORDER BY conrelid, conname"
+        ),
+        "triggers": await pool.fetch(
+            "SELECT tgrelid, tgname, pg_get_triggerdef(oid) FROM pg_trigger "
+            "WHERE NOT tgisinternal ORDER BY tgrelid, tgname"
+        ),
+    }
+    for table in ("ingest_sessions", "ingest_files", "dataset_revisions"):
+        snapshot[table] = await pool.fetchval(
+            f"SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM {table} t"
+        )
+    return snapshot
 
 
 async def _seed_legacy_link(dsn: str) -> tuple[UUID, UUID]:

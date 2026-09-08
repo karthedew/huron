@@ -255,6 +255,7 @@ include = ["src/huron"]
 # lower it; raise it as coverage climbs. New or touched files are covered in
 # full.
 fail_under = 94
+precision = 2
 
 [[tool.importlinter.contracts]]
 name = "API endpoints cannot call internal workflow implementations"

@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from .paths import Slugged
 
 METADATA_SCHEMA = "urn:huron:metadata:1"
-COMMITTED_SCHEMA = "urn:huron:committed:1"
+COMMITTED_SCHEMA = "urn:huron:committed:2"
 INDEX_SCHEMA = "urn:huron:revision-index:1"
 
 #: The metadata-v1 members the server sources; a submission naming any of
@@ -347,6 +347,7 @@ class CommitRecord:
     total_bytes: int
     committed_by: str
     committed_at: datetime
+    protocol: int = 2
 
     @classmethod
     def of(cls, record: RevisionRecord) -> CommitRecord:
@@ -386,7 +387,12 @@ class CommitRecord:
         """
         document = _decode_canonical(payload)
         try:
-            validate("committed-v1.json", document)
+            protocol = {"urn:huron:committed:1": 1, COMMITTED_SCHEMA: 2}.get(
+                str(document.get("schema"))
+            )
+            if protocol is None:
+                raise ValueError("unsupported committed document schema")
+            validate(f"committed-v{protocol}.json", document)
         except ValidationError as err:
             raise ValueError(str(err)) from err
         return cls(
@@ -399,6 +405,7 @@ class CommitRecord:
             total_bytes=cast("int", document["total_bytes"]),
             committed_by=cast("str", document["committed_by"]),
             committed_at=_parse_instant(cast("str", document["committed_at"])),
+            protocol=protocol,
         )
 
     def as_dict(self) -> dict[str, JsonValue]:
@@ -408,7 +415,7 @@ class CommitRecord:
             The document with every committed-v1 required member.
         """
         return {
-            "schema": COMMITTED_SCHEMA,
+            "schema": f"urn:huron:committed:{self.protocol}",
             "revision_id": str(self.revision_id),
             "dataset_id": str(self.dataset_id),
             "revision_number": self.revision_number,
@@ -679,3 +686,67 @@ def revision_from_storage(
     if observed != expected:
         raise ValueError("the committed marker and metadata document disagree with the session")
     return record.revision_record(revision_path=revision_path)
+
+
+@dataclass(frozen=True, slots=True)
+class CommitIntent:
+    """A session's immutable canonical command and complete publication evidence.
+
+    Attributes:
+        command: Canonical client metadata command.
+        manifest: Canonical manifest bytes.
+        metadata: Canonical metadata bytes including the frozen commit instant.
+        committed: Canonical verified-protocol marker bytes.
+    """
+
+    command: bytes
+    manifest: bytes
+    metadata: bytes
+    committed: bytes
+
+    def __post_init__(self) -> None:
+        """Validate canonical documents and their shared content identity.
+
+        Raises:
+            ValueError: If evidence is noncanonical, inconsistent or uses a legacy marker.
+        """
+        _decode_canonical(self.command)
+        manifest = decode_manifest(self.manifest)
+        metadata = MetadataDocument.decode(self.metadata)
+        marker = CommitRecord.decode(self.committed)
+        if (
+            marker.protocol != 2
+            or marker.manifest_sha256 != manifest.sha256
+            or metadata.manifest_sha256 != manifest.sha256
+            or marker.metadata_sha256 != metadata.sha256
+            or marker.file_count != len(manifest.files)
+            or marker.total_bytes != manifest.total_bytes
+            or marker.committed_at != metadata.committed_at
+            or marker.committed_by != metadata.committed_by
+        ):
+            raise ValueError("commit intent documents disagree")
+
+    def require_same_command(self, proposed: CommitIntent) -> None:
+        """Refuse a retry that changes the client command or declared manifest.
+
+        Args:
+            proposed: The retry's proposed document set.
+
+        Raises:
+            ContractMismatch: If the command or manifest differs.
+        """
+        if self.command != proposed.command or self.manifest != proposed.manifest:
+            raise ContractMismatch("commit retry disagrees with the frozen command")
+
+    @property
+    def documents(self) -> dict[str, bytes]:
+        """Return the exact document set every commit attempt must use.
+
+        Returns:
+            The three immutable envelope documents.
+        """
+        return {
+            "manifest.json": self.manifest,
+            "metadata.json": self.metadata,
+            "COMMITTED": self.committed,
+        }

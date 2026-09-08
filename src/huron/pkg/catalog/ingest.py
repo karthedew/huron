@@ -49,6 +49,7 @@ class IngestState(StrEnum):
     UPLOADING = "UPLOADING"
     VERIFYING = "VERIFYING"
     COMMITTING = "COMMITTING"
+    RECOVERING = "RECOVERING"
     COMMITTED = "COMMITTED"
     ABORTED = "ABORTED"
     FAILED = "FAILED"
@@ -72,8 +73,9 @@ TRANSITIONS: Mapping[IngestState, frozenset[IngestState]] = {
         {IngestState.COMMITTING, IngestState.ABORTED, IngestState.FAILED}
     ),
     IngestState.COMMITTING: frozenset(
-        {IngestState.COMMITTING, IngestState.COMMITTED, IngestState.FAILED}
+        {IngestState.COMMITTING, IngestState.RECOVERING, IngestState.COMMITTED, IngestState.FAILED}
     ),
+    IngestState.RECOVERING: frozenset({IngestState.COMMITTED, IngestState.FAILED}),
     IngestState.COMMITTED: frozenset(),
     IngestState.ABORTED: frozenset(),
     IngestState.FAILED: frozenset(),
@@ -455,6 +457,14 @@ class IngestSession:
             )
         return moved
 
+    def recover(self) -> IngestSession:
+        """Fence the commit driver before recovery claims its storage.
+
+        Returns:
+            The session in RECOVERING with an advanced etag.
+        """
+        return self._advance(IngestState.RECOVERING, operation="recover")
+
     def commit(self) -> IngestSession:
         """Move from COMMITTING to COMMITTED once the envelope's rename is durable.
 
@@ -576,8 +586,8 @@ def revision_record(
         ValueError: If ``manifest``'s identity does not match the
             session's declared manifest, or the session is not COMMITTING.
     """
-    if session.state is not IngestState.COMMITTING:
-        raise ValueError("a revision record can only be built for a session in COMMITTING")
+    if session.state not in {IngestState.COMMITTING, IngestState.RECOVERING}:
+        raise ValueError("a revision record requires a committing or recovering session")
     if manifest.sha256 != session.manifest_sha256:
         raise ValueError("the manifest does not match the session's declared identity")
     return RevisionRecord(

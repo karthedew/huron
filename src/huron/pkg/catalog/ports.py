@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import os
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping, Sequence
     from datetime import datetime
     from pathlib import Path, PurePosixPath
     from uuid import UUID
@@ -118,19 +118,41 @@ class RawStore(Protocol):
         """
         ...
 
-    def finish_file(self, staging_payload: PurePosixPath, rel_path: str) -> tuple[int, str]:
-        """Report a payload file exactly as it is on disk.
-
-        Reads the file in one sequential pass; nothing about it is cached
-        from an earlier call. A missing file is refused as a
-        ``FileNotFoundError``.
+    def finish_file(
+        self,
+        staging: PurePosixPath,
+        file_id: str,
+        rel_path: str,
+        *,
+        expected_size: int,
+        expected_sha256: str,
+    ) -> tuple[int, str]:
+        """Install independently copied, verified bytes without replacing a winner.
 
         Args:
-            staging_payload: The envelope's ``payload`` directory.
-            rel_path: The file's path relative to ``staging_payload``.
+            staging: Existing session root; never recreated.
+            file_id: Upload input name.
+            rel_path: Manifest payload path.
+            expected_size: Declared byte count.
+            expected_sha256: Declared digest.
 
         Returns:
-            The file's size in bytes and the hex SHA-256 of its content.
+            Actual observation; mismatch installs nothing and removes only its candidate.
+        """
+        ...
+
+    def verify_envelope(
+        self,
+        envelope: PurePosixPath,
+        files: Sequence[tuple[str, int, str]],
+        documents: Mapping[str, bytes],
+    ) -> None:
+        """Check exact inventory, independent sealed inodes and frozen evidence.
+
+        Args:
+            envelope: Existing staged or final envelope.
+            files: Manifest paths, sizes and digests.
+            documents: Frozen control document bytes.
         """
         ...
 

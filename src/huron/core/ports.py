@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
+    from huron.pkg.catalog.documents import CommitIntent
     from huron.pkg.catalog.ingest import IngestFile, IngestSession
     from huron.pkg.catalog.models import OutboxEvent, RevisionRecord, RevisionRef
     from huron.pkg.catalog.persistence import IdempotencyClaim, LedgerEntry, Replay, Window
@@ -534,6 +535,36 @@ class HierarchyWriter(Protocol):
 
         Args:
             event: The event to append, fully formed.
+        """
+        ...
+
+    async def lock_ingest_session(self, session_id: UUID) -> IngestSession:
+        """Hold the session mutation lock through the enclosing transaction.
+
+        Args:
+            session_id: Session identity to fence.
+
+        Returns:
+            The current session under the transaction lock.
+        """
+        ...
+
+    async def freeze_commit(
+        self,
+        session: IngestSession,
+        intent: CommitIntent,
+        *,
+        expected_etag: int,
+    ) -> tuple[IngestSession, CommitIntent]:
+        """Atomically freeze evidence with the first COMMITTING transition.
+
+        Args:
+            session: Proposed COMMITTING session.
+            intent: Proposed canonical command and documents.
+            expected_etag: Version observed before the transition.
+
+        Returns:
+            Persisted session and its immutable evidence, shared by concurrent retries.
         """
         ...
 

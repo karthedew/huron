@@ -180,7 +180,7 @@ API-proxied chunk reads — same client code, degraded transport — so no capab
 <tr><th>Service</th><th>Kind</th><th>Replicas</th><th>Responsibility</th><th>Writes to</th></tr>
 <tr><td class="k">API</td><td>FastAPI/uvicorn</td><td>≥2, stateless</td>
 <td>All control-plane routes; streams raw uploads with in-flight SHA-256; issues access grants;
-enforces RBAC on every request; reaps lapsed ingest leases.</td><td>NFS staging, PostgreSQL</td></tr>
+enforces RBAC on every request; reaps lapsed ingest leases. P3 will materialize verified independent payload at file completion before rename publication.</td><td>NFS staging, PostgreSQL</td></tr>
 
 <tr><td class="k">Layer intake service</td><td>Job runner</td><td>1–N</td>
 <td>Executes <a href="layer-bronze.html#manual-intake">manual bronze/silver intake</a>: opens
@@ -206,11 +206,10 @@ gates publication.</td><td>PostgreSQL (evidence)</td></tr>
 <td>One-way mirror of published tabular Gold into Polaris namespaces and grants.</td>
 <td>Polaris</td></tr>
 <tr><td class="k">Sweeper</td><td>CronJob (15 min)</td><td>—</td>
-<td>Deletes expired staging directories on NFS; aborts stale Icechunk transient state; fraction
-guard + dry-run.</td><td>NFS staging only</td></tr>
+<td>P3: deletes only eligible terminal/orphan staging trees through claimed trash, fraction guard and dry-run. Icechunk transient cleanup remains future work.</td><td>NFS staging only</td></tr>
 <tr><td class="k">Reconciler</td><td>CronJob (nightly + on demand)</td><td>—</td>
 <td>Compares NFS envelopes, object-store snapshot refs, and PostgreSQL; imports orphan commits; flags
-<code>DEGRADED</code>; never silently rewrites history.</td><td>PostgreSQL (findings)</td></tr>
+<code>DEGRADED</code>; never silently rewrites history. P3 covers Raw only, verified recovery, derived-document repair and guarded continuation of existing intents.</td><td>PostgreSQL; NFS recovery/derived documents and authorized removal continuation</td></tr>
 <tr><td class="k">Retention worker</td><td>CronJob (daily)</td><td>—</td>
 <td>Executes raw TTL expiration and approved purges; honors legal holds; writes markers and
 audit events.</td><td>NFS (expirable payload only)</td></tr>
@@ -267,14 +266,14 @@ holds an invariant — or where none does —
 <tr><th></th><th>Invariant</th></tr>
 <tr><td class="inv">A</td><td>No capability is served from two stores; there is no search fallback.</td></tr>
 <tr><td class="inv">B</td><td>Nothing under a published <code>revisions/</code> prefix is ever deleted except by the audited retention/purge code paths.</td></tr>
-<tr><td class="inv">C</td><td>A revision directory reachable under <code>revisions/</code> contains <code>COMMITTED</code> and matches its manifest; incomplete work exists only under <code>.staging/</code>.</td></tr>
+<tr><td class="inv">C</td><td>At publication a revision contains COMMITTED and verified payload matching its manifest. P3 requires verification with no writable payload handles remaining and no later write opens; stale upload inodes are never published. Lawful later removal is governed by I; observed violations are DEGRADED, not silently repaired.</td></tr>
 <tr><td class="inv">D</td><td>Frozen objects are written exactly once; amendments are appended, never edited.</td></tr>
 <tr><td class="inv">E</td><td>Committed revision numbers within a dataset are contiguous <code>1..N</code>.</td></tr>
 <tr><td class="inv">M</td><td>A release tag is written once and never repointed; a wrong tag is withdrawn, not moved. <code>dataset@tag</code> resolves to the same bytes forever.</td></tr>
 <tr><td class="inv">F</td><td>The client never chooses the final path and never writes <code>COMMITTED</code>.</td></tr>
 <tr><td class="inv">G</td><td>A revision/snapshot/product row is never published in PostgreSQL before its storage state is durable. Storage leads; the catalog follows.</td></tr>
 <tr><td class="inv">H</td><td>No search response contains an ID the caller is not authorized to discover.</td></tr>
-<tr><td class="inv">I</td><td>A committed revision without payload is valid only with a <code>PURGED</code> or <code>EXPIRED</code> marker naming what was removed and why.</td></tr>
+<tr><td class="inv">I</td><td>Missing payload requires valid PURGED or numbered expiry evidence matching physical state. Write-ahead intent distinguishes pending removal from completion. Storage-only recovery cannot continue deletion without restored current governance; purge removes expiry per-file details too.</td></tr>
 <tr><td class="inv">J</td><td>Only Huron service identities hold write credentials to Bronze/Silver/Gold repositories; every published snapshot has a catalog row created by a pipeline service, with validation evidence attached.</td></tr>
 <tr><td class="inv">K</td><td>Every Gold product version resolves to exact input snapshot IDs, a transform container digest, and parameters — sufficient to re-execute the derivation without consulting anything mutable.</td></tr>
 <tr><td class="inv">L</td><td>Access grants are scoped to a single repo prefix, read-only for non-service principals, and expire; possessing a grant for a Gold product confers nothing on its upstream inputs.</td></tr>

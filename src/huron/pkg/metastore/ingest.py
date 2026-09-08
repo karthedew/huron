@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 import asyncpg
 
+from huron.pkg.catalog.documents import CommitIntent, CommitRecord
 from huron.pkg.catalog.errors import (
     DatasetLocked,
     IngestSessionExpired,
@@ -300,6 +301,54 @@ class InMemoryIngestWriter:
                 ingest_id=session.lease.ingest_id, file=_reserved_file(file)
             )
         return session
+
+    async def lock_ingest_session(self, session_id: UUID) -> IngestSession:
+        """Hold the session mutation lock through the enclosing transaction.
+
+        Args:
+            session_id: Session identity to fence.
+
+        Returns:
+            The current session under the transaction lock.
+        """
+        return await self._store.ingest_session(session_id)
+
+    async def freeze_commit(
+        self,
+        session: IngestSession,
+        intent: CommitIntent,
+        *,
+        expected_etag: int,
+    ) -> tuple[IngestSession, CommitIntent]:
+        """Freeze the first command and return it for every identical retry.
+
+        Args:
+            session: Proposed COMMITTING session.
+            intent: Proposed immutable document set.
+            expected_etag: Previously observed session version.
+
+        Returns:
+            The persisted session and frozen intent.
+
+        Raises:
+            PreconditionFailed: If the session is missing, fenced or changed.
+        """
+        key = session.lease.ingest_id
+        current = self._store._sessions.get(key)
+        existing = self._store._intents.get(key)
+        if current is not None and existing is not None:
+            existing.require_same_command(intent)
+            if current.state in {IngestState.COMMITTING, IngestState.COMMITTED}:
+                return current, existing
+        if (
+            current is None
+            or current.state is not IngestState.VERIFYING
+            or current.etag != expected_etag
+        ):
+            raise PreconditionFailed(f"ingest commit version conflict: {key}")
+        self._buffer.sessions[key] = session
+        self._buffer.intents[key] = intent
+        return session, intent
 
     async def update_ingest_session(self, session: IngestSession, *, expected_etag: int) -> None:
         """Persist one state edge, guarded by optimistic concurrency on the session's etag.
@@ -596,6 +645,84 @@ class PostgresIngestWriter:
             [str(file.action) for file in files],
             [file.part_count for file in files],
         )
+
+    async def lock_ingest_session(self, session_id: UUID) -> IngestSession:
+        """Hold the session mutation lock through the enclosing transaction.
+
+        Args:
+            session_id: Session identity to fence.
+
+        Returns:
+            The current session under the transaction lock.
+
+        Raises:
+            ResourceNotFound: If the session does not exist.
+        """
+        row = await self._connection.fetchrow(
+            f"SELECT {_INGEST_SESSION_COLUMNS} FROM ingest_sessions WHERE id = $1 FOR UPDATE",
+            session_id,
+        )
+        if row is None:
+            raise ResourceNotFound(f"ingest session does not exist: {session_id}")
+        return rows.ingest_session(row)
+
+    async def freeze_commit(
+        self,
+        session: IngestSession,
+        intent: CommitIntent,
+        *,
+        expected_etag: int,
+    ) -> tuple[IngestSession, CommitIntent]:
+        """Freeze canonical evidence under the session row lock before storage work.
+
+        Args:
+            session: Proposed COMMITTING session.
+            intent: Proposed canonical command and document set.
+            expected_etag: Previously observed session version.
+
+        Returns:
+            The persisted session and immutable evidence.
+
+        Raises:
+            PreconditionFailed: If the session is missing, fenced or changed.
+        """
+        key = session.lease.ingest_id
+        row = await self._connection.fetchrow(
+            f"SELECT {_INGEST_SESSION_COLUMNS} FROM ingest_sessions WHERE id = $1 FOR UPDATE", key
+        )
+        existing = await self._connection.fetchrow(
+            "SELECT command, manifest, metadata, committed "
+            "FROM ingest_commit_intents WHERE ingest_id = $1",
+            key,
+        )
+        if row is not None and existing is not None:
+            frozen = CommitIntent(
+                existing["command"],
+                existing["manifest"],
+                existing["metadata"],
+                existing["committed"],
+            )
+            frozen.require_same_command(intent)
+            current = rows.ingest_session(row)
+            if current.state in {IngestState.COMMITTING, IngestState.COMMITTED}:
+                return current, frozen
+        if row is None or row["state"] != "VERIFYING" or row["etag"] != expected_etag:
+            raise PreconditionFailed(f"ingest commit version conflict: {key}")
+        await self.update_ingest_session(session, expected_etag=expected_etag)
+        marker = CommitRecord.decode(intent.committed)
+        await self._connection.execute(
+            """INSERT INTO ingest_commit_intents
+               (ingest_id, command, manifest, metadata, committed, committed_by, committed_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+            key,
+            intent.command,
+            intent.manifest,
+            intent.metadata,
+            intent.committed,
+            marker.committed_by,
+            marker.committed_at,
+        )
+        return session, intent
 
     async def update_ingest_session(self, session: IngestSession, *, expected_etag: int) -> None:
         """Persist one state edge, guarded by optimistic concurrency on the session's etag.

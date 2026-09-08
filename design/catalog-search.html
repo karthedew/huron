@@ -483,16 +483,25 @@ then re-authorize returned IDs against PostgreSQL before serialization (invarian
 carry <code>projection_lag_seconds</code> + <code>projection_watermark</code>.</p>
 
 <h2 id="rebuild">5. Rebuild and reconciliation</h2>
+<p><strong>P3 persistence plan, not applied schema:</strong> add frozen ingest commit intents,
+recovery ownership, governance document/digest mirrors, revision integrity/lifecycle observations and
+resumable run receipts. Findings separate INFO/WARNING/ERROR severity from repair/resolution outcome;
+acknowledgement never clears damage. Purge removes mirrored expiry per-file details. Latest revision
+means highest published number across all states. See <a href="../P3_DESIGN.md">P3 design</a> for
+constraints and <a href="layer-raw.html#p3-integrity">cutover requirements</a>.</p>
 
 <ul>
 <li><code>lakectl projection rebuild</code> — walks NFS (datasets, revisions, release tags, effective metadata)
 and PostgreSQL (snapshot/product registry), writes fresh tables under a new prefix, verifies row
 counts, flips the pointer. Routine, not exceptional.</li>
-<li><code>lakectl rebuild --from-storage</code> — reconstructs PostgreSQL structural rows from NFS
-generation documents and <code>COMMITTED</code> markers, then the layer registry from Icechunk repo
-metadata on the object store (each snapshot's provenance block names its sources), then lineage from derivation
-records, then the projection. RBAC, audit, idempotency, and API keys come from PostgreSQL backups
-only.</li>
+<li><code>lakectl rebuild --from-storage</code> — P3 reconstructs Raw structural inventory offline:
+protocol/cutover evidence, generation hierarchy, revisions/governance observations, amendments and releases.
+A fresh target is claimed by a run identity; that same run may resume. Missing parents and identity conflicts
+block activation; reported payload corruption remains DEGRADED and need not block healthy inventory.
+Access policy must be restored and unambiguous before activation; governance readiness separately gates
+removal. No placeholder parents, synthetic approvals or deletion during rebuild. V1 membership is exact
+cutover inventory/digests, not timestamps. Derived-layer registry, lineage and projection rebuilds follow
+in their owning phases. RBAC, credentials, audit, holds, original outbox and idempotency require backups.</li>
 <li>The reconciler (see <a href="layer-raw.html#sweeper">Raw §9</a>) also cross-checks the layer
 registry: every PUBLISHED snapshot row must resolve to a live Icechunk ref, and every repo main
 branch must be recorded — disagreement is <code>DEGRADED</code> + alert, never silent repair.</li>

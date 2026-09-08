@@ -45,7 +45,7 @@ def _initialized_store(tmp_path: Path) -> PosixRawStore:
     return store
 
 
-def _staging_payload(store: PosixRawStore, name: str = "envelope") -> Path:
+def _staging_session(store: PosixRawStore, name: str = "envelope") -> Path:
     """Claim a fresh staging envelope on ``store`` and return its ``payload`` directory.
 
     Args:
@@ -57,7 +57,7 @@ def _staging_payload(store: PosixRawStore, name: str = "envelope") -> Path:
     """
     staging = store.root / ".staging" / name
     store.create_staging(staging)
-    return staging / "payload"
+    return staging
 
 
 def _with_different_device(result: os.stat_result) -> os.stat_result:
@@ -120,8 +120,15 @@ def test_create_staging_claims_a_private_envelope_once(
     store.create_staging(staging)
 
     assert stat.S_IMODE(staging.stat().st_mode) == 0o700
-    assert stat.S_IMODE((staging / "payload").stat().st_mode) == 0o700
-    assert log == [store.root / ".staging", staging, staging / "payload"]
+    assert stat.S_IMODE((staging / "envelope" / "payload").stat().st_mode) == 0o700
+    assert set(log) == {
+        store.root / ".staging",
+        staging,
+        staging / "upload",
+        staging / "completion",
+        staging / "envelope",
+        staging / "envelope" / "payload",
+    }
 
     with pytest.raises(FileExistsError):
         store.create_staging(staging)
@@ -135,10 +142,10 @@ def test_write_part_pulls_one_chunk_at_a_time_and_reports_the_digest_of_the_byte
 ) -> None:
     """write_part reads chunks lazily and returns the SHA-256 of the bytes it wrote."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
+    payload_root = _staging_session(store)
     chunks = [b"abc", b"defgh", b"ij"]
     whole = b"".join(chunks)
-    target = payload_root / "a.bin"
+    target = payload_root / "upload" / "a.bin"
 
     def _spy() -> Iterator[bytes]:
         written = 0
@@ -157,7 +164,7 @@ def test_write_part_pulls_one_chunk_at_a_time_and_reports_the_digest_of_the_byte
 def test_write_part_places_parts_at_their_offsets_in_any_order(tmp_path: Path) -> None:
     """Parts written out of order assemble into the correct whole file."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
+    payload_root = _staging_session(store)
     part_size = 4
     parts = [b"aaaa", b"bbbb", b"cccc"]
 
@@ -166,13 +173,13 @@ def test_write_part_places_parts_at_their_offsets_in_any_order(tmp_path: Path) -
             payload_root, "f.bin", [parts[index]], offset=index * part_size, length=part_size
         )
 
-    assert (payload_root / "f.bin").read_bytes() == b"".join(parts)
+    assert (payload_root / "upload" / "f.bin").read_bytes() == b"".join(parts)
 
 
 def test_write_part_overwrites_a_resent_part_s_range_only(tmp_path: Path) -> None:
     """Resending a part after a partial write overwrites only that part's range."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
+    payload_root = _staging_session(store)
     part_size = 4
     store.write_part(payload_root, "f.bin", [b"1111"], offset=0, length=part_size)
     store.write_part(payload_root, "f.bin", [b"3333"], offset=2 * part_size, length=part_size)
@@ -186,13 +193,13 @@ def test_write_part_overwrites_a_resent_part_s_range_only(tmp_path: Path) -> Non
 
     store.write_part(payload_root, "f.bin", [b"2222"], offset=part_size, length=part_size)
 
-    assert (payload_root / "f.bin").read_bytes() == b"111122223333"
+    assert (payload_root / "upload" / "f.bin").read_bytes() == b"111122223333"
 
 
 def test_write_part_refuses_a_short_or_long_stream(tmp_path: Path) -> None:
     """A stream that ends short or runs long raises PartLengthMismatchError, no digest returned."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
+    payload_root = _staging_session(store)
 
     with pytest.raises(PartLengthMismatchError):
         store.write_part(payload_root, "short.bin", [b"ab"], offset=0, length=3)
@@ -206,8 +213,8 @@ def test_write_part_propagates_a_mid_stream_exception_and_leaves_the_range_for_t
 ) -> None:
     """A client disconnect mid-stream propagates, and a resend of the same part succeeds."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
-    target = payload_root / "f.bin"
+    payload_root = _staging_session(store)
+    target = payload_root / "upload" / "f.bin"
 
     def _dropped() -> Iterator[bytes]:
         yield b"ab"
@@ -230,13 +237,13 @@ def test_write_part_fsyncs_the_file_and_every_directory_up_to_the_payload_root(
 ) -> None:
     """write_part fsyncs the file and every directory from it up to the payload root."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
+    payload_root = _staging_session(store)
     log = fsync_log(monkeypatch)
 
     store.write_part(payload_root, "d1/d2/f.bin", [b"data"], offset=0, length=4)
 
-    target = payload_root / "d1" / "d2" / "f.bin"
-    assert log == [target, target.parent, target.parent.parent, payload_root]
+    target = payload_root / "upload" / "d1" / "d2" / "f.bin"
+    assert {target, target.parent, target.parent.parent, payload_root / "upload"} <= set(log)
     assert stat.S_IMODE(target.parent.stat().st_mode) == 0o700
     assert stat.S_IMODE(target.parent.parent.stat().st_mode) == 0o700
 
@@ -244,22 +251,28 @@ def test_write_part_fsyncs_the_file_and_every_directory_up_to_the_payload_root(
 def test_write_part_refuses_an_unsafe_path_before_touching_the_disk(tmp_path: Path) -> None:
     """An unsafe rel_path raises ValueError before any file or directory is created."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
+    payload_root = _staging_session(store)
 
     with pytest.raises(ValueError, match="unsafe relative path"):
         store.write_part(payload_root, "../escape.bin", [b"x"], offset=0, length=1)
 
-    assert list(payload_root.iterdir()) == []
+    assert list((payload_root / "upload").iterdir()) == []
 
 
 def test_a_single_part_write_is_the_whole_file_observation(tmp_path: Path) -> None:
     """A single-part write's returned digest matches finish_file's whole-file observation."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
+    payload_root = _staging_session(store)
     content = b"the whole file, in one part"
 
     digest = store.write_part(payload_root, "f.bin", [content], offset=0, length=len(content))
-    size, finished_digest = store.finish_file(payload_root, "f.bin")
+    size, finished_digest = store.finish_file(
+        payload_root,
+        "f.bin",
+        "payload/f.bin",
+        expected_size=len(content),
+        expected_sha256=hashlib.sha256(content).hexdigest(),
+    )
 
     assert (size, digest) == (len(content), finished_digest)
 
@@ -267,28 +280,40 @@ def test_a_single_part_write_is_the_whole_file_observation(tmp_path: Path) -> No
 def test_finish_file_reports_size_and_digest_and_refuses_a_missing_file(tmp_path: Path) -> None:
     """finish_file reports the file's real size and digest, and refuses a missing file."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
+    payload_root = _staging_session(store)
     content = b"x" * 5000
     store.write_part(payload_root, "f.bin", [content], offset=0, length=len(content))
 
-    size, digest = store.finish_file(payload_root, "f.bin")
+    size, digest = store.finish_file(
+        payload_root,
+        "f.bin",
+        "payload/f.bin",
+        expected_size=len(content),
+        expected_sha256=hashlib.sha256(content).hexdigest(),
+    )
 
     assert size == len(content)
     assert digest == hashlib.sha256(content).hexdigest()
 
     with pytest.raises(FileNotFoundError):
-        store.finish_file(payload_root, "missing.bin")
+        store.finish_file(
+            payload_root,
+            "missing.bin",
+            "payload/missing.bin",
+            expected_size=0,
+            expected_sha256=hashlib.sha256(b"").hexdigest(),
+        )
 
 
 def test_discard_file_removes_the_file_and_tolerates_a_missing_one(tmp_path: Path) -> None:
     """discard_file removes an existing file and is a no-op for one already gone."""
     store = _initialized_store(tmp_path)
-    payload_root = _staging_payload(store)
+    payload_root = _staging_session(store)
     store.write_part(payload_root, "f.bin", [b"data"], offset=0, length=4)
 
     store.discard_file(payload_root, "f.bin")
 
-    assert not (payload_root / "f.bin").exists()
+    assert not (payload_root / "upload" / "f.bin").exists()
 
     store.discard_file(payload_root, "f.bin")
 
@@ -326,19 +351,20 @@ def test_seal_refuses_a_missing_directory(tmp_path: Path) -> None:
         store.seal(tmp_path / "missing")
 
 
-def test_write_document_replaces_at_the_envelope_root_and_refuses_a_nested_or_reserved_name(
+def test_write_document_is_immutable_and_refuses_a_nested_or_reserved_name(
     tmp_path: Path,
 ) -> None:
-    """A repeat write replaces the document read-only; a nested or reserved name is refused."""
-    store = PosixRawStore(tmp_path)
-    envelope = tmp_path / "envelope"
-    envelope.mkdir()
+    """Identical document retries succeed and conflicting bytes or unsafe names are refused."""
+    store = _initialized_store(tmp_path)
+    envelope = _staging_session(store) / "envelope"
 
     store.write_document(envelope, "manifest.json", b"first")
-    store.write_document(envelope, "manifest.json", b"second")
+    store.write_document(envelope, "manifest.json", b"first")
+    with pytest.raises(ValueError, match="conflicts"):
+        store.write_document(envelope, "manifest.json", b"second")
 
     document = envelope / "manifest.json"
-    assert document.read_bytes() == b"second"
+    assert document.read_bytes() == b"first"
     assert stat.S_IMODE(document.stat().st_mode) == 0o444
 
     for name in ("a/b", "..", "payload"):

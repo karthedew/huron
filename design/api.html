@@ -204,7 +204,7 @@ client code path, degraded transport.</li>
 <tr><td>POST</td><td><code>/schemas/{namespace}/{name}/{semver}:deprecate</code> / <code>:withdraw</code></td><td>deprecation stops new declarations; withdrawal is the audited tombstone</td></tr>
 <tr><td>POST</td><td><code>/admin/revisions/{id}:request-purge</code> · <code>/admin/purges/{id}:approve</code></td><td>two-person, different subjects</td></tr>
 <tr><td>POST/DELETE</td><td><code>/retention/holds</code></td><td>pins and legal holds; audited</td></tr>
-<tr><td>GET</td><td><code>/admin/reconciliation/report</code> · <code>:plan</code> / <code>:apply</code></td><td>dry-run first</td></tr>
+<tr><td>GET</td><td><code>/admin/reconciliation/report</code> (planned P3)</td><td>read-only, scoped keyset report; core integrity.read required. Maintenance mutations use lakectl; no HTTP :apply in P3.</td></tr>
 <tr><td>GET</td><td><code>/audit</code></td><td>filterable audit stream for auditors</td></tr>
 <tr><td>GET</td><td><code>/healthz</code> · <code>/readyz</code> · <code>/metrics</code> <em>(planned — <code>/metrics</code> answers 404 and <code>pkg/telemetry/</code> does not exist)</em></td><td><code>/readyz</code> checks PostgreSQL and the raw store, never LanceDB or Polaris; the object store is not a dependency of this service</td></tr>
 </table>
@@ -289,6 +289,25 @@ the service can raise has exactly one row here. <code>tests/unit/test_error_cont
 asserts the bijection and the status column in both directions; a code added to either side without
 the other fails CI.</p>
 
+<h3 id="planned-p3-error-codes">Planned P3 error codes</h3>
+<p>These codes describe the planned P3 contract. They have no runtime exception classes yet
+and are separate from the current live/reserved error contract above.</p>
+
+<table>
+<tr><th>Code</th><th>HTTP status</th><th>Status</th><th>Meaning</th></tr>
+<tr><td>INGEST_RECOVERY_IN_PROGRESS</td><td>409</td><td>planned P3</td><td>RECOVERING retains the dataset/number claim; retry cannot take over</td></tr>
+<tr><td>RAW_REMOVAL_PENDING</td><td>409</td><td>planned P3</td><td>new read selects content covered by a pending removal intent</td></tr>
+<tr><td>RAW_CONTENT_REMOVED</td><td>410</td><td>planned P3</td><td>authorized/discoverable content was lawfully removed</td></tr>
+<tr><td>REVISION_DEGRADED</td><td>409</td><td>planned P3</td><td>new payload read blocked by revision integrity; documents require independent trust</td></tr>
+</table>
+
+<h2 id="p3-read-admission">P3 integrity read admission (planned)</h2>
+<p>Core resolves discovery and authorization before reporting integrity/removal status; undiscoverable
+resources stay 404. DEGRADED blocks all new payload downloads. Pending purge blocks payload and manifest;
+pending expiry blocks selected files, permitting unselected retained content. Already-authorized streams
+may finish. An incomplete amendment history never restores broader classification; trusted metadata may
+be shown only when effective access is independently established. Latest revision never silently falls
+back to an older healthy revision. See <a href="layer-raw.html#sweeper">Raw integrity services</a>.</p>
 </main>
 </body>
 </html>

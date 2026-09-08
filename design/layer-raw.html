@@ -131,8 +131,14 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
 
 <pre>
 /data/
-  .staging/                                      sweeper's territory; never scanned by readers
-    {ingest_id hex}/                             one per open ingest session (32 lowercase hex digits, no hyphens — the path form of §2)
+  protocol/                                     P3: immutable cutover records and digest-bound inventory reports
+  .staging/                                      sweeper's only territory; never scanned by readers
+    {ingest_id hex}/                             one session; only BeginIngest creates this root
+      upload/                                   P3: request-writable input files, never published
+      completion/{attempt_id}/                  P3: private verified-copy candidates
+      envelope/                                 P3: documents + verified payload; this alone is renamed
+    recovery/{ingest_id}/{attempt_id}/           P3: original and independent recovery candidate
+    trash/{claim_id}/                           P3: claimed resumable cleanup
   organization/{org_slug}--{org_id}/
     CURRENT.json + generations/000001.json       descriptive documents (numbered generations)
     project/{project_slug}--{project_id}/
@@ -150,11 +156,14 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
               manifest.json                      IMMUTABLE inventory (JCS)
               COMMITTED                          commit marker (§5)
               amendments/0001.json               append-only
-              EXPIRED                            present only after TTL expiration (§8)
+              expired/0001.json                  P3 contract: append-only expiry intents (§8)
+              PURGED                             write-ahead purge intent (§8)
               payload/
                 shielding.i  outp  meshtal  runtpe  slurm-881247.log
         bronze/  silver/  gold/                  Icechunk repos on the object store, same spine (§2 of each)
 </pre>
+
+<p class="note"><strong>Layout status.</strong> The upload/completion/envelope split and protocol/recovery/trash directories are the agreed P3 target, not shipped P2 behavior. P2 writes directly into the session envelope. See <a href="#p3-integrity">P3 integrity contracts</a>.</p>
 
 <p class="note"><span class="k">One spine, four layers.</span> The
 <code>organization/…/project/…/dataset/…</code> hierarchy is identical for every layer, and the
@@ -259,7 +268,7 @@ hashing.</p>
 <li><strong>The lock is per-dataset:</strong> one open ingest session per dataset (partial unique
 index in PostgreSQL), so <code>run-0042</code> and <code>run-0043</code> upload concurrently while
 successive commits to the same dataset serialize. The revision number is allocated at
-<code>BeginIngest</code> as <code>max(committed)+1</code> under the lock — gap-free per dataset
+<code>BeginIngest</code> as <code>max(published revision number)+1</code> across every lifecycle/health state under the lock — gap-free per dataset
 (invariant E), and the final path is known before any byte is written.</li>
 <li><strong>Dataset-scoped locking is the cost of collapsing the hierarchy.</strong> Two people
 depositing into one dataset queue behind each other. This is the right trade while a dataset is one
@@ -273,46 +282,42 @@ Every revision is an independent complete submission: no parent-manifest compari
 files, shared hardlinks, or cross-revision pointers. A file omitted from this submission is absent
 from this revision. Every file's bytes, including unchanged content, must be received and verified.</li>
 <li><strong>Session TTL</strong> 2 h, refreshed by heartbeat and by any successful part upload; a
-crashed client releases the dataset lock within the TTL plus one sweep interval; a project admin
-can force-abort (audited). Interrupted transfers resume via <code>completed_parts</code>.</li>
+crashed pre-commit client releases the dataset lock within the TTL plus one sweep interval; a project admin
+can abort eligible pre-commit states (audited). COMMITTING and planned RECOVERING retain their claims until safe recovery. Interrupted transfers resume via <code>completed_parts</code>.</li>
 </ul>
 
 <h2 id="commit">5. The commit protocol</h2>
 
+<p><strong>P3 target (implementation pending).</strong> Part requests write outside the
+publishable envelope. Completion copies to a fresh private inode, hashes the written bytes,
+fsyncs and closes it, then installs it without replacement into payload. An overlapping
+completion can only install the same verified content; it cannot delete a winner. No subsequent
+staging write may recreate a missing session root. P2's hash-only completion does not yet supply
+this protection.</p>
+
 <pre>
 CommitIngest(ingest_id, manifest_sha256, If-Match, Idempotency-Key)
 
- 1. Idempotency replay check.                                        [PG]
- 2. Lock session row; assert VERIFYING, ETag, manifest digest.       [PG]
- 3. Assert every file accounted for, every digest matched.           [PG]
- 4. In .staging/{ingest_id}/: write manifest.json, metadata.json,
-    COMMITTED (all JCS; fsync each file, then fsync the dir).        [NFS]
- 5. Seal the envelope's contents: files 0444, directories below the
-    envelope root 0555. The root keeps its write bit — rename(2) must
-    update its .. entry.                                             [NFS]
- 6. rename(.staging/{ingest_id},
-           …/revisions/{nnnnnn}--{revision_id})   ◀── durability point [NFS]
-    then chmod the published root 0555 and fsync it.                 [NFS]
- 7. ONE short PG transaction: revision row, session → COMMITTED,
-    audit event, outbox event, idempotency record.                   [PG]
- 8. Best-effort: write INDEX.json's new entry (the reconciler
-    regenerates it).                                                  [NFS]
+ 1. Idempotency replay check.                                      [PG]
+ 2. Fence session/etag; freeze commit metadata, instant and digests
+    once. Retries reuse the exact frozen document set.              [PG]
+ 3. Assert every declared file durably installed and verified.       [PG + NFS]
+ 4. Install complete closed JCS manifest, metadata and COMMITTED v2
+    into .staging/{ingest_id}/envelope/, never replacing documents.  [NFS]
+ 5. Seal files 0444, child directories 0555; no candidate files.      [NFS]
+ 6. fsync envelope; rename(envelope, final revision path);
+    fsync target parent; seal final root 0555 and fsync it.          [NFS]
+ 7. ONE transaction: revision, session → COMMITTED, audit,
+    outbox and idempotency receipt.                                 [PG]
+ 8. Best-effort INDEX regeneration/update.                           [NFS]
 </pre>
 
 <table>
-<tr><th>Crash after step</th><th>Storage state</th><th>Resolution</th></tr>
-<tr><td>4–5</td><td>Complete-looking envelope, still under <code>.staging/</code></td>
-<td>Invisible (readers never scan staging). The implemented lease sweep aborts expired PREPARING/UPLOADING/VERIFYING sessions.
-Physical staging deletion is planned in P3; a COMMITTING session retains its lock until retry
-or the planned reconciler resolves it.</td></tr>
-<tr><td>6</td><td>Envelope published under <code>revisions/</code>, no PG row</td>
-<td><strong>Orphan commit.</strong> The P3 reconciler is planned to import the row from
-<code>COMMITTED</code>; automatic orphan import is not implemented in P2.
-A retry past the rename finds staging gone, so it reads <code>final/manifest.json</code> in
-place of the vanished <code>staging/manifest.json</code> (the bytes are identical by
-construction) and its read-back branch still runs step 6's rename step, so the published root is
-resealed and fsynced again.</td></tr>
-<tr><td>7</td><td>Complete</td><td>Normal; P3 will regenerate the best-effort index through the reconciler.</td></tr>
+<tr><th>Crash boundary</th><th>State and P3 resolution</th></tr>
+<tr><td>Completion before installation / before COMPLETE row</td><td>Private candidate is invisible; installed-before-row retry verifies and records the existing file. No row attests an absent installation.</td></tr>
+<tr><td>Commit before final rename</td><td>Session retains its claim. Recovery fences RECOVERING and relocates staging. Valid marker evidence is copied and verified into fresh inodes before publication; no marker means fail only after safe relocation. Invalid or ambiguous evidence remains locked.</td></tr>
+<tr><td>Final rename before catalog transaction</td><td>Validate full identity/document evidence and import once. V2 is the new protocol; v1 requires verified cutover-inventory membership. Unknown v1 is operator-only.</td></tr>
+<tr><td>Catalog transaction before index</td><td>Revision remains committed and readable; regenerate the derived index.</td></tr>
 </table>
 
 <p>There is no distributed transaction between the filesystem and PostgreSQL, and the design does
@@ -323,15 +328,14 @@ published before the rename is durable.</p>
 <p class="note"><span class="k">Why keep a marker when rename is atomic?</span> Because the
 envelope is complete by construction (invariant C), the <code>COMMITTED</code> file is not needed
 for visibility. It exists as the reconciler's catalog-reconstruction record — digests, counts,
-committer, timestamp in one small JCS document, <code>urn:huron:committed:1</code> — as the
+committer, timestamp in one small JCS document: <code>urn:huron:committed:1</code> for legacy data and planned <code>urn:huron:committed:2</code> for verified materialization — as the
 object site replication tools can key on, and as defense in depth if a partial copy ever lands
 under <code>revisions/</code> by operator error.</p>
 
 <h3>NFS-specific discipline</h3>
 <ul>
 <li><strong>Single-writer model:</strong> only Huron service identities write the filesystem. All
-API pods and workers mount the same export; close-to-open consistency suffices because no node
-reads a file until after the writer closed it <em>and</em> the rename published it.</li>
+API pods and workers mount the same export. P3 separates upload inodes from publishable inodes; a stale writable upload descriptor cannot alter published bytes. Verify publication primitives and exclusion on the actual NFS deployment; a heartbeat, database etag or chmod does not revoke an open descriptor.</li>
 <li><strong>fsync before rename</strong> on every file and the staging directory; fsync the
 rename target's parent after. NFS servers may otherwise acknowledge writes before stable
 storage.</li>
@@ -389,8 +393,7 @@ retention:
 </pre>
 
 <p>The retention worker expires payload files whose category TTL has elapsed <em>and</em> whose
-revision has a published Bronze and Silver materialization. It writes an <code>EXPIRED</code>
-marker listing exactly which manifest entries were removed and why, flips the PG revision state to
+revision has a published Bronze and Silver materialization. Before deletion it writes a numbered, immutable <code>expired/0001.json</code> intent listing exact paths, sizes, digests, categories and reasons; later records select disjoint entries in a gap-free sequence. Start time describes intent; completion is observed separately. After removal it derives the PG revision state as
 <code>EXPIRED_PARTIAL</code> (or <code>EXPIRED</code> if all payload went), and emits audit +
 outbox events. Everything else survives: filenames, sizes, checksums, extracted parameters,
 manifest hash, sidecars, lineage. The upload confirmation and the dataset page both show the
@@ -412,34 +415,66 @@ deletion.</p>
 <p>Purge is two-person, audited, and deliberately inconvenient: one platform admin requests with a
 reason, a <em>different</em> one approves (enforced by a database CHECK constraint, not
 convention). Execution destroys payload and <code>manifest.json</code> — filenames and per-file
-digests are frequently the sensitive material — and retains <code>metadata.json</code>,
+digests are frequently the sensitive material — plus expiry records and their mirrored per-file database contents. It retains <code>metadata.json</code>,
 amendments, <code>COMMITTED</code>, a <code>PURGED</code> marker, and the audit trail. Idempotent
-and resumable. Invariant I: a committed envelope without payload is valid <em>only</em> with a
-<code>PURGED</code> or <code>EXPIRED</code> marker; anything else is data loss and is raised as
-<code>DEGRADED</code>.</p>
+and resumable. The canonical PURGED intent is durable before the first unlink and binds revision,
+dataset, manifest digest, distinct requester/approver, authorization reference and request/approval/start
+instants. It contains no per-file details. Audit retains operation evidence without copying deleted
+file details. A valid intent with files still present is pending removal; missing files without
+valid explaining evidence are <code>DEGRADED</code>. P3 recognizes these contracts; P5 originates
+governance workflows. Storage-only recovery never resumes deletion without restored current authority.</p>
 
 <h2 id="sweeper">9. Sweeper and reconciler</h2>
 
+<p><strong>P3 planned.</strong> Full design and implementation slices are recorded in
+<a href="../P3_DESIGN.md">P3_DESIGN.md</a> and <a href="../P3_IMPLEMENTATION_PLAN.md">P3_IMPLEMENTATION_PLAN.md</a>.</p>
 <ul>
-<li><strong>Sweeper</strong> (15 min): deletes <code>.staging/{ingest_id}</code> directories whose
-session is terminal or expired, and staging dirs with no session row older than 24 h. It
-<em>never</em> descends into <code>organization/</code> — its deletion scope is staging, full stop. A
-fraction guard refuses to run if it would delete more than a configured share of staging in one
-pass, and every run supports <code>--dry-run</code>.</li>
-<li><strong>Reconciler</strong> (nightly + on demand): walks <code>revisions/</code> and compares
-with PostgreSQL. Orphan envelope → import the row from <code>COMMITTED</code>. Row without an
-envelope → <code>DEGRADED</code>, alert, never delete the row. Digest mismatch →
-<code>DEGRADED</code>. Payload missing without <code>PURGED</code>/<code>EXPIRED</code> →
-<code>DEGRADED</code>. Stale <code>INDEX.json</code> → regenerate. Torn <code>CURRENT.json</code>
-→ repoint at the highest generation. It also verifies seal permissions and independent file ownership. The
-reconciler never silently rewrites catalog history — disagreements become findings, alerts, and
-report entries.</li>
-<li><strong><code>lakectl rebuild --from-storage</code></strong> reconstructs PostgreSQL structural
-rows from the NFS tree alone (orgs → datasets from generation documents, revisions from
-<code>COMMITTED</code> markers, release tags from <code>releases/*.json</code>), then the derived-layer registry from object-store snapshot metadata, then
-the LanceDB projection. RBAC, audit, idempotency records, and API keys are recoverable only from
-PostgreSQL backups — stated plainly so nobody assumes otherwise.</li>
+<li><strong>Sweeper</strong> every 15 minutes: terminal session trees after a 15-minute grace,
+or unknown trees older than 24 hours, only with an authoritative session ledger. COMMITTING and
+RECOVERING are never eligible. Recheck, rename into staging trash, fsync and delete without following
+links. No deletion during database-loss/rebuild ambiguity. Guard refuses more than
+max(10, floor(25% of managed session trees)); limits are configurable. Dry-run changes no state.</li>
+<li><strong>Reconciler</strong> nightly/on demand: validate identities, canonical documents/digests,
+expected presence/sizes, ownership, seals and independent regular files on every pass. Budgeted
+hashing defaults to 1 TiB per run and a 7-day verification target with durable progress and overdue
+reporting. Import validated missing records; never overwrite conflicting history. Reseal only known
+validated content, never automatically chown. Rebuild INDEX; repair CURRENT only from an unambiguous
+valid generation chain. Complete relevant checks resolve findings; acknowledgement alone does not.</li>
+<li><strong>Recovery</strong>: 30-second commit heartbeat and 5-minute grace identify candidates,
+not safety. CAS to RECOVERING retains both claims; relocation prevents original-path publication,
+and a fresh verified copy prevents stale handles mutating recovered payload. One owner; no timed
+recovery takeover. Default automatic-copy cap 100 GiB; larger copies require an explicit command
+and capacity reserve. Ambiguity stays locked for operator action.</li>
+<li><strong>Removal continuation</strong>: existing valid intents only, with current authorization,
+restored governance, holds/pins and shared mutation coordination. P5 owns new intent creation.
+Pending purge blocks new payload/manifest reads; pending expiry blocks its selected files.
+Already-authorized streams may finish. DEGRADED blocks every new payload read.</li>
+<li><strong>Rebuild</strong>: offline into a fresh migrated database, resumable only under the same
+run/root identity. Restore hierarchy, revisions, amendments and releases; no invented parents or
+historical authority. Missing parents, identity conflicts and ambiguous access block activation;
+reported DEGRADED revisions need not. RBAC, credentials, audit, holds, idempotency and original
+outbox require backups. Search and derived-layer reconstruction remain later phases.</li>
 </ul>
+
+<h3 id="p3-integrity">Protocol cutover and recovery evidence</h3>
+<p>The first deployable P3 slice combines verified file completion with an offline cutover.
+Deployment evidence proves every writer terminated; an unreachable node must be fenced from storage.
+Disabled old database roles and unavailable replacement credentials prevent old releases restarting
+with access. SQL polls supplement enforced exclusion; they cannot prove no filesystem writer exists.
+The command refuses unverifiable fences. New runtimes check protocol and schema head; that new check
+cannot retrofit old binaries.</p>
+<p>Under exclusion, fully verify legacy finals, resolve unfinished sessions and write a canonical
+inventory under <code>protocol/</code>. A numbered record binds its report digest. Inventory entries
+name exact revision/dataset/number/path and document digests with VERIFIED or DEGRADED outcomes.
+Timestamps do not establish membership. Migration 0011 refuses nonterminal legacy sessions; v2
+publication starts only after cutover validation. Empty roots require explicit protocol initialization.
+V1 markers remain unchanged; unknown v1 envelopes are operator findings. A later valid purge can
+explain an absent inventoried manifest through its retained digest and marker evidence.</p>
+<p>Governance records use the same single-writer trust root, with no signatures. JCS is canonical
+encoding, not tamper proof. Mirror digests support database comparisons. Incomplete amendment history
+cannot broaden classification/access; a valid prefix is restricted diagnostic evidence, not current
+metadata. Filesystem-only recovery can recognize pending removals but cannot infer that lost hold
+rows never existed.</p>
 
 <h2 id="upload-modes">10. Upload modes</h2>
 
@@ -451,7 +486,7 @@ the event loop); parts land in staging; resume via <code>completed_parts</code>.
 <tr><td class="k">Register-in-place</td><td>v2</td>
 <td>For data already on the raw filesystem (HPC jobs writing to a Huron-managed landing directory):
 the CLI requests a landing allocation inside <code>.staging/</code>, the job writes there directly
-(or the CLI moves files in), then ingest proceeds hash-verify → commit without a second copy.
+(or the CLI moves files in), then ingest materializes a verified independent copy before commit: no second upload, not no second storage copy. A future clone optimization must prove equivalent write isolation.
 Requires same-filesystem, group-writable landing dirs; the API re-hashes everything it did not
 stream. The <code>mode</code> field in the upload plan is the seam this slots into.</td></tr>
 </table>

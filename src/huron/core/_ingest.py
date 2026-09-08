@@ -37,10 +37,10 @@ from huron.pkg.catalog import (
     manifest_bytes,
     revision_committed,
     revision_from_storage,
-    revision_record,
     uuid7,
     validate_manifest,
 )
+from huron.pkg.catalog.documents import CommitIntent
 from huron.pkg.catalog.errors import (
     IllegalIngestTransition,
     ManifestMismatch,
@@ -48,6 +48,7 @@ from huron.pkg.catalog.errors import (
     ResourceNotFound,
 )
 from huron.pkg.catalog.layers import Layer, LayerWorkflowError
+from huron.pkg.catalog.manifest import canonical_bytes
 from huron.pkg.catalog.paths import revision_dir, staging_dir
 from huron.pkg.catalog.persistence import Replay
 from huron.pkg.catalog.records import AuditEvent, jsonable, jsonable_value
@@ -371,7 +372,7 @@ class IngestService:
         try:
             await asyncify(self._raw_store.create_staging)(staging)
             await asyncify(self._raw_store.write_document)(
-                staging, "manifest.json", manifest_bytes(manifest)
+                staging / "envelope", "manifest.json", manifest_bytes(manifest)
             )
             opened = session.open(now=self._clock.now())
             async with self._hierarchy.transaction() as writer:
@@ -637,11 +638,11 @@ class IngestService:
             ManifestMismatch: If the stream delivered a different number
                 of bytes than ``length``.
         """
-        payload = staging_dir(self._root, ledger.id) / "payload"
+        payload = staging_dir(self._root, ledger.id)
         measured = _MeasuredChunks(chunks)
         try:
             return await asyncify(self._raw_store.write_part)(
-                payload, file.path, measured, offset=offset, length=length
+                payload, str(file.file_id), measured, offset=offset, length=length
             )
         except PartLengthMismatchError as exc:
             raise ManifestMismatch(
@@ -659,6 +660,9 @@ class IngestService:
     ) -> IngestFile:
         """Apply one part's arrival to the ledger, retrying past a write that raced it.
 
+        A single-part observation that disagrees with the manifest propagates
+        ``ManifestMismatch`` without recording the part, allowing an immediate retry.
+
         Args:
             ledger: The file's session, as last read by the caller.
             file: The file as last read, before this part arrived.
@@ -670,103 +674,73 @@ class IngestService:
             The file as persisted: the part recorded, and completed if
             this was its only part and the observation matched the
             manifest.
-
-        Raises:
-            ManifestMismatch: If this is a single-part file and the
-                whole-file observation does not match the manifest; the
-                payload is discarded and the ledger is left exactly as it
-                was, so the same part can be re-sent immediately.
         """
-        payload = staging_dir(self._root, ledger.id) / "payload"
         current = file
         while True:
+            if current.state is FileState.COMPLETE:
+                return current
             updated = current.part_received(part)
             if updated.part_count == 1:
-                try:
-                    updated = updated.completed(observed_size=length, observed_sha256=digest)
-                except ManifestMismatch:
-                    await asyncify(self._raw_store.discard_file)(payload, file.path)
-                    raise
+                updated.completed(observed_size=length, observed_sha256=digest)
+                return await self._materialize_file(ledger, updated)
             try:
                 async with self._hierarchy.transaction() as writer:
                     await writer.update_ingest_file(
                         ledger.id, updated, expected_parts=current.completed_parts
                     )
             except PreconditionFailed:
-                entry = await self._hierarchy.ingest_file(file.file_id)
-                current = entry.file
+                current = (await self._hierarchy.ingest_file(file.file_id)).file
                 continue
             return updated
 
     async def complete_file(self, ledger: SessionLedger, file: IngestFile) -> IngestFile:
-        """Assemble and verify one file's uploaded parts.
+        """Durably install a fully received file before recording COMPLETE.
 
         Args:
-            ledger: The file's session, as last read by the caller.
-            file: The file to complete, as last read; every part it plans
-                for must already be recorded.
+            ledger: The owning session ledger.
+            file: The submitted file's current ledger entry.
 
         Returns:
-            The file as persisted, in state COMPLETE.
+            The idempotent COMPLETE result.
 
         Raises:
-            IllegalIngestTransition: If the file is not fully received, is
-                already COMPLETE.
+            IllegalIngestTransition: If not all upload parts are recorded.
         """
-        now = self._clock.now()
-        ledger.session.require(IngestState.UPLOADING, now=now)
-        if file.state is FileState.COMPLETE or not file.received:
+        ledger.session.require(IngestState.UPLOADING, now=self._clock.now())
+        if not file.received:
             raise IllegalIngestTransition(
                 f"{file.path} is not ready to be completed",
                 context={"state": file.state, "operation": "complete_file"},
             )
-        payload = staging_dir(self._root, ledger.id) / "payload"
-        size, digest = await asyncify(self._raw_store.finish_file)(payload, file.path)
-        updated = await self._finish_file(ledger, file, payload, size=size, digest=digest)
-        renewed = ledger.session.renew(now=now)
-        async with self._hierarchy.transaction() as writer:
-            await writer.renew_ingest_session(renewed)
-        return updated
+        return await self._materialize_file(ledger, file)
 
-    async def _finish_file(
-        self,
-        ledger: SessionLedger,
-        file: IngestFile,
-        payload: PurePosixPath,
-        *,
-        size: int,
-        digest: str,
-    ) -> IngestFile:
-        """Prove a file's assembled bytes against the manifest, retrying past a race.
-
-        Args:
-            ledger: The file's session, as last read by the caller.
-            file: The file as last read, before this call proves it.
-            payload: The envelope's ``payload`` directory.
-            size: The whole-file size the store measured.
-            digest: The whole-file SHA-256 the store measured.
-
-        Returns:
-            The file as persisted, in state COMPLETE.
-
-        Raises:
-            ManifestMismatch: If the observation does not match the
-                manifest; the payload is discarded and the ledger is
-                persisted with no parts recorded, so every part must be
-                re-sent.
-        """
-        current = file
+    async def _materialize_file(self, ledger: SessionLedger, file: IngestFile) -> IngestFile:
+        size, digest = await asyncify(self._raw_store.finish_file)(
+            staging_dir(self._root, ledger.id),
+            str(file.file_id),
+            file.path,
+            expected_size=file.size,
+            expected_sha256=file.expected_sha256,
+        )
+        current = (await self._hierarchy.ingest_file(file.file_id)).file
         while True:
+            if current.state is FileState.COMPLETE:
+                return current
             try:
-                updated = current.completed(observed_size=size, observed_sha256=digest)
+                updated = replace(current, completed_parts=file.completed_parts).completed(
+                    observed_size=size, observed_sha256=digest
+                )
             except ManifestMismatch:
-                await asyncify(self._raw_store.discard_file)(payload, file.path)
-                async with self._hierarchy.transaction() as writer:
-                    await writer.update_ingest_file(
-                        ledger.id,
-                        replace(current, completed_parts=frozenset()),
-                        expected_parts=current.completed_parts,
-                    )
+                try:
+                    async with self._hierarchy.transaction() as writer:
+                        await writer.update_ingest_file(
+                            ledger.id,
+                            replace(current, completed_parts=frozenset()),
+                            expected_parts=current.completed_parts,
+                        )
+                except PreconditionFailed:
+                    current = (await self._hierarchy.ingest_file(file.file_id)).file
+                    continue
                 raise
             try:
                 async with self._hierarchy.transaction() as writer:
@@ -774,9 +748,11 @@ class IngestService:
                         ledger.id, updated, expected_parts=current.completed_parts
                     )
             except PreconditionFailed:
-                entry = await self._hierarchy.ingest_file(file.file_id)
-                current = entry.file
+                current = (await self._hierarchy.ingest_file(file.file_id)).file
                 continue
+            await asyncify(self._raw_store.discard_file)(
+                staging_dir(self._root, ledger.id), str(file.file_id)
+            )
             return updated
 
     async def verify(self, ledger: SessionLedger) -> SessionLedger:
@@ -809,7 +785,7 @@ class IngestService:
         """
         try:
             return await asyncify(self._raw_store.read_document)(
-                staging_dir(self._root, ledger.id) / "manifest.json"
+                staging_dir(self._root, ledger.id) / "envelope" / "manifest.json"
             )
         except FileNotFoundError:
             return await asyncify(self._raw_store.read_document)(final / "manifest.json")
@@ -865,127 +841,41 @@ class IngestService:
         )
         return manifest, doc, final
 
-    async def _fence_commit(
-        self, session: IngestSession, manifest_sha256: str, now: datetime
-    ) -> IngestSession:
-        """Move the session into COMMITTING, in its own transaction.
-
-        Args:
-            session: The session as last read by the caller; must be
-                VERIFYING, or already COMMITTING for a retry re-entering
-                past the rename.
-            manifest_sha256: The manifest identity the caller is
-                committing.
-            now: The instant to judge the session's lease against, unless
-                it is already COMMITTING.
-
-        Returns:
-            The session in COMMITTING, its etag advanced.
-        """
-        committing = session.begin_commit(manifest_sha256=manifest_sha256, now=now)
-        async with self._hierarchy.transaction() as writer:
-            await writer.update_ingest_session(committing, expected_etag=session.etag)
-        return committing
-
-    async def _published_marker(self, final: PurePosixPath) -> bytes | None:
-        """Return the ``COMMITTED`` marker's bytes if the envelope is already published.
-
-        Args:
-            final: The revision directory the envelope publishes as.
-
-        Returns:
-            The marker's bytes, or None if nothing is published there yet.
-        """
-        try:
-            return await asyncify(self._raw_store.read_document)(final / "COMMITTED")
-        except FileNotFoundError:
-            return None
-
     async def _publish_envelope(
         self,
-        committing: IngestSession,
-        manifest: Manifest,
-        doc: MetadataDocument,
+        session: IngestSession,
+        intent: CommitIntent,
         final: PurePosixPath,
-        *,
-        committed_by: str,
-        now: datetime,
     ) -> RevisionRecord:
-        """Publish the envelope's documents and seal, or reseal one already published.
-
-        The record is built before any disk write in the publishing
-        branch, because the ``COMMITTED`` marker's own bytes are its
-        canonical form: the marker cannot be written until the record it
-        describes exists. A failure of any of the six steps that leaves no
-        marker behind fails the session outright, since nothing was
-        published; one that leaves a marker behind - a crash after the
-        rename - is left exactly as it is for the client's retry to read
-        back, because storage, not this failed attempt, now leads. A
-        retry that finds the marker already there still runs
-        ``commit_envelope`` once more before reading anything back: a
-        crash between the rename and the root's own seal leaves the
-        published root writable, and this is the only call left to close
-        that gap. That reseal (or its silent no-op once the root is
-        already sealed) is never wrapped in the failure mapping below,
-        because publication has already happened by the time the marker
-        is visible - a fault here must leave the session COMMITTING for
-        the client to retry again, never fail it outright.
+        """Publish only the verified envelope using its frozen evidence.
 
         Args:
-            committing: The session driving the commit, already fenced
-                into COMMITTING.
-            manifest: The manifest being committed.
-            doc: The composed metadata document.
-            final: The revision directory the envelope publishes as.
-            committed_by: The principal driving the commit.
-            now: The instant the commit began.
+            session: The fenced session.
+            intent: Immutable canonical command and documents.
+            final: Authoritative publication path.
 
         Returns:
-            The published revision record, freshly built or rebuilt from
-            an envelope a previous attempt already published.
-
-        Raises:
-            OSError: If the reseal of an already-published envelope
-                fails, re-raised unchanged with the session left
-                COMMITTING; or if one of the publishing steps fails, once
-                the session has been failed if no marker was left behind,
-                re-raised unchanged either way since a marker left behind
-                means the client must retry rather than see this
-                attempt's failure.
-            ValueError: If ``commit_envelope`` found the staged envelope
-                unmarked; handled the same way as an ``OSError`` here.
+            The fully validated published revision.
         """
-        staging = staging_dir(self._root, committing.lease.ingest_id)
-        published = await self._published_marker(final)
-        if published is not None:
-            await asyncify(self._raw_store.commit_envelope)(staging, final)
-            metadata_bytes = await asyncify(self._raw_store.read_document)(final / "metadata.json")
-            return revision_from_storage(
-                published, metadata_bytes, session=committing, revision_path=str(final)
-            )
-        record = revision_record(
-            committing,
-            manifest,
-            metadata_sha256=doc.sha256,
-            revision_path=str(final),
-            committed_by=committed_by,
-            committed_at=now,
-        )
+        staging = staging_dir(self._root, session.lease.ingest_id) / "envelope"
+        manifest = decode_manifest(intent.manifest)
+        files = tuple((file.path, file.size, file.sha256) for file in manifest.files)
         try:
-            await asyncify(self._raw_store.write_document)(
-                staging, "manifest.json", manifest_bytes(manifest)
-            )
-            await asyncify(self._raw_store.write_document)(staging, "metadata.json", doc.canonical)
-            await asyncify(self._raw_store.seal)(staging)
-            await asyncify(self._raw_store.write_document)(
-                staging, "COMMITTED", CommitRecord.of(record).canonical
-            )
-            await asyncify(self._raw_store.commit_envelope)(staging, final)
-        except (OSError, ValueError):
-            if await self._published_marker(final) is None:
-                await self._fail(committing, actor=committed_by)
-            raise
-        return record
+            await asyncify(self._raw_store.stat_document)(final)
+        except FileNotFoundError:
+            try:
+                for name, payload in intent.documents.items():
+                    await asyncify(self._raw_store.write_document)(staging, name, payload)
+                await asyncify(self._raw_store.verify_envelope)(staging, files, intent.documents)
+                await asyncify(self._raw_store.seal)(staging)
+                await asyncify(self._raw_store.commit_envelope)(staging, final)
+            except (FileNotFoundError, FileExistsError):
+                await asyncify(self._raw_store.verify_envelope)(final, files, intent.documents)
+        await asyncify(self._raw_store.verify_envelope)(final, files, intent.documents)
+        await asyncify(self._raw_store.commit_envelope)(staging, final)
+        return revision_from_storage(
+            intent.committed, intent.metadata, session=session, revision_path=str(final)
+        )
 
     async def _record_revision(
         self,
@@ -1009,11 +899,20 @@ class IngestService:
         Returns:
             The revision an identical earlier claim already recorded, or
             ``record`` itself once freshly recorded.
+
+        Raises:
+            PreconditionFailed: If the commit driver no longer owns the session.
         """
         async with self._hierarchy.transaction() as writer:
             replay = await writer.claim(claim)
             if replay is not None:
                 return await self._hierarchy.revision(replay.resource_id)
+            current = await writer.lock_ingest_session(committing.lease.ingest_id)
+            if current.state is IngestState.COMMITTED:
+                await writer.remember(claim, Replay(kind="revision", resource_id=record.id))
+                return await self._hierarchy.revision(record.id)
+            if current.etag != committing.etag or current.state is not IngestState.COMMITTING:
+                raise PreconditionFailed("commit driver no longer owns the session")
             await writer.insert_revision(record)
             committed = committing.commit()
             await writer.update_ingest_session(committed, expected_etag=committing.etag)
@@ -1094,20 +993,38 @@ class IngestService:
             replayed claim, or rebuilt from a retry past the rename.
 
         Raises:
-            PreconditionFailed: If the session is not already COMMITTED
-                and ``expected_etag`` does not match its current etag.
+            ManifestMismatch: If the requested manifest differs from the session's identity.
+            PreconditionFailed: If a VERIFYING session's etag does not match ``expected_etag``.
         """
-        if ledger.state is IngestState.COMMITTED:
-            return await self._hierarchy.revision(ledger.revision_id)
-        if expected_etag != ledger.etag:
+        if ledger.state is IngestState.VERIFYING and expected_etag != ledger.etag:
             raise PreconditionFailed(f"ingest session version conflict: {ledger.id}")
         now = self._clock.now()
         manifest, doc, final = await self._compose_commit(ledger, metadata, committed_by, now)
-        committing = await self._fence_commit(ledger.session, manifest_sha256, now)
-        record = await self._publish_envelope(
-            committing, manifest, doc, final, committed_by=committed_by, now=now
+        if manifest_sha256 != ledger.manifest_sha256:
+            raise ManifestMismatch("manifest does not match the session's declared identity")
+        proposed = ledger.session
+        if ledger.state is not IngestState.COMMITTED:
+            proposed = proposed.begin_commit(manifest_sha256=manifest_sha256, now=now)
+        marker = CommitRecord(
+            revision_id=ledger.revision_id,
+            dataset_id=ledger.dataset_id,
+            revision_number=ledger.revision_number,
+            manifest_sha256=manifest.sha256,
+            metadata_sha256=doc.sha256,
+            file_count=len(manifest.files),
+            total_bytes=manifest.total_bytes,
+            committed_by=committed_by,
+            committed_at=now,
         )
-        published = await self._record_revision(committing, record, claim, now)
+        intent = CommitIntent(
+            canonical_bytes(metadata), manifest_bytes(manifest), doc.canonical, marker.canonical
+        )
+        async with self._hierarchy.transaction() as writer:
+            committing, frozen = await writer.freeze_commit(
+                proposed, intent, expected_etag=ledger.etag
+            )
+        record = await self._publish_envelope(committing, frozen, final)
+        published = await self._record_revision(committing, record, claim, record.committed_at)
         await self._write_index(published)
         return published
 

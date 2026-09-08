@@ -18,6 +18,8 @@ import errno
 import os
 from typing import TYPE_CHECKING
 
+from .materialize import directory, rename_exclusive
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -156,7 +158,9 @@ def commit_envelope(staging: Path, final: Path) -> None:
         raise CrossDeviceCommitError(errno.EXDEV, f"cross-device commit: {staging} -> {final}")
     fsync_tree(staging)
     try:
-        os.rename(staging, final)
+        with directory(staging.parent) as source, directory(final.parent) as target:
+            rename_exclusive(source, staging.name, target, final.name)
+            os.fsync(source)
     except OSError as exc:
         if exc.errno == errno.EXDEV:
             raise CrossDeviceCommitError(exc.errno, str(exc)) from exc

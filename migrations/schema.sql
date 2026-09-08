@@ -7,7 +7,7 @@
 -- to carry what a schema dump cannot - the trigger annotations, the vocabularies,
 -- and the invariant each rule serves. Do not replace it with pg_dump output.
 --
--- Reflects: 0010_independent_raw
+-- Reflects: 0011_verified_raw
 --
 -- Every revision that changes the schema updates this file in the same commit
 -- and moves the Reflects line to the new head. scripts/check_schema_map.py
@@ -137,7 +137,7 @@ CREATE TABLE ingest_sessions (
     dataset_id uuid NOT NULL REFERENCES datasets,
     revision_id uuid UNIQUE NOT NULL, revision_number integer NOT NULL,
     manifest_sha256 text NOT NULL,
-    state text NOT NULL,  -- PREPARING|UPLOADING|VERIFYING|COMMITTING|COMMITTED|ABORTED|FAILED
+    state text NOT NULL,  -- PREPARING|UPLOADING|VERIFYING|COMMITTING|RECOVERING|COMMITTED|ABORTED|FAILED
     etag integer NOT NULL DEFAULT 1,
     expires_at timestamptz NOT NULL,
     created_by text NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
@@ -146,7 +146,7 @@ CREATE TABLE ingest_sessions (
     -- revision_number and manifest_sha256 - checked FOR KEY SHARE
 );
 -- [db] one_open_ingest_per_dataset: partial unique index, at most ONE open
--- ingest per dataset (per-dataset lock)
+-- ingest per dataset, excludes only COMMITTED/ABORTED/FAILED
 -- [db] one_claim_per_revision_number: partial unique index on
 -- (dataset_id, revision_number) excluding ABORTED/FAILED - a dead session's
 -- number is freed for retry, a COMMITTED one stays spent forever
@@ -154,6 +154,33 @@ CREATE TABLE ingest_sessions (
 -- index above serves a predicate-free lookup
 -- [db] index ingest_sessions_lapsing (expires_at) WHERE state IN
 -- ('PREPARING','UPLOADING','VERIFYING') - the expiry sweep's listing
+
+CREATE TABLE ingest_commit_intents (
+    ingest_id uuid PRIMARY KEY REFERENCES ingest_sessions ON DELETE RESTRICT,
+    command bytea NOT NULL,
+    manifest bytea NOT NULL,
+    metadata bytea NOT NULL,
+    committed bytea NOT NULL,
+    command_sha256 text GENERATED ALWAYS AS (encode(sha256(command), 'hex')) STORED,
+    manifest_sha256 text GENERATED ALWAYS AS (encode(sha256(manifest), 'hex')) STORED,
+    metadata_sha256 text GENERATED ALWAYS AS (encode(sha256(metadata), 'hex')) STORED,
+    committed_sha256 text GENERATED ALWAYS AS (encode(sha256(committed), 'hex')) STORED,
+    committed_by text NOT NULL,
+    committed_at timestamptz NOT NULL
+);
+-- [db] trigger ingest_commit_intents_immutable: refuses UPDATE and DELETE
+
+CREATE TABLE ingest_recoveries (
+    ingest_id uuid PRIMARY KEY REFERENCES ingest_sessions ON DELETE RESTRICT,
+    attempt_id uuid NOT NULL UNIQUE,
+    original_path text NOT NULL CHECK (length(original_path) > 0),
+    candidate_path text NOT NULL CHECK (length(candidate_path) > 0),
+    checkpoint text NOT NULL CHECK (checkpoint IN ('CLAIMED', 'RELOCATED', 'MATERIALIZED', 'PUBLISHED', 'RECORDED')),
+    actor text NOT NULL CHECK (length(actor) > 0),
+    started_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL CHECK (updated_at >= started_at),
+    CHECK (original_path <> candidate_path)
+);
 
 CREATE TABLE ingest_files (
     file_id uuid PRIMARY KEY,

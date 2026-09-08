@@ -428,6 +428,15 @@ committed raw; only services write published Bronze/Silver/Gold; the project is 
 Roles stack — a person can hold <code>developer</code> on one project and
 <code>project_admin</code> on another; bind IdP groups, not individuals, wherever possible.</p>
 
+<h2 id="p3-maintenance">P3 integrity authority (planned)</h2>
+<p>Platform owners receive SYSTEM-scoped <code>integrity.read</code> and <code>integrity.maintain</code>
+without a new <code>data.write</code> grant. Core enforces these permissions for online report and
+maintenance operations. Scheduled and offline commands use an independently authenticated deployment/operator
+identity scoped to the raw root and permitted operations; a CLI actor string is not authentication.
+Lost RBAC cannot authorize its own reconstruction. Cutover/rebuild additionally require enforced writer
+exclusion. Existing removal intents do not replace current authorization, holds or pins, and unknown
+restored governance keeps destructive continuation disabled. Ordinary scientist service accounts gain no
+broad maintenance privilege.</p>
 </main>
 </body>
 </html>

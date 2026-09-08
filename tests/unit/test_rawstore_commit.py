@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from huron.pkg.rawstore import commit as commit_module
 from huron.pkg.rawstore.commit import (
     CrossDeviceCommitError,
     assert_same_filesystem,
@@ -58,6 +59,13 @@ def _with_different_device(result: os.stat_result) -> os.stat_result:
         result.st_ctime,
     )
     return os.stat_result(fields)
+
+
+def _fail_rename(monkeypatch: pytest.MonkeyPatch, error: int) -> None:
+    def fail(source: int, name: str, target: int, destination: str) -> None:
+        raise OSError(error, os.strerror(error))
+
+    monkeypatch.setattr(commit_module, "rename_exclusive", fail)
 
 
 def _committed_envelope(base: Path) -> tuple[Path, Path]:
@@ -225,7 +233,7 @@ def test_commit_envelope_translates_exdev_from_the_rename(
 ) -> None:
     """An EXDEV raised by the rename itself is translated to CrossDeviceCommitError."""
     staging, final = _committed_envelope(tmp_path)
-    crash_on(monkeypatch, "rename", errno_=errno.EXDEV)
+    _fail_rename(monkeypatch, errno.EXDEV)
 
     with pytest.raises(CrossDeviceCommitError) as exc_info:
         commit_envelope(staging, final)
@@ -241,20 +249,20 @@ def test_commit_envelope_fsyncs_the_whole_tree_before_the_rename_and_the_parent_
     """Every staging path is fsynced before the rename; final's parent and final after it."""
     staging, final = _committed_envelope(tmp_path)
     log = fsync_log(monkeypatch)
-    original_rename = os.rename
+    original_rename = commit_module.rename_exclusive
     split_index: list[int] = []
 
-    def _tracking_rename(source: object, destination: object) -> None:
+    def _tracking_rename(source: int, name: str, destination: int, target: str) -> None:
         split_index.append(len(log))
-        original_rename(source, destination)
+        original_rename(source, name, destination, target)
 
-    monkeypatch.setattr(os, "rename", _tracking_rename)
+    monkeypatch.setattr(commit_module, "rename_exclusive", _tracking_rename)
 
     commit_envelope(staging, final)
 
     before, after = log[: split_index[0]], log[split_index[0] :]
     assert set(before) == {staging, staging / "COMMITTED"}
-    assert after == [final.parent, final]
+    assert after == [staging.parent, final.parent, final]
 
 
 def test_commit_envelope_publishes_and_seals_the_root(tmp_path: Path) -> None:
@@ -303,7 +311,7 @@ def test_a_crash_in_the_rename_leaves_staging_intact_and_final_absent(
 ) -> None:
     """A crash during the rename itself leaves staging intact and final never created."""
     staging, final = _committed_envelope(tmp_path)
-    crash_on(monkeypatch, "rename")
+    _fail_rename(monkeypatch, errno.EIO)
 
     with pytest.raises(OSError) as exc_info:
         commit_envelope(staging, final)

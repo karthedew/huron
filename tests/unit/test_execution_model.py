@@ -253,7 +253,7 @@ def test_readyz_s_raw_store_stat_executes_off_the_event_loop_thread(tmp_path: Pa
         response = client.get("/readyz")
 
     assert response.status_code == 200
-    assert ran_on_the_event_loop == [False]
+    assert ran_on_the_event_loop and not any(ran_on_the_event_loop)
 
 
 def test_the_upload_route_s_write_part_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
@@ -284,7 +284,7 @@ def test_the_upload_route_s_write_part_executes_off_the_event_loop_thread(tmp_pa
         response = ingest.put_part(file_id, 1, b"hello")
 
     assert response.status_code == 200, response.text
-    assert ran_on_the_event_loop == [False]
+    assert ran_on_the_event_loop and not any(ran_on_the_event_loop)
 
 
 def test_the_commit_route_s_envelope_publication_executes_off_the_event_loop_thread(
@@ -322,7 +322,7 @@ def test_the_commit_route_s_envelope_publication_executes_off_the_event_loop_thr
         )
 
     assert response.status_code == 201, response.text
-    assert ran_on_the_event_loop == [False]
+    assert ran_on_the_event_loop and not any(ran_on_the_event_loop)
 
 
 def test_the_file_download_s_stat_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
@@ -350,7 +350,7 @@ def test_the_file_download_s_stat_executes_off_the_event_loop_thread(tmp_path: P
         response = ingest.download(revision_id, "payload/a.bin")
 
     assert response.status_code == 200, response.text
-    assert ran_on_the_event_loop == [False]
+    assert ran_on_the_event_loop and not any(ran_on_the_event_loop)
 
 
 def test_no_asyncify_call_site_in_the_service_tier_is_cancellable() -> None:

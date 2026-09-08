@@ -44,6 +44,7 @@ from .ingest import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterable
 
+    from huron.pkg.catalog.documents import CommitIntent
     from huron.pkg.catalog.ingest import IngestSession
     from huron.pkg.catalog.models import OutboxEvent, RevisionRecord
     from huron.pkg.catalog.persistence import IdempotencyClaim, LedgerEntry
@@ -111,6 +112,7 @@ class TransactionBuffer:
     releases: dict[tuple[UUID, str], Release] = field(default_factory=dict)
     revisions: dict[UUID, RevisionRecord] = field(default_factory=dict)
     sessions: dict[UUID, IngestSession] = field(default_factory=dict)
+    intents: dict[UUID, CommitIntent] = field(default_factory=dict)
     files: dict[UUID, LedgerEntry] = field(default_factory=dict)
     audit: list[AuditEvent] = field(default_factory=list)
     outbox: list[OutboxEvent] = field(default_factory=list)
@@ -480,6 +482,7 @@ class InMemoryHierarchyStore(InMemoryIngestReader):
         self._releases: dict[tuple[UUID, str], Release] = {}
         self._revisions: dict[UUID, RevisionRecord] = {}
         self._sessions: dict[UUID, IngestSession] = {}
+        self._intents: dict[UUID, CommitIntent] = {}
         self._files: dict[UUID, LedgerEntry] = {}
         self._audit: list[AuditEvent] = []
         self._outbox: list[OutboxEvent] = []
@@ -503,6 +506,7 @@ class InMemoryHierarchyStore(InMemoryIngestReader):
             self._releases.update(buffer.releases)
             self._revisions.update(buffer.revisions)
             self._sessions.update(buffer.sessions)
+            self._intents.update(buffer.intents)
             self._files.update(buffer.files)
             self._audit.extend(buffer.audit)
             self._outbox.extend(buffer.outbox)

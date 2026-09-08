@@ -400,7 +400,7 @@ def test_revision_record_refuses_a_foreign_manifest_or_a_session_not_committing(
             committed_by="user:alice",
             committed_at=INGEST_NOW,
         )
-    with pytest.raises(ValueError, match="COMMITTING"):
+    with pytest.raises(ValueError, match="committing or recovering"):
         revision_record(
             verifying,
             manifest,

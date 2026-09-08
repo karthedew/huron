@@ -79,6 +79,7 @@ INGEST_OPERATION_TARGETS: dict[str, IngestState] = {
     "verify": IngestState.VERIFYING,
     "begin_commit": IngestState.COMMITTING,
     "commit": IngestState.COMMITTED,
+    "recover": IngestState.RECOVERING,
     "abort": IngestState.ABORTED,
     "fail": IngestState.FAILED,
 }
@@ -202,6 +203,8 @@ def run_ingest_operation(session: IngestSession, operation: str, *, now: datetim
         return session.verify((complete_file,), now=now)
     if operation == "begin_commit":
         return session.begin_commit(manifest_sha256=session.manifest_sha256, now=now)
+    if operation == "recover":
+        return session.recover()
     if operation == "commit":
         return session.commit()
     if operation == "abort":
@@ -263,17 +266,27 @@ def fsync_log(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     paths_by_descriptor: dict[int, Path] = {}
     original_open = os.open
     original_fsync = os.fsync
+    original_dup = os.dup
     log: list[Path] = []
 
     def _tracking_open(path: str | os.PathLike[str], *args: object, **kwargs: object) -> int:
         descriptor = original_open(path, *args, **kwargs)
-        paths_by_descriptor[descriptor] = Path(path)
+        parent = kwargs.get("dir_fd")
+        paths_by_descriptor[descriptor] = (
+            paths_by_descriptor[parent] / path if isinstance(parent, int) else Path(path)
+        )
         return descriptor
+
+    def _tracking_dup(descriptor: int) -> int:
+        result = original_dup(descriptor)
+        paths_by_descriptor[result] = paths_by_descriptor[descriptor]
+        return result
 
     def _tracking_fsync(descriptor: int) -> None:
         original_fsync(descriptor)
         log.append(paths_by_descriptor[descriptor])
 
+    monkeypatch.setattr(os, "dup", _tracking_dup)
     monkeypatch.setattr(os, "open", _tracking_open)
     monkeypatch.setattr(os, "fsync", _tracking_fsync)
     return log

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -21,9 +22,11 @@ from typing import TYPE_CHECKING
 from huron.schema.storage import PartLengthMismatchError
 
 from .commit import assert_same_filesystem, commit_envelope, fsync_dir
+from .inspection import verify_envelope
+from .materialize import candidate, descendant, directory, file_chunks, install, observe
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping, Sequence
 
 #: Document names a caller may never write at the envelope root: the empty
 #: string and the two directory pseudo-entries are unsafe path components,
@@ -96,10 +99,12 @@ class PosixRawStore:
         envelope = Path(staging)
         staging_root.mkdir(parents=True, exist_ok=True)
         envelope.mkdir(mode=0o700)
-        (envelope / "payload").mkdir(mode=0o700)
-        fsync_dir(staging_root)
+        for child in ("upload", "completion", "envelope", "envelope/payload"):
+            (envelope / child).mkdir(mode=0o700)
+            fsync_dir(envelope / child)
+        fsync_dir(envelope / "envelope")
         fsync_dir(envelope)
-        fsync_dir(envelope / "payload")
+        fsync_dir(staging_root)
 
     def write_part(
         self,
@@ -136,44 +141,84 @@ class PosixRawStore:
 
         Returns:
             The hex SHA-256 of the bytes written.
+
+        Raises:
+            ValueError: If the upload input is not an independently owned regular file.
         """
-        payload_root = Path(staging_payload)
-        target = payload_root / _safe_relative(rel_path)
-        _make_private_dirs(payload_root, target.parent)
-        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT, 0o600)
-        try:
-            digest = _stream_part(descriptor, chunks, offset=offset, length=length)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        _fsync_up_to(target.parent, payload_root)
+        relative = _safe_relative(rel_path)
+        with directory(Path(staging_payload)) as session, descendant(session, ("upload",)) as root:
+            with descendant(root, relative.parts[:-1], create=True) as parent:
+                descriptor = os.open(
+                    relative.name,
+                    os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    0o600,
+                    dir_fd=parent,
+                )
+                try:
+                    info = os.fstat(descriptor)
+                    if (
+                        not stat.S_ISREG(info.st_mode)
+                        or info.st_nlink != 1
+                        or info.st_uid != os.geteuid()
+                    ):
+                        raise ValueError("upload input is not an independent regular file")
+                    digest = _stream_part(descriptor, chunks, offset=offset, length=length)
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+                os.fsync(parent)
+            os.fsync(root)
         return digest
 
-    def finish_file(self, staging_payload: PurePosixPath, rel_path: str) -> tuple[int, str]:
-        """Report a payload file exactly as it is on disk.
-
-        Reads the whole file in one sequential pass, in 1 MiB blocks;
-        nothing about the file is cached from an earlier call. A missing
-        file raises ``FileNotFoundError``.
+    def finish_file(
+        self,
+        staging: PurePosixPath,
+        file_id: str,
+        rel_path: str,
+        *,
+        expected_size: int,
+        expected_sha256: str,
+    ) -> tuple[int, str]:
+        """Materialize verified bytes into an independent, closed payload inode.
 
         Args:
-            staging_payload: The envelope's ``payload`` directory.
-            rel_path: The file's path relative to ``staging_payload`` (a
-                leading ``payload/`` is tolerated).
+            staging: Existing session root.
+            file_id: Upload input name.
+            rel_path: Manifest path of the installed payload.
+            expected_size: Declared complete byte count.
+            expected_sha256: Declared content digest.
 
         Returns:
-            The file's size in bytes and the hex SHA-256 of its content.
+            Observed size and digest. A mismatch installs nothing.
+
+        Raises:
+            ValueError: If the input name is unsafe or an installed file conflicts.
         """
-        target = Path(staging_payload) / _safe_relative(rel_path)
-        descriptor = os.open(target, os.O_RDONLY)
-        try:
-            size = os.fstat(descriptor).st_size
-            digest = hashlib.sha256()
-            while block := os.read(descriptor, 1 << 20):
-                digest.update(block)
-        finally:
-            os.close(descriptor)
-        return size, digest.hexdigest()
+        if _safe_relative(file_id).parts != (file_id,):
+            raise ValueError("upload input must be a single file name")
+        relative = _safe_relative(rel_path)
+        expected = expected_size, expected_sha256
+        with (
+            directory(Path(staging)) as root,
+            descendant(root, ("upload",)) as upload,
+            descendant(root, ("completion",)) as completion,
+            descendant(root, ("envelope", "payload")) as payload,
+            descendant(payload, relative.parts[:-1], create=True) as parent,
+        ):
+            try:
+                existing = observe(parent, relative.name)
+            except FileNotFoundError:
+                pass
+            else:
+                if existing != expected:
+                    raise ValueError("installed payload conflicts with declared content")
+                os.fsync(parent)
+                return existing
+            with candidate(completion, file_chunks(upload, file_id)) as name:
+                observed = observe(completion, name)
+                if observed == expected:
+                    install(completion, name, parent, relative.name, expected)
+                return observed
 
     def discard_file(self, staging_payload: PurePosixPath, rel_path: str) -> None:
         """Remove a payload file the ledger no longer vouches for.
@@ -186,11 +231,17 @@ class PosixRawStore:
             rel_path: The file's path relative to ``staging_payload`` (a
                 leading ``payload/`` is tolerated).
         """
-        target = Path(staging_payload) / _safe_relative(rel_path)
-        if not target.exists():
-            return
-        target.unlink()
-        fsync_dir(target.parent)
+        relative = _safe_relative(rel_path)
+        with (
+            directory(Path(staging_payload)) as session,
+            descendant(session, ("upload",)) as upload,
+            descendant(upload, relative.parts[:-1]) as parent,
+        ):
+            try:
+                os.unlink(relative.name, dir_fd=parent)
+            except FileNotFoundError:
+                return
+            os.fsync(parent)
 
     def stat_document(self, path: PurePosixPath) -> os.stat_result:
         """Inspect a stored file without reading its contents.
@@ -236,7 +287,20 @@ class PosixRawStore:
         """
         if "/" in name or name in _RESERVED_DOCUMENT_NAMES:
             raise ValueError(f"invalid document name: {name!r}")
-        self.atomic_replace(Path(staging) / name, payload, mode=0o444)
+        envelope = Path(staging)
+        with (
+            directory(envelope.parent) as root,
+            descendant(root, ("completion",)) as completion,
+            descendant(root, (envelope.name,)) as target,
+            candidate(completion, (payload,)) as name_candidate,
+        ):
+            install(
+                completion,
+                name_candidate,
+                target,
+                name,
+                (len(payload), hashlib.sha256(payload).hexdigest()),
+            )
 
     def atomic_replace(
         self, path: PurePosixPath | Path, payload: bytes, *, mode: int = 0o444
@@ -302,6 +366,21 @@ class PosixRawStore:
             reverse=True,
         ):
             path.chmod(0o555)
+
+    def verify_envelope(
+        self,
+        envelope: PurePosixPath,
+        files: Sequence[tuple[str, int, str]],
+        documents: Mapping[str, bytes],
+    ) -> None:
+        """Check exact inventory and frozen evidence before publication or replay.
+
+        Args:
+            envelope: Existing staged or final envelope.
+            files: Manifest paths, sizes and digests.
+            documents: Frozen control document bytes.
+        """
+        verify_envelope(Path(envelope), files, documents)
 
     def commit_envelope(self, staging: PurePosixPath, final: PurePosixPath) -> None:
         """Publish a finished staging envelope at its final revision path.
@@ -430,27 +509,6 @@ def _safe_relative(value: str) -> Path:
     return Path(*parts)
 
 
-def _make_private_dirs(base: Path, directory: Path) -> None:
-    """Create every missing directory between ``base`` and ``directory`` at mode 0o700.
-
-    ``Path.mkdir(parents=True)`` creates intermediate directories at
-    ``0o777`` masked by the process umask - typically ``0o755`` - which is
-    too permissive for a staging envelope that must stay private until it
-    is sealed.
-
-    Args:
-        base: The existing ancestor directory to stop at.
-        directory: The directory to ensure exists, private end to end.
-    """
-    missing: list[Path] = []
-    current = directory
-    while current != base and not current.is_dir():
-        missing.append(current)
-        current = current.parent
-    for path in reversed(missing):
-        path.mkdir(mode=0o700, exist_ok=True)
-
-
 def _stream_part(descriptor: int, chunks: Iterable[bytes], *, offset: int, length: int) -> str:
     """Write a stream of chunks into a file range at ``offset``, hashing and length-checking it.
 
@@ -481,22 +539,6 @@ def _stream_part(descriptor: int, chunks: Iterable[bytes], *, offset: int, lengt
     if written != length:
         raise PartLengthMismatchError(f"part delivered {written} bytes, expected {length}")
     return digest.hexdigest()
-
-
-def _fsync_up_to(start: Path, stop: Path) -> None:
-    """Fsync every directory from ``start`` up to and including ``stop``.
-
-    Args:
-        start: The deepest directory to fsync.
-        stop: The shallowest directory to fsync; ``start`` or an ancestor
-            of it.
-    """
-    directory = start
-    while True:
-        fsync_dir(directory)
-        if directory == stop:
-            return
-        directory = directory.parent
 
 
 def _write_all(descriptor: int, payload: bytes) -> None:

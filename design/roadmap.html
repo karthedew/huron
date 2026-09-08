@@ -340,7 +340,10 @@ resumes at the real 64 MiB part size and downloads byte-identically. This closes
 The same implementation passed 990 local unit tests (94.32% coverage), 13 PostgreSQL contract
 tests, <code>make lint</code>, and the strict documentation build. The integration marker has
 no tests; it is not additional integration coverage. Automatic staging deletion and orphan
-reconciliation remain P3; search projection remains P4.</p></td>
+reconciliation remain P3; search projection remains P4. <strong>P3 hardening is planned:</strong>
+P2's hash-only completion and mutable commit-document retries do not exclude stale writable handles.
+The first P3 release adds verified completion copies, frozen commit intent, COMMITTED v2 and a
+fenced offline cutover; this historical P2 receipt does not verify those new guarantees.</p></td>
 <td>Round trip: a tree with NFC/NFD pairs, a zero-byte file, 8-level nesting, and a 9 GiB file
 ingests and downloads byte-identically. Crash matrix: kill after every protocol step; staging
 crashes invisible and swept; post-rename crash imported as an orphan with no duplicate on retry.
@@ -352,11 +355,19 @@ into an independent revision, including unchanged bytes. Every path-rejection ru
 proves the on-disk state each crash leaves.</td></tr>
 
 <tr><td class="k">P3 — Integrity services<br><span class="tag">todo</span></td>
-<td>Staging-only sweeper with fraction guard and dry-run; reconciler implementing the findings
-table plus seal and file-integrity verification; <code>lakectl rebuild --from-storage</code>.</td>
-<td>Drop the database, apply migrations, rebuild from the filesystem alone: identical inventory of
-orgs, projects, datasets, revisions, release tags, amendments — with a purged and an expired revision
-present and reported lawful, not <code>DEGRADED</code>.</td></tr>
+<td><strong>Design complete; implementation not started.</strong>
+<a href="../P3_DESIGN.md">Design</a> · <a href="../P3_IMPLEMENTATION_PLAN.md">Implementation plan</a>.
+First deployable slice: verified file-completion copies, frozen commit documents and externally fenced
+protocol cutover. Then RECOVERING and safe orphan import, versioned governance evidence, integrity/read
+rules, findings, staging-only guarded cleanup and offline Raw catalog rebuild. P5 originates governance
+workflows; P3 recognizes their records and guards continuation of existing intents. No search or array
+registry work is included.</td>
+<td>Stale upload/completion handles cannot change published bytes. Cutover proves old-writer exclusion
+and legacy inventory membership. Real adapter crash/concurrency tests prove recovery and cleanup.
+Drop/migrate/rebuild yields identical hierarchy, revisions, release tags and amendments, including lawful
+purge/expiry and non-destructive pending removal. Missing parents/conflicting identities block activation;
+known corruption stays DEGRADED without blocking healthy inventory. Real NFS evidence is required for an
+NFS deployment. P3 acceptance needs calculated copy capacity, at least 25 GiB for the 9 GiB flow.</td></tr>
 
 <tr><td class="k">P4 — Search projection<br><span class="tag">todo</span></td>
 <td>Outbox consumer (single writer), LanceDB datasets + revisions + snapshots + products tables

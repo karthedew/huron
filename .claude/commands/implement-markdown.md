@@ -1,7 +1,8 @@
 ---
 description: Execute a markdown implementation plan for a Python project through serial implementation and verification agents with a strict validation gate, bounded fix loops, and configurable models
 agent: build
-model: claude-fable-5
+model: openai/gpt-6-astra
+variant: low
 ---
 
 You are orchestrating a disciplined, senior-engineer implementation workflow for a Python project from the markdown implementation plan at:
@@ -11,11 +12,12 @@ You are orchestrating a disciplined, senior-engineer implementation workflow for
 ## Inputs
 
 - Implementation plan: `$1`
-- Implementation subagent model: `${2:-anthropic/claude-sonnet-5}`
-- Verification subagent model: `${3:-anthropic/claude-opus-5}`
+- Implementation subagent model: `${2:-openai/gpt-6-astra}`
+- Verification subagent model: `${3:-openai/gpt-6-astra}`
+- Reasoning effort: `low` for the orchestrator and every implementation, fix, and verification subagent.
 - Escalation review command: `${4:-/architectural-review}`
 
-When spawning subagents, pass the model explicitly: every implementation and fix subagent runs on `${2:-anthropic/claude-sonnet-5}`, and every verification subagent runs on `${3:-anthropic/claude-opus-5}`. If a specified model is unavailable in the current provider configuration, stop immediately and report the available providers instead of silently substituting a model.
+When spawning subagents, pass the model and low reasoning effort explicitly: every implementation and fix subagent runs on `${2:-openai/gpt-6-astra}`, and every verification subagent runs on `${3:-openai/gpt-6-astra}`. If a specified model or low reasoning effort cannot be selected in the current runtime, stop immediately and report the limitation and any confirmed available providers instead of silently substituting a model or reasoning effort.
 
 Treat `$1` as the source-of-truth implementation plan. Before doing anything else, read the entire markdown file carefully. Do not begin editing until you understand the full plan, its phases, its sequencing, its stated constraints, and its acceptance criteria.
 
@@ -81,8 +83,8 @@ Complexity failures and the clean sweep: consolidating legacy paths often pushes
 Your job is to complete the markdown plan through a strict serial loop:
 
 1. Choose exactly one phase or task from the markdown plan.
-2. Send exactly one implementation subagent (model: `${2:-anthropic/claude-sonnet-5}`) to complete that phase or task.
-3. After implementation returns, send exactly one verification subagent (model: `${3:-anthropic/claude-opus-5}`) to review the result.
+2. Send exactly one implementation subagent (model: `${2:-openai/gpt-6-astra}`, reasoning effort: `low`) to complete that phase or task.
+3. After implementation returns, send exactly one verification subagent (model: `${3:-openai/gpt-6-astra}`, reasoning effort: `low`) to review the result.
 4. If verification finds any issue of any size, send another implementation subagent to fix every issue.
 5. Send another verification subagent.
 6. Repeat implementation -> verification, subject to the iteration cap below.
@@ -142,7 +144,7 @@ Maintain a visible progress ledger in your own response as you work. The ledger 
 - Verification attempt number (n of 3)
 - Verification status
 - Remaining phases/tasks
-- Models in use (implementation / verification)
+- Models and reasoning effort in use (orchestrator / implementation / verification)
 
 Use the markdown plan to determine phase boundaries. If the markdown does not clearly define phases, derive a sensible sequence from the document and state the derived sequence before starting.
 
@@ -150,7 +152,7 @@ For each phase/task, follow this exact loop.
 
 ### Step 1: Implementation subagent
 
-Invoke one implementation subagent (model: `${2:-anthropic/claude-sonnet-5}`) for the current phase/task. The implementation subagent must receive a self-contained assignment that includes:
+Invoke one implementation subagent (model: `${2:-openai/gpt-6-astra}`, reasoning effort: `low`) for the current phase/task. The implementation subagent must receive a self-contained assignment that includes:
 
 - The markdown file path: `$1`
 - The exact phase/task to implement
@@ -223,7 +225,7 @@ Process:
 
 ### Step 2: Verification subagent
 
-After implementation returns, invoke one verification subagent (model: `${3:-anthropic/claude-opus-5}`) for the same phase/task. The verification subagent must receive a self-contained assignment that includes:
+After implementation returns, invoke one verification subagent (model: `${3:-openai/gpt-6-astra}`, reasoning effort: `low`) for the same phase/task. The verification subagent must receive a self-contained assignment that includes:
 
 - The markdown file path: `$1`
 - The exact phase/task being verified
@@ -320,7 +322,7 @@ If FAIL, include:
 
 ### Step 3: Fix loop
 
-If the verification subagent returns `FAIL` and fewer than 3 verification attempts have been used for this phase/task, invoke a new implementation subagent (model: `${2:-anthropic/claude-sonnet-5}`) whose only job is to fix every verification issue for the current phase/task. The fix implementation subagent must read the markdown file, read the verification report, inspect the code, fix all issues, and rerun the complete validation gate.
+If the verification subagent returns `FAIL` and fewer than 3 verification attempts have been used for this phase/task, invoke a new implementation subagent (model: `${2:-openai/gpt-6-astra}`, reasoning effort: `low`) whose only job is to fix every verification issue for the current phase/task. The fix implementation subagent must read the markdown file, read the verification report, inspect the code, fix all issues, and rerun the complete validation gate.
 
 If the verification subagent returns `FAIL` on attempt 3, do not send another fix subagent. Execute the escalation procedure in "Iteration cap and escalation" and end the workflow.
 
