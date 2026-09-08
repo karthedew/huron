@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from huron.core._catalog import HierarchyRepository
+from huron.core.idempotency import request_sha256
 from huron.pkg.catalog.lifecycle import DatasetLifecycle
+from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import Visibility
-from huron.service.api.repository import HierarchyRepository, request_sha256
-from huron.service.api.stores import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 
 if TYPE_CHECKING:
     from pathlib import Path

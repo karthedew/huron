@@ -31,14 +31,14 @@ from alembic import command
 from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
+from huron.core.ports import HierarchyStore
 from huron.pkg.catalog.errors import DatasetLocked, ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.ingest import LEASE_TTL
 from huron.pkg.catalog.layers import Layer
 from huron.pkg.catalog.lifecycle import DatasetLifecycle
-from huron.service.api.records import Dataset, Organization, Project, Release
-from huron.service.api.stores import (
-    HierarchyStore,
+from huron.pkg.catalog.records import Dataset, Organization, Project, Release
+from huron.pkg.metastore import (
     IdempotencyClaim,
     InMemoryHierarchyStore,
     PostgresHierarchyStore,
@@ -687,7 +687,6 @@ async def _assert_concurrent_begin_ingest_calls_serialize(dsn: str) -> None:
                     dataset_id,
                     "a" * 64,
                     created_by="user:alice",
-                    parent_revision_id=None,
                     files=(),
                 )
                 locked.set()
@@ -705,7 +704,6 @@ async def _assert_concurrent_begin_ingest_calls_serialize(dsn: str) -> None:
                         dataset_id,
                         "b" * 64,
                         created_by="user:bob",
-                        parent_revision_id=None,
                         files=(),
                     )
             return excinfo.value
@@ -776,7 +774,7 @@ async def _assert_begin_ingest_binds_one_instant(dsn: str) -> None:
         dataset_id = hierarchy.datasets["run-0001"]
         async with store.transaction() as writer:
             session = await writer.begin_ingest(
-                dataset_id, "a" * 64, created_by="user:alice", parent_revision_id=None, files=()
+                dataset_id, "a" * 64, created_by="user:alice", files=()
             )
         row = await pool.fetchrow(
             "SELECT created_at, updated_at, expires_at FROM ingest_sessions WHERE id = $1",

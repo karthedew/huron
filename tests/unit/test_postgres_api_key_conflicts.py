@@ -18,7 +18,7 @@ import pytest
 
 from huron.pkg.auth import ApiKeyRecord
 from huron.pkg.catalog.errors import ResourceNotFound
-from huron.service.api.stores import PostgresApiKeyStore
+from huron.pkg.metastore import PostgresApiKeyStore
 
 pytestmark = pytest.mark.unit
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from huron.applications.api.runtime import ApiStores
 from huron.pkg.auth import (
     MemoryApiKeyStore,
     MemoryCredentialStore,
@@ -24,8 +25,7 @@ from huron.pkg.catalog.ingest import (
     IngestState,
     UploadAction,
 )
-from huron.service.api.runtime import ApiStores
-from huron.service.api.stores import InMemoryHierarchyStore, InMemoryRbacStore
+from huron.pkg.metastore import InMemoryHierarchyStore, InMemoryRbacStore
 
 if TYPE_CHECKING:
     from datetime import timedelta
@@ -143,7 +143,6 @@ def ingest_session(
         state=state,
         manifest_sha256=manifest_sha256,
         created_by="user:alice",
-        parent_revision_id=None,
     )
 
 

@@ -4,7 +4,8 @@
 make lint    # every static check CI enforces
 ```
 
-That is the whole validation gate, and every step must be clean:
+That is the static validation gate. Tests run separately as documented in AGENTS.md;
+every applicable check must be clean:
 
 ```bash
 uv run ruff check .                              # lint, including docstring presence and shape
@@ -31,7 +32,7 @@ Per-file ignores exist and are narrow, each for a stated reason:
   mirrors its API code — `SlugImmutable`, `Forbidden`, `PrincipalKindNotAllowed`. The wire code
   is the contract; renaming the class to satisfy a linter would desynchronize them.
 - `TC001`–`TC003` (move imports into a type-checking block) are waived across
-  `src/huron/service/api/**`, because FastAPI resolves annotations at runtime to build dependency
+  `src/huron/applications/api/**`, because FastAPI resolves annotations at runtime to build dependency
   injection — moving those imports breaks the application.
 - `D301` (raw string for a docstring with a backslash) is waived for route modules
   (`routes/**/endpoints/*.py` and `app.py`), whose docstrings hold a `\f` so that FastAPI stops the
@@ -52,20 +53,20 @@ Annotate every public function and method. `Any` is for genuinely open types, no
 
 ## Import boundaries
 
-Four `import-linter` contracts, all checked in CI:
+`make lint` runs the import-linter contracts declared in `pyproject.toml`:
 
-| Contract | Rule |
+| Boundary | Rule |
 |---|---|
-| *layers* | `service` → `pkg` → `schema`, never the reverse |
-| *independence* (packages) | no `pkg` imports another `pkg` |
-| *independence* (services) | no `service` imports another `service` |
-| *forbidden* | no web framework, driver or storage SDK inside `pkg/catalog` or `pkg/rbac` |
+| Layers | `applications` → `core` → `pkg` → `schema` |
+| Domain independence | auth, catalog, RBAC and rawstore do not import one another |
+| Infrastructure | metastore may import domain types; domains never import metastore |
+| Core | injected ports, no concrete adapters, HTTP framework or compute runtime |
+| Domain logic | no web framework, database driver or storage SDK |
+| API authorization | routes use the authorization package's public surface |
 
-The forbidden list is `fastapi`, `uvicorn`, `starlette`, `sqlalchemy`, `asyncpg`, `alembic`,
-`aiobotocore`, `boto3`, `botocore`, `lancedb`, `icechunk`, `zarr`, `httpx`, `structlog` and
-`prometheus_client`. `pydantic` and `jsonschema` are deliberately absent.
-
-When adding a package, add it to the independence contract's module list in the same change.
+Applications may import concrete adapters to wire core services. Pydantic and JSON Schema
+validation are allowed in domain contracts. Add appropriate boundaries when introducing
+new packages; do not weaken existing contracts to conceal reverse dependencies.
 
 ## The design record
 

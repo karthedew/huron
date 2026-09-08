@@ -288,7 +288,6 @@ def test_revision_from_storage_rebuilds_only_when_marker_metadata_and_session_ag
         state=IngestState.COMMITTING,
         manifest_sha256=manifest.sha256,
         created_by="user:karl",
-        parent_revision_id=None,
     )
     record = _record(
         id=lease.revision_id,

@@ -17,9 +17,14 @@ from uuid import uuid4
 
 import pytest
 
+from huron.applications.api.authorization import bindings_for_principal, check
+from huron.core._catalog import HierarchyRepository
+from huron.core.idempotency import request_sha256
 from huron.pkg.auth import ApiKeyRecord, MemoryApiKeyStore
 from huron.pkg.auth import Principal as AuthPrincipal
 from huron.pkg.catalog.errors import ResourceNotFound
+from huron.pkg.catalog.failures import AttachmentExists, BindingExists, ServiceAccountExists
+from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import (
     Binding,
@@ -32,10 +37,6 @@ from huron.pkg.rbac import (
     decide,
 )
 from huron.pkg.rbac.roles import PrincipalKindNotAllowed, ScopeNotBindable
-from huron.service.api.authorization import bindings_for_principal, check
-from huron.service.api.errors import AttachmentExists, BindingExists, ServiceAccountExists
-from huron.service.api.repository import HierarchyRepository, request_sha256
-from huron.service.api.stores import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -457,7 +458,7 @@ async def test_memory_api_key_store_records_touch_calls() -> None:
 
 async def test_touch_api_key_failure_does_not_break_authentication() -> None:
     """The touch is best-effort: a store that raises must not surface to the caller."""
-    from huron.service.api.authorization.credentials import _touch_api_key
+    from huron.applications.api.authorization.credentials import _touch_api_key
 
     class _ExplodingStore:
         """An API-key store whose ``touch_last_used`` always raises."""

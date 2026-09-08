@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 import pytest
 
 import huron.pkg.catalog.ingest as ingest_module
+from huron.core._ingest import IngestService
 from huron.pkg.catalog import (
     PART_BYTES,
     FileState,
@@ -38,9 +39,8 @@ from huron.pkg.catalog.documents import (
 from huron.pkg.catalog.errors import IllegalIngestTransition
 from huron.pkg.catalog.manifest import DEFAULT_MAX_FILE_BYTES
 from huron.pkg.catalog.paths import revision_dir, staging_dir
+from huron.pkg.metastore import IdempotencyClaim, Replay, SystemClock
 from huron.pkg.rawstore import PosixRawStore
-from huron.service.api.ingest import IngestService
-from huron.service.api.stores import IdempotencyClaim, Replay, SystemClock
 from tests.ingest_client import IngestClient, declared_file, dev_headers, manifest_file
 from tests.unit.support import crash_on
 
@@ -50,8 +50,8 @@ if TYPE_CHECKING:
 
     from fastapi.testclient import TestClient
 
-    from huron.service.api.routes.v1.schema.ingest_sessions import ManifestFile
-    from huron.service.api.runtime import ApiStores
+    from huron.applications.api.routes.v1.schema.ingest_sessions import ManifestFile
+    from huron.applications.api.runtime import ApiStores
 
 pytestmark = pytest.mark.unit
 
@@ -620,63 +620,6 @@ def test_every_session_route_hides_an_invisible_dataset(client: TestClient) -> N
 # -- planning against a parent revision ---------------------------------------
 
 
-def test_create_plans_hardlinks_against_the_latest_committed_revision(
-    client: TestClient, stores: ApiStores, tmp_path: Path
-) -> None:
-    """A file identical to the parent's is hard-linked; a changed one must still be uploaded."""
-    ingest = IngestClient(client)
-    _, dataset_id = ingest.developer_dataset()
-
-    dataset_view = client.get(f"/api/v1/datasets/{dataset_id}", headers=dev_headers("bob")).json()
-    project_view = client.get(
-        f"/api/v1/projects/{dataset_view['project_id']}", headers=dev_headers("bob")
-    ).json()
-    organization = client.get(
-        f"/api/v1/organizations/{project_view['organization_id']}", headers=dev_headers("bob")
-    ).json()
-
-    unchanged = manifest_file("payload/a.bin", b"hello")
-    changed = manifest_file("payload/b.bin", b"world")
-    parent_manifest = validate_manifest(
-        [ManifestEntry(path=unchanged.path, size=unchanged.size, sha256=unchanged.sha256)]
-    )
-
-    revision_id = uuid4()
-    path = revision_dir(
-        PurePosixPath(str(tmp_path / "data")),
-        _Ref(id=UUID(organization["id"]), slug=organization["slug"]),
-        _Ref(id=UUID(project_view["id"]), slug=project_view["slug"]),
-        _Ref(id=UUID(dataset_view["id"]), slug=dataset_view["slug"]),
-        1,
-        revision_id,
-    )
-    (Path(path)).mkdir(parents=True)
-    (Path(path) / "manifest.json").write_bytes(manifest_bytes(parent_manifest))
-    record = RevisionRecord(
-        id=revision_id,
-        dataset_id=UUID(dataset_id),
-        number=1,
-        manifest_sha256=parent_manifest.sha256,
-        metadata_sha256=_ZERO_SHA,
-        revision_path=str(path),
-        committed_by="bob",
-        committed_at=datetime.now(UTC),
-        file_count=1,
-        total_bytes=parent_manifest.total_bytes,
-    )
-    stores.hierarchy._revisions[record.id] = record
-
-    response = ingest.create(dataset_id, [unchanged, changed])
-
-    assert response.status_code == 201, response.text
-    body = response.json()
-    assert body["parent_revision_id"] == str(revision_id)
-    files_by_path = {item["path"]: item for item in body["files"]}
-    assert files_by_path["payload/a.bin"]["action"] == "hardlink"
-    assert files_by_path["payload/a.bin"]["part_count"] == 0
-    assert files_by_path["payload/b.bin"]["action"] == "upload"
-
-
 def test_a_staging_failure_at_create_fails_the_session_and_frees_the_number(
     client: TestClient, stores: ApiStores, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1057,22 +1000,6 @@ def test_upload_refusals_happen_before_the_body_is_read(
         assert touched == []
     ingest.abort(session["id"])
 
-    unchanged = manifest_file("payload/a.bin", data)
-    _seed_committed_revision(client, stores, tmp_path, dataset_id, [unchanged])
-    changed = manifest_file("payload/d.bin", b"other")
-    hardlink_session = ingest.create(dataset_id, [unchanged, changed]).json()
-    files_by_path = {item["path"]: item for item in hardlink_session["files"]}
-    hardlink_file = files_by_path["payload/a.bin"]
-    assert hardlink_file["action"] == "hardlink"
-    touched = []
-    hardlink_response = ingest.put_part(
-        hardlink_file["file_id"], 1, _untouched_body(data, touched), content_length=len(data)
-    )
-    assert hardlink_response.status_code == 409
-    assert hardlink_response.json()["code"] == "ILLEGAL_INGEST_TRANSITION"
-    assert touched == []
-    ingest.abort(hardlink_session["id"])
-
     verifying_session = ingest.create(dataset_id, [manifest_file("payload/b.bin", data)]).json()
     verifying_file_id = verifying_session["files"][0]["file_id"]
     verifying_id = UUID(verifying_session["id"])
@@ -1302,65 +1229,6 @@ async def test_a_second_concurrent_complete_retries_past_the_first_then_refuses(
 
 
 # -- verify and commit ---------------------------------------------------------
-
-
-def test_verify_links_parent_files_and_moves_to_verifying(
-    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Verify links every unchanged file from the parent and moves a full session to VERIFYING.
-
-    A retry after a link failure only touches the files still PENDING:
-    the file linked before the crash is not visited again.
-    """
-    ingest = IngestClient(client)
-    _, dataset_id = ingest.developer_dataset()
-    first_unchanged = b"unchanged one"
-    second_unchanged = b"unchanged two"
-    ingest.upload_revision(
-        dataset_id, [("payload/a.bin", first_unchanged), ("payload/c.bin", second_unchanged)]
-    )
-
-    changed = b"new content"
-    session = ingest.create(
-        dataset_id,
-        [
-            manifest_file("payload/a.bin", first_unchanged),
-            manifest_file("payload/b.bin", changed),
-            manifest_file("payload/c.bin", second_unchanged),
-        ],
-    ).json()
-    files_by_path = {item["path"]: item for item in session["files"]}
-    assert files_by_path["payload/a.bin"]["action"] == "hardlink"
-    assert files_by_path["payload/a.bin"]["part_count"] == 0
-    assert files_by_path["payload/c.bin"]["action"] == "hardlink"
-    assert files_by_path["payload/b.bin"]["action"] == "upload"
-    ingest.put_part(files_by_path["payload/b.bin"]["file_id"], 1, changed)
-
-    monkeypatch.setattr(
-        client.app.state.runtime.repository.raw_store, "hardlink_fallback_copy", False
-    )
-    crash_on(monkeypatch, "link", call=2)
-    failed = ingest.verify(session["id"])
-    assert failed.status_code == 500
-
-    after_crash = ingest.get(session["id"]).json()
-    files_after_crash = {item["path"]: item for item in after_crash["files"]}
-    assert after_crash["state"] == "UPLOADING"
-    assert files_after_crash["payload/a.bin"]["state"] == "COMPLETE"
-    assert files_after_crash["payload/c.bin"]["state"] == "PENDING"
-
-    verified = ingest.verify(session["id"])
-
-    assert verified.status_code == 200, verified.text
-    body = verified.json()
-    assert body["state"] == "VERIFYING"
-    verified_by_path = {item["path"]: item for item in body["files"]}
-    assert verified_by_path["payload/a.bin"]["state"] == "COMPLETE"
-    assert verified_by_path["payload/c.bin"]["state"] == "COMPLETE"
-
-    staging = staging_dir(PurePosixPath(str(tmp_path / "data")), UUID(session["id"]))
-    for name in ("a.bin", "c.bin"):
-        assert (Path(staging) / "payload" / name).stat().st_nlink == 2
 
 
 def test_verify_refuses_while_a_file_is_pending(client: TestClient) -> None:
@@ -1606,23 +1474,3 @@ def test_a_replayed_commit_returns_the_same_revision(client: TestClient) -> None
     assert reused.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
     still_committing = ingest.get(second_session["id"]).json()
     assert still_committing["state"] == "COMMITTING"
-
-
-def test_create_refuses_a_manifest_the_dataset_already_holds(client: TestClient) -> None:
-    """Opening a session for a manifest the dataset already committed is refused."""
-    ingest = IngestClient(client)
-    _, dataset_id = ingest.developer_dataset()
-    data = b"hello"
-    files = [manifest_file("payload/a.bin", data)]
-    session = ingest.create(dataset_id, files).json()
-    ingest.put_part(session["files"][0]["file_id"], 1, data)
-    verified = ingest.verify(session["id"]).json()
-    committed = ingest.commit(
-        session["id"], verified["etag"], {"title": "Run", "creators": ["bob"]}
-    )
-    assert committed.status_code == 201, committed.text
-
-    duplicate = ingest.create(dataset_id, files)
-
-    assert duplicate.status_code == 409
-    assert duplicate.json()["code"] == "DUPLICATE_CONTENT"

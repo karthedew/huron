@@ -55,9 +55,14 @@ from alembic.config import Config
 from pydantic import BaseModel, ConfigDict
 from testcontainers.postgres import PostgresContainer
 
+from huron.applications.api.routes.v1.pagination import paginate
+from huron.core.ports import ApiKeyWriter, RbacStore
 from huron.pkg.auth import ApiKeyRecord
 from huron.pkg.catalog.errors import ResourceNotFound
+from huron.pkg.catalog.failures import UsernameTaken
 from huron.pkg.catalog.ids import uuid7
+from huron.pkg.catalog.records import Policy, RoleBindingRecord, ServiceAccount
+from huron.pkg.metastore import InMemoryRbacStore, PostgresApiKeyStore, PostgresRbacStore
 from huron.pkg.rbac import ScopeType
 from huron.pkg.rbac.roles import (
     CAPABILITIES,
@@ -66,16 +71,6 @@ from huron.pkg.rbac.roles import (
     PrincipalKindNotAllowed,
     ScopeNotBindable,
     compile_binding,
-)
-from huron.service.api.errors import UsernameTaken
-from huron.service.api.records import Policy, RoleBindingRecord, ServiceAccount
-from huron.service.api.routes.v1.pagination import paginate
-from huron.service.api.stores import (
-    ApiKeyWriter,
-    InMemoryRbacStore,
-    PostgresApiKeyStore,
-    PostgresRbacStore,
-    RbacStore,
 )
 
 pytestmark = pytest.mark.contract

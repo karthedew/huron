@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from huron.core._catalog import HierarchyRepository
+from huron.core.idempotency import request_sha256
 from huron.pkg.catalog.errors import (
     ClassificationUnknown,
     IdempotencyKeyReused,
@@ -26,12 +28,11 @@ from huron.pkg.catalog.errors import (
     SlugImmutable,
     TagExists,
 )
+from huron.pkg.catalog.failures import SlugExists
 from huron.pkg.catalog.paths import dataset_dir, organization_dir, project_dir, release_tag_file
+from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import Visibility
-from huron.service.api.errors import SlugExists
-from huron.service.api.repository import HierarchyRepository, request_sha256
-from huron.service.api.stores import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 from tests.hierarchy_contract import committed_revision
 
 if TYPE_CHECKING:

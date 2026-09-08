@@ -1,11 +1,10 @@
 """Pure raw-ingest state and upload-plan mechanics.
 
 A raw revision arrives through an ingest session: the client declares a
-manifest, uploads what the parent revision does not already hold, and the
+manifest, uploads every declared file, and the
 service verifies and commits the result as one atomic envelope. This module
 holds the session's state machine and lease arithmetic, the per-file ledger
-that tracks upload progress, and the plan that decides which files must be
-uploaded and which can be hard-linked from the parent. Every value is
+that tracks upload progress, and the plan that divides each file into upload parts. Every value is
 immutable and every operation returns a new value; persistence, I/O and
 clocks belong to the service that drives the session.
 """
@@ -82,10 +81,9 @@ TRANSITIONS: Mapping[IngestState, frozenset[IngestState]] = {
 
 
 class UploadAction(StrEnum):
-    """What the upload plan asks for one file: send its bytes, or reuse the parent's."""
+    """The upload disposition for one file's complete bytes."""
 
     UPLOAD = "upload"
-    HARDLINK = "hardlink"
 
 
 class FileState(StrEnum):
@@ -95,7 +93,7 @@ class FileState(StrEnum):
     whether none, some or all of its parts have arrived, or an observation
     was found not to match and discarded. ``COMPLETE`` means the bytes are
     proven: every part arrived and the whole-file observation matched the
-    manifest, or the file was linked from the parent revision. There is no
+    manifest. There is no
     third state; a mismatch never becomes one, it returns the file to
     ``PENDING``.
     """
@@ -139,10 +137,9 @@ class IngestFile:
             beginning with ``payload/``.
         size: The size the manifest declares for this file.
         expected_sha256: The digest the manifest declares for this file.
-        action: Whether the client must upload the file's bytes or the
-            service links them from the parent revision.
+        action: The upload disposition; every file is uploaded.
         part_count: The number of upload parts the plan allows: at least
-            one for an upload, zero for a hardlink.
+            one, including for an empty file.
         state: Whether the ledger currently vouches for this file's bytes.
         completed_parts: The 1-based part numbers durably in the envelope.
     """
@@ -161,12 +158,8 @@ class IngestFile:
         """Return whether every part the plan calls for has arrived.
 
         Returns:
-            Whether ``completed_parts`` covers ``1..part_count`` in full;
-            vacuously False for a hardlink file, which has no parts to
-            receive and is proven complete by :meth:`linked` instead.
+            Whether ``completed_parts`` covers ``1..part_count`` in full.
         """
-        if self.action is UploadAction.HARDLINK:
-            return False
         return self.completed_parts == frozenset(range(1, self.part_count + 1))
 
     def part_received(self, part: int) -> IngestFile:
@@ -180,11 +173,10 @@ class IngestFile:
             this file if ``part`` was already held.
 
         Raises:
-            IllegalIngestTransition: If this is a hardlink file, which has
-                no parts to receive, or the file is already COMPLETE.
+            IllegalIngestTransition: If the file is already COMPLETE.
             ValueError: If ``part`` is outside ``1..part_count``.
         """
-        if self.action is UploadAction.HARDLINK or self.state is FileState.COMPLETE:
+        if self.state is FileState.COMPLETE:
             raise IllegalIngestTransition(
                 f"{self.path} cannot receive a part in its current state",
                 context={"state": self.state, "operation": "part_received"},
@@ -231,35 +223,14 @@ class IngestFile:
             )
         return replace(self, state=FileState.COMPLETE)
 
-    def linked(self) -> IngestFile:
-        """Record that the parent's bytes were linked in for this file.
-
-        A hardlink file inherits the parent's digest unhashed, so no
-        observation is taken. Calling this again on an already-COMPLETE
-        hardlink file succeeds and changes nothing.
-
-        Returns:
-            A copy in state COMPLETE, with no parts recorded.
-
-        Raises:
-            IllegalIngestTransition: If this is not a hardlink file.
-        """
-        if self.action is not UploadAction.HARDLINK:
-            raise IllegalIngestTransition(
-                f"{self.path} is not a hardlink file",
-                context={"state": self.state, "operation": "linked"},
-            )
-        return replace(self, state=FileState.COMPLETE)
-
 
 @dataclass(frozen=True, slots=True)
 class UploadPlanEntry:
-    """The plan for one manifest entry: upload it, or hard-link it from the parent revision.
+    """The complete upload plan for one manifest entry.
 
     Attributes:
         file: The manifest entry the plan is for.
-        action: Whether the client must upload the bytes or the service can
-            link them from the parent revision.
+        action: The upload disposition; every file requires its complete bytes.
         part_count: The number of upload parts the client must send, as
             :attr:`IngestFile.part_count`.
     """
@@ -287,8 +258,6 @@ class IngestSession:
         created_by: The principal who opened the session; the only one,
             besides a project admin driving a force-abort, allowed to
             advance it.
-        parent_revision_id: The committed revision the upload plan was
-            computed against, or None for a dataset's first revision.
         etag: The session's version, starting at 1 and incremented by
             every state edge.
     """
@@ -297,7 +266,6 @@ class IngestSession:
     state: IngestState
     manifest_sha256: str
     created_by: str
-    parent_revision_id: UUID | None
     etag: int = 1
 
     def _lapsed(self, *, now: datetime) -> bool:
@@ -553,49 +521,30 @@ class IngestSession:
 
 
 def compute_upload_plan(
-    manifest: Manifest, parent_manifest: Manifest | None = None, *, part_bytes: int = PART_BYTES
+    manifest: Manifest, *, part_bytes: int = PART_BYTES
 ) -> tuple[UploadPlanEntry, ...]:
-    """Decide, file by file, what the client must upload and what the parent already holds.
-
-    A file is unchanged when the parent revision has an entry at the same
-    path with the same SHA-256 and size, and both manifests share a hash
-    algorithm; it is planned as a hard link from the parent, so a revision
-    that touches one file in a thousand costs one upload and no duplicate
-    storage. Everything else, and every file when there is no parent or the
-    two manifests used different hash algorithms, is planned as an upload.
-    A change of media type alone does not make a file an upload: the bytes
-    are what is linked.
+    """Plan a complete independent upload of every declared file.
 
     Args:
-        manifest: The validated manifest of the revision being ingested.
-        parent_manifest: The manifest of the revision the new one builds on,
-            or None for a dataset's first revision.
-        part_bytes: The size of one upload part; an upload file needs
-            ``max(1, ceil(size / part_bytes))`` of them.
+        manifest: The validated collection being submitted.
+        part_bytes: Maximum bytes in a part; must be positive.
 
     Returns:
-        One entry per file of ``manifest``, in the manifest's order.
+        One upload entry per file, including one part for empty files.
+
+    Raises:
+        ValueError: If the part size is not positive.
     """
-    comparable_parent = (
-        parent_manifest
-        if parent_manifest is not None and parent_manifest.hash_algorithm == manifest.hash_algorithm
-        else None
-    )
-    parent_by_path = (
-        {entry.path: entry for entry in comparable_parent.files} if comparable_parent else {}
-    )
-    plan: list[UploadPlanEntry] = []
-    for entry in manifest.files:
-        parent = parent_by_path.get(entry.path)
-        unchanged = (
-            parent is not None and parent.sha256 == entry.sha256 and parent.size == entry.size
+    if part_bytes <= 0:
+        raise ValueError("part_bytes must be positive")
+    return tuple(
+        UploadPlanEntry(
+            file=entry,
+            action=UploadAction.UPLOAD,
+            part_count=max(1, ceil(entry.size / part_bytes)),
         )
-        if unchanged:
-            action, part_count = UploadAction.HARDLINK, 0
-        else:
-            action, part_count = UploadAction.UPLOAD, max(1, ceil(entry.size / part_bytes))
-        plan.append(UploadPlanEntry(file=entry, action=action, part_count=part_count))
-    return tuple(plan)
+        for entry in manifest.files
+    )
 
 
 def revision_record(

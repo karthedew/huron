@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
+
+from huron.schema.storage import PartLengthMismatchError
 
 from .commit import assert_same_filesystem, commit_envelope, fsync_dir
 
@@ -28,10 +29,6 @@ if TYPE_CHECKING:
 #: string and the two directory pseudo-entries are unsafe path components,
 #: and ``payload`` is reserved for the upload tree itself.
 _RESERVED_DOCUMENT_NAMES = frozenset({"", ".", "..", "payload"})
-
-
-class PartLengthMismatchError(ValueError):
-    """The stream delivered a different number of bytes than the part was planned to hold."""
 
 
 class PosixRawStore:
@@ -51,19 +48,15 @@ class PosixRawStore:
     satisfies :class:`huron.pkg.catalog.ports.RawStore`.
     """
 
-    def __init__(self, root: str | Path, *, hardlink_fallback_copy: bool = True):
+    def __init__(self, root: str | Path):
         """Bind the store to a data root without touching the filesystem.
 
         Args:
             root: The data root; ``.staging`` and ``organization`` live
                 directly beneath it. Nothing is created until
                 :meth:`initialize`.
-            hardlink_fallback_copy: Whether :meth:`hardlink_from_parent`
-                copies the file when a hard link cannot be made, instead of
-                raising the ``OSError`` from the failed link.
         """
         self.root = Path(root)
-        self.hardlink_fallback_copy = hardlink_fallback_copy
 
     def initialize(self) -> None:
         """Create the store's directory skeleton and prove it can commit.
@@ -199,51 +192,16 @@ class PosixRawStore:
         target.unlink()
         fsync_dir(target.parent)
 
-    def hardlink_from_parent(
-        self,
-        parent_payload: PurePosixPath,
-        staging_payload: PurePosixPath,
-        rel_path: str,
-    ) -> None:
-        """Carry one unchanged file from the parent revision into the staging payload.
-
-        The file is hard-linked rather than copied, so an incremental
-        revision costs one directory entry per inherited file and the bytes
-        stay shared with the parent. A target that is already the parent's
-        inode is a no-op; anything else already there is unlinked first.
-        When the link cannot be made and ``hardlink_fallback_copy`` is set,
-        the bytes are copied into a newly created file and fsynced instead;
-        a missing source file surfaces as ``FileNotFoundError`` either way.
-        ``rel_path`` is validated as a safe payload-relative path first, so
-        an unsafe one fails with the ``ValueError`` of that check before
-        anything is touched.
+    def stat_document(self, path: PurePosixPath) -> os.stat_result:
+        """Inspect a stored file without reading its contents.
 
         Args:
-            parent_payload: The parent revision's ``payload`` directory.
-            staging_payload: The staging envelope's ``payload`` directory.
-            rel_path: The file's path relative to the payload directory (a
-                leading ``payload/`` is tolerated); intermediate directories
-                are created as needed.
+            path: The stored file's location.
 
-        Raises:
-            OSError: If the hard link cannot be created and copying is
-                disabled.
+        Returns:
+            Its current filesystem metadata.
         """
-        relative = _safe_relative(rel_path)
-        source = Path(parent_payload) / relative
-        target = Path(staging_payload) / relative
-        _make_private_dirs(Path(staging_payload), target.parent)
-        if target.exists():
-            if os.path.samefile(source, target):
-                return
-            target.unlink()
-        try:
-            os.link(source, target)
-        except OSError:
-            if not self.hardlink_fallback_copy:
-                raise
-            _copy_exclusive(source, target)
-        fsync_dir(target.parent)
+        return os.stat(path)
 
     def read_document(self, path: PurePosixPath) -> bytes:
         """Return a stored document's bytes exactly as written.
@@ -539,31 +497,6 @@ def _fsync_up_to(start: Path, stop: Path) -> None:
         if directory == stop:
             return
         directory = directory.parent
-
-
-def _copy_exclusive(source: Path, target: Path) -> None:
-    """Copy ``source`` into a newly created ``target``, refusing an existing file.
-
-    The fallback for filesystems where a hard link cannot be made: the
-    target is created exclusively with mode ``0o600``, the bytes are
-    streamed across, and the file is flushed and fsynced before it is
-    closed, so the copy is as durable as a link would have been.
-
-    Args:
-        source: The existing file to read.
-        target: The path to create; it must not exist.
-    """
-    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with (
-            source.open("rb") as source_file,
-            os.fdopen(descriptor, "wb", closefd=False) as target_file,
-        ):
-            shutil.copyfileobj(source_file, target_file)
-            target_file.flush()
-            os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _write_all(descriptor: int, payload: bytes) -> None:

@@ -34,7 +34,7 @@ tables:
    account, and ``PostgresCredentialStore.upsert`` must tell the two apart:
    an unknown id stays :class:`~huron.pkg.catalog.errors.ResourceNotFound`,
    a real service account becomes
-   :class:`~huron.service.api.errors.PrincipalKindMismatch`.
+   :class:`~huron.pkg.catalog.failures.PrincipalKindMismatch`.
 
 Requires Docker (testcontainers spins up a real PostgreSQL). Checked against
 a database migrated with the project's own Alembic revisions.
@@ -60,9 +60,9 @@ from huron.pkg.auth.password import CredentialRecord
 from huron.pkg.auth.principals import PrincipalSubjectExists
 from huron.pkg.auth.sessions import SessionRecord
 from huron.pkg.catalog.errors import ResourceNotFound
+from huron.pkg.catalog.failures import PrincipalKindMismatch
 from huron.pkg.catalog.ids import uuid7
-from huron.service.api.errors import PrincipalKindMismatch
-from huron.service.api.stores import (
+from huron.pkg.metastore import (
     PostgresApiKeyStore,
     PostgresCredentialStore,
     PostgresPrincipalStore,

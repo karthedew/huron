@@ -22,16 +22,16 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from huron.applications.api.app import create_app
+from huron.applications.api.settings import ApiSettings, ClassificationValue
 from huron.pkg.catalog.paths import dataset_dir
-from huron.service.api.app import create_app
-from huron.service.api.settings import ApiSettings, ClassificationValue
 from tests.hierarchy_contract import committed_revision
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from huron.service.api.runtime import ApiStores
+    from huron.applications.api.runtime import ApiStores
 
 pytestmark = pytest.mark.unit
 

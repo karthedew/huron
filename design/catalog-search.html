@@ -146,7 +146,7 @@ dataset_revisions(id PK, dataset_id FK, revision_number,
          state CHECK IN ('COMMITTED','EXPIRED_PARTIAL','EXPIRED','PURGED','DEGRADED'),  -- [db 0008] (S2)
          manifest_sha256, metadata_sha256, revision_path, file_count, total_bytes,
          committed_by, committed_at, …,
-         UNIQUE (dataset_id, revision_number), UNIQUE (dataset_id, manifest_sha256))
+         UNIQUE (dataset_id, revision_number)) -- distinct revisions may repeat content
 -- a release is a named immutable pointer at one revision (an Icechunk tag, for raw)
 releases(id PK, dataset_id FK, tag, revision_id FK, title, purpose, campaign,
          created_by, created_at, withdrawn_at NULL, withdrawn_reason NULL,
@@ -159,7 +159,7 @@ revision_amendments(id PK, revision_id FK, sequence, changed_keys text[], reclas
 ingest_sessions(…, dataset_id FK, …)         -- [db] one_open_ingest_per_dataset:
                                              -- partial unique index, one open per dataset
 ingest_files(ingest_id FK, file_id PK, path, size, expected_sha256,
-         action CHECK IN ('upload','hardlink'),   -- [db]
+         action CHECK (action = 'upload'),   -- [db]
          state, completed_parts jsonb, UNIQUE (ingest_id, path))
          -- [db] expected_sha256 ~ '^[0-9a-f]{64}$'
 

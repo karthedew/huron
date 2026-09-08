@@ -6,8 +6,10 @@ primitives it is built on: :func:`commit_envelope`,
 :func:`assert_same_filesystem` and :class:`CrossDeviceCommitError`.
 """
 
+from huron.schema.storage import PartLengthMismatchError
+
 from .commit import CrossDeviceCommitError, assert_same_filesystem, commit_envelope
-from .store import PartLengthMismatchError, PosixRawStore
+from .store import PosixRawStore
 
 __all__ = [
     "CrossDeviceCommitError",

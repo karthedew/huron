@@ -212,9 +212,8 @@ size-cap raise fails loudly instead of corrupting digests. Path rules, applied i
 client-side and server-side (mismatch is a 400): relative, forward-slash, <code>payload/</code>
 prefix, Unicode NFC normalization (macOS emits NFD), no <code>.</code>/<code>..</code>/control
 characters/trailing slashes, ≤1024 bytes; only regular files; NFC- or case-colliding paths are
-<code>409 PATH_COLLISION</code>; zero-byte files legal; empty revisions rejected; a manifest whose
-digest already exists on another revision of the same dataset is
-<code>409 DUPLICATE_CONTENT</code>.</p>
+<code>409 PATH_COLLISION</code>; zero-byte files legal; empty revisions rejected. Identical manifests may appear in distinct revisions: content identity
+is not revision identity. A retry with the same upload identity returns the same revision.</p>
 
 <h3>Releases</h3>
 <p>A release is a <strong>named, immutable pointer at one revision</strong> — the same relationship
@@ -263,11 +262,10 @@ answer is finer-grained datasets, not a re-introduced level.</li>
 <li><strong>Creating a dataset</strong> is implicit in the first <code>BeginIngest</code> naming a
 new dataset slug (subject to <code>dataset.create</code>), or explicit via
 <code>POST /projects/{id}/datasets</code>.</li>
-<li><strong>The upload plan</strong> assigns every file <code>action: upload</code> or
-<code>action: hardlink</code>. Hardlink sources are resolved from the parent revision's
-<code>manifest.json</code> read from the filesystem — storage is consulted as the authority on
-every ingest, not only during recovery. Hardlinked files inherit the parent's verified SHA-256 and
-are not rehashed.</li>
+<li><strong>The upload plan</strong> assigns every submitted file <code>action: upload</code>.
+Every revision is an independent complete submission: no parent-manifest comparison, inherited
+files, shared hardlinks, or cross-revision pointers. A file omitted from this submission is absent
+from this revision. Every file's bytes, including unchanged content, must be received and verified.</li>
 <li><strong>Session TTL</strong> 2 h, refreshed by heartbeat and by any successful part upload; a
 crashed client releases the dataset lock within the TTL plus one sweep interval; a project admin
 can force-abort (audited). Interrupted transfers resume via <code>completed_parts</code>.</li>
@@ -335,21 +333,24 @@ filesystem per raw root (<code>st_dev</code> compared); cross-device rename is a
 deploy-time error, not a runtime surprise.</li>
 </ul>
 
-<h2 id="dedup">6. Hardlink dedup and sealing</h2>
+<h2 id="independent-copies">6. Independent copies and sealing</h2>
 
-<p>Unchanged files between successive revisions of a dataset are materialized by hardlinking the parent
-revision's payload into the staging payload (prepare worker, concurrent with client uploads). The
-new revision remains a <em>full logical copy</em> — every revision directory lists every file —
-while unchanged bytes are stored once.</p>
+<p>Each Raw revision owns a complete physical copy of every submitted file. Separate submissions
+may contain identical bytes and still receive different revision IDs and numbers. Removing an
+older revision never removes bytes needed by a later revision. Sealing makes published payload
+files <code>0444</code> and directories <code>0555</code>; only the Huron storage identity owns them.</p>
 
-<p class="warn"><span class="k">The hardlink hazard, and its containment.</span> Hardlinks share an
-inode: a write through any link would corrupt every revision sharing it. Containment is layered:
-(1) sealing — committed payload is <code>0444</code>, directories <code>0555</code>; (2) identity —
-only the Huron service user owns these files, and no user-facing code path opens payload for write,
-ever; (3) audit — a quarterly scrubber re-hashes a sample of payload files against manifests and
-raises <code>DEGRADED</code> on mismatch. Where site policy forbids hardlinks or trees cross
-devices, the prepare worker falls back to <code>copy_file_range()</code> (reflink where supported)
-behind the same <code>action: hardlink</code> plan entry.</p>
+<p>The proposed Python interface is <code>dataset = client.datasets.create(...)</code> or
+<code>client.datasets.get(...)</code>, followed by <code>dataset.upload(source=..., metadata=...)</code>.
+The source may be one file, multiple files or a directory. Required descriptive metadata uses the
+shared <code>MetadataSubmission</code> Pydantic contract; the backend also validates the final
+canonical document and supplies dataset identity, classification and committing actor. The SDK
+hides staging, heartbeat, verification and commit, and returns only once publication succeeds.
+The current backend exposes these resumable steps over HTTP; this SDK convenience API is planned.</p>
+
+<p>Migration <code>0010_independent_raw</code> removes manifest uniqueness and parent references,
+and requires upload-only ledgers. It refuses existing hardlink ledger entries: an operator must
+copy or re-ingest legacy data before upgrading. It never silently relabels shared files as copies.</p>
 
 <h2 id="generations">7. Descriptive documents</h2>
 
@@ -421,7 +422,7 @@ with PostgreSQL. Orphan envelope → import the row from <code>COMMITTED</code>.
 envelope → <code>DEGRADED</code>, alert, never delete the row. Digest mismatch →
 <code>DEGRADED</code>. Payload missing without <code>PURGED</code>/<code>EXPIRED</code> →
 <code>DEGRADED</code>. Stale <code>INDEX.json</code> → regenerate. Torn <code>CURRENT.json</code>
-→ repoint at the highest generation. It also verifies seal permissions and hardlink counts. The
+→ repoint at the highest generation. It also verifies seal permissions and independent file ownership. The
 reconciler never silently rewrites catalog history — disagreements become findings, alerts, and
 report entries.</li>
 <li><strong><code>lakectl rebuild --from-storage</code></strong> reconstructs PostgreSQL structural

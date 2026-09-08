@@ -16,15 +16,15 @@ import asyncpg
 import pytest
 
 from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.rbac import ScopeType
-from huron.pkg.rbac.roles import ScopeNotBindable
-from huron.service.api.errors import (
+from huron.pkg.catalog.failures import (
     AttachmentExists,
     BindingExists,
     ServiceAccountExists,
     UsernameTaken,
 )
-from huron.service.api.stores import PostgresRbacStore
+from huron.pkg.metastore import PostgresRbacStore
+from huron.pkg.rbac import ScopeType
+from huron.pkg.rbac.roles import ScopeNotBindable
 
 pytestmark = pytest.mark.unit
 

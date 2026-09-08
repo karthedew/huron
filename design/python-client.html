@@ -191,14 +191,14 @@ huron release create --dataset nuclear-engineering/modeling-simulation/run-0042 
 <ul>
 <li>The client walks the tree, applies the same NFC normalization and rejection rules as the server
 (shared test vectors keep them locked), hashes every file, and calls <code>BeginIngest</code> with
-the manifest and the extractor-inferred metadata draft.</li>
+the manifest; required, Pydantic-validated metadata accompanies commit.</li>
 <li><code>--infer</code> shows what the profile extractor found (MCNP version, NPS, tallies,
 completion state…); the human confirms only the assertions Huron cannot infer (campaign, purpose,
 quality state).</li>
-<li>Uploads stream with bounded concurrency from the <code>UploadPlan</code>; unchanged files are
-server-side hardlinks and never leave the machine; interrupted transfers resume via
+<li>Uploads stream every submitted file with bounded concurrency from the <code>UploadPlan</code>;
+interrupted transfers resume via
 <code>completed_parts</code>; heartbeats run while any transfer is in flight.</li>
-<li>Programmatic form: <code>client.revisions.upload(path, dataset=…, metadata={…})</code>
+<li>Programmatic form: <code>dataset.upload(source=path, metadata={…})</code>
 returns the committed revision; a correction is the same call again — it simply commits revision
 <em>n+1</em>, with <code>reason=</code> recorded in the audit trail. Tagging is separate and
 explicit: <code>client.releases.tag(dataset=…, revision=1, tag="v1.0")</code>.</li>

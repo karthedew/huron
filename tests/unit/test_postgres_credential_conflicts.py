@@ -18,8 +18,8 @@ import pytest
 
 from huron.pkg.auth import CredentialRecord
 from huron.pkg.catalog.errors import ResourceNotFound
-from huron.service.api.errors import PrincipalKindMismatch
-from huron.service.api.stores import PostgresCredentialStore
+from huron.pkg.catalog.failures import PrincipalKindMismatch
+from huron.pkg.metastore import PostgresCredentialStore
 
 pytestmark = pytest.mark.unit
 

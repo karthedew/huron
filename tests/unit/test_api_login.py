@@ -23,6 +23,11 @@ from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from huron.applications.api.app import create_app
+from huron.applications.api.routes.auth.endpoints.login import _password_hash_limiter
+from huron.applications.api.routes.auth.schema.login import LoginResult, SignOut
+from huron.applications.api.routes.auth.schema.session import ProviderInfo, ScopeRoles, SessionInfo
+from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
 from huron.pkg.auth import (
     CredentialRecord,
     MemoryCredentialStore,
@@ -32,18 +37,13 @@ from huron.pkg.auth import (
     verify_password,
 )
 from huron.pkg.rbac.roles import ROLES
-from huron.service.api.app import create_app
-from huron.service.api.routes.auth.endpoints.login import _password_hash_limiter
-from huron.service.api.routes.auth.schema.login import LoginResult, SignOut
-from huron.service.api.routes.auth.schema.session import ProviderInfo, ScopeRoles, SessionInfo
-from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from huron.service.api.runtime import ApiStores
+    from huron.applications.api.runtime import ApiStores
 
 pytestmark = pytest.mark.unit
 

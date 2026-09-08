@@ -16,13 +16,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.catalog.layers import LayerWriteForbidden
-from huron.pkg.catalog.manifest import ManifestEntry
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import ScopeType, Visibility
-from huron.service.api.authorization.guards import (
+from huron.applications.api.authorization.guards import (
     dataset_raw_writer,
     project_intake,
     require_dataset,
@@ -32,20 +26,27 @@ from huron.service.api.authorization.guards import (
     session_overseer,
     session_owner,
 )
-from huron.service.api.errors import Forbidden
-from huron.service.api.ingest import IngestService
-from huron.service.api.repository import HierarchyRepository, request_sha256
-from huron.service.api.stores import (
+from huron.core._catalog import HierarchyRepository
+from huron.core._ingest import IngestService
+from huron.core.idempotency import request_sha256
+from huron.pkg.auth import Principal
+from huron.pkg.catalog.errors import ResourceNotFound
+from huron.pkg.catalog.failures import Forbidden
+from huron.pkg.catalog.layers import LayerWriteForbidden
+from huron.pkg.catalog.manifest import ManifestEntry
+from huron.pkg.metastore import (
     IdempotencyClaim,
     InMemoryHierarchyStore,
     InMemoryRbacStore,
     SystemClock,
 )
+from huron.pkg.rawstore import PosixRawStore
+from huron.pkg.rbac import ScopeType, Visibility
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from huron.service.api.records import Dataset, Organization, Project
+    from huron.pkg.catalog.records import Dataset, Organization, Project
 
 pytestmark = pytest.mark.unit
 

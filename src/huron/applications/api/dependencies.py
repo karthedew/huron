@@ -1,0 +1,93 @@
+"""Bind transport-independent workflows to the authenticated request actor."""
+
+from typing import Annotated
+
+from fastapi import Depends
+
+from huron.core.access import AccessPolicy
+from huron.core.catalog import CatalogService
+from huron.core.identity import IdentityService
+from huron.core.raw import RawIngestionService
+from huron.core.revisions import RevisionReadService
+
+from .authorization.credentials import CurrentPrincipal
+from .runtime import Runtime
+
+
+def catalog_service(runtime: Runtime, actor: CurrentPrincipal) -> CatalogService:
+    """Create the actor-bound catalog facade for this request.
+
+    Args:
+        runtime: The process's configured capabilities.
+        actor: The authenticated request principal.
+
+    Returns:
+        Catalog operations that enforce the actor's permissions themselves.
+    """
+    return CatalogService(
+        runtime.repository, AccessPolicy(actor, runtime.repository, runtime.authorizer)
+    )
+
+
+Catalog = Annotated[CatalogService, Depends(catalog_service)]
+
+
+def raw_ingestion_service(runtime: Runtime, actor: CurrentPrincipal) -> RawIngestionService:
+    """Bind Raw ingestion to the authenticated actor.
+
+    Args:
+        runtime: The process's configured capabilities.
+        actor: The authenticated caller.
+
+    Returns:
+        Authorized Raw ingestion operations.
+    """
+    return RawIngestionService(
+        runtime.ingest,
+        AccessPolicy(actor, runtime.repository, runtime.authorizer),
+        catalog_service(runtime, actor),
+    )
+
+
+RawIngestion = Annotated[RawIngestionService, Depends(raw_ingestion_service)]
+
+
+def identity_service(runtime: Runtime, actor: CurrentPrincipal) -> IdentityService:
+    """Bind identity management to the authenticated actor.
+
+    Args:
+        runtime: The process's configured capabilities.
+        actor: The authenticated caller.
+
+    Returns:
+        Authorized identity operations.
+    """
+    return IdentityService(
+        AccessPolicy(actor, runtime.repository, runtime.authorizer),
+        runtime.principals,
+        runtime.credentials,
+        runtime.sessions,
+        runtime.api_keys,
+        catalog_service(runtime, actor),
+    )
+
+
+Identity = Annotated[IdentityService, Depends(identity_service)]
+
+
+def revision_service(runtime: Runtime, actor: CurrentPrincipal) -> RevisionReadService:
+    """Bind revision reads to the authenticated actor.
+
+    Args:
+        runtime: The configured capabilities.
+        actor: The authenticated caller.
+
+    Returns:
+        Authorized revision reads.
+    """
+    return RevisionReadService(
+        runtime.revisions, AccessPolicy(actor, runtime.repository, runtime.authorizer)
+    )
+
+
+Revisions = Annotated[RevisionReadService, Depends(revision_service)]

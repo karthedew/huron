@@ -139,11 +139,11 @@ documentation and is never executed.
 ## Running the API
 
 ```bash
-make api                # uv run --env-file dev.env uvicorn huron.service.api.main:app --reload --port 8080
+make api                # uv run --env-file dev.env uvicorn huron.applications.api.main:app --reload --port 8080
 ```
 
 Configuration is environment variables with the `HURON_` prefix, read by `ApiSettings` in
-`huron/service/api/settings.py`. `ApiSettings` reads the process environment and nothing else —
+`huron/applications/api/settings.py`. `ApiSettings` reads the process environment and nothing else —
 it has no `.env` support of its own, so a bare `uvicorn` with nothing exported fails at import
 with four `Field required` errors. `dev.env` at the repository root holds the development
 values, and both `make api` and `make migrate` load it through `uv run --env-file`; a variable

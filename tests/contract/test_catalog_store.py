@@ -1,133 +1,8 @@
-"""Proves the catalog hierarchy's cross-parent referential integrity.
+"""PostgreSQL catalog constraints and reversible migration contracts.
 
-Requires Docker (testcontainers spins up a real PostgreSQL). Checked against
-a database migrated with the project's own Alembic revisions.
-
-A release cites a revision by ``revision_id`` and independently carries the
-``dataset_id`` it belongs to; nothing before ``0008`` ties the two together,
-so a release could be inserted citing a revision that belongs to a different
-dataset - and releases are immutable, so the mis-citation would be
-permanent. ``releases_revision_dataset_fk`` closes that: it rejects the
-cross-dataset citation and accepts the same insert against the revision's
-own dataset.
-
-Every row this module needs is inserted directly with SQL rather than
-through ``PostgresHierarchyStore`` or any other application store: these
-assertions pin the schema's own constraints, triggers and indexes, and a
-raw insert reaches a refusal the store's own validation would otherwise
-intercept before the database ever saw it.
-
-Nine ``CHECK`` constraints pin the vocabularies eight columns are closed to
-and the digest format the one unformatted ``*_sha256`` column now carries.
-Three of the refusals below replay the schema audit's own proofs, now that a
-constraint exists to catch them: ``datasets.lifecycle_state = 'BANANA'``, an
-empty-string ``projects.lifecycle_state``, and
-``dataset_revisions.state = 'NOT_A_STATE'``. Every refusal is paired with a
-write of a member of that column's own set, so a constraint that rejected
-everything would not pass.
-
-Four more ``CHECK`` constraints pin the ``kind`` vocabularies outside
-``audit_events``: ``jobs_kind_vocabulary`` closes ``jobs.kind`` to its seven
-documented workers, ``outbox_events_kind_format`` holds ``outbox_events.kind``
-to shape without enumerating it, and ``lineage_edges_upstream_kind_vocabulary``
-/ ``lineage_edges_downstream_kind_vocabulary`` close both ends of a lineage
-edge to the same four typed nodes. The two open-vocabulary assertions carry
-the most weight: ``outbox_events.kind = 'something.nobody.designed'`` must be
-**accepted** - proving the column is format-checked, not enumerated - and
-``lineage_edges.upstream_kind = 'gold_snapshot'``, a plausible near-miss
-rather than a nonsense string, must be **refused** on both ends. The
-permitted lineage set includes a ``gold_version -> gold_version``
-supersession edge, the case that rules out a layer-ordering CHECK.
-
-Twelve more ``CHECK`` constraints pin every jsonb column's own top-level
-type outside ``audit_events`` (pinned separately, below, once its rebuild has
-run) and outside ``policies.spec`` /
-``role_bindings.conditions`` (``tests/contract/test_rbac_store.py``, whose
-fixture set already builds those tables' rows). Eight are the generic
-refuse-a-bare-scalar-or-array/accept-an-object pairing; four carry a design
-decision of their own and are asserted explicitly rather than folded into
-that pairing: ``projects.raw_retention_policy`` replays F5's own proof that
-a bare string once wrote silently; ``ingest_files.completed_parts`` is the
-one *array* column, refusing ``'{}'::jsonb`` while every object column
-refuses the converse, ``'[]'::jsonb``; and ``snapshots.validation_evidence``
-/ ``lineage_edges.region`` are the two nullable columns, where SQL NULL and
-the JSON ``null`` literal are different values and only the former is
-accepted.
-
-One more assertion pins a deliberate deferral rather than a constraint:
-``jobs.state = 'WAT'`` still succeeds after ``0008`` - ``jobs_kind_vocabulary``
-above closes ``kind``, but no vocabulary exists yet for ``state``, and this is
-the audit's fourth proof kept green on purpose.
-
-Two more mechanisms on ``ingest_sessions`` close out F8. The commit-time
-trigger ``ingest_sessions_revision_guard`` is pinned by five assertions,
-expecting ``asyncpg.exceptions.RaiseError`` rather than a foreign-key or
-check violation: the audit's own proof case, a cross-dataset citation, a
-wrong ``revision_number``, the positive control against the revision a
-session actually reserved, and a terminal-state control proving the guard
-never fires on ``PREPARING -> ABORTED`` or ``UPLOADING -> FAILED``. The
-partial unique index ``one_claim_per_revision_number`` - which replaces the
-total ``UNIQUE (dataset_id, revision_number)`` ``0008`` drops - is pinned by
-six: the retry that ``0007`` refuses now succeeding, for both ``ABORTED``
-and a ``FAILED`` session that reached ``COMMITTING`` first; the dead row
-surviving the retry unchanged; a committed number still refused, naming
-``one_claim_per_revision_number`` rather than merely raising
-``UniqueViolationError``; a second live session at a different number still
-refused, naming ``one_open_ingest_per_dataset`` instead, which is what keeps
-the two guarantees from being mistaken for one; a dataset whose only ingest
-aborted staying ``ACTIVE`` and empty; and an end-to-end sequence proving
-gap-free numbering survives two dead attempts. Every ``ingest_sessions`` row
-these eleven assertions create is deleted before the module returns, so a
-dead/live pair sharing a ``revision_number`` - lawful under ``0008``,
-unlawful under ``0007``'s total ``UNIQUE`` - never outlives this function to
-trip a downgrade run later against the same container.
-
-Finally, three assertions pin what the ``audit_events`` rebuild bought.
-``audit_events_kind_format`` gets the same treatment as
-``outbox_events_kind_format`` above - the same four refused shapes, and
-``something.nobody.designed`` accepted alongside ``revision.committed`` as
-the open-vocabulary proof - now applied to the plain table the rebuild
-leaves behind rather than the partitioned parent it was written against.
-``audit_events_payload_is_an_object`` refuses a bare string, an array and the
-JSON ``null`` literal, and accepts ``'{}'::jsonb``. The third assertion pins
-the rebuild's own guarantee rather than a `CHECK`: two rows sharing an ``id``
-at different ``created_at`` values are refused with
-``asyncpg.exceptions.UniqueViolationError`` by ``PRIMARY KEY (id)`` alone - a
-write the old composite ``PRIMARY KEY (id, created_at)`` could never refuse,
-since two different partitions could each hold a row with the same ``id``.
-
-``0009``'s ingest-ledger additions get five assertions of their own.
-``ingest_files_state_vocabulary`` refuses a state outside ``PENDING``/
-``COMPLETE``; ``ingest_files_part_count_matches_action`` refuses a hardlink
-file claiming a part and an upload file claiming none, and accepts the
-converse of each. ``ingest_sessions_parent_revision_fk`` refuses a session
-naming a parent revision that belongs to another dataset - the same
-cross-parent bug ``releases_revision_dataset_fk`` closes on ``releases`` -
-and accepts a ``NULL`` parent. The last two run ``EXPLAIN`` under
-``SET LOCAL enable_seqscan = off`` and name the index the planner is forced
-to use: ``ingest_sessions_dataset`` for a bare ``dataset_id`` lookup, which
-neither partial unique index on the table can serve, and
-``ingest_sessions_lapsing`` for the expiry sweep's own predicate.
-
-One narrow round trip pins ``0009`` on its own, ahead of the broader one
-below: downgrading one revision from head drops ``parent_revision_id``,
-``part_count`` and all three new indexes, and upgrading back to head
-restores every one of them.
-
-Finally, the module proves ``0008``'s ``downgrade()`` is the exact inverse
-of its ``upgrade()``, across all nine ``DDL`` blocks, in the same container
-the assertions above already migrated. The probe set is one object name per
-block; block 9 rides on block 8's rebuilt ``audit_events`` relation and so
-shares its probe rather than adding a tenth. Two preconditions belong to
-this proof rather than to the blocks that precede it: ``ingest_sessions``
-must hold no duplicate ``(dataset_id, revision_number)`` pair when the
-downgrade runs, since the partial unique index above permits what the
-restored total ``UNIQUE`` refuses - every assertion that creates such a
-pair deletes its own rows, and this is where that promise is checked rather
-than trusted; and an ``audit_events`` row inserted immediately before the
-downgrade must survive both the downgrade and the second upgrade, which is
-where a row-loss defect in the rebuild's ``INSERT ... SELECT`` would be
-caught.
+Checks authoritative ancestry, lifecycle vocabulary, reservations, audit indexes,
+and independent Raw uploads against a disposable PostgreSQL database. Downgrade
+round trips preserve seeded records while restoring the preceding schema.
 """
 
 from __future__ import annotations
@@ -214,7 +89,6 @@ async def _assert_against(dsn: str) -> None:
         await _assert_gap_free_end_to_end(pool)
         await _assert_ingest_files_state_vocabulary(pool)
         await _assert_ingest_files_part_count_matches_action(pool)
-        await _assert_a_parent_revision_belongs_to_the_sessions_dataset(pool)
         await _assert_ingest_sessions_dataset_index_serves_a_bare_dataset_lookup(pool)
         await _assert_ingest_sessions_lapsing_index_serves_the_sweep_predicate(pool)
         await _assert_audit_events_kind_format(pool)
@@ -835,7 +709,6 @@ async def _insert_ingest_session_claiming(
     revision_id: UUID,
     manifest_sha256: str,
     state: str = "PREPARING",
-    parent_revision_id: UUID | None = None,
 ) -> UUID:
     """Inserts an ingest_sessions row with every begin_ingest-reserved column caller-controlled.
 
@@ -851,8 +724,8 @@ async def _insert_ingest_session_claiming(
         """
         INSERT INTO ingest_sessions
             (id, dataset_id, revision_id, revision_number, manifest_sha256, state, expires_at,
-             created_by, created_at, updated_at, parent_revision_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'contract-test', $8, $8, $9)
+             created_by, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'contract-test', $8, $8)
         """,
         session_id,
         dataset_id,
@@ -862,7 +735,6 @@ async def _insert_ingest_session_claiming(
         state,
         now + timedelta(hours=1),
         now,
-        parent_revision_id,
     )
     return session_id
 
@@ -1650,86 +1522,24 @@ async def _assert_ingest_files_state_vocabulary(pool: asyncpg.Pool) -> None:
 
 
 async def _assert_ingest_files_part_count_matches_action(pool: asyncpg.Pool) -> None:
-    """``ingest_files_part_count_matches_action`` ties part_count to action, both ways.
-
-    A hardlinked file has no parts to receive and an uploaded file has at
-    least one: ``hardlink``/1 and ``upload``/0 are both refused, and
-    ``hardlink``/0 and ``upload``/1 are both accepted.
-    """
+    """Raw files require upload actions and at least one part, even when empty."""
     organization_id = await _insert_organization(pool, slug="ingest-files-part-count")
     project_id = await _insert_project(pool, organization_id=organization_id, slug="part-count")
     dataset_id = await _insert_dataset(pool, project_id=project_id, slug="part-count")
     ingest_id = await _insert_ingest_session(pool, dataset_id=dataset_id)
-
-    with pytest.raises(asyncpg.exceptions.CheckViolationError) as exc_info:
-        await _insert_ingest_file(pool, ingest_id=ingest_id, action="hardlink", part_count=1)
-    assert "ingest_files_part_count_matches_action" in str(exc_info.value)
-
-    with pytest.raises(asyncpg.exceptions.CheckViolationError) as exc_info:
+    for parts in (0, 1):
+        with pytest.raises(
+            asyncpg.exceptions.CheckViolationError, match="ingest_files_action_check"
+        ):
+            await _insert_ingest_file(
+                pool, ingest_id=ingest_id, action="hardlink", part_count=parts
+            )
+    with pytest.raises(
+        asyncpg.exceptions.CheckViolationError, match="ingest_files_part_count_positive"
+    ):
         await _insert_ingest_file(pool, ingest_id=ingest_id, action="upload", part_count=0)
-    assert "ingest_files_part_count_matches_action" in str(exc_info.value)
-
-    await _insert_ingest_file(pool, ingest_id=ingest_id, action="hardlink", part_count=0)
     await _insert_ingest_file(pool, ingest_id=ingest_id, action="upload", part_count=1)
-
     await _delete_ingest_sessions(pool, session_ids=(ingest_id,))
-
-
-async def _assert_a_parent_revision_belongs_to_the_sessions_dataset(pool: asyncpg.Pool) -> None:
-    """``ingest_sessions_parent_revision_fk`` refuses a foreign parent, accepts NULL and its own.
-
-    The plan a session's upload deduplicates against is computed against one
-    specific parent revision; a session naming a parent of another dataset
-    would be linking bytes from outside its own dataset's tree - the same
-    cross-parent bug ``releases_revision_dataset_fk`` closes on ``releases``.
-    A session naming no parent, and one naming a revision of its own dataset,
-    are both accepted - without the second, a foreign key with transposed
-    columns or the wrong target would pass this assertion unchanged.
-    """
-    organization_id = await _insert_organization(pool, slug="parent-revision-fk")
-    project_id = await _insert_project(pool, organization_id=organization_id, slug="parent")
-    claiming_dataset_id = await _insert_dataset(pool, project_id=project_id, slug="claiming")
-    foreign_dataset_id = await _insert_dataset(pool, project_id=project_id, slug="foreign")
-    foreign_revision_id = await _insert_dataset_revision(
-        pool, dataset_id=foreign_dataset_id, revision_number=1
-    )
-
-    with pytest.raises(asyncpg.exceptions.ForeignKeyViolationError) as exc_info:
-        await _insert_ingest_session_claiming(
-            pool,
-            dataset_id=claiming_dataset_id,
-            revision_number=1,
-            revision_id=uuid7(),
-            manifest_sha256=uuid7().hex * 2,
-            parent_revision_id=foreign_revision_id,
-        )
-    assert "ingest_sessions_parent_revision_fk" in str(exc_info.value)
-
-    null_parent_session_id = await _insert_ingest_session_claiming(
-        pool,
-        dataset_id=claiming_dataset_id,
-        revision_number=1,
-        revision_id=uuid7(),
-        manifest_sha256=uuid7().hex * 2,
-        parent_revision_id=None,
-    )
-    # one_open_ingest_per_dataset permits only one live session per dataset, so
-    # the NULL-parent session above must retire before a second one opens here.
-    await _set_ingest_session_state(pool, session_id=null_parent_session_id, state="ABORTED")
-
-    own_revision_id = await _insert_dataset_revision(
-        pool, dataset_id=claiming_dataset_id, revision_number=1
-    )
-    own_parent_session_id = await _insert_ingest_session_claiming(
-        pool,
-        dataset_id=claiming_dataset_id,
-        revision_number=2,
-        revision_id=uuid7(),
-        manifest_sha256=uuid7().hex * 2,
-        parent_revision_id=own_revision_id,
-    )
-
-    await _delete_ingest_sessions(pool, session_ids=(null_parent_session_id, own_parent_session_id))
 
 
 async def _assert_ingest_sessions_dataset_index_serves_a_bare_dataset_lookup(
@@ -1868,23 +1678,20 @@ async def _assert_audit_events_id_is_globally_unique(pool: asyncpg.Pool) -> None
 # -- the round trip: downgrade() is upgrade()'s exact inverse -----------------
 
 _INGEST_LEDGER_INDEXES = (
-    "ingest_sessions_parent_revision",
     "ingest_sessions_dataset",
     "ingest_sessions_lapsing",
 )
-_INGEST_LEDGER_ADDITIONS = frozenset(
-    {"ingest_sessions.parent_revision_id", "ingest_files.part_count", *_INGEST_LEDGER_INDEXES}
-)
+_INGEST_LEDGER_ADDITIONS = frozenset({"ingest_files.part_count", *_INGEST_LEDGER_INDEXES})
 
 
 async def _present_ingest_ledger_additions(pool: asyncpg.Pool) -> frozenset[str]:
-    """Returns which of 0009's two ledger columns and three indexes currently exist."""
+    """Returns which of The current ledger column and two indexes currently exist."""
     column_rows = await pool.fetch(
         """
         SELECT table_name || '.' || column_name AS name
         FROM information_schema.columns
         WHERE (table_name, column_name) IN
-              (('ingest_sessions', 'parent_revision_id'), ('ingest_files', 'part_count'))
+              (('ingest_files', 'part_count'))
         """
     )
     index_rows = await pool.fetch(
@@ -1895,7 +1702,7 @@ async def _present_ingest_ledger_additions(pool: asyncpg.Pool) -> frozenset[str]
 
 
 async def _assert_ingest_ledger_additions_present(dsn: str) -> None:
-    """0009's two ledger columns and three indexes all exist."""
+    """The current ledger column and two indexes all exist."""
     pool = await asyncpg.create_pool(dsn)
     try:
         assert await _present_ingest_ledger_additions(pool) == _INGEST_LEDGER_ADDITIONS
@@ -1904,7 +1711,7 @@ async def _assert_ingest_ledger_additions_present(dsn: str) -> None:
 
 
 async def _assert_ingest_ledger_additions_absent(dsn: str) -> None:
-    """0009's two ledger columns and three indexes are all gone after downgrading one revision."""
+    """The current ledger column and two indexes are all gone after downgrading one revision."""
     pool = await asyncpg.create_pool(dsn)
     try:
         assert await _present_ingest_ledger_additions(pool) == frozenset()
@@ -1970,9 +1777,8 @@ async def _assert_ingest_sessions_holds_no_duplicate_reservation(pool: asyncpg.P
 def _assert_round_trip(asyncpg_sqlalchemy_url: str, dsn: str) -> None:
     """``downgrade()`` undoes exactly what ``upgrade()`` added, at two grains.
 
-    First a narrow trip pinning ``0009`` on its own: downgrading one
-    revision from head (already applied by the caller) drops its two ledger
-    columns and three indexes, and upgrading back to head restores them.
+    First downgrade to ``0008`` to remove the current ledger additions, then
+    upgrade to head and check the column and two surviving indexes.
     Then the broader trip across all nine of ``0008``'s ``DDL`` blocks:
     downgrading to ``0007_roleless_service_accounts`` and upgrading to head
     again, against the one container this module's other assertions already
@@ -1983,7 +1789,7 @@ def _assert_round_trip(asyncpg_sqlalchemy_url: str, dsn: str) -> None:
     config = _config(asyncpg_sqlalchemy_url)
 
     asyncio.run(_assert_ingest_ledger_additions_present(dsn))
-    command.downgrade(config, "-1")
+    command.downgrade(config, "0008_schema_conformance")
     asyncio.run(_assert_ingest_ledger_additions_absent(dsn))
     command.upgrade(config, "head")
     asyncio.run(_assert_ingest_ledger_additions_present(dsn))
@@ -2024,5 +1830,90 @@ async def _assert_round_trip_reupgraded(dsn: str, event_id: UUID) -> None:
         assert await _present_probe_names(pool) == set(_ROUND_TRIP_PROBES)
         row = await pool.fetchrow("SELECT id FROM audit_events WHERE id = $1", event_id)
         assert row is not None
+    finally:
+        await pool.close()
+
+
+def test_independent_raw_migration_refuses_legacy_links_and_lossy_downgrades() -> None:
+    """Unsafe schema transitions fail atomically; clean upgrades retain revision records."""
+    from sqlalchemy.exc import DBAPIError
+
+    with PostgresContainer("postgres:16") as postgres:
+        config = _config(postgres.get_connection_url(driver="asyncpg"))
+        dsn = postgres.get_connection_url(driver=None)
+        command.upgrade(config, "0009_ingest_ledger")
+        file_id, dataset_id = asyncio.run(_seed_legacy_link(dsn))
+        with pytest.raises(DBAPIError, match="Legacy hardlinks"):
+            command.upgrade(config, "head")
+        asyncio.run(_remove_legacy_fixture(dsn, file_id))
+        command.upgrade(config, "head")
+        first, second = asyncio.run(_seed_identical_revisions(dsn, dataset_id))
+        with pytest.raises(DBAPIError, match="dataset_revisions_dataset_id_manifest_sha256_key"):
+            command.downgrade(config, "0009_ingest_ledger")
+        asyncio.run(_assert_failed_downgrade_preserves_revisions(dsn, first, second))
+
+
+async def _seed_legacy_link(dsn: str) -> tuple[UUID, UUID]:
+    """Create one historical hardlink ledger in a disposable migration-test database."""
+    pool = await asyncpg.create_pool(dsn)
+    try:
+        organization = await _insert_organization(pool, slug="legacy-links")
+        project = await _insert_project(pool, organization_id=organization, slug="legacy")
+        dataset = await _insert_dataset(pool, project_id=project, slug="legacy")
+        session = await _insert_ingest_session(pool, dataset_id=dataset)
+        file = await _insert_ingest_file(pool, ingest_id=session, action="hardlink", part_count=0)
+        return file, dataset
+    finally:
+        await pool.close()
+
+
+async def _remove_legacy_fixture(dsn: str, file_id: UUID) -> None:
+    """Prove the refused upgrade rolled back, then remove its synthetic blocking fixture."""
+    pool = await asyncpg.create_pool(dsn)
+    try:
+        assert (
+            await pool.fetchval("SELECT version_num FROM alembic_version") == "0009_ingest_ledger"
+        )
+        assert (
+            await pool.fetchval("SELECT action FROM ingest_files WHERE file_id = $1", file_id)
+            == "hardlink"
+        )
+        await pool.execute("DELETE FROM ingest_files WHERE file_id = $1", file_id)
+    finally:
+        await pool.close()
+
+
+async def _seed_identical_revisions(dsn: str, dataset_id: UUID) -> tuple[UUID, UUID]:
+    """Distinct committed revision identities may have identical content after upgrading."""
+    pool = await asyncpg.create_pool(dsn)
+    try:
+        first = await _insert_dataset_revision(
+            pool, dataset_id=dataset_id, revision_number=1, manifest_sha256="a" * 64
+        )
+        second = await _insert_dataset_revision(
+            pool, dataset_id=dataset_id, revision_number=2, manifest_sha256="a" * 64
+        )
+        return first, second
+    finally:
+        await pool.close()
+
+
+async def _assert_failed_downgrade_preserves_revisions(dsn: str, first: UUID, second: UUID) -> None:
+    """A refused downgrade leaves both repeated-content revisions and the current schema intact."""
+    pool = await asyncpg.create_pool(dsn)
+    try:
+        assert (
+            await pool.fetchval("SELECT version_num FROM alembic_version") == "0010_independent_raw"
+        )
+        assert (
+            await pool.fetchval(
+                "SELECT count(*) FROM dataset_revisions WHERE id = ANY($1::uuid[])", [first, second]
+            )
+            == 2
+        )
+        assert not await pool.fetchval(
+            "SELECT EXISTS (SELECT FROM information_schema.columns "
+            "WHERE table_name = 'ingest_sessions' AND column_name = 'parent_revision_id')"
+        )
     finally:
         await pool.close()

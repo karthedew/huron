@@ -10,9 +10,9 @@ import httpx
 import pytest
 import uvicorn
 
+from huron.applications.api.app import create_app
+from huron.applications.api.settings import ApiSettings, ClassificationValue
 from huron.pkg.catalog import PART_BYTES
-from huron.service.api.app import create_app
-from huron.service.api.settings import ApiSettings, ClassificationValue
 from tests.ingest_client import IngestClient, declared_file, sparse_file, zeros_sha256
 from tests.unit.support import memory_stores
 
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
 
-    from huron.service.api.runtime import ApiStores
+    from huron.applications.api.runtime import ApiStores
 
 pytestmark = pytest.mark.acceptance
 

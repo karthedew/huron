@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
+from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
 
 pytestmark = pytest.mark.unit
 

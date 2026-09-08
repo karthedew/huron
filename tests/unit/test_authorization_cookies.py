@@ -11,9 +11,9 @@ import pytest
 from starlette.requests import Request
 from starlette.responses import Response
 
+from huron.applications.api.authorization import login_flow_cookie, session_cookie
+from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
 from huron.pkg.auth import ABSOLUTE_TTL
-from huron.service.api.authorization import login_flow_cookie, session_cookie
-from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
 
 pytestmark = pytest.mark.unit
 

@@ -92,9 +92,9 @@ convention = "google"
 # description at a form feed, so the caller-facing prose comes first and the
 # Args/Returns/Raises sections follow "\f" - which D301 would otherwise want
 # a raw string for, defeating the escape.
-"src/huron/service/api/routes/**/endpoints/*.py" = ["D301"]
+"src/huron/applications/api/routes/**/endpoints/*.py" = ["D301"]
 # app.py defines the two health probes the same way.
-"src/huron/service/api/app.py" = ["D301"]
+"src/huron/applications/api/app.py" = ["D301"]
 # Stable public error names intentionally mirror their API codes.
 "src/huron/pkg/auth/errors.py" = ["N818"]
 "src/huron/pkg/auth/password.py" = ["N818"]
@@ -104,10 +104,10 @@ convention = "google"
 "src/huron/pkg/catalog/layers.py" = ["N818"]
 # The role/rbac error names intentionally mirror their stable API codes.
 "src/huron/pkg/rbac/roles.py" = ["N818"]
-"src/huron/service/api/errors.py" = ["N818"]
+"src/huron/pkg/catalog/failures.py" = ["N818"]
 # FastAPI resolves annotations at runtime; type-checking-only imports break
 # dependency injection in these modules.
-"src/huron/service/api/**" = ["TC001", "TC002", "TC003"]
+"src/huron/applications/api/**" = ["TC001", "TC002", "TC003"]
 
 [tool.pydoclint]
 style = "google"
@@ -159,18 +159,13 @@ addopts = "-m unit --strict-markers"
 root_package = "huron"
 include_external_packages = true
 
-# The layout rule, mechanically. src/huron/ has exactly three surfaces and the
-# dependency between them runs one way: service -> pkg -> schema. A package that
-# imports a service, or a schema that imports a package, fails CI.
+# Dependencies point inward; application composition roots also import adapters.
 [[tool.importlinter.contracts]]
-name = "service depends on pkg depends on schema, never the reverse"
+name = "applications depend on core then packages then schema"
 type = "layers"
-layers = ["huron.service", "huron.pkg", "huron.schema"]
+layers = ["huron.applications", "huron.core", "huron.pkg", "huron.schema"]
 
-# Packages are libraries, not a dependency graph. A package that needs another's
-# capability declares a Protocol for it (see huron/pkg/catalog/ports.py) and
-# receives a conforming object from a service. Structural typing means the
-# implementing package never imports the declaring one either.
+# Domain packages and POSIX storage remain independent; metastore consumes domain types.
 [[tool.importlinter.contracts]]
 name = "Packages are independent of one another"
 type = "independence"
@@ -178,14 +173,12 @@ modules = [
     "huron.pkg.auth", "huron.pkg.catalog", "huron.pkg.rawstore", "huron.pkg.rbac",
 ]
 
-# All glue lives inside one service. Two services that want the same behavior
-# share a package, not an import of each other. Only one service (api) exists
-# today; re-add each deployable here as it gains real code.
+# Entry points share core workflows, never import one another.
 [[tool.importlinter.contracts]]
-name = "Services are independent of one another"
+name = "Applications are independent of one another"
 type = "independence"
 modules = [
-    "huron.service.api",
+    "huron.applications.api",
 ]
 
 # The two decision-making packages hold rules, not I/O. Web frameworks, storage
@@ -234,26 +227,25 @@ forbidden_modules = [
 name = "the authorization package is entered through its public surface"
 type = "forbidden"
 allow_indirect_imports = true
-source_modules = ["huron.service.api.routes.**", "huron.service.api.app"]
-forbidden_modules = ["huron.service.api.authorization.*"]
+source_modules = ["huron.applications.api.routes.**", "huron.applications.api.app"]
+forbidden_modules = ["huron.applications.api.authorization.*"]
 
-# The stores package is entered through its public surface. A caller depends
-# on the guarantee a port makes, never on which module a particular adapter
-# was filed under; ``rows`` in particular is one store's private decoding of
-# its own SELECT.
+# Concrete persistence adapters depend on domain types, never the reverse.
 [[tool.importlinter.contracts]]
-name = "the stores package is entered through its public surface"
+name = "domain packages do not depend on persistence adapters"
+type = "forbidden"
+source_modules = ["huron.pkg.catalog", "huron.pkg.rbac", "huron.pkg.auth", "huron.pkg.rawstore"]
+forbidden_modules = ["huron.pkg.metastore"]
+
+[[tool.importlinter.contracts]]
+name = "core uses ports rather than concrete infrastructure"
 type = "forbidden"
 allow_indirect_imports = true
-source_modules = [
-    "huron.service.api.repository",
-    "huron.service.api.ingest",
-    "huron.service.api.revisions",
-    "huron.service.api.app",
-    "huron.service.api.authorization.**",
-    "huron.service.api.routes.**",
+source_modules = ["huron.core"]
+forbidden_modules = [
+    "huron.pkg.metastore", "huron.pkg.rawstore", "fastapi", "starlette",
+    "uvicorn", "asyncpg", "sqlalchemy", "ray", "boto3", "aiobotocore",
 ]
-forbidden_modules = ["huron.service.api.stores.*"]
 
 [tool.ty.src]
 include = ["src/huron"]
@@ -263,3 +255,10 @@ include = ["src/huron"]
 # lower it; raise it as coverage climbs. New or touched files are covered in
 # full.
 fail_under = 94
+
+[[tool.importlinter.contracts]]
+name = "API endpoints cannot call internal workflow implementations"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["huron.applications.api.routes.**"]
+forbidden_modules = ["huron.core._catalog", "huron.core._ingest", "huron.core._revision_reader"]

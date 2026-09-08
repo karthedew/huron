@@ -14,13 +14,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from huron.core._ingest import SWEEP_ACTOR, ExpiryReport, IngestService
 from huron.pkg.catalog import FileState, IngestFile, IngestSession, IngestState, UploadAction
 from huron.pkg.catalog.errors import DatasetLocked
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.ingest import LEASE_TTL
+from huron.pkg.metastore.hierarchy import InMemoryHierarchyStore
 from huron.pkg.rawstore import PosixRawStore
-from huron.service.api.ingest import SWEEP_ACTOR, ExpiryReport, IngestService
-from huron.service.api.stores.hierarchy import InMemoryHierarchyStore
 from tests.hierarchy_contract import seed_hierarchy
 from tests.unit.support import FakeClock
 
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from uuid import UUID
 
+    from huron.core.ports import HierarchyWriter
     from huron.pkg.catalog.ports import Clock
-    from huron.service.api.stores.ports import HierarchyWriter
 
 pytestmark = pytest.mark.unit
 
@@ -60,7 +60,6 @@ async def _open_session(
             dataset_id,
             manifest_sha256,
             created_by="user:alice",
-            parent_revision_id=None,
             files=(),
         )
     opened = reserved.open(now=clock.now())
@@ -211,9 +210,7 @@ async def test_expire_lapsed_flips_a_lapsed_session_and_frees_its_dataset() -> N
     assert updated.state is IngestState.ABORTED
     assert updated.etag == session.etag + 1
     async with hierarchy.transaction() as writer:
-        retaken = await writer.begin_ingest(
-            dataset_id, "b" * 64, created_by="user:alice", parent_revision_id=None, files=()
-        )
+        retaken = await writer.begin_ingest(dataset_id, "b" * 64, created_by="user:alice", files=())
     assert retaken.lease.revision_number == session.lease.revision_number
 
 
@@ -233,9 +230,7 @@ async def test_expire_lapsed_leaves_a_live_session_untouched() -> None:
     assert await hierarchy.ingest_session(session.lease.ingest_id) == session
     with pytest.raises(DatasetLocked):
         async with hierarchy.transaction() as writer:
-            await writer.begin_ingest(
-                dataset_id, "b" * 64, created_by="user:alice", parent_revision_id=None, files=()
-            )
+            await writer.begin_ingest(dataset_id, "b" * 64, created_by="user:alice", files=())
 
 
 async def test_expire_lapsed_never_touches_a_lapsed_committing_session() -> None:
@@ -247,7 +242,7 @@ async def test_expire_lapsed_never_touches_a_lapsed_committing_session() -> None
     dataset_id = ids.datasets["run-0001"]
     async with hierarchy.transaction() as writer:
         reserved = await writer.begin_ingest(
-            dataset_id, "c" * 64, created_by="user:alice", parent_revision_id=None, files=()
+            dataset_id, "c" * 64, created_by="user:alice", files=()
         )
     committing = _committing_session(reserved, manifest_sha256="c" * 64, now=clock.now())
     async with hierarchy.transaction() as writer:
@@ -261,9 +256,7 @@ async def test_expire_lapsed_never_touches_a_lapsed_committing_session() -> None
     assert updated.state is IngestState.COMMITTING
     with pytest.raises(DatasetLocked):
         async with hierarchy.transaction() as writer:
-            await writer.begin_ingest(
-                dataset_id, "d" * 64, created_by="user:alice", parent_revision_id=None, files=()
-            )
+            await writer.begin_ingest(dataset_id, "d" * 64, created_by="user:alice", files=())
 
 
 async def test_a_renewal_between_listing_and_flip_beats_the_sweep() -> None:

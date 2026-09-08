@@ -16,8 +16,8 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from huron.service.api.app import create_app
-from huron.service.api.settings import ApiSettings, ClassificationValue
+from huron.applications.api.app import create_app
+from huron.applications.api.settings import ApiSettings, ClassificationValue
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:

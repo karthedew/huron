@@ -14,10 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
-from huron.pkg.auth import AuthError
-from huron.pkg.rbac.roles import UnknownRole
-from huron.service.api.errors import Forbidden, SlugExists
-from huron.service.api.problems import (
+from huron.applications.api.problems import (
     AUTHENTICATED_ERRORS,
     PROBLEM_MEDIA_TYPE,
     PROBLEM_SCHEMA,
@@ -28,6 +25,9 @@ from huron.service.api.problems import (
     problem_response,
     wire_error_codes,
 )
+from huron.pkg.auth import AuthError
+from huron.pkg.catalog.failures import Forbidden, SlugExists
+from huron.pkg.rbac.roles import UnknownRole
 
 pytestmark = pytest.mark.unit
 

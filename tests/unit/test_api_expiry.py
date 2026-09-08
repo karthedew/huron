@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from huron.service.api.expiry import ExpirySweep
-from huron.service.api.ingest import ExpiryReport
+from huron.applications.api.expiry import ExpirySweep
+from huron.core._ingest import ExpiryReport
 
 pytestmark = pytest.mark.unit
 
@@ -68,7 +68,7 @@ async def test_a_failing_pass_is_logged_and_the_next_pass_runs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A pass that raises is logged with its traceback, and the loop keeps running afterward."""
-    caplog.set_level(logging.ERROR, logger="huron.service.api.expiry")
+    caplog.set_level(logging.ERROR, logger="huron.applications.api.expiry")
     ingest = _RecordingIngest(raise_on=1)
     async with ExpirySweep(ingest, interval_seconds=0, limit=1):
         for _ in range(6):
@@ -77,7 +77,7 @@ async def test_a_failing_pass_is_logged_and_the_next_pass_runs(
 
     errors = [record for record in caplog.records if record.levelno == logging.ERROR]
     assert len(errors) == 1
-    assert errors[0].name == "huron.service.api.expiry"
+    assert errors[0].name == "huron.applications.api.expiry"
     assert errors[0].exc_info is not None
 
 

@@ -28,9 +28,9 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from jwt.algorithms import RSAAlgorithm
 
+from huron.applications.api.app import create_app
+from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
 from huron.pkg.auth import MemoryPrincipalStore, MemorySessionStore, PrincipalRecord
-from huron.service.api.app import create_app
-from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:

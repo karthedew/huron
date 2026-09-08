@@ -44,9 +44,9 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
     from httpx import Response
 
+    from huron.applications.api.runtime import ApiStores
+    from huron.core.ports import HierarchyWriter
     from huron.pkg.catalog.models import RevisionRecord
-    from huron.service.api.runtime import ApiStores
-    from huron.service.api.stores.ports import HierarchyWriter
 
 pytestmark = pytest.mark.unit
 

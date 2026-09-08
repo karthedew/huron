@@ -82,6 +82,24 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 <h1>System Architecture</h1>
 <p class="sub">Stores, services, and the flow from HPC run to published product.</p>
 
+<section id="code-boundaries">
+<h2>Implemented backend boundaries</h2>
+<p><code>src/huron/applications/api</code> owns FastAPI transport, credentials, configuration,
+lifecycle and composition. <code>src/huron/core</code> owns reusable authorized catalog, identity,
+Raw ingestion and revision-read workflows. <code>src/huron/pkg</code> owns domain objects and
+technical adapters, including <code>metastore</code> for PostgreSQL and in-memory persistence.</p>
+<p>Core services bind an authenticated actor, resolve authoritative ancestry and current permissions,
+and coordinate domain behavior, transactions, storage and publication. HTTP guards provide early
+rejections; core checks remain authoritative for non-HTTP callers. Domain objects own immutable
+state and transitions; composition and consumer-owned protocols connect capabilities. Infrastructure
+adapters may depend on domain types, while domain packages never import their adapters or core.</p>
+<p>Dependency direction: <code>applications → core → pkg → schema</code>. Applications may import
+concrete adapters for wiring. A remote Python client calls the API and shares document contracts;
+it does not run privileged server workflows locally. Bronze/Ray, Silver and Gold workflow services
+remain planned; their input identities and output lineage must be published atomically with catalog
+output records when implemented.</p>
+</section>
+
 <h2 id="stores">1. Four stores, four jobs</h2>
 
 <pre>
@@ -163,9 +181,7 @@ API-proxied chunk reads — same client code, degraded transport — so no capab
 <tr><td class="k">API</td><td>FastAPI/uvicorn</td><td>≥2, stateless</td>
 <td>All control-plane routes; streams raw uploads with in-flight SHA-256; issues access grants;
 enforces RBAC on every request; reaps lapsed ingest leases.</td><td>NFS staging, PostgreSQL</td></tr>
-<tr><td class="k">Prepare worker</td><td>Deployment</td><td>1–N</td>
-<td>Materializes hardlink dedup for unchanged files during ingest, concurrent with client uploads.</td>
-<td>NFS staging</td></tr>
+
 <tr><td class="k">Layer intake service</td><td>Job runner</td><td>1–N</td>
 <td>Executes <a href="layer-bronze.html#manual-intake">manual bronze/silver intake</a>: opens
 uploaded NetCDF/HDF5/Zarr with xarray, converts to Zarr automatically, validates against the
@@ -211,8 +227,8 @@ Ray/KubeRay is a later swap behind the same <code>JobDispatcher</code> port.</p>
  1. huron upload ./run-0042 --project modeling-simulation --dataset run-0042
       └─ CLI builds manifest (NFC paths, SHA-256), calls BeginIngest
  2. API: authorize → lock dataset → allocate revision number → staging dir on NFS
-      └─ UploadPlan: {action: upload | hardlink} per file
- 3. Client streams uploads (hashed in flight); prepare worker hardlinks unchanged files
+      └─ UploadPlan: {action: upload} per file
+ 3. Client streams every submitted file (hashed in flight)
  4. Verify → Commit: sidecars + COMMITTED written into staging, fsync, atomic rename → published
  5. PG transaction: revision row, audit, outbox        ◀── storage leads, catalog follows
  6. Scientist converts locally, `huron bronze upload … --link-raw-revision 1`: layer intake
@@ -271,7 +287,7 @@ holds an invariant — or where none does —
 <li><strong>Platform:</strong> OpenShift. Arbitrary non-root UIDs, read-only root filesystems,
 NetworkPolicy so only the API is routed; PostgreSQL via HA operator (CloudNativePG); the object store and NFS
 reachable only from the namespace.</li>
-<li><strong>NFS mounts:</strong> API, prepare worker, bronze builder (read-only), retention worker,
+<li><strong>NFS mounts:</strong> API, bronze builder (read-only), retention worker,
 sweeper, and reconciler mount the raw filesystem. The mount is <em>not</em> exported to users; see
 <a href="rbac.html#dataplane">RBAC — data-plane enforcement</a>.</li>
 <li><strong>Identities:</strong> separate service accounts per service; the projection worker is the

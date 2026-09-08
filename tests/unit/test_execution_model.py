@@ -18,16 +18,15 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-import huron.service.api as api_package
-import huron.service.api.app as app_module
-import huron.service.api.revisions as revisions_module
+import huron.applications.api as api_package
+import huron.applications.api.app as app_module
+import huron.core.identity as identity_module
+from huron.applications.api.app import create_app
+from huron.applications.api.routes.auth.endpoints import login
+from huron.applications.api.settings import ApiSettings, ClassificationValue
 from huron.pkg.auth import make_credential as real_make_credential
 from huron.pkg.auth import verify_password as real_verify_password
 from huron.pkg.rawstore import PosixRawStore
-from huron.service.api.app import create_app
-from huron.service.api.routes.auth.endpoints import login
-from huron.service.api.routes.v1.endpoints import users
-from huron.service.api.settings import ApiSettings, ClassificationValue
 from tests.ingest_client import IngestClient, manifest_file
 from tests.unit.support import memory_stores
 
@@ -38,8 +37,8 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
+    from huron.core._catalog import HierarchyRepository
     from huron.pkg.auth import CredentialRecord
-    from huron.service.api.repository import HierarchyRepository
 
 pytestmark = pytest.mark.unit
 
@@ -211,7 +210,7 @@ def test_the_three_blocking_calls_execute_off_the_event_loop_thread(tmp_path: Pa
     headers = {"X-Huron-Subject": "root"}
     with (
         patch.object(login, "verify_password", _tracking_verify_password),
-        patch.object(users, "make_credential", _tracking_make_credential),
+        patch.object(identity_module, "make_credential", _tracking_make_credential),
         TestClient(create_app(settings=settings, stores=memory_stores())) as client,
     ):
         client.post("/auth/login", json={"username": "nobody", "password": "wrong-password"})
@@ -335,15 +334,15 @@ def test_the_file_download_s_stat_executes_off_the_event_loop_thread(tmp_path: P
     this pins directly by driving one real download through the route.
     """
     ran_on_the_event_loop: list[bool] = []
-    real_stat = revisions_module._stat
+    real_stat = PosixRawStore.stat_document
 
-    def _tracking_stat(path: Path) -> os.stat_result:
+    def _tracking_stat(self: PosixRawStore, path: Path) -> os.stat_result:
         ran_on_the_event_loop.append(_event_loop_is_running())
-        return real_stat(path)
+        return real_stat(self, path)
 
     settings = _settings(tmp_path, bootstrap_platform_owner="root")
     with (
-        patch.object(revisions_module, "_stat", _tracking_stat),
+        patch.object(PosixRawStore, "stat_document", _tracking_stat),
         TestClient(create_app(settings=settings, stores=memory_stores())) as client,
     ):
         ingest = IngestClient(client)

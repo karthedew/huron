@@ -12,7 +12,6 @@ what is actually on disk, not against how the method happens to be written.
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import os
 import stat
@@ -294,104 +293,6 @@ def test_discard_file_removes_the_file_and_tolerates_a_missing_one(tmp_path: Pat
     store.discard_file(payload_root, "f.bin")
 
 
-def test_hardlink_from_parent_links_the_inode_and_is_idempotent(tmp_path: Path) -> None:
-    """hardlink_from_parent shares the parent's inode and a repeat call is a no-op."""
-    store = _initialized_store(tmp_path)
-    parent_payload = tmp_path / "parent" / "payload"
-    parent_payload.mkdir(parents=True)
-    source = parent_payload / "f.bin"
-    source.write_bytes(b"shared")
-    staging_payload = _staging_payload(store)
-
-    store.hardlink_from_parent(parent_payload, staging_payload, "f.bin")
-
-    target = staging_payload / "f.bin"
-    assert target.stat().st_nlink == 2
-    assert os.path.samefile(source, target)
-
-    store.hardlink_from_parent(parent_payload, staging_payload, "f.bin")
-
-    assert target.stat().st_nlink == 2
-    assert os.path.samefile(source, target)
-
-
-def test_hardlink_from_parent_replaces_a_foreign_file_at_the_target(tmp_path: Path) -> None:
-    """A foreign file already at the target is replaced by the parent's inode."""
-    store = _initialized_store(tmp_path)
-    parent_payload = tmp_path / "parent" / "payload"
-    parent_payload.mkdir(parents=True)
-    source = parent_payload / "f.bin"
-    source.write_bytes(b"shared")
-    staging_payload = _staging_payload(store)
-    target = staging_payload / "f.bin"
-    target.write_bytes(b"a crashed attempt's bytes")
-
-    store.hardlink_from_parent(parent_payload, staging_payload, "f.bin")
-
-    assert os.path.samefile(source, target)
-
-
-def test_hardlink_from_parent_copies_when_linking_fails_and_the_copy_is_enabled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When linking fails and the fallback is enabled, the file is copied instead."""
-    store = _initialized_store(tmp_path)
-    parent_payload = tmp_path / "parent" / "payload"
-    parent_payload.mkdir(parents=True)
-    source = parent_payload / "f.bin"
-    source.write_bytes(b"shared")
-    staging_payload = _staging_payload(store)
-    crash_on(monkeypatch, "link", errno_=errno.EPERM)
-
-    store.hardlink_from_parent(parent_payload, staging_payload, "f.bin")
-
-    target = staging_payload / "f.bin"
-    assert target.read_bytes() == source.read_bytes()
-    assert target.stat().st_nlink == 1
-    assert stat.S_IMODE(target.stat().st_mode) == 0o600
-
-
-def test_hardlink_from_parent_raises_when_linking_fails_and_the_copy_is_disabled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """With the copy fallback disabled, a failed link raises and leaves no target."""
-    store = PosixRawStore(tmp_path, hardlink_fallback_copy=False)
-    store.initialize()
-    parent_payload = tmp_path / "parent" / "payload"
-    parent_payload.mkdir(parents=True)
-    source = parent_payload / "f.bin"
-    source.write_bytes(b"shared")
-    staging_payload = _staging_payload(store)
-    crash_on(monkeypatch, "link", errno_=errno.EPERM)
-
-    with pytest.raises(OSError) as exc_info:
-        store.hardlink_from_parent(parent_payload, staging_payload, "f.bin")
-
-    assert exc_info.value.errno == errno.EPERM
-    assert not (staging_payload / "f.bin").exists()
-
-
-def test_hardlink_from_parent_links_a_sealed_parent_file_into_a_private_envelope(
-    tmp_path: Path,
-) -> None:
-    """A hard link reaches into a sealed 0o555 parent revision without disturbing it."""
-    store = _initialized_store(tmp_path)
-    parent_revision = tmp_path / "parent_revision"
-    parent_payload = parent_revision / "payload"
-    parent_payload.mkdir(parents=True)
-    source = parent_payload / "f.bin"
-    source.write_bytes(b"shared")
-    store.seal(parent_revision)
-    staging_payload = _staging_payload(store)
-
-    store.hardlink_from_parent(parent_payload, staging_payload, "f.bin")
-
-    target = staging_payload / "f.bin"
-    assert os.path.samefile(source, target)
-    assert stat.S_IMODE(source.stat().st_mode) == 0o444
-    assert stat.S_IMODE(parent_payload.stat().st_mode) == 0o555
-
-
 def test_seal_makes_files_read_only_and_directories_below_the_root_traversal_only(
     tmp_path: Path,
 ) -> None:
@@ -423,30 +324,6 @@ def test_seal_refuses_a_missing_directory(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         store.seal(tmp_path / "missing")
-
-
-def test_seal_after_hardlink_leaves_the_shared_inode_read_only_for_both_revisions(
-    tmp_path: Path,
-) -> None:
-    """Sealing a revision built from a hard link makes both linked paths read-only."""
-    store = _initialized_store(tmp_path)
-    parent_revision = tmp_path / "parent_revision"
-    parent_payload = parent_revision / "payload"
-    parent_payload.mkdir(parents=True)
-    source = parent_payload / "f.bin"
-    source.write_bytes(b"shared")
-    store.seal(parent_revision)
-    staging = store.root / ".staging" / "envelope"
-    store.create_staging(staging)
-    staging_payload = staging / "payload"
-    store.hardlink_from_parent(parent_payload, staging_payload, "f.bin")
-
-    store.seal(staging)
-
-    linked = staging_payload / "f.bin"
-    assert stat.S_IMODE(source.stat().st_mode) == 0o444
-    assert stat.S_IMODE(linked.stat().st_mode) == 0o444
-    assert linked.stat().st_nlink == 2
 
 
 def test_write_document_replaces_at_the_envelope_root_and_refuses_a_nested_or_reserved_name(

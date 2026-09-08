@@ -24,11 +24,11 @@ import respx
 from fastapi.testclient import TestClient
 from httpx import Response
 
-import huron.service.api.app as app_module
+import huron.applications.api.app as app_module
+from huron.applications.api.app import create_app
+from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
 from huron.pkg.auth import AuthError
-from huron.service.api.app import create_app
-from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
-from huron.service.api.stores import (
+from huron.pkg.metastore import (
     PostgresApiKeyStore,
     PostgresCredentialStore,
     PostgresPrincipalStore,
@@ -556,7 +556,7 @@ async def test_the_lifespan_sweeps_lapsed_sessions_before_serving_the_first_requ
     dataset_id = ids.datasets["run-0001"]
     async with stores.hierarchy.transaction() as writer:
         reserved = await writer.begin_ingest(
-            dataset_id, "a" * 64, created_by="user:alice", parent_revision_id=None, files=()
+            dataset_id, "a" * 64, created_by="user:alice", files=()
         )
     opened = reserved.open(now=clock.now())
     async with stores.hierarchy.transaction() as writer:

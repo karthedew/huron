@@ -124,7 +124,7 @@ the authorization predicate ahead of <code>LIMIT</code>. No free-text parameters
 
 <table>
 <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-<tr><td>POST</td><td><code>/datasets/{id}/ingest-sessions</code></td><td>body: manifest → session with <code>UploadPlan</code> (files: <code>upload | hardlink</code>, <code>part_count</code>, <code>part_bytes</code>); locks the dataset; <code>Idempotency-Key</code></td></tr>
+<tr><td>POST</td><td><code>/datasets/{id}/ingest-sessions</code></td><td>body: manifest → session with <code>UploadPlan</code> (files: <code>upload</code>, <code>part_count</code>, <code>part_bytes</code>); locks the dataset; <code>Idempotency-Key</code></td></tr>
 <tr><td>POST</td><td><code>/projects/{id}/ingest-sessions</code></td><td>creates the dataset (raw entry) under <code>dataset.create</code> + <code>data.write@raw</code>, then as above</td></tr>
 <tr><td>GET</td><td><code>/ingest-sessions/{id}</code></td><td>state, per-file progress, ETag</td></tr>
 <tr><td>POST</td><td><code>/ingest-sessions/{id}/heartbeat</code></td><td>extends TTL</td></tr>
@@ -242,7 +242,6 @@ but no shipped route raises it yet.</p>
 <tr><td>PROFILE_UNKNOWN</td><td>400</td><td>reserved</td><td>unknown dataset profile (§2 dataset profiles)</td></tr>
 <tr><td>INGEST_SESSION_EXPIRED</td><td>409</td><td>live</td><td>ingest session passed its idle TTL, or is terminal and cannot be renewed (§3 ingest)</td></tr>
 <tr><td>DATASET_LOCKED</td><td>409</td><td>live</td><td>dataset is locked against concurrent ingest (§3 ingest)</td></tr>
-<tr><td>DUPLICATE_CONTENT</td><td>409</td><td>live</td><td>identical content already ingested (§3 ingest)</td></tr>
 <tr><td>LAYER_NOT_MATERIALIZED</td><td>409</td><td>reserved</td><td>referenced layer has not been materialized (§4 layers)</td></tr>
 <tr><td>SNAPSHOT_NOT_PUBLISHED</td><td>409</td><td>reserved</td><td>referenced snapshot has not been published (§4 snapshots)</td></tr>
 <tr><td>PRODUCT_VERSION_EXISTS</td><td>409</td><td>reserved</td><td>product version already published (§4 products)</td></tr>

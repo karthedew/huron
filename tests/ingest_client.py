@@ -17,7 +17,7 @@ import io
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from huron.service.api.routes.v1.schema.ingest_sessions import ManifestFile
+from huron.applications.api.routes.v1.schema.ingest_sessions import ManifestFile
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence

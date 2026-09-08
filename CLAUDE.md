@@ -1,69 +1,68 @@
-# CLAUDE.md
+# Claude repository instructions
 
-Huron is a datalake for scientific projects. `design/` is the authoritative architecture record; `design/roadmap.html` is the living, cross-phase roadmap.
+Read and follow [AGENTS.md](AGENTS.md) first. It is the shared source for package
+boundaries, OOP conventions, skills by area, scientific workflows, RBAC/lineage,
+verification, and scoped frontend instructions. Do not maintain alternate versions
+of those rules here.
 
-## Development lifecycle: grill -> design → implement → review
+## Architecture and skills
 
-When starting fresh on a session, we should look for a phase that is part of the roadmap. The first step in the development lifecycle should be to use the /grill-with-docs skill found in ./.claude/skills/grill-with-docs/ to determine the details of what to build.
+The implemented layout is `src/huron/{pkg,core,applications}`, with `schema/` as the
+shared document-contract floor. Follow the ownership and dependency rules in AGENTS.md.
 
-Non-trivial work in this repo goes through three Claude Code slash commands, defined in `.claude/commands/` and backed by skills in `.claude/skills/`. Don't hand-implement a multi-file change without going through this loop.
+Read skills from `.claude/skills/<name>/SKILL.md`:
 
-1. `/grill-with-docs <prompt-from-roadmap-description>`
-   - Just follow the grill-with-docs process.
-   - The prompt-from-roadmap-description should provide the basis to explain what is being built.
-   - The results of this skill should feed into the design-plan and be recorded into a unique GRILL.md file.
+- `oop-design` when writing, designing, refactoring or reviewing `pkg/` and `core/`
+  code. Use the project-local copy; the previous encapsulation skill is retired.
+- `fastapi` exclusively for API-service code, in
+  `src/huron/applications/api/`. Do not apply
+  `oop-design` to this service. For changes spanning layers, apply each skill only
+  to its corresponding area; shared workflow and verification rules still apply.
+- `postgresql-table-design` for database schema, migrations and persistence design;
+  `src/huron/schema/` contains document contracts and is not automatically SQL work.
+- `grill-with-docs` to verify design/roadmap claims against executable evidence.
+- `codebase-design` for structural planning/review only to the extent its actual
+  contents supply a methodology; inspect it rather than assuming it is complete.
+- Frontend skills and gates are defined in AGENTS.md’s **Frontend: `web/`** section.
+  Load both `svelte-code-writer` and `svelte-core-bestpractices` for Svelte work, and
+  `tailwind-design-system` for Tailwind/design-system work. `web/AGENTS.md` is a
+  discovery pointer to those shared rules, not a separate lifecycle.
 
-1. `/design-plan <target-path> [design-file] [plan-file] [design-goal] [roadmap-file] [escalation-context]`
-   - Planning only — never edits application code.
-   - Uses the `codebase-design` and `grill-with-docs` skills.
-   - Produces/updates `DESIGN.md` (current state, roadmap drift, target design, rejected alternatives) and `IMPLEMENTATION_PLAN.md` (milestone-by-milestone, mechanically verifiable tasks) for the phase currently being worked on.
-   - Reconciles `design/roadmap.html` — the living, cross-phase roadmap — against what the codebase actually does, so documentation doesn't drift from reality.
-   - Defaults: `design-file=DESIGN.md`, `plan-file=IMPLEMENTATION_PLAN.md`, `roadmap-file=design/roadmap.html`.
+## Claude command workflow
 
-2. `/implement-markdown <plan-file> [impl-model] [verify-model] [escalation-command]`
-   - Implements an `IMPLEMENTATION_PLAN.md` produced by `/design-plan`, one phase/task at a time, through a strict implement → verify serial loop.
-   - Every attempt runs the full Python validation gate (ruff, pydoclint, ty, mypy, lint-imports, pytest with coverage, radon, complexipy, pyscn) — no suppressed lints, no partial runs.
-   - Capped at 3 verification attempts per phase/task.
-   - On the 3rd failure: reverts/isolates the broken state, appends a `## Escalation` section to the plan (what was tried, what failed, the open design questions), and instructs the user to run `/architectural-review` against the affected area, seeded with that escalation report.
-   - Defaults: `impl-model=anthropic/claude-sonnet-5`, `verify-model=anthropic/claude-opus-5`, `escalation-command=/architectural-review`.
+The general lifecycle is understand → resolve/design → implement → verify/review,
+with scope and gates specified in AGENTS.md. Continue the requested task and settled
+session decisions. Do not automatically choose a roadmap phase or interview the user
+again merely because a session is new.
 
-3. `/architectural-review <target-path> [review-file] [review-goal] [escalation-context]`
-   - Clean-sweep structural review only — no implementation.
-   - Uses the `codebase-design` skill.
-   - Produces `architectural_review.md`: a phased review plan, per-phase findings, and a final synthesis.
-   - Can be seeded with an `/implement-markdown` escalation report so discovery starts from the known failure instead of re-deriving it.
+For substantial planned changes, the committed commands in `.claude/commands/`
+provide the following workflow. Read a command before invoking it; when the user
+explicitly invokes one, follow its additional artifact and verification requirements.
 
-### The loop
+1. **Resolve requirements and check documentation.** Use `grill-with-docs` for its
+   actual documented purpose: checking claims against implementation. It is a skill,
+   not a committed slash-command file. Preserve its findings separately from later
+   corrections. Ask focused questions only for unresolved decisions that affect design.
+2. **`/design-plan`.** Defined in `.claude/commands/design-plan.md`. Planning only;
+   produces a design and implementation plan, including current state, target design,
+   roadmap drift, alternatives and mechanically verifiable milestones. Default
+   artifacts are `DESIGN.md` and `IMPLEMENTATION_PLAN.md`; use task-specific locations
+   when existing work would otherwise be overwritten.
+3. **`/implement-markdown`.** Defined in `.claude/commands/implement-markdown.md`.
+   Executes a plan through serial implementation and verification. Its explicit
+   workflow requires a baseline, full gate for each attempt, and at most three
+   verification attempts per task before architectural escalation. Read its current
+   model/tool requirements rather than copying defaults into this file. Include
+   AGENTS.md's `make lint` checks and relevant non-unit suites; default pytest alone
+   does not exercise them. Do not revert unrelated user work during escalation.
+4. **`/architectural-review`.** Defined in `.claude/commands/architectural-review.md`.
+   Structural review only; produces findings and a synthesis, optionally using an
+   escalation report to inform a revised design plan.
 
-```text
-/grill-with-docs -> /design-plan  ──►  /implement-markdown  ──► success: next phase ──► back to /design-plan
-                          │
-                          └─ 3x verification failure
-                                   │
-                                   ▼
-                          /architectural-review
-                                   │
-                                   ▼
-                    /design-plan (re-seeded with escalation
-                     report + architectural review findings)
-```
+When a command calls for subagents, keep its implementation/verification sequence
+serial. Do not assume other agents or environments can invoke Claude slash commands;
+AGENTS.md supplies the tool-independent workflow.
 
-### Conventions shared across all three commands
-
-- Clean-sweep by default: no backwards-compatibility shims, no TODOs, no speculative abstractions, no suppressed lints — unless the design or plan explicitly requires otherwise for this change.
-- No comment, docstring, test name, or user-facing string may reference the plan, phases, or checklist mechanics. Comments explain enduring code intent, not orchestration history.
-- Every module, class, function and method carries a Google-style docstring whose `Args`/`Returns`/`Yields`/`Raises` match the signature — enforced by ruff's `D` rules and `pydoclint` in the gate; tests carry a one-line summary of what they prove. The standard is `docs/getting-started/docstrings.md`.
-- Subagents run serially, never in parallel, within each command.
-- Commands and skills live in `.claude/commands/` and `.claude/skills/<name>/SKILL.md` respectively, both committed to the repo so the workflow travels with it.
-
-### Code Design
-
-The codebase that is developed should follow Object Oriented Design unless otherwise stated in the skills uploaded.
-
-They OOP designs should be based on if a section of code relates to creational, structural, or behavior block.
-
-### Skills
-
-- `.claude/skills/fastapi/` — the official FastAPI skill, vendored from the upstream FastAPI repo (`fastapi/.agents/skills/fastapi/`). Load it whenever working on the FastAPI service tier (`src/huron/service`) — endpoints, routers, dependencies, Pydantic models, responses, streaming — whether designing, implementing, or reviewing.
-- `.claude/skills/postgresql-table-design/` — PostgreSQL schema-design skill, vendored from the wshobson/agents plugin collection (`plugins/database-design/skills/postgresql/`). Load it whenever designing, updating, or reviewing the PostgreSQL schema — `src/huron/schema`, `migrations/`, or any DDL, index, constraint, or trigger work.
-- `.claude/skills/codebase-design/` and `.claude/skills/grill-with-docs/` back the lifecycle commands above (both are still TODO scaffolds pending their real methodology).
+Documentation-only and small localized tasks do not require this full command loop.
+Apply proportionate verification from AGENTS.md. Report checks actually performed
+and any unresolved gaps; never present a planned migration as completed code.

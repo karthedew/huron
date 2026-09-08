@@ -18,18 +18,18 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from huron.applications.api.app import create_app
+from huron.applications.api.settings import ApiSettings, ClassificationValue
+from huron.pkg.metastore import InMemoryRbacStore
 from huron.pkg.rbac import ScopeType
-from huron.service.api.app import create_app
-from huron.service.api.settings import ApiSettings, ClassificationValue
-from huron.service.api.stores import InMemoryRbacStore
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from huron.service.api.records import RoleBindingRecord
-    from huron.service.api.repository import HierarchyRepository
+    from huron.core._catalog import HierarchyRepository
+    from huron.pkg.catalog.records import RoleBindingRecord
 
 pytestmark = pytest.mark.unit
 

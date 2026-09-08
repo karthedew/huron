@@ -387,8 +387,7 @@ def staging_dir(root: PurePosixPath, ingest_id: UUID) -> PurePosixPath:
 
     Staging lives at the data root, beside ``organization/``, so a staged
     envelope and its final revision directory are on one filesystem; the
-    rename that commits an envelope and the hard links that reuse a parent
-    revision's files both require that. The dot prefix keeps it out of the
+    rename that commits an envelope requires that. The dot prefix keeps it out of the
     organization listing.
 
     Args:

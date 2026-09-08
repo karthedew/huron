@@ -164,7 +164,7 @@ reused must re-justify itself against this record.</td>
 every mechanism earn its place.</td></tr>
 <tr><td>2</td>
 <td><strong>Raw lives on NFS; POSIX is the authoritative raw store.</strong> Commit = staging
-directory + atomic <code>rename(2)</code>; dedup = hardlinks; immutability = sealing. Details in
+directory + atomic <code>rename(2)</code>; complete independent uploads; immutability = sealing. Details in
 <a href="layer-raw.html">Raw Layer</a>.</td>
 <td>Object storage for raw too</td>
 <td>HPC runs are born on NFS; committing in place avoids copying up to 1&nbsp;TiB per run.
@@ -203,7 +203,7 @@ read on NFS or a scoped grant on the object store, so it would add a second RBAC
 the first — see <a href="catalog-search.html#split">Catalog &amp; Search</a>.</td></tr>
 <tr><td>6</td>
 <td><strong>Full logical copy per revision.</strong> Every revision directory is complete and
-offline-readable; unchanged bytes are shared via hardlinks, not deltas.</td>
+offline-readable; every submitted file has an independent copy.</td>
 <td>Delta chains or content-addressed pools</td>
 <td>Evidence must remain understandable with <code>ls</code> and <code>jq</code> if the platform
 is lost. Also: no lakeFS, no git-like indirection — corrections are naturally new immutable
@@ -333,7 +333,7 @@ bar.</td></tr>
 <p>The stores, the services, the data flow from HPC run to published product, and the deployment
 picture.</p></div>
 <div class="card"><h3><a href="layer-raw.html">Raw Layer — NFS Store</a></h3>
-<p>Directory layout, the POSIX commit protocol, ingest sessions, hardlink dedup, sealing,
+<p>Directory layout, the POSIX commit protocol, ingest sessions, independent revisions, sealing,
 TTL expiration, purge.</p></div>
 <div class="card"><h3><a href="layer-bronze.html">Bronze Layer</a></h3>
 <p>Source-faithful Zarr, science profiles, manual intake (v1) and the deferred auto-builder,

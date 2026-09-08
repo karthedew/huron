@@ -7,7 +7,7 @@
 -- to carry what a schema dump cannot - the trigger annotations, the vocabularies,
 -- and the invariant each rule serves. Do not replace it with pg_dump output.
 --
--- Reflects: 0009_ingest_ledger
+-- Reflects: 0010_independent_raw
 --
 -- Every revision that changes the schema updates this file in the same commit
 -- and moves the Reflects line to the new head. scripts/check_schema_map.py
@@ -91,7 +91,7 @@ CREATE TABLE dataset_revisions (
     id uuid PRIMARY KEY,
     dataset_id uuid NOT NULL REFERENCES datasets,
     revision_number integer NOT NULL,   -- 1..999999; UNIQUE (dataset_id, revision_number)
-    manifest_sha256 text NOT NULL,      -- UNIQUE (dataset_id, manifest_sha256)
+    manifest_sha256 text NOT NULL,      -- Identical manifests are allowed in distinct revisions.
     metadata_sha256 text NOT NULL,
     revision_path text UNIQUE NOT NULL, -- /data/.../dataset/{...}/raw/revision/000042--{id}
     file_count integer NOT NULL, total_bytes bigint NOT NULL,
@@ -140,21 +140,16 @@ CREATE TABLE ingest_sessions (
     state text NOT NULL,  -- PREPARING|UPLOADING|VERIFYING|COMMITTING|COMMITTED|ABORTED|FAILED
     etag integer NOT NULL DEFAULT 1,
     expires_at timestamptz NOT NULL,
-    created_by text NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
-    parent_revision_id uuid  -- NULL for a first revision
+    created_by text NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
     -- [db] trigger ingest_sessions_revision_guard: a session may claim
     -- COMMITTED only about the revision it reserved - same id, dataset,
     -- revision_number and manifest_sha256 - checked FOR KEY SHARE
-    -- [db] FOREIGN KEY (parent_revision_id, dataset_id) REFERENCES
-    -- dataset_revisions (id, dataset_id) ingest_sessions_parent_revision_fk:
-    -- the plan's parent is a revision of this dataset
 );
 -- [db] one_open_ingest_per_dataset: partial unique index, at most ONE open
 -- ingest per dataset (per-dataset lock)
 -- [db] one_claim_per_revision_number: partial unique index on
 -- (dataset_id, revision_number) excluding ABORTED/FAILED - a dead session's
 -- number is freed for retry, a COMMITTED one stays spent forever
--- [db] index ingest_sessions_parent_revision (parent_revision_id, dataset_id)
 -- [db] index ingest_sessions_dataset (dataset_id) - neither partial unique
 -- index above serves a predicate-free lookup
 -- [db] index ingest_sessions_lapsing (expires_at) WHERE state IN
@@ -165,13 +160,12 @@ CREATE TABLE ingest_files (
     ingest_id uuid NOT NULL REFERENCES ingest_sessions ON DELETE CASCADE,
     path text NOT NULL,                 UNIQUE (ingest_id, path),
     size bigint NOT NULL, expected_sha256 text NOT NULL,
-    action text NOT NULL,               -- upload | hardlink (dedup from parent)
+    action text NOT NULL CHECK (action = 'upload'),
     state text NOT NULL DEFAULT 'PENDING',
     -- [db] ingest_files_state_vocabulary CHECK IN ('PENDING','COMPLETE'):
     -- PENDING until every part is in the envelope and proven
     part_count integer NOT NULL,
-    -- [db] ingest_files_part_count_matches_action CHECK: 0 iff hardlink,
-    -- >= 1 iff upload
+    -- [db] ingest_files_part_count_positive CHECK: >= 1,
     completed_parts jsonb NOT NULL DEFAULT '[]'
     -- [db] ingest_files_completed_parts_is_an_array CHECK: array shape -
     -- the resume ledger for a multipart upload, the one jsonb column that

@@ -15,7 +15,7 @@ from uuid import uuid4
 import pytest
 
 from huron.pkg.catalog.ingest import FileState, IngestState, UploadAction
-from huron.service.api.stores.rows import (
+from huron.pkg.metastore.rows import (
     affected_row_count,
     api_key_record,
     binding_record,
@@ -364,25 +364,7 @@ def test_ingest_session_decodes_the_lease_and_declared_identity() -> None:
     assert session.state is IngestState.UPLOADING
     assert session.manifest_sha256 == "a" * 64
     assert session.created_by == "user:alice"
-    assert session.parent_revision_id == parent_id
     assert session.etag == 2
-
-
-def test_ingest_session_decodes_a_null_parent_revision() -> None:
-    """``ingest_session`` decodes a first revision's null ``parent_revision_id`` as None."""
-    row = {
-        "id": uuid4(),
-        "dataset_id": uuid4(),
-        "revision_id": uuid4(),
-        "revision_number": 1,
-        "manifest_sha256": "a" * 64,
-        "state": "PREPARING",
-        "etag": 1,
-        "expires_at": datetime.now(UTC),
-        "created_by": "user:alice",
-        "parent_revision_id": None,
-    }
-    assert ingest_session(row).parent_revision_id is None
 
 
 def test_ingest_file_decodes_action_state_and_completed_parts() -> None:
@@ -407,24 +389,6 @@ def test_ingest_file_decodes_action_state_and_completed_parts() -> None:
     assert file.part_count == 2
     assert file.state is FileState.PENDING
     assert file.completed_parts == frozenset({1})
-
-
-def test_ingest_file_decodes_a_hardlink_file_with_no_parts() -> None:
-    """``ingest_file`` decodes a hardlink file's empty ``completed_parts`` array."""
-    row = {
-        "file_id": uuid4(),
-        "path": "payload/b.bin",
-        "size": 5,
-        "expected_sha256": "c" * 64,
-        "action": "hardlink",
-        "part_count": 0,
-        "state": "COMPLETE",
-        "completed_parts": json.dumps([]),
-    }
-    file = ingest_file(row)
-    assert file.action is UploadAction.HARDLINK
-    assert file.state is FileState.COMPLETE
-    assert file.completed_parts == frozenset()
 
 
 @pytest.mark.parametrize(

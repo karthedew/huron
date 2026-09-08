@@ -36,7 +36,7 @@ from tests.ingest_client import IngestClient, dev_headers, manifest_file
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
-    from huron.service.api.runtime import ApiStores
+    from huron.applications.api.runtime import ApiStores
 
 pytestmark = pytest.mark.unit
 

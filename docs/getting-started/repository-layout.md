@@ -13,55 +13,36 @@ huron/
 └── web/                     SvelteKit front end
 ```
 
-## The three surfaces
+## Backend boundaries
 
-`src/huron/` has exactly three surfaces, and the dependency between them runs one way —
-**service → pkg → schema**:
+Dependencies point inward: **applications → core → pkg → schema**.
 
 ```text
 src/huron/
-  service/    composition roots, one per deployable
-              api/            the FastAPI control plane
-                              authorization/     the Depends chain: credential → principal → check
-                              repository.py      the hierarchy application service
-                              stores/            both backends of RbacStore/ApiKeyWriter, and the Protocols
-                              routes/v1/         schemas.py + endpoints/
-  pkg/        independent libraries
-              catalog/        the manifest, hierarchy, layer workflow, and paths
-                              paths.py    the sole constructor AND parser of storage paths
-                              layers.py   the raw→bronze→silver→gold workflow
-              rbac/           the pure decision engine (decide, Binding, Scope)
-                              roles.py    the role model — the source of truth for the matrix
-              identity/       authentication: credential → Principal
-              rawstore/       NFS/POSIX staging, hashing, hardlink dedup, atomic rename, sealing
-  schema/     the shared floor: canonical JSON Schema documents plus loaders and types
+  applications/api/   FastAPI routes, credentials/cookies, settings and lifecycle wiring
+  core/               authorized catalog, identity, Raw ingestion and revision reads
+  pkg/catalog/        entities, state transitions, manifests and document validation
+  pkg/auth/           credentials and identity primitives
+  pkg/rbac/           role and scope evaluation
+  pkg/rawstore/       POSIX staging, hashing, independent copies, rename and sealing
+  pkg/metastore/      PostgreSQL and in-memory persistence adapters
+  schema/             canonical JSON schemas, loaders and shared primitive contracts
 ```
 
-Only the deployables that have real code exist on disk. The others named in
-`design/architecture.html` §2 — `prepare`, `bronze_builder`, `canonicalizer`, `product_runner`,
-`validator`, `projection`, `polaris_sync`, `sweeper`, `reconciler`, `retention`, `lakectl` — are
-created in the change that gives them code, not scaffolded ahead of need. The same applies to
-`pkg/`: `objectstore`, `metastore`, `searchindex`, `credentials`, `jobrunner`, `polaris` and
-`telemetry` return when they do something.
+Core's public services bind an authenticated actor and enforce current permissions.
+Private core modules implement persistence and ingestion mechanics for those services;
+they are not alternate entry points for callers. The API manages HTTP concerns and
+constructs adapters. Domain objects own invariants and meaningful transitions; core
+composes domain and infrastructure capabilities through consumer-owned protocols.
 
-## The rules that bite in review
+Domain packages and rawstore remain independent siblings. Metastore may import domain
+types to persist them; domains cannot import metastore. Core never imports concrete
+storage adapters, database drivers, FastAPI or Ray. Import-linter checks these rules.
 
-**No package imports a sibling package.** A package that needs another's capability declares a
-`typing.Protocol` for it and receives a conforming object from a service. Because Protocol
-conformance is structural, the implementing package does not import the declaring one either —
-which is what makes `pkg/*` genuinely independent rather than merely tidy. `pkg/catalog/ports.py`
-is the worked example.
+Raw revisions contain exactly the submitted files, with no inherited files or shared
+hardlinks. Metadata uses a shared Pydantic input contract and authoritative backend
+validation. The Python SDK, Ray/Zarr workflows, and other planned deployables gain
+packages when implemented; this restructure does not scaffold them.
 
-**All glue lives in a service.** A service reads settings, constructs concrete stores, and injects
-them. Behavior two services both want becomes a package — never an import of the sibling that
-already has it.
-
-**`catalog` and `rbac` hold rules, not I/O.** No web framework, database driver, or storage SDK
-reaches them; those arrive as an injected Protocol. Data-modeling and validation libraries
-(`pydantic`, `jsonschema`) are deliberately allowed — `schema/` is built on them and `catalog`
-validates against `schema/` rather than restating formats.
-
-**A package that wants to log uses stdlib `logging`** and the service configures capture, rather
-than every package importing one shared logging module.
-
-All four of these are mechanically enforced; see [conventions](conventions.md#import-boundaries).
+See [conventions](conventions.md#import-boundaries), root `AGENTS.md`, and
+`design/architecture.html` for package rules and workflow responsibilities.

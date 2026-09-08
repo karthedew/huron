@@ -31,7 +31,6 @@ from huron.pkg.catalog.ingest import (
     TRANSITIONS,
     FileState,
     IngestState,
-    UploadAction,
     compute_upload_plan,
     revision_committed,
     revision_record,
@@ -264,10 +263,6 @@ def test_part_received_refuses_a_part_outside_the_plan_a_hardlink_file_and_a_com
     with pytest.raises(ValueError, match=r"\b3\b"):
         file.part_received(3)
 
-    hardlink = ingest_file(action=UploadAction.HARDLINK, part_count=0)
-    with pytest.raises(IllegalIngestTransition):
-        hardlink.part_received(1)
-
     complete = ingest_file(part_count=1, state=FileState.COMPLETE, completed_parts=frozenset({1}))
     with pytest.raises(IllegalIngestTransition):
         complete.part_received(1)
@@ -317,21 +312,6 @@ def test_completed_refuses_a_size_or_digest_mismatch_with_the_observation_in_con
     }
 
 
-def test_linked_completes_a_hardlink_file_and_refuses_an_upload_file() -> None:
-    """Linking completes a hardlink file with no parts recorded; an upload file refuses to link."""
-    hardlink = ingest_file(action=UploadAction.HARDLINK, part_count=0)
-    assert hardlink.received is False
-
-    linked = hardlink.linked()
-
-    assert linked.state is FileState.COMPLETE
-    assert linked.completed_parts == frozenset()
-
-    upload = ingest_file(action=UploadAction.UPLOAD, part_count=1)
-    with pytest.raises(IllegalIngestTransition):
-        upload.linked()
-
-
 def test_a_zero_byte_file_is_one_part_that_completes_on_the_empty_digest() -> None:
     """A zero-byte manifest entry plans as one part that completes on the empty-string digest."""
     manifest = Manifest((_entry("payload/empty.bin", size=0, sha256=_EMPTY_SHA256),))
@@ -346,56 +326,6 @@ def test_a_zero_byte_file_is_one_part_that_completes_on_the_empty_digest() -> No
     completed = file.part_received(1).completed(observed_size=0, observed_sha256=_EMPTY_SHA256)
 
     assert completed.state is FileState.COMPLETE
-
-
-def test_upload_plan_links_only_entries_the_parent_holds_identically() -> None:
-    """A file hardlinks only when the parent holds it at the same path, size and digest."""
-    parent = Manifest(
-        (
-            _entry("payload/same.bin", size=10, sha256="a" * 64),
-            _entry("payload/resized.bin", size=10, sha256="b" * 64),
-            _entry("payload/retyped.bin", size=10, sha256="c" * 64, media_type="text/plain"),
-            _entry("payload/empty.bin", size=0, sha256=_EMPTY_SHA256),
-        )
-    )
-    manifest = Manifest(
-        (
-            _entry("payload/same.bin", size=10, sha256="a" * 64),
-            _entry("payload/resized.bin", size=11, sha256="b" * 64),
-            _entry(
-                "payload/retyped.bin",
-                size=10,
-                sha256="c" * 64,
-                media_type="application/octet-stream",
-            ),
-            _entry("payload/new.bin", size=10, sha256="d" * 64),
-            _entry("payload/empty.bin", size=0, sha256=_EMPTY_SHA256),
-        )
-    )
-
-    plan = {entry.file.path: entry.action for entry in compute_upload_plan(manifest, parent)}
-
-    assert plan == {
-        "payload/same.bin": UploadAction.HARDLINK,
-        "payload/resized.bin": UploadAction.UPLOAD,
-        "payload/retyped.bin": UploadAction.HARDLINK,
-        "payload/new.bin": UploadAction.UPLOAD,
-        "payload/empty.bin": UploadAction.HARDLINK,
-    }
-
-
-def test_upload_plan_uploads_everything_without_a_parent_or_under_another_hash_algorithm() -> None:
-    """Every file uploads with no parent, and again when the parent used a different algorithm."""
-    manifest = Manifest((_entry("payload/a.bin"), _entry("payload/b.bin")))
-
-    without_parent = compute_upload_plan(manifest)
-    assert all(entry.action is UploadAction.UPLOAD for entry in without_parent)
-
-    other_algorithm_parent = Manifest(
-        (_entry("payload/a.bin"), _entry("payload/b.bin")), hash_algorithm="sha512"
-    )
-    under_other_algorithm = compute_upload_plan(manifest, other_algorithm_parent)
-    assert all(entry.action is UploadAction.UPLOAD for entry in under_other_algorithm)
 
 
 def test_upload_plan_part_counts_follow_the_part_size() -> None:
@@ -418,7 +348,8 @@ def test_upload_plan_part_counts_follow_the_part_size() -> None:
         "payload/c.bin": 2,
         "payload/d.bin": 1,
     }
-    assert all(entry.part_count == 0 for entry in compute_upload_plan(manifest, manifest))
+    with pytest.raises(ValueError, match="positive"):
+        compute_upload_plan(manifest, part_bytes=0)
 
 
 def test_revision_record_takes_every_column_from_the_session_and_manifest() -> None:

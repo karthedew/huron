@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    import os
     from collections.abc import Iterable
     from datetime import datetime
     from pathlib import Path, PurePosixPath
@@ -144,27 +145,6 @@ class RawStore(Protocol):
         """
         ...
 
-    def hardlink_from_parent(
-        self, parent_payload: PurePosixPath, staging_payload: PurePosixPath, rel_path: str
-    ) -> None:
-        """Reuse one unchanged file from the parent revision without copying its bytes.
-
-        The file at ``rel_path`` under ``parent_payload`` must appear at the
-        same relative path under ``staging_payload``, creating intermediate
-        directories as needed. A hard link is the intent; an implementation
-        that cannot link may copy, but the result must be byte-identical
-        and must not disturb the parent. Success is a no-op when the target
-        is already the parent's inode; anything else there is replaced. A
-        missing source file is refused as a ``FileNotFoundError``.
-
-        Args:
-            parent_payload: The committed parent revision's ``payload``
-                directory.
-            staging_payload: The staging envelope's ``payload`` directory.
-            rel_path: The file's path relative to both payload directories.
-        """
-        ...
-
     def read_document(self, path: PurePosixPath) -> bytes:
         """Return a stored document's bytes exactly as written.
 
@@ -175,6 +155,17 @@ class RawStore(Protocol):
 
         Returns:
             The document's content.
+        """
+        ...
+
+    def stat_document(self, path: PurePosixPath) -> os.stat_result:
+        """Inspect a stored file without reading its contents.
+
+        Args:
+            path: The stored file's location.
+
+        Returns:
+            Its current filesystem metadata.
         """
         ...
 

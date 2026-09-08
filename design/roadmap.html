@@ -97,9 +97,8 @@ Practically:</p>
 nothing is shaped to accommodate what already exists.</li>
 <li>Prototype endpoints, schemas, and plans are retired outright. No dual-running, no
 compatibility shims, no migration tooling.</li>
-<li>Repository hygiene from day one: the three-surface layout below, with import-linter
-enforcing every boundary in it — no package imports a sibling package, no service imports a
-sibling service, and <code>catalog/</code> and <code>rbac/</code> know nothing of FastAPI,
+<li>Repository hygiene from day one: the layered layout below, with import-linter
+enforcing every boundary in it — domain packages remain independent and infrastructure dependencies point toward domains, and <code>catalog/</code> and <code>rbac/</code> know nothing of FastAPI,
 SQLAlchemy, storage SDKs, or LanceDB; a task is done when its gate passes in CI, not when the
 code is written; any change to a decision or invariant updates this design directory in the
 same PR.</li>
@@ -107,88 +106,28 @@ same PR.</li>
 
 <pre>
 src/huron/
-  service/    one package per deployable in <a href="architecture.html#services">architecture §2</a>,
-              plus the operator CLI. A service is a composition root: it reads settings,
-              constructs the concrete stores, and injects them into the packages that
-              declare Protocols for them. All glue lives here.
-
-              api · prepare · bronze_builder · canonicalizer · product_runner · validator
-              projection · polaris_sync · sweeper · reconciler · retention · lakectl
-              (the scientist-facing `huron` CLI ships with the client package, not here)
-
-              api's own routes split by version: routes/v1/ (the versioned resource
-              API, mounted at /api/v1, with routes/v1/schema/ - one schema file per
-              endpoints module) and routes/auth/ (login, OIDC and session routes,
-              mounted unversioned at /auth - see <a href="auth.html">Authentication</a>)
-
-  pkg/        the coding logic, as libraries. Every package is independent of every other.
-              This tree is the <em>intended</em> layout, not an inventory of this checkout:
-              four packages exist today - catalog/, rawstore/, rbac/ and auth/. The other
-              seven, telemetry/ included, are unbuilt; only metastore/ once said so, and
-              that selective annotation is what made this block read as an inventory.
-
-              catalog/       the manifest, the hierarchy, the Raw/Bronze/Silver/Gold
-                             interaction logic, the invariants — and, in ports.py, the
-                             Protocols it depends on: RawStore, Metastore,
-                             SearchProjection, CredentialVendor, JobDispatcher,
-                             PrincipalResolver, Clock
-              rbac/          role-binding evaluation and discovery gating — pure
-              rawstore/      NFS/POSIX: staging, hashing, hardlink dedup, atomic rename, sealing
-              objectstore/   S3-compatible object store + Icechunk repository handles
-              metastore/     PostgreSQL structural state and the outbox — planned, not built:
-                             the SQL that exists today lives in the api service tier
-                             (service/api/postgres_rbac.py, postgres_auth.py), and the
-                             Metastore Protocol in catalog/ports.py has no implementation
-              searchindex/   LanceDB tables and pointer-flip rebuild
-              auth/          all AuthN resolves to the principal.py Principal:
-                             apikeys.py, oidc.py and dev.py are the API-key,
-                             OIDC-bearer and dev-header resolvers; password.py and
-                             sessions.py add admin-provisioned password accounts and
-                             server-side browser sessions; principals.py is the
-                             provisioning seam both login paths share (OIDC
-                             upsert-on-login, admin-created password users); errors.py
-                             holds AuthError and its subclasses
-              credentials/   STS vending of prefix-scoped, expiring grants
-              jobrunner/     digest-pinned container dispatch (Kubernetes Jobs in v1)
-              polaris/       Polaris namespace, table and grant operations
-              telemetry/     structlog and Prometheus wiring
-
-  schema/     contracts shared across services: the canonical JSON Schema documents
-              (revision metadata, manifests, science profiles, generation documents) under
-              documents/, with their loaders, validators, and Python types. The dependency
-              floor — anything may import it, it imports nothing.
+  applications/api/   FastAPI transport, settings, authentication extraction and wiring
+  core/               authorized catalog, identity, Raw-ingestion and revision-read workflows
+  pkg/catalog/        domain entities, immutable transitions, manifests and document contracts
+  pkg/auth/           credential verification and identity primitives
+  pkg/rbac/           role and scope evaluation
+  pkg/rawstore/       POSIX staging, checksums, atomic publication and sealing
+  pkg/metastore/      PostgreSQL and in-memory persistence adapters
+  schema/             canonical JSON schemas, shared document validation and primitive contracts
 </pre>
 
-<p><strong>The dependency rule is one-way and mechanical: service → pkg → schema.</strong>
-Never the reverse and never sideways. A package that needs another package's capability does
-not import it — it declares a <code>typing.Protocol</code> describing what it needs, and a
-service passes in a conforming object. Because Protocol conformance is structural, the
-implementing package does not import the declaring one either, which is what lets
-<code>pkg/*</code> be genuinely independent rather than merely tidy. mypy checks conformance at
-the wiring site, where the concrete object meets the Protocol.</p>
+<p><strong>Implemented dependency direction: applications → core → pkg → schema.</strong>
+Core owns reusable behavior and uses injected capabilities; the FastAPI application owns transport
+and process wiring. Core public services enforce authorization themselves. Domain and infrastructure
+objects use composition and immutable values where appropriate. Auth, catalog, RBAC and rawstore
+remain independent siblings; metastore may import domain types, while domains cannot import it.
+Import-linter enforces layer direction, domain independence and framework/adapter exclusion from core.
+See <code>AGENTS.md</code> for the current package rules, skills and verification workflow.</p>
 
-<p>Seven import-linter contracts hold this in place, checked by <code>make lint</code>
-(<code>lint-imports</code>), which <a href="https://github.com/karthedew/huron/blob/main/.github/workflows/ci.yml"><code>.github/workflows/ci.yml</code></a>'s <code>lint</code> job runs on every push
-and pull request. The five architectural ones:
-a <em>layers</em> contract for service → pkg → schema; an <em>independence</em> contract across
-the packages that exist today (<code>pkg/auth</code>, <code>pkg/catalog</code>,
-<code>pkg/rawstore</code>, <code>pkg/rbac</code>); an <em>independence</em> contract across the
-services that exist today (<code>service/api</code> alone), each deployable re-added to the list
-as it gains code; a
-<em>forbidden</em> contract keeping web frameworks, database drivers and storage SDKs out of
-<code>catalog/</code> and <code>rbac/</code>; and a narrower <em>forbidden</em> contract
-keeping web frameworks and database drivers out of <code>auth/</code> — an IO package that
-legitimately uses HTTP, JWT and password-hashing libraries. Data-modeling and validation libraries are
-deliberately not on that forbidden list: <code>schema/</code> is built on them, and
-<code>catalog/</code> validates against <code>schema/</code> rather than restating formats.
-The remaining two are <em>forbidden</em> contracts that keep the API service's
-<code>authorization/</code> and <code>stores/</code> packages entered through their public
-surfaces.</p>
-
-<p>Two consequences worth stating, because they are the ones that bite in review. Cross-cutting
-concerns do not get a shared import: a package that wants to log uses the standard library, and
-the service configures <code>telemetry/</code> to capture it. And behavior two services both
-want becomes a package — never an import of the sibling that happens to have it already.</p>
+<p>Worker entry points, objectstore, searchindex, credentials, jobrunner, Polaris and telemetry
+packages remain planned. The Python SDK also remains planned; its Raw interface will create/get a
+dataset and upload an independent revision with required metadata. This restructure does not claim
+Ray execution, Zarr publication or transformation lineage services are implemented.</p>
 
 <h2 id="phases">2. Phases</h2>
 
@@ -232,7 +171,7 @@ HTTP, with generation
 documents at the documented paths <span class="tag">done</span> — verified route by route against
 the built route table and against <a href="api.html">API</a> §2. The hierarchy is persisted in
 PostgreSQL <span class="tag">done</span>: <code>PostgresHierarchyStore</code>
-(<code>service/api/stores/hierarchy.py</code>) is the only production wiring
+(<code>pkg/metastore/hierarchy.py</code>) is the only production wiring
 <code>create_app</code> builds, so an organization created over HTTP survives a restart and can own
 a service account or scope an API key in the one deployment shape that exists. Discovery gating
 <span class="tag">done</span>: every hierarchy read, window and mutation resolves the caller's
@@ -293,7 +232,7 @@ downgrade → upgrade round-trips on a clean database; <code>make lint</code> fa
 map's <code>Reflects:</code> stamp does not match the Alembic head.</td></tr>
 
 <tr id="api-sweep"><td class="k">API tier clean sweep<br><span class="tag">done</span></td>
-<td>A cross-cutting rework of <code>src/huron/service/api</code> — no new product surface, no
+<td>A cross-cutting rework of <code>src/huron/applications/api</code> — no new product surface, no
 migration, no frontend. It brings the tier P1 shipped up to the standard the rest of this roadmap
 assumes: blocking work off the event loop under one stated rule; a typed composition root with
 declared dependencies instead of <code>Request</code>-threading; <code>repository.py</code>
@@ -334,21 +273,21 @@ state.</td></tr>
 (<code>pkg/catalog/ingest.py</code> — <code>tests/unit/test_catalog_ingest.py</code>,
 <code>tests/unit/test_catalog_properties.py</code>); the dataset-scoped lock and gap-free
 allocator, migration <code>0009_ingest_ledger</code>
-(<code>service/api/stores/ingest.py</code> — <code>tests/unit/test_hierarchy_store_memory.py</code>,
-<code>tests/contract/test_hierarchy_store.py</code>); the upload plan with hardlink dedup
+(<code>pkg/metastore/ingest.py</code> — <code>tests/unit/test_hierarchy_store_memory.py</code>,
+<code>tests/contract/test_hierarchy_store.py</code>); the upload plan with complete independent uploads
 (<code>pkg/catalog/ingest.py</code>'s <code>compute_upload_plan</code> —
-<code>tests/unit/test_catalog_ingest.py</code>, <code>tests/unit/test_api_ingest_dedup.py</code>);
+<code>tests/unit/test_catalog_ingest.py</code>, <code>tests/unit/test_api_raw_revisions.py</code>);
 streaming in-flight hashing (<code>pkg/rawstore/store.py</code>'s <code>write_part</code> —
 <code>tests/unit/test_rawstore_store.py</code>, <code>tests/unit/test_api_ingest_sessions.py</code>);
 the POSIX commit protocol and sealing (<code>pkg/rawstore/commit.py</code>,
 <code>pkg/rawstore/store.py</code>'s <code>seal</code> —
 <code>tests/unit/test_rawstore_commit.py</code>,
 <code>tests/unit/test_api_ingest_crash_matrix.py</code>); the HTTP surface, nine ingest
-operations and three revision read routes (<code>service/api/ingest.py</code>,
-<code>service/api/revisions.py</code>, <code>service/api/routes/v1/endpoints/ingest_sessions.py</code>,
+operations and three revision read routes (<code>core/_ingest.py</code>,
+<code>core/revisions.py</code>, <code>applications/api/routes/v1/endpoints/ingest_sessions.py</code>,
 <code>.../revisions.py</code> — <code>tests/unit/test_api_ingest_sessions.py</code>,
 <code>tests/unit/test_api_revisions.py</code>); the expiry sweep
-(<code>service/api/expiry.py</code> — <code>tests/unit/test_api_expiry.py</code>,
+(<code>applications/api/expiry.py</code> — <code>tests/unit/test_api_expiry.py</code>,
 <code>tests/unit/test_api_ingest_expiry.py</code>); download capabilities as a per-request
 <code>data.read@raw</code> check, nothing minted (<code>D-13</code>) — every human role carries
 unrestricted <code>data.read</code>, so a download's 403 is reachable only for a service account
@@ -387,14 +326,10 @@ verification</em> — the in-process app over <code>memory_stores()</code> and t
 <code>PosixRawStore</code> stands, but serves over a loopback <code>uvicorn</code> socket rather
 than <code>TestClient</code>/<code>ASGITransport</code>, which both materialize a whole response
 body in memory (a 9 GiB download would need ≈18.5 GiB and be killed on a 16 GB runner); D-20 the
-four pre-existing <code>radon</code> C-grade items reduced to B before any P2 task ran; D-21 the
-dedup test stays in <code>unit</code> at 500 files; it runs ≈10.5 s against the design's ≤10 s
-budget, and the real cause is not the count but <code>RevisionService.payload_file</code>
-re-reading, schema-validating and re-canonicalizing the whole manifest on every file request — a
-read quadratic in file count, a production characteristic the test surfaced, and a candidate for
-caching the decoded manifest per revision in a later phase, not for this plan; D-22 measured B
+four pre-existing <code>radon</code> C-grade items reduced to B before any P2 task ran; D-21 superseded by independent-copy tests: unchanged files are uploaded, repeated content creates
+new revision identities, omitted files are absent, and deleting an earlier revision preserves later bytes; D-22 measured B
 (10.27) after M3.3 with the session and file methods in place, so the split ran there — both
-adapters' ingest methods live in <code>service/api/stores/ingest.py</code> as four mixin bases
+adapters' ingest methods live in <code>pkg/metastore/ingest.py</code> as four mixin bases
 behind the unchanged port, and <code>stores/hierarchy.py</code> reads A (25.94),
 <code>stores/ingest.py</code> A (44.47) after it; D-23
 <code>RevisionRecord.metadata_sha256</code> is the digest of <code>metadata.json</code>'s
@@ -407,16 +342,15 @@ scheduled and <code>workflow_dispatch</code>-able, and the tag flips to
 ingests and downloads byte-identically. Crash matrix: kill after every protocol step; staging
 crashes invisible and swept; post-rename crash imported as an orphan with no duplicate on retry.
 Resume re-sends only incomplete files. Two racing <code>BeginIngest</code> calls: exactly one wins;
-100 sequential ingests number 1..100 gap-free. Replayed commit returns the same revision. Dedup:
-1 changed file of 500 uploads exactly 1; the other 499 hardlink; the new revision is independently
-complete. Every path-rejection rule produces its documented error code. Per
+100 sequential ingests number 1..100 gap-free. Replayed commit returns the same revision. Each new submission uploads every declared file
+into an independent revision, including unchanged bytes. Every path-rejection rule produces its documented error code. Per
 <code>P2_DESIGN.md</code> § "Design 7" › "Excluded clauses", "staging crashes … swept" and
 "post-rename crash imported as an orphan" are proven by P3's sweeper and reconciler, not here; P2
 proves the on-disk state each crash leaves.</td></tr>
 
 <tr><td class="k">P3 — Integrity services<br><span class="tag">todo</span></td>
 <td>Staging-only sweeper with fraction guard and dry-run; reconciler implementing the findings
-table plus seal/hardlink verification; <code>lakectl rebuild --from-storage</code>.</td>
+table plus seal and file-integrity verification; <code>lakectl rebuild --from-storage</code>.</td>
 <td>Drop the database, apply migrations, rebuild from the filesystem alone: identical inventory of
 orgs, projects, datasets, revisions, release tags, amendments — with a purged and an expired revision
 present and reported lawful, not <code>DEGRADED</code>.</td></tr>
@@ -627,8 +561,7 @@ tombstone and re-tagging the same name is refused.</td></tr>
 one at intake, get, heartbeat, upload part, complete, verify, commit, abort — and the three
 revision read routes (<code>GET /revisions/{id}</code>, <code>/manifest</code>,
 <code>/files/{path}</code>), every one unit-tested: a nine-row crash matrix proves the on-disk and
-catalog state after a fault at each protocol step, the dedup gate proves 1 changed file of 500
-uploads exactly one and links the rest, and a hundred sequential ingests number 1..100 gap-free.
+catalog state after a fault at each protocol step, independent-copy tests prove all submitted files are uploaded without carry-forward, and a hundred sequential ingests number 1..100 gap-free.
 Dataset-creation-at-intake is open to humans with <code>dataset.create</code> and
 <code>data.write@raw</code>; an organization service account may mint the dataset but
 cannot upload to <code>raw</code> (<code>D-9</code>). An expiry sweep is a lifespan-owned task

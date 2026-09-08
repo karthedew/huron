@@ -14,8 +14,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from huron.pkg.catalog.errors import InvalidCursor
-from huron.service.api.routes.v1.pagination import (
+from huron.applications.api.routes.v1.pagination import (
     Page,
     after_key,
     decode_cursor,
@@ -25,7 +24,8 @@ from huron.service.api.routes.v1.pagination import (
     slug_cursor_key,
     tag_cursor_key,
 )
-from huron.service.api.stores import Window
+from huron.pkg.catalog.errors import InvalidCursor
+from huron.pkg.metastore import Window
 
 pytestmark = pytest.mark.unit
 

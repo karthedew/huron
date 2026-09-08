@@ -17,13 +17,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.catalog.errors import DuplicateContent, ResourceNotFound
+from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.models import OutboxEvent
+from huron.pkg.catalog.persistence import IdempotencyClaim, Replay
+from huron.pkg.catalog.records import AuditEvent, Organization, Release
+from huron.pkg.metastore.hierarchy import InMemoryHierarchyStore, SystemClock
 from huron.pkg.rbac import Visibility
-from huron.service.api.records import AuditEvent, Organization, Release
-from huron.service.api.stores.hierarchy import InMemoryHierarchyStore, SystemClock
-from huron.service.api.stores.ports import IdempotencyClaim, Replay
 from tests.hierarchy_contract import (
     committed_revision,
     scenario_1_write_invisible_until_commit,
@@ -171,8 +171,8 @@ async def test_an_expired_claim_is_taken_over_rather_than_rejected() -> None:
     assert replayed.id == second_id
 
 
-async def test_insert_revision_refuses_a_manifest_the_dataset_already_holds() -> None:
-    """insert_revision raises DuplicateContent for a manifest identity the dataset already holds."""
+async def test_insert_revision_accepts_repeated_content_with_a_new_identity() -> None:
+    """Each revision has its own identity even when its manifest repeats earlier content."""
     store = InMemoryHierarchyStore()
     hierarchy = await seed_hierarchy(store)
     dataset_id = hierarchy.datasets["run-0001"]
@@ -180,9 +180,9 @@ async def test_insert_revision_refuses_a_manifest_the_dataset_already_holds() ->
     async with store.transaction() as writer:
         await writer.insert_revision(first)
     duplicate = committed_revision(dataset_id, 2, manifest_sha256="a" * 64)
-    with pytest.raises(DuplicateContent):
-        async with store.transaction() as writer:
-            await writer.insert_revision(duplicate)
+    async with store.transaction() as writer:
+        await writer.insert_revision(duplicate)
+    assert await store.revision(duplicate.id) == duplicate
 
 
 async def test_revision_and_latest_committed_revision_read_the_inserted_row() -> None:

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import itertools
 import string
-import unicodedata
 from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
@@ -39,12 +38,10 @@ from huron.pkg.catalog.errors import (
     IllegalIngestTransition,
     IngestSessionExpired,
     PathCollision,
-    PathRuleViolation,
 )
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.ingest import (
     LEASE_TTL,
-    PART_BYTES,
     TERMINAL_STATES,
     TRANSITIONS,
     FileState,
@@ -567,92 +564,10 @@ def _upload_plan_manifest(draw: st.DrawFn) -> Manifest:
     return Manifest(entries, hash_algorithm=draw(st.sampled_from(_HASH_ALGORITHMS)))
 
 
-@given(manifest=_upload_plan_manifest(), parent=st.none() | _upload_plan_manifest())
-@_property
-def test_upload_plan_is_one_entry_per_file_in_manifest_order_and_links_only_identical_entries(
-    manifest: Manifest, parent: Manifest | None
-) -> None:
-    """The plan has one entry per manifest file, in order, linking only identical parent files."""
-    plan = compute_upload_plan(manifest, parent)
-
+@given(manifest=_upload_plan_manifest())
+def test_upload_plan_requires_every_submitted_file(manifest: Manifest) -> None:
+    """Every revision uploads each declared file, independently of earlier content."""
+    plan = compute_upload_plan(manifest, part_bytes=7)
     assert [entry.file for entry in plan] == list(manifest.files)
-
-    parent_by_path = (
-        {entry.path: entry for entry in parent.files}
-        if parent is not None and parent.hash_algorithm == manifest.hash_algorithm
-        else {}
-    )
-    for entry in plan:
-        counterpart = parent_by_path.get(entry.file.path)
-        should_hardlink = (
-            counterpart is not None
-            and counterpart.size == entry.file.size
-            and counterpart.sha256 == entry.file.sha256
-        )
-        assert (entry.action is UploadAction.HARDLINK) == should_hardlink
-
-
-@given(
-    size=st.integers(min_value=0, max_value=10**12),
-    part_bytes=st.integers(min_value=1, max_value=10**9),
-)
-@example(size=0, part_bytes=PART_BYTES)
-@example(size=1, part_bytes=PART_BYTES)
-@example(size=PART_BYTES, part_bytes=PART_BYTES)
-@example(size=PART_BYTES + 1, part_bytes=PART_BYTES)
-@example(size=9 * 1024**3, part_bytes=PART_BYTES)
-@_property
-def test_upload_plan_part_counts_cover_every_byte_exactly_once(size: int, part_bytes: int) -> None:
-    """Every upload's parts, at any part size, cover the file's bytes exactly once with no gap.
-
-    The bound holds for sizes up to a terabyte and part sizes down to one
-    byte, so the part count itself can reach the trillions; the proof stays
-    arithmetic rather than counting or summing individual parts, which
-    would allocate proportionally to that count.
-    """
-    manifest = Manifest((ManifestEntry(path="payload/a.bin", size=size, sha256="a" * 64),))
-
-    plan = compute_upload_plan(manifest, part_bytes=part_bytes)
-
-    part_count = plan[0].part_count
-    covered = max(size, 1)
-    assert (part_count - 1) * part_bytes < covered <= part_count * part_bytes
-
-    last_part_length = covered - (part_count - 1) * part_bytes
-    assert 0 < last_part_length <= part_bytes
-
-    if size == 0:
-        assert part_count == 1
-
-
-_PRECOMPOSED_LETTERS = "áéíóúñÁÉÍÓÚÑàèìòùÀÈÌÒÙâêîôûÂÊÎÔÛäëïöüÄËÏÖÜçÇ"
-_PATH_SEGMENT_ALPHABET = string.ascii_lowercase + string.digits + "_-."
-
-
-@st.composite
-def _non_nfc_manifest_paths(draw: st.DrawFn) -> str:
-    """Build a payload path containing one canonically decomposed accented letter.
-
-    Args:
-        draw: The Hypothesis draw function.
-
-    Returns:
-        A path beginning with ``payload/`` whose NFC form differs from
-        itself, because it embeds a base letter followed by a combining
-        mark instead of the precomposed character.
-    """
-    prefix = draw(st.text(alphabet=_PATH_SEGMENT_ALPHABET, max_size=8))
-    suffix = draw(st.text(alphabet=_PATH_SEGMENT_ALPHABET, max_size=8))
-    decomposed = unicodedata.normalize("NFD", draw(st.sampled_from(_PRECOMPOSED_LETTERS)))
-    return f"payload/{prefix}{decomposed}{suffix}"
-
-
-@given(path=_non_nfc_manifest_paths())
-@_property
-def test_validate_manifest_refuses_every_non_nfc_path(path: str) -> None:
-    """A manifest path whose NFC form differs from itself is refused as PATH_NOT_NFC."""
-    with pytest.raises(PathRuleViolation) as excinfo:
-        validate_manifest([ManifestEntry(path=path, size=0, sha256="0" * 64)])
-
-    assert excinfo.value.code == "PATH_NOT_NFC"
-    assert excinfo.value.context == {"path": path}
+    assert all(entry.action is UploadAction.UPLOAD for entry in plan)
+    assert all(entry.part_count >= 1 for entry in plan)

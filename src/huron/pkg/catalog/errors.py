@@ -103,12 +103,6 @@ class TagWithdrawn(DomainError):
     code, status_code = "TAG_WITHDRAWN", 410
 
 
-class DuplicateContent(DomainError):
-    """Content with the same identity has already been ingested into the dataset."""
-
-    code, status_code = "DUPLICATE_CONTENT", 409
-
-
 class PathCollision(DomainError):
     """Two manifest entries claim the same path, ignoring case and Unicode normalization."""
 
@@ -326,7 +320,6 @@ __all__ = [
     "ContractMismatch",
     "DatasetLocked",
     "DomainError",
-    "DuplicateContent",
     "EmptyRevision",
     "FileTooLarge",
     "GrantExpired",

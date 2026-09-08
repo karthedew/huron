@@ -12,8 +12,8 @@ from uuid import uuid4
 
 import pytest
 
-import huron.service.api.stores as stores_package
-from huron.service.api.stores.ports import IdempotencyClaim, LedgerEntry, Replay, Window
+import huron.pkg.metastore as stores_package
+from huron.pkg.catalog.persistence import IdempotencyClaim, LedgerEntry, Replay, Window
 from tests.unit.support import ingest_file
 
 pytestmark = pytest.mark.unit
@@ -48,8 +48,6 @@ def test_stores_package_exports_the_hierarchy_port_and_its_values() -> None:
     """The package's public surface names every hierarchy-port symbol a consumer imports."""
     assert {
         "AuditEvent",
-        "HierarchyStore",
-        "HierarchyWriter",
         "IdempotencyClaim",
         "LedgerEntry",
         "Replay",

@@ -13,23 +13,23 @@ from uuid import uuid4
 import pytest
 from starlette.requests import Request
 
+from huron.applications.api.authorization import current_principal
+from huron.applications.api.authorization.credentials import _enforce_csrf
+from huron.applications.api.runtime import ApiRuntime
+from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
+from huron.core._catalog import HierarchyRepository
+from huron.core._ingest import IngestService
+from huron.core._revision_reader import RevisionService
 from huron.pkg.auth import AuthError, OidcResolver, SessionRecord, create_session
+from huron.pkg.metastore import SystemClock
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import RoleBindingAuthorizer
-from huron.service.api.authorization import current_principal
-from huron.service.api.authorization.credentials import _enforce_csrf
-from huron.service.api.ingest import IngestService
-from huron.service.api.repository import HierarchyRepository
-from huron.service.api.revisions import RevisionService
-from huron.service.api.runtime import ApiRuntime
-from huron.service.api.settings import ApiSettings, ClassificationValue, OidcSettings
-from huron.service.api.stores import SystemClock
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from huron.service.api.runtime import ApiStores
+    from huron.applications.api.runtime import ApiStores
 
 pytestmark = pytest.mark.unit
 

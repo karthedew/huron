@@ -15,11 +15,11 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from huron.applications.api.app import create_app
+from huron.applications.api.routes.v1.schema.policies import MAX_POLICY_SPEC_BYTES
+from huron.applications.api.settings import ApiSettings, ClassificationValue
 from huron.pkg.catalog.manifest import MAX_SAFE_INT, canonical_bytes
-from huron.service.api.app import create_app
-from huron.service.api.routes.v1.schema.policies import MAX_POLICY_SPEC_BYTES
-from huron.service.api.settings import ApiSettings, ClassificationValue
-from huron.service.api.stores import InMemoryRbacStore
+from huron.pkg.metastore import InMemoryRbacStore
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from huron.service.api.records import Policy
-    from huron.service.api.repository import HierarchyRepository
+    from huron.core._catalog import HierarchyRepository
+    from huron.pkg.catalog.records import Policy
 
 pytestmark = pytest.mark.unit
 

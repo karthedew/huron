@@ -1,10 +1,7 @@
-"""Shared packages: the coding logic, decoupled.
+"""Domain objects and infrastructure capabilities.
 
-Every subpackage here is independent of every other one. A package that needs
-another's capability declares a Protocol describing what it needs and receives
-a conforming object from a service; it does not import the sibling that
-provides it. Packages may import `huron.schema` and third-party libraries.
-
-Enforced by the `Packages are independent of one another` import-linter
-contract, not by convention.
+Auth, catalog, RBAC and rawstore are independent siblings. Metastore adapters
+consume domain types without depending on core or applications. Domain packages
+never import their adapters. Consumer-owned protocols and constructor injection
+connect capabilities; import-linter enforces the dependency direction.
 """

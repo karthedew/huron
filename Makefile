@@ -47,7 +47,7 @@ migrate: ## Run pending Alembic migrations against the database configured in de
 	uv run --env-file $(ENV_FILE) alembic upgrade head
 
 api: ## Run the API on the host with autoreload, configured by dev.env, against infra started by "make up".
-	uv run --env-file $(ENV_FILE) uvicorn huron.service.api.main:app --reload --port 8080
+	uv run --env-file $(ENV_FILE) uvicorn huron.applications.api.main:app --reload --port 8080
 
 test: ## Run the fast unit suite.
 	uv run pytest -m unit

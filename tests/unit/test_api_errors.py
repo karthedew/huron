@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from huron.pkg.catalog.errors import DomainError
-from huron.service.api.errors import (
+from huron.pkg.catalog.failures import (
     AttachmentExists,
     BindingExists,
     DependencyUnavailable,

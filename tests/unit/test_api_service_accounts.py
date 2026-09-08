@@ -19,11 +19,11 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from huron.applications.api.app import create_app
+from huron.applications.api.routes.v1.schema.service_accounts import IssuedServiceAccountKey
+from huron.applications.api.settings import ApiSettings, ClassificationValue
 from huron.pkg.auth.apikeys import ApiKeyRecord, MemoryApiKeyStore
-from huron.service.api.app import create_app
-from huron.service.api.routes.v1.schema.service_accounts import IssuedServiceAccountKey
-from huron.service.api.settings import ApiSettings, ClassificationValue
-from huron.service.api.stores import InMemoryRbacStore
+from huron.pkg.metastore import InMemoryRbacStore
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from uuid import UUID
 
-    from huron.service.api.records import ServiceAccount
+    from huron.pkg.catalog.records import ServiceAccount
 
 pytestmark = pytest.mark.unit
 

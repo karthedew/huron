@@ -32,12 +32,12 @@ def test_importing_main_reads_the_environment_and_builds_the_app(
         "HURON_CLASSIFICATION_VOCABULARY",
         '[{"code": "open", "order": 0, "discoverable": true}]',
     )
-    sys.modules.pop("huron.service.api.main", None)
+    sys.modules.pop("huron.applications.api.main", None)
     try:
-        module = importlib.import_module("huron.service.api.main")
+        module = importlib.import_module("huron.applications.api.main")
         assert isinstance(module.app, FastAPI)
     finally:
-        sys.modules.pop("huron.service.api.main", None)
+        sys.modules.pop("huron.applications.api.main", None)
 
 
 def test_importing_main_with_no_environment_fails_validation(
@@ -58,9 +58,9 @@ def test_importing_main_with_no_environment_fails_validation(
         "HURON_CLASSIFICATION_VOCABULARY",
     ):
         monkeypatch.delenv(name, raising=False)
-    sys.modules.pop("huron.service.api.main", None)
+    sys.modules.pop("huron.applications.api.main", None)
     try:
         with pytest.raises(ValidationError):
-            importlib.import_module("huron.service.api.main")
+            importlib.import_module("huron.applications.api.main")
     finally:
-        sys.modules.pop("huron.service.api.main", None)
+        sys.modules.pop("huron.applications.api.main", None)

@@ -19,9 +19,9 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from huron.service.api.app import create_app
-from huron.service.api.authorization import decisions
-from huron.service.api.settings import ApiSettings, ClassificationValue
+from huron.applications.api.app import create_app
+from huron.applications.api.settings import ApiSettings, ClassificationValue
+from huron.core import access as decisions
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -63,16 +63,16 @@ def test_a_route_two_routers_below_v1_still_requires_a_credential(tmp_path: Path
     assert response.headers["content-type"] == "application/problem+json"
 
 
-def test_a_capability_bound_on_both_the_router_and_a_parameter_decides_once(
+def test_router_and_parameter_share_one_guard_and_core_rechecks(
     tmp_path: Path,
 ) -> None:
-    """A capability guarded on both the router and a parameter still decides exactly once.
+    """Router and parameter share one decision; core independently checks the operation.
 
     ``create_user`` reads the ``user.manage`` principal as a parameter and
     ``users.router`` also requires it; both reference the same module-level
-    closure, so the request must reach ``decide()`` exactly once - two
+    closure, so transport reaches ``decide()`` once and core once - two
     independent ``require_system("user.manage")`` closures would decide
-    twice for the same answer.
+    three times including core.
     """
     calls: list[str] = []
     real_decide = decisions.decide
@@ -100,7 +100,7 @@ def test_a_capability_bound_on_both_the_router_and_a_parameter_decides_once(
             headers={"X-Huron-Subject": "root", "Idempotency-Key": str(uuid4())},
         )
     assert response.status_code == 201
-    assert calls == ["user.manage"]
+    assert calls == ["user.manage", "user.manage"]
 
 
 def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decides_once(
@@ -157,7 +157,7 @@ def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decid
                 headers=headers,
             )
     assert response.status_code == 201
-    assert calls == ["rbac.binding_manage"]
+    assert calls == ["rbac.binding_manage", "rbac.binding_manage"]
 
 
 def test_the_openapi_document_carries_fifteen_resource_grained_tags(tmp_path: Path) -> None:
@@ -320,7 +320,7 @@ def test_no_v1_operation_redeclares_a_status_the_v1_router_already_covers() -> N
     operation's own ``responses=`` would defeat the point of declaring it
     there.
     """
-    from huron.service.api.routes.v1.endpoints import (
+    from huron.applications.api.routes.v1.endpoints import (
         api_keys,
         bindings,
         datasets,
@@ -350,7 +350,7 @@ def test_no_v1_operation_redeclares_a_status_the_v1_router_already_covers() -> N
 
 def test_no_auth_operation_redeclares_a_status_the_auth_router_already_covers() -> None:
     """``UNIVERSAL_ERRORS`` (422/500) is declared once, on ``routes/auth/__init__.py``'s router."""
-    from huron.service.api.routes.auth.endpoints import login, oidc, session
+    from huron.applications.api.routes.auth.endpoints import login, oidc, session
 
     for module in (login, oidc, session):
         assert _decorator_response_statuses(module) & {422, 500} == set()

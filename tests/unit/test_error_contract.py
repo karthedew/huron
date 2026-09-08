@@ -21,15 +21,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
-from huron.pkg.auth import AuthError
-from huron.pkg.catalog.errors import DomainError, ResourceNotFound
-from huron.pkg.rbac.roles import RoleError, UnknownRole
-from huron.service.api.problems import (
+from huron.applications.api.problems import (
     FRAMEWORK_STATUSES,
     PROBLEM_MEDIA_TYPE,
     install_error_handlers,
     wire_error_codes,
 )
+from huron.pkg.auth import AuthError
+from huron.pkg.catalog.errors import DomainError, ResourceNotFound
+from huron.pkg.rbac.roles import RoleError, UnknownRole
 
 if TYPE_CHECKING:
     from httpx import Response
