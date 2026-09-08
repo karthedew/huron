@@ -184,10 +184,8 @@ window, so a walk at <code>limit=1</code> enumerates every visible row exactly o
 debts — property tests over the pure core, a
 CI that runs the gate, and this write-back — are closed:
 <code>P1_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M1–M6, fifteen tasks) is done; the
-release-tag half of the gate is proven against a revision row the contract test inserts by SQL,
-because no HTTP path yet writes <code>dataset_revisions</code> — P2's ingest path is what makes
-that clause reachable over real HTTP. Where this row
-and the code disagree, the code wins.
+release-tag contract is covered against SQL-seeded revisions, and P2 now also creates a release
+after a real HTTP ingest and commit in <code>tests/unit/test_api_ingest_sessions.py</code>.
 Withdrawn: the audit table was delivered without the pre-created partitions this row once
 claimed — <code>audit_events</code> shipped declared <code>PARTITION BY RANGE (created_at)</code>
 with a single DEFAULT child and nothing that creates bounded ones, so every row lands in the
@@ -202,9 +200,8 @@ Reasoning, rejected alternative and live-database proof:
 at the exact documented paths; a release tag resolves to one revision and a second write of the
 same tag is <code>409 TAG_EXISTS</code>; slug-change attempts 409; API-key auth round-trip; a principal
 scoped to project A gets full-size pages with zero rows from B and no evidence of B in counts or
-cursors; import-linter green. The release-tag clause is proven against a revision row a contract
-test inserts by SQL, not one created over HTTP, until P2's ingest path writes
-<code>dataset_revisions</code>.</td></tr>
+cursors; import-linter green. The release-tag clause has both SQL-backed contract coverage and an HTTP ingest-to-release
+exercise in <code>tests/unit/test_api_ingest_sessions.py</code>.</td></tr>
 
 <tr><td class="k">Schema conformance — <code>0008</code><br><span class="tag">done</span></td>
 <td>One Alembic revision, <code>0008_schema_conformance</code>, bringing the P1 metastore into
@@ -267,12 +264,12 @@ and revoke and no update verb exists at any scope; no file under <code>migration
 the owner's answer — an unanswered decision means its milestone is not done regardless of gate
 state.</td></tr>
 
-<tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">partial</span></td>
+<tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">done</span></td>
 <td>Delivers, each item named with the module it lives in and the test module that pins it
-(Drift 1's "unit-tested" is true by inspection): the session state machine and lease
+and verified by the test suites: the session state machine and lease
 (<code>pkg/catalog/ingest.py</code> — <code>tests/unit/test_catalog_ingest.py</code>,
 <code>tests/unit/test_catalog_properties.py</code>); the dataset-scoped lock and gap-free
-allocator, migration <code>0009_ingest_ledger</code>
+allocator, migrations <code>0009_ingest_ledger</code> and <code>0010_independent_raw</code>
 (<code>pkg/metastore/ingest.py</code> — <code>tests/unit/test_hierarchy_store_memory.py</code>,
 <code>tests/contract/test_hierarchy_store.py</code>); the upload plan with complete independent uploads
 (<code>pkg/catalog/ingest.py</code>'s <code>compute_upload_plan</code> —
@@ -330,14 +327,20 @@ four pre-existing <code>radon</code> C-grade items reduced to B before any P2 ta
 new revision identities, omitted files are absent, and deleting an earlier revision preserves later bytes; D-22 measured B
 (10.27) after M3.3 with the session and file methods in place, so the split ran there — both
 adapters' ingest methods live in <code>pkg/metastore/ingest.py</code> as four mixin bases
-behind the unchanged port, and <code>stores/hierarchy.py</code> reads A (25.94),
-<code>stores/ingest.py</code> A (44.47) after it; D-23
+behind the port in <code>core/ports.py</code>; the historical measurements after that split were
+A (25.94) for <code>pkg/metastore/hierarchy.py</code> and A (44.47) for
+<code>pkg/metastore/ingest.py</code>; D-23
 <code>RevisionRecord.metadata_sha256</code> is the digest of <code>metadata.json</code>'s
 canonical bytes, no column change.
-The tag stays <span class="tag">partial</span>: every clause above is shipped and unit-tested, but
-no acceptance-workflow run exists yet — <code>.github/workflows/acceptance.yml</code> is
-scheduled and <code>workflow_dispatch</code>-able, and the tag flips to
-<span class="tag">done</span> only once a run's URL is recorded here.</td>
+<p id="p2-verified"><strong>Completion verified.</strong>
+<a href="https://github.com/karthedew/huron/actions/runs/34177077449">Acceptance run 34177077449</a> passed on
+2026-09-08 (UTC) against <code>db5fc84cd7bfe049692ef2abb16fb32570ccf5a2</code>.
+It executes <code>tests/acceptance/test_raw_ingest_gate.py</code>: an interrupted 9 GiB upload
+resumes at the real 64 MiB part size and downloads byte-identically. This closes the final P2 gate.
+The same implementation passed 990 local unit tests (94.32% coverage), 13 PostgreSQL contract
+tests, <code>make lint</code>, and the strict documentation build. The integration marker has
+no tests; it is not additional integration coverage. Automatic staging deletion and orphan
+reconciliation remain P3; search projection remains P4.</p></td>
 <td>Round trip: a tree with NFC/NFD pairs, a zero-byte file, 8-level nesting, and a 9 GiB file
 ingests and downloads byte-identically. Crash matrix: kill after every protocol step; staging
 crashes invisible and swept; post-rename crash imported as an orphan with no duplicate on retry.
@@ -556,7 +559,7 @@ tombstone and re-tagging the same name is refused.</td></tr>
 <table>
 <tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
-<tr><td class="k">8 — Raw ingestion<br><span class="tag">partial</span><br>backend P2</td>
+<tr><td class="k">8 — Raw ingestion<br><span class="tag">done</span><br>backend P2</td>
 <td>Delivers: the nine ingest operations over HTTP — create on an existing raw dataset or minting
 one at intake, get, heartbeat, upload part, complete, verify, commit, abort — and the three
 revision read routes (<code>GET /revisions/{id}</code>, <code>/manifest</code>,
@@ -572,11 +575,12 @@ events milestones 6 and 18 consume, and writes <code>INDEX.json</code> best-effo
 (<code>D-12</code>). Raw-file downloads are re-authorized per request under
 <code>data.read@raw</code> — nothing is minted, the authorized response is the capability itself
 (<code>D-13</code>). Milestones M0–M10 of <code>P2_IMPLEMENTATION_PLAN.md</code> § "3. Milestone
-sequence" deliver this row; per the P2 row in §2, the one open item is the nightly acceptance
-workflow's first recorded run.</td>
+sequence" deliver this row. The final acceptance gate is closed by the
+<a href="#p2-verified">recorded successful run in §2</a>.</td>
 <td>An interrupted multi-GB upload resumes without re-sending completed parts — proven at the
 real 64&nbsp;MiB part size by <code>tests/acceptance/test_raw_ingest_gate.py</code>, collected and
-scheduled by <code>.github/workflows/acceptance.yml</code>, not yet by a recorded run; two
+scheduled by <code>.github/workflows/acceptance.yml</code>, and passed in
+<a href="https://github.com/karthedew/huron/actions/runs/34177077449">run 34177077449</a>; two
 sessions racing one dataset serialize on the lock; a committed revision appears in the catalog and
 the audit stream. Per <code>P2_DESIGN.md</code> § "Design 7" › "Excluded clauses", "appears in …
 the search projection" is P4's consumer; P2 proves the outbox row.</td></tr>

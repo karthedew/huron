@@ -57,6 +57,9 @@ UV_CACHE_DIR=/tmp/huron-uv-cache and UV_NO_SYNC=1 with the installed environment
 - Unit suite: 990 passed, coverage 94.32% (94% gate retained).
 - PostgreSQL contract suite: 13 passed, including migration failure and round-trip tests.
 - Raw acceptance: the 9 GiB interrupted upload resumes and downloads byte-identically.
+  [GitHub acceptance run 34177077449](https://github.com/karthedew/huron/actions/runs/34177077449)
+  passed against commit `db5fc84cd7bfe049692ef2abb16fb32570ccf5a2`, closing P2's
+  remaining recorded-CI-evidence gate.
 - Integration marker: no tests collected; this is not integration coverage.
 - Documentation build and diff whitespace checks pass.
 

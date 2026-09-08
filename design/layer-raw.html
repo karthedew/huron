@@ -83,6 +83,11 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 <p class="sub">Immutable scientific evidence on a POSIX filesystem: envelopes, manifests, the
 atomic commit protocol, retention, and the machinery that keeps all of it honest.</p>
 
+<p><strong>Implementation status:</strong> P2 Raw ingestion and commit are complete;
+see the <a href="roadmap.html#p2-verified">recorded acceptance evidence</a>. This page also
+specifies later recovery, retention and governance capabilities; their status is tracked separately
+in the roadmap. The scientist SDK and Ray/Zarr workflows remain planned.</p>
+
 <h2 id="why-nfs">1. Why NFS for raw</h2>
 
 <p>Raw's job is to be the evidence tier: byte-exact, immutable, navigable by a human with
@@ -92,17 +97,18 @@ considered:</p>
 <table>
 <tr><th></th><th>NFS / POSIX (chosen)</th><th>Object storage (rejected for raw)</th></tr>
 <tr><td class="k">Ingest cost</td>
-<td>HPC runs are born on NFS; commit is a same-filesystem move, and register-in-place (v2) makes
-multi-TB ingest O(metadata).</td>
+<td>Every submission uploads its complete files into private staging; publication is a
+same-filesystem move after verification.</td>
 <td>Every run — up to 1 TiB — copied through the API into the store.</td></tr>
 <tr><td class="k">Publish atomicity</td>
 <td><code>rename(2)</code> is atomic within a filesystem: the whole envelope appears at once,
 marker included.</td>
 <td>Objects appear one by one; a marker-written-last protocol and reader discipline are needed to
 fake atomicity.</td></tr>
-<tr><td class="k">Dedup</td>
-<td>Hardlinks: free, instant, same inode. Requires sealing discipline (§6).</td>
-<td>Server-side copy: no shared inodes, but a real copy per revision.</td></tr>
+<tr><td class="k">Revision independence</td>
+<td>Each revision owns a complete physical copy; unchanged bytes are uploaded again.
+No shared inodes or inherited files (§6).</td>
+<td>Separate objects per revision can also provide independent copies.</td></tr>
 <tr><td class="k">Direct access</td>
 <td>None — all raw byte access is API-mediated, which is the RBAC posture we want anyway
 (<a href="rbac.html#dataplane">RBAC</a>).</td>
@@ -296,14 +302,17 @@ CommitIngest(ingest_id, manifest_sha256, If-Match, Idempotency-Key)
 <table>
 <tr><th>Crash after step</th><th>Storage state</th><th>Resolution</th></tr>
 <tr><td>4–5</td><td>Complete-looking envelope, still under <code>.staging/</code></td>
-<td>Invisible (readers never scan staging). Session expires → sweeper deletes the staging dir.</td></tr>
+<td>Invisible (readers never scan staging). The implemented lease sweep aborts expired PREPARING/UPLOADING/VERIFYING sessions.
+Physical staging deletion is planned in P3; a COMMITTING session retains its lock until retry
+or the planned reconciler resolves it.</td></tr>
 <tr><td>6</td><td>Envelope published under <code>revisions/</code>, no PG row</td>
-<td><strong>Orphan commit.</strong> Reconciler imports the row from <code>COMMITTED</code>.
+<td><strong>Orphan commit.</strong> The P3 reconciler is planned to import the row from
+<code>COMMITTED</code>; automatic orphan import is not implemented in P2.
 A retry past the rename finds staging gone, so it reads <code>final/manifest.json</code> in
 place of the vanished <code>staging/manifest.json</code> (the bytes are identical by
 construction) and its read-back branch still runs step 6's rename step, so the published root is
 resealed and fsynced again.</td></tr>
-<tr><td>7</td><td>Complete</td><td>Normal; step 8 retried by the reconciler.</td></tr>
+<tr><td>7</td><td>Complete</td><td>Normal; P3 will regenerate the best-effort index through the reconciler.</td></tr>
 </table>
 
 <p>There is no distributed transaction between the filesystem and PostgreSQL, and the design does
