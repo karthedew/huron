@@ -40,7 +40,7 @@ class PosixRawStore:
     In-flight ingests are built under ``root/.staging/{ingest}`` and
     published under ``root/organization/...`` by a single rename, which is
     why :meth:`initialize` insists both live on the same filesystem.
-    :meth:`write_part` writes into a fixed byte range of a payload file
+    :meth:`write_part` writes into a fixed byte range of an upload input
     that may already exist, so a resent part overwrites only its own
     bytes; it is the ingest ledger, not the filesystem, that vouches a
     part is durable. :meth:`atomic_replace` is the one primitive that
@@ -76,18 +76,18 @@ class PosixRawStore:
         assert_same_filesystem(staging_root, self.root / "organization")
 
     def create_staging(self, staging: PurePosixPath) -> None:
-        """Claim a fresh, private envelope for one ingest session.
+        """Claim a fresh, private root for one ingest session.
 
         ``staging`` must name a direct child of ``root/.staging``; the
-        envelope and its ``payload`` child are created at mode ``0o700``,
-        and all three directory entries - ``.staging``, the envelope and
-        ``payload`` - are fsynced before returning. The envelope must not
+        upload, completion and envelope directories are created at mode
+        ``0o700``, including the envelope's payload child. Every directory
+        and its parent are fsynced before returning. The session root must not
         already exist: creating it is the ingest's claim on that name, and
         a second call for the same name fails at the ``mkdir`` rather than
         reusing a possibly half-built envelope.
 
         Args:
-            staging: The envelope's path, from
+            staging: The session root's path, from
                 :func:`huron.pkg.catalog.paths.staging_dir`.
 
         Raises:
@@ -115,7 +115,7 @@ class PosixRawStore:
         offset: int,
         length: int,
     ) -> str:
-        """Stream one range of a payload file into place, hashing as it goes.
+        """Stream one range of an upload input into place, hashing as it goes.
 
         The target is opened for writing without truncating and without
         requiring it to be new (``O_WRONLY | O_CREAT``, mode ``0o600``),
@@ -132,8 +132,8 @@ class PosixRawStore:
         the names that reach it.
 
         Args:
-            staging_payload: The envelope's ``payload`` directory.
-            rel_path: The file's path relative to ``staging_payload`` (a
+            staging_payload: The existing session root.
+            rel_path: The input's path relative to the upload directory (a
                 leading ``payload/`` component is tolerated).
             chunks: The range's bytes, consumed once, in order.
             offset: The first byte position the range writes to.
@@ -208,27 +208,31 @@ class PosixRawStore:
             try:
                 existing = observe(parent, relative.name)
             except FileNotFoundError:
-                pass
-            else:
-                if existing != expected:
-                    raise ValueError("installed payload conflicts with declared content")
-                os.fsync(parent)
-                return existing
-            with candidate(completion, file_chunks(upload, file_id)) as name:
-                observed = observe(completion, name)
-                if observed == expected:
-                    install(completion, name, parent, relative.name, expected)
-                return observed
+                try:
+                    with candidate(completion, file_chunks(upload, file_id)) as name:
+                        observed = observe(completion, name)
+                        if observed == expected:
+                            install(completion, name, parent, relative.name, expected)
+                        return observed
+                except FileNotFoundError:
+                    # A concurrent completer may have installed payload and
+                    # removed upload before this attempt opened the input.
+                    existing = observe(parent, relative.name)
+            if existing != expected:
+                raise ValueError("installed payload conflicts with declared content")
+            os.fsync(parent)
+            os.fsync(completion)
+            return existing
 
     def discard_file(self, staging_payload: PurePosixPath, rel_path: str) -> None:
-        """Remove a payload file the ledger no longer vouches for.
+        """Remove an upload input without touching installed payload.
 
         A missing file is success: nothing is raised and nothing is
         fsynced, since there is no removal to make durable.
 
         Args:
-            staging_payload: The envelope's ``payload`` directory.
-            rel_path: The file's path relative to ``staging_payload`` (a
+            staging_payload: The existing session root.
+            rel_path: The input's path relative to the upload directory (a
                 leading ``payload/`` is tolerated).
         """
         relative = _safe_relative(rel_path)
@@ -271,19 +275,17 @@ class PosixRawStore:
         """Durably place a control document at the envelope root.
 
         ``name`` must be a single path component and none of the reserved
-        names; the document is written read-only through
-        :meth:`atomic_replace`, so a second call with the same name
-        replaces its bytes wholesale, never leaving a mix of an earlier
-        attempt's content and the new one.
+        names. A private candidate is sealed, fsynced and closed before
+        installation without replacement. Equal existing bytes are a retry;
+        different bytes are refused. Missing session roots are never recreated.
 
         Args:
-            staging: The envelope's root directory.
+            staging: The existing envelope directory beneath the session root.
             name: The document's file name.
             payload: The document's complete content.
 
         Raises:
-            ValueError: If ``name`` is not a single, non-reserved
-                component.
+            ValueError: If ``name`` is not a single, non-reserved component.
         """
         if "/" in name or name in _RESERVED_DOCUMENT_NAMES:
             raise ValueError(f"invalid document name: {name!r}")
@@ -391,7 +393,7 @@ class PosixRawStore:
         a commit that already completed may be retried harmlessly.
 
         Args:
-            staging: The envelope from :meth:`create_staging`, with its
+            staging: The session's envelope child, with its
                 ``COMMITTED`` marker written.
             final: The revision directory to publish it as.
         """

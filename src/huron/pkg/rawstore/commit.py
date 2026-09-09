@@ -117,10 +117,10 @@ def commit_envelope(staging: Path, final: Path) -> None:
 
     An existing ``final`` is never overwritten. The one case that is not
     refused is the retry: when ``staging`` is already gone and ``final``
-    carries ``COMMITTED``, this same commit has evidently completed, and
-    the call reseals ``final`` and returns silently, so a caller that
-    crashed between the rename and its own bookkeeping - or between the
-    rename and the seal - can safely run again.
+    carries ``COMMITTED``, the caller must first validate its full frozen
+    evidence. The call flushes both rename parents and reseals ``final``,
+    so a caller that crashed between the rename and its own bookkeeping
+    or between the rename and the seal can safely run again.
 
     Args:
         staging: The finished envelope; must be a directory containing a
@@ -142,9 +142,10 @@ def commit_envelope(staging: Path, final: Path) -> None:
     """
     if final.exists():
         if not staging.exists() and (final / "COMMITTED").is_file():
-            # A crash between the rename and the seal publishes an envelope
-            # that is never resealed by anything else, so the retry finishes
-            # the seal itself before returning.
+            # The name may be visible even though the interrupted rename's
+            # directory updates have not reached stable storage.
+            fsync_dir(staging.parent)
+            fsync_dir(final.parent)
             os.chmod(final, 0o555)
             fsync_dir(final)
             return

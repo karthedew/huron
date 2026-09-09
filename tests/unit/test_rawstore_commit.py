@@ -289,6 +289,37 @@ def test_commit_envelope_retry_after_the_rename_is_silent_and_reseals_the_root(
     assert stat.S_IMODE(final.stat().st_mode) == 0o555
 
 
+@pytest.mark.parametrize("failed_parent", ["source", "target"])
+def test_publication_retry_flushes_both_rename_parents_before_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_parent: str
+) -> None:
+    """A visible rename with a failed durability barrier is made durable by its retry."""
+    staging, _ = _committed_envelope(tmp_path / "session")
+    destination = tmp_path / "revisions"
+    destination.mkdir()
+    final = destination / "revision"
+    failed = staging.parent if failed_parent == "source" else final.parent
+    identity = failed.stat()
+    real_fsync = os.fsync
+
+    def fail_parent(descriptor: int) -> None:
+        info = os.fstat(descriptor)
+        if (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino):
+            raise OSError(errno.EIO, "directory flush failed")
+        real_fsync(descriptor)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", fail_parent)
+        with pytest.raises(OSError, match="directory flush failed"):
+            commit_envelope(staging, final)
+    assert not staging.exists()
+    assert (final / "COMMITTED").is_file()
+    log = fsync_log(monkeypatch)
+    commit_envelope(staging, final)
+    assert {staging.parent, final.parent, final} <= set(log)
+    assert stat.S_IMODE(final.stat().st_mode) == 0o555
+
+
 def test_a_crash_in_the_tree_fsync_attempts_no_rename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

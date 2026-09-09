@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unicodedata import normalize
@@ -22,6 +22,7 @@ import pytest
 from huron.pkg.catalog.documents import (
     INDEX_SCHEMA,
     METADATA_SCHEMA,
+    CommitIntent,
     CommitRecord,
     MetadataDocument,
     RevisionIndex,
@@ -271,6 +272,93 @@ def test_commit_record_decode_refuses_an_extra_member_a_missing_member_and_prett
 
     with pytest.raises(ValueError):
         CommitRecord.decode(json.dumps(document, indent=2).encode())
+
+
+@pytest.mark.parametrize("protocol", [1, 2])
+def test_commit_marker_decoding_preserves_its_explicit_protocol(protocol: int) -> None:
+    """Legacy inspection retains v1 identity while newly composed markers default to v2."""
+    marker = CommitRecord.of(_record())
+    assert marker.protocol == 2
+    versioned = replace(marker, protocol=protocol)
+    assert CommitRecord.decode(versioned.canonical) == versioned
+
+
+def test_commit_marker_decoding_refuses_an_unknown_protocol() -> None:
+    """An unknown schema is not silently interpreted as a legacy or verified marker."""
+    marker = replace(CommitRecord.of(_record()), protocol=3)
+    with pytest.raises(ValueError, match="unsupported"):
+        CommitRecord.decode(marker.canonical)
+
+
+@pytest.fixture
+def commit_intent() -> CommitIntent:
+    """A canonical command and consistent immutable publication document set."""
+    manifest = _manifest()
+    metadata = _compose(manifest=manifest)
+    marker = CommitRecord.of(
+        _record(manifest_sha256=manifest.sha256, metadata_sha256=metadata.sha256)
+    )
+    return CommitIntent(
+        canonical_bytes(_submission()),
+        manifest_bytes(manifest),
+        metadata.canonical,
+        marker.canonical,
+    )
+
+
+def test_commit_intent_retains_immutable_bytes_and_returns_an_independent_document_map(
+    commit_intent: CommitIntent,
+) -> None:
+    """Callers cannot mutate frozen evidence through either fields or the returned mapping."""
+    assert commit_intent.documents == {
+        "manifest.json": commit_intent.manifest,
+        "metadata.json": commit_intent.metadata,
+        "COMMITTED": commit_intent.committed,
+    }
+    with pytest.raises(FrozenInstanceError):
+        commit_intent.command = b"{}"
+    documents = commit_intent.documents
+    documents.clear()
+    assert len(commit_intent.documents) == 3
+    commit_intent.require_same_command(replace(commit_intent))
+
+
+@pytest.mark.parametrize("field", ["command", "manifest", "metadata", "committed"])
+@pytest.mark.parametrize("payload", [b"", b"[]", b"{}\n"])
+def test_commit_intent_refuses_invalid_or_noncanonical_evidence(
+    commit_intent: CommitIntent, field: str, payload: bytes
+) -> None:
+    """Every evidence member must be a canonical JSON object conforming to its contract."""
+    with pytest.raises(ValueError):
+        replace(commit_intent, **{field: payload})
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("protocol", 1),
+        ("manifest_sha256", "0" * 64),
+        ("metadata_sha256", "0" * 64),
+        ("file_count", 2),
+        ("total_bytes", 11),
+        ("committed_at", NOW + timedelta(seconds=1)),
+        ("committed_by", "user:other"),
+    ],
+)
+def test_commit_intent_refuses_disagreement_between_valid_documents(
+    commit_intent: CommitIntent, field: str, value: int | str | datetime
+) -> None:
+    """Individually valid markers cannot disagree with the frozen manifest or metadata."""
+    marker = replace(CommitRecord.decode(commit_intent.committed), **{field: value})
+    with pytest.raises(ValueError, match="documents disagree"):
+        replace(commit_intent, committed=marker.canonical)
+
+
+def test_commit_intent_refuses_a_different_retry_command(commit_intent: CommitIntent) -> None:
+    """A distinct canonical client command conflicts without changing frozen evidence."""
+    changed = replace(commit_intent, command=canonical_bytes(_submission(title="Different")))
+    with pytest.raises(ContractMismatch):
+        commit_intent.require_same_command(changed)
 
 
 def test_revision_from_storage_rebuilds_only_when_marker_metadata_and_session_agree() -> None:

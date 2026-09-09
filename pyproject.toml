@@ -254,7 +254,7 @@ include = ["src/huron"]
 # Ratchet floor: the measured value at the last raise, rounded down. Never
 # lower it; raise it as coverage climbs. New or touched files are covered in
 # full.
-fail_under = 94
+fail_under = 94.15
 precision = 2
 
 [[tool.importlinter.contracts]]

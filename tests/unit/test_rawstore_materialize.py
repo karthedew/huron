@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import hashlib
 import os
@@ -14,7 +15,7 @@ import pytest
 
 from huron.pkg.rawstore import PosixRawStore, materialize
 from huron.pkg.rawstore.materialize import candidate, directory, install, observe, rename_exclusive
-from tests.unit.support import crash_on
+from tests.unit.support import crash_on, fsync_log
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -120,6 +121,46 @@ def test_overlapping_completions_converge_on_one_inode(storage: tuple[PosixRawSt
     assert list((root / "completion").iterdir()) == []
 
 
+@pytest.mark.parametrize("conflicting", [False, True])
+def test_completion_validates_a_winner_that_removes_upload_before_the_loser_opens_it(
+    storage: tuple[PosixRawStore, Path], monkeypatch: pytest.MonkeyPatch, conflicting: bool
+) -> None:
+    """A completion racing input cleanup succeeds only when the installed winner agrees."""
+    store, root = storage
+    data = b"independent winner"
+    store.write_part(root, "input", [data], offset=0, length=len(data))
+    waiting, resume = Event(), Event()
+    real_open = os.open
+
+    def delayed_open(
+        path: str | os.PathLike[str], flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+    ) -> int:
+        if path == "input" and flags & os.O_ACCMODE == os.O_RDONLY and not waiting.is_set():
+            waiting.set()
+            assert resume.wait(10)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", delayed_open)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        loser = executor.submit(_finish, store, root, data)
+        try:
+            assert waiting.wait(10)
+            installed = b"x" * len(data) if conflicting else data
+            store.write_part(root, "input", [installed], offset=0, length=len(installed))
+            winner = _finish(store, root, installed)
+            store.discard_file(root, "input")
+        finally:
+            resume.set()
+        if conflicting:
+            with pytest.raises(ValueError, match="conflicts"):
+                loser.result(timeout=10)
+        else:
+            assert loser.result(timeout=10) == winner
+    assert (root / "envelope/payload/nested/file").read_bytes() == installed
+    assert not (root / "upload/input").exists()
+    assert list((root / "completion").iterdir()) == []
+
+
 def test_a_mismatch_cannot_remove_an_installed_winner(storage: tuple[PosixRawStore, Path]) -> None:
     """Bad expected content neither replaces nor unlinks an already verified destination."""
     store, root = storage
@@ -128,6 +169,17 @@ def test_a_mismatch_cannot_remove_an_installed_winner(storage: tuple[PosixRawSto
     with pytest.raises(ValueError, match="conflicts"):
         _finish(store, root, b"evil")
     assert (root / "envelope/payload/nested/file").read_bytes() == b"good"
+
+
+def test_missing_upload_without_an_installed_winner_is_not_complete(
+    storage: tuple[PosixRawStore, Path],
+) -> None:
+    """Missing input is not mistaken for successful concurrent completion."""
+    store, root = storage
+    with pytest.raises(FileNotFoundError):
+        _finish(store, root, b"missing")
+    assert list((root / "completion").iterdir()) == []
+    assert not (root / "envelope/payload/nested/file").exists()
 
 
 def test_mismatch_installs_nothing_and_retains_the_upload_for_retry(
@@ -297,3 +349,54 @@ def test_exclusive_rename_refuses_unsupported_platform_without_moving_files(
     assert caught.value.errno == errno.ENOTSUP
     assert source.read_bytes() == b"safe"
     assert not (tmp_path / "target").exists()
+
+
+def test_cancelled_copy_never_installs_or_removes_another_candidate(tmp_path: Path) -> None:
+    """Cancellation closes and removes only the interrupted attempt's private inode."""
+
+    def interrupted() -> Iterator[bytes]:
+        yield b"partial"
+        raise asyncio.CancelledError
+
+    with directory(tmp_path) as parent, candidate(parent, [b"winner"]) as winner:
+        with pytest.raises(asyncio.CancelledError), candidate(parent, interrupted()):
+            pytest.fail("cancelled candidate was exposed")
+        assert (tmp_path / winner).read_bytes() == b"winner"
+        assert [path.name for path in tmp_path.iterdir()] == [winner]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("failed_directory", ["completion", "payload"])
+def test_installed_payload_survives_a_failed_directory_flush_and_retries(
+    storage: tuple[PosixRawStore, Path], monkeypatch: pytest.MonkeyPatch, failed_directory: str
+) -> None:
+    """An install-before-receipt failure retains independent bytes that completion can recover."""
+    store, root = storage
+    data = b"durable candidate"
+    store.write_part(root, "input", [data], offset=0, length=len(data))
+    installed = root / "envelope/payload/file"
+    watched = root / ("completion" if failed_directory == "completion" else "envelope/payload")
+    identity = watched.stat()
+    real_fsync = os.fsync
+
+    def fail_after_install(descriptor: int) -> None:
+        info = os.fstat(descriptor)
+        if installed.exists() and (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino):
+            raise OSError(errno.EIO, "installed directory flush failed")
+        real_fsync(descriptor)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", fail_after_install)
+        with pytest.raises(OSError, match="installed directory flush failed"):
+            _finish(store, root, data, "payload/file")
+    inode = installed.stat().st_ino
+    log = fsync_log(monkeypatch)
+    assert _finish(store, root, data, "payload/file") == (
+        len(data),
+        hashlib.sha256(data).hexdigest(),
+    )
+    assert {root / "completion", installed.parent} <= set(log)
+    assert installed.stat().st_ino == inode
+    assert installed.stat().st_nlink == 1
+    assert installed.read_bytes() == data
+    assert list((root / "completion").iterdir()) == []

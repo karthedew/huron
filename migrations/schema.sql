@@ -138,6 +138,7 @@ CREATE TABLE ingest_sessions (
     revision_id uuid UNIQUE NOT NULL, revision_number integer NOT NULL,
     manifest_sha256 text NOT NULL,
     state text NOT NULL,  -- PREPARING|UPLOADING|VERIFYING|COMMITTING|RECOVERING|COMMITTED|ABORTED|FAILED
+    -- [db] ingest_sessions_state_check: CHECK restricts state to the vocabulary above
     etag integer NOT NULL DEFAULT 1,
     expires_at timestamptz NOT NULL,
     created_by text NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
