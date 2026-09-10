@@ -36,6 +36,19 @@ def test_defaults_construct_a_working_development_configuration() -> None:
     assert settings.oidc is None
     assert settings.ingest_sweep_interval_seconds == 60.0
     assert settings.ingest_sweep_limit == 100
+    assert settings.completion_max_concurrent == 1
+    assert settings.completion_reserve_bytes == 1 << 30
+
+
+@pytest.mark.parametrize(
+    "overrides", [{"completion_max_concurrent": 0}, {"completion_reserve_bytes": -1}]
+)
+def test_completion_capacity_configuration_refuses_invalid_limits(
+    overrides: dict[str, int],
+) -> None:
+    """Copy concurrency must be positive and the retained disk reserve nonnegative."""
+    with pytest.raises(ValidationError):
+        ApiSettings(**_kwargs(**overrides))
 
 
 def test_dev_headers_are_refused_outside_development() -> None:

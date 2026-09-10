@@ -36,6 +36,7 @@ from huron.pkg.catalog.documents import (
     decode_manifest,
     manifest_bytes,
 )
+from huron.pkg.catalog.errors import IdempotencyKeyReused
 from huron.pkg.catalog.manifest import DEFAULT_MAX_FILE_BYTES
 from huron.pkg.catalog.paths import revision_dir, staging_dir
 from huron.pkg.metastore import IdempotencyClaim, Replay, SystemClock
@@ -1380,16 +1381,10 @@ def test_a_commit_whose_staged_manifest_disagrees_with_the_session_is_a_server_e
     assert response.status_code == 500
 
 
-async def test_a_commit_race_that_loses_its_claim_returns_the_winner_s_revision(
+async def test_a_commit_cannot_publish_under_another_revisions_claim(
     client: TestClient, stores: ApiStores, tmp_path: Path
 ) -> None:
-    """A commit whose idempotency claim was already remembered returns the recorded revision.
-
-    Proves the facade's own defence against two concurrent attempts at the
-    same commit racing past the envelope's publication and into the
-    transaction together: whichever loses the claim returns what the
-    winner recorded instead of raising or double-publishing.
-    """
+    """Even a reused digest cannot bind another session to an existing revision receipt."""
     ingest = IngestClient(client)
     _, dataset_id = ingest.developer_dataset()
     data = b"hello"
@@ -1424,20 +1419,23 @@ async def test_a_commit_race_that_loses_its_claim_returns_the_winner_s_revision(
         await writer.insert_revision(winner)
         await writer.remember(claim, Replay(kind="revision", resource_id=winner.id))
 
-    record = await service.commit(
-        ledger,
-        expected_etag=verified["etag"],
-        manifest_sha256=verified["manifest_sha256"],
-        metadata=metadata,
-        committed_by="bob",
-        claim=claim,
-    )
+    with pytest.raises(IdempotencyKeyReused):
+        await service.commit(
+            ledger,
+            expected_etag=verified["etag"],
+            manifest_sha256=verified["manifest_sha256"],
+            metadata=metadata,
+            committed_by="bob",
+            claim=claim,
+        )
+    assert (await service.ledger(ledger.id)).state is IngestState.VERIFYING
+    assert ledger.id not in stores.hierarchy._intents
+    assert not list((tmp_path / "data").rglob("COMMITTED"))
 
-    assert record == winner
-    assert stores.hierarchy._sessions[UUID(session["id"])].state is IngestState.COMMITTING
 
-
-def test_a_replayed_commit_returns_the_same_revision(client: TestClient) -> None:
+def test_a_replayed_commit_returns_the_same_revision(
+    client: TestClient, stores: ApiStores, tmp_path: Path
+) -> None:
     """A replayed commit under the same key, even with a stale etag, returns the same revision.
 
     Reusing the key for a distinct, not-yet-committed session's commit is
@@ -1472,5 +1470,12 @@ def test_a_replayed_commit_returns_the_same_revision(client: TestClient) -> None
 
     assert reused.status_code == 409
     assert reused.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
-    still_committing = ingest.get(second_session["id"]).json()
-    assert still_committing["state"] == "COMMITTING"
+    unchanged = ingest.get(second_session["id"]).json()
+    assert unchanged["state"] == "VERIFYING"
+    assert unchanged["etag"] == second_verified["etag"]
+    assert UUID(second_session["id"]) not in stores.hierarchy._intents
+    assert len(list((tmp_path / "data").rglob("COMMITTED"))) == 1
+    retry = ingest.commit(
+        second_session["id"], second_verified["etag"], {"title": "Other", "creators": ["bob"]}
+    )
+    assert retry.status_code == 201, retry.text

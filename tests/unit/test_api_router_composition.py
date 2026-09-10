@@ -230,6 +230,28 @@ def test_the_problem_schema_is_registered_exactly_once(tmp_path: Path) -> None:
     assert schemas["Problem"]["required"] == ["type", "title", "status", "code", "detail"]
 
 
+@pytest.mark.parametrize(
+    ("resource", "parameter"),
+    [
+        ("organizations", "organization_id"),
+        ("projects", "project_id"),
+        ("datasets", "dataset_id"),
+    ],
+)
+def test_catalog_guards_keep_resource_ids_as_named_path_parameters(
+    tmp_path: Path, resource: str, parameter: str
+) -> None:
+    """Shared guards preserve each route's required UUID path parameter without query inputs."""
+    schema = create_app(settings=_settings(tmp_path), stores=memory_stores()).openapi()
+    operation = schema["paths"][f"/api/v1/{resource}/{{{parameter}}}"]["patch"]
+    path_parameters = [item for item in operation["parameters"] if item["in"] == "path"]
+    assert len(path_parameters) == 1
+    assert path_parameters[0]["name"] == parameter
+    assert path_parameters[0]["required"] is True
+    assert path_parameters[0]["schema"]["format"] == "uuid"
+    assert all(item["name"] != "resource_id" for item in operation["parameters"])
+
+
 def test_every_declared_error_response_refs_the_shared_problem_schema(tmp_path: Path) -> None:
     """Every declared 4xx/5xx response across the document refs the shared Problem schema."""
     schema = create_app(settings=_settings(tmp_path), stores=memory_stores()).openapi()

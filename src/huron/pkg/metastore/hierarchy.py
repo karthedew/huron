@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from itertools import chain
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 import asyncpg
@@ -143,6 +143,8 @@ class _TransactionWriter(InMemoryIngestWriter):
     async def claim(self, claim: IdempotencyClaim) -> Replay | None:
         """Stake this transaction's claim to a principal-scoped idempotency key.
 
+        An unfinished ingest commit retains its binding beyond the ordinary TTL.
+
         Args:
             claim: The principal, key and request digest to stake.
 
@@ -161,8 +163,9 @@ class _TransactionWriter(InMemoryIngestWriter):
             entry = self._store._idempotency.get(key)
         if entry is not None:
             request_sha256, replay, expires_at = entry
-            if expires_at > now:
+            if expires_at > now or (replay is not None and replay.kind == "ingest_commit"):
                 if request_sha256 == claim.request_sha256:
+                    self._buffer.idempotency[key] = entry
                     return replay
                 raise IdempotencyKeyReused(
                     f"idempotency key reused with a different request: {claim.key!r}"
@@ -304,53 +307,81 @@ class _TransactionWriter(InMemoryIngestWriter):
     async def update_organization(self, item: Organization, *, expected_version: int) -> None:
         """Apply an update to one organization, guarded by optimistic concurrency.
 
+        ``PreconditionFailed`` reports an absent row or a stale stored version.
+
         Args:
             item: The organization as it should read after the update.
             expected_version: The version the caller last read; the update
                 is refused unless this still matches what is stored.
-
-        Raises:
-            PreconditionFailed: If no live organization has ``item.id``, or
-                its stored version is not ``expected_version``.
         """
-        current = self._store._organizations.get(item.id)
-        if current is None or current.version != expected_version:
-            raise PreconditionFailed(f"organization version conflict: {item.id}")
-        self._buffer.organizations[item.id] = item
+        _stage_update(
+            item,
+            expected_version,
+            "organization",
+            self._store._organizations,
+            self._buffer.organizations,
+        )
 
     async def update_project(self, item: Project, *, expected_version: int) -> None:
         """Apply an update to one project, guarded by optimistic concurrency.
+
+        ``PreconditionFailed`` reports an absent row or a stale stored version.
 
         Args:
             item: The project as it should read after the update.
             expected_version: The version the caller last read; the update
                 is refused unless this still matches what is stored.
-
-        Raises:
-            PreconditionFailed: If no live project has ``item.id``, or its
-                stored version is not ``expected_version``.
         """
-        current = self._store._projects.get(item.id)
-        if current is None or current.version != expected_version:
-            raise PreconditionFailed(f"project version conflict: {item.id}")
-        self._buffer.projects[item.id] = item
+        _stage_update(
+            item,
+            expected_version,
+            "project",
+            self._store._projects,
+            self._buffer.projects,
+        )
 
     async def update_dataset(self, item: Dataset, *, expected_version: int) -> None:
         """Apply an update to one dataset, guarded by optimistic concurrency.
+
+        ``PreconditionFailed`` reports an absent row or a stale stored version.
 
         Args:
             item: The dataset as it should read after the update.
             expected_version: The version the caller last read; the update
                 is refused unless this still matches what is stored.
-
-        Raises:
-            PreconditionFailed: If no live dataset has ``item.id``, or its
-                stored version is not ``expected_version``.
         """
-        current = self._store._datasets.get(item.id)
-        if current is None or current.version != expected_version:
-            raise PreconditionFailed(f"dataset version conflict: {item.id}")
-        self._buffer.datasets[item.id] = item
+        _stage_update(
+            item,
+            expected_version,
+            "dataset",
+            self._store._datasets,
+            self._buffer.datasets,
+        )
+
+
+def _stage_update[ItemT: Organization | Project | Dataset](
+    item: ItemT,
+    expected_version: int,
+    kind: str,
+    live: dict[UUID, ItemT],
+    staged: dict[UUID, ItemT],
+) -> None:
+    """Stage a hierarchy replacement only when the live version still matches.
+
+    Args:
+        item: The successor to stage.
+        expected_version: The live version the caller observed.
+        kind: The entity kind used in a version-conflict error.
+        live: The store's committed entities of this kind.
+        staged: This transaction's staged entities of the same kind.
+
+    Raises:
+        PreconditionFailed: If the entity is absent or its live version is stale.
+    """
+    current = live.get(item.id)
+    if current is None or current.version != expected_version:
+        raise PreconditionFailed(f"{kind} version conflict: {item.id}")
+    staged[item.id] = item
 
 
 def _dataset_visible(dataset: Dataset, visibility: Visibility) -> bool:
@@ -882,8 +913,8 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
 
         The claim is staked with an ``INSERT ... ON CONFLICT DO UPDATE``
         that only takes over a row whose ``expires_at`` has already
-        passed; a live conflicting row is left untouched and read back to
-        decide between a replay and a reuse.
+        passed and is not an unfinished ingest commit. A live conflicting row is
+        left untouched and read back to decide between a replay and a reuse.
 
         Args:
             claim: The principal, key and request digest to stake.
@@ -912,6 +943,7 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
                     response = '{}'::jsonb, created_at = EXCLUDED.created_at,
                     expires_at = EXCLUDED.expires_at
                 WHERE idempotency_records.expires_at <= EXCLUDED.created_at
+                  AND idempotency_records.response->>'kind' IS DISTINCT FROM 'ingest_commit'
             RETURNING key
             """,
             claim.principal,
@@ -1180,78 +1212,61 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
     async def update_organization(self, item: Organization, *, expected_version: int) -> None:
         """Apply an update to one organization, guarded by optimistic concurrency.
 
+        ``PreconditionFailed`` reports an absent row or a stale stored version.
+
         Args:
             item: The organization as it should read after the update.
             expected_version: The version the caller last read; the update
                 is refused unless this still matches what is stored.
-
-        Raises:
-            PreconditionFailed: If no row has ``item.id`` with
-                ``expected_version`` as its stored version.
         """
-        row = await self._connection.fetchrow(
-            """
-            UPDATE organizations
-            SET title = $2, description = $3, generation = $4, version = $5, updated_at = $6
-            WHERE id = $1 AND version = $7
-            RETURNING id
-            """,
-            item.id,
-            item.title,
-            item.description,
-            item.generation,
-            item.version,
-            self._clock.now(),
-            expected_version,
-        )
-        if row is None:
-            raise PreconditionFailed(f"organization version conflict: {item.id}")
+        await self._update_description(item, "organization", expected_version)
 
     async def update_project(self, item: Project, *, expected_version: int) -> None:
         """Apply an update to one project, guarded by optimistic concurrency.
+
+        ``PreconditionFailed`` reports an absent row or a stale stored version.
 
         Args:
             item: The project as it should read after the update.
             expected_version: The version the caller last read; the update
                 is refused unless this still matches what is stored.
-
-        Raises:
-            PreconditionFailed: If no row has ``item.id`` with
-                ``expected_version`` as its stored version.
         """
-        row = await self._connection.fetchrow(
-            """
-            UPDATE projects
-            SET title = $2, description = $3, generation = $4, version = $5, updated_at = $6
-            WHERE id = $1 AND version = $7
-            RETURNING id
-            """,
-            item.id,
-            item.title,
-            item.description,
-            item.generation,
-            item.version,
-            self._clock.now(),
-            expected_version,
-        )
-        if row is None:
-            raise PreconditionFailed(f"project version conflict: {item.id}")
+        await self._update_description(item, "project", expected_version)
 
     async def update_dataset(self, item: Dataset, *, expected_version: int) -> None:
         """Apply an update to one dataset, guarded by optimistic concurrency.
+
+        ``PreconditionFailed`` reports an absent row or a stale stored version.
 
         Args:
             item: The dataset as it should read after the update.
             expected_version: The version the caller last read; the update
                 is refused unless this still matches what is stored.
+        """
+        await self._update_description(item, "dataset", expected_version)
+
+    async def _update_description(
+        self,
+        item: Organization | Project | Dataset,
+        kind: Literal["organization", "project", "dataset"],
+        expected_version: int,
+    ) -> None:
+        """Persist descriptive fields with a database-atomic version comparison.
+
+        Args:
+            item: The successor whose descriptive fields and counters are stored.
+            kind: The fixed hierarchy table kind, supplied by the writer method.
+            expected_version: The version required on the stored row.
 
         Raises:
-            PreconditionFailed: If no row has ``item.id`` with
-                ``expected_version`` as its stored version.
+            PreconditionFailed: If the entity is absent or its version is stale.
         """
+        table = {"organization": "organizations", "project": "projects", "dataset": "datasets"}[
+            kind
+        ]
         row = await self._connection.fetchrow(
-            """
-            UPDATE datasets
+            f"""
+            UPDATE {table}
             SET title = $2, description = $3, generation = $4, version = $5, updated_at = $6
             WHERE id = $1 AND version = $7
             RETURNING id
@@ -1265,7 +1280,7 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
             expected_version,
         )
         if row is None:
-            raise PreconditionFailed(f"dataset version conflict: {item.id}")
+            raise PreconditionFailed(f"{kind} version conflict: {item.id}")
 
 
 class PostgresHierarchyStore(PostgresIngestReader):

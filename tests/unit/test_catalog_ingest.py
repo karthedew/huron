@@ -352,12 +352,15 @@ def test_upload_plan_part_counts_follow_the_part_size() -> None:
         compute_upload_plan(manifest, part_bytes=0)
 
 
-def test_revision_record_takes_every_column_from_the_session_and_manifest() -> None:
+@pytest.mark.parametrize("recovering", [False, True])
+def test_revision_record_takes_every_column_from_the_session_and_manifest(recovering: bool) -> None:
     """A revision record's every field traces to the session, the manifest or a given value."""
     manifest = Manifest((_entry("payload/a.bin", size=10, sha256="a" * 64),))
     session = ingest_session(
         IngestState.COMMITTING, expires_in=timedelta(hours=1), manifest_sha256=manifest.sha256
     )
+    if recovering:
+        session = session.recover()
 
     record = revision_record(
         session,

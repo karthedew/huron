@@ -49,7 +49,7 @@ dev = [
     "ty>=0.0.75",
     "radon>=6.0.1",
     "complexipy>=7.0.1",
-    "pyscn>=1.30.0 ; platform_machine == 'x86_64' or sys_platform == 'darwin'",
+    "pyscn==1.31.1 ; platform_machine == 'x86_64' or sys_platform == 'darwin'",
     # Checks every docstring against its signature: parameters, returns, yields
     # and raised exceptions. ruff's D rules prove a docstring exists and is well
     # formed; only pydoclint proves it is complete.
@@ -254,7 +254,7 @@ include = ["src/huron"]
 # Ratchet floor: the measured value at the last raise, rounded down. Never
 # lower it; raise it as coverage climbs. New or touched files are covered in
 # full.
-fail_under = 94.15
+fail_under = 94.71
 precision = 2
 
 [[tool.importlinter.contracts]]

@@ -18,15 +18,26 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def directory(path: Path) -> Iterator[int]:
+def directory(path: Path, *, anchor: Path | None = None) -> Iterator[int]:
     """Hold an existing directory without following a link at its name.
 
     Args:
         path: Existing directory to open.
+        anchor: Trusted root beneath which every component must be a real directory.
 
     Yields:
         A directory descriptor, closed when the context exits.
+
+    Raises:
+        ValueError: If the path traverses above its trusted root.
     """
+    if anchor is not None:
+        parts = path.relative_to(anchor).parts
+        if ".." in parts:
+            raise ValueError("directory escapes its trusted root")
+        with directory(anchor) as root, descendant(root, parts) as descriptor:
+            yield descriptor
+        return
     descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         yield descriptor
@@ -75,13 +86,15 @@ def rename_exclusive(source_dir: int, source: str, target_dir: int, target: str)
     """
     library = ctypes.CDLL(None, use_errno=True)
     if sys.platform == "darwin":
-        function = library.renameatx_np
+        function = getattr(library, "renameatx_np", None)
         flags = 4
     elif sys.platform == "linux":
-        function = library.renameat2
+        function = getattr(library, "renameat2", None)
         flags = 1
     else:
         raise OSError(errno.ENOTSUP, "exclusive rename is not supported on this platform")
+    if function is None:
+        raise OSError(errno.ENOTSUP, "exclusive rename is unavailable in the system library")
     function.argtypes = [
         ctypes.c_int,
         ctypes.c_char_p,
@@ -129,14 +142,29 @@ def observe(parent: int, name: str, *, sealed: bool = True) -> tuple[int, str]:
         os.close(descriptor)
 
 
-def _write_chunks(descriptor: int, chunks: Iterable[bytes]) -> None:
-    for chunk in chunks:
-        remaining = memoryview(chunk)
-        while remaining:
-            count = os.write(descriptor, remaining)
-            if count == 0:
-                raise OSError(errno.EIO, "write made no progress")
-            remaining = remaining[count:]
+def write_all(descriptor: int, payload: bytes, *, offset: int | None = None) -> None:
+    """Write complete bytes despite short writes, refusing a stalled filesystem.
+
+    Args:
+        descriptor: An open writable file descriptor.
+        payload: Bytes to write completely.
+        offset: Fixed range start, or the descriptor's current position when absent.
+
+    Raises:
+        OSError: If the filesystem reports no write progress.
+    """
+    remaining = memoryview(payload)
+    while remaining:
+        count = (
+            os.write(descriptor, remaining)
+            if offset is None
+            else os.pwrite(descriptor, remaining, offset)
+        )
+        if count == 0:
+            raise OSError(errno.EIO, "write made no progress")
+        remaining = remaining[count:]
+        if offset is not None:
+            offset += count
 
 
 @contextmanager
@@ -154,7 +182,8 @@ def candidate(parent: int, chunks: Iterable[bytes]) -> Iterator[str]:
     descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent)
     try:
         try:
-            _write_chunks(descriptor, chunks)
+            for chunk in chunks:
+                write_all(descriptor, chunk)
             os.fchmod(descriptor, 0o444)
             os.fsync(descriptor)
         finally:
@@ -213,3 +242,39 @@ def file_chunks(parent: int, name: str) -> Iterator[bytes]:
             yield block
     finally:
         os.close(descriptor)
+
+
+def flush_tree(root: int, *, seal: bool = False) -> None:
+    """Flush a held tree, optionally sealing each descendant before its parent.
+
+    Args:
+        root: Existing directory descriptor; the root itself remains writable.
+        seal: Whether to remove write permissions from all descendants.
+
+    Raises:
+        ValueError: If any file is not regular and independently owned.
+    """
+    for name in sorted(os.listdir(root)):
+        info = os.stat(name, dir_fd=root, follow_symlinks=False)
+        if stat.S_ISDIR(info.st_mode):
+            with descendant(root, (name,)) as child:
+                flush_tree(child, seal=seal)
+                if seal:
+                    os.fchmod(child, 0o555)
+                    os.fsync(child)
+        else:
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
+            try:
+                info = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or info.st_uid != os.geteuid()
+                ):
+                    raise ValueError(f"tree contains an unsafe file: {name}")
+                if seal:
+                    os.fchmod(descriptor, 0o444)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+    os.fsync(root)

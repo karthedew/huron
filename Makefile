@@ -66,7 +66,8 @@ lint: ## Run every static check the validation gate enforces.
 	uv run radon cc src/huron --min C
 	uv run radon mi src/huron --min B
 	uv run complexipy src/huron --max-complexity-allowed 15
-	uv run pyscn check src/huron
+	uv run --locked pyscn check src/huron
+	uv run --locked python scripts/check_duplication.py src/huron
 
 docs: ## Build the documentation site, failing on broken internal links.
 	uv run --group docs zensical build --strict

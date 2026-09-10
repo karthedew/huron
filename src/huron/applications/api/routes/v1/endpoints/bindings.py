@@ -70,24 +70,82 @@ def _key(item: RoleBindingRecord) -> tuple[str, str]:
     return (item.principal, item.role_code)
 
 
-def _member(record: RoleBindingRecord, scope_type: ScopeType, scope_id: UUID | None) -> None:
-    """Refuse a binding that is not in this collection, as if it did not exist.
-
-    The guard proved the caller may administer bindings *here*; it proved
-    nothing about a binding granted somewhere else, and naming one from the
-    wrong root must not confirm that it exists.
+async def _binding_page(
+    repository: Repository,
+    scope_type: ScopeType,
+    scope_id: UUID | None,
+    limit: int,
+    after: str | None,
+) -> Page[RoleBindingView]:
+    """Sort and serialize the binding roster of one authorized collection.
 
     Args:
-        record: The binding the request named.
-        scope_type: The scope level of the collection the route serves.
-        scope_id: The organization, project or dataset id of that
-            collection, or None for SYSTEM scope.
+        repository: The caller's authorized catalog operations.
+        scope_type: The collection's scope level.
+        scope_id: Its identifier, absent for SYSTEM scope.
+        limit: The maximum number of bindings to return.
+        after: The continuation cursor, absent for the first page.
+
+    Returns:
+        A page ordered by principal then role, including expired grants.
+    """
+    records = await repository.bindings_at(scope_type, scope_id)
+    return paginate(sorted(records, key=_key), RoleBindingView, key=_key, limit=limit, after=after)
+
+
+async def _grant_binding(
+    body: CreateRoleBinding,
+    repository: Repository,
+    actor: Principal,
+    scope_type: ScopeType,
+    scope_id: UUID | None,
+) -> RoleBindingView:
+    """Translate a grant request into an authorized catalog operation and response.
+
+    Args:
+        body: The grantee, role and optional lifetime.
+        repository: The caller's authorized catalog operations.
+        actor: The authenticated administrator recorded as the creator.
+        scope_type: The collection's scope level.
+        scope_id: Its identifier, absent for SYSTEM scope.
+
+    Returns:
+        The stored grant serialized for the HTTP response.
+    """
+    return RoleBindingView.model_validate(
+        await repository.grant_role(
+            principal=body.principal,
+            role_code=body.role,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            created_by=actor.subject,
+            expires_at=_expires(body),
+        )
+    )
+
+
+async def _revoke_binding(
+    repository: Repository, binding_id: UUID, scope_type: ScopeType, scope_id: UUID | None
+) -> None:
+    """Revoke a binding only when it belongs to the route's authorized collection.
+
+    The guard proved the caller may administer bindings here; it proved
+    nothing about a binding granted elsewhere. A wrong-root request must
+    not confirm that the binding exists or remove it from another collection.
+
+    Args:
+        repository: The caller's authorized catalog operations.
+        binding_id: The requested binding identifier.
+        scope_type: The collection's scope level.
+        scope_id: Its identifier, absent for SYSTEM scope.
 
     Raises:
         ResourceNotFound: If the binding was granted at any other scope.
     """
+    record = await repository.get_role_binding(binding_id)
     if record.scope_type != scope_type.value or record.scope_id != scope_id:
         raise ResourceNotFound(f"role binding does not exist: {record.id}")
+    await repository.revoke_role(binding_id)
 
 
 @router.get("", responses={400: problem_response("cursor is not a valid continuation")})
@@ -109,8 +167,7 @@ async def list_system_bindings(
     Returns:
         One page of bindings and the cursor to the next, if any.
     """
-    records = await repository.bindings_at(ScopeType.SYSTEM, None)
-    return paginate(sorted(records, key=_key), RoleBindingView, key=_key, limit=limit, after=after)
+    return await _binding_page(repository, ScopeType.SYSTEM, None, limit, after)
 
 
 @router.post(
@@ -138,16 +195,7 @@ async def create_system_binding(
     Returns:
         The stored binding, with its generated id and timestamps.
     """
-    return RoleBindingView.model_validate(
-        await repository.grant_role(
-            principal=body.principal,
-            role_code=body.role,
-            scope_type=ScopeType.SYSTEM,
-            scope_id=None,
-            created_by=actor.subject,
-            expires_at=_expires(body),
-        )
-    )
+    return await _grant_binding(body, repository, actor, ScopeType.SYSTEM, None)
 
 
 @organization_bindings.post(
@@ -183,16 +231,7 @@ async def create_organization_binding(
     Returns:
         The stored binding, with its generated id and timestamps.
     """
-    return RoleBindingView.model_validate(
-        await repository.grant_role(
-            principal=body.principal,
-            role_code=body.role,
-            scope_type=ScopeType.ORGANIZATION,
-            scope_id=organization_id,
-            created_by=actor.subject,
-            expires_at=_expires(body),
-        )
-    )
+    return await _grant_binding(body, repository, actor, ScopeType.ORGANIZATION, organization_id)
 
 
 @project_bindings.post(
@@ -227,16 +266,7 @@ async def create_project_binding(
     Returns:
         The stored binding, with its generated id and timestamps.
     """
-    return RoleBindingView.model_validate(
-        await repository.grant_role(
-            principal=body.principal,
-            role_code=body.role,
-            scope_type=ScopeType.PROJECT,
-            scope_id=project_id,
-            created_by=actor.subject,
-            expires_at=_expires(body),
-        )
-    )
+    return await _grant_binding(body, repository, actor, ScopeType.PROJECT, project_id)
 
 
 @dataset_bindings.post(
@@ -271,16 +301,7 @@ async def create_dataset_binding(
     Returns:
         The stored binding, with its generated id and timestamps.
     """
-    return RoleBindingView.model_validate(
-        await repository.grant_role(
-            principal=body.principal,
-            role_code=body.role,
-            scope_type=ScopeType.DATASET,
-            scope_id=dataset_id,
-            created_by=actor.subject,
-            expires_at=_expires(body),
-        )
-    )
+    return await _grant_binding(body, repository, actor, ScopeType.DATASET, dataset_id)
 
 
 @organization_bindings.get(
@@ -310,8 +331,7 @@ async def list_organization_bindings(
     Returns:
         One page of bindings and the cursor to the next, if any.
     """
-    records = await repository.bindings_at(ScopeType.ORGANIZATION, organization_id)
-    return paginate(sorted(records, key=_key), RoleBindingView, key=_key, limit=limit, after=after)
+    return await _binding_page(repository, ScopeType.ORGANIZATION, organization_id, limit, after)
 
 
 @project_bindings.get(
@@ -342,8 +362,7 @@ async def list_project_bindings(
     Returns:
         One page of bindings and the cursor to the next, if any.
     """
-    records = await repository.bindings_at(ScopeType.PROJECT, project_id)
-    return paginate(sorted(records, key=_key), RoleBindingView, key=_key, limit=limit, after=after)
+    return await _binding_page(repository, ScopeType.PROJECT, project_id, limit, after)
 
 
 @dataset_bindings.get(
@@ -374,8 +393,7 @@ async def list_dataset_bindings(
     Returns:
         One page of bindings and the cursor to the next, if any.
     """
-    records = await repository.bindings_at(ScopeType.DATASET, dataset_id)
-    return paginate(sorted(records, key=_key), RoleBindingView, key=_key, limit=limit, after=after)
+    return await _binding_page(repository, ScopeType.DATASET, dataset_id, limit, after)
 
 
 @router.delete(
@@ -393,8 +411,7 @@ async def revoke_system_binding(repository: Repository, binding_id: UUID) -> Non
         repository: The wired hierarchy repository.
         binding_id: The binding to revoke.
     """
-    _member(await repository.get_role_binding(binding_id), ScopeType.SYSTEM, None)
-    await repository.revoke_role(binding_id)
+    await _revoke_binding(repository, binding_id, ScopeType.SYSTEM, None)
 
 
 @organization_bindings.delete(
@@ -415,9 +432,7 @@ async def revoke_organization_binding(
         organization_id: The organization the binding was granted on.
         binding_id: The binding to revoke.
     """
-    record = await repository.get_role_binding(binding_id)
-    _member(record, ScopeType.ORGANIZATION, organization_id)
-    await repository.revoke_role(binding_id)
+    await _revoke_binding(repository, binding_id, ScopeType.ORGANIZATION, organization_id)
 
 
 @project_bindings.delete(
@@ -438,9 +453,7 @@ async def revoke_project_binding(
         project_id: The project the binding was granted on.
         binding_id: The binding to revoke.
     """
-    record = await repository.get_role_binding(binding_id)
-    _member(record, ScopeType.PROJECT, project_id)
-    await repository.revoke_role(binding_id)
+    await _revoke_binding(repository, binding_id, ScopeType.PROJECT, project_id)
 
 
 @dataset_bindings.delete(
@@ -461,6 +474,4 @@ async def revoke_dataset_binding(
         dataset_id: The dataset the binding was granted on.
         binding_id: The binding to revoke.
     """
-    record = await repository.get_role_binding(binding_id)
-    _member(record, ScopeType.DATASET, dataset_id)
-    await repository.revoke_role(binding_id)
+    await _revoke_binding(repository, binding_id, ScopeType.DATASET, dataset_id)

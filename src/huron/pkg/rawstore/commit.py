@@ -18,7 +18,7 @@ import errno
 import os
 from typing import TYPE_CHECKING
 
-from .materialize import directory, rename_exclusive
+from .materialize import descendant, directory, flush_tree, rename_exclusive
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -102,13 +102,13 @@ def assert_same_filesystem(staging_root: Path, final_root: Path) -> None:
         )
 
 
-def commit_envelope(staging: Path, final: Path) -> None:
+def commit_envelope(staging: Path, final: Path, root: Path) -> None:
     """Durably publish one complete staging envelope with a single rename.
 
     The envelope is a directory the caller has finished writing and marked
     with a ``COMMITTED`` file. Publication is: every file and directory in
     it is fsynced, the directory is renamed to ``final`` in one
-    ``os.rename``, ``final``'s parent is fsynced so the new name is as
+    exclusive rename, ``final``'s parent is fsynced so the new name is as
     durable as its contents, and then ``final`` itself is made ``0o555``
     and fsynced. Nothing is visible under ``final`` before the rename and
     the rename is the only step that changes what is visible there, so a
@@ -127,49 +127,59 @@ def commit_envelope(staging: Path, final: Path) -> None:
             ``COMMITTED`` file.
         final: The path to publish it at; its parent is created if missing
             and must be on the same filesystem as ``staging``.
+        root: Trusted storage root containing both publication paths.
+
+    Storage traversal propagates missing-path and existing-target errors. A device
+    mismatch propagates ``CrossDeviceCommitError``; other I/O errors are unchanged.
 
     Raises:
-        FileExistsError: If ``final`` exists and this is not a completed
-            retry.
-        FileNotFoundError: If ``staging`` is not a directory.
-        ValueError: If ``staging`` has no ``COMMITTED`` marker; an unmarked
-            envelope is unfinished and must not be published.
-        CrossDeviceCommitError: If ``staging`` and ``final``'s parent are on
-            different filesystems, whether detected before the rename or
-            reported by it as ``EXDEV``.
-        OSError: If the rename fails for any other reason; re-raised
-            unchanged.
+        ValueError: If a path escapes the trusted root.
     """
-    if final.exists():
-        if not staging.exists() and (final / "COMMITTED").is_file():
-            # The name may be visible even though the interrupted rename's
-            # directory updates have not reached stable storage.
-            fsync_dir(staging.parent)
-            fsync_dir(final.parent)
-            os.chmod(final, 0o555)
-            fsync_dir(final)
-            return
-        raise FileExistsError(final)
-    if not staging.is_dir():
-        raise FileNotFoundError(staging)
-    if not (staging / "COMMITTED").is_file():
-        raise ValueError("refusing to publish an envelope without COMMITTED")
-    final.parent.mkdir(parents=True, exist_ok=True)
-    if staging.stat().st_dev != final.parent.stat().st_dev:
-        raise CrossDeviceCommitError(errno.EXDEV, f"cross-device commit: {staging} -> {final}")
-    fsync_tree(staging)
+    source_parts = staging.relative_to(root).parent.parts
+    target_parts = final.relative_to(root).parent.parts
+    if ".." in source_parts + target_parts:
+        raise ValueError("publication path escapes its trusted root")
+    with (
+        directory(root) as anchor,
+        descendant(anchor, source_parts) as source,
+        descendant(anchor, target_parts, create=True) as target,
+    ):
+        _publish(source, staging.name, target, final.name)
+
+
+def _publish(source: int, staged_name: str, target: int, final_name: str) -> None:
     try:
-        with directory(staging.parent) as source, directory(final.parent) as target:
-            rename_exclusive(source, staging.name, target, final.name)
-            os.fsync(source)
-    except OSError as exc:
-        if exc.errno == errno.EXDEV:
-            raise CrossDeviceCommitError(exc.errno, str(exc)) from exc
-        raise
-    fsync_dir(final.parent)
-    # Sealing before the rename would make the root un-renameable by a
-    # non-root user - rename(2) needs write access on the directory being
-    # moved to update its own `..` entry - so the seal happens only once
-    # publication is already durable.
-    os.chmod(final, 0o555)
-    fsync_dir(final)
+        os.stat(final_name, dir_fd=target, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        try:
+            os.stat(staged_name, dir_fd=source, follow_symlinks=False)
+        except FileNotFoundError:
+            with descendant(target, (final_name,)) as published:
+                os.stat("COMMITTED", dir_fd=published, follow_symlinks=False)
+                _finish_publication(source, target, published)
+            return
+        raise FileExistsError(final_name)
+    with descendant(source, (staged_name,)) as staged:
+        try:
+            os.stat("COMMITTED", dir_fd=staged, follow_symlinks=False)
+        except FileNotFoundError:
+            raise ValueError("refusing to publish an envelope without COMMITTED") from None
+        if os.fstat(staged).st_dev != os.fstat(target).st_dev:
+            raise CrossDeviceCommitError(errno.EXDEV, "cross-device commit")
+        flush_tree(staged)
+        try:
+            rename_exclusive(source, staged_name, target, final_name)
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:
+                raise CrossDeviceCommitError(exc.errno, str(exc)) from exc
+            raise
+        _finish_publication(source, target, staged)
+
+
+def _finish_publication(source: int, target: int, published: int) -> None:
+    os.fsync(source)
+    os.fsync(target)
+    os.fchmod(published, 0o555)
+    os.fsync(published)

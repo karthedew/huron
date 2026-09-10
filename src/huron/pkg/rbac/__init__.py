@@ -452,32 +452,18 @@ class RoleBindingAuthorizer:
         """
         vocabulary = {item.code: item for item in self.classifications}
         current_time = now or datetime.now(UTC)
-        visible: list[UUID] = []
-        for project in projects:
-            if (
-                decide(
-                    bindings,
-                    principal,
-                    "dataset.discover",
-                    project.scope,
-                    now=current_time,
-                )
-                is not Decision.ALLOW
-            ):
-                continue
-            classification = vocabulary.get(project.classification)
-            if classification is None:
-                continue
-            if classification.discoverable or _has_clearance(
+        return [
+            project.project_id
+            for project in projects
+            if _classified_scope_visible(
                 bindings,
                 principal,
                 project.scope,
-                classification.order,
+                project.classification,
                 vocabulary,
                 current_time,
-            ):
-                visible.append(project.project_id)
-        return visible
+            )
+        ]
 
     def visibility(
         self,
@@ -770,34 +756,37 @@ def _dataset_scope(dataset: DatasetVisibility, project: ProjectVisibility) -> Sc
     )
 
 
-def _dataset_visible(
+def _classified_scope_visible(
     bindings: tuple[Binding, ...] | list[Binding],
     principal: Principal,
-    dataset: DatasetVisibility,
-    project: ProjectVisibility,
+    scope: Scope,
+    classification_code: str,
     vocabulary: dict[str, Classification],
     now: datetime,
 ) -> bool:
-    """Return whether ``dataset`` is discoverable, given the project that owns it.
+    """Apply discovery and classification clearance at the requested resource scope.
+
+    Project and dataset discovery use the same classification policy, but the
+    scope must remain the resource being discovered: dataset-scoped discovery
+    or clearance never grants access to its project or sibling datasets.
 
     Args:
         bindings: Every binding loaded for the principal's identifiers.
         principal: The actor asking.
-        dataset: The dataset being evaluated.
-        project: The project that owns ``dataset``.
+        scope: The project or dataset being evaluated, including its ancestry.
+        classification_code: The owning project's classification code.
         vocabulary: The classification vocabulary keyed by code.
         now: The instant expiries are judged at.
 
     Returns:
         True when a covering ALLOW binding grants ``dataset.discover`` at
-        the dataset's scope and the project's classification is in the
+        this scope and the project's classification is in the
         vocabulary and either discoverable or the principal is cleared
         for it.
     """
-    scope = _dataset_scope(dataset, project)
     if decide(bindings, principal, "dataset.discover", scope, now=now) is not Decision.ALLOW:
         return False
-    classification = vocabulary.get(project.classification)
+    classification = vocabulary.get(classification_code)
     if classification is None:
         return False
     return classification.discoverable or _has_clearance(
@@ -813,7 +802,7 @@ def _dataset_ids(
     vocabulary: dict[str, Classification],
     now: datetime,
 ) -> frozenset[UUID]:
-    """Return the id of every dataset in ``datasets`` that :func:`_dataset_visible` admits.
+    """Return dataset ids admitted by discovery and their project's classification.
 
     A dataset whose ``project_id`` names no entry in ``projects`` is
     skipped rather than evaluated, so an unseeded project never leaks a
@@ -837,7 +826,14 @@ def _dataset_ids(
         dataset.dataset_id
         for dataset in datasets
         if (project := projects_by_id.get(dataset.project_id)) is not None
-        and _dataset_visible(bindings, principal, dataset, project, vocabulary, now)
+        and _classified_scope_visible(
+            bindings,
+            principal,
+            _dataset_scope(dataset, project),
+            project.classification,
+            vocabulary,
+            now,
+        )
     )
 
 

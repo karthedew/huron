@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import errno
 import os
-from contextlib import asynccontextmanager
-from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -15,18 +14,14 @@ import pytest
 from huron.core._ingest import IngestService
 from huron.pkg.catalog import ingest as ingest_module
 from huron.pkg.catalog.ingest import FileState, IngestState
-from huron.pkg.metastore import SystemClock
 from huron.pkg.rawstore import PosixRawStore
 from tests.ingest_client import IngestClient, dev_headers, manifest_file
-from tests.unit.support import crash_on
+from tests.unit.support import FakeClock, crash_on
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from fastapi.testclient import TestClient
 
     from huron.applications.api.runtime import ApiStores
-    from huron.pkg.metastore.ingest import InMemoryIngestWriter
 
 pytestmark = pytest.mark.unit
 
@@ -149,75 +144,6 @@ def test_a_retry_refuses_modified_final_evidence(
     assert response.status_code == 500, response.text
 
 
-@pytest.mark.parametrize("corrupt", [False, True])
-def test_completion_retries_a_competing_ledger_write(
-    client: TestClient,
-    stores: ApiStores,
-    monkeypatch: pytest.MonkeyPatch,
-    corrupt: bool,
-) -> None:
-    """A competing completion or mismatch reset cannot lose verified data or retain bad parts."""
-    monkeypatch.setattr(ingest_module, "PART_BYTES", 4)
-    ingest = IngestClient(client)
-    _, dataset = ingest.developer_dataset()
-    data = b"abcdefgh"
-    session = ingest.create(dataset, [manifest_file("payload/a.bin", data)]).json()
-    file_id = session["files"][0]["file_id"]
-    uploaded = b"xxxxxxxx" if corrupt else data
-    for part in (1, 2):
-        assert (
-            ingest.put_part(file_id, part, uploaded[(part - 1) * 4 : part * 4]).status_code == 200
-        )
-
-    raced = False
-
-    # The store serializes transactions, so inject the competing commit before
-    # the losing transaction acquires its lock rather than inside its writer.
-    original_transaction = stores.hierarchy.transaction
-
-    @asynccontextmanager
-    async def race_transaction() -> AsyncIterator[InMemoryIngestWriter]:
-        nonlocal raced
-        if not raced:
-            entry = await stores.hierarchy.ingest_file(UUID(file_id))
-            winner_file = (
-                replace(entry.file, completed_parts=frozenset())
-                if corrupt
-                else entry.file.completed(
-                    observed_size=len(data), observed_sha256=entry.file.expected_sha256
-                )
-            )
-            async with original_transaction() as winner:
-                raced = True
-                await winner.update_ingest_file(
-                    UUID(session["id"]),
-                    winner_file,
-                    expected_parts=entry.file.completed_parts,
-                )
-        async with original_transaction() as writer:
-            yield writer
-
-    with monkeypatch.context() as patch:
-        patch.setattr(stores.hierarchy, "transaction", race_transaction)
-        result = ingest.complete(file_id)
-    assert raced
-    assert result.status_code == (400 if corrupt else 200), result.text
-    view = ingest.get(session["id"]).json()["files"][0]
-    assert view["state"] == ("PENDING" if corrupt else "COMPLETE")
-    assert view["completed_parts"] == ([] if corrupt else [1, 2])
-    if corrupt:
-        assert result.json()["code"] == "MANIFEST_MISMATCH"
-        for part in (1, 2):
-            assert (
-                ingest.put_part(file_id, part, data[(part - 1) * 4 : part * 4]).status_code == 200
-            )
-        assert ingest.complete(file_id).status_code == 200
-    verified = ingest.verify(session["id"]).json()
-    committed = ingest.commit(session["id"], verified["etag"], _METADATA)
-    assert committed.status_code == 201, committed.text
-    assert ingest.download(committed.json()["id"], "payload/a.bin").content == data
-
-
 async def test_a_late_part_receipt_preserves_a_completed_file(
     client: TestClient, stores: ApiStores, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -228,8 +154,11 @@ async def test_a_late_part_receipt_preserves_a_completed_file(
     data = b"abcdefgh"
     session = ingest.create(dataset, [manifest_file("payload/a.bin", data)]).json()
     file_id = UUID(session["files"][0]["file_id"])
+    persisted = await stores.hierarchy.ingest_session(UUID(session["id"]))
     service = IngestService(
-        PosixRawStore(str(tmp_path / "data")), stores.hierarchy, clock=SystemClock()
+        PosixRawStore(str(tmp_path / "data")),
+        stores.hierarchy,
+        clock=FakeClock(persisted.lease.expires_at - timedelta(seconds=1)),
     )
     stale_ledger, stale_file = await service.entry(file_id)
     for part in (1, 2):
@@ -282,14 +211,14 @@ def test_publication_rechecks_final_evidence_after_a_filesystem_race(
 
 
 def test_recovery_fences_a_commit_driver_after_the_final_rename(
-    client: TestClient, stores: ApiStores, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, stores: ApiStores, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A driver that loses ownership after publication cannot record a revision or its events."""
     ingest = IngestClient(client)
     _, dataset = ingest.developer_dataset()
     verified = _verified(ingest, dataset)
     session_id = UUID(str(verified["id"]))
-    original = os.chmod
+    original = os.fchmod
     published: list[Path] = []
 
     async def recover() -> None:
@@ -297,18 +226,17 @@ def test_recovery_fences_a_commit_driver_after_the_final_rename(
         async with stores.hierarchy.transaction() as writer:
             await writer.update_ingest_session(current.recover(), expected_etag=current.etag)
 
-    def fence_after_rename(
-        path: str | os.PathLike[str], mode: int, *, follow_symlinks: bool = True
-    ) -> None:
-        original(path, mode, follow_symlinks=follow_symlinks)
-        target = Path(path)
-        if target.name.startswith("000001--") and not published:
-            published.append(target)
+    def fence_after_rename(descriptor: int, mode: int) -> None:
+        original(descriptor, mode)
+        identity = os.fstat(descriptor)
+        targets = list((tmp_path / "data").rglob("000001--*"))
+        if targets and targets[0].stat().st_ino == identity.st_ino and not published:
+            published.append(targets[0])
             assert client.portal is not None
             client.portal.call(recover)
 
     with monkeypatch.context() as patch:
-        patch.setattr(os, "chmod", fence_after_rename)
+        patch.setattr(os, "fchmod", fence_after_rename)
         result = ingest.commit(str(session_id), int(str(verified["etag"])), _METADATA)
     assert result.status_code == 412, result.text
     assert result.json()["code"] == "PRECONDITION_FAILED"

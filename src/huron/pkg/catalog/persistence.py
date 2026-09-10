@@ -59,10 +59,22 @@ class LedgerEntry:
 class Replay:
     """What one idempotent write produced, kept so a later replay of its claim can return it.
 
+    ``ingest_commit`` binds an unfinished publication to its ingest session, not
+    to a readable revision. It remains reserved beyond the ordinary retry TTL
+    until the revision transaction replaces it with a ``revision`` receipt.
+
     Attributes:
         kind: Which hierarchy level, or ingest step, the claimed write created.
         resource_id: The id of the resource that write created.
     """
 
-    kind: Literal["organization", "project", "dataset", "release", "ingest_session", "revision"]
+    kind: Literal[
+        "organization",
+        "project",
+        "dataset",
+        "release",
+        "ingest_session",
+        "ingest_commit",
+        "revision",
+    ]
     resource_id: UUID

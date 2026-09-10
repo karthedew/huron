@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from ._catalog import HierarchyRepository
 
 
-from huron.pkg.catalog.failures import Forbidden
 from huron.pkg.catalog.layers import LAYER_ORDER, LAYER_SPECS
 from huron.pkg.rbac import Decision, decide
 
@@ -51,6 +50,8 @@ class CatalogService:
     ) -> Organization:
         """Authorize and execute create organization.
 
+        A claim belonging to another actor raises ``Forbidden``.
+
         Args:
             slug: Stable URL and storage slug.
             title: Descriptive title.
@@ -59,13 +60,9 @@ class CatalogService:
 
         Returns:
             The operation result after authorization.
-
-        Raises:
-            Forbidden: If the request identity belongs to another actor.
         """
         await self._access.require("organization.create", ScopeType.SYSTEM)
-        if claim.principal != self._access.actor.subject:
-            raise Forbidden("idempotency claim must belong to the authenticated actor")
+        self._access.require_claim(claim)
         return await self._operations.create_organization(
             slug=slug, title=title, description=description, claim=claim
         )
@@ -113,6 +110,8 @@ class CatalogService:
     ) -> Project:
         """Authorize and execute create project.
 
+        A claim belonging to another actor raises ``Forbidden``.
+
         Args:
             organization_id: Authoritative organization identifier.
             slug: Stable URL and storage slug.
@@ -123,13 +122,9 @@ class CatalogService:
 
         Returns:
             The operation result after authorization.
-
-        Raises:
-            Forbidden: If the request identity belongs to another actor.
         """
         await self._access.require("project.create", ScopeType.ORGANIZATION, organization_id)
-        if claim.principal != self._access.actor.subject:
-            raise Forbidden("idempotency claim must belong to the authenticated actor")
+        self._access.require_claim(claim)
         return await self._operations.create_project(
             organization_id,
             await self._access.visibility(),
@@ -185,6 +180,8 @@ class CatalogService:
     ) -> Dataset:
         """Authorize and execute create dataset.
 
+        A claim belonging to another actor raises ``Forbidden``.
+
         Args:
             project_id: Authoritative project identifier.
             slug: Stable URL and storage slug.
@@ -197,13 +194,9 @@ class CatalogService:
 
         Returns:
             The operation result after authorization.
-
-        Raises:
-            Forbidden: If the request identity belongs to another actor.
         """
         await self._access.require("dataset.create", ScopeType.PROJECT, project_id)
-        if claim.principal != self._access.actor.subject:
-            raise Forbidden("idempotency claim must belong to the authenticated actor")
+        self._access.require_claim(claim)
         return await self._operations.create_dataset(
             project_id,
             await self._access.visibility(),
@@ -259,6 +252,8 @@ class CatalogService:
     ) -> Release:
         """Authorize and execute create release.
 
+        A claim belonging to another actor raises ``Forbidden``.
+
         Args:
             dataset_id: Authoritative dataset identifier.
             tag: Immutable release tag.
@@ -269,13 +264,9 @@ class CatalogService:
 
         Returns:
             The operation result after authorization.
-
-        Raises:
-            Forbidden: If the request identity belongs to another actor.
         """
         await self._access.require("release.create", ScopeType.DATASET, dataset_id)
-        if claim.principal != self._access.actor.subject:
-            raise Forbidden("idempotency claim must belong to the authenticated actor")
+        self._access.require_claim(claim)
         created_by = self._access.actor.subject
         return await self._operations.create_release(
             dataset_id,

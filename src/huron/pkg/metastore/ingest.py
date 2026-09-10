@@ -333,10 +333,12 @@ class InMemoryIngestWriter:
         Raises:
             PreconditionFailed: If the session is missing, fenced or changed.
         """
+        intent.require_session(session)
         key = session.lease.ingest_id
         current = self._store._sessions.get(key)
         existing = self._store._intents.get(key)
         if current is not None and existing is not None:
+            existing.require_session(current)
             existing.require_same_command(intent)
             if current.state in {IngestState.COMMITTING, IngestState.COMMITTED}:
                 return current, existing
@@ -377,7 +379,7 @@ class InMemoryIngestWriter:
                 or it is already terminal.
         """
         current = self._store._sessions.get(session.lease.ingest_id)
-        if current is None or current.state in TERMINAL_STATES:
+        if current is None or current.state in TERMINAL_STATES | {IngestState.RECOVERING}:
             raise IngestSessionExpired(f"ingest session {session.lease.ingest_id} is not renewable")
         renewed_expiry = max(current.lease.expires_at, session.lease.expires_at)
         self._buffer.sessions[session.lease.ingest_id] = replace(
@@ -430,6 +432,7 @@ class InMemoryIngestWriter:
             current is not None
             and current.ingest_id == ingest_id
             and current.file.state is FileState.PENDING
+            and self._store._sessions[ingest_id].state in _OPEN_INGEST_STATES
             and current.file.completed_parts == expected_parts
         )
         if not fenced:
@@ -686,6 +689,7 @@ class PostgresIngestWriter:
         Raises:
             PreconditionFailed: If the session is missing, fenced or changed.
         """
+        intent.require_session(session)
         key = session.lease.ingest_id
         row = await self._connection.fetchrow(
             f"SELECT {_INGEST_SESSION_COLUMNS} FROM ingest_sessions WHERE id = $1 FOR UPDATE", key
@@ -704,6 +708,7 @@ class PostgresIngestWriter:
             )
             frozen.require_same_command(intent)
             current = rows.ingest_session(row)
+            frozen.require_session(current)
             if current.state in {IngestState.COMMITTING, IngestState.COMMITTED}:
                 return current, frozen
         if row is None or row["state"] != "VERIFYING" or row["etag"] != expected_etag:
@@ -762,7 +767,7 @@ class PostgresIngestWriter:
         tag = await self._connection.execute(
             f"""
             UPDATE ingest_sessions SET expires_at = GREATEST(expires_at, $2), updated_at = $3
-            WHERE id = $1 AND state NOT IN ({_TERMINAL_STATE_NAMES})
+            WHERE id = $1 AND state NOT IN ({_TERMINAL_STATE_NAMES}) AND state <> 'RECOVERING'
             """,
             session.lease.ingest_id,
             session.lease.expires_at,
@@ -820,6 +825,8 @@ class PostgresIngestWriter:
             UPDATE ingest_files SET state = $3, completed_parts = $4::jsonb
             WHERE file_id = $1 AND ingest_id = $2 AND state = 'PENDING'
               AND completed_parts = $5::jsonb
+              AND EXISTS (SELECT 1 FROM ingest_sessions
+                          WHERE id = $2 AND state IN ('PREPARING', 'UPLOADING', 'VERIFYING'))
             """,
             file.file_id,
             ingest_id,

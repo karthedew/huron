@@ -30,10 +30,11 @@ from huron.pkg.catalog.documents import (
     manifest_bytes,
     revision_from_storage,
 )
-from huron.pkg.catalog.errors import ContractMismatch, PathRuleViolation
+from huron.pkg.catalog.errors import ContractMismatch, PathRuleViolation, PreconditionFailed
 from huron.pkg.catalog.ingest import IngestLease, IngestSession, IngestState
 from huron.pkg.catalog.manifest import Manifest, ManifestEntry, canonical_bytes, validate_manifest
 from huron.pkg.catalog.models import EntityRef, RevisionRecord
+from huron.pkg.metastore import InMemoryHierarchyStore
 
 pytestmark = pytest.mark.unit
 
@@ -356,7 +357,19 @@ def test_commit_intent_refuses_disagreement_between_valid_documents(
 
 def test_commit_intent_refuses_a_different_retry_command(commit_intent: CommitIntent) -> None:
     """A distinct canonical client command conflicts without changing frozen evidence."""
-    changed = replace(commit_intent, command=canonical_bytes(_submission(title="Different")))
+    metadata = MetadataDocument.decode(commit_intent.metadata).as_dict()
+    metadata["title"] = "Different"
+    encoded = canonical_bytes(metadata)
+    marker = replace(
+        CommitRecord.decode(commit_intent.committed),
+        metadata_sha256=hashlib.sha256(encoded).hexdigest(),
+    )
+    changed = replace(
+        commit_intent,
+        command=canonical_bytes(_submission(title="Different")),
+        metadata=encoded,
+        committed=marker.canonical,
+    )
     with pytest.raises(ContractMismatch):
         commit_intent.require_same_command(changed)
 
@@ -462,3 +475,62 @@ def test_revision_index_round_trips_and_the_same_set_gives_identical_bytes() -> 
     schemaless = {"schema": INDEX_SCHEMA, "dataset_id": str(dataset_id)}
     with pytest.raises(ValueError):
         RevisionIndex.decode(canonical_bytes(schemaless))
+
+
+@pytest.mark.parametrize("field", ["dataset_id", "revision_number"])
+def test_commit_intent_rejects_metadata_identity_disagreement(
+    commit_intent: CommitIntent, field: str
+) -> None:
+    """A marker cannot change the dataset or revision number declared in metadata."""
+    marker = CommitRecord.decode(commit_intent.committed)
+    changed = replace(
+        marker, **{field: uuid4() if field == "dataset_id" else marker.revision_number + 1}
+    )
+    with pytest.raises(ValueError, match="documents disagree"):
+        replace(commit_intent, committed=changed.canonical)
+
+
+def test_commit_intent_rejects_a_command_that_does_not_describe_its_metadata(
+    commit_intent: CommitIntent,
+) -> None:
+    """Frozen metadata must preserve exactly the validated submitted command."""
+    with pytest.raises(ValueError, match="documents disagree"):
+        replace(commit_intent, command=canonical_bytes(_submission(title="Different")))
+
+
+def test_commit_intent_is_bound_to_its_reserved_session(commit_intent: CommitIntent) -> None:
+    """Revision, dataset, number, manifest and actor must all match the reservation."""
+    marker = CommitRecord.decode(commit_intent.committed)
+    lease = IngestLease(uuid4(), marker.dataset_id, marker.revision_id, marker.revision_number, NOW)
+    session = IngestSession(
+        lease, IngestState.COMMITTING, marker.manifest_sha256, marker.committed_by
+    )
+    commit_intent.require_session(session)
+    for changed_lease in (
+        replace(lease, revision_id=uuid4()),
+        replace(lease, dataset_id=uuid4()),
+        replace(lease, revision_number=lease.revision_number + 1),
+    ):
+        with pytest.raises(ValueError, match="does not belong"):
+            commit_intent.require_session(replace(session, lease=changed_lease))
+    for changed in (
+        replace(session, manifest_sha256="0" * 64),
+        replace(session, created_by="other"),
+    ):
+        with pytest.raises(ValueError, match="does not belong"):
+            commit_intent.require_session(changed)
+
+
+async def test_freezing_an_unknown_session_does_not_create_a_publication(
+    commit_intent: CommitIntent,
+) -> None:
+    """Frozen evidence cannot manufacture a session that was never reserved."""
+    marker = CommitRecord.decode(commit_intent.committed)
+    lease = IngestLease(uuid4(), marker.dataset_id, marker.revision_id, marker.revision_number, NOW)
+    session = IngestSession(
+        lease, IngestState.COMMITTING, marker.manifest_sha256, marker.committed_by
+    )
+    store = InMemoryHierarchyStore()
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.freeze_commit(session, commit_intent, expected_etag=session.etag)

@@ -596,8 +596,9 @@ async def test_patch_dataset_naming_the_current_values_is_a_no_op(tmp_path: Path
     assert after == before
 
 
+@pytest.mark.parametrize("kind", ("organization", "project", "dataset"))
 async def test_a_failing_document_write_during_patch_leaves_the_stored_record_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     """A patch whose document write raises leaves the row at its pre-patch state.
 
@@ -606,15 +607,21 @@ async def test_a_failing_document_write_during_patch_leaves_the_stored_record_un
     document landing beside it.
     """
     repository = _repository(tmp_path)
-    _, _, dataset_id = await _hierarchy(repository)
+    organization_id, project_id, dataset_id = await _hierarchy(repository)
+    target_id, read, patch = {
+        "organization": (organization_id, repository.organization, repository.patch_organization),
+        "project": (project_id, repository.project, repository.patch_project),
+        "dataset": (dataset_id, repository.dataset, repository.patch_dataset),
+    }[kind]
+    original = await read(target_id, Visibility.ALL)
 
     def _raising_write_generation(*_args: object, **_kwargs: object) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(repository, "_write_generation", _raising_write_generation)
     with pytest.raises(OSError, match="disk full"):
-        await repository.patch_dataset(
-            dataset_id,
+        await patch(
+            target_id,
             Visibility.ALL,
             expected_version=1,
             slug=None,
@@ -623,9 +630,27 @@ async def test_a_failing_document_write_during_patch_leaves_the_stored_record_un
         )
 
     monkeypatch.undo()
-    current = await repository.dataset(dataset_id, Visibility.ALL)
-    assert current.title == "Run 1"
-    assert current.version == 1
+    assert await read(target_id, Visibility.ALL) == original
+
+
+async def test_undiscoverable_patch_targets_hide_slug_and_version_errors(tmp_path: Path) -> None:
+    """Every hierarchy patch checks discovery before reporting identity or version details."""
+    repository = _repository(tmp_path)
+    organization_id, project_id, dataset_id = await _hierarchy(repository)
+    for target_id, patch in (
+        (organization_id, repository.patch_organization),
+        (project_id, repository.patch_project),
+        (dataset_id, repository.patch_dataset),
+    ):
+        with pytest.raises(ResourceNotFound):
+            await patch(
+                target_id,
+                Visibility(),
+                expected_version=99,
+                slug="renamed",
+                title="Invisible",
+                description=None,
+            )
 
 
 # -- create_release -------------------------------------------------------

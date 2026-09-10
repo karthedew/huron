@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import stat
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -15,7 +14,12 @@ if TYPE_CHECKING:
 
 
 def verify_envelope(
-    envelope: Path, files: Sequence[tuple[str, int, str]], documents: Mapping[str, bytes]
+    envelope: Path,
+    files: Sequence[tuple[str, int, str]],
+    documents: Mapping[str, bytes],
+    *,
+    sealed: bool = False,
+    anchor: Path | None = None,
 ) -> None:
     """Validate exact inventory, independent sealed files and frozen document bytes.
 
@@ -25,6 +29,8 @@ def verify_envelope(
         envelope: Existing envelope to inspect without mutation.
         files: Manifest paths, complete sizes and content digests.
         documents: Exact immutable control document bytes.
+        sealed: Require sealed descendant directories; the root may await its final seal.
+        anchor: Trusted storage root for component-by-component traversal.
     """
     expected = {
         name: (len(data), hashlib.sha256(data).hexdigest()) for name, data in documents.items()
@@ -35,12 +41,18 @@ def verify_envelope(
         directories.update(
             str(parent) for parent in PurePosixPath(path).parents if str(parent) != "."
         )
-    with directory(envelope) as root:
-        _verify_tree(root, "", expected, directories)
+    with directory(envelope, anchor=anchor) as root:
+        _verify_directory(root, ".", sealed=False)
+        _verify_tree(root, "", expected, directories, sealed=sealed)
 
 
 def _verify_tree(
-    root: int, prefix: str, expected: Mapping[str, tuple[int, str]], directories: set[str]
+    root: int,
+    prefix: str,
+    expected: Mapping[str, tuple[int, str]],
+    directories: set[str],
+    *,
+    sealed: bool,
 ) -> None:
     parent = PurePosixPath(prefix)
     wanted = {
@@ -54,9 +66,13 @@ def _verify_tree(
         path = str(parent / name)
         if path in directories:
             with descendant(root, (name,)) as child:
-                info = os.fstat(child)
-                if info.st_uid != os.geteuid() or not stat.S_ISDIR(info.st_mode):
-                    raise ValueError(f"envelope directory ownership disagrees: {path}")
-                _verify_tree(child, path, expected, directories)
+                _verify_directory(child, path, sealed=sealed)
+                _verify_tree(child, path, expected, directories, sealed=sealed)
         elif observe(root, name) != expected[path]:
             raise ValueError(f"envelope content disagrees: {path}")
+
+
+def _verify_directory(descriptor: int, path: str, *, sealed: bool) -> None:
+    info = os.fstat(descriptor)
+    if info.st_uid != os.geteuid() or (sealed and info.st_mode & 0o222):
+        raise ValueError(f"envelope directory ownership or seal disagrees: {path}")

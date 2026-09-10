@@ -135,7 +135,7 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
   .staging/                                      sweeper's only territory; never scanned by readers
     {ingest_id hex}/                             one session; only BeginIngest creates this root
       upload/                                   P3: request-writable input files, never published
-      completion/{attempt_id}/                  P3: private verified-copy candidates
+      completion/{candidate_id}                 private verified-copy candidate files
       envelope/                                 P3: documents + verified payload; this alone is renamed
     recovery/{ingest_id}/{attempt_id}/           P3: original and independent recovery candidate
     trash/{claim_id}/                           P3: claimed resumable cleanup
@@ -163,7 +163,7 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
         bronze/  silver/  gold/                  Icechunk repos on the object store, same spine (§2 of each)
 </pre>
 
-<p class="note"><strong>Layout status.</strong> The upload/completion/envelope split and protocol/recovery/trash directories are the agreed P3 target, not shipped P2 behavior. P2 writes directly into the session envelope. See <a href="#p3-integrity">P3 integrity contracts</a>.</p>
+<p class="note"><strong>Layout status.</strong> The upload/completion/envelope split is implemented and under validation. Protocol/recovery/trash directories and their maintenance workflows remain planned. Historically, P2 wrote directly into the session envelope; that release did not provide the new separation. See <a href="#p3-integrity">P3 integrity contracts</a>.</p>
 
 <p class="note"><span class="k">One spine, four layers.</span> The
 <code>organization/…/project/…/dataset/…</code> hierarchy is identical for every layer, and the
@@ -283,30 +283,43 @@ files, shared hardlinks, or cross-revision pointers. A file omitted from this su
 from this revision. Every file's bytes, including unchanged content, must be received and verified.</li>
 <li><strong>Session TTL</strong> 2 h, refreshed by heartbeat and by any successful part upload; a
 crashed pre-commit client releases the dataset lock within the TTL plus one sweep interval; a project admin
-can abort eligible pre-commit states (audited). COMMITTING and planned RECOVERING retain their claims until safe recovery. Interrupted transfers resume via <code>completed_parts</code>.</li>
+can abort eligible pre-commit states (audited). COMMITTING and RECOVERING retain their claims until safe recovery. The RECOVERING domain state and schema constraints are implemented; recovery orchestration remains planned. Interrupted transfers resume via <code>completed_parts</code>.</li>
 </ul>
 
 <h2 id="commit">5. The commit protocol</h2>
 
-<p><strong>P3 target (implementation pending).</strong> Part requests write outside the
+<p><strong>Verified completion implementation is under validation.</strong> Part requests write outside the
 publishable envelope. Completion copies to a fresh private inode, hashes the written bytes,
 fsyncs and closes it, then installs it without replacement into payload. An overlapping
 completion can only install the same verified content; it cannot delete a winner. No subsequent
-staging write may recreate a missing session root. P2's hash-only completion does not yet supply
-this protection.</p>
+staging write may recreate a missing session root. Installation uses native exclusive rename
+(<code>renameat2(RENAME_NOREPLACE)</code> on Linux and
+<code>renameatx_np(RENAME_EXCL)</code> on Darwin), refusing unsupported filesystems.
+PostgreSQL stores the frozen canonical command and documents as immutable <code>bytea</code>,
+with generated SHA-256 digests, actor and commit instant. Cutover, writer exclusion and startup
+gates remain prerequisites: this implementation is not independently deployable.</p>
+
+<p>Verified completion defaults to one copy per API process with a 1 GiB free-space reserve.
+<code>HURON_COMPLETION_MAX_CONCURRENT</code> and <code>HURON_COMPLETION_RESERVE_BYTES</code>
+configure these limits. Admission counts each active copy's expected bytes until installation and
+cleanup finish; installed-file replay requires no new reservation. This does not coordinate capacity
+across processes or exclude other writers. Deployment sizing still accounts for uploads, retained
+descriptors and every replica.</p>
 
 <pre>
 CommitIngest(ingest_id, manifest_sha256, If-Match, Idempotency-Key)
 
- 1. Idempotency replay check.                                      [PG]
- 2. Fence session/etag; freeze commit metadata, instant and digests
-    once. Retries reuse the exact frozen document set.              [PG]
+  1. Arbitrate the idempotency key before any publication.            [PG]
+  2. Fence session/etag; freeze commit metadata, instant and digests
+     once, atomically binding the key to this unfinished commit.
+     The pending binding cannot expire before the revision receipt;
+     retries reuse and validate the exact frozen document set.       [PG]
  3. Assert every declared file durably installed and verified.       [PG + NFS]
  4. Install complete closed JCS manifest, metadata and COMMITTED v2
     into .staging/{ingest_id}/envelope/, never replacing documents.  [NFS]
  5. Seal files 0444, child directories 0555; no candidate files.      [NFS]
  6. fsync envelope; rename(envelope, final revision path);
-    fsync target parent; seal final root 0555 and fsync it.          [NFS]
+    fsync both rename parents; seal final root 0555 and fsync it.          [NFS]
  7. ONE transaction: revision, session → COMMITTED, audit,
     outbox and idempotency receipt.                                 [PG]
  8. Best-effort INDEX regeneration/update.                           [NFS]
@@ -328,7 +341,7 @@ published before the rename is durable.</p>
 <p class="note"><span class="k">Why keep a marker when rename is atomic?</span> Because the
 envelope is complete by construction (invariant C), the <code>COMMITTED</code> file is not needed
 for visibility. It exists as the reconciler's catalog-reconstruction record — digests, counts,
-committer, timestamp in one small JCS document: <code>urn:huron:committed:1</code> for legacy data and planned <code>urn:huron:committed:2</code> for verified materialization — as the
+committer, timestamp in one small JCS document: <code>urn:huron:committed:1</code> for legacy data and <code>urn:huron:committed:2</code> for implemented verified materialization (under validation; deployment still requires M1b/M1c) — as the
 object site replication tools can key on, and as defense in depth if a partial copy ever lands
 under <code>revisions/</code> by operator error.</p>
 
@@ -426,7 +439,7 @@ governance workflows. Storage-only recovery never resumes deletion without resto
 
 <h2 id="sweeper">9. Sweeper and reconciler</h2>
 
-<p><strong>P3 planned.</strong> Full design and implementation slices are recorded in
+<p><strong>Sweeper and reconciler workflows remain planned.</strong> Full design and implementation slices are recorded in
 <a href="../P3_DESIGN.md">P3_DESIGN.md</a> and <a href="../P3_IMPLEMENTATION_PLAN.md">P3_IMPLEMENTATION_PLAN.md</a>.</p>
 <ul>
 <li><strong>Sweeper</strong> every 15 minutes: terminal session trees after a 15-minute grace,

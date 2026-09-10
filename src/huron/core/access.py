@@ -18,10 +18,13 @@ from huron.pkg.rbac import (
 from huron.pkg.rbac import Principal as RbacPrincipal
 from huron.pkg.rbac.roles import PRINCIPAL_KIND_SERVICE_ACCOUNT, service_account_bindings
 
+from .scopes import resource_scope
+
 if TYPE_CHECKING:
     from uuid import UUID
 
     from huron.pkg.auth import Principal
+    from huron.pkg.catalog.persistence import IdempotencyClaim
     from huron.pkg.catalog.records import Dataset
     from huron.pkg.rbac import RoleBindingAuthorizer
 
@@ -161,6 +164,44 @@ async def check(
         )
 
 
+async def visibility_for_principal(
+    cache: BindingCacheMap,
+    repository: HierarchyRepository,
+    principal: Principal,
+    authorizer: RoleBindingAuthorizer,
+) -> Visibility:
+    """Resolve discovery rights against authoritative bindings and catalog ancestry.
+
+    The caller owns the binding cache lifetime: HTTP dependencies may share it
+    within one request, while reusable operations supply a fresh cache. Dataset
+    ancestry is loaded only for dataset-scoped bindings.
+
+    Args:
+        cache: Bindings already loaded in this authorization context.
+        repository: Source of bindings, classifications and dataset parents.
+        principal: The authenticated caller.
+        authorizer: The classification-aware discovery policy.
+
+    Returns:
+        The resources this caller may discover.
+    """
+    actor = as_rbac_principal(principal)
+    bindings = await bindings_for_principal(cache, repository, actor)
+    dataset_ids = frozenset(
+        binding.scope_id
+        for binding in bindings
+        if binding.scope_type is ScopeType.DATASET and binding.scope_id is not None
+    )
+    projects = await repository.project_visibilities()
+    parents = await repository.dataset_parents(dataset_ids) if dataset_ids else {}
+    return authorizer.visibility(
+        actor,
+        bindings,
+        projects,
+        [DatasetVisibility(dataset_id=k, project_id=v) for k, v in parents.items()],
+    )
+
+
 class AccessPolicy:
     """Resolve one actor's permissions without relying on a transport dependency.
 
@@ -181,27 +222,28 @@ class AccessPolicy:
         self._repository = repository
         self._authorizer = authorizer
 
+    def require_claim(self, claim: IdempotencyClaim) -> None:
+        """Require a retry identity owned by this authenticated actor.
+
+        Callers separately enforce the operation's capability and target access
+        before validating its claim, preserving their authorization ordering.
+
+        Args:
+            claim: The retry identity supplied for the authorized operation.
+
+        Raises:
+            Forbidden: If the claim belongs to another actor.
+        """
+        if claim.principal != self.actor.subject:
+            raise Forbidden("idempotency claim must belong to the authenticated actor")
+
     async def visibility(self) -> Visibility:
         """Compute current discovery rights from authoritative bindings.
 
         Returns:
             The resources this actor may discover.
         """
-        actor = as_rbac_principal(self.actor)
-        bindings = await bindings_for_principal({}, self._repository, actor)
-        dataset_ids = frozenset(
-            binding.scope_id
-            for binding in bindings
-            if binding.scope_type is ScopeType.DATASET and binding.scope_id is not None
-        )
-        projects = await self._repository.project_visibilities()
-        parents = await self._repository.dataset_parents(dataset_ids) if dataset_ids else {}
-        return self._authorizer.visibility(
-            actor,
-            bindings,
-            projects,
-            [DatasetVisibility(dataset_id=k, project_id=v) for k, v in parents.items()],
-        )
+        return await visibility_for_principal({}, self._repository, self.actor, self._authorizer)
 
     async def scope(self, kind: ScopeType, resource_id: UUID | None = None) -> Scope:
         """Resolve authoritative ancestry, refusing undiscoverable resources first.
@@ -220,24 +262,7 @@ class AccessPolicy:
             return Scope.system()
         if resource_id is None:
             raise ValueError("resource scope requires an identifier")
-        visible = await self.visibility()
-        if kind is ScopeType.ORGANIZATION:
-            await self._repository.organization(resource_id, visible)
-            return Scope(kind, resource_id, organization_id=resource_id)
-        if kind is ScopeType.PROJECT:
-            project = await self._repository.project(resource_id, visible)
-            return Scope(
-                kind, resource_id, organization_id=project.organization_id, project_id=project.id
-            )
-        dataset = await self._repository.dataset(resource_id, visible)
-        project = await self._repository.project(dataset.project_id, Visibility.ALL)
-        return Scope(
-            kind,
-            resource_id,
-            organization_id=project.organization_id,
-            project_id=project.id,
-            dataset_id=dataset.id,
-        )
+        return await resource_scope(self._repository, kind, resource_id, await self.visibility())
 
     async def require(
         self,

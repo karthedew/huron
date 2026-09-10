@@ -51,6 +51,19 @@ CREATE TABLE ingest_recoveries (
     updated_at timestamptz NOT NULL CHECK (updated_at >= started_at),
     CHECK (original_path <> candidate_path)
 );
+CREATE FUNCTION protect_recovery_ownership() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF ROW(NEW.ingest_id, NEW.attempt_id, NEW.original_path, NEW.candidate_path,
+           NEW.actor, NEW.started_at) IS DISTINCT FROM
+       ROW(OLD.ingest_id, OLD.attempt_id, OLD.original_path, OLD.candidate_path,
+           OLD.actor, OLD.started_at) THEN
+        RAISE EXCEPTION 'Recovery ownership is immutable' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER ingest_recoveries_ownership BEFORE UPDATE ON ingest_recoveries
+    FOR EACH ROW EXECUTE FUNCTION protect_recovery_ownership();
+
 """
 
 

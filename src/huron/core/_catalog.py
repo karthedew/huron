@@ -241,17 +241,9 @@ class HierarchyRepository:
             with version and generation advanced.
         """
         item = await self.organization(organization_id, visibility)
-        successor = item.describe(
-            expected_version=expected_version, slug=slug, title=title, description=description
+        return await self._patch_description(
+            item, expected_version=expected_version, slug=slug, title=title, description=description
         )
-        if successor is item:
-            return item
-        async with self._hierarchy.transaction() as writer:
-            await writer.update_organization(successor, expected_version=item.version)
-            await asyncify(self._write_generation)(
-                organization_dir(self.data_root, successor), successor
-            )
-        return successor
 
     async def create_project(
         self,
@@ -366,20 +358,9 @@ class HierarchyRepository:
             version and generation advanced.
         """
         item = await self.project(project_id, visibility)
-        successor = item.describe(
-            expected_version=expected_version, slug=slug, title=title, description=description
+        return await self._patch_description(
+            item, expected_version=expected_version, slug=slug, title=title, description=description
         )
-        if successor is item:
-            return item
-        async with self._hierarchy.transaction() as writer:
-            await writer.update_project(successor, expected_version=item.version)
-            organization = await self._hierarchy.organization(
-                successor.organization_id, Visibility.ALL
-            )
-            await asyncify(self._write_generation)(
-                project_dir(self.data_root, organization, successor), successor
-            )
-        return successor
 
     async def create_dataset(
         self,
@@ -502,21 +483,74 @@ class HierarchyRepository:
             version and generation advanced.
         """
         item = await self.dataset(dataset_id, visibility)
+        return await self._patch_description(
+            item, expected_version=expected_version, slug=slug, title=title, description=description
+        )
+
+    async def _patch_description[ItemT: (Organization, Project, Dataset)](
+        self,
+        item: ItemT,
+        *,
+        expected_version: int,
+        slug: str | None,
+        title: str | None,
+        description: str | None,
+    ) -> ItemT:
+        """Publish a descriptive successor only after the row's version comparison succeeds.
+
+        The caller has already resolved the entity through its visibility. Ancestors
+        are loaded solely to derive the immutable storage path, inside the transaction
+        after the update; a no-op performs neither those reads nor any write.
+
+        Args:
+            item: The visible current hierarchy entity.
+            expected_version: The version the caller observed.
+            slug: The immutable current slug, or None to retain it.
+            title: A replacement title, or None to retain it.
+            description: A replacement description, or None to retain it.
+
+        Returns:
+            The original entity for a no-op, or its durably recorded successor.
+        """
         successor = item.describe(
             expected_version=expected_version, slug=slug, title=title, description=description
         )
         if successor is item:
             return item
         async with self._hierarchy.transaction() as writer:
-            await writer.update_dataset(successor, expected_version=item.version)
-            project = await self._hierarchy.project(successor.project_id, Visibility.ALL)
-            organization = await self._hierarchy.organization(
-                project.organization_id, Visibility.ALL
-            )
-            await asyncify(self._write_generation)(
-                dataset_dir(self.data_root, organization, project, successor), successor
-            )
+            directory = await self._update_description(writer, successor, item.version)
+            await asyncify(self._write_generation)(directory, successor)
         return successor
+
+    async def _update_description(
+        self,
+        writer: HierarchyWriter,
+        successor: Organization | Project | Dataset,
+        expected_version: int,
+    ) -> PurePosixPath:
+        """Update the entity's row and resolve its generation document directory.
+
+        Args:
+            writer: The open hierarchy transaction.
+            successor: The immutable descriptive successor.
+            expected_version: The version required on the persisted entity.
+
+        Returns:
+            The stable directory for the entity whose row was updated.
+        """
+        if isinstance(successor, Organization):
+            await writer.update_organization(successor, expected_version=expected_version)
+            return organization_dir(self.data_root, successor)
+        if isinstance(successor, Project):
+            await writer.update_project(successor, expected_version=expected_version)
+            organization = await self._hierarchy.organization(
+                successor.organization_id, Visibility.ALL
+            )
+            return project_dir(self.data_root, organization, successor)
+        await writer.update_dataset(successor, expected_version=expected_version)
+        project = await self._hierarchy.project(successor.project_id, Visibility.ALL)
+        organization = await self._hierarchy.organization(project.organization_id, Visibility.ALL)
+        return dataset_dir(self.data_root, organization, project, successor)
 
     async def create_release(
         self,

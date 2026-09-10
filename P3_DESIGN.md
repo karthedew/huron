@@ -1,8 +1,7 @@
 # P3 — Integrity services: final design
 
-Status: design complete, implementation not started. Agreed 2026-09-08.
-This document and [P3_IMPLEMENTATION_PLAN.md](P3_IMPLEMENTATION_PLAN.md) authorize
-planning only. `design/` remains the architecture authority; its affected pages
+Status: design agreed 2026-09-08; verified-completion implementation is under validation.
+Implementation follows the separately authorized [P3_IMPLEMENTATION_PLAN.md](P3_IMPLEMENTATION_PLAN.md). `design/` remains the architecture authority; its affected pages
 are reconciled in this change. [P3_PROPOSAL.md](P3_PROPOSAL.md) is historical
 interview input and is superseded wherever this final design differs.
 
@@ -70,7 +69,7 @@ Directory link counts are not file link counts: require `st_nlink == 1` for
 regular owned files, not directories. Refuse symlinks, special files, escaping
 paths, wrong owners and unexpected entries; do not follow them during scans.
 
-Target layout (planned P3, not the current P2 layout):
+Storage layout: normal upload/completion/envelope separation is implemented; protocol, recovery and cleanup areas remain planned:
 
 ```text
 /data/
@@ -80,7 +79,7 @@ Target layout (planned P3, not the current P2 layout):
   .staging/
     <ingest-id>/
       upload/<file-id>            request-writable inputs, never published
-      completion/<attempt-id>/    private candidates, closed before installation
+      completion/<candidate-id>   private candidate files, closed before installation
       envelope/
         manifest.json
         metadata.json
@@ -130,6 +129,28 @@ installation links must be gone before final seal/publication checks pass.
 5. Session verification remains a ledger operation. Publication additionally
    checks the installed inventory and absence of candidate/temporary files.
 
+Completion admission defaults to one copy per Raw-store instance (normally one
+per API process) and a 1 GiB free-space reserve. Configure these with
+`HURON_COMPLETION_MAX_CONCURRENT` and `HURON_COMPLETION_RESERVE_BYTES`. Before
+creating a candidate, compare free capacity on its held directory descriptor
+against all expected copy bytes reserved by this instance plus the reserve.
+Keep each reservation through installation and cleanup; release it on failure
+or cancellation. Queued retries recheck installed payload before reserving, and
+already-installed replay needs no copy capacity. This accounting is conservative:
+written candidate bytes remain reserved until the operation finishes. It does
+not coordinate other processes or reserve space against uploads and external
+writers, so deployment capacity must still account for those consumers and ENOSPC
+must leave unpublished candidates safe. This is not a root-wide writer fence.
+
+Arbitrate the principal-scoped idempotency key before freezing or publishing.
+In the same transaction as the first freeze, bind the key to the ingest session
+with an unfinished-commit receipt. That binding does not expire while publication
+is unresolved; otherwise a long interruption could let another session take the
+key before the original publisher records its revision. The revision transaction
+replaces the pending binding with the final revision receipt. Conflicting keys
+leave the losing session and its staging envelope unchanged. A legitimate replay
+still validates the frozen documents and final payload before returning success.
+
 Freeze a commit's canonical metadata, commit instant and identity once in a
 session-owned commit-intent row when first entering COMMITTING. A retry uses that
 same document set and returns a conflict for a different metadata command; it
@@ -140,10 +161,12 @@ of persisted commit intent: concurrent attempts must agree on every byte.
 Immutable document installation must expose complete, fsynced, closed candidates
 without replacing an existing document. Equal existing bytes are an idempotent
 success; unequal or partial documents are findings. Keep `atomic_replace` for
-CURRENT/INDEX only. The rawstore primitive may use a temporary link followed by
-unlink on supported POSIX storage to install without replacement; publication
-requires final file link counts of one. This is transient installation, never
-cross-revision hardlink reuse. Prove its crash cases on the target mount.
+CURRENT/INDEX only. The implementation uses native exclusive rename:
+`renameat2(RENAME_NOREPLACE)` on Linux and `renameatx_np(RENAME_EXCL)` on Darwin.
+Unsupported platforms, system libraries and filesystems refuse installation.
+Unlike a temporary link/unlink pair, this leaves no second name after an install
+crash; publication requires regular-file link counts of one throughout. Real NFS
+cross-client proof remains mandatory before deployment to that filesystem.
 
 Commit keeps its short database fence, seals the complete envelope, durably
 renames `envelope/` to final, seals the final root and records revision/session,
@@ -280,8 +303,9 @@ Rebuild preserves marker evidence separately until authentic governance is resto
 
 P3 persistence additions (exact migration numbering after 0011 may change):
 
-- `ingest_commit_intents`: session PK/FK, frozen command/document JSON and canonical
-  digests, commit instant/actor; immutable after insertion. Index/FK ownership is
+- `ingest_commit_intents`: session PK/FK, exact canonical command/document bytes in `bytea`,
+  generated SHA-256 digests and commit instant/actor; immutable after insertion.
+  Storing canonical bytes avoids JSON re-encoding changing the frozen evidence. Index/FK ownership is
   with core ingestion's port, not a catalog-wide repository.
 - `ingest_recoveries`: session PK/FK, unique attempt ID, original/candidate paths,
   checkpoint, actor, start/update times. One owner; no expiry-based takeover.

@@ -150,15 +150,22 @@ def test_a_platform_owner_creates_a_system_scope_binding(client: TestClient) -> 
     assert body["expires_at"] is None
 
 
-def test_a_binding_with_an_expiry_carries_it_forward(client: TestClient) -> None:
-    """A binding created with ``expires_in_days`` carries a non-null ``expires_at``."""
+@pytest.mark.parametrize("scope", ["system", "organization", "project", "dataset"])
+def test_a_binding_with_an_expiry_carries_it_forward(client: TestClient, scope: str) -> None:
+    """Every scope records the authenticated creator and requested grant lifetime."""
+    organization_id, project_id, dataset_id = _hierarchy(client)
+    path = _bindings_path(scope, organization_id, project_id, dataset_id)
+    earliest_expiry = datetime.now(UTC) + timedelta(days=30)
     response = client.post(
-        "/api/v1/bindings",
-        json={"principal": "user:temp", "role": "platform_owner", "expires_in_days": 30},
+        path,
+        json={"principal": "user:temp", "role": _ROOT_ROLE[scope], "expires_in_days": 30},
         headers=_headers("root"),
     )
+    latest_expiry = datetime.now(UTC) + timedelta(days=30)
     assert response.status_code == 201
-    assert response.json()["expires_at"] is not None
+    body = response.json()
+    assert body["created_by"] == "root"
+    assert earliest_expiry <= datetime.fromisoformat(body["expires_at"]) <= latest_expiry
 
 
 def test_creating_a_system_scope_binding_is_denied_without_the_capability(
@@ -336,10 +343,15 @@ def test_binding_scope_id_is_null_only_for_the_system_scope(client: TestClient, 
     _path, binding = _create_binding(client, scope, organization_id, project_id, dataset_id)
 
     assert binding["scope_type"] == scope.upper()
-    if scope == "system":
-        assert binding["scope_id"] is None
-    else:
-        assert binding["scope_id"] is not None
+    assert (
+        binding["scope_id"]
+        == {
+            "system": None,
+            "organization": organization_id,
+            "project": project_id,
+            "dataset": dataset_id,
+        }[scope]
+    )
 
 
 def test_project_bindings_can_be_listed_by_someone_who_manages_them(client: TestClient) -> None:
@@ -407,14 +419,13 @@ def test_dataset_bindings_404_for_an_unknown_dataset(client: TestClient) -> None
     assert response.status_code == 404
 
 
-@pytest.mark.parametrize("path", ["/api/v1/bindings", "/api/v1/datasets/{dataset_id}/bindings"])
+@pytest.mark.parametrize("scope", ["system", "organization", "project", "dataset"])
 def test_a_cursor_walk_visits_every_binding_at_the_root_exactly_once(
-    client: TestClient, path: str
+    client: TestClient, scope: str
 ) -> None:
     """A cursor walk with ``limit=1`` visits every binding at a root exactly once."""
-    _organization_id, _project_id, dataset_id = _hierarchy(client)
-    bindings_path = path.format(dataset_id=dataset_id)
-    scope = "system" if path == "/api/v1/bindings" else "dataset"
+    organization_id, project_id, dataset_id = _hierarchy(client)
+    bindings_path = _bindings_path(scope, organization_id, project_id, dataset_id)
     role = _ROOT_ROLE[scope]
     for principal in ["user:carol", "user:alice", "user:mallory"]:
         response = client.post(
@@ -443,9 +454,9 @@ def test_a_cursor_walk_visits_every_binding_at_the_root_exactly_once(
     assert len(seen) == len(set(seen))
 
 
-@pytest.mark.parametrize("path", ["/api/v1/bindings", "/api/v1/datasets/{dataset_id}/bindings"])
+@pytest.mark.parametrize("scope", ["system", "organization", "project", "dataset"])
 async def test_a_lapsed_grant_still_appears_in_the_listing(
-    client: TestClient, repository: HierarchyRepository, path: str
+    client: TestClient, repository: HierarchyRepository, scope: str
 ) -> None:
     """The binding collections are a roster of grants, not of grants still in force.
 
@@ -453,16 +464,19 @@ async def test_a_lapsed_grant_still_appears_in_the_listing(
     ``expires_at`` has already passed is exactly as much a member of the
     collection as one that never expires.
     """
-    _organization_id, _project_id, dataset_id = _hierarchy(client)
-    bindings_path = path.format(dataset_id=dataset_id)
-    scope_type = ScopeType.SYSTEM if path == "/api/v1/bindings" else ScopeType.DATASET
-    scope_id = None if scope_type is ScopeType.SYSTEM else UUID(dataset_id)
-    role = _ROOT_ROLE["system" if scope_type is ScopeType.SYSTEM else "dataset"]
+    organization_id, project_id, dataset_id = _hierarchy(client)
+    bindings_path = _bindings_path(scope, organization_id, project_id, dataset_id)
+    scope_id = {
+        "system": None,
+        "organization": UUID(organization_id),
+        "project": UUID(project_id),
+        "dataset": UUID(dataset_id),
+    }[scope]
 
     lapsed = await repository.grant_role(
         principal="user:lapsed",
-        role_code=role,
-        scope_type=scope_type,
+        role_code=_ROOT_ROLE[scope],
+        scope_type=ScopeType(scope.upper()),
         scope_id=scope_id,
         created_by="root",
         expires_at=datetime.now(UTC) - timedelta(days=1),

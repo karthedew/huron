@@ -31,18 +31,15 @@ PART_BYTES = 64 * 1024**2  # one upload part; a file needs max(1, ceil(size / PA
 
 
 class IngestState(StrEnum):
-    """The states of one ingest session, in the order a successful ingest passes them.
+    """The normal, recovery and terminal states of one ingest session.
 
     The happy path is ``PREPARING -> UPLOADING -> VERIFYING -> COMMITTING ->
-    COMMITTED``. ``ABORTED`` (the client gave up) and ``FAILED`` (the service
-    could not finish) are exits available from every non-terminal state
-    except that a session already ``COMMITTING`` can no longer be aborted:
-    once the commit has begun, it either becomes durable or fails, never
-    half of each. A session already ``COMMITTING`` may instead re-enter
-    ``COMMITTING``, the one edge with no other source: a ``/commit`` retry
-    after a crash between the envelope's rename and the transaction that
-    records it must be able to re-fence and finish what storage already
-    did. ``COMMITTED``, ``ABORTED`` and ``FAILED`` are terminal.
+    COMMITTED``. ``ABORTED`` is available only before COMMITTING; ``FAILED``
+    is available from every nonterminal state. COMMITTING can re-enter itself
+    so a retry can finish after publication, or enter the fenced nonterminal
+    state RECOVERING. RECOVERING retains the session's claims and permits
+    only COMMITTED or FAILED next; it cannot abort or resume client work.
+    COMMITTED, ABORTED and FAILED are terminal.
     """
 
     PREPARING = "PREPARING"
@@ -352,10 +349,10 @@ class IngestSession:
             etag are unchanged.
 
         Raises:
-            IngestSessionExpired: If the session is terminal or its lease
-                has already lapsed.
+            IngestSessionExpired: If the session is terminal, is RECOVERING,
+                or its lease has already lapsed.
         """
-        if self.state in TERMINAL_STATES or now >= self.lease.expires_at:
+        if self.state in TERMINAL_STATES | {IngestState.RECOVERING} or now >= self.lease.expires_at:
             raise IngestSessionExpired(
                 f"ingest session {self.lease.ingest_id} is not renewable",
                 context={"expires_at": self.lease.expires_at.isoformat()},
@@ -365,8 +362,8 @@ class IngestSession:
     def require(self, state: IngestState, *, now: datetime) -> None:
         """Refuse unless the session is in ``state`` with a live lease.
 
-        Every per-file step - a part upload, a whole-file completion, a
-        link - runs this first, so a driver cannot advance a file's ledger
+        Every per-file step, including part upload and whole-file completion,
+        runs this first, so a driver cannot advance a file's ledger
         once its session has moved on or its lease has lapsed. Refuses with
         :class:`IngestSessionExpired` when the lease has lapsed, and with
         :class:`IllegalIngestTransition` when the session is not in
@@ -466,13 +463,13 @@ class IngestSession:
         return self._advance(IngestState.RECOVERING, operation="recover")
 
     def commit(self) -> IngestSession:
-        """Move from COMMITTING to COMMITTED once the envelope's rename is durable.
+        """Finish COMMITTING or RECOVERING once the envelope's rename is durable.
 
         Storage leads at this point, so the lease plays no part: a lease
         lapsing during a long ``fsync_tree`` must not strand a published
         envelope short of its terminal state. Refuses with
-        :class:`IllegalIngestTransition` when the session is not
-        COMMITTING.
+        :class:`IllegalIngestTransition` when the session is neither
+        COMMITTING nor RECOVERING.
 
         Returns:
             A copy in state COMMITTED with the etag incremented.
@@ -495,12 +492,12 @@ class IngestSession:
     def abort(self) -> IngestSession:
         """Move PREPARING, UPLOADING or VERIFYING to ABORTED.
 
-        Never from COMMITTING: once a commit has begun the envelope may
+        Never from COMMITTING or RECOVERING: once a commit has begun the envelope may
         already be published, and aborting would record a revision as
         never having happened - true for the client's own abort, an
         admin's force-abort and the expiry sweep alike. Refuses with
-        :class:`IllegalIngestTransition` when the session is COMMITTING or
-        already terminal.
+        :class:`IllegalIngestTransition` when the session is COMMITTING,
+        RECOVERING or already terminal.
 
         Returns:
             A copy in state ABORTED with the etag incremented.
@@ -511,7 +508,7 @@ class IngestSession:
         """Abort the session on the sweep's behalf, once its lease has actually lapsed.
 
         Refuses with :class:`IllegalIngestTransition` when the session is
-        COMMITTING or already terminal, even though its lease has lapsed:
+        COMMITTING, RECOVERING or already terminal, even though its lease has lapsed:
         the terminal state, not the clock, names the true reason a
         finished session cannot be swept again.
 
@@ -566,11 +563,11 @@ def revision_record(
     committed_by: str,
     committed_at: datetime,
 ) -> RevisionRecord:
-    """Build the row a COMMITTING session publishes when its commit lands.
+    """Build the revision row published by a committing or recovering session.
 
     Args:
-        session: The session driving the commit; must be COMMITTING and
-            must have declared ``manifest``.
+        session: The session driving the commit; must be COMMITTING or RECOVERING
+            and must have declared ``manifest``.
         manifest: The manifest being committed, supplying its identity,
             file count and total size.
         metadata_sha256: The content identity of the committed
@@ -584,7 +581,8 @@ def revision_record(
 
     Raises:
         ValueError: If ``manifest``'s identity does not match the
-            session's declared manifest, or the session is not COMMITTING.
+            session's declared manifest, or the session is neither COMMITTING
+            nor RECOVERING.
     """
     if session.state not in {IngestState.COMMITTING, IngestState.RECOVERING}:
         raise ValueError("a revision record requires a committing or recovering session")

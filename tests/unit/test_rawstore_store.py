@@ -12,6 +12,7 @@ what is actually on disk, not against how the method happens to be written.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import stat
@@ -208,6 +209,42 @@ def test_write_part_refuses_a_short_or_long_stream(tmp_path: Path) -> None:
         store.write_part(payload_root, "long.bin", [b"abcd"], offset=0, length=3)
 
 
+def test_short_positional_writes_preserve_the_complete_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Short filesystem writes complete the requested range without touching adjacent bytes."""
+    store = _initialized_store(tmp_path)
+    root = _staging_session(store)
+    store.write_part(root, "file", [b"prefix------suffix"], offset=0, length=18)
+    original = os.pwrite
+
+    def short_write(descriptor: int, data: bytes, offset: int) -> int:
+        return original(descriptor, data[:2], offset)
+
+    monkeypatch.setattr(os, "pwrite", short_write)
+    assert store.write_part(root, "file", [b"middle"], offset=6, length=6) == (
+        hashlib.sha256(b"middle").hexdigest()
+    )
+    assert (root / "upload/file").read_bytes() == b"prefixmiddlesuffix"
+
+
+def test_stalled_positional_write_refuses_success_and_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Zero progress raises EIO promptly, preserving bytes for a successful part retry."""
+    store = _initialized_store(tmp_path)
+    root = _staging_session(store)
+    store.write_part(root, "file", [b"before"], offset=0, length=6)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "pwrite", lambda *_args: 0)
+        with pytest.raises(OSError) as raised:
+            store.write_part(root, "file", [b"after!"], offset=0, length=6)
+    assert raised.value.errno == errno.EIO
+    assert (root / "upload/file").read_bytes() == b"before"
+    store.write_part(root, "file", [b"after!"], offset=0, length=6)
+    assert (root / "upload/file").read_bytes() == b"after!"
+
+
 def test_write_part_propagates_a_mid_stream_exception_and_leaves_the_range_for_the_resend(
     tmp_path: Path,
 ) -> None:
@@ -397,6 +434,26 @@ def test_atomic_replace_leaves_the_old_bytes_when_the_write_fails(
         store.atomic_replace(target, b"second")
 
     assert target.read_bytes() == b"first"
+    assert list(tmp_path.glob(".pointer.json.*")) == []
+
+
+def test_document_writes_complete_short_writes_and_refuse_zero_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pointer replacement writes all bytes and retains its old value if writing stalls."""
+    store = PosixRawStore(tmp_path)
+    target = tmp_path / "pointer.json"
+    original = os.write
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "write", lambda descriptor, data: original(descriptor, data[:2]))
+        store.atomic_replace(target, b"original")
+    assert target.read_bytes() == b"original"
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "write", lambda *_args: 0)
+        with pytest.raises(OSError) as raised:
+            store.atomic_replace(target, b"replacement")
+    assert raised.value.errno == errno.EIO
+    assert target.read_bytes() == b"original"
     assert list(tmp_path.glob(".pointer.json.*")) == []
 
 

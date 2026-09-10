@@ -358,6 +358,37 @@ async def scenario_3_optimistic_concurrency(store: HierarchyStore) -> None:
             )
     assert (await store.dataset(dataset.id, Visibility.ALL)).title == "Run 1"
 
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.update_project(
+                dataclasses.replace(project, id=uuid7(), version=2, generation=2),
+                expected_version=1,
+            )
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.update_dataset(
+                dataclasses.replace(dataset, id=uuid7(), version=2, generation=2),
+                expected_version=1,
+            )
+
+    with pytest.raises(PreconditionFailed):
+        async with store.transaction() as writer:
+            await writer.update_organization(
+                dataclasses.replace(updated_organization, title="rolled back", version=3),
+                expected_version=2,
+            )
+            await writer.update_project(
+                dataclasses.replace(updated_project, title="rolled back", version=3),
+                expected_version=2,
+            )
+            await writer.update_dataset(
+                dataclasses.replace(updated_dataset, title="stale", version=3),
+                expected_version=1,
+            )
+    assert await store.organization(organization.id, Visibility.ALL) == updated_organization
+    assert await store.project(project.id, Visibility.ALL) == updated_project
+    assert await store.dataset(dataset.id, Visibility.ALL) == updated_dataset
+
 
 async def scenario_4_idempotency(store: HierarchyStore) -> None:
     """A claim replays inside its TTL, rejects a mismatch, and leaves no trace on rollback."""

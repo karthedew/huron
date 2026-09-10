@@ -177,7 +177,7 @@ async def test_require_organization_returns_the_principal_when_scoped_to_that_or
     guard = require_organization("service_account.manage")
 
     result = await guard(
-        organization_id=organization.id,
+        resource_id=organization.id,
         principal=alice,
         repository=repository,
         cache={},
@@ -200,7 +200,7 @@ async def test_require_organization_raises_not_found_before_checking_the_binding
 
     with pytest.raises(ResourceNotFound):
         await guard(
-            organization_id=uuid4(),
+            resource_id=uuid4(),
             principal=Principal(subject="alice"),
             repository=repository,
             cache={},
@@ -230,7 +230,7 @@ async def test_require_organization_raises_not_found_for_an_organization_the_cal
 
     with pytest.raises(ResourceNotFound):
         await guard(
-            organization_id=organization.id,
+            resource_id=organization.id,
             principal=Principal(subject="alice"),
             repository=repository,
             cache={},
@@ -259,7 +259,7 @@ async def test_require_project_returns_the_principal_when_scoped_to_that_project
     guard = require_project("dataset.create")
 
     result = await guard(
-        project_id=project.id,
+        resource_id=project.id,
         principal=alice,
         repository=repository,
         cache={},
@@ -296,7 +296,7 @@ async def test_require_project_refuses_a_binding_scoped_to_a_different_project(
 
     with pytest.raises(Forbidden):
         await guard(
-            project_id=other_project.id,
+            resource_id=other_project.id,
             principal=Principal(subject="alice"),
             repository=repository,
             cache={},
@@ -311,7 +311,7 @@ async def test_require_project_raises_not_found_for_an_unknown_project(tmp_path:
 
     with pytest.raises(ResourceNotFound):
         await guard(
-            project_id=uuid4(),
+            resource_id=uuid4(),
             principal=Principal(subject="alice"),
             repository=repository,
             cache={},
@@ -337,7 +337,7 @@ async def test_require_project_raises_not_found_for_a_project_the_caller_cannot_
 
     with pytest.raises(ResourceNotFound):
         await guard(
-            project_id=project.id,
+            resource_id=project.id,
             principal=Principal(subject="alice"),
             repository=repository,
             cache={},
@@ -367,7 +367,7 @@ async def test_require_dataset_returns_the_principal_when_scoped_to_that_dataset
     guard = require_dataset("dataset.update")
 
     result = await guard(
-        dataset_id=dataset.id,
+        resource_id=dataset.id,
         principal=alice,
         repository=repository,
         cache={},
@@ -384,7 +384,7 @@ async def test_require_dataset_raises_not_found_for_an_unknown_dataset(tmp_path:
 
     with pytest.raises(ResourceNotFound):
         await guard(
-            dataset_id=uuid4(),
+            resource_id=uuid4(),
             principal=Principal(subject="alice"),
             repository=repository,
             cache={},
@@ -422,7 +422,7 @@ async def test_require_dataset_raises_not_found_for_a_dataset_the_caller_cannot_
 
     with pytest.raises(ResourceNotFound):
         await guard(
-            dataset_id=dataset.id,
+            resource_id=dataset.id,
             principal=Principal(subject="alice"),
             repository=repository,
             cache={},

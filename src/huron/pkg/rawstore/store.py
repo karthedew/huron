@@ -22,15 +22,25 @@ from typing import TYPE_CHECKING
 from huron.schema.storage import PartLengthMismatchError
 
 from .commit import assert_same_filesystem, commit_envelope, fsync_dir
+from .completion import CompletionAdmission
 from .inspection import verify_envelope
-from .materialize import candidate, descendant, directory, file_chunks, install, observe
+from .materialize import (
+    candidate,
+    descendant,
+    directory,
+    file_chunks,
+    flush_tree,
+    install,
+    observe,
+    write_all,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
 #: Document names a caller may never write at the envelope root: the empty
 #: string and the two directory pseudo-entries are unsafe path components,
-#: and ``payload`` is reserved for the upload tree itself.
+#: and ``payload`` is reserved for the verified payload tree itself.
 _RESERVED_DOCUMENT_NAMES = frozenset({"", ".", "..", "payload"})
 
 
@@ -51,15 +61,29 @@ class PosixRawStore:
     satisfies :class:`huron.pkg.catalog.ports.RawStore`.
     """
 
-    def __init__(self, root: str | Path):
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        max_concurrent_completions: int = 1,
+        completion_reserve_bytes: int = 1 << 30,
+    ) -> None:
         """Bind the store to a data root without touching the filesystem.
 
         Args:
             root: The data root; ``.staging`` and ``organization`` live
                 directly beneath it. Nothing is created until
                 :meth:`initialize`.
+            max_concurrent_completions: Maximum simultaneous copies sharing this
+                store instance. Other store instances and processes are independent.
+            completion_reserve_bytes: Free bytes to retain beyond all expected
+                completion copies reserved by this store instance.
         """
         self.root = Path(root)
+        self._completion_admission = CompletionAdmission(
+            max_concurrent=max_concurrent_completions,
+            reserve_bytes=completion_reserve_bytes,
+        )
 
     def initialize(self) -> None:
         """Create the store's directory skeleton and prove it can commit.
@@ -96,19 +120,18 @@ class PosixRawStore:
         staging_root = self.root / ".staging"
         if PurePosixPath(staging).parent != PurePosixPath(staging_root):
             raise ValueError(f"staging envelope must live directly under {staging_root}: {staging}")
-        envelope = Path(staging)
-        staging_root.mkdir(parents=True, exist_ok=True)
-        envelope.mkdir(mode=0o700)
-        for child in ("upload", "completion", "envelope", "envelope/payload"):
-            (envelope / child).mkdir(mode=0o700)
-            fsync_dir(envelope / child)
-        fsync_dir(envelope / "envelope")
-        fsync_dir(envelope)
-        fsync_dir(staging_root)
+        with directory(staging_root, anchor=self.root) as parent:
+            os.mkdir(Path(staging).name, mode=0o700, dir_fd=parent)
+            os.fsync(parent)
+            with descendant(parent, (Path(staging).name,)) as session:
+                for parts in (("upload",), ("completion",), ("envelope", "payload")):
+                    with descendant(session, parts, create=True) as child:
+                        os.fsync(child)
+                os.fsync(session)
 
     def write_part(
         self,
-        staging_payload: PurePosixPath,
+        staging: PurePosixPath,
         rel_path: str,
         chunks: Iterable[bytes],
         *,
@@ -127,12 +150,12 @@ class PosixRawStore:
         raises ``ValueError`` before anything opens, and a stream that
         ends short or runs long raises ``PartLengthMismatchError`` before any
         success is reported. Before returning, the file and every
-        directory from its parent up to ``staging_payload`` are fsynced,
+        directory from its parent up to ``staging`` are fsynced,
         so a part the caller goes on to record is durable together with
         the names that reach it.
 
         Args:
-            staging_payload: The existing session root.
+            staging: The existing session root.
             rel_path: The input's path relative to the upload directory (a
                 leading ``payload/`` component is tolerated).
             chunks: The range's bytes, consumed once, in order.
@@ -146,7 +169,10 @@ class PosixRawStore:
             ValueError: If the upload input is not an independently owned regular file.
         """
         relative = _safe_relative(rel_path)
-        with directory(Path(staging_payload)) as session, descendant(session, ("upload",)) as root:
+        with (
+            directory(Path(staging), anchor=self.root) as session,
+            descendant(session, ("upload",)) as root,
+        ):
             with descendant(root, relative.parts[:-1], create=True) as parent:
                 descriptor = os.open(
                     relative.name,
@@ -181,6 +207,10 @@ class PosixRawStore:
     ) -> tuple[int, str]:
         """Materialize verified bytes into an independent, closed payload inode.
 
+        A new copy raises ``OSError`` with ``ENOSPC`` when available capacity
+        cannot retain the configured disk reserve. Installed payload replays
+        require no capacity reservation or surviving upload input.
+
         Args:
             staging: Existing session root.
             file_id: Upload input name.
@@ -199,45 +229,58 @@ class PosixRawStore:
         relative = _safe_relative(rel_path)
         expected = expected_size, expected_sha256
         with (
-            directory(Path(staging)) as root,
+            directory(Path(staging), anchor=self.root) as root,
             descendant(root, ("upload",)) as upload,
             descendant(root, ("completion",)) as completion,
             descendant(root, ("envelope", "payload")) as payload,
             descendant(payload, relative.parts[:-1], create=True) as parent,
         ):
             try:
-                existing = observe(parent, relative.name)
+                return _installed_payload(parent, completion, relative.name, expected)
             except FileNotFoundError:
-                try:
-                    with candidate(completion, file_chunks(upload, file_id)) as name:
-                        observed = observe(completion, name)
-                        if observed == expected:
-                            install(completion, name, parent, relative.name, expected)
-                        return observed
-                except FileNotFoundError:
-                    # A concurrent completer may have installed payload and
-                    # removed upload before this attempt opened the input.
-                    existing = observe(parent, relative.name)
-            if existing != expected:
-                raise ValueError("installed payload conflicts with declared content")
-            os.fsync(parent)
-            os.fsync(completion)
-            return existing
+                return self._copy_file(upload, file_id, completion, parent, relative.name, expected)
 
-    def discard_file(self, staging_payload: PurePosixPath, rel_path: str) -> None:
+    def _copy_file(
+        self,
+        upload: int,
+        file_id: str,
+        completion: int,
+        parent: int,
+        target: str,
+        expected: tuple[int, str],
+    ) -> tuple[int, str]:
+        with self._completion_admission.slot():
+            try:
+                return _installed_payload(parent, completion, target, expected)
+            except FileNotFoundError:
+                pass
+            try:
+                with (
+                    self._completion_admission.reserve(completion, expected[0]),
+                    candidate(completion, file_chunks(upload, file_id)) as name,
+                ):
+                    observed = observe(completion, name)
+                    if observed == expected:
+                        install(completion, name, parent, target, expected)
+                    return observed
+            except FileNotFoundError:
+                # A concurrent winner may remove upload before this copy opens it.
+                return _installed_payload(parent, completion, target, expected)
+
+    def discard_file(self, staging: PurePosixPath, rel_path: str) -> None:
         """Remove an upload input without touching installed payload.
 
         A missing file is success: nothing is raised and nothing is
         fsynced, since there is no removal to make durable.
 
         Args:
-            staging_payload: The existing session root.
+            staging: The existing session root.
             rel_path: The input's path relative to the upload directory (a
                 leading ``payload/`` is tolerated).
         """
         relative = _safe_relative(rel_path)
         with (
-            directory(Path(staging_payload)) as session,
+            directory(Path(staging), anchor=self.root) as session,
             descendant(session, ("upload",)) as upload,
             descendant(upload, relative.parts[:-1]) as parent,
         ):
@@ -291,7 +334,7 @@ class PosixRawStore:
             raise ValueError(f"invalid document name: {name!r}")
         envelope = Path(staging)
         with (
-            directory(envelope.parent) as root,
+            directory(envelope.parent, anchor=self.root) as root,
             descendant(root, ("completion",)) as completion,
             descendant(root, (envelope.name,)) as target,
             candidate(completion, (payload,)) as name_candidate,
@@ -330,7 +373,7 @@ class PosixRawStore:
         temp_path = Path(temp_name)
         try:
             os.fchmod(descriptor, mode)
-            _write_all(descriptor, payload)
+            write_all(descriptor, payload)
             os.fsync(descriptor)
             os.close(descriptor)
             descriptor = -1
@@ -353,27 +396,19 @@ class PosixRawStore:
         Args:
             revision_dir: The directory whose contents are sealed.
 
-        Raises:
-            FileNotFoundError: If ``revision_dir`` is not a directory.
+        A missing directory propagates ``FileNotFoundError``. Unsafe descendant
+        files propagate ``ValueError`` from the descriptor traversal.
         """
-        root = Path(revision_dir)
-        if not root.is_dir():
-            raise FileNotFoundError(root)
-        for path in root.rglob("*"):
-            if path.is_file():
-                path.chmod(0o444)
-        for path in sorted(
-            (item for item in root.rglob("*") if item.is_dir()),
-            key=lambda item: len(item.parts),
-            reverse=True,
-        ):
-            path.chmod(0o555)
+        with directory(Path(revision_dir), anchor=self.root) as root:
+            flush_tree(root, seal=True)
 
     def verify_envelope(
         self,
         envelope: PurePosixPath,
         files: Sequence[tuple[str, int, str]],
         documents: Mapping[str, bytes],
+        *,
+        sealed: bool = False,
     ) -> None:
         """Check exact inventory and frozen evidence before publication or replay.
 
@@ -381,8 +416,9 @@ class PosixRawStore:
             envelope: Existing staged or final envelope.
             files: Manifest paths, sizes and digests.
             documents: Frozen control document bytes.
+            sealed: Require sealed descendant directories, allowing an unfinished root seal.
         """
-        verify_envelope(Path(envelope), files, documents)
+        verify_envelope(Path(envelope), files, documents, sealed=sealed, anchor=self.root)
 
     def commit_envelope(self, staging: PurePosixPath, final: PurePosixPath) -> None:
         """Publish a finished staging envelope at its final revision path.
@@ -397,7 +433,7 @@ class PosixRawStore:
                 ``COMMITTED`` marker written.
             final: The revision directory to publish it as.
         """
-        commit_envelope(Path(staging), Path(final))
+        commit_envelope(Path(staging), Path(final), self.root)
 
     def _write_once(self, path: PurePosixPath | Path, payload: bytes, *, mode: int = 0o444) -> None:
         """Create a file that must not already exist, write ``payload``, and make it durable.
@@ -420,7 +456,7 @@ class PosixRawStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
         try:
-            _write_all(descriptor, payload)
+            write_all(descriptor, payload)
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
@@ -483,6 +519,17 @@ class PosixRawStore:
         return generation_path
 
 
+def _installed_payload(
+    parent: int, completion: int, target: str, expected: tuple[int, str]
+) -> tuple[int, str]:
+    observed = observe(parent, target)
+    if observed != expected:
+        raise ValueError("installed payload conflicts with declared content")
+    os.fsync(parent)
+    os.fsync(completion)
+    return observed
+
+
 def _safe_relative(value: str) -> Path:
     """Turn a client-supplied path into a safe path relative to the payload directory.
 
@@ -535,46 +582,9 @@ def _stream_part(descriptor: int, chunks: Iterable[bytes], *, offset: int, lengt
     for chunk in chunks:
         if written + len(chunk) > length:
             raise PartLengthMismatchError(f"part exceeded its planned length of {length} bytes")
-        _pwrite_all(descriptor, chunk, offset + written)
+        write_all(descriptor, chunk, offset=offset + written)
         digest.update(chunk)
         written += len(chunk)
     if written != length:
         raise PartLengthMismatchError(f"part delivered {written} bytes, expected {length}")
     return digest.hexdigest()
-
-
-def _write_all(descriptor: int, payload: bytes) -> None:
-    """Write the whole payload to ``descriptor``, retrying across short writes.
-
-    ``os.write`` may accept fewer bytes than it was given; this loops until
-    every byte has been accepted, so no caller can mistake a partial write
-    for a complete one.
-
-    Args:
-        descriptor: An open, writable file descriptor.
-        payload: The bytes to write in full.
-    """
-    remaining = memoryview(payload)
-    while remaining:
-        written = os.write(descriptor, remaining)
-        remaining = remaining[written:]
-
-
-def _pwrite_all(descriptor: int, payload: bytes, offset: int) -> None:
-    """Write the whole payload to ``descriptor`` at ``offset``, retrying across short writes.
-
-    The positional twin of :func:`_write_all`: ``os.pwrite`` may accept
-    fewer bytes than it was given, so this loops, advancing the offset by
-    what was actually written, until every byte has landed.
-
-    Args:
-        descriptor: An open, writable file descriptor.
-        payload: The bytes to write in full.
-        offset: The absolute file position to start writing at.
-    """
-    remaining = memoryview(payload)
-    position = offset
-    while remaining:
-        written = os.pwrite(descriptor, remaining, position)
-        remaining = remaining[written:]
-        position += written

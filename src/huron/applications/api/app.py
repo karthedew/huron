@@ -95,7 +95,11 @@ def _build_runtime(
         The runtime every injected route reads through
         ``huron.applications.api.runtime``.
     """
-    raw_store = PosixRawStore(settings.data_root)
+    raw_store = PosixRawStore(
+        settings.data_root,
+        max_concurrent_completions=settings.completion_max_concurrent,
+        completion_reserve_bytes=settings.completion_reserve_bytes,
+    )
     classifications = tuple(value.code for value in settings.classification_vocabulary)
     repository = HierarchyRepository(
         raw_store, wired.hierarchy, classification_vocabulary=classifications, rbac_store=wired.rbac

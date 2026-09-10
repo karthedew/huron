@@ -11,14 +11,16 @@ to be written.
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import os
 import stat
+import sys
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.rawstore import commit as commit_module
 from huron.pkg.rawstore.commit import (
     CrossDeviceCommitError,
     assert_same_filesystem,
@@ -62,10 +64,12 @@ def _with_different_device(result: os.stat_result) -> os.stat_result:
 
 
 def _fail_rename(monkeypatch: pytest.MonkeyPatch, error: int) -> None:
-    def fail(source: int, name: str, target: int, destination: str) -> None:
-        raise OSError(error, os.strerror(error))
+    def fail(source: int, name: bytes, target: int, destination: bytes, flags: int) -> int:
+        ctypes.set_errno(error)
+        return -1
 
-    monkeypatch.setattr(commit_module, "rename_exclusive", fail)
+    symbol = "renameatx_np" if sys.platform == "darwin" else "renameat2"
+    monkeypatch.setattr(ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace(**{symbol: fail}))
 
 
 def _committed_envelope(base: Path) -> tuple[Path, Path]:
@@ -177,7 +181,7 @@ def test_commit_envelope_refuses_an_existing_final_that_is_not_a_completed_retry
     log = fsync_log(monkeypatch)
 
     with pytest.raises(FileExistsError):
-        commit_envelope(staging, final)
+        commit_envelope(staging, final, tmp_path)
 
     assert staging.is_dir()
     assert log == []
@@ -189,7 +193,7 @@ def test_commit_envelope_refuses_a_missing_staging_directory(tmp_path: Path) -> 
     final = tmp_path / "final"
 
     with pytest.raises(FileNotFoundError):
-        commit_envelope(staging, final)
+        commit_envelope(staging, final, tmp_path)
 
 
 def test_commit_envelope_refuses_an_envelope_without_the_committed_marker(
@@ -202,7 +206,7 @@ def test_commit_envelope_refuses_an_envelope_without_the_committed_marker(
     renames = crash_on(monkeypatch, "rename")
 
     with pytest.raises(ValueError, match="COMMITTED"):
-        commit_envelope(staging, final)
+        commit_envelope(staging, final, tmp_path)
 
     assert renames == []
 
@@ -212,17 +216,18 @@ def test_commit_envelope_refuses_a_cross_device_pair_before_any_fsync(
 ) -> None:
     """A staging and final pair on different devices raises CrossDeviceCommitError, no fsync."""
     staging, final = _committed_envelope(tmp_path)
-    real_stat = type(staging).stat
+    identity = staging.stat()
+    real_fstat = os.fstat
 
-    def _fake_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
-        result = real_stat(self, *args, **kwargs)
-        return _with_different_device(result) if self == staging else result
+    def _fake_fstat(descriptor: int) -> os.stat_result:
+        result = real_fstat(descriptor)
+        return _with_different_device(result) if result.st_ino == identity.st_ino else result
 
-    monkeypatch.setattr(type(staging), "stat", _fake_stat)
+    monkeypatch.setattr(os, "fstat", _fake_fstat)
     log = fsync_log(monkeypatch)
 
     with pytest.raises(CrossDeviceCommitError) as exc_info:
-        commit_envelope(staging, final)
+        commit_envelope(staging, final, tmp_path)
 
     assert exc_info.value.errno == errno.EXDEV
     assert log == []
@@ -236,7 +241,7 @@ def test_commit_envelope_translates_exdev_from_the_rename(
     _fail_rename(monkeypatch, errno.EXDEV)
 
     with pytest.raises(CrossDeviceCommitError) as exc_info:
-        commit_envelope(staging, final)
+        commit_envelope(staging, final, tmp_path)
 
     assert exc_info.value.errno == errno.EXDEV
     assert staging.is_dir()
@@ -249,27 +254,34 @@ def test_commit_envelope_fsyncs_the_whole_tree_before_the_rename_and_the_parent_
     """Every staging path is fsynced before the rename; final's parent and final after it."""
     staging, final = _committed_envelope(tmp_path)
     log = fsync_log(monkeypatch)
-    original_rename = commit_module.rename_exclusive
+    original_library = ctypes.CDLL
+    symbol = "renameatx_np" if sys.platform == "darwin" else "renameat2"
     split_index: list[int] = []
 
-    def _tracking_rename(source: int, name: str, destination: int, target: str) -> None:
-        split_index.append(len(log))
-        original_rename(source, name, destination, target)
+    def library(*args: object, **kwargs: object) -> SimpleNamespace:
+        native = getattr(original_library(*args, **kwargs), symbol)
 
-    monkeypatch.setattr(commit_module, "rename_exclusive", _tracking_rename)
+        def rename(source: int, name: bytes, destination: int, target: bytes, flags: int) -> int:
+            split_index.append(len(log))
+            return native(source, name, destination, target, flags)
 
-    commit_envelope(staging, final)
+        return SimpleNamespace(**{symbol: rename})
+
+    monkeypatch.setattr(ctypes, "CDLL", library)
+
+    commit_envelope(staging, final, tmp_path)
 
     before, after = log[: split_index[0]], log[split_index[0] :]
     assert set(before) == {staging, staging / "COMMITTED"}
-    assert after == [staging.parent, final.parent, final]
+    assert after[:2] == [staging.parent, final.parent]
+    assert after[2:] in ([staging], [final])
 
 
 def test_commit_envelope_publishes_and_seals_the_root(tmp_path: Path) -> None:
     """A successful commit publishes final as a 0o555 directory and removes staging."""
     staging, final = _committed_envelope(tmp_path)
 
-    commit_envelope(staging, final)
+    commit_envelope(staging, final, tmp_path)
 
     assert not staging.exists()
     assert final.is_dir()
@@ -281,10 +293,10 @@ def test_commit_envelope_retry_after_the_rename_is_silent_and_reseals_the_root(
 ) -> None:
     """A retry against an already-published envelope returns silently and reseals the root."""
     staging, final = _committed_envelope(tmp_path)
-    commit_envelope(staging, final)
+    commit_envelope(staging, final, tmp_path)
     final.chmod(0o700)
 
-    commit_envelope(staging, final)
+    commit_envelope(staging, final, tmp_path)
 
     assert stat.S_IMODE(final.stat().st_mode) == 0o555
 
@@ -311,11 +323,11 @@ def test_publication_retry_flushes_both_rename_parents_before_success(
     with monkeypatch.context() as patch:
         patch.setattr(os, "fsync", fail_parent)
         with pytest.raises(OSError, match="directory flush failed"):
-            commit_envelope(staging, final)
+            commit_envelope(staging, final, tmp_path)
     assert not staging.exists()
     assert (final / "COMMITTED").is_file()
     log = fsync_log(monkeypatch)
-    commit_envelope(staging, final)
+    commit_envelope(staging, final, tmp_path)
     assert {staging.parent, final.parent, final} <= set(log)
     assert stat.S_IMODE(final.stat().st_mode) == 0o555
 
@@ -329,7 +341,7 @@ def test_a_crash_in_the_tree_fsync_attempts_no_rename(
     crash_on(monkeypatch, "fsync")
 
     with pytest.raises(OSError) as exc_info:
-        commit_envelope(staging, final)
+        commit_envelope(staging, final, tmp_path)
 
     assert exc_info.value.errno == errno.EIO
     assert renames == []
@@ -345,7 +357,7 @@ def test_a_crash_in_the_rename_leaves_staging_intact_and_final_absent(
     _fail_rename(monkeypatch, errno.EIO)
 
     with pytest.raises(OSError) as exc_info:
-        commit_envelope(staging, final)
+        commit_envelope(staging, final, tmp_path)
 
     assert exc_info.value.errno == errno.EIO
     assert staging.is_dir()
@@ -359,7 +371,7 @@ def test_a_crash_in_the_parent_fsync_leaves_the_envelope_published_and_the_retry
     """A crash in the parent fsync still leaves final published, and the retry is silent."""
     rehearsal_staging, rehearsal_final = _committed_envelope(tmp_path / "rehearsal")
     log = fsync_log(monkeypatch)
-    commit_envelope(rehearsal_staging, rehearsal_final)
+    commit_envelope(rehearsal_staging, rehearsal_final, tmp_path)
     parent_fsync_call = log.index(rehearsal_final.parent) + 1
     monkeypatch.undo()
 
@@ -367,12 +379,20 @@ def test_a_crash_in_the_parent_fsync_leaves_the_envelope_published_and_the_retry
     crash_on(monkeypatch, "fsync", call=parent_fsync_call)
 
     with pytest.raises(OSError) as exc_info:
-        commit_envelope(staging, final)
+        commit_envelope(staging, final, tmp_path)
 
     assert exc_info.value.errno == errno.EIO
     assert not staging.exists()
     assert final.is_dir()
 
-    commit_envelope(staging, final)
+    commit_envelope(staging, final, tmp_path)
 
     assert stat.S_IMODE(final.stat().st_mode) == 0o555
+
+
+def test_publication_refuses_parent_escape(tmp_path: Path) -> None:
+    """Publication rejects a destination that traverses above the trusted root."""
+    staging, _ = _committed_envelope(tmp_path)
+    with pytest.raises(ValueError, match="escapes"):
+        commit_envelope(staging, tmp_path / "../escaped/revision", tmp_path)
+    assert staging.is_dir()

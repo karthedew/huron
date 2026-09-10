@@ -22,7 +22,9 @@ from huron.applications.api.authorization.decisions import (
     request_binding_cache,
 )
 from huron.core._catalog import HierarchyRepository
+from huron.core.access import AccessPolicy
 from huron.core.idempotency import request_sha256
+from huron.core.scopes import resource_scope
 from huron.pkg.auth import Principal
 from huron.pkg.catalog.failures import Forbidden
 from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
@@ -373,3 +375,38 @@ async def test_current_visibility_for_a_caller_with_no_bindings_is_empty(tmp_pat
     visibility = await current_visibility({}, repository, Principal(subject="nobody"), runtime)
 
     assert visibility == Visibility()
+
+
+async def test_core_discovery_reloads_revoked_bindings_while_a_request_keeps_its_cache(
+    tmp_path: Path,
+) -> None:
+    """Revocation applies on the next core operation and request; cached bindings stay unchanged."""
+    repository = _repository(tmp_path)
+    binding = await repository.grant_role(
+        principal="user:alice",
+        role_code="platform_owner",
+        scope_type=ScopeType.SYSTEM,
+        scope_id=None,
+        created_by="admin",
+    )
+    alice = Principal(subject="alice")
+    runtime = SimpleNamespace(authorizer=RoleBindingAuthorizer())
+    access = AccessPolicy(alice, repository, runtime.authorizer)
+    cache = await request_binding_cache()
+    assert (await current_visibility(cache, repository, alice, runtime)).unrestricted
+    assert (await access.visibility()).unrestricted
+
+    await repository.revoke_role(binding.id)
+
+    assert (await current_visibility(cache, repository, alice, runtime)).unrestricted
+    assert await current_visibility({}, repository, alice, runtime) == Visibility()
+    assert await access.visibility() == Visibility()
+    with pytest.raises(Forbidden):
+        await access.require("organization.create", ScopeType.SYSTEM)
+    assert await current_visibility(cache, repository, Principal("bob"), runtime) == Visibility()
+
+
+async def test_resource_scope_refuses_system_scope_with_a_resource_id(tmp_path: Path) -> None:
+    """System authority cannot be resolved as a catalog resource."""
+    with pytest.raises(ValueError, match="system scope has no catalog resource"):
+        await resource_scope(_repository(tmp_path), ScopeType.SYSTEM, uuid4(), Visibility.ALL)

@@ -383,7 +383,8 @@ class CommitRecord:
 
         Raises:
             ValueError: If the bytes are not their own canonical form, are
-                not valid JSON, or fail committed-v1.
+                not valid JSON, name an unsupported protocol, or fail the selected
+                committed-v1 or committed-v2 schema.
         """
         document = _decode_canonical(payload)
         try:
@@ -412,7 +413,8 @@ class CommitRecord:
         """Return the marker as the ``COMMITTED`` JSON document.
 
         Returns:
-            The document with every committed-v1 required member.
+            The document with the schema identifier and required members for
+            the marker's selected protocol.
         """
         return {
             "schema": f"urn:huron:committed:{self.protocol}",
@@ -710,21 +712,69 @@ class CommitIntent:
         Raises:
             ValueError: If evidence is noncanonical, inconsistent or uses a legacy marker.
         """
-        _decode_canonical(self.command)
+        command = _decode_canonical(self.command)
         manifest = decode_manifest(self.manifest)
         metadata = MetadataDocument.decode(self.metadata)
         marker = CommitRecord.decode(self.committed)
-        if (
-            marker.protocol != 2
-            or marker.manifest_sha256 != manifest.sha256
-            or metadata.manifest_sha256 != manifest.sha256
-            or marker.metadata_sha256 != metadata.sha256
-            or marker.file_count != len(manifest.files)
-            or marker.total_bytes != manifest.total_bytes
-            or marker.committed_at != metadata.committed_at
-            or marker.committed_by != metadata.committed_by
-        ):
+        document = metadata.as_dict()
+        dataset = cast("dict[str, JsonValue]", document["dataset"])
+        submitted = {
+            key: value for key, value in document.items() if key not in SERVER_METADATA_MEMBERS
+        }
+        observed = (
+            marker.protocol,
+            marker.manifest_sha256,
+            metadata.manifest_sha256,
+            marker.metadata_sha256,
+            marker.file_count,
+            marker.total_bytes,
+            marker.committed_at,
+            marker.committed_by,
+            str(marker.dataset_id),
+            marker.revision_number,
+            command,
+        )
+        expected = (
+            2,
+            manifest.sha256,
+            manifest.sha256,
+            metadata.sha256,
+            len(manifest.files),
+            manifest.total_bytes,
+            metadata.committed_at,
+            metadata.committed_by,
+            dataset["id"],
+            document["revision_number"],
+            submitted,
+        )
+        if observed != expected:
             raise ValueError("commit intent documents disagree")
+
+    def require_session(self, session: IngestSession) -> None:
+        """Bind all frozen publication identity to the session reservation.
+
+        Args:
+            session: The session that owns this intent.
+
+        Raises:
+            ValueError: If the reserved revision identity or actor disagrees.
+        """
+        marker = CommitRecord.decode(self.committed)
+        lease = session.lease
+        if (
+            marker.revision_id,
+            marker.dataset_id,
+            marker.revision_number,
+            marker.manifest_sha256,
+            marker.committed_by,
+        ) != (
+            lease.revision_id,
+            lease.dataset_id,
+            lease.revision_number,
+            session.manifest_sha256,
+            session.created_by,
+        ):
+            raise ValueError("commit intent does not belong to the session")
 
     def require_same_command(self, proposed: CommitIntent) -> None:
         """Refuse a retry that changes the client command or declared manifest.

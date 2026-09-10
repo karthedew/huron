@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -18,7 +19,7 @@ from huron.core.catalog import CatalogService
 from huron.core.raw import RawIngestionService
 from huron.core.revisions import RevisionReadService
 from huron.pkg.auth import Principal
-from huron.pkg.catalog import ManifestEntry
+from huron.pkg.catalog import FileState, ManifestEntry
 from huron.pkg.catalog.errors import ResourceNotFound
 from huron.pkg.catalog.failures import Forbidden
 from huron.pkg.catalog.persistence import IdempotencyClaim
@@ -154,9 +155,19 @@ async def test_core_cannot_create_or_discover_under_another_actor(workspace) -> 
     _, _, _, dataset, repository, _, _ = workspace
     access = AccessPolicy(Principal("outsider"), repository, RoleBindingAuthorizer())
     catalog = CatalogService(repository, access)
-    with pytest.raises(Forbidden):
+    with pytest.raises(Forbidden, match=r"organization\.create denied"):
         await catalog.create_organization(
-            slug="other", title="Other", description="", claim=claim("other", "outsider")
+            slug="other", title="Other", description="", claim=claim("other", "forged")
+        )
+    with pytest.raises(ResourceNotFound):
+        await catalog.create_dataset(
+            dataset.project_id,
+            slug="other",
+            title="Other",
+            description="",
+            profile_name="mcnp-run",
+            profile_version="1.0",
+            claim=claim("invisible", "forged"),
         )
     with pytest.raises(ResourceNotFound):
         await catalog.dataset(dataset.id)
@@ -211,9 +222,25 @@ async def test_raw_checks_owner_target_metadata_and_revocation_before_commit(wor
         created_by="root",
     )
     assert (await stranger.ledger(ledger.id)).id == ledger.id
-    with pytest.raises(Forbidden, match="owner"):
-        await stranger.verify(ledger.id)
+    for operation in (
+        stranger.verify(ledger.id),
+        stranger.receive_part(ledger.id, uuid4(), 1, [contents], content_length=len(contents)),
+        stranger.complete_file(ledger.id, uuid4()),
+        stranger.commit(
+            ledger.id,
+            expected_etag=ledger.etag,
+            manifest_sha256=ledger.manifest_sha256,
+            metadata={},
+            claim=claim("unowned-commit", "forged"),
+        ),
+    ):
+        with pytest.raises(Forbidden, match="owner"):
+            await operation
+    assert await raw.ledger(ledger.id) == ledger
     await raw.receive_part(ledger.id, file.file_id, 1, [contents], content_length=len(contents))
+    completed = await raw.complete_file(ledger.id, file.file_id)
+    assert completed.file_id == file.file_id
+    assert completed.state is FileState.COMPLETE
     ledger = await raw.verify(ledger.id)
     args = dict(
         expected_etag=ledger.etag,

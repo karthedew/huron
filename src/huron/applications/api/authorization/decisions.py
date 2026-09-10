@@ -21,12 +21,9 @@ from huron.core.access import (
     as_rbac_principal,
     bindings_for_principal,
     check,
+    visibility_for_principal,
 )
-from huron.pkg.rbac import (
-    DatasetVisibility,
-    ScopeType,
-    Visibility,
-)
+from huron.pkg.rbac import Visibility
 
 from ..runtime import Repository, Runtime
 from .credentials import CurrentPrincipal
@@ -76,24 +73,7 @@ async def current_visibility(
         The organization, project and dataset ids the caller may discover,
         and whether discovery is unrestricted.
     """
-    actor = as_rbac_principal(principal)
-    bindings = await bindings_for_principal(cache, repository, actor)
-    dataset_scoped = frozenset(
-        binding.scope_id
-        for binding in bindings
-        if binding.scope_type is ScopeType.DATASET and binding.scope_id is not None
-    )
-    projects = await repository.project_visibilities()
-    parents = await repository.dataset_parents(dataset_scoped) if dataset_scoped else {}
-    return runtime.authorizer.visibility(
-        actor,
-        bindings,
-        projects,
-        [
-            DatasetVisibility(dataset_id=dataset_id, project_id=project_id)
-            for dataset_id, project_id in parents.items()
-        ],
-    )
+    return await visibility_for_principal(cache, repository, principal, runtime.authorizer)
 
 
 CurrentVisibility = Annotated[Visibility, Depends(current_visibility)]

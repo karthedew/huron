@@ -42,6 +42,7 @@ from huron.pkg.catalog import (
 )
 from huron.pkg.catalog.documents import CommitIntent
 from huron.pkg.catalog.errors import (
+    IdempotencyKeyReused,
     IllegalIngestTransition,
     ManifestMismatch,
     PreconditionFailed,
@@ -49,7 +50,7 @@ from huron.pkg.catalog.errors import (
 )
 from huron.pkg.catalog.layers import Layer, LayerWorkflowError
 from huron.pkg.catalog.manifest import canonical_bytes
-from huron.pkg.catalog.paths import revision_dir, staging_dir
+from huron.pkg.catalog.paths import revision_dir, staging_dir, staging_paths
 from huron.pkg.catalog.persistence import Replay
 from huron.pkg.catalog.records import AuditEvent, jsonable, jsonable_value
 from huron.pkg.rbac import Visibility
@@ -529,7 +530,7 @@ class IngestService:
         *,
         content_length: int,
     ) -> IngestFile:
-        """Stream one part's bytes into its range of the payload file.
+        """Stream one part's bytes into its range of the upload input.
 
         Every refusal but a stream that ends short or long, or a client
         disconnect, is raised before ``chunks`` is ever pulled from. The
@@ -621,7 +622,7 @@ class IngestService:
         offset: int,
         length: int,
     ) -> str:
-        """Write one part's range into the payload file, on a worker thread.
+        """Write one part's range into the upload input, on a worker thread.
 
         Args:
             ledger: The file's session, as last read by the caller.
@@ -689,7 +690,7 @@ class IngestService:
                         ledger.id, updated, expected_parts=current.completed_parts
                     )
             except PreconditionFailed:
-                current = (await self._hierarchy.ingest_file(file.file_id)).file
+                current = await self._current_upload_file(file.file_id)
                 continue
             return updated
 
@@ -714,6 +715,13 @@ class IngestService:
             )
         return await self._materialize_file(ledger, file)
 
+    async def _current_upload_file(self, file_id: UUID) -> IngestFile:
+        entry = await self._hierarchy.ingest_file(file_id)
+        if entry.file.state is not FileState.COMPLETE:
+            session = await self._hierarchy.ingest_session(entry.ingest_id)
+            session.require(IngestState.UPLOADING, now=self._clock.now())
+        return entry.file
+
     async def _materialize_file(self, ledger: SessionLedger, file: IngestFile) -> IngestFile:
         size, digest = await asyncify(self._raw_store.finish_file)(
             staging_dir(self._root, ledger.id),
@@ -722,7 +730,7 @@ class IngestService:
             expected_size=file.size,
             expected_sha256=file.expected_sha256,
         )
-        current = (await self._hierarchy.ingest_file(file.file_id)).file
+        current = await self._current_upload_file(file.file_id)
         while True:
             if current.state is FileState.COMPLETE:
                 return current
@@ -739,7 +747,7 @@ class IngestService:
                             expected_parts=current.completed_parts,
                         )
                 except PreconditionFailed:
-                    current = (await self._hierarchy.ingest_file(file.file_id)).file
+                    current = await self._current_upload_file(file.file_id)
                     continue
                 raise
             try:
@@ -748,7 +756,7 @@ class IngestService:
                         ledger.id, updated, expected_parts=current.completed_parts
                     )
             except PreconditionFailed:
-                current = (await self._hierarchy.ingest_file(file.file_id)).file
+                current = await self._current_upload_file(file.file_id)
                 continue
             await asyncify(self._raw_store.discard_file)(
                 staging_dir(self._root, ledger.id), str(file.file_id)
@@ -773,8 +781,9 @@ class IngestService:
         """Read the session's declared manifest from wherever it currently sits.
 
         Ordinarily that is the staging envelope; a retry landing after the
-        rename finds no staging left at all, only the envelope already
-        published at ``final``, so the read falls back there.
+        rename finds the staged envelope absent and falls back to the envelope
+        published at ``final``. The session root, upload inputs and completion
+        candidates may still remain in staging.
 
         Args:
             ledger: The session's ledger, as last read by the caller.
@@ -785,7 +794,7 @@ class IngestService:
         """
         try:
             return await asyncify(self._raw_store.read_document)(
-                staging_dir(self._root, ledger.id) / "envelope" / "manifest.json"
+                staging_paths(self._root, ledger.id).envelope / "manifest.json"
             )
         except FileNotFoundError:
             return await asyncify(self._raw_store.read_document)(final / "manifest.json")
@@ -857,7 +866,7 @@ class IngestService:
         Returns:
             The fully validated published revision.
         """
-        staging = staging_dir(self._root, session.lease.ingest_id) / "envelope"
+        staging = staging_paths(self._root, session.lease.ingest_id).envelope
         manifest = decode_manifest(intent.manifest)
         files = tuple((file.path, file.size, file.sha256) for file in manifest.files)
         try:
@@ -869,9 +878,11 @@ class IngestService:
                 await asyncify(self._raw_store.verify_envelope)(staging, files, intent.documents)
                 await asyncify(self._raw_store.seal)(staging)
                 await asyncify(self._raw_store.commit_envelope)(staging, final)
-            except (FileNotFoundError, FileExistsError):
-                await asyncify(self._raw_store.verify_envelope)(final, files, intent.documents)
-        await asyncify(self._raw_store.verify_envelope)(final, files, intent.documents)
+            except (OSError, ValueError):
+                await asyncify(self._raw_store.verify_envelope)(
+                    final, files, intent.documents, sealed=True
+                )
+        await asyncify(self._raw_store.verify_envelope)(final, files, intent.documents, sealed=True)
         await asyncify(self._raw_store.commit_envelope)(staging, final)
         return revision_from_storage(
             intent.committed, intent.metadata, session=session, revision_path=str(final)
@@ -905,7 +916,7 @@ class IngestService:
         """
         async with self._hierarchy.transaction() as writer:
             replay = await writer.claim(claim)
-            if replay is not None:
+            if replay is not None and replay.kind == "revision":
                 return await self._hierarchy.revision(replay.resource_id)
             current = await writer.lock_ingest_session(committing.lease.ingest_id)
             if current.state is IngestState.COMMITTED:
@@ -968,16 +979,12 @@ class IngestService:
     ) -> RevisionRecord:
         """Publish a verified session's envelope as a committed revision.
 
-        A session already COMMITTED returns its revision unchanged, ahead
-        of the etag check and the idempotency claim, so a retry whose key
-        has lapsed and whose etag has gone stale still recovers the same
-        result. Otherwise the etag must match before anything else runs:
-        the commit's documents are composed and validated, the session is
-        fenced into COMMITTING (accepting a retry already there), the
-        envelope is published - or, for a retry past the rename, read back
-        from what is already published - and the result recorded in one
-        short transaction. The index update that follows is best-effort
-        and never affects what is returned.
+        The first COMMITTING transition freezes canonical evidence atomically.
+        Every retry checks the same command and validates the exact stored
+        documents and payload, even after COMMITTED. A stale etag may recover
+        an existing intent but cannot start a different commit. Publication and
+        its revision/events transaction are idempotent; the derived index update
+        remains best-effort.
 
         Args:
             ledger: The session's ledger, as last read by the caller.
@@ -995,6 +1002,7 @@ class IngestService:
         Raises:
             ManifestMismatch: If the requested manifest differs from the session's identity.
             PreconditionFailed: If a VERIFYING session's etag does not match ``expected_etag``.
+            IdempotencyKeyReused: If the key is bound to another operation or session.
         """
         if ledger.state is IngestState.VERIFYING and expected_etag != ledger.etag:
             raise PreconditionFailed(f"ingest session version conflict: {ledger.id}")
@@ -1020,9 +1028,17 @@ class IngestService:
             canonical_bytes(metadata), manifest_bytes(manifest), doc.canonical, marker.canonical
         )
         async with self._hierarchy.transaction() as writer:
+            replay = await writer.claim(claim)
+            if replay is not None and replay not in (
+                Replay(kind="ingest_commit", resource_id=ledger.id),
+                Replay(kind="revision", resource_id=ledger.revision_id),
+            ):
+                raise IdempotencyKeyReused("idempotency key belongs to another operation")
             committing, frozen = await writer.freeze_commit(
                 proposed, intent, expected_etag=ledger.etag
             )
+            if replay is None:
+                await writer.remember(claim, Replay(kind="ingest_commit", resource_id=ledger.id))
         record = await self._publish_envelope(committing, frozen, final)
         published = await self._record_revision(committing, record, claim, record.committed_at)
         await self._write_index(published)

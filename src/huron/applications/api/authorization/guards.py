@@ -9,14 +9,18 @@ both on a router and as a parameter must share one bound closure or the
 check runs twice; routes never re-check permissions.
 """
 
-from __future__ import annotations
-
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Annotated
 from uuid import UUID
 
-from huron.core.scopes import dataset_scope, organization_scope, project_scope
+from fastapi import Path
+
+from huron.core._catalog import HierarchyRepository
+from huron.core._ingest import SessionLedger
+from huron.core.scopes import dataset_scope, project_scope, resource_scope
 from huron.pkg.auth import Principal
+from huron.pkg.catalog import IngestFile, RevisionRecord
 from huron.pkg.catalog.failures import Forbidden
 from huron.pkg.catalog.layers import (
     Layer,
@@ -24,20 +28,11 @@ from huron.pkg.catalog.layers import (
     ensure_layer_writable,
     required_capability,
 )
-from huron.pkg.rbac import Scope
+from huron.pkg.rbac import Scope, ScopeType
 
 from ..runtime import Ingest, Repository, Revisions
 from .credentials import CurrentPrincipal
-from .decisions import BindingCache, CurrentVisibility, check
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-    from huron.core._catalog import HierarchyRepository
-    from huron.core._ingest import SessionLedger
-    from huron.pkg.catalog import IngestFile, RevisionRecord
-
-    from .decisions import BindingCacheMap
+from .decisions import BindingCache, BindingCacheMap, CurrentVisibility, check
 
 
 def require_system(capability: str) -> Callable[..., Awaitable[Principal]]:
@@ -79,6 +74,46 @@ def require_system(capability: str) -> Callable[..., Awaitable[Principal]]:
     return dependency
 
 
+def _require_resource(
+    capability: str, kind: ScopeType, path_parameter: str
+) -> Callable[..., Awaitable[Principal]]:
+    """Bind a catalog guard to its capability and named HTTP path parameter.
+
+    Args:
+        capability: The capability required at the resolved resource.
+        kind: The resource scope whose authoritative ancestry is resolved.
+        path_parameter: The public path parameter naming that resource.
+
+    Returns:
+        A fresh dependency checking discovery before capability authorization.
+    """
+
+    async def dependency(
+        resource_id: Annotated[UUID, Path(alias=path_parameter)],
+        principal: CurrentPrincipal,
+        repository: Repository,
+        cache: BindingCache,
+        visibility: CurrentVisibility,
+    ) -> Principal:
+        """Resolve the addressed resource and enforce the bound capability.
+
+        Args:
+            resource_id: The identifier parsed from the named path parameter.
+            principal: The authenticated caller.
+            repository: Source of resource ancestry and role bindings.
+            cache: The request's binding cache.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The caller after discovery and capability checks pass.
+        """
+        scope = await resource_scope(repository, kind, resource_id, visibility)
+        await check(cache, repository, principal, capability, scope)
+        return principal
+
+    return dependency
+
+
 def require_organization(capability: str) -> Callable[..., Awaitable[Principal]]:
     """Guard a route addressing one organization (path: ``organization_id``).
 
@@ -100,32 +135,7 @@ def require_organization(capability: str) -> Callable[..., Awaitable[Principal]]
         check passed; the same closure must be reused wherever the same
         capability is declared, or the check runs twice.
     """
-
-    async def dependency(
-        organization_id: UUID,
-        principal: CurrentPrincipal,
-        repository: Repository,
-        cache: BindingCache,
-        visibility: CurrentVisibility,
-    ) -> Principal:
-        """Enforce the bound capability at the addressed organization.
-
-        Args:
-            organization_id: The path parameter, bound by name.
-            principal: The authenticated caller.
-            repository: Resolves the organization and the caller's bindings.
-            cache: The request's binding cache.
-            visibility: The caller's discovery rights, used to resolve
-                ``organization_id``.
-
-        Returns:
-            The same principal, as proof the check passed.
-        """
-        scope = await organization_scope(repository, organization_id, visibility)
-        await check(cache, repository, principal, capability, scope)
-        return principal
-
-    return dependency
+    return _require_resource(capability, ScopeType.ORGANIZATION, "organization_id")
 
 
 def require_project(capability: str) -> Callable[..., Awaitable[Principal]]:
@@ -150,32 +160,7 @@ def require_project(capability: str) -> Callable[..., Awaitable[Principal]]:
         check passed; the same closure must be reused wherever the same
         capability is declared, or the check runs twice.
     """
-
-    async def dependency(
-        project_id: UUID,
-        principal: CurrentPrincipal,
-        repository: Repository,
-        cache: BindingCache,
-        visibility: CurrentVisibility,
-    ) -> Principal:
-        """Enforce the bound capability at the addressed project.
-
-        Args:
-            project_id: The path parameter, bound by name.
-            principal: The authenticated caller.
-            repository: Resolves the project and the caller's bindings.
-            cache: The request's binding cache.
-            visibility: The caller's discovery rights, used to resolve
-                ``project_id``.
-
-        Returns:
-            The same principal, as proof the check passed.
-        """
-        scope = await project_scope(repository, project_id, visibility)
-        await check(cache, repository, principal, capability, scope)
-        return principal
-
-    return dependency
+    return _require_resource(capability, ScopeType.PROJECT, "project_id")
 
 
 def require_dataset(capability: str) -> Callable[..., Awaitable[Principal]]:
@@ -200,33 +185,7 @@ def require_dataset(capability: str) -> Callable[..., Awaitable[Principal]]:
         check passed; the same closure must be reused wherever the same
         capability is declared, or the check runs twice.
     """
-
-    async def dependency(
-        dataset_id: UUID,
-        principal: CurrentPrincipal,
-        repository: Repository,
-        cache: BindingCache,
-        visibility: CurrentVisibility,
-    ) -> Principal:
-        """Enforce the bound capability at the addressed dataset.
-
-        Args:
-            dataset_id: The path parameter, bound by name.
-            principal: The authenticated caller.
-            repository: Resolves the dataset's ancestry and the caller's
-                bindings.
-            cache: The request's binding cache.
-            visibility: The caller's discovery rights, used to resolve
-                ``dataset_id``.
-
-        Returns:
-            The same principal, as proof the check passed.
-        """
-        scope = await dataset_scope(repository, dataset_id, visibility)
-        await check(cache, repository, principal, capability, scope)
-        return principal
-
-    return dependency
+    return _require_resource(capability, ScopeType.DATASET, "dataset_id")
 
 
 @dataclass(frozen=True, slots=True)

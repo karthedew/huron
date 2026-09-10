@@ -72,6 +72,10 @@ class ApiSettings(BaseSettings):
     auth_mode: Literal["oidc", "dev-headers"]
     data_root: str = "/data"
     database_url: str
+    #: Per-process verified completion copy limit; uploads have separate concurrency.
+    completion_max_concurrent: int = Field(default=1, ge=1)
+    #: Free filesystem bytes retained beyond active completion-copy reservations.
+    completion_reserve_bytes: int = Field(default=1 << 30, ge=0)
     #: Subject granted a SYSTEM-scope platform_owner binding at startup, so a
     #: fresh deployment has exactly one way in. Unset it once real bindings
     #: exist.

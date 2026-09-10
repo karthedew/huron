@@ -47,6 +47,9 @@ class Organization:
     ) -> Self:
         """Change descriptive fields while protecting identity and version invariants.
 
+        A rename raises ``SlugImmutable``; a stale version raises
+        ``PreconditionFailed``, including when no descriptive field changes.
+
         Args:
             expected_version: The version observed by the caller.
             slug: The existing slug or None; renaming is forbidden.
@@ -55,28 +58,8 @@ class Organization:
 
         Returns:
             The unchanged object, or an immutable successor with advanced counters.
-
-        Raises:
-            SlugImmutable: If the caller attempts to change the slug.
-            PreconditionFailed: If the observed version is stale.
         """
-        if slug is not None and slug != self.slug:
-            raise SlugImmutable("organization slugs cannot be changed")
-        if expected_version != self.version:
-            raise PreconditionFailed(
-                f"expected version {expected_version}, current version is {self.version}"
-            )
-        next_title = self.title if title is None else title
-        next_description = self.description if description is None else description
-        if (next_title, next_description) == (self.title, self.description):
-            return self
-        return replace(
-            self,
-            title=next_title,
-            description=next_description,
-            generation=self.generation + 1,
-            version=self.version + 1,
-        )
+        return _describe(self, "organization", expected_version, slug, title, description)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +94,9 @@ class Project:
     ) -> Self:
         """Change descriptive fields while protecting identity and version invariants.
 
+        A rename raises ``SlugImmutable``; a stale version raises
+        ``PreconditionFailed``, including when no descriptive field changes.
+
         Args:
             expected_version: The version observed by the caller.
             slug: The existing slug or None; renaming is forbidden.
@@ -119,28 +105,8 @@ class Project:
 
         Returns:
             The unchanged object, or an immutable successor with advanced counters.
-
-        Raises:
-            SlugImmutable: If the caller attempts to change the slug.
-            PreconditionFailed: If the observed version is stale.
         """
-        if slug is not None and slug != self.slug:
-            raise SlugImmutable("project slugs cannot be changed")
-        if expected_version != self.version:
-            raise PreconditionFailed(
-                f"expected version {expected_version}, current version is {self.version}"
-            )
-        next_title = self.title if title is None else title
-        next_description = self.description if description is None else description
-        if (next_title, next_description) == (self.title, self.description):
-            return self
-        return replace(
-            self,
-            title=next_title,
-            description=next_description,
-            generation=self.generation + 1,
-            version=self.version + 1,
-        )
+        return _describe(self, "project", expected_version, slug, title, description)
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +151,9 @@ class Dataset:
     ) -> Self:
         """Change descriptive fields while protecting identity and version invariants.
 
+        A rename raises ``SlugImmutable``; a stale version raises
+        ``PreconditionFailed``, including when no descriptive field changes.
+
         Args:
             expected_version: The version observed by the caller.
             slug: The existing slug or None; renaming is forbidden.
@@ -193,28 +162,52 @@ class Dataset:
 
         Returns:
             The unchanged object, or an immutable successor with advanced counters.
-
-        Raises:
-            SlugImmutable: If the caller attempts to change the slug.
-            PreconditionFailed: If the observed version is stale.
         """
-        if slug is not None and slug != self.slug:
-            raise SlugImmutable("dataset slugs cannot be changed")
-        if expected_version != self.version:
-            raise PreconditionFailed(
-                f"expected version {expected_version}, current version is {self.version}"
-            )
-        next_title = self.title if title is None else title
-        next_description = self.description if description is None else description
-        if (next_title, next_description) == (self.title, self.description):
-            return self
-        return replace(
-            self,
-            title=next_title,
-            description=next_description,
-            generation=self.generation + 1,
-            version=self.version + 1,
+        return _describe(self, "dataset", expected_version, slug, title, description)
+
+
+def _describe[ItemT: Organization | Project | Dataset](
+    item: ItemT,
+    kind: str,
+    expected_version: int,
+    slug: str | None,
+    title: str | None,
+    description: str | None,
+) -> ItemT:
+    """Apply the shared immutable descriptive update contract to a hierarchy entity.
+
+    Args:
+        item: The current immutable entity.
+        kind: The entity kind used in the slug-conflict error.
+        expected_version: The version observed by the caller.
+        slug: The existing slug or None; renaming is forbidden.
+        title: A replacement title, or None to retain it.
+        description: A replacement description, or None to retain it.
+
+    Returns:
+        The same object for a no-op, or a successor advancing both counters once.
+
+    Raises:
+        SlugImmutable: If the caller attempts to change the slug.
+        PreconditionFailed: If the observed version is stale, even for a no-op.
+    """
+    if slug is not None and slug != item.slug:
+        raise SlugImmutable(f"{kind} slugs cannot be changed")
+    if expected_version != item.version:
+        raise PreconditionFailed(
+            f"expected version {expected_version}, current version is {item.version}"
         )
+    next_title = item.title if title is None else title
+    next_description = item.description if description is None else description
+    if (next_title, next_description) == (item.title, item.description):
+        return item
+    return replace(
+        item,
+        title=next_title,
+        description=next_description,
+        generation=item.generation + 1,
+        version=item.version + 1,
+    )
 
 
 @dataclass(slots=True)

@@ -68,6 +68,27 @@ class RawIngestionService:
         await self._access.require("data.write", ScopeType.DATASET, ledger.dataset_id, layer="raw")
         return ledger
 
+    async def _owned_file(
+        self, session_id: UUID, file_id: UUID
+    ) -> tuple[SessionLedger, IngestFile]:
+        """Resolve a file only after the actor may drive its stated upload.
+
+        Args:
+            session_id: The upload whose ownership and write permission are checked.
+            file_id: The file that must belong to that upload.
+
+        Returns:
+            The authorized upload ledger and its addressed file.
+
+        Raises:
+            Forbidden: If the addressed file belongs to a different upload.
+        """
+        ledger = await self._owned(session_id)
+        entry, file = await self._operations.entry(file_id)
+        if entry.id != ledger.id:
+            raise Forbidden("file does not belong to this upload")
+        return ledger, file
+
     async def create(
         self,
         dataset_id: UUID,
@@ -77,6 +98,8 @@ class RawIngestionService:
     ) -> SessionLedger:
         """Authorize and execute create.
 
+        A claim belonging to another actor raises ``Forbidden``.
+
         Args:
             dataset_id: The authoritative dataset identifier.
             files: Complete submitted manifest.
@@ -84,16 +107,12 @@ class RawIngestionService:
 
         Returns:
             The verified operation result.
-
-        Raises:
-            Forbidden: If the request identity belongs to another actor.
         """
         ensure_layer_writable(Layer.RAW, self._access.actor.kind)
         await self._access.require("data.write", ScopeType.DATASET, dataset_id, layer="raw")
         dataset = await self._access.dataset(dataset_id)
         created_by = self._access.actor.subject
-        if claim.principal != self._access.actor.subject:
-            raise Forbidden("idempotency claim must belong to the authenticated actor")
+        self._access.require_claim(claim)
         return await self._operations.create(
             dataset, files=files, created_by=created_by, claim=claim
         )
@@ -139,6 +158,8 @@ class RawIngestionService:
     ) -> IngestFile:
         """Authorize and execute receive part.
 
+        A foreign owner or a file from another upload raises ``Forbidden``.
+
         Args:
             session_id: The upload identifier.
             file_id: The file identifier within the upload.
@@ -148,14 +169,8 @@ class RawIngestionService:
 
         Returns:
             The verified operation result.
-
-        Raises:
-            Forbidden: If the request identity belongs to another actor.
         """
-        ledger = await self._owned(session_id)
-        entry, file = await self._operations.entry(file_id)
-        if entry.id != ledger.id:
-            raise Forbidden("file does not belong to this upload")
+        ledger, file = await self._owned_file(session_id, file_id)
         return await self._operations.receive_part(
             ledger, file, part, chunks, content_length=content_length
         )
@@ -163,20 +178,16 @@ class RawIngestionService:
     async def complete_file(self, session_id: UUID, file_id: UUID) -> IngestFile:
         """Authorize and execute complete file.
 
+        A foreign owner or a file from another upload raises ``Forbidden``.
+
         Args:
             session_id: The upload identifier.
             file_id: The file identifier within the upload.
 
         Returns:
             The verified operation result.
-
-        Raises:
-            Forbidden: If the request identity belongs to another actor.
         """
-        ledger = await self._owned(session_id)
-        entry, file = await self._operations.entry(file_id)
-        if entry.id != ledger.id:
-            raise Forbidden("file does not belong to this upload")
+        ledger, file = await self._owned_file(session_id, file_id)
         return await self._operations.complete_file(ledger, file)
 
     async def verify(self, session_id: UUID) -> SessionLedger:
@@ -202,6 +213,8 @@ class RawIngestionService:
     ) -> RevisionRecord:
         """Authorize and execute commit.
 
+        A claim belonging to another actor raises ``Forbidden``.
+
         Args:
             session_id: The upload identifier.
             expected_etag: Last observed session version.
@@ -211,14 +224,10 @@ class RawIngestionService:
 
         Returns:
             The verified operation result.
-
-        Raises:
-            Forbidden: If the request identity belongs to another actor.
         """
         ledger = await self._owned(session_id)
         committed_by = self._access.actor.subject
-        if claim.principal != self._access.actor.subject:
-            raise Forbidden("idempotency claim must belong to the authenticated actor")
+        self._access.require_claim(claim)
         return await self._operations.commit(
             ledger,
             expected_etag=expected_etag,

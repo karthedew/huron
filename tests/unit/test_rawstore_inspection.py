@@ -63,7 +63,7 @@ def test_inspection_rejects_foreign_directory_ownership(
     (tmp_path / "payload").mkdir()
     uid = os.geteuid()
     monkeypatch.setattr(os, "geteuid", lambda: uid + 1)
-    with pytest.raises(ValueError, match="directory ownership disagrees"):
+    with pytest.raises(ValueError, match="directory ownership or seal disagrees"):
         PosixRawStore(tmp_path).verify_envelope(tmp_path, [], {})
 
 
@@ -83,7 +83,9 @@ def test_inspection_rejects_untrusted_file_inodes(
     else:
         uid = os.geteuid()
         monkeypatch.setattr(os, "geteuid", lambda: uid + 1)
-    with pytest.raises(ValueError, match="not independently owned and sealed"):
+    with pytest.raises(
+        ValueError, match=r"ownership or seal disagrees|not independently owned and sealed"
+    ):
         _verify(envelope)
 
 
@@ -95,3 +97,22 @@ def test_inspection_rejects_changed_document_bytes(envelope: Path) -> None:
     path.chmod(0o444)
     with pytest.raises(ValueError, match="content disagrees: COMMITTED"):
         _verify(envelope)
+
+
+def test_published_inspection_requires_sealed_descendants_but_allows_pending_root_seal(
+    envelope: Path,
+) -> None:
+    """The post-rename root can be resealed only after its descendants already verify."""
+    store = PosixRawStore(envelope)
+    files = [
+        ("payload/a/file", 4, hashlib.sha256(b"good").hexdigest()),
+        ("payload/ab/deep/file", 4, hashlib.sha256(b"good").hexdigest()),
+    ]
+    with pytest.raises(ValueError, match="seal disagrees"):
+        store.verify_envelope(envelope, files, {"COMMITTED": b"good"}, sealed=True)
+    store.seal(envelope)
+    assert envelope.stat().st_mode & 0o200
+    store.verify_envelope(envelope, files, {"COMMITTED": b"good"}, sealed=True)
+    (envelope / "payload/ab").chmod(0o755)
+    with pytest.raises(ValueError, match="seal disagrees: payload/ab"):
+        store.verify_envelope(envelope, files, {"COMMITTED": b"good"}, sealed=True)

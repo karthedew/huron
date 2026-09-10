@@ -628,7 +628,7 @@ class HierarchyWriter(Protocol):
         The stored ``expires_at`` becomes the later of itself and
         ``session.lease.expires_at``, so two concurrent renewals - or a renewal
         racing an older instant - are commutative and never move the lease
-        backward. A session that does not exist, or is already terminal,
+        backward. A session that does not exist, is already terminal or is RECOVERING,
         raises ``IngestSessionExpired``.
 
         Args:
@@ -670,7 +670,9 @@ class HierarchyWriter(Protocol):
         raises never leaves the ledger short of an accepted byte, because the
         caller re-reads and re-applies the same step. No PENDING file
         matching ``file.file_id`` under ``ingest_id`` with exactly
-        ``expected_parts`` recorded raises ``PreconditionFailed``.
+        ``expected_parts`` recorded raises ``PreconditionFailed``. The owning
+        session must still be PREPARING, UPLOADING or VERIFYING; later states
+        fence every remaining file-ledger mutation.
 
         Args:
             ingest_id: The session the file's ledger row belongs to.

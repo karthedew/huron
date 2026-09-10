@@ -31,6 +31,7 @@ from huron.pkg.catalog.paths import (
     release_tag_file,
     revision_dir,
     staging_dir,
+    staging_paths,
     validate_org_slug,
     validate_slug,
 )
@@ -350,3 +351,15 @@ def test_parse_revision_dir_rejects_an_organization_component_with_a_malformed_i
     mangled = ROOT.joinpath(*relative_parts)
     with pytest.raises(PathRuleViolation):
         parse_revision_dir(ROOT, mangled)
+
+
+def test_staging_areas_separate_request_inputs_from_published_envelope() -> None:
+    """Every fixed session area has a distinct name below the reserved root."""
+    ingest_id = uuid7()
+    paths = staging_paths(ROOT, ingest_id)
+    assert paths.root == staging_dir(ROOT, ingest_id)
+    assert paths.upload == paths.root / "upload"
+    assert paths.completion == paths.root / "completion"
+    assert paths.envelope == paths.root / "envelope"
+    assert paths.envelope not in paths.upload.parents
+    assert paths.envelope not in paths.completion.parents

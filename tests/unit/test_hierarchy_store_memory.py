@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.catalog.errors import ResourceNotFound
+from huron.pkg.catalog.errors import IdempotencyKeyReused, ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.models import OutboxEvent
 from huron.pkg.catalog.persistence import IdempotencyClaim, Replay
@@ -169,6 +169,28 @@ async def test_an_expired_claim_is_taken_over_rather_than_rejected() -> None:
 
     replayed = await store.organization(second_id, Visibility.ALL)
     assert replayed.id == second_id
+
+
+async def test_an_unfinished_commit_claim_cannot_expire_before_its_revision_receipt() -> None:
+    """Elapsed retry TTL cannot release a key while publication is still unresolved."""
+    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
+    store = InMemoryHierarchyStore(clock=clock)
+    claim = IdempotencyClaim("user:alice", "commit", "a" * 64)
+    pending = Replay(kind="ingest_commit", resource_id=uuid7())
+    async with store.transaction() as writer:
+        assert await writer.claim(claim) is None
+        await writer.remember(claim, pending)
+    clock.advance(timedelta(days=2))
+    conflicting = IdempotencyClaim(claim.principal, claim.key, "b" * 64)
+    with pytest.raises(IdempotencyKeyReused):
+        async with store.transaction() as writer:
+            await writer.claim(conflicting)
+    async with store.transaction() as writer:
+        assert await writer.claim(claim) == pending
+        await writer.remember(claim, Replay(kind="revision", resource_id=uuid7()))
+    async with store.transaction() as writer:
+        assert await writer.claim(conflicting) is None
+        await writer.remember(conflicting, Replay(kind="revision", resource_id=uuid7()))
 
 
 async def test_insert_revision_accepts_repeated_content_with_a_new_identity() -> None:

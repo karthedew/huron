@@ -400,6 +400,36 @@ def staging_dir(root: PurePosixPath, ingest_id: UUID) -> PurePosixPath:
     return root / ".staging" / ingest_id.hex
 
 
+class StagingPaths(NamedTuple):
+    """The separate writable inputs, candidates and publishable envelope of one session.
+
+    Attributes:
+        root: Existing session root created only when ingestion begins.
+        upload: Request-writable inputs, outside publication.
+        completion: Private closed candidates, outside publication.
+        envelope: Verified payload and immutable documents published by rename.
+    """
+
+    root: PurePosixPath
+    upload: PurePosixPath
+    completion: PurePosixPath
+    envelope: PurePosixPath
+
+
+def staging_paths(root: PurePosixPath, ingest_id: UUID) -> StagingPaths:
+    """Return the fixed storage areas reserved for one upload session.
+
+    Args:
+        root: Data root owning the session.
+        ingest_id: Reserved ingest identity.
+
+    Returns:
+        Distinct upload, completion and envelope paths beneath the session root.
+    """
+    session = staging_dir(root, ingest_id)
+    return StagingPaths(session, session / "upload", session / "completion", session / "envelope")
+
+
 def generation_file(entity_dir: PurePosixPath, generation: int) -> PurePosixPath:
     """Return the file holding one generation of an entity's descriptive record.
 

@@ -31,7 +31,7 @@ from alembic import command
 from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
-from huron.core.ports import HierarchyStore
+from huron.core.ports import HierarchyStore, HierarchyWriter
 from huron.pkg.catalog.errors import DatasetLocked, ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.ingest import LEASE_TTL
@@ -793,3 +793,58 @@ def test_stores_conform_to_their_ports_structurally_not_by_inheritance() -> None
     """Neither store inherits HierarchyStore; conformance to the port stays purely structural."""
     assert HierarchyStore not in PostgresHierarchyStore.__mro__
     assert HierarchyStore not in InMemoryHierarchyStore.__mro__
+
+
+def test_identity_and_parent_constraints_preserve_their_database_errors() -> None:
+    """Duplicate identities and missing release parents retain precise PostgreSQL errors."""
+    with PostgresContainer("postgres:16") as postgres:
+        _migrate(postgres.get_connection_url(driver="asyncpg"))
+        asyncio.run(_assert_identity_constraints(postgres.get_connection_url(driver=None)))
+
+
+async def _assert_identity_constraints(dsn: str) -> None:
+    pool = await asyncpg.create_pool(dsn)
+    try:
+        store = PostgresHierarchyStore(pool)
+        hierarchy = await seed_hierarchy(store)
+        dataset = await store.dataset(hierarchy.datasets["run-0001"], Visibility.ALL)
+        project = await store.project(dataset.project_id, Visibility.ALL)
+        organization = await store.organization(project.organization_id, Visibility.ALL)
+        revision = committed_revision(dataset.id, 1)
+        release = Release(
+            id=uuid7(),
+            dataset_id=dataset.id,
+            tag="original",
+            revision_id=revision.id,
+            revision_number=1,
+            title=None,
+            created_by="user:test",
+            created_at=revision.committed_at,
+        )
+        async with store.transaction() as writer:
+            await writer.insert_revision(revision)
+            await writer.insert_release(release)
+        duplicates: tuple[Callable[[HierarchyWriter], Awaitable[None]], ...] = (
+            lambda writer: writer.insert_organization(
+                dataclasses.replace(organization, slug="new")
+            ),
+            lambda writer: writer.insert_project(dataclasses.replace(project, slug="new")),
+            lambda writer: writer.insert_dataset(
+                dataclasses.replace(dataset, slug="new"), data_classification="open"
+            ),
+            lambda writer: writer.insert_release(dataclasses.replace(release, tag="new")),
+        )
+        for insert in duplicates:
+            with pytest.raises(asyncpg.UniqueViolationError) as raised:
+                async with store.transaction() as writer:
+                    await insert(writer)
+            assert raised.value.constraint_name.endswith("_pkey")
+        with pytest.raises(asyncpg.ForeignKeyViolationError) as raised_parent:
+            async with store.transaction() as writer:
+                await writer.insert_release(
+                    dataclasses.replace(release, id=uuid7(), dataset_id=uuid7(), tag="missing")
+                )
+        assert raised_parent.value.constraint_name == "releases_dataset_id_fkey"
+        assert (await store.release(release.dataset_id, release.tag, Visibility.ALL)) == release
+    finally:
+        await pool.close()

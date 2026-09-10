@@ -171,6 +171,7 @@ CREATE TABLE ingest_commit_intents (
 );
 -- [db] trigger ingest_commit_intents_immutable: refuses UPDATE and DELETE
 
+-- [db] trigger ingest_recoveries_ownership: attempt identity, paths, actor and start are immutable
 CREATE TABLE ingest_recoveries (
     ingest_id uuid PRIMARY KEY REFERENCES ingest_sessions ON DELETE RESTRICT,
     attempt_id uuid NOT NULL UNIQUE,

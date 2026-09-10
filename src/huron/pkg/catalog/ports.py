@@ -72,29 +72,29 @@ class RawStore(Protocol):
     def create_staging(self, staging: PurePosixPath) -> None:
         """Claim a fresh, private envelope for one ingest session.
 
-        The envelope and its ``payload`` child are created at mode
-        ``0o700``, visible to nobody but the store's own process until the
-        envelope is published. A ``staging`` whose parent is not
+        The session root and its upload, completion, envelope and envelope/payload
+        children are created privately at mode ``0o700`` and made durable.
+        A ``staging`` whose parent is not
         ``root/.staging`` is refused as a ``ValueError``; a name already
         claimed fails as a ``FileExistsError`` rather than handing back a
         directory another driver may be writing.
 
         Args:
-            staging: The envelope's path, from
+            staging: The session root's path, from
                 :func:`huron.pkg.catalog.paths.staging_dir`.
         """
         ...
 
     def write_part(
         self,
-        staging_payload: PurePosixPath,
+        staging: PurePosixPath,
         rel_path: str,
         chunks: Iterable[bytes],
         *,
         offset: int,
         length: int,
     ) -> str:
-        """Stream one range of a payload file into place, hashing as it goes.
+        """Stream one range of an upload input, hashing as it goes.
 
         Exactly ``length`` bytes are pulled from ``chunks``, in order, and
         written to ``[offset, offset + length)`` of the file at
@@ -104,11 +104,11 @@ class RawStore(Protocol):
         before anything opens; a stream that ends short or runs long is
         refused as a ``PartLengthMismatchError`` before any success is
         reported. The file and every directory from its parent up to
-        ``staging_payload`` must be durable before the digest is returned.
+        ``staging`` must be durable before the digest is returned.
 
         Args:
-            staging_payload: The envelope's ``payload`` directory.
-            rel_path: The file's path relative to ``staging_payload``.
+            staging: The existing session root.
+            rel_path: The input name relative to the upload directory.
             chunks: The range's bytes, consumed once, in order.
             offset: The first byte position the range writes to.
             length: The exact number of bytes the range must contain.
@@ -146,6 +146,8 @@ class RawStore(Protocol):
         envelope: PurePosixPath,
         files: Sequence[tuple[str, int, str]],
         documents: Mapping[str, bytes],
+        *,
+        sealed: bool = False,
     ) -> None:
         """Check exact inventory, independent sealed inodes and frozen evidence.
 
@@ -153,17 +155,18 @@ class RawStore(Protocol):
             envelope: Existing staged or final envelope.
             files: Manifest paths, sizes and digests.
             documents: Frozen control document bytes.
+            sealed: Require sealed descendant directories, allowing an unfinished root seal.
         """
         ...
 
-    def discard_file(self, staging_payload: PurePosixPath, rel_path: str) -> None:
-        """Remove a payload file the ledger no longer vouches for.
+    def discard_file(self, staging: PurePosixPath, rel_path: str) -> None:
+        """Remove an upload input after its independent payload is complete.
 
         A missing file is success.
 
         Args:
-            staging_payload: The envelope's ``payload`` directory.
-            rel_path: The file's path relative to ``staging_payload``.
+            staging: The existing session root.
+            rel_path: The input name relative to the upload directory.
         """
         ...
 
@@ -195,10 +198,9 @@ class RawStore(Protocol):
         """Durably place a control document at the envelope root.
 
         ``name`` must be a single path component and none of the reserved
-        names, refused otherwise as a ``ValueError``; the file is written
-        read-only, and a second call with the same name replaces its bytes
-        wholesale, never leaving a mix of an earlier attempt's content and
-        the new one.
+        names, refused otherwise as a ``ValueError``. A closed, sealed candidate
+        is installed without replacement; equal bytes are an idempotent retry and
+        different bytes are refused. No missing session directory is recreated.
 
         Args:
             staging: The envelope's root directory.
@@ -240,8 +242,9 @@ class RawStore(Protocol):
         itself is sealed; the rename is the only step that changes what is
         visible at ``final``, so a reader can never observe a half-
         published revision. After this returns, ``final`` holds everything
-        ``staging`` held and ``staging`` is gone; if it raises, ``final``
-        does not exist and ``staging`` is untouched. Committing an envelope
+        ``staging`` held and ``staging`` is gone; an interrupted call may leave
+        either name present and must be retried using
+        fully validated frozen evidence. Committing an envelope
         that is already published at ``final``, with no staging directory
         left, succeeds silently so a crashed driver can retry; any other
         pre-existing ``final`` is refused as a ``FileExistsError``, a

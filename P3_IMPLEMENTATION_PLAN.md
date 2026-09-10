@@ -1,8 +1,10 @@
 # P3 — Integrity services: implementation plan
 
-Status: ready for implementation; no implementation performed by this planning
-change. Read [P3_DESIGN.md](P3_DESIGN.md) first. The architecture authority is
-`design/`; the phase remains `todo` in `design/roadmap.html` until gates pass.
+Status: M1a is implemented in part and remains under validation; see the
+[2026-09-09 validation record](P3_M1A_VALIDATION.md). The original planning change
+performed no implementation. Read [P3_DESIGN.md](P3_DESIGN.md) first. The
+architecture authority is `design/`; the phase remains `todo` in
+`design/roadmap.html` until gates pass.
 
 ## Acceptance outcome
 

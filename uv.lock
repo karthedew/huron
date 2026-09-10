@@ -1291,7 +1291,7 @@ dev = [
     { name = "import-linter" },
     { name = "mypy" },
     { name = "pydoclint", specifier = ">=0.9.1" },
-    { name = "pyscn", marker = "platform_machine == 'x86_64' or sys_platform == 'darwin'", specifier = ">=1.30.0" },
+    { name = "pyscn", marker = "platform_machine == 'x86_64' or sys_platform == 'darwin'", specifier = "==1.31.1" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -2174,12 +2174,12 @@ wheels = [
 
 [[package]]
 name = "pyscn"
-version = "1.30.0"
+version = "1.31.1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/69/c6ce1798e702c80758f92fab8417a125411990c416de61d06ed1e5bd8f26/pyscn-1.30.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:35ffa6772b4bd701a09d5a704a824dc934f7e3d9d16bb1c1031eaa41344c6ee1", size = 10215622, upload-time = "2026-08-26T21:40:44.319Z" },
-    { url = "https://files.pythonhosted.org/packages/99/ef/aa7f067b66f916bc7dd01d2a38e73186b3fe8c77e82e0c368d1fce8d268b/pyscn-1.30.0-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:93ad032f67991ea61befb91dafacaa50213e77f845fdba469a775ef6ff237f7a", size = 11152794, upload-time = "2026-08-26T21:40:46.624Z" },
-    { url = "https://files.pythonhosted.org/packages/41/e0/1f501999f82d714ad96b73175877f27e63720baf1a053409b1761328f1a3/pyscn-1.30.0-py3-none-win_amd64.whl", hash = "sha256:d93d41a240900f2211dd5d9f6db65c44bab87f16cad5d418b43960989fde1cc2", size = 11621025, upload-time = "2026-08-26T21:40:48.869Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/85/160f8019e24531c42f351fcd7dfca60d65cce840e987c911db1a952308f2/pyscn-1.31.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:917023e3f0c095edde54a40a48466266be2e035b88497bdfd9ec5ccdaace9068", size = 10226081, upload-time = "2026-09-09T13:50:18.246Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/2f/c77518740158c1deb170d0537940ddd4fff1a45c1f4a29335f2cc251fa4f/pyscn-1.31.1-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:f61c5c0ae49ee3975dfa27b1e712326b202adc9148516e93dc12e949fb56c66e", size = 11163217, upload-time = "2026-09-09T13:50:20.449Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/80/6e2315bd7cae2f295b66129b48885be4bc8ed6bf64ff0c7d8f683397131e/pyscn-1.31.1-py3-none-win_amd64.whl", hash = "sha256:7229e32e2e7a2b003afa866b6f2799ed0806aca6f61ceb2cf3c8158b514df7af", size = 11629428, upload-time = "2026-09-09T13:50:22.633Z" },
 ]
 
 [[package]]

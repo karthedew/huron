@@ -342,3 +342,36 @@ def test_visible_project_ids_skips_a_classification_outside_the_vocabulary() -> 
     authorizer = RoleBindingAuthorizer(classifications=(Classification("public", 0, True),))
 
     assert authorizer.visible_project_ids(principal, [project], [binding]) == []
+
+
+def test_dataset_clearance_never_discovers_its_project_or_sibling() -> None:
+    """Dataset-only clearance stays local even when discovery is granted to the whole project."""
+    organization_id, project_id, dataset_id, sibling_id = (uuid4() for _ in range(4))
+    principal = Principal(subject="alice")
+    discover = Binding(
+        principal="user:alice",
+        capabilities=frozenset({"dataset.discover"}),
+        scope_type=ScopeType.PROJECT,
+        scope_id=project_id,
+    )
+    clearance = Binding(
+        principal="user:alice",
+        capabilities=frozenset(),
+        scope_type=ScopeType.DATASET,
+        scope_id=dataset_id,
+        maximum_classification="restricted",
+    )
+    project = ProjectVisibility(project_id, organization_id, "restricted")
+    authorizer = RoleBindingAuthorizer((Classification("restricted", 1, False),))
+
+    visible = authorizer.visibility(
+        principal,
+        [discover, clearance],
+        [project],
+        [DatasetVisibility(dataset_id, project_id), DatasetVisibility(sibling_id, project_id)],
+    )
+
+    assert visible.dataset_ids == frozenset({dataset_id})
+    assert visible.project_ids == frozenset()
+    assert visible.organization_ids == frozenset()
+    assert not visible.unrestricted

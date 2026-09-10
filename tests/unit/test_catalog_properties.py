@@ -410,7 +410,7 @@ def _predict_named_operation(
     """
     state = session.state
     if operation == "renew":
-        if state in TERMINAL_STATES or now >= session.lease.expires_at:
+        if state in TERMINAL_STATES | {IngestState.RECOVERING} or now >= session.lease.expires_at:
             return IngestSessionExpired
         return state
     if operation == "expire":

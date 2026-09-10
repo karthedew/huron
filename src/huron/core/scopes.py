@@ -20,6 +20,35 @@ if TYPE_CHECKING:
     from huron.core._catalog import HierarchyRepository
 
 
+async def resource_scope(
+    repository: HierarchyRepository,
+    kind: ScopeType,
+    resource_id: UUID,
+    visibility: Visibility,
+) -> Scope:
+    """Resolve a catalog resource's scope through its own discovery check.
+
+    Args:
+        repository: Source of authoritative resource ancestry.
+        kind: The organization, project or dataset scope to resolve.
+        resource_id: The addressed resource's identifier.
+        visibility: The caller's discovery rights.
+
+    Returns:
+        The scope including every ancestor used for inherited permissions.
+
+    Raises:
+        ValueError: If system scope is requested instead of a catalog resource.
+    """
+    if kind is ScopeType.ORGANIZATION:
+        return await organization_scope(repository, resource_id, visibility)
+    if kind is ScopeType.PROJECT:
+        return await project_scope(repository, resource_id, visibility)
+    if kind is ScopeType.DATASET:
+        return await dataset_scope(repository, resource_id, visibility)
+    raise ValueError("system scope has no catalog resource")
+
+
 async def organization_scope(
     repository: HierarchyRepository, organization_id: UUID, visibility: Visibility
 ) -> Scope:
