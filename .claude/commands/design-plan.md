@@ -7,9 +7,9 @@ Produce a design document and an implementation plan for the target codebase, an
 
 The work runs in one order and the order is load-bearing: **grill the documentation first, then map and design the codebase, then write the plan.** The grill establishes what the project believes about itself and which of those beliefs are false. Designing before that means designing on top of stale claims — a design built on an invariant that turns out never to have been enforced inherits the error, and nothing downstream catches it.
 
-- Phase 0 uses the `grill-with-docs` skill.
+- Phase 0 runs the documentation grill specified inline below. `grill-with-docs` is an interview skill (`grilling` plus `domain-modeling`) and is not what this phase does.
 - Phases 1 and 2 use the `codebase-design` skill.
-- Phase 5 uses `grill-with-docs` again to write the reconciled roadmap back.
+- Phase 5 writes the reconciled roadmap back from Phase 0's findings; it uses no skill.
 
 ## Inputs
 
@@ -47,7 +47,7 @@ Do not run subagents in parallel. Each subagent must read the current state of `
 
 ## Phase 0: documentation grill
 
-Send exactly one grill subagent, using the `grill-with-docs` skill.
+Send exactly one grill subagent. Give it the method below verbatim; do not tell it to load `grill-with-docs`, which interviews a user rather than checking claims against code.
 
 The grill subagent must:
 
@@ -142,7 +142,7 @@ If defects are found, fix them with one additional planning subagent pass, then 
 
 ## Phase 5: roadmap reconciliation
 
-Send exactly one documentation subagent, using the `grill-with-docs` skill.
+Send exactly one documentation subagent. It needs no skill; give it the instructions below.
 
 The documentation subagent must:
 
@@ -189,9 +189,8 @@ Token budget:
 30k–50k tokens.
 
 Instructions:
-- Use the `codebase-design` skill. For Phase 0 and Phase 5, use `grill-with-docs` instead.
-- If the scope touches the FastAPI service tier (`src/huron/service`), also load the `fastapi` skill (`.claude/skills/fastapi/`).
-- If the scope designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, DDL/indexes/constraints/triggers), also load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`).
+- Use the `codebase-design` skill for Phases 1 through 4. Phase 0 and Phase 5 use no skill; their method is in the assignment.
+- Load the area skills that AGENTS.md's "Skills by area" table assigns to every code area the scope touches: `oop-design` for `src/huron/pkg` and `src/huron/core`, `fastapi` for `src/huron/applications/api`, `postgresql-table-design` for PostgreSQL adapters, `migrations/`, and any DDL, index, constraint, or trigger work, and the Svelte and Tailwind skills for `web/`. Read each `SKILL.md` before applying it.
 - Read the design and plan files before starting, including the sections completed by earlier tasks, so your output does not contradict them.
 - Inspect the relevant code before making recommendations.
 - Where a claim about runtime behavior can be cheaply tested, test it and record the receipt rather than reasoning about it.

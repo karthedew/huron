@@ -11,8 +11,8 @@ Escalation context: `schema_audit.md` (findings F1–F8). Every finding there wa
 live PostgreSQL 16 by catalog query or by a negative write that succeeded. **Those findings
 are established. Do not re-derive them and do not re-run the database verification.**
 
-Plan file: `SCHEMA_IMPLEMENTATION_PLAN.md`. (`DESIGN.md` / `IMPLEMENTATION_PLAN.md` are
-deliberately *not* used here — `IMPLEMENTATION_PLAN.md` holds the already-shipped auth plan
+Plan file: `SCHEMA_IMPLEMENTATION_PLAN.md`. (`DESIGN.md` / `AUTH_IMPLEMENTATION_PLAN.md` are
+deliberately *not* used here — `AUTH_IMPLEMENTATION_PLAN.md` holds the already-shipped auth plan
 and must not be clobbered.)
 
 ---
@@ -3578,7 +3578,7 @@ carries plan *and* status (`done` / `partial` / `todo`) and is the only status c
 `docs/backend-design.md` § "Where build status lives"; `docs/` is repository documentation and is
 derived; `migrations/versions/*.py` docstrings are authoritative for what each revision installs;
 `migrations/schema.sql` is a derived map; `site/` is retired build output and was not read.
-`IMPLEMENTATION_PLAN.md` and `RBAC_IMPLEMENTATION_PLAN.md` are historical records of shipped work.
+`AUTH_IMPLEMENTATION_PLAN.md` and `RBAC_IMPLEMENTATION_PLAN.md` are historical records of shipped work.
 
 **Method.** Migrations `0001`–`0007` were extracted (`ast.literal_eval` of each module's single
 `DDL` string) and applied in order to a scratch PostgreSQL 16.13 with `psql -v ON_ERROR_STOP=1`.
@@ -3832,7 +3832,7 @@ Drift 4 above already records that `schema.sql`'s header names `0001`–`0005` a
 **Claim.** `RBAC_IMPLEMENTATION_PLAN.md` §R4 (`✅ implemented, applied on PG16`):
 "Verified rejections: pipeline→user, platform_owner→ORGANIZATION scope, bad prefix, exact
 duplicate" and "`migrations/schema.sql` is the human-readable summary of the whole metastore
-(0001+0002, all six sections)". `IMPLEMENTATION_PLAN.md` §A5 is titled "Migration `0004_auth` +
+(0001+0002, all six sections)". `AUTH_IMPLEMENTATION_PLAN.md` §A5 is titled "Migration `0004_auth` +
 `migrations/schema.sql`".
 
 **Reality.** The `pipeline` role was deleted by `0007` (`select code from roles` returns exactly
@@ -4422,7 +4422,7 @@ The §5 example binding (the grill calls it §4) is respelled so the live databa
 is. `developer`'s `bindable_scopes` include `PROJECT`, so the row now passes `role_binding_guard`,
 `role_bindings_scope_type_check` and `role_bindings_effect_check`. Line count unchanged.
 
-### `RBAC_IMPLEMENTATION_PLAN.md` and `IMPLEMENTATION_PLAN.md` — Drift 15
+### `RBAC_IMPLEMENTATION_PLAN.md` and `AUTH_IMPLEMENTATION_PLAN.md` — Drift 15
 
 - §R4's verified-rejection list no longer cites `pipeline→user`; `0007` deleted the role. The
   principal-kind case is now stated as it reproduces today — any `sa:` principal against any role,

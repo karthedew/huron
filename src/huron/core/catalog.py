@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from huron.pkg.catalog.layers import Layer
 from huron.pkg.rbac import ScopeType
 
 if TYPE_CHECKING:
@@ -13,232 +12,42 @@ if TYPE_CHECKING:
 
     from huron.pkg.catalog.persistence import IdempotencyClaim, Window
     from huron.pkg.catalog.records import (
-        Dataset,
-        Organization,
         Policy,
         PolicyAttachment,
-        Project,
         Release,
         RoleBindingRecord,
         ServiceAccount,
     )
 
     from ._catalog import HierarchyRepository
+    from .catalog_ports import DescriptionStore
 
 
 from huron.pkg.catalog.layers import LAYER_ORDER, LAYER_SPECS
 from huron.pkg.rbac import Decision, decide
 
-from .access import AccessPolicy, as_rbac_principal, bindings_for_principal
+from .access import AccessPolicy, as_rbac_principal
+from .catalog_collections import DatasetCollection, OrganizationCollection, ProjectCollection
 
 
 class CatalogService:
     """Authorize catalog operations against current bindings before invoking domain workflows."""
 
-    def __init__(self, operations: HierarchyRepository, access: AccessPolicy) -> None:
+    def __init__(
+        self, operations: HierarchyRepository, access: AccessPolicy, readers: DescriptionStore
+    ) -> None:
         """Bind catalog workflows to one authenticated actor.
 
         Args:
             operations: The internal catalog implementation.
             access: The caller's authorization policy.
+            readers: Typed committed catalog readers.
         """
         self._operations = operations
         self._access = access
-
-    async def create_organization(
-        self, *, slug: str, title: str, description: str, claim: IdempotencyClaim
-    ) -> Organization:
-        """Authorize and execute create organization.
-
-        A claim belonging to another actor raises ``Forbidden``.
-
-        Args:
-            slug: Stable URL and storage slug.
-            title: Descriptive title.
-            description: Free-text description.
-            claim: Retry identity and request fingerprint.
-
-        Returns:
-            The operation result after authorization.
-        """
-        await self._access.require("organization.create", ScopeType.SYSTEM)
-        self._access.require_claim(claim)
-        return await self._operations.create_organization(
-            slug=slug, title=title, description=description, claim=claim
-        )
-
-    async def patch_organization(
-        self,
-        organization_id: UUID,
-        *,
-        expected_version: int,
-        slug: str | None,
-        title: str | None,
-        description: str | None,
-    ) -> Organization:
-        """Authorize and execute patch organization.
-
-        Args:
-            organization_id: Authoritative organization identifier.
-            expected_version: Version the caller last observed.
-            slug: Stable URL and storage slug.
-            title: Descriptive title.
-            description: Free-text description.
-
-        Returns:
-            The operation result after authorization.
-        """
-        await self._access.require("organization.update", ScopeType.ORGANIZATION, organization_id)
-        return await self._operations.patch_organization(
-            organization_id,
-            await self._access.visibility(),
-            expected_version=expected_version,
-            slug=slug,
-            title=title,
-            description=description,
-        )
-
-    async def create_project(
-        self,
-        organization_id: UUID,
-        *,
-        slug: str,
-        title: str,
-        description: str,
-        data_classification: str,
-        claim: IdempotencyClaim,
-    ) -> Project:
-        """Authorize and execute create project.
-
-        A claim belonging to another actor raises ``Forbidden``.
-
-        Args:
-            organization_id: Authoritative organization identifier.
-            slug: Stable URL and storage slug.
-            title: Descriptive title.
-            description: Free-text description.
-            data_classification: Configured project classification code.
-            claim: Retry identity and request fingerprint.
-
-        Returns:
-            The operation result after authorization.
-        """
-        await self._access.require("project.create", ScopeType.ORGANIZATION, organization_id)
-        self._access.require_claim(claim)
-        return await self._operations.create_project(
-            organization_id,
-            await self._access.visibility(),
-            slug=slug,
-            title=title,
-            description=description,
-            data_classification=data_classification,
-            claim=claim,
-        )
-
-    async def patch_project(
-        self,
-        project_id: UUID,
-        *,
-        expected_version: int,
-        slug: str | None,
-        title: str | None,
-        description: str | None,
-    ) -> Project:
-        """Authorize and execute patch project.
-
-        Args:
-            project_id: Authoritative project identifier.
-            expected_version: Version the caller last observed.
-            slug: Stable URL and storage slug.
-            title: Descriptive title.
-            description: Free-text description.
-
-        Returns:
-            The operation result after authorization.
-        """
-        await self._access.require("project.update", ScopeType.PROJECT, project_id)
-        return await self._operations.patch_project(
-            project_id,
-            await self._access.visibility(),
-            expected_version=expected_version,
-            slug=slug,
-            title=title,
-            description=description,
-        )
-
-    async def create_dataset(
-        self,
-        project_id: UUID,
-        *,
-        slug: str,
-        title: str,
-        description: str,
-        profile_name: str,
-        profile_version: str,
-        entry_layer: str = Layer.RAW.value,
-        claim: IdempotencyClaim,
-    ) -> Dataset:
-        """Authorize and execute create dataset.
-
-        A claim belonging to another actor raises ``Forbidden``.
-
-        Args:
-            project_id: Authoritative project identifier.
-            slug: Stable URL and storage slug.
-            title: Descriptive title.
-            description: Free-text description.
-            profile_name: Science profile name.
-            profile_version: Science profile version.
-            entry_layer: Dataset entry layer.
-            claim: Retry identity and request fingerprint.
-
-        Returns:
-            The operation result after authorization.
-        """
-        await self._access.require("dataset.create", ScopeType.PROJECT, project_id)
-        self._access.require_claim(claim)
-        return await self._operations.create_dataset(
-            project_id,
-            await self._access.visibility(),
-            slug=slug,
-            title=title,
-            description=description,
-            profile_name=profile_name,
-            profile_version=profile_version,
-            entry_layer=entry_layer,
-            claim=claim,
-        )
-
-    async def patch_dataset(
-        self,
-        dataset_id: UUID,
-        *,
-        expected_version: int,
-        slug: str | None,
-        title: str | None,
-        description: str | None,
-    ) -> Dataset:
-        """Authorize and execute patch dataset.
-
-        Args:
-            dataset_id: Authoritative dataset identifier.
-            expected_version: Version the caller last observed.
-            slug: Stable URL and storage slug.
-            title: Descriptive title.
-            description: Free-text description.
-
-        Returns:
-            The operation result after authorization.
-        """
-        await self._access.require("dataset.update", ScopeType.DATASET, dataset_id)
-        return await self._operations.patch_dataset(
-            dataset_id,
-            await self._access.visibility(),
-            expected_version=expected_version,
-            slug=slug,
-            title=title,
-            description=description,
-        )
+        self.organizations = OrganizationCollection(access, readers, operations.raw_store)
+        self.projects = ProjectCollection(access, readers, operations.raw_store)
+        self.datasets = DatasetCollection(access, readers, operations.raw_store)
 
     async def create_release(
         self,
@@ -278,39 +87,6 @@ class CatalogService:
             claim=claim,
         )
 
-    async def organization(self, organization_id: UUID) -> Organization:
-        """Authorize and execute organization.
-
-        Args:
-            organization_id: Authoritative organization identifier.
-
-        Returns:
-            The operation result after authorization.
-        """
-        return await self._operations.organization(organization_id, await self._access.visibility())
-
-    async def project(self, project_id: UUID) -> Project:
-        """Authorize and execute project.
-
-        Args:
-            project_id: Authoritative project identifier.
-
-        Returns:
-            The operation result after authorization.
-        """
-        return await self._operations.project(project_id, await self._access.visibility())
-
-    async def dataset(self, dataset_id: UUID) -> Dataset:
-        """Authorize and execute dataset.
-
-        Args:
-            dataset_id: Authoritative dataset identifier.
-
-        Returns:
-            The operation result after authorization.
-        """
-        return await self._operations.dataset(dataset_id, await self._access.visibility())
-
     async def release(self, dataset_id: UUID, tag: str) -> Release:
         """Authorize and execute release.
 
@@ -322,56 +98,6 @@ class CatalogService:
             The operation result after authorization.
         """
         return await self._operations.release(dataset_id, tag, await self._access.visibility())
-
-    async def organizations(
-        self, *, limit: int, after: tuple[str, UUID] | None
-    ) -> Window[Organization]:
-        """Authorize and execute organizations.
-
-        Args:
-            limit: Maximum number of records.
-            after: Exclusive pagination cursor.
-
-        Returns:
-            The operation result after authorization.
-        """
-        return await self._operations.organizations(
-            await self._access.visibility(), limit=limit, after=after
-        )
-
-    async def projects(
-        self, organization_id: UUID, *, limit: int, after: tuple[str, UUID] | None
-    ) -> Window[Project]:
-        """Authorize and execute projects.
-
-        Args:
-            organization_id: Authoritative organization identifier.
-            limit: Maximum number of records.
-            after: Exclusive pagination cursor.
-
-        Returns:
-            The operation result after authorization.
-        """
-        return await self._operations.projects(
-            organization_id, await self._access.visibility(), limit=limit, after=after
-        )
-
-    async def datasets(
-        self, project_id: UUID, *, limit: int, after: tuple[str, UUID] | None
-    ) -> Window[Dataset]:
-        """Authorize and execute datasets.
-
-        Args:
-            project_id: Authoritative project identifier.
-            limit: Maximum number of records.
-            after: Exclusive pagination cursor.
-
-        Returns:
-            The operation result after authorization.
-        """
-        return await self._operations.datasets(
-            project_id, await self._access.visibility(), limit=limit, after=after
-        )
 
     async def releases(
         self, dataset_id: UUID, *, limit: int, after: tuple[str] | None
@@ -595,10 +321,10 @@ class CatalogService:
         Returns:
             Layer descriptions with current read and write decisions.
         """
-        dataset = await self.dataset(dataset_id)
+        dataset = await self.datasets.get(dataset_id)
         scope = await self._access.scope(ScopeType.DATASET, dataset_id)
         actor = as_rbac_principal(self._access.actor)
-        bindings = await bindings_for_principal({}, self._operations, actor)
+        bindings = await self._access.bindings()
         return [
             {
                 "layer": layer,

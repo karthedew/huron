@@ -20,7 +20,7 @@ from huron.applications.api.authorization import (
 )
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.auth.schema.session import ProviderInfo, ScopeRoles, SessionInfo
-from huron.applications.api.runtime import Repository, Settings
+from huron.applications.api.runtime import Bindings, Settings
 
 router = APIRouter()
 
@@ -29,7 +29,7 @@ router = APIRouter()
 async def session_info(
     actor: CurrentPrincipal,
     session: CurrentSession,
-    repository: Repository,
+    repository: Bindings,
     cache: BindingCache,
 ) -> SessionInfo:
     """Describe the caller: who they are, how they authenticated, what they may do.

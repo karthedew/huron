@@ -218,7 +218,7 @@ complete list rather than a sample.
 - **Drift 12** — `design/rbac.html` §4's example binding, which the live `role_binding_guard` and
   two CHECKs refuse. `SCHEMA_DESIGN.md` § "S9 — …" states explicitly that this is a wrong example
   rather than an unmarked enforcement claim, and that S9 does not close it.
-- **Drift 15** — stale specifics in `RBAC_IMPLEMENTATION_PLAN.md` §R4 and `IMPLEMENTATION_PLAN.md`
+- **Drift 15** — stale specifics in `RBAC_IMPLEMENTATION_PLAN.md` §R4 and `AUTH_IMPLEMENTATION_PLAN.md`
   §A5, both records of shipped work.
 - **Drift 16** — `design/catalog-search.html` §2 no longer names `science_profiles`, which exists,
   and names `schema_registry`, which does not.

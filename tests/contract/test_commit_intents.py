@@ -63,9 +63,9 @@ async def _assert_frozen_evidence(dsn: str, root: Path) -> None:
         clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
         store = PostgresHierarchyStore(pool, clock=clock)
         hierarchy = await seed_hierarchy(store)
-        dataset = await store.dataset(hierarchy.datasets["run-0001"], Visibility.ALL)
-        project = await store.project(dataset.project_id, Visibility.ALL)
-        organization = await store.organization(project.organization_id, Visibility.ALL)
+        dataset = await store.datasets.get(hierarchy.datasets["run-0001"], Visibility.ALL)
+        project = await store.projects.get(dataset.project_id, Visibility.ALL)
+        organization = await store.organizations.get(project.organization_id, Visibility.ALL)
         for read in (store.ingest_session, store.ingest_file):
             with pytest.raises(ResourceNotFound):
                 await read(uuid4())
@@ -280,7 +280,7 @@ async def _assert_concurrent_publication(dsn: str, root: Path, same_key: bool) -
         clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
         store = PostgresHierarchyStore(pool, clock=clock)
         hierarchy = await seed_hierarchy(store)
-        dataset = await store.dataset(hierarchy.datasets["run-0001"], Visibility.ALL)
+        dataset = await store.datasets.get(hierarchy.datasets["run-0001"], Visibility.ALL)
         raw = PosixRawStore(root)
         raw.initialize()
         service = IngestService(raw, store, clock=clock)

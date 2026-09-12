@@ -20,7 +20,10 @@ Read skills from `.claude/skills/<name>/SKILL.md`:
   to its corresponding area; shared workflow and verification rules still apply.
 - `postgresql-table-design` for database schema, migrations and persistence design;
   `src/huron/schema/` contains document contracts and is not automatically SQL work.
-- `grill-with-docs` to verify design/roadmap claims against executable evidence.
+- `grill-with-docs` to sharpen a plan by interview: it calls `grilling` and
+  `domain-modeling`, updating `CONTEXT.md` and ADRs as terms and decisions settle.
+  Checking roadmap claims against executable evidence is `/design-plan`'s own
+  Phase 0 method, not a separate skill.
 - `codebase-design` for structural planning/review only to the extent its actual
   contents supply a methodology; inspect it rather than assuming it is complete.
 - Frontend skills and gates are defined in AGENTS.md’s **Frontend: `web/`** section.
@@ -39,10 +42,12 @@ For substantial planned changes, the committed commands in `.claude/commands/`
 provide the following workflow. Read a command before invoking it; when the user
 explicitly invokes one, follow its additional artifact and verification requirements.
 
-1. **Resolve requirements and check documentation.** Use `grill-with-docs` for its
-   actual documented purpose: checking claims against implementation. It is a skill,
-   not a committed slash-command file. Preserve its findings separately from later
-   corrections. Ask focused questions only for unresolved decisions that affect design.
+1. **Resolve requirements and check documentation.** Use `grill-with-docs` to
+   interview the user and settle vocabulary and decisions; it is a skill, not a
+   committed slash-command file. Publish the settled spec with `to-spec`. Claims
+   about what has shipped are checked in `/design-plan` Phase 0; keep those findings
+   separate from later corrections. Ask focused questions only for unresolved
+   decisions that affect design.
 2. **`/design-plan`.** Defined in `.claude/commands/design-plan.md`. Planning only;
    produces a design and implementation plan, including current state, target design,
    roadmap drift, alternatives and mechanically verifiable milestones. Default
@@ -66,3 +71,29 @@ AGENTS.md supplies the tool-independent workflow.
 Documentation-only and small localized tasks do not require this full command loop.
 Apply proportionate verification from AGENTS.md. Report checks actually performed
 and any unresolved gaps; never present a planned migration as completed code.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues for `karthedew/huron`, via the `gh` CLI.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles use their default label strings.
+See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. `design/` remains
+the architecture record. See `docs/agents/domain.md`.
+
+### Implementation workflow
+
+Plans produced by `/design-plan` are executed by `/implement-markdown`, not by
+the `implement` or `implement-spec` skills. Implementation and verification
+subagents load skills by code area from AGENTS.md's "Skills by area" table.
+`to-spec` publishes the spec issue that `code-review` later checks against. When
+tickets are wanted, `to-tickets` (not the older `to-issues`) breaks the spec into
+tracer-bullet tickets; keep one ticket per plan task.

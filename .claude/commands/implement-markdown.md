@@ -1,8 +1,7 @@
 ---
 description: Execute a markdown implementation plan for a Python project through serial implementation and verification agents with a strict validation gate, bounded fix loops, and configurable models
 agent: build
-model: openai/gpt-6-astra
-variant: low
+model: claude-fable-5
 ---
 
 You are orchestrating a disciplined, senior-engineer implementation workflow for a Python project from the markdown implementation plan at:
@@ -12,12 +11,39 @@ You are orchestrating a disciplined, senior-engineer implementation workflow for
 ## Inputs
 
 - Implementation plan: `$1`
-- Implementation subagent model: `${2:-openai/gpt-6-astra}`
-- Verification subagent model: `${3:-openai/gpt-6-astra}`
-- Reasoning effort: `low` for the orchestrator and every implementation, fix, and verification subagent.
+- Claude Code implementation subagent model: `${2:-anthropic/claude-sonnet-5}`
+- Claude Code verification subagent model: `${3:-anthropic/claude-opus-5}`
+- OpenCode model: `openai/gpt-6-astra`, reasoning effort `low`, for every role.
+- Codex models and reasoning effort: inherit the current session by default; explicit `$2`/`$3` select implementation/verification models only when the native tool supports them.
 - Escalation review command: `${4:-/architectural-review}`
 
-When spawning subagents, pass the model and low reasoning effort explicitly: every implementation and fix subagent runs on `${2:-openai/gpt-6-astra}`, and every verification subagent runs on `${3:-openai/gpt-6-astra}`. If a specified model or low reasoning effort cannot be selected in the current runtime, stop immediately and report the limitation and any confirmed available providers instead of silently substituting a model or reasoning effort.
+### Runtime selection
+
+Detect the host application from its runtime/tool context, not the model's name. If uncertain, ask before delegation. Record the host and resolved settings in the ledger.
+
+- **Claude Code:** retain the frontmatter's `claude-fable-5` orchestrator and the Claude implementation/verification defaults above, with optional `$2`/`$3` overrides. Use the host's supported model identifiers and background-agent/output-status tools. Do not impose OpenCode's `low` variant on Claude. Verify the requested models are available; never silently substitute.
+- **OpenCode:** enter through `.opencode/commands/implement-markdown.md`, which selects `markdown-orchestrator`. `opencode.json` configures that agent, `markdown-implementer` (implementation and fixes), and `markdown-reviewer` for Astra Low. The project plugin enforces low reasoning effort for these agents and refuses model substitution. `$2`/`$3` must be omitted or equal `openai/gpt-6-astra` in this runtime. The Claude frontmatter does not apply to the OpenCode wrapper.
+- **Codex:** read this file as workflow instructions when the user supplies its path and a plan, for example `./.claude/commands/implement-markdown.md P3_IMPLEMENTATION_PLAN.md`. This is a prompt invocation, not a shell executable or a registered Codex slash command. Ignore the Claude frontmatter and other hosts' model defaults. Use native subagent tools exposed in the current session. Invoking this workflow authorizes its serial delegation; proceed without requesting runtime substitution approval when these capabilities are available. Keep the current orchestrator settings and inherit them for children by default. Apply explicit model or reasoning overrides only through supported native parameters, with a self-contained assignment when inheritance is incompatible with overrides. Record inherited settings as inherited; do not guess an unexposed model or reasoning value. If an explicit override is unavailable, report it rather than substitute.
+
+#### Codex delegation
+
+Inspect the exposed tool schemas before launching. In sessions exposing `collaboration`, use `spawn_agent` with a unique task name and the complete assignment, record the returned agent ID, receive progress through `send_message`, and inspect status with `list_agents`. Use `wait_agent` with waits of at most 60 seconds between status checks; relay incoming updates promptly. Other Codex surfaces may expose equivalent native tools with different names or arguments: use their actual schemas, not invented aliases. See the [official subagent guidance](https://learn.chatgpt.com/docs/agent-configuration/subagents); the current session's tool definitions govern exact calls.
+
+Launch one child at a time for implementation, fixes, or independent verification. Include an instruction against nested delegation in every assignment. While the child runs, the orchestrator monitors progress and maintains the ledger without editing the child's files or running competing validation. Start the next child only after receiving the current child's final report and confirming its work has stopped. Verification reruns the full gate and reports findings without editing source files; this is a workflow rule, not an OS-level read-only sandbox.
+
+After an interrupted launch, inspect existing agents before dispatching again. An idle agent, timeout, error, or missing final report is indeterminate, not a verification verdict. Inspect any surviving tool processes before replacing an interrupted worker. An interruption does not imply its shell commands stopped. Keep one active child across recovery as well as normal execution; resume the existing assignment through supported native tools when appropriate.
+
+#### OpenCode delegation
+
+OpenCode must expose `implementation_start` and `implementation_status` from `.opencode/plugins/implementation.ts`. Launch with `role`, `title`, and the full assignment in `prompt`; record the returned `sessionID`. The asynchronous launch returns without waiting for completion. Poll `implementation_status` with that ID at least once per minute while active, and relay substantive changes immediately and a short user update at least every 15 minutes. Use an available bounded wait between polls, not a blocking Task call or a tight loop. Polling exposes the latest assistant text and tool activity even when the child cannot push updates directly to the parent.
+
+After an interrupted launch, omit `sessionID` when polling to discover direct children. Inspect the existing child rather than launch a duplicate. A missing final response, API error, or idle status alone is indeterminate, not PASS or proof of a stopped writer. The plugin refuses another child until existing children have terminal response evidence. An explicit abort still requires checking for surviving tool processes before replacement. Do not delete sessions to bypass the serial guard.
+
+#### Runtime readiness
+
+Before the first launch, confirm the selected host's tools and agent settings are available. Only require the tools for that host; Codex does not require the OpenCode plugin or Claude models. If required capabilities are unavailable, report the specific runtime limitation and request a restart or an explicit alternative; do not claim prompt instructions exposed new tools. For OpenCode setup and validation, see `.opencode/README.md`. Keep the full serial loop, validation gate, and iteration cap below in every runtime.
+
+In Codex, escalation commands also name instruction files: present the equivalent prompt invocation of `.claude/commands/architectural-review.md` or `.claude/commands/design-plan.md` with the affected area and evidence paths. Read the requested command and check its own runtime requirements before executing it.
 
 Treat `$1` as the source-of-truth implementation plan. Before doing anything else, read the entire markdown file carefully. Do not begin editing until you understand the full plan, its phases, its sequencing, its stated constraints, and its acceptance criteria.
 
@@ -26,28 +52,32 @@ Treat `$1` as the source-of-truth implementation plan. Before doing anything els
 Before starting the first phase/task, do all of the following and record the results in the progress ledger:
 
 1. Read `pyproject.toml`. Determine the package import path(s) to measure (from `[project]`, `[tool.setuptools]`, `[tool.hatch]`, `[tool.pytest.ini_options]`, or the `src/` layout). State the resolved package path explicitly; every validation command below uses it.
-2. Confirm every tool in the validation gate resolves inside the project environment: `uv run ruff --version`, `uv run ty --version`, `uv run mypy --version`, `uv run lint-imports --version`, `uv run pytest --version`, `uv run python -c "import pytest_cov"`, `uv run radon --version`, `uv run complexipy --version`, `uv run pyscn --version`. If any tool is missing, stop immediately and report which tools must be added as dev dependencies. Do not treat a missing tool as "validation not applicable."
+2. Confirm every tool in the validation gate resolves inside the project environment: `uv run ruff --version`, `uv run ty --version`, `uv run mypy --version`, `uv run lint-imports --version`, `uv run pytest --version`, `uv run python -c "import pytest_cov"`, `uv run radon --version`, `uv run complexipy --version`, `uv run --locked pyscn --version` (must be 1.31.1). If any tool is missing, stop immediately and report which tools must be added as dev dependencies. Do not treat a missing tool as "validation not applicable."
 3. Run the full validation gate once on the untouched tree to establish a baseline. If the baseline already fails, report the failures and stop; the plan must be executed from a green tree so that every failure during the workflow is attributable to the current phase/task.
 
 ## Python validation gate
 
-Every implementation, fix, and verification subagent runs the complete gate. The gate passes only when every command exits 0 and produces no findings. Partial runs, "ran the relevant subset," and skipped tools are not acceptable.
+Every implementation, fix, and verification subagent runs the complete gate. The gate passes only when every command exits 0 and meets the pass conditions below. The sole findings exception is code duplication: clone findings are allowed when pyscn's native duplication score is at least 90/100. All other zero-findings requirements remain strict. Partial runs, "ran the relevant subset," and skipped tools are not acceptable. Throughout this workflow, a "clean" gate means these pass conditions are met, not that clone output is empty.
 
 Configuration precedence: if `pyproject.toml` (or `ruff.toml`, `ty.toml`, `.coveragerc`) configures a tool, that configuration governs. Any thresholds stated below are fallback defaults that apply only when the project has not configured the tool. Subagents must not loosen configured thresholds, add exclusions, or introduce `# noqa`, `# type: ignore`, `# pragma: no cover`, `@pytest.mark.skip`, or `@pytest.mark.xfail` to make the gate pass.
 
-Run from the repository root, with `<pkg>` replaced by the resolved package path:
+Run from the repository root, with `<pkg>` replaced by the resolved coverage package
+path. Static lint targets `src/`; tests and migration schema-map validation remain
+separate required verification. `make lint` is the canonical static gate, including
+pydoclint and schema-map validation.
 
 ```text
-uv run ruff check .
-uv run ruff format --check .
+uv run ruff check src
+uv run ruff format --check src
 uv run ty check
 uv run mypy
 uv run lint-imports
 uv run pytest --cov=<pkg> --cov-report=term-missing
-uv run radon cc <pkg> --min C
-uv run radon mi <pkg> --min B
-uv run complexipy <pkg> --max-complexity-allowed 15
-uv run pyscn check <pkg>
+uv run radon cc src --min C
+uv run radon mi src --min B
+uv run complexipy src --max-complexity-allowed 15
+uv run --locked pyscn check src
+uv run --locked python scripts/check_duplication.py src
 ```
 
 Pass conditions:
@@ -61,7 +91,8 @@ Pass conditions:
 - `radon cc --min C`: empty output. No function, method, or class at cyclomatic grade C or worse.
 - `radon mi --min B`: empty output. No module at maintainability grade B or worse.
 - `complexipy`: exit 0. No function above the cognitive complexity limit.
-- `pyscn check`: exit 0. No dead code, no code clones, no structural complexity findings.
+- `pyscn check`: exit 0. No dead code or structural complexity findings. Clone warnings are evaluated by the score gate below, not a zero-clones rule; do not skip clone detection.
+- `check_duplication.py`: exit 0 and pyscn's native JSON `summary.duplication_score` >=90/100, inclusive. This script runs `uv run --locked pyscn analyze --select clones --json <pkg>` and validates the report from that invocation; missing/invalid reports, unsupported versions, disabled clone analysis, incomplete analysis (including diagnostics or failures), and tool failures fail closed. Use the native category score, not overall health, clone count, or a custom duplicated-line percentage. pyscn is pinned to 1.31.1, which has no native CLI score-threshold flag. Its [score implementation](https://github.com/ludo-technologies/pyscn/blob/v1.31.1/domain/analyze.go) uses [polyscan core v0.2.7 scoring](https://github.com/ludo-technologies/polyscan/blob/core/v0.2.7/core/domain/scoring.go), as pinned in [go.mod](https://github.com/ludo-technologies/pyscn/blob/v1.31.1/go.mod); use these sources rather than the stale upstream scoring documentation. This curve differs from 1.30.0, so scores across those versions are not comparable. Report the measured native score and cloned/total fragments, pair and group counts; do not lower the 90/100 floor or tune detection/exclusions to manufacture a pass.
 
 Complexity failures and the clean sweep: consolidating legacy paths often pushes a function over a complexity limit. The correct fix is a better decomposition along domain boundaries, not mechanical extraction of arbitrary helpers to satisfy the metric. If a function genuinely requires complexity beyond the limit to express its domain logic correctly, that is a plan-defect signal to be raised in the verification report, not a reason to suppress the check.
 
@@ -83,8 +114,8 @@ Complexity failures and the clean sweep: consolidating legacy paths often pushes
 Your job is to complete the markdown plan through a strict serial loop:
 
 1. Choose exactly one phase or task from the markdown plan.
-2. Send exactly one implementation subagent (model: `${2:-openai/gpt-6-astra}`, reasoning effort: `low`) to complete that phase or task.
-3. After implementation returns, send exactly one verification subagent (model: `${3:-openai/gpt-6-astra}`, reasoning effort: `low`) to review the result.
+2. Send exactly one implementation subagent using the resolved runtime settings to complete that phase or task.
+3. After implementation returns, send exactly one verification subagent using the resolved runtime settings to review the result.
 4. If verification finds any issue of any size, send another implementation subagent to fix every issue.
 5. Send another verification subagent.
 6. Repeat implementation -> verification, subject to the iteration cap below.
@@ -145,14 +176,27 @@ Maintain a visible progress ledger in your own response as you work. The ledger 
 - Verification status
 - Remaining phases/tasks
 - Models and reasoning effort in use (orchestrator / implementation / verification)
+- Active subagent task ID, start time, last progress-update time, and current operation
 
 Use the markdown plan to determine phase boundaries. If the markdown does not clearly define phases, derive a sensible sequence from the document and state the derived sequence before starting.
 
 For each phase/task, follow this exact loop.
 
+### Progress updates
+
+Every implementation, fix, and verification subagent must send a brief progress update at least every 15 minutes of elapsed time while its assignment remains active, including during validation. Send blockers, repeated failures, and suspected hangs immediately rather than waiting for the next interval. These are progress messages, not final implementation reports or verification verdicts.
+
+Keep each update to 2-4 short lines containing the phase/task, agent role and attempt number, elapsed time, concrete progress since the previous update, current operation or command, and the next step or blocker. If nothing has advanced, say so and identify the last observed activity; do not substitute "still working" for evidence.
+
+The orchestrator must relay each update to the user promptly and refresh the visible ledger. Include this entire progress-update contract verbatim in every implementation, verification, and fix assignment, including resumed assignments.
+
+Before delegation, confirm how the runtime delivers intermediate updates. Use supported streaming or background execution with status polling so a long-running command does not hide progress for more than 15 minutes. Do not cancel or rerun a healthy command merely to produce an update. If intermediate updates are unavailable, disclose that limitation before launching and obtain approval for a checkpoint/resume alternative or for proceeding without live updates; prompt text alone does not guarantee delivery.
+
+When an update is overdue, inspect available task/process status and report the last confirmed activity. If liveness cannot be inspected, state that it is unknown, not that the agent is working or stuck. Do not start a replacement until the previous agent is confirmed stopped. A checkpoint, interruption, or resume does not itself consume another verification attempt or replace any required validation; a checkpoint is not PASS or FAIL.
+
 ### Step 1: Implementation subagent
 
-Invoke one implementation subagent (model: `${2:-openai/gpt-6-astra}`, reasoning effort: `low`) for the current phase/task. The implementation subagent must receive a self-contained assignment that includes:
+Invoke one implementation subagent using the resolved runtime settings for the current phase/task. The implementation subagent must receive a self-contained assignment that includes:
 
 - The markdown file path: `$1`
 - The exact phase/task to implement
@@ -163,10 +207,10 @@ Invoke one implementation subagent (model: `${2:-openai/gpt-6-astra}`, reasoning
 - The clean-sweep rule: no backwards compatibility unless explicitly required
 - The comment rule: no code comment, docstring, test name, user-facing message, or internal note may reference the markdown, the plan, phases, or checklist mechanics
 - The expectation that all touched code should be senior-level, idiomatic, minimal, and beautiful
-- The requirement to load the `fastapi` skill (`.claude/skills/fastapi/`) before editing, when the phase/task touches the FastAPI service tier (`src/huron/service`)
-- The requirement to load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`) before editing, when the phase/task designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, or any DDL, index, constraint, or trigger work)
+- The skills to load before editing, resolved by the orchestrator from AGENTS.md's "Skills by area" table for every code area the phase/task touches: `oop-design` for `src/huron/pkg` and `src/huron/core`, `fastapi` for `src/huron/applications/api`, `postgresql-table-design` for PostgreSQL adapters, `migrations/`, and any DDL, index, constraint, or trigger work, and the Svelte and Tailwind skills for `web/`. Name the resolved skills in the assignment; do not leave the lookup to the subagent
 - The requirement to run the complete validation gate and paste the actual output of every command
 - The requirement to summarize exactly what changed and what validation was run
+- The progress-update contract above, verbatim
 
 The implementation subagent must read the markdown file before editing. It must inspect the relevant code before changing it. It must make the smallest complete set of changes necessary to finish the current phase/task while removing obsolete code made unnecessary by the clean sweep.
 
@@ -189,10 +233,12 @@ Acceptance criteria:
 
 Package path for validation: [RESOLVED_PACKAGE_PATH]
 
+Progress updates:
+[PASTE_PROGRESS_UPDATE_CONTRACT_VERBATIM]
+
 Engineering rules:
 - Complete this phase/task fully.
-- If this phase/task touches the FastAPI service tier (`src/huron/service`), load the `fastapi` skill (`.claude/skills/fastapi/`) before writing code, and follow its conventions.
-- If this phase/task designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, or any DDL, index, constraint, or trigger work), load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`) and follow its conventions.
+- Load these skills before writing code and follow their conventions: [RESOLVED_AREA_SKILLS_FROM_AGENTS_MD]. AGENTS.md's "Skills by area" table assigns them by code area: `oop-design` for `src/huron/pkg` and `src/huron/core`, `fastapi` for `src/huron/applications/api`, `postgresql-table-design` for PostgreSQL adapters, `migrations/`, and any DDL, index, constraint, or trigger work, and the Svelte and Tailwind skills for `web/`. Read each `SKILL.md` in full and apply each skill only to its own area.
 - This is a clean sweep. Do not preserve backwards compatibility unless the markdown explicitly requires it.
 - Remove obsolete code, dead paths, compatibility shims, stale tests, unused types, and transitional abstractions made unnecessary by this work.
 - Do not reference the markdown, implementation plan, phase numbers, checklist mechanics, or this orchestration process in code comments, docstrings, test names, user-facing strings, or internal comments.
@@ -205,7 +251,7 @@ Engineering rules:
 Testing standard:
 [PASTE_TESTING_STANDARD_VERBATIM]
 
-Validation gate (every command must exit 0 with no findings; configured thresholds in pyproject.toml govern):
+Validation gate (every command must exit 0 and meet its pass conditions; duplication score >=90/100 permits clone findings, all other zero-findings checks remain strict; configured thresholds in pyproject.toml govern):
 [PASTE_VALIDATION_GATE_VERBATIM]
 
 Process:
@@ -225,7 +271,7 @@ Process:
 
 ### Step 2: Verification subagent
 
-After implementation returns, invoke one verification subagent (model: `${3:-openai/gpt-6-astra}`, reasoning effort: `low`) for the same phase/task. The verification subagent must receive a self-contained assignment that includes:
+After implementation returns, invoke one verification subagent using the resolved runtime settings for the same phase/task. The verification subagent must receive a self-contained assignment that includes:
 
 - The markdown file path: `$1`
 - The exact phase/task being verified
@@ -240,6 +286,7 @@ After implementation returns, invoke one verification subagent (model: `${3:-ope
 - The requirement to flag every issue, including small ones
 - The requirement to check code quality, comments, naming, tests, architecture, deletion of obsolete code, validation completeness, and general code health
 - Which verification attempt this is (1, 2, or 3 of 3)
+- The progress-update contract above, verbatim
 
 The verification subagent must read the markdown file before reviewing. It must inspect the actual code and diff. It must rerun the entire validation gate and base its verdict on what it observes, never on the implementation subagent's pasted output. It must not rubber-stamp. It must look for small problems as well as large ones.
 
@@ -248,7 +295,7 @@ Verification must produce one of two outcomes:
 - `PASS`: The phase/task is complete, the gate is clean, and no issues remain.
 - `FAIL`: One or more issues remain.
 
-Any non-zero exit or non-empty finding from the gate is an automatic `FAIL`. A missing tool or an unconfigured threshold that the implementation relied on is an automatic `FAIL`.
+Any non-zero exit or violation of a pass condition is an automatic `FAIL`. Clone findings alone are not a failure when the native duplication score is >=90/100; every other zero-findings check remains strict. A missing tool, missing/invalid duplication report, or an unconfigured threshold that the implementation relied on is an automatic `FAIL`.
 
 If verification returns `FAIL`, it must provide a precise fix list. Every issue must be actionable, specific, and tied to files, symbols, behavior, tests, or validation gaps.
 
@@ -275,6 +322,9 @@ Package path for validation: [RESOLVED_PACKAGE_PATH]
 
 Your job is to verify the implementation against the markdown plan and senior engineering standards. Inspect the working tree, relevant files, tests, and diff. Do not rely on the implementation summary for anything you can check yourself.
 
+Progress updates:
+[PASTE_PROGRESS_UPDATE_CONTRACT_VERBATIM]
+
 Validation gate (run every command yourself; do not trust pasted output):
 [PASTE_VALIDATION_GATE_VERBATIM]
 
@@ -283,11 +333,10 @@ Testing standard:
 
 Verification rules:
 - Be strict.
-- Run the complete validation gate. Any non-zero exit or any finding is FAIL.
+- Run the complete validation gate. Any non-zero exit or violation of a pass condition is FAIL. Clone findings are allowed only with native duplication score >=90/100; all other zero-findings checks remain strict.
 - Flag every issue, even small ones.
 - Check correctness, completeness, code quality, naming, architecture, type annotations, comments, tests, validation, and general code health.
-- Where the change touches the FastAPI service tier (`src/huron/service`), load the `fastapi` skill (`.claude/skills/fastapi/`) and check the code against its conventions.
-- Where the change designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, DDL, indexes, constraints, triggers), load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`) and check the schema against its conventions.
+- Load the skills AGENTS.md's "Skills by area" table assigns to the code areas the change touches ([RESOLVED_AREA_SKILLS_FROM_AGENTS_MD]) and check the code against their conventions, each applied only to its own area.
 - Check the tests against the testing standard: coverage of error paths and boundaries, behavioral rather than implementation-coupled assertions, determinism, mocking only at I/O boundaries, and no skipped or xfailed tests introduced.
 - Confirm every file touched in this phase/task is fully covered, or state precisely which uncovered lines you judge unreachable and why.
 - Confirm obsolete code was removed where the clean-sweep change makes it unnecessary.
@@ -322,7 +371,7 @@ If FAIL, include:
 
 ### Step 3: Fix loop
 
-If the verification subagent returns `FAIL` and fewer than 3 verification attempts have been used for this phase/task, invoke a new implementation subagent (model: `${2:-openai/gpt-6-astra}`, reasoning effort: `low`) whose only job is to fix every verification issue for the current phase/task. The fix implementation subagent must read the markdown file, read the verification report, inspect the code, fix all issues, and rerun the complete validation gate.
+If the verification subagent returns `FAIL` and fewer than 3 verification attempts have been used for this phase/task, invoke a new implementation subagent using the resolved runtime settings whose only job is to fix every verification issue for the current phase/task. The fix implementation subagent must read the markdown file, read the verification report, inspect the code, fix all issues, and rerun the complete validation gate.
 
 If the verification subagent returns `FAIL` on attempt 3, do not send another fix subagent. Execute the escalation procedure in "Iteration cap and escalation" and end the workflow.
 
@@ -341,10 +390,12 @@ The previous verification failed. Fix every issue below before returning:
 
 Package path for validation: [RESOLVED_PACKAGE_PATH]
 
+Progress updates:
+[PASTE_PROGRESS_UPDATE_CONTRACT_VERBATIM]
+
 Rules:
 - Fix all issues, including small ones.
-- If this phase/task touches the FastAPI service tier (`src/huron/service`), load the `fastapi` skill (`.claude/skills/fastapi/`) before writing code, and follow its conventions.
-- If this phase/task designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, or any DDL, index, constraint, or trigger work), load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`) and follow its conventions.
+- Load these skills before writing code and follow their conventions: [RESOLVED_AREA_SKILLS_FROM_AGENTS_MD]. AGENTS.md's "Skills by area" table assigns them by code area: `oop-design` for `src/huron/pkg` and `src/huron/core`, `fastapi` for `src/huron/applications/api`, `postgresql-table-design` for PostgreSQL adapters, `migrations/`, and any DDL, index, constraint, or trigger work, and the Svelte and Tailwind skills for `web/`. Read each `SKILL.md` in full and apply each skill only to its own area.
 - Do not ignore, defer, or partially address any verification item.
 - This is a clean sweep. Do not preserve backwards compatibility unless explicitly required by the markdown.
 - Remove obsolete code made unnecessary by the fix.
@@ -358,7 +409,7 @@ Rules:
 Testing standard:
 [PASTE_TESTING_STANDARD_VERBATIM]
 
-Validation gate (every command must exit 0 with no findings):
+Validation gate (every command must exit 0 and meet its pass conditions; clone findings are allowed only with native duplication score >=90/100, all other zero-findings checks remain strict):
 [PASTE_VALIDATION_GATE_VERBATIM]
 
 Process:

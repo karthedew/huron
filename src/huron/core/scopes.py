@@ -17,11 +17,11 @@ from huron.pkg.rbac import Scope, ScopeType, Visibility
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from huron.core._catalog import HierarchyRepository
+    from huron.core.catalog_ports import CatalogReaders
 
 
 async def resource_scope(
-    repository: HierarchyRepository,
+    repository: CatalogReaders,
     kind: ScopeType,
     resource_id: UUID,
     visibility: Visibility,
@@ -50,7 +50,7 @@ async def resource_scope(
 
 
 async def organization_scope(
-    repository: HierarchyRepository, organization_id: UUID, visibility: Visibility
+    repository: CatalogReaders, organization_id: UUID, visibility: Visibility
 ) -> Scope:
     """Resolve an organization id to its RBAC scope, 404 before 403.
 
@@ -68,12 +68,12 @@ async def organization_scope(
     Returns:
         An ORGANIZATION scope whose ancestry is the organization itself.
     """
-    await repository.organization(organization_id, visibility)  # 404 before 403
+    await repository.organizations.get(organization_id, visibility)  # 404 before 403
     return Scope(ScopeType.ORGANIZATION, organization_id, organization_id=organization_id)
 
 
 async def project_scope(
-    repository: HierarchyRepository, project_id: UUID, visibility: Visibility
+    repository: CatalogReaders, project_id: UUID, visibility: Visibility
 ) -> Scope:
     """Resolve a project id to its RBAC scope, 404 before 403.
 
@@ -88,7 +88,7 @@ async def project_scope(
         A PROJECT scope carrying the owning organization, so an
         organization-level binding covers it.
     """
-    project = await repository.project(project_id, visibility)
+    project = await repository.projects.get(project_id, visibility)
     return Scope(
         ScopeType.PROJECT,
         project_id,
@@ -98,7 +98,7 @@ async def project_scope(
 
 
 async def dataset_scope(
-    repository: HierarchyRepository, dataset_id: UUID, visibility: Visibility
+    repository: CatalogReaders, dataset_id: UUID, visibility: Visibility
 ) -> Scope:
     """Resolve a dataset id to its RBAC scope, 404 before 403.
 
@@ -118,8 +118,8 @@ async def dataset_scope(
         A DATASET scope carrying the owning project and organization, so a
         binding at either level covers it.
     """
-    dataset = await repository.dataset(dataset_id, visibility)
-    project = await repository.project(dataset.project_id, Visibility.ALL)
+    dataset = await repository.datasets.get(dataset_id, visibility)
+    project = await repository.projects.get(dataset.project_id, Visibility.ALL)
     return Scope(
         ScopeType.DATASET,
         dataset_id,

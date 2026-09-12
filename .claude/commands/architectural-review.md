@@ -121,8 +121,7 @@ Token budget:
 Instructions:
 - Use the `codebase-design` skill.
 - Where a claim about runtime behavior can be cheaply tested, test it and record the receipt rather than reasoning about it.
-- If the scope touches the FastAPI service tier (`src/huron/service`), also load the `fastapi` skill (`.claude/skills/fastapi/`).
-- If the scope designs or updates the PostgreSQL schema (`src/huron/schema`, `migrations/`, DDL/indexes/constraints/triggers), also load the `postgresql-table-design` skill (`.claude/skills/postgresql-table-design/`).
+- Load the area skills that AGENTS.md's "Skills by area" table assigns to every code area the scope touches: `oop-design` for `src/huron/pkg` and `src/huron/core`, `fastapi` for `src/huron/applications/api`, `postgresql-table-design` for PostgreSQL adapters, `migrations/`, and any DDL, index, constraint, or trigger work, and the Svelte and Tailwind skills for `web/`. Read each `SKILL.md` before applying it.
 - Read the review output file before starting.
 - Inspect the relevant code before making recommendations.
 - Produce senior-level, idiomatic, minimal, cohesive architectural recommendations.

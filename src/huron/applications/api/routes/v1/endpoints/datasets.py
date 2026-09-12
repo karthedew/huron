@@ -22,6 +22,7 @@ from huron.applications.api.authorization import (
     require_project,
 )
 from huron.applications.api.dependencies import Catalog as Repository
+from huron.applications.api.dependencies import Creation
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import (
     Page,
@@ -44,6 +45,7 @@ from huron.applications.api.routes.v1.schema.datasets import (
     PatchDataset,
     ReleaseView,
 )
+from huron.core.catalog_collections import DescriptionChange
 from huron.core.idempotency import request_sha256
 from huron.pkg.auth import Principal
 from huron.pkg.catalog.records import Dataset, Release
@@ -73,7 +75,7 @@ async def create_dataset(
     project_id: UUID,
     body: CreateDataset,
     idempotency_key: IdempotencyHeader,
-    repository: Repository,
+    repository: Creation,
     visibility: CurrentVisibility,
     actor: Annotated[Principal, Depends(require_project("dataset.create"))],
 ) -> DatasetView:
@@ -160,7 +162,7 @@ async def list_datasets(
     Returns:
         One page of datasets and the cursor to the next, if any.
     """
-    window = await repository.datasets(project_id, limit=limit, after=slug_cursor_key(after))
+    window = await repository.datasets.browse(project_id, limit=limit, after=slug_cursor_key(after))
     return page(window, DatasetView, key=_key)
 
 
@@ -181,7 +183,7 @@ async def get_dataset(
         The dataset as the API renders it, including the ``version`` that
         ``If-Match`` carries back on a PATCH.
     """
-    dataset = await repository.dataset(dataset_id)
+    dataset = await repository.datasets.get(dataset_id)
     return DatasetView.model_validate(dataset)
 
 
@@ -223,12 +225,14 @@ async def patch_dataset(
         The updated dataset as the API renders it.
     """
     return DatasetView.model_validate(
-        await repository.patch_dataset(
+        await repository.datasets.describe(
             dataset_id,
-            expected_version=expected_version(if_match),
-            slug=body.slug,
-            title=body.title,
-            description=body.description,
+            DescriptionChange(
+                expected_version=expected_version(if_match),
+                slug=body.slug,
+                title=body.title,
+                description=body.description,
+            ),
         )
     )
 

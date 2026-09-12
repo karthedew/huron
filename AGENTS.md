@@ -143,7 +143,8 @@ available copy, report material discrepancies, and follow explicit user scope.
 | --- | --- |
 | Writing, designing, refactoring or reviewing code in `pkg/` or `core/` | Project-local `oop-design` |
 | Architecture, boundary changes, structural review | `codebase-design`; inspect whether its methodology is implemented before relying on it |
-| Checking plans and roadmap claims against implementation | `grill-with-docs` |
+| Sharpening a plan or design by interview, updating `CONTEXT.md` and ADRs | `grill-with-docs`, which calls `grilling` and `domain-modeling` |
+| Checking plans and roadmap claims against implementation | No separate skill; `/design-plan` Phase 0 and Phase 5 specify the method inline |
 | API-service code: endpoints, dependencies, request Pydantic models, streaming, HTTP errors and wiring | `fastapi` exclusively for `applications/api` |
 | PostgreSQL adapters, schema, migrations, indexes, constraints and transaction design | `postgresql-table-design` |
 | Non-HTTP application entry points | Capability-specific guidance for the entry point; apply `oop-design` to any accompanying `pkg/` or `core/` changes |
@@ -215,7 +216,7 @@ make lint
 uv run pytest -m unit --cov=src/huron --cov-report=term-missing
 uv run pytest -m contract
 uv run pytest -m integration
-# For ingestion/durability acceptance changes; requires at least 10 GiB free disk:
+# For ingestion/durability acceptance changes; requires at least 25 GiB free disk:
 make test-acceptance
 # When changing documentation included in the documentation site:
 make docs
@@ -229,6 +230,9 @@ make docs
 - `make lint` runs Ruff lint/format, pydoclint, mypy strict, ty, import-linter, the
   schema-map check, radon, complexipy and pyscn. Inspect findings as well as exit codes,
   especially radon's reported complexity/maintainability grades.
+- Static lint targets `src/`. Tests remain separate behavioral verification; the
+  migration schema-map check remains required. Source thresholds and import contracts
+  apply unchanged across the entire source tree.
 - Preserve configured coverage and complexity thresholds; do not add suppressions,
   exclusions, skips or weaker contracts to hide failures. Cover new/touched behavior
   and explain any unverified paths. Report missing infrastructure and baseline failures

@@ -18,6 +18,7 @@ from fastapi import Depends, Request
 from huron.core._catalog import HierarchyRepository
 from huron.core._ingest import IngestService
 from huron.core._revision_reader import RevisionService
+from huron.core.catalog_ports import BindingFacts, HierarchyFacts
 from huron.core.ports import ApiKeyWriter, HierarchyStore, RbacStore
 from huron.pkg.auth import CredentialStore, OidcClient, OidcResolver, PrincipalStore, SessionStore
 from huron.pkg.rbac import RoleBindingAuthorizer
@@ -67,6 +68,8 @@ class ApiRuntime:
 
     settings: ApiSettings
     repository: HierarchyRepository
+    hierarchy: HierarchyStore
+    rbac: BindingFacts
     ingest: IngestService
     revisions: RevisionService
     authorizer: RoleBindingAuthorizer
@@ -240,3 +243,31 @@ __all__ = [
     "api_sessions",
     "api_settings",
 ]
+
+
+async def api_hierarchy(runtime: Runtime) -> HierarchyFacts:
+    """Return committed catalog facts and typed readers.
+
+    Args:
+        runtime: The process wiring.
+
+    Returns:
+        The actual hierarchy adapter.
+    """
+    return runtime.hierarchy
+
+
+async def api_binding_facts(runtime: Runtime) -> BindingFacts:
+    """Return current binding and service-account facts.
+
+    Args:
+        runtime: The process wiring.
+
+    Returns:
+        The actual RBAC adapter.
+    """
+    return runtime.rbac
+
+
+Hierarchy = Annotated[HierarchyFacts, Depends(api_hierarchy)]
+Bindings = Annotated[BindingFacts, Depends(api_binding_facts)]

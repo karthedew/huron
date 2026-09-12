@@ -8,7 +8,7 @@ reason or reassuring for no reason.
 | `unit` | Is the logic correct? | nothing external | milliseconds |
 | `contract` | Does an adapter honour its Protocol? | Docker (testcontainers) | seconds |
 | `integration` | Do the pieces work together? | the Compose stack | seconds to minutes |
-| `acceptance` | Does a phase gate hold end to end? | ≥ 10 GiB free disk | minutes |
+| `acceptance` | Does a phase gate hold end to end? | ≥ 25 GiB free disk | minutes |
 
 `pyproject.toml` sets `addopts = "-m unit --strict-markers"`, so:
 
@@ -75,13 +75,21 @@ the real `PosixRawStore` for storage) rather than `TestClient`, which would mate
 response body in memory.
 
 ```bash
-make test-acceptance       # needs ≥ 10 GiB free disk
+make test-acceptance       # needs ≥ 25 GiB free disk
 uv run pytest -m acceptance
 ```
 
 `.github/workflows/acceptance.yml` runs it nightly (`workflow_dispatch` also triggers it by hand)
 on a runner with the disk to spare, and records a `df -h .` receipt in the job log before the test
 runs.
+
+The test refuses to start below 25 GiB free on its temporary-data filesystem.
+Its sparse source occupies negligible blocks, but the 9 GiB upload and independent
+9 GiB completion candidate coexist. The remaining 7 GiB allows the default 1 GiB
+completion reserve plus filesystem overhead and other local consumers. This
+preflight does not reserve space against concurrent writers; concurrent acceptance
+runs require additional capacity. With `--junitxml=receipt.xml`, the test records
+the completion and commit request durations as suite properties.
 
 ## Rules
 

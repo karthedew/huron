@@ -1,1067 +1,572 @@
-# Huron — Authentication Implementation Plan (OIDC login, passwords, sessions)
+# Huron duplication reduction — implementation plan
 
-Scope: interactive login for the control plane — an OIDC authorization-code flow, an
-admin-provisioned username/password option, server-side sessions for the browser, the
-database migration behind them, and a compose stack that runs the whole application locally
-under Podman or Docker. Companion to [`RBAC_IMPLEMENTATION_PLAN.md`](RBAC_IMPLEMENTATION_PLAN.md)
-(authorization; R1–R9 shipped, except R6's binding surface — see that step) — this plan supplies the authentication half and **subsumes R10**
-("real JWT verification for the UI path" and the principals-upsert-on-login it called for).
-`design/` remains authoritative; decisions made here that design/ is silent on get recorded
-there in the same PR that ships them (A13).
+Status: **D3a independently verified for functional behavior; duplication redesign paused before D3b**.
+Written 2026-09-10 against source commit `6082088`. D0–D2 are tested; the native
+90/100 target remains outstanding. On 2026-09-11 the user prioritized finishing
+P3 functional and acceptance work after stabilizing D3a. See
+[P3 execution rules](P3_IMPLEMENTATION_PLAN.md#execution-rules). D3b–D7 are paused,
+not completed; scanner settings and thresholds remain unchanged.
 
-**Status: implemented.** Steps A1–A13 have landed and the tree contains the artifact each one
-names — A1–A5 and A7–A13 verified item by item in `API_DESIGN.md` § "Roadmap Drift" → "Drift 2",
-and A6's `rbac_backend` → `store_backend` rename with its OIDC and session-cookie settings present
-in `src/huron/service/api/settings.py`. Steps A1–A13 were ordered so every step leaves the tree
-green (all four static gates + unit suite); the code blocks below were the intended
-implementation, written against the tree as of 2026-08-30, and are kept as the record of intent
-rather than as work still to be done. **This file is not a status source for the tree**
-— `design/roadmap.html` § 2 is.
+Implement the architecture in
+[design/duplication-architecture.md](design/duplication-architecture.md) until
+pyscn's **native duplication score is at least 90/100** and all applicable
+verification gates pass. Preserve observable behavior, authorization, persistence,
+and durability throughout the refactor.
 
----
+The completed authentication plan formerly at this path is preserved verbatim in
+[AUTH_IMPLEMENTATION_PLAN.md](AUTH_IMPLEMENTATION_PLAN.md). It is historical
+context, not part of this work.
 
-## 0. The model in one page
+## 1. Authority, scope, and completion
 
-Four ways to authenticate, one `Principal` out the other end:
+Read [AGENTS.md](AGENTS.md), the duplication architecture above, and the relevant
+sections of [architecture](design/architecture.html), [RBAC](design/rbac.html),
+and [Raw ingestion](design/layer-raw.html). For Raw changes also read
+[P3_DESIGN.md](P3_DESIGN.md), M1a in
+[P3_IMPLEMENTATION_PLAN.md](P3_IMPLEMENTATION_PLAN.md), and the implemented
+evidence in [P3_M1A_VALIDATION.md](P3_M1A_VALIDATION.md).
 
-| Credential | Carrier | Resolver | Audience |
-|---|---|---|---|
-| API key (`hk_…`) | `Authorization: Bearer` | `ApiKeyResolver` (exists) | programmatic |
-| OIDC access/ID JWT | `Authorization: Bearer` | `OidcResolver` + **real JWKS verify** (A4) | programmatic / SPA-with-own-token |
-| **Session cookie** (`hs_…`) | `huron_session` HttpOnly cookie | `SessionResolver` (A3/A7) | **the web UI — new** |
-| Dev headers | `X-Huron-*` | `DevHeaderResolver` (exists) | development only |
+This plan covers genuine duplication in `src`, the tests needed to prove the
+refactors, application wiring, import contracts, and affected documentation.
+It does not introduce new HTTP behavior, change the database schema or persisted
+document formats, implement future compute/frontend features, execute deployment
+or cutover, or implement M1b/M1c. A need to change a scientific or persistence
+contract is a design issue to resolve before the dependent refactor proceeds.
 
-Decisions already made (with Karl, 2026-08-30):
+Completion requires all of the following:
 
-- **Server-side sessions**, not Huron-issued JWTs: login writes a `sessions` row; the browser
-  holds an opaque HttpOnly cookie. Revocation is a row update; the SvelteKit shell needs no
-  token-refresh plumbing. Bearer credentials are untouched.
-- **Password accounts are admin-provisioned only.** No self-registration, no email
-  verification, no self-service reset — an admin creates the user and sets/resets the
-  password. Keeps the surface proportional to a control plane.
-- **`pkg/identity` is absorbed into `pkg/auth`** (A1). All AuthN — API keys, OIDC, passwords,
-  sessions — is one package; `pkg/rbac` stays a separate, independent sibling (AuthN produces
-  the `Principal` that `rbac.decide()` consumes; neither imports the other).
-- **Keycloak in compose** as the local IdP, realm pre-seeded, so the full code flow runs
-  end-to-end on a laptop.
-- **Auth routes are unversioned** — mounted at `/auth`, not `/api/v1/auth`. Login is a
-  protocol surface negotiated with browsers and IdPs (redirect URLs live in IdP config);
-  it does not version alongside the resource API. `GET /api/v1/auth/whoami` **moves** to
-  `GET /auth/session` (no back-compat, per project invariant); `POST /api/v1/auth/api-keys`
-  **stays versioned** — an API key is a resource, not a login step.
-- **`routes/v1/schemas.py` splits into `routes/v1/schema/*`**, one file per endpoints module
-  (A10), and the new auth routes are born with that layout.
+- A fresh, complete pyscn 1.31.1 report for the entire `src` tree with native
+  `summary.duplication_score >= 90`, validated by the existing checker.
+- `make lint`, the configured unit coverage gate, all contract and integration
+  tests, and any applicable acceptance/documentation gates pass on the final tree.
+- Replaced interfaces and their forwarding implementations are removed; concrete
+  application callers and both persistence adapters use the new interfaces.
+- Direct core, HTTP, real PostgreSQL, and filesystem evidence establish the
+  affected invariants. Independent review has no unresolved actionable defects.
+- Delivery records state the actual score, source identity, test outcomes, and
+  limitations. A duplication pass alone does not mark M1a or P3 complete.
 
-The login flows end-to-end:
+Writing this plan is documentation work. None of these implementation criteria
+are satisfied merely by producing the plan or its architecture proposal.
 
-```
-password  POST /auth/login {username, password}
-          → principal lookup (kind=user, not disabled) → argon2id verify
-          → INSERT sessions → Set-Cookie huron_session=hs_… → 200 {subject, csrf_token}
+## 2. Baseline and measurement contract
 
-OIDC      GET  /auth/oidc/start
-          → 302 to IdP authorize URL; state+nonce+PKCE verifier in a short-lived
-            HMAC-signed huron_login cookie (no server state for pending logins)
-          GET  /auth/oidc/callback?code&state
-          → verify state against cookie → exchange code (client_secret + PKCE)
-          → verify ID token (issuer, audience, nonce, exp, sig via cached JWKS)
-          → UPSERT principals ON idp_subject   ← the R10 upsert
-          → INSERT sessions → Set-Cookie → 302 to the web app
+The latest source scan is
+`.pyscn/reports/analyze_20260910_070754.json`, produced by:
 
-any       later requests: cookie → SessionResolver → Principal(method="session")
-          POST /auth/logout → revoked_at=now() → cleared cookie
+```sh
+uv run --locked python scripts/check_duplication.py src
 ```
 
-New dependencies: `pyjwt[crypto]` (JWKS + RS256/ES256 verification — already the pick named in
-R10) and `argon2-cffi` (argon2id hashing). Both go in `[project].dependencies`.
+| Measurement | Recorded baseline |
+| --- | ---: |
+| Native duplication score | 50/100 |
+| Cloned / total fragments | 241 / 800 |
+| Cloned fraction | 30.125% |
+| Clone pairs / groups | 319 / 60 |
+| Python files analyzed / skipped | 109 / 0 |
 
----
+The native curve requires a cloned fraction strictly below 7.5% for 90: at 800
+fragments, at most 59 can remain cloned; at 700, at most 52; at 600, at most 44.
+Deleting methods changes the denominator too. These numbers describe the target,
+not a replacement score calculation or forecast of individual milestone gains.
 
-## A1 — Absorb `pkg/identity` into `pkg/auth`
+An isolated three-view inheritance prototype preserved the complete OpenAPI
+contract after normalizing `required` property ordering and measured 237/798
+cloned fragments, still score 50. Recreate and test the useful change in D5;
+temporary files under `/private/tmp/huron-common-caller-design/` are not a required
+dependency for executing this plan.
 
-Same shape as the authz→rbac rename (2026-08-29): mechanical, complete, no compat shims.
+Previous source validation recorded 1,423 unit tests at 94.75% coverage and 31
+real-adapter tests (30 contract, one integration). Those are historical receipts,
+not expected test-count assertions or proof for a later source tree. The configured
+coverage floor is 94.71%; never lower it.
 
-New layout (module-per-concern, `__init__.py` is a re-export shim only — the established
-pattern; nothing but imports and `__all__` in it):
+### Rules for each measured slice
 
-```
-src/huron/pkg/auth/
-    __init__.py        re-exports: the public names below, nothing else
-    errors.py          AuthError (was IdentityError) + subclasses
-    principal.py       Principal                        (moved from identity.py, unchanged)
-    apikeys.py         ApiKeyRecord, ApiKeyStore, MemoryApiKeyStore,
-                       create_api_key, parse_api_key, ApiKeyResolver   (moved, unchanged)
-    dev.py             DevHeaderResolver                (moved, unchanged)
-    oidc.py            OidcResolver (moved) + JwksVerifier, OidcClient, LoginFlow   (A4)
-    password.py        hash_password, verify_password, CredentialRecord, CredentialStore  (A2)
-    sessions.py        SessionRecord, SessionStore, MemorySessionStore,
-                       create_session, SessionResolver, parse_session_token          (A3)
-```
+1. Record the source commit and working diff; preserve unrelated work. Scan all
+   of `src` using the locked checker. Compare analyzed file paths with the actual
+   source inventory; new modules are allowed, skipped or omitted source is not.
+2. Count inventory from `clone.clones`, identified by file and symbol/range.
+   Group IDs are report-local and may change; group membership alone is not the
+   full inventory. Inspect the matching behavior before deciding it is reusable.
+3. After tests and static checks, capture the new native score, cloned/total
+   fragments, pairs, groups, file coverage, deleted interfaces, remaining matches,
+   and newly introduced matches. Preserve the exact reported JSON immediately
+   under a unique slice label; do not select the newest report by directory order.
+4. An unchanged rounded score can still accompany a useful fragment reduction.
+   Keep a change only when it improves the architecture and retains its behavior
+   evidence. A moved wrapper or new callback registry is not sufficient progress.
+5. The known duplication failure may remain during intermediate work. Label the
+   slice **tested; duplication target outstanding**, never green or deliverable
+   as completion of this plan. Every other required gate must pass before building
+   on the slice. Record scanner/tool failures separately from a valid score below 90.
 
-Renames (project-wide, zero survivors, verified by grep as with authz→rbac):
+Keep the scanner version, settings, detection scope, score threshold, coverage
+and complexity thresholds, and import restrictions. Do not add exclusions,
+suppression markers, skipped tests, denominator padding, or syntax/docstring
+changes whose purpose is to evade clone detection.
 
-- `huron.pkg.identity` → `huron.pkg.auth` in every import (`app.py`, `authorization.py`,
-  `repository.py`, `postgres_rbac.py`, `routes/v1/endpoints/auth.py`, tests).
-- `IdentityError` → `AuthError`. The class keeps `code = "INVALID_CREDENTIAL"` and its
-  subclasses (`ApiKeyExpired`, `ApiKeyRevoked`) so the 401 problem-json contract in `app.py`
-  is unchanged apart from the exception-handler's type annotation.
-- pyproject: in the **packages-independence contract**, `huron.pkg.identity` →
-  `huron.pkg.auth`; ruff per-file N818 ignore repoints from `pkg/identity/identity.py` to
-  `pkg/auth/errors.py`.
-- Add `huron.pkg.auth` to the framework-free forbidden contract **for the web/DB frameworks
-  only**: `fastapi`, `starlette`, `uvicorn`, `sqlalchemy`, `asyncpg`, `alembic`. `httpx` is
-  deliberately **allowed** in `pkg/auth` (the OIDC client is IO, like `rawstore`'s use of the
-  filesystem); `pyjwt` and `argon2-cffi` likewise. Rename the contract or add a second one —
-  cleanest is a second contract so "catalog and rbac are framework-free" keeps its meaning:
+## 3. Target responsibilities and fixed contracts
 
-```toml
-[[tool.importlinter.contracts]]
-name = "auth is web-framework-free"
-type = "forbidden"
-source_modules = ["huron.pkg.auth"]
-forbidden_modules = [
-    "fastapi", "starlette", "uvicorn", "sqlalchemy", "asyncpg", "alembic",
-]
-```
+### Module destinations
 
-`design/roadmap.html` §1's package tree changes `identity` → `auth` in the same PR (A13 also
-touches design/, but the tree edit ships with the rename that invalidates it).
+The following are concrete destinations for implementation. Introduce each only
+with its real callers and tests; do not scaffold the whole tree before D1.
 
-Postgres implementations of the new stores do **not** go in `pkg/auth` — they follow the
-`postgres_rbac.py` precedent and live in the service (A6), keeping asyncpg out of pkg.
+| Responsibility | Current source | Target |
+| --- | --- | --- |
+| Authorized hierarchy reads/descriptions | `core/catalog.py`, `core/_catalog.py` | `core/catalog_collections.py`: shared typed collection implementation |
+| Organization/project/dataset creation | Same two modules | `core/catalog_creation.py`: explicit creation workflows |
+| Immutable releases | Same two modules | `core/releases.py`: release read/publication workflows |
+| Binding, policy, service-account administration | Same two modules | `core/bindings.py`, `core/policies.py`, `core/service_accounts.py` |
+| Current authorization facts and ancestry | `core/access.py`, `core/scopes.py`, `_catalog.py` forwards | Focused consumer ports; inject actual read/binding collaborators without another repository facade |
+| Catalog persistence interfaces | `core/ports.py` | `core/catalog_ports.py`; other consumer ports move with their workflows |
+| Repeated SQL result handling | `pkg/metastore/hierarchy.py`, later other adapters | Adapter-private `pkg/metastore/queries.py`, explicit typed projections and decoders |
+| Runtime composition | `applications/api/app.py`, `runtime.py`, `dependencies.py` | Same application modules, wired to the focused workflows |
 
----
+All source paths in the table are relative to `src/huron/`. Domain values stay
+in `pkg/catalog`; database adapters stay in `pkg/metastore`. In particular,
+`pkg/catalog/persistence.py` contains values such as `Window`, claims, and receipts;
+it is not the destination for adapter implementations.
 
-## A2 — Passwords: `pkg/auth/password.py`
+Use the project-local OOP guidance for core/pkg work, PostgreSQL guidance for
+adapters and transactions, and FastAPI guidance for HTTP/wiring. The
+codebase-design vocabulary and deletion test govern the shared interfaces.
 
-argon2id via `argon2-cffi`, RFC-9106 low-memory parameters, per-hash salts handled by the
-library. The store is a Protocol; Postgres rows come in A5/A6.
+### Collection interface
 
-```python
-"""Admin-provisioned password credentials.
+A typed collection implements `get`, `browse`, then `describe` for organizations,
+projects, and datasets. Results remain statically typed as the concrete entity;
+pages retain `Window[T]` and the current cursor contract. An explicit platform-root
+value represents the organization collection's parent. Releases retain their own
+key/cursor and do not gain a descriptive-update operation.
 
-Hashing policy lives here so the service layer never sees a bare hash. No
-self-registration and no reset tokens exist by design: an admin sets or
-replaces the password through the guarded v1 user routes (A9).
-"""
+Concrete construction binds resource kind, reader, update capability, and parent
+scope together. Do not allow independently configurable combinations that authorize
+one kind while reading another. Core receives the authenticated actor and injected
+capabilities; it recomputes authority for each operation. Preserve the distinct
+request-local HTTP binding-cache behavior; do not promote that cache into a
+long-lived core permission snapshot.
 
-from __future__ import annotations
+Keep creation explicit. Do not introduce an `execute(kind, action, **fields)`
+dispatcher, extensible sequencing callbacks, a generic CRUD manager, a reflection
+codec, or generated HTTP routes. Shared SQL execution uses fixed trusted
+projections and bound request parameters; domain/core interfaces expose no SQL.
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+### Invariants that every slice must retain
 
-from argon2 import PasswordHasher
-from argon2.exceptions import VerificationError, VerifyMismatchError
+- **Discovery and authorization:** point reads retain visibility-based admission;
+  do not invent an additional read capability. Hidden targets/parents remain 404
+  before permission errors. Ancestry comes from the server. Dataset access through
+  a narrow grant must not start requiring independent parent visibility.
+- **Pagination:** apply visibility before limiting; preserve C collation,
+  `(slug, UUID)` ordering for hierarchy pages, existing release cursors, and
+  `has_more` based on visible results. No per-row query loop or unbounded fetch to
+  perform filtering in Python for PostgreSQL pages.
+- **Descriptions:** omitted/null title and description retain stored values;
+  empty strings replace them. Changed slug fails before stale version; stale
+  no-op fails. A valid no-op opens no mutation transaction and writes no generation.
+  A change performs CAS, committed ancestry reads, durable generation writing,
+  then database commit. Failed CAS writes no generation; write failure rolls back
+  the row. Keep filesystem work off the event loop.
+- **Creation and releases:** retain per-operation validation and error ordering,
+  claim ownership, fingerprint/replay behavior, parent/revision checks, uniqueness,
+  and durable generation/tag publication before database commit. Derive provenance
+  from the actor. Dataset profiles are currently stored verbatim; do not introduce
+  profile validation in this refactor.
+- **Persistence:** keep required reads, optional reads, locking reads, and writes
+  with `RETURNING` distinct where their error/atomicity contracts differ. Preserve
+  explicit JSON, enum, UUID, join, and nested-value decoding. Each atomic mutation
+  retains one acquired connection or staged memory transaction; do not silently
+  change committed ancestry reads into transactional reads.
+- **Raw:** retain file/session membership, lease fencing, owner/admin exceptions,
+  verified installed-byte evidence, immutable intents, retry conflicts, and crash
+  recovery. Intent freeze, filesystem publication, and final database publication
+  remain separate phases. Revision/session/audit/outbox/receipt publication stays
+  atomic within the final database transaction.
+- **HTTP:** retain paths, methods, named schemas, serialization, redaction, headers,
+  status/problem codes, ETags, Location, retry responses, and streaming behavior.
+  HTTP guards never become the sole authorization for a core operation.
 
-from huron.pkg.auth.errors import AuthError
+## 4. Dependency order
 
-if TYPE_CHECKING:
-    from uuid import UUID
-
-# RFC 9106 second recommendation (64 MiB, t=3, p=4): fine for a control plane
-# with human-frequency logins; revisit only with measurements in hand.
-_HASHER = PasswordHasher(time_cost=3, memory_cost=64 * 1024, parallelism=4)
-
-#: Verified against on every miss so "unknown user" and "wrong password" cost
-#: the same wall-clock time. Generated once at import from a random secret.
-_DUMMY_HASH = _HASHER.hash("huron-dummy-password-for-timing-equalization")
-
-MIN_PASSWORD_LENGTH = 12
-
-
-class PasswordRejected(AuthError):
-    code = "PASSWORD_REJECTED"
-
-
-@dataclass(frozen=True, slots=True)
-class CredentialRecord:
-    principal_id: UUID
-    password_hash: str
-    updated_at: datetime
-    updated_by: str
-
-
-class CredentialStore(Protocol):
-    async def get(self, principal_id: UUID) -> CredentialRecord | None: ...
-
-    async def upsert(self, record: CredentialRecord) -> None: ...
-
-
-def hash_password(password: str) -> str:
-    if len(password) < MIN_PASSWORD_LENGTH:
-        raise PasswordRejected(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
-    return _HASHER.hash(password)
-
-
-def verify_password(record: CredentialRecord | None, password: str) -> bool:
-    """Constant-shape verification: hash work happens on every call."""
-    expected = record.password_hash if record is not None else _DUMMY_HASH
-    try:
-        _HASHER.verify(expected, password)
-    except (VerifyMismatchError, VerificationError):
-        return False
-    return record is not None
-
-
-def needs_rehash(record: CredentialRecord) -> bool:
-    return _HASHER.check_needs_rehash(record.password_hash)
-
-
-def make_credential(
-    principal_id: UUID, password: str, *, updated_by: str, now: datetime | None = None
-) -> CredentialRecord:
-    return CredentialRecord(
-        principal_id=principal_id,
-        password_hash=hash_password(password),
-        updated_at=now or datetime.now(UTC),
-        updated_by=updated_by,
-    )
+```text
+D0 baseline and consumer map
+  → D1 typed reads and authorization-facts seam
+  → D2 descriptive updates
+  → D3a creation → D3b releases
+  → D4 governance and retirement of the mirrored catalog surface
+  → D5 HTTP/schema simplification
+  → D6 remaining persistence and forwarding, selected by the report
+  → D7 residual inventory and final verification
 ```
 
-`MemoryCredentialStore` (a dict keyed by `principal_id`, same shape as `MemoryApiKeyStore`)
-also lives here for the in-memory backend and tests.
+D3a, D3b, and D6 sub-slices each receive their own measurements. Work on
+independent tests or read-only review can run in parallel. Changes to
+`core/ports.py`, `_catalog.py`, `metastore/hierarchy.py`, and application wiring
+have one integration owner; do not have parallel implementers rewrite those
+files. Complete each vertical slice through callers, adapters, and tests before
+starting its dependent slice.
 
----
+## D0 — Establish the execution baseline
 
-## A3 — Sessions: `pkg/auth/sessions.py`
+- [x] Record HEAD, working-tree ownership, the locked environment, complete source
+  inventory, native report, and current non-duplication gate outcomes. Inspect
+  [Makefile](Makefile) and [CI](.github/workflows/ci.yml) before selecting commands.
+- [x] Map every consumer of `CatalogService`, `HierarchyRepository`,
+  `HierarchyStore`, and `HierarchyWriter`, including imports used only for typing.
+  Include `AccessPolicy`, scope helpers, `RawIngestionService.create_in_project`,
+  `IdentityService`, revision reads, HTTP authorization, bootstrap, and readiness.
+  Maintain a deletion matrix: old symbol → new owner → migrated callers →
+  preserved behavioral tests. Close a row only when the old implementation is gone.
+- [x] Capture a baseline full OpenAPI document and representative response/error
+  contracts from the same runtime settings. Add new behavioral coverage only for
+  gaps needed by the first slice; do not freeze private forwarding call sequences.
+- [x] Establish disposable PostgreSQL 16 through the local Docker-compatible
+  socket and temporary filesystem tests. Record unavailable prerequisites; do
+  not substitute in-memory results for real-adapter evidence.
 
-Token format mirrors API keys: `hs_{session_id}_{secret}`; only `sha256(secret)` is stored.
-Two clocks: an **idle** timeout that slides on use and an **absolute** lifetime that never
-extends. A per-session CSRF token rides along (checked in A7).
+**Exit evidence:** a reproducible baseline and consumer/test map, with duplication
+explicitly failing at its measured native score. Do not label this a passing gate.
 
-```python
-"""Server-side browser sessions.
+## D1 — Replace repeated hierarchy reads
 
-The cookie value is ``hs_{session_id}_{secret}``; the database keeps only the
-secret's SHA-256, so a leaked sessions table cannot mint cookies. Expiry is
-double-bounded: ``idle_expires_at`` slides forward on activity,
-``absolute_expires_at`` is fixed at login. Revocation is a row update and
-takes effect on the next request.
-"""
+**Files:** `core/catalog.py`, `_catalog.py`, `access.py`, `scopes.py`, `ports.py`;
+new `core/catalog_collections.py`, `catalog_ports.py`; `pkg/metastore/hierarchy.py`,
+`rows.py`, new `queries.py`; affected application dependencies/runtime/guards.
+Paths are under `src/huron/`.
 
-from __future__ import annotations
+- [x] Give access/scope helpers focused hierarchy and binding-facts ports. Inject
+  actual collaborators so authorization no longer requires the broad internal
+  repository. Preserve internal classification and dataset-parent fact reads
+  needed to calculate visibility before discovery. Resolve the addressed
+  resource's full scope/storage ancestry only after its discovery decision;
+  unrestricted ancestor lookup remains internal. Do not create a circular
+  dependency between visibility calculation and visible resource lookup.
+- [x] Implement typed organization/project/dataset `get` and `browse` through both
+  memory and PostgreSQL adapters. Introduce the small query executor here, paired
+  with explicit projections and existing decoders. Fix resource/policy selection
+  in concrete construction; no caller-supplied model or table dispatch.
+- [x] Migrate `organization/project/dataset` and
+  `organizations/projects/datasets` callers across both current core surfaces,
+  consumer declarations, and adapters. Update internal Raw/revision/ancestry
+  consumers of replaced adapter reads too. Keep state-transition behavior intact.
+- [x] Delete each replaced forward/declaration when its final caller migrates.
+  Retain only unmigrated real responsibilities in the old modules; add no new
+  compatibility layer. Verify precise return types and wiring conformance.
 
-import hashlib
-import hmac
-import secrets
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
-from typing import Protocol
-from uuid import UUID, uuid4
+**Tests:** extend `tests/unit/test_core_workflows.py` with direct core point/page
+reads, narrow grants, hidden parents, and permissions changed between operations.
+Retain scenarios in `tests/hierarchy_contract.py`, driven by
+`tests/unit/test_hierarchy_store_memory.py` and
+`tests/contract/test_hierarchy_store.py`, especially backend visibility parity
+and C-collation ordering. Run affected `test_api_catalog_hierarchy.py`,
+`test_api_visibility.py`, `test_api_pagination.py`, scope/authorization tests,
+and startup/wiring tests. Use real PostgreSQL for visibility and cursor behavior.
 
-from huron.pkg.auth.errors import AuthError
-from huron.pkg.auth.principal import Principal
+**Exit evidence:** same visible IDs, ordering, errors, and query behavior through
+the new interfaces; replaced read wrappers gone; complete native remeasurement.
 
+## D2 — Consolidate descriptive updates
 
-class SessionExpired(AuthError):
-    code = "SESSION_EXPIRED"
+**Files:** D1 collection/port/adapters; `core/_catalog.py` descriptive helpers;
+`pkg/catalog/records.py`; organization/project/dataset PATCH handlers and inputs.
 
+- [x] Introduce a typed `DescriptionChange` with today's PATCH semantics.
+  Reuse the existing domain `describe` transition and closed entity dispatch.
+- [x] Move `patch_organization/project/dataset`, `_patch_description`, and shared
+  conditional persistence into one authorized workflow. Typed writers perform
+  CAS; the workflow owns the exact validation, no-op, transaction, path, and
+  generation order listed above. No sequencing hooks in resource definitions.
+- [x] Migrate all three concrete callers and both adapters; remove the replaced
+  patch/update delegators and declarations. Do not alter creation or Raw
+  transaction contracts while introducing the description capability.
+- [x] Add complete workflow evidence using PostgreSQL plus the real filesystem:
+  two updates with one expected version produce one winner; losing CAS writes
+  no generation; generation-write failure rolls back the row. Existing sequential
+  adapter tests alone do not prove these combined guarantees.
 
-class SessionRevoked(AuthError):
-    code = "SESSION_REVOKED"
+**Tests:** `tests/unit/test_catalog_hierarchy_records.py`,
+`test_repository_hierarchy.py` (migrate useful cases to the new interface),
+`test_core_workflows.py`, `test_api_preconditions.py`, hierarchy HTTP tests, and
+the shared memory/PostgreSQL hierarchy contract. Add
+`tests/integration/test_catalog_descriptions.py` for combined adapter guarantees.
+Retain stale/no-op/slug precedence and off-event-loop filesystem tests.
 
+**Exit evidence:** complete descriptive behavior through all three typed
+collections, with real concurrency/rollback evidence and a separate native scan.
 
-IDLE_TTL = timedelta(hours=12)
-ABSOLUTE_TTL = timedelta(days=7)
-#: last_seen/idle sliding is persisted at most this often, so a busy UI does
-#: not turn every GET into a session-table write.
-TOUCH_INTERVAL = timedelta(minutes=5)
+## D3 — Move explicit creation and release workflows
 
+### D3a — Catalog creation
 
-@dataclass(frozen=True, slots=True)
-class SessionRecord:
-    id: UUID
-    secret_sha256: str
-    csrf_token: str
-    #: Denormalized principal snapshot taken at login. Groups refresh at next
-    #: login, not mid-session - same tradeoff as an OIDC token's lifetime.
-    subject: str
-    groups: frozenset[str]
-    authentication_method: str  # "oidc" | "password"
-    created_at: datetime
-    last_seen_at: datetime
-    idle_expires_at: datetime
-    absolute_expires_at: datetime
-    revoked_at: datetime | None = None
+**Files:** `core/catalog.py`, `_catalog.py`; new `core/catalog_creation.py`;
+catalog transaction ports/adapters; `core/raw.py` creation collaborator;
+application creation handlers and wiring.
 
+- [x] Move `create_organization`, `create_project`, `create_dataset`, and their
+  useful shared claim/generation mechanics into an authorized creation module.
+  Use concrete inputs; do not force their different validation into a universal
+  command or callback descriptor.
+- [x] Preserve capability checks before claim-owner checks, current classification
+  and entry-layer validation, and child-parent resolution before replay where it
+  currently occurs. Reuse claim fingerprints and receipts without migration.
+- [x] Keep claim arbitration, insert, generation publication, and receipt in the
+  existing transaction order. Migrate `RawIngestionService.create_in_project`
+  to the focused creation collaborator without changing upload semantics.
+- [x] Remove the replaced creation forwards and update direct core/HTTP callers.
+  Prove matching concurrent claims return one identity and changed commands
+  conflict; add combined workflow evidence if claim orchestration changes.
 
-class SessionStore(Protocol):
-    async def get(self, session_id: UUID) -> SessionRecord | None: ...
+**Tests:** creation/idempotency cases in `test_repository_hierarchy.py`,
+`test_core_workflows.py`, `test_api_catalog_hierarchy.py`, shared hierarchy
+scenarios, and real PostgreSQL concurrent-claim/rollback tests. Run affected Raw
+creation tests and the restart integration test when its wiring changes.
 
-    async def add(self, record: SessionRecord) -> None: ...
+**Exit evidence:** explicit creation workflows retain identity, validation,
+claim/replay, generation, and provenance behavior; native scan recorded.
 
-    async def touch(
-        self, session_id: UUID, last_seen_at: datetime, idle_expires_at: datetime
-    ) -> None: ...
+### D3b — Immutable releases
 
-    async def revoke(self, session_id: UUID, revoked_at: datetime) -> None: ...
+**Files:** `core/catalog.py`, `_catalog.py`; new `core/releases.py`; release
+read/mutation ports; `pkg/metastore/hierarchy.py`; dataset release HTTP handlers.
 
-    async def revoke_all_for(self, subject: str, revoked_at: datetime) -> int: ...
+- [ ] Move `create_release`, release resolution, and release browsing into the
+  release module. Share read mechanics only where key/cursor semantics fit.
+- [ ] Preserve dataset/revision discovery before replay, exact revision pinning,
+  actor-derived provenance, tag uniqueness, and filesystem `write_tag_once`
+  collision handling. Tag write and receipt retain their transaction order.
+- [ ] Remove the replaced release forwards; verify concurrent retry and conflict
+  behavior through the complete workflow, not only database claim primitives.
 
+**Tests:** release scenarios in the hierarchy/repository/core/HTTP suites and
+real PostgreSQL contracts; add combined PostgreSQL/filesystem release retry
+coverage when reorganizing claim or tag publication.
 
-def create_session(
-    subject: str,
-    *,
-    groups: frozenset[str] = frozenset(),
-    authentication_method: str,
-    now: datetime | None = None,
-) -> tuple[SessionRecord, str]:
-    """Return the record to persist and the ``hs_…`` cookie value (shown once)."""
-    created_at = now or datetime.now(UTC)
-    session_id = uuid4()
-    secret = secrets.token_urlsafe(32)
-    record = SessionRecord(
-        id=session_id,
-        secret_sha256=hashlib.sha256(secret.encode()).hexdigest(),
-        csrf_token=secrets.token_urlsafe(32),
-        subject=subject,
-        groups=groups,
-        authentication_method=authentication_method,
-        created_at=created_at,
-        last_seen_at=created_at,
-        idle_expires_at=created_at + IDLE_TTL,
-        absolute_expires_at=created_at + ABSOLUTE_TTL,
-    )
-    return record, f"hs_{session_id.hex}_{secret}"
+**Exit evidence:** immutable releases retain their specific contract and cursor;
+the separate release scan is recorded.
 
+## D4 — Governance modules and catalog retirement
 
-def parse_session_token(token: str) -> tuple[UUID, str]:
-    prefix, _, remainder = token.partition("_")
-    raw_id, separator, secret = remainder.partition("_")
-    try:
-        session_id = UUID(hex=raw_id)
-    except ValueError:
-        session_id = None  # type: ignore[assignment]
-    if prefix != "hs" or not separator or session_id is None or not secret:
-        raise AuthError("invalid session token format")
-    return session_id, secret
+**Files:** `core/catalog.py`, `_catalog.py`, `access.py`, `identity.py`, `raw.py`,
+`ports.py`; new `core/bindings.py`, `policies.py`, `service_accounts.py`;
+`pkg/metastore/rbac.py`; application runtime/dependencies/bootstrap/readiness,
+authorization guards, binding/policy/service-account handlers, `pyproject.toml`.
 
+- [ ] Move binding grant/list/revoke, policy create/list/attach, and service-account
+  operations into focused authorized modules. Pass exact scoped collections;
+  verify membership before revocation. System, organization, project, and dataset
+  admission rules remain explicit; service accounts do not gain human role rules.
+- [ ] Move role compilation and policy decisions only when their existing owner
+  belongs in the new module. Preserve atomic source-grant/compiled-binding writes,
+  expiry, disabled-account handling, principal-kind restrictions, and error order.
+  Policy definitions remain creatable/listable by any authenticated actor; only
+  attachment requires the scope-specific permission. Exact-scope binding listings
+  continue to include expired records. Service-account disabling retains
+  `IdentityService`'s key revocation and already-disabled behavior; the internal
+  catalog disable method alone is not a complete replacement workflow.
+- [ ] Migrate `IdentityService`'s service-account collaborator, Raw creation,
+  revision reads, access helpers, and every runtime consumer discovered in D0.
+  Bootstrap and readiness use their actual capabilities, not an unauthorized
+  workflow facade. Keep pools/stores/lifecycle ownership in the application.
+  Move storage initialization currently performed by `HierarchyRepository`'s
+  constructor into application startup before deleting it.
+- [ ] Split remaining broad persistence ports by consumer and atomic operation.
+  Raw freeze/publication retains its existing writer transaction grouping. Pass
+  the same acquired connection to any helper inside an atomic mutation.
+- [ ] Delete `CatalogService` and `HierarchyRepository` after all responsibilities
+  and callers move. Remove empty retired modules rather than leaving aliases.
+  Update import-linter's named-module contracts to the new implementation paths
+  while preserving layer, framework, and package-independence restrictions.
+- [ ] Search source/tests/config for retired names and imports; require zero live
+  callers. Historical planning prose may still name the baseline implementation.
 
-class SessionResolver:
-    def __init__(self, store: SessionStore):
-        self.store = store
+**Tests:** `test_core_workflows.py`, `test_repository_rbac.py`,
+`test_api_bindings.py`, `test_api_policies.py`, `test_api_service_accounts.py`,
+`test_api_api_keys.py`, `test_api_users.py`, `test_api_app.py`, relevant guards and
+scope tests; `tests/contract/test_rbac_store.py` and `test_auth_store.py`;
+row-decoding tests in `tests/unit/test_stores_rows.py`. If shared Raw writers or
+their construction change, include `test_commit_intents.py`,
+`test_ingest_process_death.py`, and `test_verified_raw_ingest.py`.
 
-    async def resolve(self, token: str, *, now: datetime | None = None) -> tuple[Principal, SessionRecord]:
-        session_id, secret = parse_session_token(token)
-        record = await self.store.get(session_id)
-        candidate = hashlib.sha256(secret.encode()).hexdigest()
-        expected = record.secret_sha256 if record is not None else "0" * 64
-        if record is None or not hmac.compare_digest(candidate, expected):
-            raise AuthError("invalid session")
-        moment = now or datetime.now(UTC)
-        if record.revoked_at is not None:
-            raise SessionRevoked("session has been revoked")
-        if moment >= record.idle_expires_at or moment >= record.absolute_expires_at:
-            raise SessionExpired("session has expired")
-        if moment - record.last_seen_at >= TOUCH_INTERVAL:
-            new_idle = min(moment + IDLE_TTL, record.absolute_expires_at)
-            await self.store.touch(record.id, moment, new_idle)
-            record = replace(record, last_seen_at=moment, idle_expires_at=new_idle)
-        principal = Principal(
-            subject=record.subject,
-            groups=record.groups,
-            authentication_method="session",
-            kind="user",
-        )
-        return principal, record
+**Exit evidence:** the mirrored catalog surface is gone, all callers are wired,
+typed adapters conform, affected real contracts pass, and full-source score is
+recorded. Do not claim score improvement from port/file splitting alone.
+
+## D5 — Simplify HTTP schema and result handling
+
+**Files:** `applications/api/routes/v1/schema/organizations.py`, `projects.py`,
+`datasets.py`, shared schema support; corresponding handlers plus bindings,
+policies, and service accounts where their new interfaces remove transport glue.
+
+- [ ] Recreate the measured common hierarchy response-field base. Keep distinct
+  named leaf views/pages and entity-specific fields. Share PATCH validation only
+  across the three genuinely identical descriptive contracts.
+- [ ] Replace repeated explicit view conversion with `response_model=ExistingView`
+  and typed domain returns where equivalent. Retain explicit adaptation for
+  projection, nested values, headers, special statuses, or streaming that need it.
+- [ ] Consume the focused authorized workflow/collection from each HTTP operation.
+  Preserve explicit route definitions and existing guard/error precedence.
+- [ ] Compare the full OpenAPI contract and actual responses with D0; normalize
+  only semantically unordered `required` arrays. Investigate every other difference.
+  Prove extra internal fields and credentials remain excluded.
+
+**Tests:** existing hierarchy, pagination, preconditions, bindings, policy,
+service-account, and router composition HTTP tests. Add focused named-schema and
+response filtering assertions to those suites. The temporary prototype is useful
+evidence, not a substitute for committed regression tests.
+
+**Exit evidence:** HTTP contracts preserved, useful conversion/model duplication
+removed, full native scan recorded. DTO inheritance alone did not raise the
+prototype's rounded score; do not forecast a milestone score here.
+
+## D6 — Reduce the remaining measured duplication
+
+D1–D5 are a coherent catalog redesign, not proof that all of `src` will reach 90.
+Inspect the new full report and create bounded sub-slices for the remaining real
+opportunities below. If the target already passes, perform the residual review
+and final gate without broadening the refactor unnecessarily.
+
+| Priority | Candidate source | Allowed consolidation | Required preserved distinction |
+| --- | --- | --- | --- |
+| D6a | `pkg/metastore/rbac.py`, `principals.py`, `api_keys.py`, `sessions.py`, `credentials.py`, `rows.py` | Proven typed required/optional read execution, fixed projections, shared result mechanics | Missing-row errors, mutations/locks, joined fields, auth-specific conversions |
+| D6b | `core/raw.py`, `_ingest.py`, `revisions.py`, `_revision_reader.py`, their ports/wiring | Put mandatory authorization and the complete named workflow in one module where a mirrored interface remains | Ownership, file/session membership, forced-abort exception, lease/state transitions, immutable intent, exact publication transactions |
+| D6c | `pkg/auth/apikeys.py`, `sessions.py`, `principals.py`; `core/identity.py`; `pkg/rbac/`; remaining catalog value/document helpers | Shared calculations or storage mechanisms with demonstrably identical contracts | Token format, expiry, CSRF, principal-kind authority, disclosure, domain identity and scientific metadata |
+
+- [ ] For each selected sub-slice, record exact matching symbols, the single
+  responsibility to consolidate, deleted interfaces, affected callers, and tests
+  **before** implementing. Use current report locations, not stale group IDs.
+- [ ] Keep explicit typed decoders for nontrivial data. Do not unify unrelated
+  immutable values or security policies just because declarations match.
+- [ ] In D6b retain the existing named operations, including `receive_part`,
+  `complete_file`, `verify`, `commit`, and `abort`. Reuse M1a's completion-copy,
+  admission, fsync, no-replace, immutable-intent, and recovery mechanisms unchanged.
+  Do not replace the state machine with generic status updates.
+  Migrate the application's expiry worker to its constrained maintenance interface;
+  it must not acquire a scientist workflow with broader authority. Revision reads
+  retain authoritative revision resolution and manifest membership checks.
+- [ ] Add missing regression evidence at the new public seam, migrate callers,
+  remove the replaced implementation, run applicable gates, and record a complete
+  scan after every sub-slice. Reassess a design that creates comparable new clones
+  or weakens locality; do not stack more abstractions onto it.
+
+**Tests:** D6a uses row tests and real auth/RBAC contracts. D6b requires direct
+core authorization, Raw unit/crash matrices, real commit-intent/process-death
+contracts, restart integration, and the applicable large-file acceptance gate.
+D6c uses the specific auth/RBAC/domain tests plus affected transport and real
+persistence contracts. Choose and record exact tests with each sub-slice.
+
+**Exit evidence:** each selected family is either refactored with tests and a
+measured report, or explicitly retained with its distinct contract explained.
+Retaining a match does not exempt it from the native score.
+
+## D7 — Resolve the residual inventory and prove completion
+
+- [ ] Reconcile every remaining cloned fragment with its current symbol and
+  contract. Record the score and remaining distance to 90 using the new denominator.
+- [ ] If below 90, turn the highest-value remaining module into the next bounded
+  D6 sub-slice with an explicit interface and acceptance tests. Proceed only with
+  a concrete shared responsibility; each attempt must produce evidence that
+  informs the next decision. Do not repeat an unsuccessful abstraction unchanged.
+- [ ] If the remaining matches cannot be removed without violating the fixed
+  contracts, document the exact symbols, attempted designs, native reports, and
+  conflict. Mark the **implementation target unresolved**, not completed. Do not
+  lower the threshold, silently expand product scope, or claim the architecture
+  has proven a score it has not measured.
+- [ ] Once native 90 is attained, run the final complete gate below on the final
+  source tree. After any review fix, rerun its affected checks and refresh the
+  final full gate/report before declaring completion.
+- [ ] Obtain independent reviews of standards/seams and behavior/security/
+  transaction semantics. Resolve actionable findings; review actual changes and
+  evidence, not only the plan or raw scanner score.
+- [ ] Reconcile the implemented architecture and affected documentation. Record
+  the final delivery receipt and exact source identity. Keep P3/M1a status separate
+  from this duplication result and retain any unmet acceptance prerequisite.
+
+## 5. Verification commands and infrastructure
+
+Run from the repository root using its existing `pyproject.toml` and lockfile.
+Use focused suites during implementation; the final Python gate is:
+
+```sh
+make lint
+uv run --locked pytest -m unit --cov=src/huron --cov-report=term-missing
+uv run --locked pytest -m contract
+uv run --locked pytest -m integration
+uv run --locked python scripts/check_duplication.py src
+git diff --check
 ```
 
-`MemorySessionStore` (dict + the obvious method bodies) completes the module. Sessions are
-always `kind="user"` — service accounts never log in interactively, which keeps the
-silver/gold SA-only invariant untouched by this whole plan.
+`make lint` includes the configured checker on `src/huron`; the separate `src`
+scan verifies this plan's complete source scope. Both must pass. Preserve strict
+mypy/ty, all import contracts, the schema-map check, complexity thresholds, and
+inspect radon's reported grades as well as command exit codes.
 
----
+Plain `pytest` and `make test` default to unit tests. This plan requires actual
+integration tests to execute successfully; CI's tolerance of zero collected
+integration tests is not acceptance evidence. Do not reduce required coverage or
+delete unique behavioral cases when replacing tests tied to retired wrappers.
 
-## A4 — OIDC for real: `pkg/auth/oidc.py`
+For changed ingestion/durability guarantees, also run:
 
-Three additions around the existing (kept) `OidcResolver`:
-
-**`JwksVerifier`** — the concrete `verify` callable the composition root injects, replacing
-the current "no OIDC verifier configured" hole. PyJWT's `PyJWKClient` caches keys and
-re-fetches on unknown `kid`:
-
-```python
-class JwksVerifier:
-    """Validate signature, issuer, audience, and expiry against the IdP's JWKS."""
-
-    def __init__(self, *, issuer: str, audience: str, jwks_url: str):
-        import jwt
-
-        self.issuer = issuer
-        self.audience = audience
-        self._jwks = jwt.PyJWKClient(jwks_url, cache_keys=True, lifespan=300)
-
-    def __call__(self, token: str) -> Mapping[str, object]:
-        import jwt
-
-        try:
-            key = self._jwks.get_signing_key_from_jwt(token).key
-            return jwt.decode(
-                token,
-                key,
-                algorithms=["RS256", "ES256"],
-                issuer=self.issuer,
-                audience=self.audience,
-                options={"require": ["exp", "iat", "sub"]},
-            )
-        except jwt.PyJWTError as error:
-            raise AuthError(f"OIDC token rejected: {error}") from error
+```sh
+make test-acceptance
 ```
 
-**`OidcClient`** — discovery + the code flow. Endpoints come from
-`{issuer}/.well-known/openid-configuration`, fetched once at startup (fail fast on a bad
-issuer). `httpx.AsyncClient` is injected by the service so tests use `respx`.
+The Makefile's generic comment says 10 GiB, but P3's changed 9 GiB upload flow
+requires **at least 25 GiB free**, plus an actual peak-space check. The last
+recorded free space was approximately 5.8 GiB; recheck at execution time. Do not
+run the large-file gate without its prerequisite, delete user data to make room,
+or substitute a small transfer. Unavailable space blocks that acceptance claim,
+while independent safe refactoring/testing may continue.
 
-```python
-@dataclass(frozen=True, slots=True)
-class OidcProviderConfig:
-    issuer: str
-    authorization_endpoint: str
-    token_endpoint: str
-    jwks_uri: str
-    end_session_endpoint: str | None
+PostgreSQL tests already ran through Podman. On this machine, discover the
+running machine's socket and set the testcontainers environment:
 
-
-@dataclass(frozen=True, slots=True)
-class OidcUser:
-    """What the callback hands the service: enough to upsert a principal."""
-
-    idp_subject: str
-    display_name: str
-    email: str | None
-    groups: frozenset[str]
-
-
-class OidcClient:
-    def __init__(
-        self,
-        http: httpx.AsyncClient,
-        provider: OidcProviderConfig,
-        *,
-        client_id: str,
-        client_secret: str,
-        redirect_url: str,
-        scopes: tuple[str, ...] = ("openid", "profile", "email"),
-        groups_claim: str = "groups",
-    ): ...
-
-    @classmethod
-    async def discover(cls, http: httpx.AsyncClient, issuer: str, **kwargs) -> OidcClient: ...
-
-    def authorization_url(self, *, state: str, nonce: str, code_challenge: str) -> str: ...
-
-    async def exchange_code(self, *, code: str, code_verifier: str, nonce: str) -> OidcUser:
-        """POST the token endpoint, then verify the ID token (sig, iss, aud,
-        exp via JwksVerifier; nonce here) and map claims to OidcUser."""
+```sh
+podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}'
 ```
 
-**`LoginFlow`** — the pending-login state (no server storage; an HMAC-signed cookie carries
-it between `/auth/oidc/start` and the callback):
-
-```python
-@dataclass(frozen=True, slots=True)
-class LoginFlow:
-    state: str
-    nonce: str
-    code_verifier: str
-    issued_at: int
-    return_to: str  # path-only; validated to start with "/" and not "//"
-
-    def encode(self, secret: bytes) -> str:
-        payload = json.dumps(dataclasses.asdict(self), separators=(",", ":")).encode()
-        signature = hmac.new(secret, payload, hashlib.sha256).digest()
-        return base64.urlsafe_b64encode(payload + b"." + signature).decode()
-
-    @classmethod
-    def decode(cls, value: str, secret: bytes, *, max_age: int = 600) -> LoginFlow:
-        """Reject bad signatures and flows older than ten minutes."""
-```
-
-PKCE (`code_verifier` → S256 `code_challenge`) is used **in addition to** the client secret —
-free hardening, and Keycloak supports it out of the box.
-
----
-
-## A5 — Migration `0005_auth` + `migrations/schema.sql`
-
-Follows the raw-DDL style of 0001/0002, with the same trigger-enforced kind guards. The
-existing `principals` table (0002) already carries `idp_subject text UNIQUE` and the
-`CHECK (kind = 'user' OR idp_subject IS NULL)` — the OIDC upsert needs no schema change.
-Two new tables:
-
-```sql
--- ------------------------------------------------------- local credentials
--- At most one password per principal; users only. Password hashes are
--- argon2id strings (self-describing parameters). Admin-provisioned: rows are
--- written exclusively through the guarded v1 user routes.
-CREATE TABLE local_credentials (
-    principal_id uuid PRIMARY KEY REFERENCES principals(id),
-    password_hash text NOT NULL CHECK (password_hash LIKE '$argon2id$%'),
-    updated_at timestamptz NOT NULL,
-    updated_by text NOT NULL
-);
-
-CREATE FUNCTION local_credentials_kind_guard() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE principal_kind text;
-BEGIN
-    SELECT kind INTO principal_kind FROM principals WHERE id = NEW.principal_id;
-    IF principal_kind IS DISTINCT FROM 'user' THEN
-        RAISE EXCEPTION 'local_credentials.principal_id must reference a user principal';
-    END IF;
-    RETURN NEW;
-END $$;
-CREATE TRIGGER local_credentials_kind_guard BEFORE INSERT OR UPDATE ON local_credentials
-FOR EACH ROW EXECUTE FUNCTION local_credentials_kind_guard();
-
--- ------------------------------------------------------------------ sessions
--- One row per interactive browser session. The cookie carries the secret;
--- only its SHA-256 lands here. subject/groups are a login-time snapshot.
-CREATE TABLE sessions (
-    id uuid PRIMARY KEY,
-    secret_sha256 text NOT NULL CHECK (secret_sha256 ~ '^[0-9a-f]{64}$'),
-    csrf_token text NOT NULL,
-    subject text NOT NULL,
-    groups text[] NOT NULL DEFAULT '{}',
-    authentication_method text NOT NULL CHECK (authentication_method IN ('oidc', 'password')),
-    created_at timestamptz NOT NULL,
-    last_seen_at timestamptz NOT NULL,
-    idle_expires_at timestamptz NOT NULL,
-    absolute_expires_at timestamptz NOT NULL,
-    revoked_at timestamptz,
-    CHECK (idle_expires_at <= absolute_expires_at)
-);
-CREATE INDEX sessions_subject_active ON sessions (subject) WHERE revoked_at IS NULL;
-```
-
-Plus the role-model seed for A9's capability (same style as 0002's seed, and mirrored in
-`pkg/rbac/roles.py` first — roles.py is the source of truth, the seed follows it):
-
-```sql
-INSERT INTO capabilities (code, title) VALUES ('user.manage', 'Create and administer password users');
-INSERT INTO role_capabilities (role_code, capability_code) VALUES ('platform_owner', 'user.manage');
-```
-
-`migrations/schema.sql` gains the same DDL; the downgrade drops
-`sessions, local_credentials` and deletes the two seed rows. Expired-session cleanup is a
-`DELETE FROM sessions WHERE absolute_expires_at < now() - interval '30 days'` owned by the
-future sweeper service — noted there, not built here.
-
----
-
-## A6 — Settings and the composition root
-
-`ApiSettings` grows an OIDC block, session/cookie knobs, and renames nothing existing except
-one honest generalization: `rbac_backend` becomes **`store_backend`** — it now selects the
-Postgres implementations for RBAC *and* auth stores together (they share the pool and the
-same "FK targets must be real rows" caveat). Same values, same default, same explicit opt-in.
-
-```python
-class OidcSettings(BaseModel):
-    issuer: str
-    client_id: str
-    client_secret: str
-    redirect_url: str            # e.g. http://localhost:8080/auth/oidc/callback
-    scopes: tuple[str, ...] = ("openid", "profile", "email")
-    groups_claim: str = "groups"
-    #: Audience expected in bearer ID/access tokens; defaults to client_id.
-    audience: str | None = None
-
-
-class ApiSettings(BaseSettings):
-    ...
-    auth_mode: Literal["oidc", "dev-headers"]
-    oidc: OidcSettings | None = None          # HURON_OIDC__ISSUER etc. (env_nested_delimiter)
-    password_login_enabled: bool = True
-    #: Signs the transient huron_login flow cookie. Required outside development.
-    login_flow_secret: str = ""
-    session_cookie_name: str = "huron_session"
-    #: Where /auth/oidc/callback lands the browser after login.
-    web_app_url: str = "http://localhost:5173"
-    store_backend: Literal["memory", "postgres"] = "memory"
-
-    @model_validator(mode="after")
-    def refuse_unsafe_combinations(self) -> Self:
-        ...existing checks...
-        if self.auth_mode == "oidc" and self.oidc is None:
-            raise ValueError("auth_mode=oidc requires the HURON_OIDC__* settings")
-        if self.env != "development" and not self.login_flow_secret:
-            raise ValueError("login_flow_secret is required outside development")
-        return self
-```
-
-(`model_config` adds `env_nested_delimiter="__"` so `HURON_OIDC__CLIENT_SECRET` works.)
-
-`create_app` wiring, in the lifespan next to the existing store selection:
-
-- `store_backend == "postgres"` → `PostgresCredentialStore(pool)` and
-  `PostgresSessionStore(pool)` from a new **`service/api/postgres_auth.py`** (asyncpg, same
-  file conventions as `postgres_rbac.py`); memory otherwise.
-- `HierarchyRepository.__init__` gains `credential_store` / `session_store` /
-  `principal_store` parameters with memory defaults, exposed as `repository.credentials`,
-  `repository.sessions`, `repository.principals` — the `principals` store is the thin
-  `upsert_oidc_user(OidcUser) -> Principal-row` + `get_by_subject()` seam both login paths
-  and A9's admin routes share.
-- When `settings.oidc` is set: `http = httpx.AsyncClient()`,
-  `app.state.oidc_client = await OidcClient.discover(http, settings.oidc.issuer, ...)`, and
-  `app.state.oidc_resolver = OidcResolver(JwksVerifier(issuer=..., audience=..., jwks_url=provider.jwks_uri))`.
-  The `oidc_verify` test-injection parameter on `create_app` stays — tests keep injecting a
-  fake verifier exactly as today.
-- Close the httpx client on shutdown alongside the pool.
-
----
-
-## A7 — `current_principal` learns cookies; CSRF for session-authed writes
-
-`authorization.current_principal` gains one branch, ordered so bearer credentials keep
-absolute priority (a programmatic caller with a cookie jar must never be downgraded):
-
-```python
-async def current_principal(request: Request) -> Principal:
-    authorization = request.headers.get("authorization")
-    if authorization:
-        ...unchanged: hk_ → API key, else OIDC bearer...
-    token = request.cookies.get(_cookie_name(request))
-    if token:
-        resolver = SessionResolver(get_repository(request).sessions)
-        principal, session = await resolver.resolve(token)
-        _enforce_csrf(request, session)
-        request.state.session = session
-        return principal
-    ...unchanged: dev-headers fallback / 401...
-
-
-def _enforce_csrf(request: Request, session: SessionRecord) -> None:
-    """Cookie-authenticated state changes must echo the session's CSRF token.
-
-    Bearer paths are exempt (headers cannot be set cross-site); GET/HEAD are
-    exempt (they must stay side-effect-free anyway). The token reaches the
-    frontend in the login response and GET /auth/session.
-    """
-    if request.method in ("GET", "HEAD", "OPTIONS"):
-        return
-    supplied = request.headers.get("x-huron-csrf", "")
-    if not hmac.compare_digest(supplied, session.csrf_token):
-        raise AuthError("missing or invalid X-Huron-CSRF header")
-```
-
-Cookie attributes, set in one helper used by login/callback/logout (A8): `HttpOnly`,
-`SameSite=Lax`, `Path=/`, `Secure` unless `settings.env == "development"`, `Max-Age` =
-`ABSOLUTE_TTL`. SameSite=Lax + the CSRF header is belt-and-braces, deliberately.
-
-Everything downstream — `require_*`, `check`, `cached_bindings_for`, the layer guards — is
-untouched: a session resolves to a plain `Principal` and RBAC neither knows nor cares how
-the caller authenticated.
-
----
-
-## A8 — Unversioned routes: `routes/auth/`
-
-New package, born with the endpoints/schema split (A10's layout):
-
-```
-src/huron/service/api/routes/auth/
-    __init__.py            router = APIRouter(); includes login, oidc, session
-    endpoints/login.py     POST /auth/login, POST /auth/logout
-    endpoints/oidc.py      GET /auth/oidc/start, GET /auth/oidc/callback
-    endpoints/session.py   GET /auth/session, GET /auth/providers
-    schema/login.py        PasswordLogin
-    schema/session.py      SessionInfo, ProviderInfo (response models)
-```
-
-Mounted in `app.py` **without a version prefix**:
-
-```python
-from .routes import auth as auth_routes, v1
-
-app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
-app.include_router(v1.router, prefix="/api/v1")
-```
-
-The handlers (abridged to the decisions that matter):
-
-```python
-# endpoints/login.py
-@router.post("/login")
-async def password_login(request: Request, response: Response, body: PasswordLogin) -> dict[str, object]:
-    settings = request.app.state.settings
-    if not settings.password_login_enabled:
-        raise AuthError("password login is disabled")
-    repository = get_repository(request)
-    row = await repository.principals.get_user_by_subject(body.username)  # None if missing/disabled/sa
-    credential = await repository.credentials.get(row.id) if row else None
-    if not verify_password(credential, body.password):   # constant-shape on every miss
-        raise AuthError("invalid username or password")
-    record, token = create_session(row.subject, authentication_method="password")
-    await repository.sessions.add(record)
-    set_session_cookie(response, settings, token)
-    return {"subject": row.subject, "display_name": row.display_name, "csrf_token": record.csrf_token}
-
-
-@router.post("/logout")
-async def logout(request: Request, response: Response, actor: CurrentPrincipal) -> dict[str, str]:
-    session = getattr(request.state, "session", None)
-    if session is not None:
-        await get_repository(request).sessions.revoke(session.id, datetime.now(UTC))
-    clear_session_cookie(response, request.app.state.settings)
-    return {"status": "signed-out"}
-```
-
-```python
-# endpoints/oidc.py
-@router.get("/oidc/start")
-async def oidc_start(request: Request, return_to: str = "/") -> RedirectResponse:
-    client = _oidc_client_or_404(request)
-    flow = LoginFlow.new(return_to=_safe_return_path(return_to))
-    url = client.authorization_url(
-        state=flow.state, nonce=flow.nonce, code_challenge=s256(flow.code_verifier)
-    )
-    response = RedirectResponse(url, status_code=302)
-    response.set_cookie("huron_login", flow.encode(_flow_secret(request)),
-                        max_age=600, httponly=True, samesite="lax", path="/auth")
-    return response
-
-
-@router.get("/oidc/callback")
-async def oidc_callback(request: Request, code: str, state: str) -> RedirectResponse:
-    flow = LoginFlow.decode(request.cookies.get("huron_login", ""), _flow_secret(request))
-    if not hmac.compare_digest(state, flow.state):
-        raise AuthError("OIDC state mismatch")
-    client = _oidc_client_or_404(request)
-    user = await client.exchange_code(code=code, code_verifier=flow.code_verifier, nonce=flow.nonce)
-    repository = get_repository(request)
-    row = await repository.principals.upsert_oidc_user(user)      # R10's upsert, keyed on idp_subject
-    record, token = create_session(row.subject, groups=user.groups, authentication_method="oidc")
-    await repository.sessions.add(record)
-    response = RedirectResponse(_app_url(request, flow.return_to), status_code=302)
-    set_session_cookie(response, request.app.state.settings, token)
-    response.delete_cookie("huron_login", path="/auth")
-    return response
-```
-
-```python
-# endpoints/session.py
-@router.get("/session")     # replaces /api/v1/auth/whoami — delete that route
-async def session_info(request: Request, actor: CurrentPrincipal) -> dict[str, object]:
-    session = getattr(request.state, "session", None)
-    return {
-        "subject": actor.subject, "kind": actor.kind, "groups": sorted(actor.groups),
-        "authentication_method": actor.authentication_method,
-        "csrf_token": session.csrf_token if session else None,
-        "expires_at": session.absolute_expires_at if session else None,
-    }
-
-
-@router.get("/providers")   # unauthenticated: the login page renders from this
-async def providers(request: Request) -> dict[str, object]:
-    settings = request.app.state.settings
-    return {
-        "password": settings.password_login_enabled,
-        "oidc": settings.oidc is not None,
-        "oidc_start_url": "/auth/oidc/start" if settings.oidc is not None else None,
-    }
-```
-
-`/auth/providers`, `/auth/login`, `/auth/oidc/*` are the only unauthenticated routes in the
-service besides `/healthz` and `/readyz` — worth a one-line comment at the mount site.
-
-**Reserved slugs:** the web login page lands at `/login` (and the API owns `/auth` if the
-shell ever proxies it). Add `'auth'` and `'login'` to `RESERVED_ROOT_SLUGS` in **both**
-`web/src/lib/reserved-slugs.ts` and `pkg/catalog/paths.py` — the API-side validation exists
-now (`validate_org_slug`), so this is two one-line edits plus the UI test fixture.
-
----
-
-## A9 — Admin user management (v1, guarded)
-
-Password users have to come from somewhere. Smallest sufficient surface, versioned because
-users are resources:
-
-```
-routes/v1/endpoints/users.py     POST /users               require_system("user.manage")
-                                 PUT  /users/{principal_id}/password        same guard
-                                 POST /users/{principal_id}/disable         same guard
-routes/v1/schema/users.py        CreateUser, SetPassword
-```
-
-- `user.manage` is added to `pkg/rbac/roles.py` first (source of truth), on
-  **`platform_owner` only** — admin-provisioning is a platform act; org admins manage
-  service accounts, not humans. The 0005 seed (A5) mirrors it; the roles unit test's
-  invariants pick it up automatically.
-- `POST /users {username, display_name, password}` → `principals` row
-  (`kind='user'`, `subject=username`, no `idp_subject`) + `local_credentials` row, both via
-  `repository.principals` / `repository.credentials`. Refuse a subject that already exists —
-  never silently attach a password to an OIDC identity.
-- `PUT …/password` replaces the hash and calls `sessions.revoke_all_for(subject)` — a reset
-  logs the user out everywhere, by design.
-- `POST …/disable` sets `principals.disabled_at` and also revokes all sessions.
-- Schemas:
-
-```python
-class CreateUser(BaseModel):
-    username: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{1,62}$")
-    display_name: str = Field(min_length=1)
-    password: str = Field(min_length=12)
-
-
-class SetPassword(BaseModel):
-    password: str = Field(min_length=12)
-```
-
-The existing bootstrap path still works unchanged: `bootstrap_platform_owner=karl` grants
-the SYSTEM binding, then that subject (arriving via OIDC or dev-headers) creates password
-users through these routes. For a fully-offline first login, A11's compose seeds one
-password user via a tiny `scripts/seed-dev-auth.py` invoked by `make bootstrap` — dev
-convenience, not a production path.
-
----
-
-## A10 — Split `routes/v1/schemas.py` into `routes/v1/schema/*`
-
-One schema file per endpoints module, names matching 1-to-1; a model lives in the file of
-the endpoints module that owns its route, and other endpoint modules import across when they
-share one (only `CreateApiKey` does today):
-
-```
-routes/v1/schema/__init__.py       docstring only (the "authorization never happens
-                                   here" preamble moves here); NO re-exports - import
-                                   from the named module, per the layout convention
-routes/v1/schema/organizations.py  CreateOrganization, PatchOrganization
-routes/v1/schema/projects.py       CreateProject, PatchProject
-routes/v1/schema/datasets.py       CreateDataset, PatchDataset, CreateRelease
-routes/v1/schema/rbac.py           CreateRoleBinding, CreateServiceAccount, PRINCIPAL_PATTERN
-routes/v1/schema/policies.py       CreatePolicy, AttachPolicy
-routes/v1/schema/auth.py           CreateApiKey
-routes/v1/schema/users.py          CreateUser, SetPassword                  (new, A9)
-```
-
-`schemas.py` is deleted in the same commit; the six import sites repoint, e.g.:
-
-```python
-from huron.service.api.routes.v1.schema.datasets import CreateDataset, CreateRelease, PatchDataset
-```
-
-(`endpoints/rbac.py` imports `CreateApiKey` from `schema.auth` — cross-module imports within
-the schema package are fine; duplicating models is not.) Pure move: no model changes, so the
-only test impact is import paths. Note the package is `routes/v1/schema/`, a different thing
-from top-level `src/huron/schema/` — the FastAPI request bodies never migrate there, since
-`huron.schema` is the framework-free dependency floor.
-
----
-
-## A11 — Run the whole application under Podman/Docker
-
-Three pieces: a `Containerfile`, compose growth (Keycloak always; the app behind a profile),
-and Makefile targets. Existing behavior is preserved — `make up` still starts infra only and
-`make api` still runs uvicorn on the host with reload; Postgres stays published on **5433**
-(5432 is taken by marimohub on Karl's machine).
-
-**`Containerfile`** (uv official image, multi-stage, non-root):
-
-```dockerfile
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
-WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
-COPY src ./src
-COPY migrations ./migrations
-COPY alembic.ini ./
-RUN uv sync --frozen --no-dev
-
-FROM python:3.12-slim-bookworm
-RUN useradd --system --uid 1001 huron
-WORKDIR /app
-COPY --from=build --chown=huron:huron /app /app
-ENV PATH="/app/.venv/bin:$PATH"
-USER huron
-EXPOSE 8080
-CMD ["uvicorn", "huron.service.api.app:app", "--host", "0.0.0.0", "--port", "8080"]
-```
-
-**`docker-compose.yml` additions** (postgres/minio unchanged):
-
-```yaml
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.3
-    command: ["start-dev", "--import-realm", "--http-port=8081"]
-    environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      # One issuer string valid from the host AND from inside the network:
-      # containers resolve the service name; the host gets it from make hosts
-      # (adds "127.0.0.1 keycloak" to /etc/hosts) - or use localhost:8081 when
-      # running the API on the host, which needs no hosts entry at all.
-      KC_HOSTNAME: http://keycloak:8081
-      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
-    ports:
-      - "8081:8081"
-    volumes:
-      - ./scripts/keycloak/huron-realm.json:/opt/keycloak/data/import/huron-realm.json:ro
-    healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8081 && echo ok"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-
-  migrate:
-    profiles: ["app"]
-    build:
-      context: .
-      dockerfile: Containerfile
-    command: ["alembic", "upgrade", "head"]
-    environment:
-      HURON_DATABASE_URL: postgresql://huron:huron@postgres:5432/huron
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  api:
-    profiles: ["app"]
-    build:
-      context: .
-      dockerfile: Containerfile
-    ports:
-      - "8080:8080"
-    environment:
-      HURON_ENV: development
-      HURON_AUTH_MODE: oidc
-      HURON_DATABASE_URL: postgresql://huron:huron@postgres:5432/huron
-      HURON_STORE_BACKEND: postgres
-      HURON_OIDC__ISSUER: http://keycloak:8081/realms/huron
-      HURON_OIDC__CLIENT_ID: huron-web
-      HURON_OIDC__CLIENT_SECRET: dev-only-secret
-      HURON_OIDC__REDIRECT_URL: http://localhost:8080/auth/oidc/callback
-      HURON_LOGIN_FLOW_SECRET: dev-only-flow-secret
-      HURON_WEB_APP_URL: http://localhost:5173
-      HURON_BOOTSTRAP_PLATFORM_OWNER: karl
-      HURON_CLASSIFICATION_VOCABULARY: '[{"code":"internal","order":0,"discoverable":true}]'
-    depends_on:
-      keycloak:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-```
-
-The `migrate` service only works once Alembic stops hard-coding its URL: today
-`alembic.ini` pins `sqlalchemy.url = postgresql+asyncpg://huron:huron@localhost:5433/huron`.
-Teach `migrations/env.py` to prefer the service's own env var, normalizing the driver:
-
-```python
-import os
-
-if (env_url := os.environ.get("HURON_DATABASE_URL")) is not None:
-    config.set_main_option(
-        "sqlalchemy.url", env_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    )
-```
-
-`make migrate` on the host is unaffected (no env var set → alembic.ini's 5433 URL).
-
-The issuer question, decided: **one issuer URL, `http://keycloak:8081/realms/huron`.** OIDC
-breaks whenever the browser and the backend see different issuer strings; the service-name
-URL is valid inside the network for free, and on the host after one `/etc/hosts` line that a
-`make hosts` target adds (idempotently, with sudo prompt). Developers who skip the `app`
-profile and run `make api` on the host can instead set
-`HURON_OIDC__ISSUER=http://localhost:8081/realms/huron` in `.env` — the host reaches the
-published port directly and no hosts entry is needed. Both modes are documented in the
-README in this step.
-
-**`scripts/keycloak/huron-realm.json`** — realm `huron`; confidential client `huron-web`
-(secret `dev-only-secret`, redirect URIs `http://localhost:8080/auth/oidc/callback` and
-`http://keycloak:8081/*`, standard flow + PKCE S256); a `groups` client scope mapping realm
-roles into a `groups` claim; users `karl` (password `karl-dev-password`, group
-`platform-admins`) and `sam` (a plain scientist). Exported once from a hand-configured
-instance, committed, imported forever after.
-
-**Makefile**:
-
-```make
-up:      ## Start PostgreSQL, MinIO, and Keycloak (infra only).
-	$(COMPOSE) up -d --wait postgres minio keycloak
-
-stack:   ## Build and run the WHOLE app (api + migrations) in containers.
-	$(COMPOSE) --profile app up -d --build --wait
-
-hosts:   ## Idempotently add "127.0.0.1 keycloak" for the app profile.
-	grep -q "127.0.0.1 keycloak" /etc/hosts || echo "127.0.0.1 keycloak" | sudo tee -a /etc/hosts
-```
-
-`podman-compose` supports `profiles`, `service_completed_successfully`, and build contexts
-at the versions current on Karl's setup; the `COMPOSE` autodetect line already handles the
-docker/podman split. One caveat carried over from memory: after the Mac sleeps, Podman
-machine clock drift can surface as `RequestTimeTooSkewed` from MinIO (and now as token
-`iat`/`exp` weirdness from Keycloak) — `podman machine stop && podman machine start`.
-
----
-
-## A12 — Tests
-
-Unit (`tests/unit/`, extending the existing style — plain asyncio tests, no network):
-
-- `test_auth_password.py` — round-trip verify; rejection under `MIN_PASSWORD_LENGTH`; the
-  dummy-hash path returns False for a `None` record (and executes the hasher).
-- `test_auth_sessions.py` — token format golden + malformed variants; idle expiry slides,
-  absolute expiry doesn't; `TOUCH_INTERVAL` throttling (store.touch call count); revoked →
-  `SessionRevoked`; wrong secret with valid id → generic `AuthError`.
-- `test_auth_oidc.py` — `LoginFlow` encode/decode: signature tamper, age-out, `return_to`
-  sanitization (`//evil.example` refused); `exchange_code` against a `respx`-mocked token
-  endpoint + a static test JWKS: happy path, wrong nonce, wrong audience, expired token.
-- `test_api_login.py` — `create_app` with memory stores: password login sets the cookie and
-  the session resolves on the next request; wrong password is a 401 with the generic
-  message; CSRF: session-authed POST without `X-Huron-CSRF` → 401, with it → 200, bearer
-  POST without it → 200; logout revokes; `/auth/providers` reflects settings; disabled
-  user cannot log in; a `sa:` principal with a password row is unreachable (kind guard).
-- `test_api_users.py` — `user.manage` guard (403 for organization_admin, 200 for
-  platform_owner); duplicate-subject refusal; password reset revokes all sessions.
-- Extend `test_catalog_paths.py` for the two new reserved slugs.
-
-Contract (`tests/contract/`, live PG16 via testcontainers, pattern of `test_rbac_store.py`):
-
-- `test_auth_store.py` — `PostgresCredentialStore`/`PostgresSessionStore` round-trips;
-  the `local_credentials` kind-guard trigger negative case (service_account principal
-  refused); `revoke_all_for` touches only the subject's active rows; upsert-on-login
-  keyed by `idp_subject` creates then updates (display-name change) without duplicating.
-
-Acceptance (deferred until `tests/acceptance` grows a harness): a Playwright login journey
-against `make stack` + the seeded Keycloak realm — noted in the ledger as future work.
-
----
-
-## A13 — Design record
-
-`design/` is the authoritative record; this plan ends by making it true there:
-
-- `design/roadmap.html` §1: package tree `identity` → `auth` with the submodule list (done
-  in A1's PR), plus the `routes/auth/` and `routes/v1/schema/` layout.
-- A new **authentication section** (in `design/architecture.html`, or a `design/auth.html`
-  page if it outgrows a section): the four-credential table from §0, the session model
-  (double-bounded expiry, hash-at-rest, CSRF), the admin-provisioned password policy and
-  its rationale, the unversioned-`/auth` decision, and the one-issuer-URL local-dev topology.
-- `design/rbac.html` is already flagged stale; the `user.manage` capability lands in the
-  same rewrite (R13) rather than patching a stale page here.
-
----
-
-## Suggested step → PR grouping
-
-| PR | Steps | Leaves green because |
-|---|---|---|
-| 1 | A1 | pure move/rename; contracts + grep verify |
-| 2 | A2 + A3 + A4 + A12(unit pkg tests) | new pkg code, nothing wired yet |
-| 3 | A5 + A6 + A7 + A12(contract) | migration + wiring + resolver, behind settings |
-| 4 | A8 + A9 + A10 + A12(api tests) | routes land with their schema split |
-| 5 | A11 | infra only |
-| 6 | A13 | docs |
-
-## Verification ledger (to fill as steps land)
-
-- [ ] `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`
-- [ ] `grep -rn "pkg.identity\|IdentityError" src tests migrations pyproject.toml` → zero
-- [ ] `0005_auth` applied to a clean PG16; both triggers exercised negative-case
-- [ ] unit + contract suites green
-- [ ] `make up` → password + OIDC login both succeed against host-run `make api`
-- [ ] `make hosts && make stack` → full containerized flow: browser → Keycloak (`karl`) →
-      callback → `GET /auth/session` shows an oidc session; then `POST /api/v1/organizations`
-      succeeds with the CSRF header and 401s without it
-- [ ] Podman path: the ledger line above repeated with `podman-compose`
+Set `DOCKER_HOST` to `unix://` followed by that returned socket path, and set
+`TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/podman/podman.sock` for the Podman
+machine arrangement. Confirm connectivity before tests; do not assume a stale
+machine-specific path or connect the suite to a production database. Docker
+installations should use their actual working Docker configuration instead.
+
+For documentation included in the developer site, run `make docs`. For this
+planning-only change, verify links, paths, archive preservation, and whitespace;
+application tests do not validate the plan's prose.
+
+## 6. Evidence ledger
+
+Update this ledger as implementation runs. Store full reports and command logs
+as durable change/CI artifacts, with names that distinguish each slice. The
+architecture proposal and prior M1a receipt remain context, not new pass evidence.
+
+| Slice | Source commit + diff/artifact | Native score | Cloned/total; pairs/groups; analyzed/skipped | Behavior/static/real-adapter evidence | Review and remaining limits |
+| --- | --- | ---: | --- | --- | --- |
+| Historical baseline | `6082088`; report named in section 2 | 50 | 241/800; 319/60; 109/0 | Prior receipts in `P3_M1A_VALIDATION.md` | Duplication below target; large-file acceptance outstanding |
+| D0 execution baseline | `6082088dbcf0eda6309e099f122ef01588ead088`; [source/diff/evidence](duplication-evidence/d0/README.md) | 50 | 241/800; 319/60; 109/0 | Fresh 1,423 units, 94.75%; 30 PostgreSQL contracts + 1 integration pass; non-duplication static gates pass; full OpenAPI/HTTP baseline captured | Tested; duplication target outstanding. [Consumer/deletion map](duplication-evidence/d0/consumer-map.md); no production edits; D1 ready |
+| D1 reads | `6082088dbcf0eda6309e099f122ef01588ead088`; [source/diff/evidence](duplication-evidence/d1/README.md) | 55 | 218/798; 256/60; 112/0 | 1,425 units, 94.97%; 30 PostgreSQL contracts + one integration pass; final non-duplication static gates pass; 92 post-protocol runtime tests pass; full OpenAPI exactly equals D0 | Tested; duplication target outstanding. Read/fact forwards and replaced adapter implementations removed; D2 remains pending |
+| D2 descriptions | `6082088`; [source/diff/evidence](duplication-evidence/d2/README.md) | 55 | 212/797; 250/58; 113/0 | 1,429 units at 94.94%; 30 PostgreSQL contracts + seven integration tests pass; non-duplication static gates pass; OpenAPI exactly equals D0 | Tested; duplication target outstanding. Independent review: no actionable findings; lint stdout middle truncated, stage outcomes and exact JSON preserved |
+| D3a creation | `6082088`; [fresh checkpoint](duplication-evidence/d3a/README.md) | 55 | 210/799; 247/57; 115/0 | 1,429 units at 94.96%; 30 contracts + 13 integrations passed; non-duplication static gates pass; coverage floor raised to 94.96 | [Independent verification](duplication-evidence/d3a/verification-20260911/review.md): functional PASS, no actionable findings; full gate fails duplication. D3b–D7 paused for P3 |
+| D3b releases | Pending | — | — | — | — |
+| D4 governance/retirement | Pending | — | — | — | — |
+| D5 HTTP/schema | Pending | — | — | — | — |
+| D6 sub-slices | Add one row per attempted slice | — | — | — | — |
+| D7 final | Pending | — | — | — | — |
+
+### Planning verification
+
+This plan was checked against current source, test locations, the Makefile/CI,
+the existing architecture proposal, two independent implementation/test-map
+reviews, and a final independent plan review. The review correction preserving
+pre-discovery authorization-fact reads is incorporated in D1.
+
+Planning checks: strict `make docs` passed; plan/architecture links and whitespace
+passed; the authentication archive matches the former committed file byte-for-byte.
+The documentation build required access to the existing uv cache outside the
+filesystem sandbox. No production refactor, database migration, or acceptance
+execution was performed. The implementation's native-90 result remains to be
+demonstrated.

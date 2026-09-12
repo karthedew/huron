@@ -54,7 +54,6 @@ def _repository(tmp_path: Path, stores: ApiStores) -> HierarchyRepository:
     return HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")),
         stores.hierarchy,
-        classification_vocabulary=("open",),
         rbac_store=stores.rbac,
     )
 
@@ -76,6 +75,8 @@ def _runtime(
     return ApiRuntime(
         settings=settings,
         repository=repository,
+        hierarchy=stores.hierarchy,
+        rbac=stores.rbac,
         ingest=_ingest(repository, stores),
         revisions=_revisions(repository, stores),
         authorizer=RoleBindingAuthorizer(),
@@ -240,6 +241,8 @@ async def test_current_principal_resolves_a_bearer_jwt_through_the_configured_ve
     runtime = ApiRuntime(
         settings=_settings(env="production"),
         repository=repository,
+        hierarchy=stores.hierarchy,
+        rbac=stores.rbac,
         ingest=_ingest(repository, stores),
         revisions=_revisions(repository, stores),
         authorizer=RoleBindingAuthorizer(),

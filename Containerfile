@@ -9,7 +9,7 @@
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 # --no-dev excludes the whole [dependency-groups].dev group (ruff, mypy,
 # ty, radon, complexipy, pyscn, the test toolchain, ...) - none of it is
 # needed to run the service, and pyscn's environment marker never affects
@@ -27,4 +27,4 @@ COPY --from=build --chown=huron:huron /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 USER huron
 EXPOSE 8080
-CMD ["uvicorn", "huron.service.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "huron.applications.api.main:app", "--host", "0.0.0.0", "--port", "8080"]

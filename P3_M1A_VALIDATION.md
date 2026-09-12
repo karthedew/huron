@@ -1,6 +1,10 @@
 # M1a validation and duplication cleanup — 2026-09-09
 
-M1a remains **under validation**, and P3 remains **todo**. The native duplication
+Current continuation: M1a independent functional verification passed on 2026-09-11;
+see [the independent report](p3-evidence/m1a/verification1/report.md). The 2026-09-09
+results and capacity limitation are preserved as history.
+
+M1a has **independent functional acceptance**, and P3 remains **todo**. The native duplication
 gate still fails. This work does not authorize deployment or implement the M1b/M1c
 writer-exclusion, legacy-verification, cutover or startup workflows.
 
@@ -139,3 +143,74 @@ other replicas, uploads and held descriptors still affect available storage.
 
 Validation was performed on an uncommitted working tree. Pre-existing M1a,
 tooling, instruction and other working-tree changes were preserved.
+
+## Local functional acceptance receipt — 2026-09-11
+
+The existing M1a implementation now passes the full-size local acceptance test
+and the real PostgreSQL/POSIX suites. Independent functional verification later
+passed; its separate [report](p3-evidence/m1a/verification1/report.md) preserves
+the independently rerun commands and source identity.
+Overall repository gate: **FAIL — native duplication remains 55/100, below 90**.
+The agreed execution priority allows functional progress with that reported
+quality failure; it does not certify release or deployment readiness.
+
+The seven M1a implementation requirements and crash/concurrency matrix were
+checked against current source and tests. All 115 production Python files match
+the independently verified D3a source identity; no production code or migration
+was changed in this attempt. The scoped changes enforce the 25 GiB acceptance
+prerequisite, test its refusal/boundary behavior, record completion/commit timing,
+and correct the Makefile, repository instructions and testing guide.
+
+| Gate | Result |
+| --- | --- |
+| `make test-acceptance` | Exit 0; **1 passed**, no skips; interrupted 9 GiB upload, 144 × 64 MiB parts, exact streamed download; 90.41 seconds |
+| `uv run pytest --cov=src/huron --cov-report=term-missing` (also JSON output) | Exit 0; **1,434 passed**, **94.96%** coverage; floor remains 94.96% |
+| `uv run pytest -m contract` | Retry exit 0; **30 passed**, real disposable PostgreSQL 16 and POSIX |
+| `uv run pytest -m integration` | Retry exit 0; **13 passed**, real disposable PostgreSQL 16 and POSIX |
+| `make lint` | Exit 2 at the final duplication gate only; all preceding commands exit 0 |
+| Static lint constituents | Ruff lint/format, pydoclint, mypy, ty, all 9 import contracts, schema-map, radon and complexipy pass; both radon commands have no flagged entries; `pyscn check` exits 0 |
+| Native duplication, `src/huron` and separate `src` scan | Both check scripts exit 1; **55/100**, **210/799 fragments**, **247 pairs**, **57 groups**; all 115 files analyzed, none skipped |
+| `make docs` | Exit 0; strict build |
+| `git diff --check` | Exit 0 |
+
+The first contract/integration attempts failed because the prior Podman launcher
+session had ended and its socket refused connections; these logs are retained.
+Starting the existing VM and running both suites in the same live shell restored
+the infrastructure. The suites then passed without test or application changes.
+No production database was used. Existing third-party deprecation warnings remain.
+
+The real-socket acceptance uses memory database stores, actual local APFS files,
+and uvicorn/httpx with development headers. It is **separate evidence** from the
+real PostgreSQL suites and does not establish a PostgreSQL-backed 9 GiB run.
+
+| Observation | Measured value |
+| --- | ---: |
+| Free capacity before the run | 60,035,276,800 bytes / 55.91 GiB |
+| Sampled peak allocated fixture-file blocks | 19,339,444,224 bytes / 18.01 GiB |
+| Minimum sampled free filesystem capacity | 40,686,743,552 bytes / 37.89 GiB |
+| Completion request duration | 25.140104 seconds |
+| Commit request duration | 11.347745 seconds |
+
+An external observer sampled `st_blocks * 512` across unique fixture inodes and
+filesystem free space about every 0.2 seconds. The 441 retained samples are not an
+exact instantaneous maximum: traversal is non-atomic, and the file-block total
+excludes directories, filesystem internals and open-unlinked files. Filesystem
+free space also includes unrelated consumers. No physical write amplification or
+block-I/O counters were measured. Durations are single local client observations,
+including the work of each HTTP request, not performance guarantees.
+
+The single-run prerequisite allows 18 GiB for coexisting upload/candidate files
+plus 7 GiB headroom, including the default 1 GiB completion reserve. The source is
+sparse and the download streams. Concurrent runs or retained descriptors require
+additional accounting; this check reserves no space against other writers.
+
+Full command logs, source hashes, exact native analyzer reports, timing XML,
+storage samples and the observation script are under
+[`p3-evidence/m1a/attempt1/`](p3-evidence/m1a/attempt1/).
+The [implementation audit](p3-evidence/m1a/attempt1/audit.md) maps every M1a item to
+implementation and tests and states the measurement limits.
+
+M1b/M1c writer exclusion, full legacy verification, cutover and startup gates
+remain required before this protocol is deployable. No NFS cross-client or
+old-writer deployment proof is claimed. P3 stays incomplete, and duplication
+work stays paused before D3b. No commit, push or deployment was performed.

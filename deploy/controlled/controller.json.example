@@ -1,0 +1,15 @@
+{
+  "root_id": "00000000-0000-0000-0000-000000000001",
+  "controller_id": "00000000-0000-0000-0000-000000000002",
+  "engine_socket": "/run/huron-engine/api.sock",
+  "socket_path": "/run/huron-controller/controller.sock",
+  "state_path": "/var/lib/huron-controller/state.json",
+  "maintenance_path": "/etc/huron/maintenance.json",
+  "compose_path": "/etc/huron/compose.json",
+  "volume_name": "huron-raw",
+  "owner_uid": 1001,
+  "cutover_operators": [0],
+  "restart_operators": [1002],
+  "old_roles": ["huron_app_legacy"],
+  "new_role": "huron_app_verified"
+}

@@ -1,0 +1,16 @@
+[Unit]
+Description=Private Huron container engine
+
+[Service]
+Type=exec
+User=root
+UMask=0077
+RuntimeDirectory=huron-engine
+RuntimeDirectoryMode=0700
+StateDirectory=huron-engine
+StateDirectoryMode=0700
+ExecStart=/usr/bin/podman --root=/var/lib/huron-engine --runroot=/run/huron-engine --network-config-dir=/var/lib/huron-engine/networks system service --time=0 unix:///run/huron-engine/api.sock
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

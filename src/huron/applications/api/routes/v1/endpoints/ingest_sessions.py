@@ -160,7 +160,7 @@ async def create_dataset_ingest_session(
     Returns:
         The new session's view, in state UPLOADING.
     """
-    dataset = await repository.dataset(dataset_id)
+    dataset = await repository.datasets.get(dataset_id)
     return await _open_session(
         ingest,
         dataset,

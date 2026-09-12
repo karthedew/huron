@@ -33,10 +33,10 @@ from huron.pkg.rbac import (
     Principal,
     Scope,
     ScopeType,
-    Visibility,
     decide,
 )
 from huron.pkg.rbac.roles import PrincipalKindNotAllowed, ScopeNotBindable
+from tests.catalog_creation_support import creation_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -49,7 +49,6 @@ def _repository(tmp_path: Path) -> HierarchyRepository:
     return HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        classification_vocabulary=("open",),
         rbac_store=InMemoryRbacStore(),
     )
 
@@ -324,7 +323,7 @@ async def test_hierarchy_repository_derives_service_account_subject_from_org_slu
 ) -> None:
     """A service account's subject is derived as ``{org slug}/{name}`` and round-trips."""
     repository = _repository(tmp_path)
-    organization = await repository.create_organization(
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
@@ -343,24 +342,22 @@ async def test_hierarchy_repository_checks_dataset_scope_existence_before_delega
 ) -> None:
     """Granting, fetching and revoking a role at a real dataset's scope succeeds end to end."""
     repository = _repository(tmp_path)
-    organization = await repository.create_organization(
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="org-1"),
     )
-    project = await repository.create_project(
+    project = await (await creation_for(repository)).create_project(
         organization.id,
-        Visibility.ALL,
         slug="sims",
         title="Sims",
         description="",
         data_classification="open",
         claim=_claim("project", str(organization.id), "sims", "Sims", "", "open", key="proj-1"),
     )
-    dataset = await repository.create_dataset(
+    dataset = await (await creation_for(repository)).create_dataset(
         project.id,
-        Visibility.ALL,
         slug="run-0001",
         title="Run 1",
         description="",
@@ -416,7 +413,7 @@ async def test_hierarchy_repository_list_service_accounts_and_policies_delegate(
 ) -> None:
     """``list_service_accounts`` and ``list_policies`` delegate correctly to the rbac store."""
     repository = _repository(tmp_path)
-    organization = await repository.create_organization(
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
@@ -536,7 +533,7 @@ async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_acco
 ) -> None:
     """``bindings_for_principal`` synthesizes non-empty grants for a live service account."""
     repository = _repository(tmp_path)
-    organization = await repository.create_organization(
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
@@ -548,7 +545,7 @@ async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_acco
     actor = Principal(subject=account.subject, kind="service_account")
     cache: dict[frozenset[str], tuple[Binding, ...]] = {}
 
-    bindings = await bindings_for_principal(cache, repository, actor)
+    bindings = await bindings_for_principal(cache, repository.rbac, actor)
 
     assert bindings != ()
     assert actor.identifiers in cache
@@ -567,7 +564,7 @@ async def test_bindings_for_principal_denies_a_service_account_with_no_account_r
     actor = Principal(subject="org/gone", kind="service_account")
     cache: dict[frozenset[str], tuple[Binding, ...]] = {}
 
-    bindings = await bindings_for_principal(cache, repository, actor)
+    bindings = await bindings_for_principal(cache, repository.rbac, actor)
 
     assert bindings == ()
     assert cache[actor.identifiers] == ()

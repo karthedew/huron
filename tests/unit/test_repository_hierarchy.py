@@ -19,7 +19,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from huron.core._catalog import HierarchyRepository
+from huron.core.access import AccessPolicy
+from huron.core.catalog import CatalogService
+from huron.core.catalog_collections import DescriptionChange
 from huron.core.idempotency import request_sha256
+from huron.pkg.auth import Principal
 from huron.pkg.catalog.errors import (
     ClassificationUnknown,
     IdempotencyKeyReused,
@@ -30,9 +34,11 @@ from huron.pkg.catalog.errors import (
 )
 from huron.pkg.catalog.failures import SlugExists
 from huron.pkg.catalog.paths import dataset_dir, organization_dir, project_dir, release_tag_file
+from huron.pkg.catalog.persistence import PlatformRoot
 from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import Visibility
+from huron.pkg.rbac import RoleBindingAuthorizer, ScopeType, Visibility
+from tests.catalog_creation_support import creation_for
 from tests.hierarchy_contract import committed_revision
 
 if TYPE_CHECKING:
@@ -41,16 +47,29 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _repository(
-    tmp_path: Path, *, classifications: tuple[str, ...] = ("open",)
-) -> HierarchyRepository:
+async def _repository(tmp_path: Path) -> HierarchyRepository:
     """Build a ``HierarchyRepository`` at ``tmp_path`` over a fresh in-memory hierarchy store."""
-    return HierarchyRepository(
+    repository = HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        classification_vocabulary=classifications,
         rbac_store=InMemoryRbacStore(),
     )
+
+    await repository.grant_role(
+        principal="user:tester",
+        role_code="platform_owner",
+        scope_type=ScopeType.SYSTEM,
+        scope_id=None,
+        created_by="bootstrap",
+    )
+    return repository
+
+
+def _descriptions(repository: HierarchyRepository, visibility: Visibility) -> CatalogService:
+    """Bind actual authorized collections to an owner or an undiscovering actor."""
+    actor = Principal("tester" if visibility.unrestricted else "outsider")
+    access = AccessPolicy(actor, repository.hierarchy, repository.rbac, RoleBindingAuthorizer())
+    return CatalogService(repository, access, repository.hierarchy)
 
 
 def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
@@ -62,24 +81,22 @@ def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
 
 async def _hierarchy(repository: HierarchyRepository) -> tuple[UUID, UUID, UUID]:
     """Create one organization/project/dataset and return their ids."""
-    organization = await repository.create_organization(
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="org-1"),
     )
-    project = await repository.create_project(
+    project = await (await creation_for(repository)).create_project(
         organization.id,
-        Visibility.ALL,
         slug="sims",
         title="Sims",
         description="",
         data_classification="open",
         claim=_claim("project", str(organization.id), "sims", "Sims", "", "open", key="proj-1"),
     )
-    dataset = await repository.create_dataset(
+    dataset = await (await creation_for(repository)).create_dataset(
         project.id,
-        Visibility.ALL,
         slug="run-0001",
         title="Run 1",
         description="",
@@ -110,12 +127,12 @@ def _generation_files(entity_dir: object) -> list[Path]:
 
 async def test_create_organization_replays_an_identical_request(tmp_path: Path) -> None:
     """Replaying ``create_organization`` with the same claim returns the identical object."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     claim = _claim("organization", "astro", "Astro", "", key="k1")
-    first = await repository.create_organization(
+    first = await (await creation_for(repository)).create_organization(
         slug="astro", title="Astro", description="", claim=claim
     )
-    second = await repository.create_organization(
+    second = await (await creation_for(repository)).create_organization(
         slug="astro", title="Astro", description="", claim=claim
     )
     assert second == first
@@ -125,15 +142,15 @@ async def test_create_organization_rejects_reuse_of_a_key_with_different_argumen
     tmp_path: Path,
 ) -> None:
     """Reusing an idempotency key with a different title raises ``IdempotencyKeyReused``."""
-    repository = _repository(tmp_path)
-    await repository.create_organization(
+    repository = await _repository(tmp_path)
+    await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
     with pytest.raises(IdempotencyKeyReused):
-        await repository.create_organization(
+        await (await creation_for(repository)).create_organization(
             slug="astro",
             title="Renamed",
             description="",
@@ -143,15 +160,15 @@ async def test_create_organization_rejects_reuse_of_a_key_with_different_argumen
 
 async def test_create_organization_rejects_a_duplicate_slug(tmp_path: Path) -> None:
     """A second organization with the same slug but a new idempotency key raises ``SlugExists``."""
-    repository = _repository(tmp_path)
-    await repository.create_organization(
+    repository = await _repository(tmp_path)
+    await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
     with pytest.raises(SlugExists, match="organization slug already exists"):
-        await repository.create_organization(
+        await (await creation_for(repository)).create_organization(
             slug="astro",
             title="Astro Again",
             description="",
@@ -163,23 +180,25 @@ async def test_a_create_whose_document_write_raises_leaves_no_row_and_no_idempot
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A document write that raises rolls back the whole transaction, row and claim alike."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
 
     def _raising_write_generation(*_args: object, **_kwargs: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(repository, "_write_generation", _raising_write_generation)
+    monkeypatch.setattr(repository.raw_store, "write_generation", _raising_write_generation)
     claim = _claim("organization", "astro", "Astro", "", key="k1")
     with pytest.raises(OSError, match="disk full"):
-        await repository.create_organization(
+        await (await creation_for(repository)).create_organization(
             slug="astro", title="Astro", description="", claim=claim
         )
 
-    window = await repository.organizations(Visibility.ALL, limit=10, after=None)
+    window = await repository.hierarchy.organizations.browse(
+        PlatformRoot.ROOT, Visibility.ALL, limit=10, after=None
+    )
     assert window.items == []
 
     monkeypatch.undo()
-    created = await repository.create_organization(
+    created = await (await creation_for(repository)).create_organization(
         slug="astro", title="Astro", description="", claim=claim
     )
     assert created.slug == "astro"
@@ -189,8 +208,8 @@ async def test_the_generation_document_write_executes_off_the_event_loop_thread(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``create_organization``'s document write runs on a worker thread, not the event loop."""
-    repository = _repository(tmp_path)
-    real_write_generation = repository._write_generation
+    repository = await _repository(tmp_path)
+    real_write_generation = repository.raw_store.write_generation
     ran_on_the_event_loop: list[bool] = []
 
     def _tracking_write_generation(*args: object, **kwargs: object) -> None:
@@ -201,8 +220,8 @@ async def test_the_generation_document_write_executes_off_the_event_loop_thread(
             ran_on_the_event_loop.append(False)
         real_write_generation(*args, **kwargs)
 
-    monkeypatch.setattr(repository, "_write_generation", _tracking_write_generation)
-    await repository.create_organization(
+    monkeypatch.setattr(repository.raw_store, "write_generation", _tracking_write_generation)
+    await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
@@ -216,21 +235,19 @@ async def test_the_generation_document_write_executes_off_the_event_loop_thread(
 
 async def test_create_project_replays_an_identical_request(tmp_path: Path) -> None:
     """Replaying ``create_project`` with the same idempotency claim returns the identical object."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, _, _ = await _hierarchy(repository)
     claim = _claim("project", str(organization_id), "second", "Second", "", "open", key="k1")
-    first = await repository.create_project(
+    first = await (await creation_for(repository)).create_project(
         organization_id,
-        Visibility.ALL,
         slug="second",
         title="Second",
         description="",
         data_classification="open",
         claim=claim,
     )
-    second = await repository.create_project(
+    second = await (await creation_for(repository)).create_project(
         organization_id,
-        Visibility.ALL,
         slug="second",
         title="Second",
         description="",
@@ -242,12 +259,11 @@ async def test_create_project_replays_an_identical_request(tmp_path: Path) -> No
 
 async def test_create_project_rejects_a_duplicate_slug(tmp_path: Path) -> None:
     """A second project with an existing slug in the same organization raises ``SlugExists``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, _, _ = await _hierarchy(repository)
     with pytest.raises(SlugExists, match="project slug already exists"):
-        await repository.create_project(
+        await (await creation_for(repository)).create_project(
             organization_id,
-            Visibility.ALL,
             slug="sims",
             title="Sims Again",
             description="",
@@ -262,11 +278,10 @@ async def test_create_project_accepts_a_classification_in_the_configured_vocabul
     tmp_path: Path,
 ) -> None:
     """A classification listed in the configured vocabulary is accepted and stored."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, _, _ = await _hierarchy(repository)
-    project = await repository.create_project(
+    project = await (await creation_for(repository)).create_project(
         organization_id,
-        Visibility.ALL,
         slug="second",
         title="Second",
         description="",
@@ -280,12 +295,11 @@ async def test_create_project_rejects_a_classification_outside_the_configured_vo
     tmp_path: Path,
 ) -> None:
     """A classification outside the configured vocabulary raises ``ClassificationUnknown``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, _, _ = await _hierarchy(repository)
     with pytest.raises(ClassificationUnknown):
-        await repository.create_project(
+        await (await creation_for(repository)).create_project(
             organization_id,
-            Visibility.ALL,
             slug="second",
             title="Second",
             description="",
@@ -300,17 +314,18 @@ async def test_create_project_with_an_empty_vocabulary_refuses_every_classificat
     tmp_path: Path,
 ) -> None:
     """With an empty classification vocabulary, even a plausible classification is refused."""
-    repository = _repository(tmp_path, classifications=())
-    organization = await repository.create_organization(
+    repository = await _repository(tmp_path)
+    organization = await (
+        await creation_for(repository, classifications=(), visible=True)
+    ).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="org-1"),
     )
     with pytest.raises(ClassificationUnknown):
-        await repository.create_project(
+        await (await creation_for(repository, classifications=(), visible=True)).create_project(
             organization.id,
-            Visibility.ALL,
             slug="sims",
             title="Sims",
             description="",
@@ -327,16 +342,19 @@ async def test_create_project_replay_with_a_different_classification_is_a_reuse(
     The old fingerprint left ``data_classification`` out; the digest now
     covers it, so a request differing in only that field is caught.
     """
-    repository = _repository(tmp_path, classifications=("open", "restricted"))
-    organization = await repository.create_organization(
+    repository = await _repository(tmp_path)
+    organization = await (
+        await creation_for(repository, classifications=("open", "restricted"), visible=True)
+    ).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="org-1"),
     )
-    await repository.create_project(
+    await (
+        await creation_for(repository, classifications=("open", "restricted"), visible=True)
+    ).create_project(
         organization.id,
-        Visibility.ALL,
         slug="sims",
         title="Sims",
         description="",
@@ -344,9 +362,10 @@ async def test_create_project_replay_with_a_different_classification_is_a_reuse(
         claim=_claim("project", str(organization.id), "sims", "Sims", "", "open", key="k1"),
     )
     with pytest.raises(IdempotencyKeyReused):
-        await repository.create_project(
+        await (
+            await creation_for(repository, classifications=("open", "restricted"), visible=True)
+        ).create_project(
             organization.id,
-            Visibility.ALL,
             slug="sims",
             title="Sims",
             description="",
@@ -361,17 +380,18 @@ async def test_create_project_under_an_invisible_organization_is_not_found(
     tmp_path: Path,
 ) -> None:
     """Creating a project under an organization the caller cannot discover is 404, not 409/400."""
-    repository = _repository(tmp_path)
-    organization = await repository.create_organization(
+    repository = await _repository(tmp_path)
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="org-1"),
     )
     with pytest.raises(ResourceNotFound):
-        await repository.create_project(
+        await (
+            await creation_for(repository, classifications=("open",), visible=False)
+        ).create_project(
             organization.id,
-            Visibility(),
             slug="sims",
             title="Sims",
             description="",
@@ -385,14 +405,13 @@ async def test_create_project_under_an_invisible_organization_is_not_found(
 
 async def test_create_dataset_replays_an_identical_request(tmp_path: Path) -> None:
     """Replaying ``create_dataset`` with the same idempotency claim returns the identical object."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, project_id, _ = await _hierarchy(repository)
     claim = _claim(
         "dataset", str(project_id), "second", "Second", "", "mcnp-run", "1.0", "raw", key="k1"
     )
-    first = await repository.create_dataset(
+    first = await (await creation_for(repository)).create_dataset(
         project_id,
-        Visibility.ALL,
         slug="second",
         title="Second",
         description="",
@@ -400,9 +419,8 @@ async def test_create_dataset_replays_an_identical_request(tmp_path: Path) -> No
         profile_version="1.0",
         claim=claim,
     )
-    second = await repository.create_dataset(
+    second = await (await creation_for(repository)).create_dataset(
         project_id,
-        Visibility.ALL,
         slug="second",
         title="Second",
         description="",
@@ -415,12 +433,11 @@ async def test_create_dataset_replays_an_identical_request(tmp_path: Path) -> No
 
 async def test_create_dataset_rejects_a_duplicate_slug(tmp_path: Path) -> None:
     """A second dataset with an existing slug in the same project raises ``SlugExists``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, project_id, _ = await _hierarchy(repository)
     with pytest.raises(SlugExists, match="dataset slug already exists"):
-        await repository.create_dataset(
+        await (await creation_for(repository)).create_dataset(
             project_id,
-            Visibility.ALL,
             slug="run-0001",
             title="Run 1 Again",
             description="",
@@ -448,11 +465,10 @@ async def test_create_dataset_replay_with_a_different_description_is_a_reuse(
     The old fingerprint left ``description`` out; the digest now covers it,
     so a request differing in only that field is caught.
     """
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, project_id, _ = await _hierarchy(repository)
-    await repository.create_dataset(
+    await (await creation_for(repository)).create_dataset(
         project_id,
-        Visibility.ALL,
         slug="second",
         title="Second",
         description="first description",
@@ -471,9 +487,8 @@ async def test_create_dataset_replay_with_a_different_description_is_a_reuse(
         ),
     )
     with pytest.raises(IdempotencyKeyReused):
-        await repository.create_dataset(
+        await (await creation_for(repository)).create_dataset(
             project_id,
-            Visibility.ALL,
             slug="second",
             title="Second",
             description="different description",
@@ -495,12 +510,13 @@ async def test_create_dataset_replay_with_a_different_description_is_a_reuse(
 
 async def test_create_dataset_under_an_invisible_project_is_not_found(tmp_path: Path) -> None:
     """Creating a dataset under a project the caller cannot discover is 404, not 409/400."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, project_id, _ = await _hierarchy(repository)
     with pytest.raises(ResourceNotFound):
-        await repository.create_dataset(
+        await (
+            await creation_for(repository, classifications=("open",), visible=False)
+        ).create_dataset(
             project_id,
-            Visibility(),
             slug="second",
             title="Second",
             description="",
@@ -525,45 +541,37 @@ async def test_create_dataset_under_an_invisible_project_is_not_found(tmp_path: 
 
 async def test_patch_dataset_rejects_a_slug_change(tmp_path: Path) -> None:
     """``patch_dataset`` refuses to change the slug, raising ``SlugImmutable``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     with pytest.raises(SlugImmutable):
-        await repository.patch_dataset(
+        await _descriptions(repository, Visibility.ALL).datasets.describe(
             dataset_id,
-            Visibility.ALL,
-            expected_version=1,
-            slug="renamed",
-            title=None,
-            description=None,
+            DescriptionChange(expected_version=1, slug="renamed", title=None, description=None),
         )
 
 
 async def test_patch_dataset_rejects_a_stale_expected_version(tmp_path: Path) -> None:
     """``patch_dataset`` refuses a stale ``expected_version``, raising ``PreconditionFailed``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     with pytest.raises(PreconditionFailed):
-        await repository.patch_dataset(
+        await _descriptions(repository, Visibility.ALL).datasets.describe(
             dataset_id,
-            Visibility.ALL,
-            expected_version=99,
-            slug=None,
-            title="New Title",
-            description=None,
+            DescriptionChange(expected_version=99, slug=None, title="New Title", description=None),
         )
 
 
 async def test_patch_dataset_naming_no_field_is_a_no_op(tmp_path: Path) -> None:
     """A patch naming neither ``title`` nor ``description`` writes no new generation document."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
-    organization = await repository.organization(organization_id, Visibility.ALL)
-    project = await repository.project(project_id, Visibility.ALL)
-    dataset = await repository.dataset(dataset_id, Visibility.ALL)
+    organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
+    project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
+    dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
     before = _generation_files(dataset_dir(repository.data_root, organization, project, dataset))
 
-    patched = await repository.patch_dataset(
-        dataset_id, Visibility.ALL, expected_version=1, slug=None, title=None, description=None
+    patched = await _descriptions(repository, Visibility.ALL).datasets.describe(
+        dataset_id, DescriptionChange(expected_version=1, slug=None, title=None, description=None)
     )
 
     assert patched == dataset
@@ -574,20 +582,18 @@ async def test_patch_dataset_naming_no_field_is_a_no_op(tmp_path: Path) -> None:
 
 async def test_patch_dataset_naming_the_current_values_is_a_no_op(tmp_path: Path) -> None:
     """A patch whose title and description already match the stored values is also a no-op."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
-    organization = await repository.organization(organization_id, Visibility.ALL)
-    project = await repository.project(project_id, Visibility.ALL)
-    dataset = await repository.dataset(dataset_id, Visibility.ALL)
+    organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
+    project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
+    dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
     before = _generation_files(dataset_dir(repository.data_root, organization, project, dataset))
 
-    patched = await repository.patch_dataset(
+    patched = await _descriptions(repository, Visibility.ALL).datasets.describe(
         dataset_id,
-        Visibility.ALL,
-        expected_version=1,
-        slug=None,
-        title=dataset.title,
-        description=dataset.description,
+        DescriptionChange(
+            expected_version=1, slug=None, title=dataset.title, description=dataset.description
+        ),
     )
 
     assert patched == dataset
@@ -606,27 +612,35 @@ async def test_a_failing_document_write_during_patch_leaves_the_stored_record_un
     must never advance a record's version without the matching generation
     document landing beside it.
     """
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
     target_id, read, patch = {
-        "organization": (organization_id, repository.organization, repository.patch_organization),
-        "project": (project_id, repository.project, repository.patch_project),
-        "dataset": (dataset_id, repository.dataset, repository.patch_dataset),
+        "organization": (
+            organization_id,
+            repository.hierarchy.organizations.get,
+            _descriptions(repository, Visibility.ALL).organizations.describe,
+        ),
+        "project": (
+            project_id,
+            repository.hierarchy.projects.get,
+            _descriptions(repository, Visibility.ALL).projects.describe,
+        ),
+        "dataset": (
+            dataset_id,
+            repository.hierarchy.datasets.get,
+            _descriptions(repository, Visibility.ALL).datasets.describe,
+        ),
     }[kind]
     original = await read(target_id, Visibility.ALL)
 
     def _raising_write_generation(*_args: object, **_kwargs: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(repository, "_write_generation", _raising_write_generation)
+    monkeypatch.setattr(repository.raw_store, "write_generation", _raising_write_generation)
     with pytest.raises(OSError, match="disk full"):
         await patch(
             target_id,
-            Visibility.ALL,
-            expected_version=1,
-            slug=None,
-            title="Renamed",
-            description=None,
+            DescriptionChange(expected_version=1, slug=None, title="Renamed", description=None),
         )
 
     monkeypatch.undo()
@@ -635,21 +649,19 @@ async def test_a_failing_document_write_during_patch_leaves_the_stored_record_un
 
 async def test_undiscoverable_patch_targets_hide_slug_and_version_errors(tmp_path: Path) -> None:
     """Every hierarchy patch checks discovery before reporting identity or version details."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
     for target_id, patch in (
-        (organization_id, repository.patch_organization),
-        (project_id, repository.patch_project),
-        (dataset_id, repository.patch_dataset),
+        (organization_id, _descriptions(repository, Visibility()).organizations.describe),
+        (project_id, _descriptions(repository, Visibility()).projects.describe),
+        (dataset_id, _descriptions(repository, Visibility()).datasets.describe),
     ):
         with pytest.raises(ResourceNotFound):
             await patch(
                 target_id,
-                Visibility(),
-                expected_version=99,
-                slug="renamed",
-                title="Invisible",
-                description=None,
+                DescriptionChange(
+                    expected_version=99, slug="renamed", title="Invisible", description=None
+                ),
             )
 
 
@@ -661,13 +673,13 @@ async def _commit_revision(
 ) -> None:
     """Commit one revision directly through the hierarchy store's writer."""
     revision = committed_revision(dataset_id, number, manifest_sha256="a" * 64)
-    async with repository._hierarchy.transaction() as writer:
+    async with repository.hierarchy.transaction() as writer:
         await writer.insert_revision(revision)
 
 
 async def test_create_release_replays_an_identical_request(tmp_path: Path) -> None:
     """Replaying ``create_release`` with the same idempotency claim returns the identical object."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
     claim = _claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1")
@@ -694,7 +706,7 @@ async def test_create_release_replays_an_identical_request(tmp_path: Path) -> No
 
 async def test_create_release_rejects_a_duplicate_tag(tmp_path: Path) -> None:
     """A second release with an already-used tag raises ``TagExists`` under a new key too."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
     await repository.create_release(
@@ -726,12 +738,12 @@ async def test_create_release_translates_a_raw_store_collision_into_tag_exists(
     The store's own uniqueness and the raw store's once-only write are two
     independent guards against the same race.
     """
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
-    organization = await repository.organization(organization_id, Visibility.ALL)
-    project = await repository.project(project_id, Visibility.ALL)
-    dataset = await repository.dataset(dataset_id, Visibility.ALL)
+    organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
+    project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
+    dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
     tag_path = release_tag_file(repository.data_root, organization, project, dataset, "v1")
     Path(str(tag_path)).parent.mkdir(parents=True, exist_ok=True)
     Path(str(tag_path)).write_bytes(b"{}")
@@ -752,7 +764,7 @@ async def test_create_release_persists_a_tag_document_with_no_withdrawal_keys(
     tmp_path: Path,
 ) -> None:
     """A release's tag document on disk has exactly these keys and no fields for withdrawal."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
     await repository.create_release(
@@ -764,9 +776,9 @@ async def test_create_release_persists_a_tag_document_with_no_withdrawal_keys(
         created_by="alice",
         claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
     )
-    organization = await repository.organization(organization_id, Visibility.ALL)
-    project = await repository.project(project_id, Visibility.ALL)
-    dataset = await repository.dataset(dataset_id, Visibility.ALL)
+    organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
+    project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
+    dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
     tag_path = release_tag_file(repository.data_root, organization, project, dataset, "v1")
     document = json.loads(Path(str(tag_path)).read_text())
 
@@ -786,7 +798,7 @@ async def test_create_release_replay_with_a_title_of_none_differs_from_the_empty
     tmp_path: Path,
 ) -> None:
     """A missing title and an explicit empty-string title no longer digest the same way."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
     await repository.create_release(
@@ -814,7 +826,7 @@ async def test_create_release_replay_with_a_different_created_by_is_a_reuse(
     tmp_path: Path,
 ) -> None:
     """Reusing a release-create key with only ``created_by`` changed is a reuse."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
     await repository.create_release(
@@ -840,7 +852,7 @@ async def test_create_release_replay_with_a_different_created_by_is_a_reuse(
 
 async def test_create_release_under_an_invisible_dataset_is_not_found(tmp_path: Path) -> None:
     """A dataset the caller cannot discover is 404, before the revision is ever resolved."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
     with pytest.raises(ResourceNotFound):
@@ -857,7 +869,7 @@ async def test_create_release_under_an_invisible_dataset_is_not_found(tmp_path: 
 
 async def test_create_release_without_a_registered_revision_is_not_found(tmp_path: Path) -> None:
     """Creating a release naming an unregistered revision raises ``ResourceNotFound``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     with pytest.raises(ResourceNotFound):
         await repository.create_release(
@@ -876,30 +888,22 @@ async def test_create_release_without_a_registered_revision_is_not_found(tmp_pat
 
 async def test_patch_organization_rejects_a_stale_expected_version(tmp_path: Path) -> None:
     """``patch_organization`` refuses a stale version, raising ``PreconditionFailed``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, _, _ = await _hierarchy(repository)
     with pytest.raises(PreconditionFailed):
-        await repository.patch_organization(
+        await _descriptions(repository, Visibility.ALL).organizations.describe(
             organization_id,
-            Visibility.ALL,
-            expected_version=99,
-            slug=None,
-            title="New",
-            description=None,
+            DescriptionChange(expected_version=99, slug=None, title="New", description=None),
         )
 
 
 async def test_patch_organization_updates_description_only(tmp_path: Path) -> None:
     """Patching only the description leaves the title unchanged and still bumps the version."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, _, _ = await _hierarchy(repository)
-    patched = await repository.patch_organization(
+    patched = await _descriptions(repository, Visibility.ALL).organizations.describe(
         organization_id,
-        Visibility.ALL,
-        expected_version=1,
-        slug=None,
-        title=None,
-        description="updated",
+        DescriptionChange(expected_version=1, slug=None, title=None, description="updated"),
     )
     assert patched.description == "updated"
     assert patched.title == "Astro"
@@ -908,18 +912,14 @@ async def test_patch_organization_updates_description_only(tmp_path: Path) -> No
 
 async def test_patch_organization_naming_no_field_is_a_no_op(tmp_path: Path) -> None:
     """A patch naming neither ``title`` nor ``description`` writes no new generation document."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, _, _ = await _hierarchy(repository)
-    organization = await repository.organization(organization_id, Visibility.ALL)
+    organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
     before = _generation_files(organization_dir(repository.data_root, organization))
 
-    patched = await repository.patch_organization(
+    patched = await _descriptions(repository, Visibility.ALL).organizations.describe(
         organization_id,
-        Visibility.ALL,
-        expected_version=1,
-        slug=None,
-        title=None,
-        description=None,
+        DescriptionChange(expected_version=1, slug=None, title=None, description=None),
     )
 
     assert patched == organization
@@ -929,15 +929,11 @@ async def test_patch_organization_naming_no_field_is_a_no_op(tmp_path: Path) -> 
 
 async def test_patch_project_updates_title_and_description(tmp_path: Path) -> None:
     """Patching a project's title and description updates both and bumps the version."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, project_id, _ = await _hierarchy(repository)
-    patched = await repository.patch_project(
+    patched = await _descriptions(repository, Visibility.ALL).projects.describe(
         project_id,
-        Visibility.ALL,
-        expected_version=1,
-        slug=None,
-        title="Renamed",
-        description="updated",
+        DescriptionChange(expected_version=1, slug=None, title="Renamed", description="updated"),
     )
     assert patched.title == "Renamed"
     assert patched.description == "updated"
@@ -946,44 +942,36 @@ async def test_patch_project_updates_title_and_description(tmp_path: Path) -> No
 
 async def test_patch_project_rejects_a_slug_change(tmp_path: Path) -> None:
     """``patch_project`` refuses to change the slug, raising ``SlugImmutable``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, project_id, _ = await _hierarchy(repository)
     with pytest.raises(SlugImmutable):
-        await repository.patch_project(
+        await _descriptions(repository, Visibility.ALL).projects.describe(
             project_id,
-            Visibility.ALL,
-            expected_version=1,
-            slug="renamed",
-            title=None,
-            description=None,
+            DescriptionChange(expected_version=1, slug="renamed", title=None, description=None),
         )
 
 
 async def test_patch_project_rejects_a_stale_expected_version(tmp_path: Path) -> None:
     """``patch_project`` refuses a stale ``expected_version``, raising ``PreconditionFailed``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     _, project_id, _ = await _hierarchy(repository)
     with pytest.raises(PreconditionFailed):
-        await repository.patch_project(
+        await _descriptions(repository, Visibility.ALL).projects.describe(
             project_id,
-            Visibility.ALL,
-            expected_version=99,
-            slug=None,
-            title="New",
-            description=None,
+            DescriptionChange(expected_version=99, slug=None, title="New", description=None),
         )
 
 
 async def test_patch_project_naming_no_field_is_a_no_op(tmp_path: Path) -> None:
     """A patch naming neither ``title`` nor ``description`` writes no new generation document."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, project_id, _ = await _hierarchy(repository)
-    organization = await repository.organization(organization_id, Visibility.ALL)
-    project = await repository.project(project_id, Visibility.ALL)
+    organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
+    project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
     before = _generation_files(project_dir(repository.data_root, organization, project))
 
-    patched = await repository.patch_project(
-        project_id, Visibility.ALL, expected_version=1, slug=None, title=None, description=None
+    patched = await _descriptions(repository, Visibility.ALL).projects.describe(
+        project_id, DescriptionChange(expected_version=1, slug=None, title=None, description=None)
     )
 
     assert patched == project
@@ -998,12 +986,12 @@ async def test_organization_project_and_dataset_reads_are_not_found_under_no_vis
     tmp_path: Path,
 ) -> None:
     """Every point read is ``ResourceNotFound`` for a caller with empty ``Visibility``."""
-    repository = _repository(tmp_path)
+    repository = await _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
     for read in (
-        lambda: repository.organization(organization_id, Visibility()),
-        lambda: repository.project(project_id, Visibility()),
-        lambda: repository.dataset(dataset_id, Visibility()),
+        lambda: repository.hierarchy.organizations.get(organization_id, Visibility()),
+        lambda: repository.hierarchy.projects.get(project_id, Visibility()),
+        lambda: repository.hierarchy.datasets.get(dataset_id, Visibility()),
     ):
         with pytest.raises(ResourceNotFound):
             await read()

@@ -39,6 +39,7 @@ from huron.pkg.rbac import (
     Visibility,
 )
 from huron.pkg.rbac import Principal as RbacPrincipal
+from tests.catalog_creation_support import creation_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,7 +52,6 @@ def _repository(tmp_path: Path) -> HierarchyRepository:
     return HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        classification_vocabulary=("open",),
         rbac_store=InMemoryRbacStore(),
     )
 
@@ -188,7 +188,7 @@ async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_acco
 ) -> None:
     """A live service account gets synthesized bindings from ``bindings_for_principal``."""
     repository = _repository(tmp_path)
-    organization = await repository.create_organization(
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
@@ -199,7 +199,7 @@ async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_acco
     )
     actor = RbacPrincipal(subject=account.subject, kind="service_account")
 
-    bindings = await bindings_for_principal({}, repository, actor)
+    bindings = await bindings_for_principal({}, repository.rbac, actor)
 
     assert bindings != ()
 
@@ -209,7 +209,7 @@ async def test_bindings_for_principal_synthesizes_nothing_for_a_disabled_service
 ) -> None:
     """A disabled service account gets no bindings from ``bindings_for_principal``."""
     repository = _repository(tmp_path)
-    organization = await repository.create_organization(
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
@@ -221,7 +221,7 @@ async def test_bindings_for_principal_synthesizes_nothing_for_a_disabled_service
     await repository.disable_service_account(account.principal_id, disabled_at=account.created_at)
     actor = RbacPrincipal(subject=account.subject, kind="service_account")
 
-    bindings = await bindings_for_principal({}, repository, actor)
+    bindings = await bindings_for_principal({}, repository.rbac, actor)
 
     assert bindings == ()
 
@@ -238,7 +238,7 @@ async def test_bindings_for_principal_denies_a_service_account_with_no_account_r
     repository = _repository(tmp_path)
     actor = RbacPrincipal(subject="org/gone", kind="service_account")
 
-    bindings = await bindings_for_principal({}, repository, actor)
+    bindings = await bindings_for_principal({}, repository.rbac, actor)
 
     assert bindings == ()
 
@@ -258,9 +258,9 @@ async def test_current_visibility_for_a_system_platform_owner_is_unrestricted(
         scope_id=None,
         created_by="admin",
     )
-    runtime = SimpleNamespace(authorizer=RoleBindingAuthorizer())
+    runtime = SimpleNamespace(hierarchy=repository.hierarchy, authorizer=RoleBindingAuthorizer())
 
-    visibility = await current_visibility({}, repository, Principal(subject="root"), runtime)
+    visibility = await current_visibility({}, repository.rbac, Principal(subject="root"), runtime)
 
     assert visibility.unrestricted is True
 
@@ -270,15 +270,14 @@ async def test_current_visibility_for_a_project_scoped_reader_holds_exactly_that
 ) -> None:
     """A PROJECT-scope ``reader`` binding makes ``current_visibility`` hold exactly that project."""
     repository = _repository(tmp_path)
-    organization = await repository.create_organization(
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="org-1"),
     )
-    project = await repository.create_project(
+    project = await (await creation_for(repository)).create_project(
         organization.id,
-        Visibility.ALL,
         slug="sims",
         title="Sims",
         description="",
@@ -293,10 +292,11 @@ async def test_current_visibility_for_a_project_scoped_reader_holds_exactly_that
         created_by="admin",
     )
     runtime = SimpleNamespace(
-        authorizer=RoleBindingAuthorizer(classifications=(Classification("open", 0, True),))
+        hierarchy=repository.hierarchy,
+        authorizer=RoleBindingAuthorizer(classifications=(Classification("open", 0, True),)),
     )
 
-    visibility = await current_visibility({}, repository, Principal(subject="alice"), runtime)
+    visibility = await current_visibility({}, repository.rbac, Principal(subject="alice"), runtime)
 
     assert visibility.project_ids == frozenset({project.id})
     assert visibility.organization_ids == frozenset()
@@ -314,24 +314,22 @@ async def test_current_visibility_for_a_dataset_scoped_reader_holds_that_dataset
     binding is DATASET-scoped.
     """
     repository = _repository(tmp_path)
-    organization = await repository.create_organization(
+    organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="org-1"),
     )
-    project = await repository.create_project(
+    project = await (await creation_for(repository)).create_project(
         organization.id,
-        Visibility.ALL,
         slug="sims",
         title="Sims",
         description="",
         data_classification="open",
         claim=_claim("project", str(organization.id), "sims", "Sims", "", "open", key="proj-1"),
     )
-    dataset = await repository.create_dataset(
+    dataset = await (await creation_for(repository)).create_dataset(
         project.id,
-        Visibility.ALL,
         slug="run-0001",
         title="Run 1",
         description="",
@@ -357,10 +355,11 @@ async def test_current_visibility_for_a_dataset_scoped_reader_holds_that_dataset
         created_by="admin",
     )
     runtime = SimpleNamespace(
-        authorizer=RoleBindingAuthorizer(classifications=(Classification("open", 0, True),))
+        hierarchy=repository.hierarchy,
+        authorizer=RoleBindingAuthorizer(classifications=(Classification("open", 0, True),)),
     )
 
-    visibility = await current_visibility({}, repository, Principal(subject="alice"), runtime)
+    visibility = await current_visibility({}, repository.rbac, Principal(subject="alice"), runtime)
 
     assert visibility.dataset_ids == frozenset({dataset.id})
     assert visibility.project_ids == frozenset()
@@ -370,9 +369,9 @@ async def test_current_visibility_for_a_dataset_scoped_reader_holds_that_dataset
 async def test_current_visibility_for_a_caller_with_no_bindings_is_empty(tmp_path: Path) -> None:
     """A caller with no bindings at all gets an empty ``Visibility``."""
     repository = _repository(tmp_path)
-    runtime = SimpleNamespace(authorizer=RoleBindingAuthorizer())
+    runtime = SimpleNamespace(hierarchy=repository.hierarchy, authorizer=RoleBindingAuthorizer())
 
-    visibility = await current_visibility({}, repository, Principal(subject="nobody"), runtime)
+    visibility = await current_visibility({}, repository.rbac, Principal(subject="nobody"), runtime)
 
     assert visibility == Visibility()
 
@@ -390,23 +389,27 @@ async def test_core_discovery_reloads_revoked_bindings_while_a_request_keeps_its
         created_by="admin",
     )
     alice = Principal(subject="alice")
-    runtime = SimpleNamespace(authorizer=RoleBindingAuthorizer())
-    access = AccessPolicy(alice, repository, runtime.authorizer)
+    runtime = SimpleNamespace(hierarchy=repository.hierarchy, authorizer=RoleBindingAuthorizer())
+    access = AccessPolicy(alice, repository.hierarchy, repository.rbac, runtime.authorizer)
     cache = await request_binding_cache()
-    assert (await current_visibility(cache, repository, alice, runtime)).unrestricted
+    assert (await current_visibility(cache, repository.rbac, alice, runtime)).unrestricted
     assert (await access.visibility()).unrestricted
 
     await repository.revoke_role(binding.id)
 
-    assert (await current_visibility(cache, repository, alice, runtime)).unrestricted
-    assert await current_visibility({}, repository, alice, runtime) == Visibility()
+    assert (await current_visibility(cache, repository.rbac, alice, runtime)).unrestricted
+    assert await current_visibility({}, repository.rbac, alice, runtime) == Visibility()
     assert await access.visibility() == Visibility()
     with pytest.raises(Forbidden):
         await access.require("organization.create", ScopeType.SYSTEM)
-    assert await current_visibility(cache, repository, Principal("bob"), runtime) == Visibility()
+    assert (
+        await current_visibility(cache, repository.rbac, Principal("bob"), runtime) == Visibility()
+    )
 
 
 async def test_resource_scope_refuses_system_scope_with_a_resource_id(tmp_path: Path) -> None:
     """System authority cannot be resolved as a catalog resource."""
     with pytest.raises(ValueError, match="system scope has no catalog resource"):
-        await resource_scope(_repository(tmp_path), ScopeType.SYSTEM, uuid4(), Visibility.ALL)
+        await resource_scope(
+            _repository(tmp_path).hierarchy, ScopeType.SYSTEM, uuid4(), Visibility.ALL
+        )

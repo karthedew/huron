@@ -824,9 +824,11 @@ class IngestService:
             RuntimeError: If the manifest's identity does not match what
                 the session declared - storage and the catalog disagree.
         """
-        dataset = await self._hierarchy.dataset(ledger.dataset_id, Visibility.ALL)
-        project = await self._hierarchy.project(dataset.project_id, Visibility.ALL)
-        organization = await self._hierarchy.organization(project.organization_id, Visibility.ALL)
+        dataset = await self._hierarchy.datasets.get(ledger.dataset_id, Visibility.ALL)
+        project = await self._hierarchy.projects.get(dataset.project_id, Visibility.ALL)
+        organization = await self._hierarchy.organizations.get(
+            project.organization_id, Visibility.ALL
+        )
         final = revision_dir(
             self._root, organization, project, dataset, ledger.revision_number, ledger.revision_id
         )

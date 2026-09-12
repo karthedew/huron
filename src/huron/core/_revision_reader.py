@@ -83,7 +83,7 @@ class RevisionService:
             The revision's record.
         """
         record = await self._hierarchy.revision(revision_id)
-        await self._hierarchy.dataset(record.dataset_id, visibility)
+        await self._hierarchy.datasets.get(record.dataset_id, visibility)
         return record
 
     async def manifest_file(self, record: RevisionRecord) -> tuple[Path, os.stat_result]:

@@ -8,12 +8,14 @@ A remote SDK authenticates through the API rather than instantiating server serv
 
 from .access import AccessPolicy
 from .catalog import CatalogService
+from .catalog_creation import CatalogCreation
 from .identity import IdentityService
 from .raw import RawIngestionService
 from .revisions import RevisionReadService
 
 __all__ = [
     "AccessPolicy",
+    "CatalogCreation",
     "CatalogService",
     "IdentityService",
     "RawIngestionService",

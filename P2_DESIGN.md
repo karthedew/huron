@@ -33,7 +33,7 @@ Reused from `P1_DESIGN.md` § "Authority order" and extended for P2:
   no property tests; both re-verified below), `SCHEMA_DESIGN.md` S7/S7a (reservation semantics)
   and `schema_audit.md` F8, `API_DESIGN.md` § "Roadmap Drift".
 - **Retired:** `_to_delete/` (no ingest or rawstore tests ever lived there).
-- **Shipped plans, history only:** `IMPLEMENTATION_PLAN.md` (auth), `API_IMPLEMENTATION_PLAN.md`,
+- **Shipped plans, history only:** `AUTH_IMPLEMENTATION_PLAN.md` (auth), `API_IMPLEMENTATION_PLAN.md`,
   `SCHEMA_IMPLEMENTATION_PLAN.md`, `RBAC_IMPLEMENTATION_PLAN.md`, `CONTROL_PLANE_PLAN.md`,
   `FINDINGS_IMPLEMENTATION_PLAN.md`, and `P1_IMPLEMENTATION_PLAN.md` (one status line still
   wrong — Drift 7).

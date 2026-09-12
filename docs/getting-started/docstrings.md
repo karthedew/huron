@@ -5,8 +5,8 @@ docstring, and every docstring is checked against the code it describes. Two too
 and both run in `make lint`:
 
 ```bash
-uv run ruff check .                      # D rules: a docstring exists and is well formed
-uv run pydoclint src migrations scripts  # it names every parameter, return, yield and exception
+uv run ruff check src   # D rules: a docstring exists and is well formed
+uv run pydoclint src    # it names every parameter, return, yield and exception
 ```
 
 `ruff` proves presence and shape (the `D` rule set under `convention = "google"` in

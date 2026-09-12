@@ -3,7 +3,7 @@
 Scope: the role-based access-control system for the control plane — who can create and edit
 organizations, projects, and datasets; who can grant roles and attach policies; and, first
 among equals, **who can write which storage layer**. Companion to the repo-root
-[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) (this fills in the authorization half of
+[`AUTH_IMPLEMENTATION_PLAN.md`](AUTH_IMPLEMENTATION_PLAN.md) (this fills in the authorization half of
 P5 — Governance — and the credential story P8 depends on). `design/` remains authoritative;
 where this plan decides something design/ is silent on, the decision should be recorded there
 in the same PR that ships it.

@@ -19,6 +19,7 @@ from huron.applications.api.authorization import (
     require_project,
 )
 from huron.applications.api.dependencies import Catalog as Repository
+from huron.applications.api.dependencies import Creation
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import (
     Page,
@@ -37,6 +38,7 @@ from huron.applications.api.routes.v1.schema.projects import (
     PatchProject,
     ProjectView,
 )
+from huron.core.catalog_collections import DescriptionChange
 from huron.core.idempotency import request_sha256
 from huron.pkg.auth import Principal
 from huron.pkg.catalog.records import Project
@@ -64,7 +66,7 @@ async def create_project(
     organization_id: UUID,
     body: CreateProject,
     idempotency_key: IdempotencyHeader,
-    repository: Repository,
+    repository: Creation,
     visibility: CurrentVisibility,
     actor: Annotated[Principal, Depends(require_organization("project.create"))],
 ) -> ProjectView:
@@ -146,7 +148,9 @@ async def list_projects(
     Returns:
         One page of projects and the cursor to the next, if any.
     """
-    window = await repository.projects(organization_id, limit=limit, after=slug_cursor_key(after))
+    window = await repository.projects.browse(
+        organization_id, limit=limit, after=slug_cursor_key(after)
+    )
     return page(window, ProjectView, key=_key)
 
 
@@ -167,7 +171,7 @@ async def get_project(
         The project as the API renders it, including the ``version`` that
         ``If-Match`` carries back on a PATCH.
     """
-    project = await repository.project(project_id)
+    project = await repository.projects.get(project_id)
     return ProjectView.model_validate(project)
 
 
@@ -209,11 +213,13 @@ async def patch_project(
         The updated project as the API renders it.
     """
     return ProjectView.model_validate(
-        await repository.patch_project(
+        await repository.projects.describe(
             project_id,
-            expected_version=expected_version(if_match),
-            slug=body.slug,
-            title=body.title,
-            description=body.description,
+            DescriptionChange(
+                expected_version=expected_version(if_match),
+                slug=body.slug,
+                title=body.title,
+                description=body.description,
+            ),
         )
     )

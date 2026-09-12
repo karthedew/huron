@@ -244,7 +244,7 @@ from S118. That is what lets Gold staleness be computed precisely — a product 
 <p>A dataset declares an <strong>entry layer</strong> — <code>raw</code> (the default),
 <code>bronze</code> or <code>silver</code>. Entry above Raw means the lake is not the origin of
 these bytes: no ingest session, no manifest, no Bronze extraction, and the retention clock
-(<a href="layer-raw.html#retention">Raw §8</a>, <code>starts: after_silver_published</code>) has
+(<a href="layer-raw.html#retention">Raw §9</a>, <code>starts: after_silver_published</code>) has
 nothing to count. The publication path is otherwise identical — candidate on a working branch,
 the same validator, fast-forward and tag — because the contract check is the same check.
 Direct entry has two intake forms: <strong>manual upload</strong> by a scientist or engineer —

@@ -107,7 +107,7 @@ marker included.</td>
 fake atomicity.</td></tr>
 <tr><td class="k">Revision independence</td>
 <td>Each revision owns a complete physical copy; unchanged bytes are uploaded again.
-No shared inodes or inherited files (§6).</td>
+No shared inodes or inherited files (§7).</td>
 <td>Separate objects per revision can also provide independent copies.</td></tr>
 <tr><td class="k">Direct access</td>
 <td>None — all raw byte access is API-mediated, which is the RBAC posture we want anyway
@@ -156,14 +156,14 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
               manifest.json                      IMMUTABLE inventory (JCS)
               COMMITTED                          commit marker (§5)
               amendments/0001.json               append-only
-              expired/0001.json                  P3 contract: append-only expiry intents (§8)
-              PURGED                             write-ahead purge intent (§8)
+              expired/0001.json                  P3 contract: append-only expiry intents (§9)
+              PURGED                             write-ahead purge intent (§9)
               payload/
                 shielding.i  outp  meshtal  runtpe  slurm-881247.log
         bronze/  silver/  gold/                  Icechunk repos on the object store, same spine (§2 of each)
 </pre>
 
-<p class="note"><strong>Layout status.</strong> The upload/completion/envelope split is implemented and under validation. Protocol/recovery/trash directories and their maintenance workflows remain planned. Historically, P2 wrote directly into the session envelope; that release did not provide the new separation. See <a href="#p3-integrity">P3 integrity contracts</a>.</p>
+<p class="note"><strong>Layout status.</strong> The upload/completion/envelope split is implemented and under validation. Preparatory protocol report/record storage, exclusive maintenance ownership, live controller certificate validation and legacy verification are implemented and under review. Immutable files alone do not certify successful preparation. Protocol initialization, activation/startup enforcement, recovery and trash cleanup remain planned. Historically, P2 wrote directly into the session envelope; that release did not provide the new separation. See <a href="#p3-integrity">P3 integrity contracts</a>.</p>
 
 <p class="note"><span class="k">One spine, four layers.</span> The
 <code>organization/…/project/…/dataset/…</code> hierarchy is identical for every layer, and the
@@ -359,7 +359,274 @@ filesystem per raw root (<code>st_dev</code> compared); cross-device rename is a
 deploy-time error, not a runtime surprise.</li>
 </ul>
 
-<h2 id="independent-copies">6. Independent copies and sealing</h2>
+<h2 id="flows">6. Control flows</h2>
+
+<p>The five flows below are the Raw layer's write and read paths as the code executes them today
+(<code>core/_ingest.py</code>, <code>core/catalog_creation.py</code>, <code>core/_catalog.py</code>,
+<code>core/_revision_reader.py</code>). Each step is tagged with the system it touches:
+<code>[PG]</code> PostgreSQL, <code>[NFS]</code> the raw filesystem, <code>[core]</code> the
+actor-bound authorization that runs before any store is reached. A <code>[PG] ONE TRANSACTION</code>
+block is one <code>async with hierarchy.transaction()</code>; nothing outside such a block holds a
+connection, and no block ever contains a part upload or a hash (invariant: storage leads, the
+catalog follows). Every mutating request carries an <code>Idempotency-Key</code>; "stake key" means
+the <code>INSERT … ON CONFLICT</code> arbitration of <a href="#contracts">§3</a>, which either wins
+the key, replays the earlier result for an identical request, or refuses with
+<code>409 IDEMPOTENCY_KEY_REUSED</code>.</p>
+
+<h3 id="flow-create-dataset">6.1 Adding a new dataset</h3>
+
+<p>Two doors reach the same creation: the explicit
+<code>POST /projects/{project_id}/datasets</code>, and the project-level
+<code>POST /projects/{project_id}/ingest-sessions</code>, which mints a raw dataset and then runs
+flow 6.2 on it under a key derived from the same <code>Idempotency-Key</code>, so a retry after a
+failure between the two writes replays the kept dataset rather than minting a second one.</p>
+
+<pre>
+POST /projects/{project_id}/datasets            Idempotency-Key: k
+
+  [core]  require dataset.create @ project ─────── denied ──▶ 404 (undiscoverable) or 403
+  [core]  key must belong to the caller ─────────── no ─────▶ 403
+  [core]  validate slug (2–80 chars), parse entry layer ─ bad ▶ 400 PATH_RULE_VIOLATION /
+                                                                  LAYER_WORKFLOW_ERROR (gold)
+  [PG]    ONE TRANSACTION
+          ├─ read project with the caller's visibility ── absent ──▶ 404
+          ├─ read organization (unrestricted; path-building only)
+          ├─ stake key ── replay ──▶ return the dataset created earlier, no write
+          │             └─ reused ─▶ 409 IDEMPOTENCY_KEY_REUSED
+          ├─ INSERT dataset  ACTIVE · generation 1 · version 1 · classification inherited
+          │       slug already in project ──▶ 409 SLUG_EXISTS
+          ├─ [NFS] write {dataset dir}/generations/000001.json, then CURRENT.json
+          │        (atomic_replace: temp → fsync → rename; a file already at this number can
+          │         only be an attempt that never reached COMMIT, so it is replaced, not refused)
+          ├─ remember key → dataset id
+          └─ COMMIT ───────────────────────────────────────────────▶ 201 dataset
+</pre>
+
+<table>
+<tr><th>Crash boundary</th><th>Outcome</th></tr>
+<tr><td>After the generation file, before COMMIT</td><td>The row is rolled back; the file is
+orphaned. The next create for that slug rewrites the same generation number; the reconciler treats a
+generation with no row as noise, never as a dataset.</td></tr>
+<tr><td>After COMMIT</td><td>Nothing remains to do: there is no revision, no lock and no session
+yet. A retry with the same key replays the dataset.</td></tr>
+</table>
+
+<h3 id="flow-new-revision">6.2 Updating an existing dataset: a new Raw revision</h3>
+
+<p>A dataset is never edited in place. "Updating" it means adding revision <em>n+1</em>, a complete,
+independent submission. The session is the unit of work; the per-dataset lock is the session
+itself (one non-terminal session per dataset). The numbered steps are the HTTP calls the SDK hides
+behind <code>dataset.upload(...)</code>.</p>
+
+<pre>
+1  POST /datasets/{id}/ingest-sessions   {files: [{path,size,sha256}…]}     Idempotency-Key: k1
+
+   [core]  require data.write @ dataset, layer=raw; dataset.entry_layer must be raw
+   [core]  validate manifest: paths, sizes, limits (10 GiB/file, 10k files, 1 TiB/revision)
+   [PG]    ONE TRANSACTION  (begin_ingest)
+           ├─ stake k1 ── replay ──▶ read the session it opened earlier; skip to its state
+           ├─ SELECT … FROM datasets WHERE id = $1 FOR UPDATE     ◀── the per-dataset arbiter
+           ├─ any session for this dataset NOT IN (COMMITTED, ABORTED, FAILED)?
+           │       yes ──▶ 409 DATASET_LOCKED {session_id, state, expires_at}
+           ├─ revision_number := max(dataset_revisions.revision_number) + 1   (gap-free: only
+           │       committed revisions have rows, so a dead session leaves no hole)
+           ├─ INSERT ingest_session  PREPARING · etag 1 · expires_at = now + 2 h
+           │       backstop: unique index one_open_ingest_per_dataset ──▶ 409 DATASET_LOCKED
+           ├─ INSERT ingest_files  one ledger row per planned file
+           ├─ audit ingest.started; remember k1 → session id
+           └─ COMMIT
+   [NFS]   create .staging/{ingest_id}/{upload,completion,envelope,envelope/payload}  0700, fsync
+   [NFS]   write envelope/manifest.json  (the declared manifest travels with the envelope)
+   [PG]    ONE TRANSACTION  session PREPARING → UPLOADING (etag-fenced)
+           └─ if staging failed: session → FAILED + audit ingest.failed; lock released; re-raise
+   ──▶ 201 session + upload plan (every file: action=upload, part_count)
+
+2  PUT  /transfer/uploads/{file_id}/parts/{part}          (repeat per part, any order, resumable)
+
+   [core]  session owner only (403 otherwise); require data.write @ dataset; state UPLOADING
+   [core]  part in range, Content-Length == planned length; lease not expired
+   [NFS]   pwrite into the fixed byte range of upload/{file_id}; fsync file
+   [PG]    ONE TRANSACTION  record part in ingest_files.completed_parts; renew lease
+           (a part is "received" only when its bytes are durable and its row says so)
+
+3  POST /transfer/uploads/{file_id}/complete              (per file, once all parts are recorded)
+
+   [NFS]   copy upload input → completion/{file_id}  (fresh private inode), hashing while copying
+   [NFS]   size/sha256 must equal the manifest entry ─ mismatch ▶ 400 MANIFEST_MISMATCH,
+           parts reset to ∅ so the client re-sends
+   [NFS]   fsync; install into envelope/payload/{path} with exclusive rename (RENAME_NOREPLACE):
+           a concurrent completion of the same file can only install identical verified bytes
+   [PG]    ONE TRANSACTION  file → COMPLETE (compare-and-swap on completed_parts)
+   [NFS]   discard the upload input
+
+4  POST /ingest-sessions/{id}/verify
+
+   [core]  every planned file COMPLETE ─ no ▶ 400
+   [PG]    ONE TRANSACTION  session UPLOADING → VERIFYING (etag-fenced) ──▶ 200 {etag}
+
+5  POST /ingest-sessions/{id}/commit   If-Match: etag   {manifest_sha256, metadata}   Idempotency-Key: k2
+
+   [core]  If-Match must equal the VERIFYING session's etag ─ no ▶ 412 PRECONDITION_FAILED
+   [NFS]   read back envelope/manifest.json (or {final}/manifest.json on a retry past the rename);
+           its digest must equal the session's declared identity
+   [core]  compose metadata.json and the COMMITTED marker; freeze all four canonical documents
+   [PG]    ONE TRANSACTION  (freeze)
+           ├─ stake k2 ── bound to another operation ▶ 409 IDEMPOTENCY_KEY_REUSED
+           ├─ session VERIFYING → COMMITTING; store the frozen command + documents as bytea
+           │       with generated digests  (retries must replay exactly this document set)
+           └─ remember k2 → ingest_commit
+   [NFS]   PUBLISH  (skipped if {final} already exists: a retry past the rename)
+           ├─ write metadata.json, COMMITTED into envelope/  — never replacing a document
+           ├─ verify_envelope: every declared file present, sized, digested; documents match
+           ├─ seal: files 0444, directories 0555
+           ├─ fsync envelope; rename(envelope → {dataset dir}/raw/revision/{NNNNNN}--{id})
+           └─ fsync both parents; seal the final root; re-verify the final envelope
+   [PG]    ONE TRANSACTION  (record: the catalog catching up with storage)
+           ├─ stake k2 ── already a revision replay ──▶ return that revision
+           ├─ SELECT ingest_session FOR UPDATE; must still be COMMITTING with our etag
+           │       another driver finished it ──▶ return its revision
+           │       etag moved / state changed ──▶ 412 "commit driver no longer owns the session"
+           ├─ INSERT dataset_revisions  (COMMITTED)   ◀── the revision becomes discoverable HERE
+           ├─ session COMMITTING → COMMITTED           ◀── the dataset lock is released HERE
+           ├─ audit revision.committed; outbox revision.committed; remember k2 → revision id
+           └─ COMMIT
+   [NFS]   best-effort: raw/revision/INDEX.json ∪= {revision}, via atomic_replace; a failure is
+           logged and never turns a committed revision into an error response
+   ──▶ 201 revision record
+</pre>
+
+<p>The crash table in <a href="#commit">§5</a> names the state at every boundary of step 5. Two
+consequences matter for the flows that follow: a revision has a database row <em>only</em> after
+its bytes are sealed and renamed, and a dataset is locked from step 1 until that row exists.</p>
+
+<h3 id="flow-release">6.3 Tagging a release</h3>
+
+<pre>
+POST /datasets/{dataset_id}/releases     {tag, revision_number, title}     Idempotency-Key: k
+
+  [core]  require release.create @ dataset
+  [core]  validate tag  ^[a-z0-9][a-z0-9._-]{1,62}$ ─ bad ▶ 400 PATH_RULE_VIOLATION
+  [PG]    ONE TRANSACTION
+          ├─ read dataset with the caller's visibility ── absent ──▶ 404
+          ├─ read project, organization (unrestricted; path-building only)
+          ├─ resolve revision_number → revision_ref  ── no committed row ──▶ 404
+          │       (an in-flight session's number is not yet a revision; see 6.5)
+          ├─ stake key ── replay ──▶ return the release created earlier
+          ├─ INSERT release  (dataset_id, tag) unique ──▶ 409 TAG_EXISTS
+          ├─ [NFS] write {dataset dir}/releases/{tag}.json with O_EXCL  (a sibling of raw/, not inside it)
+          │        file already on disk ──▶ 409 TAG_EXISTS  (the transaction rolls back)
+          ├─ remember key → release id
+          └─ COMMIT ────────────────────────────────────────────────▶ 201 release
+
+GET /datasets/{dataset_id}/releases/{tag}      ─▶ the same {revision_id, revision_number} forever
+</pre>
+
+<p>A release never touches the revision, the session table or the dataset lock: it is a row and a
+write-once file pointing at a revision that already exists. Tagging while an upload is in flight is
+therefore always allowed, and can only name a revision whose commit has completed.</p>
+
+<h3 id="flow-concurrent-writers">6.4 Two people writing the same dataset</h3>
+
+<p>Three cases, one rule each: ingest is serialized by the dataset row lock; descriptive edits are
+serialized by a version compare-and-swap; and a writer who disappears releases the lock by lease
+expiry, not by anyone else's action.</p>
+
+<pre>
+(a) Alice and Bob both open an ingest session on dataset D at the same instant
+
+  Alice                                   PostgreSQL                        Bob
+  ───────────────────────────────         ───────────────────────────       ─────────────────────
+  BEGIN; SELECT D FOR UPDATE ──────────▶  row lock: Alice                   BEGIN; SELECT D FOR UPDATE
+  open session for D? none                                                  … blocks on the lock …
+  number := max+1 = 4
+  INSERT session S1 (PREPARING)
+  COMMIT ──────────────────────────────▶  lock released ───────────────────▶ acquires the lock
+                                                                            open session for D? S1
+                                                                            ◀── 409 DATASET_LOCKED
+                                                                                {session_id: S1,
+                                                                                 state: PREPARING,
+                                                                                 expires_at: …}
+  Alice uploads, verifies, commits S1 → revision 4
+
+  Bob retries after S1 is COMMITTED:  lock → no open session → number := 5 → session S2 opens.
+  Bob's revision is 5, built entirely from his own files; nothing of Alice's is carried forward.
+  If Bob retries with the SAME Idempotency-Key and body, the first attempt's 409 was never
+  remembered (refusals bind no key), so the retry is a fresh BeginIngest and succeeds.
+
+(b) Alice is mid-upload; Bob's session S2 cannot exist, so what can Bob do?
+
+  ▸ read D, its committed revisions and releases           allowed (see 6.5)
+  ▸ PATCH D's title/description                            allowed — descriptive state is not
+                                                           the lock's concern (case c)
+  ▸ tag a release on revision ≤ 3                          allowed (6.3)
+  ▸ abort S1                                               only as the session owner, or as a
+                                                           project admin (audited); otherwise 403
+  ▸ wait: the lock clears when S1 reaches COMMITTED, ABORTED or FAILED, or when the expiry sweep
+    flips a lapsed session (lease 2 h, renewed by every part and heartbeat; sweep → ABORTED,
+    audit ingest.expired by actor system:sweep). COMMITTING and RECOVERING never lapse.
+
+(c) Alice and Bob both PATCH D's description     If-Match: version 3
+
+  Alice: UPDATE datasets SET …, version = 4, generation = 4 WHERE id = D AND version = 3  → 1 row
+         write generations/000004.json, CURRENT.json; COMMIT                                → 200
+  Bob:   UPDATE … WHERE id = D AND version = 3                                             → 0 rows
+         ◀── 412 PRECONDITION_FAILED; Bob re-reads D (version 4) and decides again.
+  Two edits can never pick the same generation number because the number is the CAS result.
+
+(d) Alice's laptop dies during step 2
+
+  S1 stays UPLOADING; its lease stops renewing. Until expires_at (+ one sweep interval) the
+  dataset stays locked and Bob sees 409 with that expires_at. Alice's client, restarted, reads
+  GET /ingest-sessions/S1 and resumes from completed_parts — the ledger, not the filesystem,
+  says which bytes are durable. If nobody resumes, the sweep aborts S1 and the next
+  BeginIngest allocates the SAME revision number S1 held: no row was ever written for it.
+</pre>
+
+<h3 id="flow-reads-during-update">6.5 Reading a dataset while it is being updated</h3>
+
+<p>Readers never observe an in-flight revision, because the only things a reader can reach are
+rows in <code>dataset_revisions</code> and sealed directories under <code>raw/revision/</code>, and
+step 5 creates the directory first and the row second.</p>
+
+<pre>
+Alice's session S1 on D (revision 4 in flight)              Carol reads D at the same time
+──────────────────────────────────────────────────────────  ──────────────────────────────────────
+1  S1 PREPARING → UPLOADING                                 GET /datasets/D             → D: version,
+   .staging/{S1}/… exists (0700, Huron identity only)       lifecycle; nothing about S1
+                                                            GET /datasets/D/revisions   → [1,2,3]
+2  parts land in .staging/{S1}/upload/…                     GET /revisions/{r3}/files/x → bytes of
+3  files install into .staging/{S1}/envelope/payload/       revision 3, unchanged: sealed 0444,
+4  S1 VERIFYING                                             never rewritten, no inode shared with S1
+5a S1 COMMITTING; documents frozen in PG                    GET /datasets/D/revisions   → [1,2,3]
+5b rename(envelope → raw/revision/000004--{id}); sealed     directory exists, NO row yet:
+                                                            GET /revisions/{r4}         → 404
+                                                            GET /datasets/D/releases/v4 → 404 (no
+                                                            revision_ref for number 4 yet)
+5c INSERT dataset_revisions(4); S1 COMMITTED; COMMIT   ◀─── visibility flips here, atomically
+                                                            GET /datasets/D/revisions   → [1,2,3,4]
+                                                            GET /revisions/{r4}/manifest → complete
+                                                            manifest; payload_file re-checks the
+                                                            manifest digest and each file's size
+                                                            against the record before serving
+5d raw/revision/INDEX.json replaced atomically              a reader of INDEX.json sees the old
+                                                            list or the new, never a torn file;
+                                                            the catalog row, not the index, is
+                                                            the authority
+
+Listing is filtered BEFORE pagination by the caller's visibility, so Carol also never sees a
+dataset, revision or release she has no grant to discover (404, not 403). Nothing in any read
+path takes a lock or opens a transaction: reads are plain SELECTs against committed rows plus
+stat/open on sealed files.
+</pre>
+
+<p class="note"><span class="k">Why a revision can briefly exist on disk without being
+readable.</span> Between 5b and 5c a crash leaves a sealed, complete directory and a COMMITTING
+session. The envelope is self-describing (manifest, metadata, COMMITTED marker, all digested), so
+recovery imports it once rather than re-publishing; until that import, readers are simply told
+the revision does not exist, which is the honest answer. See the crash table in
+<a href="#commit">§5</a>.</p>
+
+<h2 id="independent-copies">7. Independent copies and sealing</h2>
 
 <p>Each Raw revision owns a complete physical copy of every submitted file. Separate submissions
 may contain identical bytes and still receive different revision IDs and numbers. Removing an
@@ -378,7 +645,7 @@ The current backend exposes these resumable steps over HTTP; this SDK convenienc
 and requires upload-only ledgers. It refuses existing hardlink ledger entries: an operator must
 copy or re-ingest legacy data before upgrading. It never silently relabels shared files as copies.</p>
 
-<h2 id="generations">7. Descriptive documents</h2>
+<h2 id="generations">8. Descriptive documents</h2>
 
 <p>Mutable descriptive state — org, project, dataset — is stored as immutable numbered
 generations plus a small pointer: write <code>generations/{n+1:06d}.json</code> through
@@ -389,7 +656,7 @@ allocated by the committed <code>UPDATE … WHERE version = $expected</code> com
 two concurrent edits cannot pick the same <code>n</code>. Recovery: if the pointer is missing or
 points at a nonexistent generation, the highest existing generation wins.</p>
 
-<h2 id="retention">8. Retention: TTL expiration, holds, purge</h2>
+<h2 id="retention">9. Retention: TTL expiration, holds, purge</h2>
 
 <h3>Per-category TTL</h3>
 <p>The science profile classifies each expected file into a retention category; the project sets
@@ -437,7 +704,7 @@ file details. A valid intent with files still present is pending removal; missin
 valid explaining evidence are <code>DEGRADED</code>. P3 recognizes these contracts; P5 originates
 governance workflows. Storage-only recovery never resumes deletion without restored current authority.</p>
 
-<h2 id="sweeper">9. Sweeper and reconciler</h2>
+<h2 id="sweeper">10. Sweeper and reconciler</h2>
 
 <p><strong>Sweeper and reconciler workflows remain planned.</strong> Full design and implementation slices are recorded in
 <a href="../P3_DESIGN.md">P3_DESIGN.md</a> and <a href="../P3_IMPLEMENTATION_PLAN.md">P3_IMPLEMENTATION_PLAN.md</a>.</p>
@@ -489,7 +756,7 @@ cannot broaden classification/access; a valid prefix is restricted diagnostic ev
 metadata. Filesystem-only recovery can recognize pending removals but cannot infer that lost hold
 rows never existed.</p>
 
-<h2 id="upload-modes">10. Upload modes</h2>
+<h2 id="upload-modes">11. Upload modes</h2>
 
 <table>
 <tr><th>Mode</th><th>v</th><th>Mechanics</th></tr>

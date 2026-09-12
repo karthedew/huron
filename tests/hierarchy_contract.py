@@ -41,7 +41,7 @@ from huron.pkg.catalog.layers import Layer
 from huron.pkg.catalog.lifecycle import DatasetLifecycle
 from huron.pkg.catalog.manifest import Manifest, ManifestEntry
 from huron.pkg.catalog.models import OutboxEvent, RevisionRecord, RevisionRef
-from huron.pkg.catalog.persistence import IdempotencyClaim, Replay
+from huron.pkg.catalog.persistence import IdempotencyClaim, PlatformRoot, Replay
 from huron.pkg.catalog.records import AuditEvent, Dataset, Organization, Project, Release
 from huron.pkg.rbac import Visibility
 
@@ -215,8 +215,8 @@ async def scenario_1_write_invisible_until_commit(store: HierarchyStore) -> None
     async with store.transaction() as writer:
         await writer.insert_organization(organization)
         with pytest.raises(ResourceNotFound):
-            await store.organization(organization.id, Visibility.ALL)
-    committed = await store.organization(organization.id, Visibility.ALL)
+            await store.organizations.get(organization.id, Visibility.ALL)
+    committed = await store.organizations.get(organization.id, Visibility.ALL)
     assert committed.id == organization.id
 
     doomed = _organization(slug="doomed")
@@ -225,7 +225,7 @@ async def scenario_1_write_invisible_until_commit(store: HierarchyStore) -> None
             await writer.insert_organization(doomed)
             raise _AbortedError
     with pytest.raises(ResourceNotFound):
-        await store.organization(doomed.id, Visibility.ALL)
+        await store.organizations.get(doomed.id, Visibility.ALL)
 
 
 async def scenario_2_uniqueness(store: HierarchyStore) -> None:
@@ -308,86 +308,86 @@ async def scenario_3_optimistic_concurrency(store: HierarchyStore) -> None:
         organization, title="Astro II", version=2, generation=2
     )
     async with store.transaction() as writer:
-        await writer.update_organization(updated_organization, expected_version=1)
-    read_organization = await store.organization(organization.id, Visibility.ALL)
+        await writer.organizations.describe(updated_organization, expected_version=1)
+    read_organization = await store.organizations.get(organization.id, Visibility.ALL)
     assert read_organization.title == "Astro II"
     assert read_organization.version == 2
 
     with pytest.raises(PreconditionFailed):
         async with store.transaction() as writer:
-            await writer.update_organization(
+            await writer.organizations.describe(
                 dataclasses.replace(updated_organization, title="lost", version=3, generation=3),
                 expected_version=1,
             )
-    unchanged_organization = await store.organization(organization.id, Visibility.ALL)
+    unchanged_organization = await store.organizations.get(organization.id, Visibility.ALL)
     assert unchanged_organization.title == "Astro II"
     assert unchanged_organization.version == 2
 
     with pytest.raises(PreconditionFailed):
         async with store.transaction() as writer:
-            await writer.update_organization(
+            await writer.organizations.describe(
                 dataclasses.replace(organization, id=uuid7(), version=2, generation=2),
                 expected_version=1,
             )
 
     updated_project = dataclasses.replace(project, title="Sims II", version=2, generation=2)
     async with store.transaction() as writer:
-        await writer.update_project(updated_project, expected_version=1)
-    read_project = await store.project(project.id, Visibility.ALL)
+        await writer.projects.describe(updated_project, expected_version=1)
+    read_project = await store.projects.get(project.id, Visibility.ALL)
     assert read_project.title == "Sims II"
 
     with pytest.raises(PreconditionFailed):
         async with store.transaction() as writer:
-            await writer.update_project(
+            await writer.projects.describe(
                 dataclasses.replace(updated_project, title="lost", version=3, generation=3),
                 expected_version=1,
             )
-    assert (await store.project(project.id, Visibility.ALL)).title == "Sims II"
+    assert (await store.projects.get(project.id, Visibility.ALL)).title == "Sims II"
 
     updated_dataset = dataclasses.replace(dataset, title="Run 1", version=2, generation=2)
     async with store.transaction() as writer:
-        await writer.update_dataset(updated_dataset, expected_version=1)
-    read_dataset = await store.dataset(dataset.id, Visibility.ALL)
+        await writer.datasets.describe(updated_dataset, expected_version=1)
+    read_dataset = await store.datasets.get(dataset.id, Visibility.ALL)
     assert read_dataset.title == "Run 1"
 
     with pytest.raises(PreconditionFailed):
         async with store.transaction() as writer:
-            await writer.update_dataset(
+            await writer.datasets.describe(
                 dataclasses.replace(updated_dataset, title="lost", version=3, generation=3),
                 expected_version=1,
             )
-    assert (await store.dataset(dataset.id, Visibility.ALL)).title == "Run 1"
+    assert (await store.datasets.get(dataset.id, Visibility.ALL)).title == "Run 1"
 
     with pytest.raises(PreconditionFailed):
         async with store.transaction() as writer:
-            await writer.update_project(
+            await writer.projects.describe(
                 dataclasses.replace(project, id=uuid7(), version=2, generation=2),
                 expected_version=1,
             )
     with pytest.raises(PreconditionFailed):
         async with store.transaction() as writer:
-            await writer.update_dataset(
+            await writer.datasets.describe(
                 dataclasses.replace(dataset, id=uuid7(), version=2, generation=2),
                 expected_version=1,
             )
 
     with pytest.raises(PreconditionFailed):
         async with store.transaction() as writer:
-            await writer.update_organization(
+            await writer.organizations.describe(
                 dataclasses.replace(updated_organization, title="rolled back", version=3),
                 expected_version=2,
             )
-            await writer.update_project(
+            await writer.projects.describe(
                 dataclasses.replace(updated_project, title="rolled back", version=3),
                 expected_version=2,
             )
-            await writer.update_dataset(
+            await writer.datasets.describe(
                 dataclasses.replace(updated_dataset, title="stale", version=3),
                 expected_version=1,
             )
-    assert await store.organization(organization.id, Visibility.ALL) == updated_organization
-    assert await store.project(project.id, Visibility.ALL) == updated_project
-    assert await store.dataset(dataset.id, Visibility.ALL) == updated_dataset
+    assert await store.organizations.get(organization.id, Visibility.ALL) == updated_organization
+    assert await store.projects.get(project.id, Visibility.ALL) == updated_project
+    assert await store.datasets.get(dataset.id, Visibility.ALL) == updated_dataset
 
 
 async def scenario_4_idempotency(store: HierarchyStore) -> None:
@@ -445,7 +445,9 @@ async def scenario_4_idempotency(store: HierarchyStore) -> None:
 
     first, second = await asyncio.gather(_create_or_replay(), _create_or_replay())
     assert first == second
-    window = await store.organizations(Visibility.ALL, limit=200, after=None)
+    window = await store.organizations.browse(
+        PlatformRoot.ROOT, Visibility.ALL, limit=200, after=None
+    )
     assert sum(1 for item in window.items if item.slug == "race") == 1
 
 
@@ -502,15 +504,17 @@ async def scenario_6_ordering(store: HierarchyStore) -> None:
     tree["a-1"] = {slug: (slugs if slug == "a-1" else ()) for slug in slugs}
     hierarchy = await seed_hierarchy(store, tree)
 
-    organizations = await store.organizations(Visibility.ALL, limit=200, after=None)
+    organizations = await store.organizations.browse(
+        PlatformRoot.ROOT, Visibility.ALL, limit=200, after=None
+    )
     assert [item.slug for item in organizations.items] == expected
 
-    projects = await store.projects(
+    projects = await store.projects.browse(
         hierarchy.organizations["a-1"], Visibility.ALL, limit=200, after=None
     )
     assert [item.slug for item in projects.items] == expected
 
-    datasets = await store.datasets(
+    datasets = await store.datasets.browse(
         hierarchy.projects["a-1"], Visibility.ALL, limit=200, after=None
     )
     assert [item.slug for item in datasets.items] == expected
@@ -544,32 +548,44 @@ async def scenario_7_windows(store: HierarchyStore) -> None:
     await seed_hierarchy(store, {slug: {} for slug in slugs})
     ordered = sorted(slugs)
 
-    partial = await store.organizations(Visibility.ALL, limit=3, after=None)
+    partial = await store.organizations.browse(
+        PlatformRoot.ROOT, Visibility.ALL, limit=3, after=None
+    )
     assert [item.slug for item in partial.items] == ordered[:3]
     assert partial.has_more is True
 
-    exact = await store.organizations(Visibility.ALL, limit=len(slugs), after=None)
+    exact = await store.organizations.browse(
+        PlatformRoot.ROOT, Visibility.ALL, limit=len(slugs), after=None
+    )
     assert [item.slug for item in exact.items] == ordered
     assert exact.has_more is False
 
-    generous = await store.organizations(Visibility.ALL, limit=200, after=None)
+    generous = await store.organizations.browse(
+        PlatformRoot.ROOT, Visibility.ALL, limit=200, after=None
+    )
     assert [item.slug for item in generous.items] == ordered
     assert generous.has_more is False
 
     first = partial.items[0]
-    after_first = await store.organizations(Visibility.ALL, limit=200, after=(first.slug, first.id))
+    after_first = await store.organizations.browse(
+        PlatformRoot.ROOT, Visibility.ALL, limit=200, after=(first.slug, first.id)
+    )
     assert first.slug not in {item.slug for item in after_first.items}
     assert [item.slug for item in after_first.items] == ordered[1:]
 
     last = exact.items[-1]
-    after_last = await store.organizations(Visibility.ALL, limit=200, after=(last.slug, last.id))
+    after_last = await store.organizations.browse(
+        PlatformRoot.ROOT, Visibility.ALL, limit=200, after=(last.slug, last.id)
+    )
     assert after_last.items == []
     assert after_last.has_more is False
 
     seen: list[str] = []
     after: tuple[str, UUID] | None = None
     while True:
-        window = await store.organizations(Visibility.ALL, limit=1, after=after)
+        window = await store.organizations.browse(
+            PlatformRoot.ROOT, Visibility.ALL, limit=1, after=after
+        )
         seen.extend(item.slug for item in window.items)
         if not window.has_more:
             break
@@ -650,14 +666,16 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
 
     async def visible_ids(visibility: Visibility) -> VisibleIds:
         """Compute the ids ``visibility`` admits at every level of the fixture."""
-        organizations = await store.organizations(visibility, limit=200, after=None)
-        projects_a = await store.projects(org_a_id, visibility, limit=200, after=None)
-        projects_b = await store.projects(org_b_id, visibility, limit=200, after=None)
-        projects_c = await store.projects(org_c_id, visibility, limit=200, after=None)
-        datasets_a1 = await store.datasets(a1_id, visibility, limit=200, after=None)
-        datasets_a2 = await store.datasets(a2_id, visibility, limit=200, after=None)
-        datasets_b1 = await store.datasets(b1_id, visibility, limit=200, after=None)
-        datasets_c1 = await store.datasets(c1_id, visibility, limit=200, after=None)
+        organizations = await store.organizations.browse(
+            PlatformRoot.ROOT, visibility, limit=200, after=None
+        )
+        projects_a = await store.projects.browse(org_a_id, visibility, limit=200, after=None)
+        projects_b = await store.projects.browse(org_b_id, visibility, limit=200, after=None)
+        projects_c = await store.projects.browse(org_c_id, visibility, limit=200, after=None)
+        datasets_a1 = await store.datasets.browse(a1_id, visibility, limit=200, after=None)
+        datasets_a2 = await store.datasets.browse(a2_id, visibility, limit=200, after=None)
+        datasets_b1 = await store.datasets.browse(b1_id, visibility, limit=200, after=None)
+        datasets_c1 = await store.datasets.browse(c1_id, visibility, limit=200, after=None)
         try:
             await store.release(a1ds_id, "v1", visibility)
             releases = frozenset({release.id})
@@ -700,17 +718,17 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
         {a1ds_id, a2ds_id, a2dt_id, a2du_id, b1ds_id, c1ds_id}
     )
     assert results["all"].releases == frozenset({release.id})
-    assert (await store.organization(org_a_id, all_visibility)).id == org_a_id
-    assert (await store.organization(org_b_id, all_visibility)).id == org_b_id
-    assert (await store.organization(org_c_id, all_visibility)).id == org_c_id
-    assert (await store.project(a1_id, all_visibility)).id == a1_id
-    assert (await store.project(a2_id, all_visibility)).id == a2_id
-    assert (await store.project(b1_id, all_visibility)).id == b1_id
-    assert (await store.project(c1_id, all_visibility)).id == c1_id
-    assert (await store.dataset(a1ds_id, all_visibility)).id == a1ds_id
-    assert (await store.dataset(a2ds_id, all_visibility)).id == a2ds_id
-    assert (await store.dataset(b1ds_id, all_visibility)).id == b1ds_id
-    assert (await store.dataset(c1ds_id, all_visibility)).id == c1ds_id
+    assert (await store.organizations.get(org_a_id, all_visibility)).id == org_a_id
+    assert (await store.organizations.get(org_b_id, all_visibility)).id == org_b_id
+    assert (await store.organizations.get(org_c_id, all_visibility)).id == org_c_id
+    assert (await store.projects.get(a1_id, all_visibility)).id == a1_id
+    assert (await store.projects.get(a2_id, all_visibility)).id == a2_id
+    assert (await store.projects.get(b1_id, all_visibility)).id == b1_id
+    assert (await store.projects.get(c1_id, all_visibility)).id == c1_id
+    assert (await store.datasets.get(a1ds_id, all_visibility)).id == a1ds_id
+    assert (await store.datasets.get(a2ds_id, all_visibility)).id == a2ds_id
+    assert (await store.datasets.get(b1ds_id, all_visibility)).id == b1ds_id
+    assert (await store.datasets.get(c1ds_id, all_visibility)).id == c1ds_id
     assert (await store.release(a1ds_id, "v1", all_visibility)).id == release.id
 
     project_scoped = Visibility(project_ids=frozenset({a1_id}))
@@ -719,13 +737,13 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     assert results["project_ids"].projects == frozenset({a1_id})
     assert results["project_ids"].datasets == frozenset({a1ds_id})
     assert results["project_ids"].releases == frozenset({release.id})
-    assert (await store.organization(org_a_id, project_scoped)).id == org_a_id
-    assert (await store.project(a1_id, project_scoped)).id == a1_id
-    assert (await store.dataset(a1ds_id, project_scoped)).id == a1ds_id
+    assert (await store.organizations.get(org_a_id, project_scoped)).id == org_a_id
+    assert (await store.projects.get(a1_id, project_scoped)).id == a1_id
+    assert (await store.datasets.get(a1ds_id, project_scoped)).id == a1ds_id
     assert (await store.release(a1ds_id, "v1", project_scoped)).id == release.id
-    await assert_invisible(store.organization, (org_b_id, org_c_id), project_scoped)
-    await assert_invisible(store.project, (a2_id, b1_id, c1_id), project_scoped)
-    await assert_invisible(store.dataset, (a2ds_id, b1ds_id, c1ds_id), project_scoped)
+    await assert_invisible(store.organizations.get, (org_b_id, org_c_id), project_scoped)
+    await assert_invisible(store.projects.get, (a2_id, b1_id, c1_id), project_scoped)
+    await assert_invisible(store.datasets.get, (a2ds_id, b1ds_id, c1ds_id), project_scoped)
 
     dataset_scoped = Visibility(dataset_ids=frozenset({a2ds_id, a2du_id, c1ds_id}))
     results["dataset_ids"] = await visible_ids(dataset_scoped)
@@ -733,27 +751,27 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     assert results["dataset_ids"].projects == frozenset({a2_id, c1_id})
     assert results["dataset_ids"].datasets == frozenset({a2ds_id, a2du_id, c1ds_id})
     assert results["dataset_ids"].releases == frozenset()
-    assert (await store.organization(org_a_id, dataset_scoped)).id == org_a_id
-    assert (await store.organization(org_c_id, dataset_scoped)).id == org_c_id
-    assert (await store.project(a2_id, dataset_scoped)).id == a2_id
-    assert (await store.project(c1_id, dataset_scoped)).id == c1_id
-    assert (await store.dataset(a2ds_id, dataset_scoped)).id == a2ds_id
-    assert (await store.dataset(a2du_id, dataset_scoped)).id == a2du_id
-    assert (await store.dataset(c1ds_id, dataset_scoped)).id == c1ds_id
-    await assert_invisible(store.project, (a1_id, b1_id), dataset_scoped)
-    await assert_invisible(store.dataset, (a1ds_id, a2dt_id, b1ds_id), dataset_scoped)
-    await assert_invisible(store.organization, (org_b_id,), dataset_scoped)
+    assert (await store.organizations.get(org_a_id, dataset_scoped)).id == org_a_id
+    assert (await store.organizations.get(org_c_id, dataset_scoped)).id == org_c_id
+    assert (await store.projects.get(a2_id, dataset_scoped)).id == a2_id
+    assert (await store.projects.get(c1_id, dataset_scoped)).id == c1_id
+    assert (await store.datasets.get(a2ds_id, dataset_scoped)).id == a2ds_id
+    assert (await store.datasets.get(a2du_id, dataset_scoped)).id == a2du_id
+    assert (await store.datasets.get(c1ds_id, dataset_scoped)).id == c1ds_id
+    await assert_invisible(store.projects.get, (a1_id, b1_id), dataset_scoped)
+    await assert_invisible(store.datasets.get, (a1ds_id, a2dt_id, b1ds_id), dataset_scoped)
+    await assert_invisible(store.organizations.get, (org_b_id,), dataset_scoped)
     with pytest.raises(ResourceNotFound):
         await store.release(a1ds_id, "v1", dataset_scoped)
 
-    narrow_projects = await store.projects(org_a_id, dataset_scoped, limit=1, after=None)
+    narrow_projects = await store.projects.browse(org_a_id, dataset_scoped, limit=1, after=None)
     assert [item.id for item in narrow_projects.items] == [a2_id]
     assert narrow_projects.has_more is False
 
     walked_dataset_ids: list[UUID] = []
     walk_after: tuple[str, UUID] | None = None
     while True:
-        window = await store.datasets(a2_id, dataset_scoped, limit=1, after=walk_after)
+        window = await store.datasets.browse(a2_id, dataset_scoped, limit=1, after=walk_after)
         assert a2dt_id not in {item.id for item in window.items}
         walked_dataset_ids.extend(item.id for item in window.items)
         if not window.has_more:
@@ -765,7 +783,9 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     walked_organization_ids: list[UUID] = []
     organization_walk_after: tuple[str, UUID] | None = None
     while True:
-        window = await store.organizations(dataset_scoped, limit=1, after=organization_walk_after)
+        window = await store.organizations.browse(
+            PlatformRoot.ROOT, dataset_scoped, limit=1, after=organization_walk_after
+        )
         assert org_b_id not in {item.id for item in window.items}
         walked_organization_ids.extend(item.id for item in window.items)
         if not window.has_more:
@@ -780,10 +800,12 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     assert results["organization_ids"].projects == frozenset()
     assert results["organization_ids"].datasets == frozenset()
     assert results["organization_ids"].releases == frozenset()
-    assert (await store.organization(org_a_id, organization_scoped)).id == org_a_id
-    await assert_invisible(store.organization, (org_b_id, org_c_id), organization_scoped)
-    await assert_invisible(store.project, (a1_id, a2_id, b1_id, c1_id), organization_scoped)
-    await assert_invisible(store.dataset, (a1ds_id, a2ds_id, b1ds_id, c1ds_id), organization_scoped)
+    assert (await store.organizations.get(org_a_id, organization_scoped)).id == org_a_id
+    await assert_invisible(store.organizations.get, (org_b_id, org_c_id), organization_scoped)
+    await assert_invisible(store.projects.get, (a1_id, a2_id, b1_id, c1_id), organization_scoped)
+    await assert_invisible(
+        store.datasets.get, (a1ds_id, a2ds_id, b1ds_id, c1ds_id), organization_scoped
+    )
     with pytest.raises(ResourceNotFound):
         await store.release(a1ds_id, "v1", organization_scoped)
 
@@ -793,9 +815,9 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     assert results["empty"].projects == frozenset()
     assert results["empty"].datasets == frozenset()
     assert results["empty"].releases == frozenset()
-    await assert_invisible(store.organization, (org_a_id, org_b_id, org_c_id), empty)
-    await assert_invisible(store.project, (a1_id, a2_id, b1_id, c1_id), empty)
-    await assert_invisible(store.dataset, (a1ds_id, a2ds_id, b1ds_id, c1ds_id), empty)
+    await assert_invisible(store.organizations.get, (org_a_id, org_b_id, org_c_id), empty)
+    await assert_invisible(store.projects.get, (a1_id, a2_id, b1_id, c1_id), empty)
+    await assert_invisible(store.datasets.get, (a1ds_id, a2ds_id, b1ds_id, c1ds_id), empty)
     with pytest.raises(ResourceNotFound):
         await store.release(a1ds_id, "v1", empty)
 

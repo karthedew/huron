@@ -6,7 +6,7 @@ it never restates the design. Every task names the `API_DESIGN.md` heading that 
 implementer is expected to read that heading before editing.
 
 This plan is executed by `/implement-markdown API_IMPLEMENTATION_PLAN.md`. It is deliberately named
-apart from [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) (the shipped platform plan) and
+apart from [`AUTH_IMPLEMENTATION_PLAN.md`](AUTH_IMPLEMENTATION_PLAN.md) (the shipped platform plan) and
 [`RBAC_IMPLEMENTATION_PLAN.md`](RBAC_IMPLEMENTATION_PLAN.md).
 
 ---
@@ -2504,7 +2504,7 @@ Judgment calls and inaccuracies that do **not** stop a task from executing.
    pass `settings=` and use `with TestClient(...)`. Only the sizing rationale in M2.1 and R1 carries
    the wrong figure.
 2. **A fourth in-repo occurrence of the entrypoint string survives the run**:
-   `IMPLEMENTATION_PLAN.md:874` (the shipped platform plan's `Containerfile` excerpt). D-1's "three
+   `AUTH_IMPLEMENTATION_PLAN.md:874` (the shipped platform plan's `Containerfile` excerpt). D-1's "three
    in-repo files" is right for hand-maintained *runtime* references, and the file is out of scope, but
    the string is still there at the end.
 3. **M5.1's route-table probe is not runnable as written** — `create_app(settings=ApiSettings(...))`

@@ -20,7 +20,7 @@ import pytest
 from huron.pkg.catalog.errors import IdempotencyKeyReused, ResourceNotFound
 from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.models import OutboxEvent
-from huron.pkg.catalog.persistence import IdempotencyClaim, Replay
+from huron.pkg.catalog.persistence import IdempotencyClaim, PlatformRoot, Replay
 from huron.pkg.catalog.records import AuditEvent, Organization, Release
 from huron.pkg.metastore.hierarchy import InMemoryHierarchyStore, SystemClock
 from huron.pkg.rbac import Visibility
@@ -167,7 +167,7 @@ async def test_an_expired_claim_is_taken_over_rather_than_rejected() -> None:
         )
         await writer.remember(retry, Replay(kind="organization", resource_id=second_id))
 
-    replayed = await store.organization(second_id, Visibility.ALL)
+    replayed = await store.organizations.get(second_id, Visibility.ALL)
     assert replayed.id == second_id
 
 
@@ -281,21 +281,21 @@ async def test_organization_point_read_raises_for_an_unknown_id() -> None:
     """organization() reports an id that names nothing as not found."""
     store = InMemoryHierarchyStore()
     with pytest.raises(ResourceNotFound):
-        await store.organization(uuid7(), Visibility.ALL)
+        await store.organizations.get(uuid7(), Visibility.ALL)
 
 
 async def test_project_point_read_raises_for_an_unknown_id() -> None:
     """project() reports an id that names nothing as not found."""
     store = InMemoryHierarchyStore()
     with pytest.raises(ResourceNotFound):
-        await store.project(uuid7(), Visibility.ALL)
+        await store.projects.get(uuid7(), Visibility.ALL)
 
 
 async def test_dataset_point_read_raises_for_an_unknown_id() -> None:
     """dataset() reports an id that names nothing as not found."""
     store = InMemoryHierarchyStore()
     with pytest.raises(ResourceNotFound):
-        await store.dataset(uuid7(), Visibility.ALL)
+        await store.datasets.get(uuid7(), Visibility.ALL)
 
 
 async def test_release_point_read_raises_for_an_unknown_tag() -> None:
@@ -312,7 +312,7 @@ async def test_organizations_window_orders_by_slug_and_admits_only_visible_rows(
     store = InMemoryHierarchyStore()
     hierarchy = await seed_hierarchy(store, _TREE)
     restricted = Visibility(organization_ids=frozenset({hierarchy.organizations["org-a"]}))
-    window = await store.organizations(restricted, limit=10, after=None)
+    window = await store.organizations.browse(PlatformRoot.ROOT, restricted, limit=10, after=None)
     assert [item.slug for item in window.items] == ["org-a"]
     assert window.has_more is False
 
@@ -322,7 +322,7 @@ async def test_projects_window_admits_a_project_named_directly() -> None:
     store = InMemoryHierarchyStore()
     hierarchy = await seed_hierarchy(store, _TREE)
     restricted = Visibility(project_ids=frozenset({hierarchy.projects["proj-a1"]}))
-    window = await store.projects(
+    window = await store.projects.browse(
         hierarchy.organizations["org-a"], restricted, limit=10, after=None
     )
     assert [item.slug for item in window.items] == ["proj-a1"]
@@ -333,7 +333,9 @@ async def test_datasets_window_admits_a_dataset_named_directly() -> None:
     store = InMemoryHierarchyStore()
     hierarchy = await seed_hierarchy(store, _TREE)
     restricted = Visibility(dataset_ids=frozenset({hierarchy.datasets["ds-a1y"]}))
-    window = await store.datasets(hierarchy.projects["proj-a1"], restricted, limit=10, after=None)
+    window = await store.datasets.browse(
+        hierarchy.projects["proj-a1"], restricted, limit=10, after=None
+    )
     assert [item.slug for item in window.items] == ["ds-a1y"]
 
 
@@ -342,10 +344,10 @@ async def test_a_project_is_visible_when_it_contains_a_directly_visible_dataset(
     store = InMemoryHierarchyStore()
     hierarchy = await seed_hierarchy(store, _TREE)
     restricted = Visibility(dataset_ids=frozenset({hierarchy.datasets["ds-a1x"]}))
-    project = await store.project(hierarchy.projects["proj-a1"], restricted)
+    project = await store.projects.get(hierarchy.projects["proj-a1"], restricted)
     assert project.slug == "proj-a1"
     with pytest.raises(ResourceNotFound):
-        await store.project(hierarchy.projects["proj-a2"], restricted)
+        await store.projects.get(hierarchy.projects["proj-a2"], restricted)
 
 
 async def test_an_organization_is_visible_when_it_contains_a_visible_project() -> None:
@@ -353,10 +355,10 @@ async def test_an_organization_is_visible_when_it_contains_a_visible_project() -
     store = InMemoryHierarchyStore()
     hierarchy = await seed_hierarchy(store, _TREE)
     restricted = Visibility(project_ids=frozenset({hierarchy.projects["proj-a1"]}))
-    organization = await store.organization(hierarchy.organizations["org-a"], restricted)
+    organization = await store.organizations.get(hierarchy.organizations["org-a"], restricted)
     assert organization.slug == "org-a"
     with pytest.raises(ResourceNotFound):
-        await store.organization(hierarchy.organizations["org-b"], restricted)
+        await store.organizations.get(hierarchy.organizations["org-b"], restricted)
 
 
 async def test_empty_visibility_admits_nothing() -> None:
@@ -365,11 +367,11 @@ async def test_empty_visibility_admits_nothing() -> None:
     hierarchy = await seed_hierarchy(store, _TREE)
     empty = Visibility()
     with pytest.raises(ResourceNotFound):
-        await store.organization(hierarchy.organizations["org-a"], empty)
+        await store.organizations.get(hierarchy.organizations["org-a"], empty)
     with pytest.raises(ResourceNotFound):
-        await store.project(hierarchy.projects["proj-a1"], empty)
+        await store.projects.get(hierarchy.projects["proj-a1"], empty)
     with pytest.raises(ResourceNotFound):
-        await store.dataset(hierarchy.datasets["ds-a1x"], empty)
+        await store.datasets.get(hierarchy.datasets["ds-a1x"], empty)
 
 
 async def test_releases_window_orders_by_tag_regardless_of_visibility() -> None:
@@ -394,7 +396,7 @@ async def test_a_limit_one_walk_visits_every_dataset_exactly_once() -> None:
     seen: list[str] = []
     after: tuple[str, UUID] | None = None
     while True:
-        window = await store.datasets(
+        window = await store.datasets.browse(
             hierarchy.projects["proj-a1"], Visibility.ALL, limit=1, after=after
         )
         seen.extend(item.slug for item in window.items)

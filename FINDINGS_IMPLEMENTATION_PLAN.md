@@ -7,7 +7,7 @@ quoted evidence and the design record (`design/api.html`, `design/auth.html`, `d
 verifiable tasks, records the **two that were refuted**, and hands the **eight that belong to
 other work** to where they belong (§1). Nothing here has been implemented.
 
-Companion naming: `IMPLEMENTATION_PLAN.md` holds the shipped auth plan and
+Companion naming: `AUTH_IMPLEMENTATION_PLAN.md` holds the shipped auth plan and
 `API_IMPLEMENTATION_PLAN.md` the shipped API-tier plan; neither may be overwritten for shipped
 work, so this plan has its own file.
 

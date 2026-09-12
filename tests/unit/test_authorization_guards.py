@@ -42,6 +42,7 @@ from huron.pkg.metastore import (
 )
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import ScopeType, Visibility
+from tests.catalog_creation_support import creation_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -56,7 +57,6 @@ def _repository(tmp_path: Path) -> HierarchyRepository:
     return HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        classification_vocabulary=("open",),
         rbac_store=InMemoryRbacStore(),
     )
 
@@ -65,9 +65,7 @@ def _stack(tmp_path: Path) -> tuple[HierarchyRepository, IngestService]:
     """A repository and an ingest service sharing one raw store and hierarchy store."""
     hierarchy = InMemoryHierarchyStore()
     raw_store = PosixRawStore(str(tmp_path / "raw"))
-    repository = HierarchyRepository(
-        raw_store, hierarchy, classification_vocabulary=("open",), rbac_store=InMemoryRbacStore()
-    )
+    repository = HierarchyRepository(raw_store, hierarchy, rbac_store=InMemoryRbacStore())
     return repository, IngestService(raw_store, hierarchy, clock=SystemClock())
 
 
@@ -80,7 +78,7 @@ def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
 
 async def _organization(repository: HierarchyRepository) -> Organization:
     """An organization named ``astro``, created fresh in the given repository."""
-    return await repository.create_organization(
+    return await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
@@ -90,9 +88,8 @@ async def _organization(repository: HierarchyRepository) -> Organization:
 
 async def _project(repository: HierarchyRepository, organization_id: UUID) -> Project:
     """A project named ``sims``, created under the given organization."""
-    return await repository.create_project(
+    return await (await creation_for(repository)).create_project(
         organization_id,
-        Visibility.ALL,
         slug="sims",
         title="Sims",
         description="",
@@ -103,9 +100,8 @@ async def _project(repository: HierarchyRepository, organization_id: UUID) -> Pr
 
 async def _dataset(repository: HierarchyRepository, project_id: UUID) -> Dataset:
     """A dataset named ``run-0001``, created under the given project."""
-    return await repository.create_dataset(
+    return await (await creation_for(repository)).create_dataset(
         project_id,
-        Visibility.ALL,
         slug="run-0001",
         title="Run 1",
         description="",
@@ -143,7 +139,7 @@ async def test_require_system_returns_the_principal_when_a_binding_grants_the_ca
     alice = Principal(subject="alice")
     guard = require_system("organization.create")
 
-    result = await guard(principal=alice, repository=repository, cache={})
+    result = await guard(principal=alice, repository=repository.rbac, cache={})
 
     assert result is alice
 
@@ -154,7 +150,7 @@ async def test_require_system_refuses_a_principal_with_no_binding(tmp_path: Path
     guard = require_system("organization.create")
 
     with pytest.raises(Forbidden):
-        await guard(principal=Principal(subject="alice"), repository=repository, cache={})
+        await guard(principal=Principal(subject="alice"), repository=repository.rbac, cache={})
 
 
 # -- require_organization -------------------------------------------------------
@@ -179,7 +175,8 @@ async def test_require_organization_returns_the_principal_when_scoped_to_that_or
     result = await guard(
         resource_id=organization.id,
         principal=alice,
-        repository=repository,
+        repository=repository.rbac,
+        hierarchy=repository.hierarchy,
         cache={},
         visibility=Visibility.ALL,
     )
@@ -202,7 +199,8 @@ async def test_require_organization_raises_not_found_before_checking_the_binding
         await guard(
             resource_id=uuid4(),
             principal=Principal(subject="alice"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -232,7 +230,8 @@ async def test_require_organization_raises_not_found_for_an_organization_the_cal
         await guard(
             resource_id=organization.id,
             principal=Principal(subject="alice"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility(),
         )
@@ -261,7 +260,8 @@ async def test_require_project_returns_the_principal_when_scoped_to_that_project
     result = await guard(
         resource_id=project.id,
         principal=alice,
-        repository=repository,
+        repository=repository.rbac,
+        hierarchy=repository.hierarchy,
         cache={},
         visibility=Visibility.ALL,
     )
@@ -276,9 +276,8 @@ async def test_require_project_refuses_a_binding_scoped_to_a_different_project(
     repository = _repository(tmp_path)
     organization = await _organization(repository)
     bound_project = await _project(repository, organization.id)
-    other_project = await repository.create_project(
+    other_project = await (await creation_for(repository)).create_project(
         organization.id,
-        Visibility.ALL,
         slug="other",
         title="Other",
         description="",
@@ -298,7 +297,8 @@ async def test_require_project_refuses_a_binding_scoped_to_a_different_project(
         await guard(
             resource_id=other_project.id,
             principal=Principal(subject="alice"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -313,7 +313,8 @@ async def test_require_project_raises_not_found_for_an_unknown_project(tmp_path:
         await guard(
             resource_id=uuid4(),
             principal=Principal(subject="alice"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -339,7 +340,8 @@ async def test_require_project_raises_not_found_for_a_project_the_caller_cannot_
         await guard(
             resource_id=project.id,
             principal=Principal(subject="alice"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility(),
         )
@@ -369,7 +371,8 @@ async def test_require_dataset_returns_the_principal_when_scoped_to_that_dataset
     result = await guard(
         resource_id=dataset.id,
         principal=alice,
-        repository=repository,
+        repository=repository.rbac,
+        hierarchy=repository.hierarchy,
         cache={},
         visibility=Visibility.ALL,
     )
@@ -386,7 +389,8 @@ async def test_require_dataset_raises_not_found_for_an_unknown_dataset(tmp_path:
         await guard(
             resource_id=uuid4(),
             principal=Principal(subject="alice"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -405,7 +409,7 @@ async def test_require_dataset_raises_not_found_for_a_dataset_the_caller_cannot_
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
     dataset = await _dataset(repository, project.id)
-    other_organization = await repository.create_organization(
+    other_organization = await (await creation_for(repository)).create_organization(
         slug="biolab",
         title="Biolab",
         description="",
@@ -424,7 +428,8 @@ async def test_require_dataset_raises_not_found_for_a_dataset_the_caller_cannot_
         await guard(
             resource_id=dataset.id,
             principal=Principal(subject="alice"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility(organization_ids=frozenset({other_organization.id})),
         )
@@ -453,7 +458,8 @@ async def test_dataset_raw_writer_returns_the_principal_when_both_stages_pass(
     result = await dataset_raw_writer(
         dataset_id=dataset.id,
         principal=alice,
-        repository=repository,
+        repository=repository.rbac,
+        hierarchy=repository.hierarchy,
         cache={},
         visibility=Visibility.ALL,
     )
@@ -479,7 +485,8 @@ async def test_dataset_raw_writer_refuses_a_service_account_before_any_binding_i
         await dataset_raw_writer(
             dataset_id=dataset.id,
             principal=pipeline,
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -499,7 +506,8 @@ async def test_dataset_raw_writer_refuses_a_human_with_no_covering_binding(
         await dataset_raw_writer(
             dataset_id=dataset.id,
             principal=alice,
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -521,7 +529,8 @@ async def test_dataset_raw_writer_raises_not_found_for_an_unknown_dataset_before
         await dataset_raw_writer(
             dataset_id=uuid4(),
             principal=pipeline,
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -547,7 +556,8 @@ async def test_project_intake_returns_the_principal_when_every_stage_passes(tmp_
     result = await project_intake(
         project_id=project.id,
         principal=alice,
-        repository=repository,
+        repository=repository.rbac,
+        hierarchy=repository.hierarchy,
         cache={},
         visibility=Visibility.ALL,
     )
@@ -574,7 +584,8 @@ async def test_project_intake_refuses_a_service_account_before_dataset_create_is
         await project_intake(
             project_id=project.id,
             principal=pipeline,
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -591,7 +602,8 @@ async def test_project_intake_refuses_a_human_with_no_covering_binding(tmp_path:
         await project_intake(
             project_id=project.id,
             principal=alice,
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -608,7 +620,8 @@ async def test_project_intake_raises_not_found_for_an_unknown_project_before_the
         await project_intake(
             project_id=uuid4(),
             principal=pipeline,
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             cache={},
             visibility=Visibility.ALL,
         )
@@ -647,7 +660,8 @@ async def test_session_overseer_lets_the_owner_and_a_project_admin_read(tmp_path
     as_owner = await session_overseer(
         session_id=session_id,
         principal=Principal(subject="alice"),
-        repository=repository,
+        repository=repository.rbac,
+        hierarchy=repository.hierarchy,
         ingest=ingest,
         cache={},
         visibility=Visibility.ALL,
@@ -657,7 +671,8 @@ async def test_session_overseer_lets_the_owner_and_a_project_admin_read(tmp_path
     as_admin = await session_overseer(
         session_id=session_id,
         principal=Principal(subject="carl"),
-        repository=repository,
+        repository=repository.rbac,
+        hierarchy=repository.hierarchy,
         ingest=ingest,
         cache={},
         visibility=Visibility.ALL,
@@ -684,7 +699,8 @@ async def test_session_overseer_refuses_a_non_owner_without_project_update(tmp_p
         await session_overseer(
             session_id=session_id,
             principal=Principal(subject="carl"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             ingest=ingest,
             cache={},
             visibility=Visibility.ALL,
@@ -699,7 +715,8 @@ async def test_session_overseer_raises_not_found_for_an_unknown_session(tmp_path
         await session_overseer(
             session_id=uuid4(),
             principal=Principal(subject="alice"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             ingest=ingest,
             cache={},
             visibility=Visibility.ALL,
@@ -725,7 +742,8 @@ async def test_session_owner_refuses_a_project_admin_who_is_not_the_owner(tmp_pa
         await session_owner(
             session_id=session_id,
             principal=Principal(subject="carl"),
-            repository=repository,
+            repository=repository.rbac,
+            hierarchy=repository.hierarchy,
             ingest=ingest,
             cache={},
             visibility=Visibility.ALL,
@@ -750,7 +768,8 @@ async def test_session_owner_returns_the_drive_for_the_owner(tmp_path: Path) -> 
     drive = await session_owner(
         session_id=session_id,
         principal=Principal(subject="alice"),
-        repository=repository,
+        repository=repository.rbac,
+        hierarchy=repository.hierarchy,
         ingest=ingest,
         cache={},
         visibility=Visibility.ALL,

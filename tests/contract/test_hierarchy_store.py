@@ -37,6 +37,7 @@ from huron.pkg.catalog.ids import uuid7
 from huron.pkg.catalog.ingest import LEASE_TTL
 from huron.pkg.catalog.layers import Layer
 from huron.pkg.catalog.lifecycle import DatasetLifecycle
+from huron.pkg.catalog.persistence import PlatformRoot
 from huron.pkg.catalog.records import Dataset, Organization, Project, Release
 from huron.pkg.metastore import (
     IdempotencyClaim,
@@ -357,13 +358,15 @@ async def _visible_ids(
     Returns:
         The ids ``visibility`` admits, one set per hierarchy level.
     """
-    organizations_window = await store.organizations(visibility, limit=200, after=None)
+    organizations_window = await store.organizations.browse(
+        PlatformRoot.ROOT, visibility, limit=200, after=None
+    )
     projects_windows = [
-        await store.projects(organization.id, visibility, limit=200, after=None)
+        await store.projects.browse(organization.id, visibility, limit=200, after=None)
         for organization in fixture.organizations.values()
     ]
     datasets_windows = [
-        await store.datasets(project.id, visibility, limit=200, after=None)
+        await store.datasets.browse(project.id, visibility, limit=200, after=None)
         for project in fixture.projects.values()
     ]
     try:
@@ -466,7 +469,9 @@ async def _assert_c_collation_order(dsn: str) -> None:
         cluster_collation = await pool.fetchval(
             "SELECT datcollate FROM pg_database WHERE datname = current_database()"
         )
-        window = await store.organizations(Visibility.ALL, limit=200, after=None)
+        window = await store.organizations.browse(
+            PlatformRoot.ROOT, Visibility.ALL, limit=200, after=None
+        )
         c_collation_order = [item.slug for item in window.items]
         assert c_collation_order == sorted(_RECEIPT_ONE_SLUGS), (
             f'COLLATE "C" order {c_collation_order} did not match Python sorted() order under '
@@ -807,9 +812,9 @@ async def _assert_identity_constraints(dsn: str) -> None:
     try:
         store = PostgresHierarchyStore(pool)
         hierarchy = await seed_hierarchy(store)
-        dataset = await store.dataset(hierarchy.datasets["run-0001"], Visibility.ALL)
-        project = await store.project(dataset.project_id, Visibility.ALL)
-        organization = await store.organization(project.organization_id, Visibility.ALL)
+        dataset = await store.datasets.get(hierarchy.datasets["run-0001"], Visibility.ALL)
+        project = await store.projects.get(dataset.project_id, Visibility.ALL)
+        organization = await store.organizations.get(project.organization_id, Visibility.ALL)
         revision = committed_revision(dataset.id, 1)
         release = Release(
             id=uuid7(),

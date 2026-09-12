@@ -29,7 +29,8 @@ from huron.pkg.catalog.errors import (
 )
 from huron.pkg.catalog.failures import SlugExists
 from huron.pkg.catalog.models import RevisionRef
-from huron.pkg.catalog.persistence import Replay, Window
+from huron.pkg.catalog.persistence import PlatformRoot, Replay, Window
+from huron.pkg.catalog.records import Dataset, Organization, Project
 from huron.pkg.rbac import ProjectVisibility
 
 from . import rows
@@ -40,6 +41,7 @@ from .ingest import (
     PostgresIngestWriter,
     latest_revision,
 )
+from .queries import _DATASETS, _ORGANIZATIONS, _PROJECTS, _PostgresCollection
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterable
@@ -49,7 +51,7 @@ if TYPE_CHECKING:
     from huron.pkg.catalog.models import OutboxEvent, RevisionRecord
     from huron.pkg.catalog.persistence import IdempotencyClaim, LedgerEntry
     from huron.pkg.catalog.ports import Clock
-    from huron.pkg.catalog.records import AuditEvent, Dataset, Organization, Project, Release
+    from huron.pkg.catalog.records import AuditEvent, Release
     from huron.pkg.rbac import Visibility
 
 #: How long an idempotency claim stands before it may be taken over by a
@@ -139,6 +141,15 @@ class _TransactionWriter(InMemoryIngestWriter):
         """
         self._store = store
         self._buffer = buffer
+        self.organizations = _MemoryDescriptionWriter[Organization](
+            store._organizations, buffer.organizations, "organization"
+        )
+        self.projects = _MemoryDescriptionWriter[Project](
+            store._projects, buffer.projects, "project"
+        )
+        self.datasets = _MemoryDescriptionWriter[Dataset](
+            store._datasets, buffer.datasets, "dataset"
+        )
 
     async def claim(self, claim: IdempotencyClaim) -> Replay | None:
         """Stake this transaction's claim to a principal-scoped idempotency key.
@@ -304,84 +315,36 @@ class _TransactionWriter(InMemoryIngestWriter):
         """
         self._buffer.outbox.append(event)
 
-    async def update_organization(self, item: Organization, *, expected_version: int) -> None:
-        """Apply an update to one organization, guarded by optimistic concurrency.
 
-        ``PreconditionFailed`` reports an absent row or a stale stored version.
+class _MemoryDescriptionWriter[ItemT: (Organization, Project, Dataset)]:
+    """Stage a fixed entity kind's CAS replacement in the enclosing transaction."""
 
-        Args:
-            item: The organization as it should read after the update.
-            expected_version: The version the caller last read; the update
-                is refused unless this still matches what is stored.
-        """
-        _stage_update(
-            item,
-            expected_version,
-            "organization",
-            self._store._organizations,
-            self._buffer.organizations,
-        )
-
-    async def update_project(self, item: Project, *, expected_version: int) -> None:
-        """Apply an update to one project, guarded by optimistic concurrency.
-
-        ``PreconditionFailed`` reports an absent row or a stale stored version.
+    def __init__(self, live: dict[UUID, ItemT], staged: dict[UUID, ItemT], kind: str) -> None:
+        """Bind committed and staged state for this entity kind.
 
         Args:
-            item: The project as it should read after the update.
-            expected_version: The version the caller last read; the update
-                is refused unless this still matches what is stored.
+            live: The committed entities.
+            staged: This transaction's pending replacements.
+            kind: Fixed entity name for conflict errors.
         """
-        _stage_update(
-            item,
-            expected_version,
-            "project",
-            self._store._projects,
-            self._buffer.projects,
-        )
+        self._live: dict[UUID, ItemT] = live
+        self._staged: dict[UUID, ItemT] = staged
+        self._kind = kind
 
-    async def update_dataset(self, item: Dataset, *, expected_version: int) -> None:
-        """Apply an update to one dataset, guarded by optimistic concurrency.
-
-        ``PreconditionFailed`` reports an absent row or a stale stored version.
+    async def describe(self, item: ItemT, *, expected_version: int) -> None:
+        """Stage the successor only when the committed version still matches.
 
         Args:
-            item: The dataset as it should read after the update.
-            expected_version: The version the caller last read; the update
-                is refused unless this still matches what is stored.
+            item: The descriptive successor.
+            expected_version: Required committed version.
+
+        Raises:
+            PreconditionFailed: If the entity is absent or its version is stale.
         """
-        _stage_update(
-            item,
-            expected_version,
-            "dataset",
-            self._store._datasets,
-            self._buffer.datasets,
-        )
-
-
-def _stage_update[ItemT: Organization | Project | Dataset](
-    item: ItemT,
-    expected_version: int,
-    kind: str,
-    live: dict[UUID, ItemT],
-    staged: dict[UUID, ItemT],
-) -> None:
-    """Stage a hierarchy replacement only when the live version still matches.
-
-    Args:
-        item: The successor to stage.
-        expected_version: The live version the caller observed.
-        kind: The entity kind used in a version-conflict error.
-        live: The store's committed entities of this kind.
-        staged: This transaction's staged entities of the same kind.
-
-    Raises:
-        PreconditionFailed: If the entity is absent or its live version is stale.
-    """
-    current = live.get(item.id)
-    if current is None or current.version != expected_version:
-        raise PreconditionFailed(f"{kind} version conflict: {item.id}")
-    staged[item.id] = item
+        current = self._live.get(item.id)
+        if current is None or current.version != expected_version:
+            raise PreconditionFailed(f"{self._kind} version conflict: {item.id}")
+        self._staged[item.id] = item
 
 
 def _dataset_visible(dataset: Dataset, visibility: Visibility) -> bool:
@@ -485,6 +448,77 @@ def _window[ItemT](
     return Window(items=page[:limit], has_more=len(page) > limit)
 
 
+class _MemoryCollection[ItemT: (Organization, Project, Dataset), ParentT]:
+    """Visible lookup and keyset paging over committed catalog dictionaries."""
+
+    def __init__(
+        self,
+        items: dict[UUID, ItemT],
+        visible: Callable[[ItemT, Visibility], bool],
+        parent: Callable[[ItemT], ParentT],
+        kind: str,
+    ) -> None:
+        """Bind fixed memory selection facts at adapter construction.
+
+        Args:
+            items: Live committed records, updated atomically by transactions.
+            visible: This entity kind's fixed visibility predicate.
+            parent: This entity kind's fixed parent projection.
+            kind: The entity name used for not-found errors.
+        """
+        self._items: dict[UUID, ItemT] = items
+        self._visible: Callable[[ItemT, Visibility], bool] = visible
+        self._parent: Callable[[ItemT], ParentT] = parent
+        self._kind = kind
+
+    async def get(self, resource_id: UUID, visibility: Visibility) -> ItemT:
+        """Resolve one visible committed entity.
+
+        Args:
+            resource_id: The exact entity identifier.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The stored entity.
+
+        Raises:
+            ResourceNotFound: If the entity is absent or hidden.
+        """
+        item = self._items.get(resource_id)
+        if item is None or not self._visible(item, visibility):
+            raise ResourceNotFound(f"{self._kind} does not exist: {resource_id}")
+        return item
+
+    async def browse(
+        self,
+        parent: ParentT,
+        visibility: Visibility,
+        *,
+        limit: int,
+        after: tuple[str, UUID] | None,
+    ) -> Window[ItemT]:
+        """Filter visible children before sorting and slicing the keyset window.
+
+        Args:
+            parent: The owning identifier or platform root.
+            visibility: The caller's discovery rights.
+            limit: Maximum returned entities.
+            after: Exclusive slug and UUID cursor.
+
+        Returns:
+            The typed visible window.
+        """
+        visible = sorted(
+            (
+                item
+                for item in self._items.values()
+                if self._parent(item) == parent and self._visible(item, visibility)
+            ),
+            key=lambda item: (item.slug, item.id),
+        )
+        return _window(visible, key=lambda item: (item.slug, item.id), limit=limit, after=after)
+
+
 class InMemoryHierarchyStore(InMemoryIngestReader):
     """The reference ``HierarchyStore``: dicts and lists held in process memory.
 
@@ -519,6 +553,23 @@ class InMemoryHierarchyStore(InMemoryIngestReader):
         self._outbox: list[OutboxEvent] = []
         self._idempotency: dict[tuple[str, str], tuple[str, Replay | None, datetime]] = {}
         self._lock = asyncio.Lock()
+        self.organizations = _MemoryCollection[Organization, PlatformRoot](
+            self._organizations,
+            lambda item, visibility: _organization_visible(
+                item.id, visibility, self._projects, self._datasets
+            ),
+            lambda item: PlatformRoot.ROOT,
+            "organization",
+        )
+        self.projects = _MemoryCollection[Project, UUID](
+            self._projects,
+            lambda item, visibility: _project_visible(item, visibility, self._datasets),
+            lambda item: item.organization_id,
+            "project",
+        )
+        self.datasets = _MemoryCollection[Dataset, UUID](
+            self._datasets, _dataset_visible, lambda item: item.project_id, "dataset"
+        )
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[_TransactionWriter]:
@@ -542,65 +593,6 @@ class InMemoryHierarchyStore(InMemoryIngestReader):
             self._audit.extend(buffer.audit)
             self._outbox.extend(buffer.outbox)
             self._idempotency.update(buffer.idempotency)
-
-    async def organization(self, organization_id: UUID, visibility: Visibility) -> Organization:
-        """Return one organization, if ``visibility`` admits it.
-
-        Args:
-            organization_id: The organization to read.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The stored organization.
-
-        Raises:
-            ResourceNotFound: If no organization has ``organization_id``,
-                or ``visibility`` does not admit it.
-        """
-        organization = self._organizations.get(organization_id)
-        if organization is None or not _organization_visible(
-            organization_id, visibility, self._projects, self._datasets
-        ):
-            raise ResourceNotFound(f"organization does not exist: {organization_id}")
-        return organization
-
-    async def project(self, project_id: UUID, visibility: Visibility) -> Project:
-        """Return one project, if ``visibility`` admits it.
-
-        Args:
-            project_id: The project to read.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The stored project.
-
-        Raises:
-            ResourceNotFound: If no project has ``project_id``, or
-                ``visibility`` does not admit it.
-        """
-        project = self._projects.get(project_id)
-        if project is None or not _project_visible(project, visibility, self._datasets):
-            raise ResourceNotFound(f"project does not exist: {project_id}")
-        return project
-
-    async def dataset(self, dataset_id: UUID, visibility: Visibility) -> Dataset:
-        """Return one dataset, if ``visibility`` admits it.
-
-        Args:
-            dataset_id: The dataset to read.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The stored dataset.
-
-        Raises:
-            ResourceNotFound: If no dataset has ``dataset_id``, or
-                ``visibility`` does not admit it.
-        """
-        dataset = self._datasets.get(dataset_id)
-        if dataset is None or not _dataset_visible(dataset, visibility):
-            raise ResourceNotFound(f"dataset does not exist: {dataset_id}")
-        return dataset
 
     async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
         """Return one release by its dataset and tag, if ``visibility`` admits the dataset.
@@ -648,108 +640,6 @@ class InMemoryHierarchyStore(InMemoryIngestReader):
             dataset_id=found.dataset_id,
             number=found.number,
             manifest_sha256=found.manifest_sha256,
-        )
-
-    async def organizations(
-        self, visibility: Visibility, *, limit: int, after: tuple[str, UUID] | None
-    ) -> Window[Organization]:
-        """Return a window of organizations ordered by ``(slug, id)``.
-
-        Args:
-            visibility: The caller's discovery rights; only admitted
-                organizations are counted toward ``limit``.
-            limit: The maximum number of organizations to return.
-            after: The ``(slug, id)`` of the last organization already
-                seen, excluded from the window, or ``None`` to start from
-                the beginning.
-
-        Returns:
-            The next window of admitted organizations.
-        """
-        visible = sorted(
-            (
-                organization
-                for organization in self._organizations.values()
-                if _organization_visible(
-                    organization.id, visibility, self._projects, self._datasets
-                )
-            ),
-            key=lambda organization: (organization.slug, organization.id),
-        )
-        return _window(
-            visible,
-            key=lambda organization: (organization.slug, organization.id),
-            limit=limit,
-            after=after,
-        )
-
-    async def projects(
-        self,
-        organization_id: UUID,
-        visibility: Visibility,
-        *,
-        limit: int,
-        after: tuple[str, UUID] | None,
-    ) -> Window[Project]:
-        """Return a window of one organization's projects ordered by ``(slug, id)``.
-
-        Args:
-            organization_id: The owning organization.
-            visibility: The caller's discovery rights; only admitted
-                projects are counted toward ``limit``.
-            limit: The maximum number of projects to return.
-            after: The ``(slug, id)`` of the last project already seen,
-                excluded from the window, or ``None`` to start from the
-                beginning.
-
-        Returns:
-            The next window of admitted projects.
-        """
-        visible = sorted(
-            (
-                project
-                for project in self._projects.values()
-                if project.organization_id == organization_id
-                and _project_visible(project, visibility, self._datasets)
-            ),
-            key=lambda project: (project.slug, project.id),
-        )
-        return _window(
-            visible, key=lambda project: (project.slug, project.id), limit=limit, after=after
-        )
-
-    async def datasets(
-        self,
-        project_id: UUID,
-        visibility: Visibility,
-        *,
-        limit: int,
-        after: tuple[str, UUID] | None,
-    ) -> Window[Dataset]:
-        """Return a window of one project's datasets ordered by ``(slug, id)``.
-
-        Args:
-            project_id: The owning project.
-            visibility: The caller's discovery rights; only admitted
-                datasets are counted toward ``limit``.
-            limit: The maximum number of datasets to return.
-            after: The ``(slug, id)`` of the last dataset already seen,
-                excluded from the window, or ``None`` to start from the
-                beginning.
-
-        Returns:
-            The next window of admitted datasets.
-        """
-        visible = sorted(
-            (
-                dataset
-                for dataset in self._datasets.values()
-                if dataset.project_id == project_id and _dataset_visible(dataset, visibility)
-            ),
-            key=lambda dataset: (dataset.slug, dataset.id),
-        )
-        return _window(
-            visible, key=lambda dataset: (dataset.slug, dataset.id), limit=limit, after=after
         )
 
     async def releases(
@@ -887,6 +777,57 @@ def _trim_window[ItemT](items: list[ItemT], *, limit: int) -> Window[ItemT]:
     return Window(items=items[:limit], has_more=len(items) > limit)
 
 
+class _PostgresDescriptionWriter[ItemT: (Organization, Project, Dataset)]:
+    """CAS descriptive fields using the enclosing transaction's held connection."""
+
+    def __init__(
+        self,
+        connection: asyncpg.Connection,
+        clock: Clock,
+        kind: Literal["organization", "project", "dataset"],
+    ) -> None:
+        """Bind the fixed table selection and transaction connection.
+
+        Args:
+            connection: The existing atomic transaction connection.
+            clock: The source of the persisted update timestamp.
+            kind: The trusted entity kind fixed by writer construction.
+        """
+        self._connection = connection
+        self._clock = clock
+        self._kind = kind
+        self._table = {
+            "organization": "organizations",
+            "project": "projects",
+            "dataset": "datasets",
+        }[kind]
+
+    async def describe(self, item: ItemT, *, expected_version: int) -> None:
+        """Persist a successor with an atomic version comparison.
+
+        Args:
+            item: The descriptive successor.
+            expected_version: Required persisted version.
+
+        Raises:
+            PreconditionFailed: If no row matches the identifier and version.
+        """
+        row = await self._connection.fetchrow(
+            f"""UPDATE {self._table}
+            SET title = $2, description = $3, generation = $4, version = $5, updated_at = $6
+            WHERE id = $1 AND version = $7 RETURNING id""",
+            item.id,
+            item.title,
+            item.description,
+            item.generation,
+            item.version,
+            self._clock.now(),
+            expected_version,
+        )
+        if row is None:
+            raise PreconditionFailed(f"{self._kind} version conflict: {item.id}")
+
+
 class _PostgresTransactionWriter(PostgresIngestWriter):
     """The write surface of one Postgres transaction, bound to the connection that opened it.
 
@@ -907,6 +848,11 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
         """
         self._connection = connection
         self._clock = clock
+        self.organizations = _PostgresDescriptionWriter[Organization](
+            connection, clock, "organization"
+        )
+        self.projects = _PostgresDescriptionWriter[Project](connection, clock, "project")
+        self.datasets = _PostgresDescriptionWriter[Dataset](connection, clock, "dataset")
 
     async def claim(self, claim: IdempotencyClaim) -> Replay | None:
         """Stake this transaction's claim to a principal-scoped idempotency key.
@@ -1209,79 +1155,6 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
             event.created_at,
         )
 
-    async def update_organization(self, item: Organization, *, expected_version: int) -> None:
-        """Apply an update to one organization, guarded by optimistic concurrency.
-
-        ``PreconditionFailed`` reports an absent row or a stale stored version.
-
-        Args:
-            item: The organization as it should read after the update.
-            expected_version: The version the caller last read; the update
-                is refused unless this still matches what is stored.
-        """
-        await self._update_description(item, "organization", expected_version)
-
-    async def update_project(self, item: Project, *, expected_version: int) -> None:
-        """Apply an update to one project, guarded by optimistic concurrency.
-
-        ``PreconditionFailed`` reports an absent row or a stale stored version.
-
-        Args:
-            item: The project as it should read after the update.
-            expected_version: The version the caller last read; the update
-                is refused unless this still matches what is stored.
-        """
-        await self._update_description(item, "project", expected_version)
-
-    async def update_dataset(self, item: Dataset, *, expected_version: int) -> None:
-        """Apply an update to one dataset, guarded by optimistic concurrency.
-
-        ``PreconditionFailed`` reports an absent row or a stale stored version.
-
-        Args:
-            item: The dataset as it should read after the update.
-            expected_version: The version the caller last read; the update
-                is refused unless this still matches what is stored.
-        """
-        await self._update_description(item, "dataset", expected_version)
-
-    async def _update_description(
-        self,
-        item: Organization | Project | Dataset,
-        kind: Literal["organization", "project", "dataset"],
-        expected_version: int,
-    ) -> None:
-        """Persist descriptive fields with a database-atomic version comparison.
-
-        Args:
-            item: The successor whose descriptive fields and counters are stored.
-            kind: The fixed hierarchy table kind, supplied by the writer method.
-            expected_version: The version required on the stored row.
-
-        Raises:
-            PreconditionFailed: If the entity is absent or its version is stale.
-        """
-        table = {"organization": "organizations", "project": "projects", "dataset": "datasets"}[
-            kind
-        ]
-        row = await self._connection.fetchrow(
-            f"""
-            UPDATE {table}
-            SET title = $2, description = $3, generation = $4, version = $5, updated_at = $6
-            WHERE id = $1 AND version = $7
-            RETURNING id
-            """,
-            item.id,
-            item.title,
-            item.description,
-            item.generation,
-            item.version,
-            self._clock.now(),
-            expected_version,
-        )
-        if row is None:
-            raise PreconditionFailed(f"{kind} version conflict: {item.id}")
-
 
 class PostgresHierarchyStore(PostgresIngestReader):
     """Real storage for the hierarchy tables ``migrations/versions/0001_foundations.py`` creates.
@@ -1310,6 +1183,11 @@ class PostgresHierarchyStore(PostgresIngestReader):
         """
         self._pool = pool
         self._clock: Clock = clock if clock is not None else SystemClock()
+        self.organizations = _PostgresCollection[Organization, PlatformRoot](
+            pool, _ORGANIZATIONS, None
+        )
+        self.projects = _PostgresCollection[Project, UUID](pool, _PROJECTS, "organization_id")
+        self.datasets = _PostgresCollection[Dataset, UUID](pool, _DATASETS, "project_id")
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[_PostgresTransactionWriter]:
@@ -1321,110 +1199,6 @@ class PostgresHierarchyStore(PostgresIngestReader):
         """
         async with self._pool.acquire() as connection, connection.transaction():
             yield _PostgresTransactionWriter(connection, self._clock)
-
-    async def organization(self, organization_id: UUID, visibility: Visibility) -> Organization:
-        """Return one organization, if ``visibility`` admits it.
-
-        Args:
-            organization_id: The organization to read.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The stored organization.
-
-        Raises:
-            ResourceNotFound: If no organization has ``organization_id``,
-                or ``visibility`` does not admit it.
-        """
-        row = await self._pool.fetchrow(
-            """
-            SELECT id, slug, title, description, generation, version, created_at
-            FROM organizations o
-            WHERE o.id = $1
-              AND ($2::boolean
-                   OR o.id = ANY($3::uuid[])
-                   OR EXISTS (SELECT 1 FROM projects p
-                              WHERE p.organization_id = o.id AND p.id = ANY($4::uuid[]))
-                   OR EXISTS (SELECT 1 FROM datasets d JOIN projects p ON p.id = d.project_id
-                              WHERE p.organization_id = o.id AND d.id = ANY($5::uuid[])))
-            LIMIT 1
-            """,
-            organization_id,
-            visibility.unrestricted,
-            list(visibility.organization_ids),
-            list(visibility.project_ids),
-            list(visibility.dataset_ids),
-        )
-        if row is None:
-            raise ResourceNotFound(f"organization does not exist: {organization_id}")
-        return rows.organization(row)
-
-    async def project(self, project_id: UUID, visibility: Visibility) -> Project:
-        """Return one project, if ``visibility`` admits it.
-
-        Args:
-            project_id: The project to read.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The stored project.
-
-        Raises:
-            ResourceNotFound: If no project has ``project_id``, or
-                ``visibility`` does not admit it.
-        """
-        row = await self._pool.fetchrow(
-            """
-            SELECT id, organization_id, slug, title, description, classification_default,
-                   generation, version, created_at
-            FROM projects p
-            WHERE p.id = $1
-              AND ($2::boolean
-                   OR p.id = ANY($3::uuid[])
-                   OR EXISTS (SELECT 1 FROM datasets d
-                              WHERE d.project_id = p.id AND d.id = ANY($4::uuid[])))
-            LIMIT 1
-            """,
-            project_id,
-            visibility.unrestricted,
-            list(visibility.project_ids),
-            list(visibility.dataset_ids),
-        )
-        if row is None:
-            raise ResourceNotFound(f"project does not exist: {project_id}")
-        return rows.project(row)
-
-    async def dataset(self, dataset_id: UUID, visibility: Visibility) -> Dataset:
-        """Return one dataset, if ``visibility`` admits it.
-
-        Args:
-            dataset_id: The dataset to read.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The stored dataset.
-
-        Raises:
-            ResourceNotFound: If no dataset has ``dataset_id``, or
-                ``visibility`` does not admit it.
-        """
-        row = await self._pool.fetchrow(
-            """
-            SELECT id, project_id, slug, title, description, profile_name, profile_version,
-                   entry_layer, lifecycle_state, generation, version, created_at
-            FROM datasets d
-            WHERE d.id = $1
-              AND ($2::boolean OR d.project_id = ANY($3::uuid[]) OR d.id = ANY($4::uuid[]))
-            LIMIT 1
-            """,
-            dataset_id,
-            visibility.unrestricted,
-            list(visibility.project_ids),
-            list(visibility.dataset_ids),
-        )
-        if row is None:
-            raise ResourceNotFound(f"dataset does not exist: {dataset_id}")
-        return rows.dataset(row)
 
     async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
         """Return one release by its dataset and tag, if ``visibility`` admits the dataset.
@@ -1490,138 +1264,6 @@ class PostgresHierarchyStore(PostgresIngestReader):
                 f"revision does not exist: dataset={dataset_id} number={revision_number}"
             )
         return rows.revision_ref(row)
-
-    async def organizations(
-        self, visibility: Visibility, *, limit: int, after: tuple[str, UUID] | None
-    ) -> Window[Organization]:
-        """Return a window of organizations ordered by ``(slug, id)``.
-
-        Args:
-            visibility: The caller's discovery rights; only admitted
-                organizations are counted toward ``limit``.
-            limit: The maximum number of organizations to return.
-            after: The ``(slug, id)`` of the last organization already
-                seen, excluded from the window, or ``None`` to start from
-                the beginning.
-
-        Returns:
-            The next window of admitted organizations.
-        """
-        after_slug, after_id = after if after is not None else (None, None)
-        fetched = await self._pool.fetch(
-            """
-            SELECT id, slug, title, description, generation, version, created_at
-            FROM organizations o
-            WHERE ($1::boolean
-                   OR o.id = ANY($2::uuid[])
-                   OR EXISTS (SELECT 1 FROM projects p
-                              WHERE p.organization_id = o.id AND p.id = ANY($3::uuid[]))
-                   OR EXISTS (SELECT 1 FROM datasets d JOIN projects p ON p.id = d.project_id
-                              WHERE p.organization_id = o.id AND d.id = ANY($4::uuid[])))
-              AND ($5::text IS NULL OR (o.slug COLLATE "C", o.id) > ($5 COLLATE "C", $6::uuid))
-            ORDER BY o.slug COLLATE "C", o.id
-            LIMIT $7
-            """,
-            visibility.unrestricted,
-            list(visibility.organization_ids),
-            list(visibility.project_ids),
-            list(visibility.dataset_ids),
-            after_slug,
-            after_id,
-            limit + 1,
-        )
-        return _trim_window([rows.organization(row) for row in fetched], limit=limit)
-
-    async def projects(
-        self,
-        organization_id: UUID,
-        visibility: Visibility,
-        *,
-        limit: int,
-        after: tuple[str, UUID] | None,
-    ) -> Window[Project]:
-        """Return a window of one organization's projects ordered by ``(slug, id)``.
-
-        Args:
-            organization_id: The owning organization.
-            visibility: The caller's discovery rights; only admitted
-                projects are counted toward ``limit``.
-            limit: The maximum number of projects to return.
-            after: The ``(slug, id)`` of the last project already seen,
-                excluded from the window, or ``None`` to start from the
-                beginning.
-
-        Returns:
-            The next window of admitted projects.
-        """
-        after_slug, after_id = after if after is not None else (None, None)
-        fetched = await self._pool.fetch(
-            """
-            SELECT id, organization_id, slug, title, description, classification_default,
-                   generation, version, created_at
-            FROM projects p
-            WHERE p.organization_id = $1
-              AND ($2::boolean
-                   OR p.id = ANY($3::uuid[])
-                   OR EXISTS (SELECT 1 FROM datasets d
-                              WHERE d.project_id = p.id AND d.id = ANY($4::uuid[])))
-              AND ($5::text IS NULL OR (p.slug COLLATE "C", p.id) > ($5 COLLATE "C", $6::uuid))
-            ORDER BY p.slug COLLATE "C", p.id
-            LIMIT $7
-            """,
-            organization_id,
-            visibility.unrestricted,
-            list(visibility.project_ids),
-            list(visibility.dataset_ids),
-            after_slug,
-            after_id,
-            limit + 1,
-        )
-        return _trim_window([rows.project(row) for row in fetched], limit=limit)
-
-    async def datasets(
-        self,
-        project_id: UUID,
-        visibility: Visibility,
-        *,
-        limit: int,
-        after: tuple[str, UUID] | None,
-    ) -> Window[Dataset]:
-        """Return a window of one project's datasets ordered by ``(slug, id)``.
-
-        Args:
-            project_id: The owning project.
-            visibility: The caller's discovery rights; only admitted
-                datasets are counted toward ``limit``.
-            limit: The maximum number of datasets to return.
-            after: The ``(slug, id)`` of the last dataset already seen,
-                excluded from the window, or ``None`` to start from the
-                beginning.
-
-        Returns:
-            The next window of admitted datasets.
-        """
-        after_slug, after_id = after if after is not None else (None, None)
-        fetched = await self._pool.fetch(
-            """
-            SELECT id, project_id, slug, title, description, profile_name, profile_version,
-                   entry_layer, lifecycle_state, generation, version, created_at
-            FROM datasets d
-            WHERE d.project_id = $1
-              AND ($2::boolean OR d.project_id = ANY($3::uuid[]) OR d.id = ANY($4::uuid[]))
-              AND ($5::text IS NULL OR (d.slug COLLATE "C", d.id) > ($5 COLLATE "C", $6::uuid))
-            ORDER BY d.slug COLLATE "C", d.id
-            LIMIT $7
-            """,
-            project_id,
-            visibility.unrestricted,
-            list(visibility.project_ids),
-            list(visibility.dataset_ids),
-            after_slug,
-            after_id,
-            limit + 1,
-        )
-        return _trim_window([rows.dataset(row) for row in fetched], limit=limit)
 
     async def releases(
         self, dataset_id: UUID, visibility: Visibility, *, limit: int, after: tuple[str] | None

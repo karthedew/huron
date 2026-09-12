@@ -7,7 +7,7 @@ never restates the design. Every task names the `P1_DESIGN.md` heading that spec
 implementer is expected to read that heading before editing.
 
 This plan is executed by `/implement-markdown P1_IMPLEMENTATION_PLAN.md`. It is deliberately named
-apart from [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) (the shipped platform plan),
+apart from [`AUTH_IMPLEMENTATION_PLAN.md`](AUTH_IMPLEMENTATION_PLAN.md) (the shipped platform plan),
 [`API_IMPLEMENTATION_PLAN.md`](API_IMPLEMENTATION_PLAN.md) (the shipped API clean sweep) and
 [`FINDINGS_IMPLEMENTATION_PLAN.md`](FINDINGS_IMPLEMENTATION_PLAN.md), four of whose tasks
 (M5.1, M5.2, M5.3, M4.2) this plan absorbs.

@@ -1,0 +1,161 @@
+{
+  "$defs": {
+    "FenceEvidence": {
+      "additionalProperties": false,
+      "description": "Controller and database identities whose enforced exclusion protects a scan.",
+      "properties": {
+        "controller_id": {
+          "format": "uuid",
+          "title": "Controller Id",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 1,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "root_id": {
+          "format": "uuid",
+          "title": "Root Id",
+          "type": "string"
+        },
+        "operator": {
+          "minLength": 1,
+          "title": "Operator",
+          "type": "string"
+        },
+        "terminated_writers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Terminated Writers",
+          "type": "array"
+        },
+        "old_roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Old Roles",
+          "type": "array"
+        },
+        "new_role": {
+          "minLength": 1,
+          "title": "New Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "controller_id",
+        "generation",
+        "root_id",
+        "operator",
+        "terminated_writers",
+        "old_roles",
+        "new_role"
+      ],
+      "title": "FenceEvidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A numbered immutable record binding a durable inventory to its root.",
+  "properties": {
+    "schema": {
+      "const": "urn:huron:protocol-transition:1",
+      "default": "urn:huron:protocol-transition:1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "sequence": {
+      "maximum": 999999,
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "root_id": {
+      "format": "uuid",
+      "title": "Root Id",
+      "type": "string"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "before": {
+      "const": 1,
+      "title": "Before",
+      "type": "integer"
+    },
+    "after": {
+      "const": 2,
+      "title": "After",
+      "type": "integer"
+    },
+    "instant": {
+      "format": "date-time",
+      "title": "Instant",
+      "type": "string"
+    },
+    "actor": {
+      "minLength": 1,
+      "title": "Actor",
+      "type": "string"
+    },
+    "code_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Code Digest",
+      "type": "string"
+    },
+    "report_path": {
+      "title": "Report Path",
+      "type": "string"
+    },
+    "report_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Report Digest",
+      "type": "string"
+    },
+    "verified_count": {
+      "minimum": 0,
+      "title": "Verified Count",
+      "type": "integer"
+    },
+    "verified_bytes": {
+      "minimum": 0,
+      "title": "Verified Bytes",
+      "type": "integer"
+    },
+    "degraded_revision_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Degraded Revision Ids",
+      "type": "array"
+    },
+    "fence": {
+      "$ref": "#/$defs/FenceEvidence"
+    }
+  },
+  "required": [
+    "sequence",
+    "root_id",
+    "run_id",
+    "before",
+    "after",
+    "instant",
+    "actor",
+    "code_digest",
+    "report_path",
+    "report_digest",
+    "verified_count",
+    "verified_bytes",
+    "degraded_revision_ids",
+    "fence"
+  ],
+  "title": "ProtocolTransition",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:huron:protocol-transition:1"
+}

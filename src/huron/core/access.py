@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from huron.pkg.catalog.records import Dataset
     from huron.pkg.rbac import RoleBindingAuthorizer
 
-    from ._catalog import HierarchyRepository
+    from .catalog_ports import BindingFacts, HierarchyFacts
 
 BindingCacheMap = dict[frozenset[str], tuple[Binding, ...]]
 
@@ -51,7 +51,7 @@ def as_rbac_principal(principal: Principal) -> RbacPrincipal:
 
 
 async def _cached_bindings_for(
-    cache: BindingCacheMap, repository: HierarchyRepository, identifiers: frozenset[str]
+    cache: BindingCacheMap, repository: BindingFacts, identifiers: frozenset[str]
 ) -> tuple[Binding, ...]:
     """Memoize ``bindings_for`` by identifier set for the life of one request.
 
@@ -81,7 +81,7 @@ async def _cached_bindings_for(
 
 
 async def bindings_for_principal(
-    cache: BindingCacheMap, repository: HierarchyRepository, actor: RbacPrincipal
+    cache: BindingCacheMap, repository: BindingFacts, actor: RbacPrincipal
 ) -> tuple[Binding, ...]:
     """Return the bindings ``decide()`` should see for this caller.
 
@@ -124,7 +124,7 @@ async def bindings_for_principal(
 
 async def check(
     cache: BindingCacheMap,
-    repository: HierarchyRepository,
+    repository: BindingFacts,
     principal: Principal,
     capability: str,
     scope: Scope,
@@ -166,9 +166,10 @@ async def check(
 
 async def visibility_for_principal(
     cache: BindingCacheMap,
-    repository: HierarchyRepository,
+    repository: BindingFacts,
     principal: Principal,
     authorizer: RoleBindingAuthorizer,
+    hierarchy: HierarchyFacts,
 ) -> Visibility:
     """Resolve discovery rights against authoritative bindings and catalog ancestry.
 
@@ -181,6 +182,7 @@ async def visibility_for_principal(
         repository: Source of bindings, classifications and dataset parents.
         principal: The authenticated caller.
         authorizer: The classification-aware discovery policy.
+        hierarchy: Current classifications and dataset ancestry.
 
     Returns:
         The resources this caller may discover.
@@ -192,8 +194,8 @@ async def visibility_for_principal(
         for binding in bindings
         if binding.scope_type is ScopeType.DATASET and binding.scope_id is not None
     )
-    projects = await repository.project_visibilities()
-    parents = await repository.dataset_parents(dataset_ids) if dataset_ids else {}
+    projects = await hierarchy.project_visibilities()
+    parents = await hierarchy.dataset_parents(dataset_ids) if dataset_ids else {}
     return authorizer.visibility(
         actor,
         bindings,
@@ -209,17 +211,23 @@ class AccessPolicy:
     """
 
     def __init__(
-        self, actor: Principal, repository: HierarchyRepository, authorizer: RoleBindingAuthorizer
+        self,
+        actor: Principal,
+        hierarchy: HierarchyFacts,
+        repository: BindingFacts,
+        authorizer: RoleBindingAuthorizer,
     ) -> None:
         """Bind an authenticated actor to authoritative permission sources.
 
         Args:
             actor: The authenticated caller.
+            hierarchy: Current catalog discovery facts and typed readers.
             repository: Catalog and role-binding operations.
             authorizer: Classification-aware discovery policy.
         """
         self.actor = actor
         self._repository = repository
+        self._hierarchy = hierarchy
         self._authorizer = authorizer
 
     def require_claim(self, claim: IdempotencyClaim) -> None:
@@ -243,7 +251,9 @@ class AccessPolicy:
         Returns:
             The resources this actor may discover.
         """
-        return await visibility_for_principal({}, self._repository, self.actor, self._authorizer)
+        return await visibility_for_principal(
+            {}, self._repository, self.actor, self._authorizer, self._hierarchy
+        )
 
     async def scope(self, kind: ScopeType, resource_id: UUID | None = None) -> Scope:
         """Resolve authoritative ancestry, refusing undiscoverable resources first.
@@ -262,7 +272,7 @@ class AccessPolicy:
             return Scope.system()
         if resource_id is None:
             raise ValueError("resource scope requires an identifier")
-        return await resource_scope(self._repository, kind, resource_id, await self.visibility())
+        return await self._resolve_scope(kind, resource_id, await self.visibility())
 
     async def require(
         self,
@@ -292,4 +302,27 @@ class AccessPolicy:
         Returns:
             Its authoritative catalog record.
         """
-        return await self._repository.dataset(dataset_id, await self.visibility())
+        return await self._hierarchy.datasets.get(dataset_id, await self.visibility())
+
+    async def _resolve_scope(
+        self, kind: ScopeType, resource_id: UUID, visibility: Visibility
+    ) -> Scope:
+        """Resolve discovery and ancestry within an already computed operation context.
+
+        Args:
+            kind: The addressed catalog resource kind.
+            resource_id: Its identifier.
+            visibility: Discovery rights computed for this operation.
+
+        Returns:
+            The authoritative scope, after discovery succeeds.
+        """
+        return await resource_scope(self._hierarchy, kind, resource_id, visibility)
+
+    async def bindings(self) -> tuple[Binding, ...]:
+        """Read current human or service-account authority for this actor.
+
+        Returns:
+            The current compiled bindings, without retaining a permission cache.
+        """
+        return await bindings_for_principal({}, self._repository, as_rbac_principal(self.actor))

@@ -52,22 +52,22 @@ api: ## Run the API on the host with autoreload, configured by dev.env, against 
 test: ## Run the fast unit suite.
 	uv run pytest -m unit
 
-test-acceptance: ## Run the acceptance suite (needs ≥ 10 GiB free disk).
+test-acceptance: ## Run the acceptance suite (needs ≥ 25 GiB free disk).
 	uv run pytest -m acceptance
 
-lint: ## Run every static check the validation gate enforces.
-	uv run ruff check .
-	uv run ruff format --check .
-	uv run pydoclint src migrations scripts
+lint: ## Lint source under src and validate the migration schema map.
+	uv run ruff check src
+	uv run ruff format --check src
+	uv run pydoclint src
 	uv run mypy
 	uv run ty check
 	uv run lint-imports
 	uv run python scripts/check_schema_map.py
-	uv run radon cc src/huron --min C
-	uv run radon mi src/huron --min B
-	uv run complexipy src/huron --max-complexity-allowed 15
-	uv run --locked pyscn check src/huron
-	uv run --locked python scripts/check_duplication.py src/huron
+	uv run radon cc src --min C
+	uv run radon mi src --min B
+	uv run complexipy src --max-complexity-allowed 15
+	uv run --locked pyscn check src
+	uv run --locked python scripts/check_duplication.py src
 
 docs: ## Build the documentation site, failing on broken internal links.
 	uv run --group docs zensical build --strict

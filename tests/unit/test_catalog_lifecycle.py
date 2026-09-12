@@ -11,7 +11,7 @@ from huron.core.idempotency import request_sha256
 from huron.pkg.catalog.lifecycle import DatasetLifecycle
 from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
 from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import Visibility
+from tests.catalog_creation_support import creation_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,18 +42,20 @@ async def test_created_dataset_is_active(tmp_path: Path) -> None:
     repository = HierarchyRepository(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        classification_vocabulary=("internal",),
         rbac_store=InMemoryRbacStore(),
     )
-    organization = await repository.create_organization(
+    organization = await (
+        await creation_for(repository, classifications=("internal",), visible=True)
+    ).create_organization(
         slug="acme",
         title="Acme",
         description="",
         claim=_claim("organization", "acme", "Acme", "", key="org-1"),
     )
-    project = await repository.create_project(
+    project = await (
+        await creation_for(repository, classifications=("internal",), visible=True)
+    ).create_project(
         organization.id,
-        Visibility.ALL,
         slug="widgets",
         title="Widgets",
         description="",
@@ -62,9 +64,10 @@ async def test_created_dataset_is_active(tmp_path: Path) -> None:
             "project", str(organization.id), "widgets", "Widgets", "", "internal", key="proj-1"
         ),
     )
-    dataset = await repository.create_dataset(
+    dataset = await (
+        await creation_for(repository, classifications=("internal",), visible=True)
+    ).create_dataset(
         project.id,
-        Visibility.ALL,
         slug="orders",
         title="Orders",
         description="",

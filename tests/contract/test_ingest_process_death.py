@@ -103,7 +103,7 @@ async def _assert_commit_death(dsn: str, root: Path, boundary: str) -> None:
     try:
         store = PostgresHierarchyStore(pool, clock=FakeClock(_NOW))
         hierarchy = await seed_hierarchy(store)
-        dataset = await store.dataset(hierarchy.datasets["run-0001"], Visibility.ALL)
+        dataset = await store.datasets.get(hierarchy.datasets["run-0001"], Visibility.ALL)
         raw = PosixRawStore(root)
         raw.initialize()
         service = IngestService(raw, store, clock=FakeClock(_NOW))
@@ -234,7 +234,7 @@ async def _assert_file_completion_death(dsn: str, root: Path, boundary: str) -> 
     try:
         store = PostgresHierarchyStore(pool, clock=FakeClock(_NOW))
         hierarchy = await seed_hierarchy(store)
-        dataset = await store.dataset(hierarchy.datasets["run-0001"], Visibility.ALL)
+        dataset = await store.datasets.get(hierarchy.datasets["run-0001"], Visibility.ALL)
         raw = PosixRawStore(root)
         raw.initialize()
         service = IngestService(raw, store, clock=FakeClock(_NOW))
@@ -344,7 +344,7 @@ async def _completion_race(
     try:
         store = PostgresHierarchyStore(pool, clock=FakeClock(_NOW))
         hierarchy = await seed_hierarchy(store)
-        dataset = await store.dataset(hierarchy.datasets["run-0001"], Visibility.ALL)
+        dataset = await store.datasets.get(hierarchy.datasets["run-0001"], Visibility.ALL)
         raw = PosixRawStore(root)
         raw.initialize()
         service = IngestService(raw, store, clock=FakeClock(_NOW))

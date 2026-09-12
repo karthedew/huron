@@ -1,0 +1,300 @@
+{
+  "$defs": {
+    "DocumentObservation": {
+      "additionalProperties": false,
+      "description": "Document bytes or explicit absence, without an invented content identity.",
+      "else": {
+        "properties": {
+          "sha256_digest": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "state": {
+            "const": "PRESENT"
+          }
+        }
+      },
+      "properties": {
+        "state": {
+          "enum": [
+            "PRESENT",
+            "ABSENT",
+            "ERROR"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "sha256_digest": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256 Digest"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "then": {
+        "properties": {
+          "sha256_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha256_digest"
+        ]
+      },
+      "title": "DocumentObservation",
+      "type": "object"
+    },
+    "FenceEvidence": {
+      "additionalProperties": false,
+      "description": "Controller and database identities whose enforced exclusion protects a scan.",
+      "properties": {
+        "controller_id": {
+          "format": "uuid",
+          "title": "Controller Id",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 1,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "root_id": {
+          "format": "uuid",
+          "title": "Root Id",
+          "type": "string"
+        },
+        "operator": {
+          "minLength": 1,
+          "title": "Operator",
+          "type": "string"
+        },
+        "terminated_writers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Terminated Writers",
+          "type": "array"
+        },
+        "old_roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Old Roles",
+          "type": "array"
+        },
+        "new_role": {
+          "minLength": 1,
+          "title": "New Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "controller_id",
+        "generation",
+        "root_id",
+        "operator",
+        "terminated_writers",
+        "old_roles",
+        "new_role"
+      ],
+      "title": "FenceEvidence",
+      "type": "object"
+    },
+    "GenerationObservation": {
+      "additionalProperties": false,
+      "description": "Exact structural control bytes checked against the authoritative hierarchy.",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256 Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256_digest"
+      ],
+      "title": "GenerationObservation",
+      "type": "object"
+    },
+    "LegacyRevision": {
+      "additionalProperties": false,
+      "description": "One trustworthy revision identity and its observed integrity outcome.",
+      "else": {
+        "properties": {
+          "findings": {
+            "minItems": 1
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "VERIFIED"
+          }
+        }
+      },
+      "properties": {
+        "revision_id": {
+          "format": "uuid",
+          "title": "Revision Id",
+          "type": "string"
+        },
+        "dataset_id": {
+          "format": "uuid",
+          "title": "Dataset Id",
+          "type": "string"
+        },
+        "number": {
+          "maximum": 999999,
+          "minimum": 1,
+          "title": "Number",
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "committed": {
+          "$ref": "#/$defs/DocumentObservation"
+        },
+        "manifest": {
+          "$ref": "#/$defs/DocumentObservation"
+        },
+        "metadata": {
+          "$ref": "#/$defs/DocumentObservation"
+        },
+        "outcome": {
+          "enum": [
+            "VERIFIED",
+            "DEGRADED"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "findings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "total_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Total Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision_id",
+        "dataset_id",
+        "number",
+        "path",
+        "committed",
+        "manifest",
+        "metadata",
+        "outcome",
+        "findings",
+        "total_bytes"
+      ],
+      "then": {
+        "properties": {
+          "findings": {
+            "maxItems": 0
+          },
+          "committed": {
+            "properties": {
+              "state": {
+                "const": "PRESENT"
+              }
+            }
+          },
+          "manifest": {
+            "properties": {
+              "state": {
+                "const": "PRESENT"
+              }
+            }
+          },
+          "metadata": {
+            "properties": {
+              "state": {
+                "const": "PRESENT"
+              }
+            }
+          }
+        }
+      },
+      "title": "LegacyRevision",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The complete legacy population observed under one uninterrupted fence.",
+  "properties": {
+    "schema": {
+      "const": "urn:huron:protocol-inventory:1",
+      "default": "urn:huron:protocol-inventory:1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "root_id": {
+      "format": "uuid",
+      "title": "Root Id",
+      "type": "string"
+    },
+    "fence": {
+      "$ref": "#/$defs/FenceEvidence"
+    },
+    "revisions": {
+      "items": {
+        "$ref": "#/$defs/LegacyRevision"
+      },
+      "title": "Revisions",
+      "type": "array"
+    },
+    "generations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/GenerationObservation"
+      },
+      "title": "Generations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "root_id",
+    "fence",
+    "revisions"
+  ],
+  "title": "ProtocolInventory",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:huron:protocol-inventory:1"
+}

@@ -13,11 +13,12 @@ import uvicorn
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
 from huron.pkg.catalog import PART_BYTES
+from tests.acceptance_support import require_upload_capacity
 from tests.ingest_client import IngestClient, declared_file, sparse_file, zeros_sha256
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
     from typing import BinaryIO
 
@@ -42,6 +43,7 @@ def stores() -> ApiStores:
 @pytest.fixture
 def _loopback_base_url(tmp_path: Path, stores: ApiStores) -> Iterator[str]:
     """Serve the wired app under ``uvicorn`` on a background thread, bound to a free port."""
+    require_upload_capacity(tmp_path)
     settings = ApiSettings(
         env="development",
         auth_mode="dev-headers",
@@ -85,7 +87,9 @@ def client(_loopback_base_url: str) -> Iterator[httpx.Client]:
 
 
 def test_a_nine_gib_file_round_trips_byte_identically_after_an_interrupted_upload_resumes(
-    client: httpx.Client, tmp_path: Path
+    client: httpx.Client,
+    tmp_path: Path,
+    record_testsuite_property: Callable[[str, object], None],
 ) -> None:
     """A 9 GiB upload survives one client stopping mid-transfer and a second one finishing it."""
     first = IngestClient(client)
@@ -119,6 +123,7 @@ def test_a_nine_gib_file_round_trips_byte_identically_after_an_interrupted_uploa
     assert sorted(resumed["files"][0]["completed_parts"]) == list(range(1, entry["part_count"] + 1))
 
     completion = second.complete(entry["file_id"])
+    record_testsuite_property("completion_seconds", completion.elapsed.total_seconds())
     assert completion.status_code == 200, completion.text
     assert completion.json()["state"] == "COMPLETE"
 
@@ -131,6 +136,7 @@ def test_a_nine_gib_file_round_trips_byte_identically_after_an_interrupted_uploa
         verified_body["etag"],
         {"title": "Nine GiB", "creators": [second.subject]},
     )
+    record_testsuite_property("commit_client_seconds", committed.elapsed.total_seconds())
     assert committed.status_code == 201, committed.text
     revision_id = committed.json()["id"]
 

@@ -341,7 +341,7 @@ The same implementation passed 990 local unit tests (94.32% coverage), 13 Postgr
 tests, <code>make lint</code>, and the strict documentation build. The integration marker has
 no tests; it is not additional integration coverage. Automatic staging deletion and orphan
 reconciliation remain P3; search projection remains P4. <strong>P3 remains incomplete:</strong> verified completion copies and frozen commit documents
-are implemented and under validation; writer exclusion, offline cutover and startup gates remain
+have independent functional acceptance; writer exclusion, offline cutover and startup gates remain
 required before deployment. P2's historical tests did not exclude stale writable handles.
 The first P3 release adds verified completion copies, frozen commit intent, COMMITTED v2 and a
 fenced offline cutover; this historical P2 receipt does not verify those new guarantees.</p></td>
@@ -358,9 +358,15 @@ proves the on-disk state each crash leaves.</td></tr>
 <tr><td class="k">P3 — Integrity services<br><span class="tag">todo</span></td>
 <td><strong>Design complete; implementation partial and under validation.</strong> M1a implements verified completion and frozen commit documents, but is not deployable until M1b writer exclusion/legacy verification and M1c cutover/startup/acceptance pass.
 <a href="../P3_DESIGN.md">Design</a> · <a href="../P3_IMPLEMENTATION_PLAN.md">Implementation plan</a>.
-<a href="../P3_M1A_VALIDATION.md">M1a validation record (2026-09-09)</a>: real PostgreSQL and
-filesystem evidence is recorded; the native duplication gate remains below 90 and the 9 GiB
-acceptance run remains blocked by disk capacity. M1a is not marked complete.
+<a href="../P3_M1A_VALIDATION.md">M1a validation record (2026-09-11)</a>: local functional acceptance
+passed, including the real-socket 9 GiB round trip and separate PostgreSQL/POSIX suites.
+<a href="../p3-evidence/m1a/verification1/report.md">Independent M1a functional verification passed</a>;
+the native duplication gate remains 55/100 against 90. M1a alone is not deployable.
+M1b implements controlled local Linux exclusion and legacy verification and has
+<a href="../P3_M1B_VALIDATION.md">local functional acceptance</a>, with independent verification pending;
+<a href="../docs/operations/controlled-cutover.md">its deployment contract</a> excludes ordinary development
+Compose and unmanaged host writers. M1b's native duplication score remains 60/100 against 90.
+M1c activation and startup remain required.
 First deployable slice: verified file-completion copies, frozen commit documents and externally fenced
 protocol cutover. Then recovery orchestration using the implemented RECOVERING state and safe orphan import, versioned governance evidence, integrity/read
 rules, findings, staging-only guarded cleanup and offline Raw catalog rebuild. P5 originates governance

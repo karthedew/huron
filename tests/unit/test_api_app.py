@@ -291,7 +291,7 @@ def test_create_app_without_injected_stores_opens_one_pool_and_wires_every_postg
     with TestClient(app) as client:
         runtime = client.app.state.runtime
         assert calls == [("postgresql://example/huron",)]
-        assert isinstance(runtime.repository._rbac_store, PostgresRbacStore)
+        assert isinstance(runtime.repository.rbac, PostgresRbacStore)
         assert isinstance(runtime.api_keys, PostgresApiKeyStore)
         assert isinstance(runtime.credentials, PostgresCredentialStore)
         assert isinstance(runtime.sessions, PostgresSessionStore)
@@ -342,7 +342,7 @@ def test_injected_stores_are_the_ones_the_runtime_exposes(tmp_path: Path) -> Non
     stores = memory_stores()
     with TestClient(create_app(settings=settings, stores=stores)) as client:
         runtime = client.app.state.runtime
-        assert runtime.repository._rbac_store is stores.rbac
+        assert runtime.repository.rbac is stores.rbac
         assert runtime.api_keys is stores.api_keys
         assert runtime.credentials is stores.credentials
         assert runtime.sessions is stores.sessions

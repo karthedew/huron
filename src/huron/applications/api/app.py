@@ -100,14 +100,13 @@ def _build_runtime(
         max_concurrent_completions=settings.completion_max_concurrent,
         completion_reserve_bytes=settings.completion_reserve_bytes,
     )
-    classifications = tuple(value.code for value in settings.classification_vocabulary)
-    repository = HierarchyRepository(
-        raw_store, wired.hierarchy, classification_vocabulary=classifications, rbac_store=wired.rbac
-    )
+    repository = HierarchyRepository(raw_store, wired.hierarchy, rbac_store=wired.rbac)
     oidc_resolver, oidc_client = oidc
     return ApiRuntime(
         settings=settings,
         repository=repository,
+        hierarchy=wired.hierarchy,
+        rbac=wired.rbac,
         ingest=IngestService(raw_store, wired.hierarchy, clock=clock),
         revisions=RevisionService(raw_store, wired.hierarchy),
         authorizer=RoleBindingAuthorizer(

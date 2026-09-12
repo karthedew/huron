@@ -26,3 +26,6 @@ htmlcov/
 # Parked by the src/huron restructure (2026-08-23) — safe to delete manually,
 # the sandbox that did the move can't unlink files itself.
 _to_delete/
+
+# /teach learning workspace (personal, not part of the product)
+learning/

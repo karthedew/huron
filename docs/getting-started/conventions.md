@@ -4,21 +4,23 @@
 make lint    # every static check CI enforces
 ```
 
-That is the static validation gate. Tests run separately as documented in AGENTS.md;
-every applicable check must be clean:
+Static lint covers `src/`. Tests run separately as documented in AGENTS.md, and
+migration schema-map validation remains required. Source thresholds and import
+contracts apply unchanged:
 
 ```bash
-uv run ruff check .                              # lint, including docstring presence and shape
-uv run ruff format --check .                     # formatting
-uv run pydoclint src migrations scripts          # docstrings match signatures (see below)
+uv run ruff check src                            # lint, including docstring presence and shape
+uv run ruff format --check src                   # formatting
+uv run pydoclint src                             # docstrings match signatures (see below)
 uv run mypy                                      # types, strict
 uv run ty check                                  # types, second opinion
 uv run lint-imports                              # architectural boundaries
 uv run python scripts/check_schema_map.py        # migrations/schema.sql is current
-uv run radon cc src/huron --min C                # cyclomatic complexity, informational
-uv run radon mi src/huron --min B                # maintainability index, informational
-uv run complexipy src/huron --max-complexity-allowed 15
-uv run pyscn check src/huron                     # dead code, complexity, clones
+uv run radon cc src --min C                      # complexity; output must be empty
+uv run radon mi src --min B                      # maintainability; output must be empty
+uv run complexipy src --max-complexity-allowed 15
+uv run --locked pyscn check src                 # dead code, complexity, clones
+uv run --locked python scripts/check_duplication.py src  # native score must reach 90
 ```
 
 ## Formatting and lint
@@ -37,17 +39,14 @@ Per-file ignores exist and are narrow, each for a stated reason:
 - `D301` (raw string for a docstring with a backslash) is waived for route modules
   (`routes/**/endpoints/*.py` and `app.py`), whose docstrings hold a `\f` so that FastAPI stops the
   published OpenAPI description before the `Args`/`Returns`/`Raises` sections.
-- `D105` and `D107` are waived under `tests/**`: a test double's dunder methods and constructor
-  need no docstring, everything else in a test module does.
 
 Do not add a suppression to make a check pass. If a rule genuinely cannot be satisfied, the
 narrow per-file ignore goes in `pyproject.toml` with a comment saying why.
 
 ## Types
 
-`mypy --strict` covers `src/huron/pkg` and `src/huron/schema`. Services are composition roots full
-of third-party wiring and join once the frameworks they compose have settled — which means **new
-logic belongs in a package, where it is type-checked**, and services stay thin.
+`mypy --strict` and `ty` cover all of `src/`, including application wiring, core,
+packages and schemas. Applications stay thin and reusable workflows belong in core.
 
 Annotate every public function and method. `Any` is for genuinely open types, not for silencing.
 

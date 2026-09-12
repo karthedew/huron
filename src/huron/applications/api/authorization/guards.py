@@ -16,8 +16,8 @@ from uuid import UUID
 
 from fastapi import Path
 
-from huron.core._catalog import HierarchyRepository
 from huron.core._ingest import SessionLedger
+from huron.core.catalog_ports import BindingFacts
 from huron.core.scopes import dataset_scope, project_scope, resource_scope
 from huron.pkg.auth import Principal
 from huron.pkg.catalog import IngestFile, RevisionRecord
@@ -30,7 +30,7 @@ from huron.pkg.catalog.layers import (
 )
 from huron.pkg.rbac import Scope, ScopeType
 
-from ..runtime import Ingest, Repository, Revisions
+from ..runtime import Bindings, Hierarchy, Ingest, Revisions
 from .credentials import CurrentPrincipal
 from .decisions import BindingCache, BindingCacheMap, CurrentVisibility, check
 
@@ -56,7 +56,7 @@ def require_system(capability: str) -> Callable[..., Awaitable[Principal]]:
     """
 
     async def dependency(
-        principal: CurrentPrincipal, repository: Repository, cache: BindingCache
+        principal: CurrentPrincipal, repository: Bindings, cache: BindingCache
     ) -> Principal:
         """Enforce the bound capability at SYSTEM scope.
 
@@ -91,8 +91,9 @@ def _require_resource(
     async def dependency(
         resource_id: Annotated[UUID, Path(alias=path_parameter)],
         principal: CurrentPrincipal,
-        repository: Repository,
+        repository: Bindings,
         cache: BindingCache,
+        hierarchy: Hierarchy,
         visibility: CurrentVisibility,
     ) -> Principal:
         """Resolve the addressed resource and enforce the bound capability.
@@ -102,12 +103,13 @@ def _require_resource(
             principal: The authenticated caller.
             repository: Source of resource ancestry and role bindings.
             cache: The request's binding cache.
+            hierarchy: Typed catalog readers used for authoritative ancestry.
             visibility: The caller's discovery rights.
 
         Returns:
             The caller after discovery and capability checks pass.
         """
-        scope = await resource_scope(repository, kind, resource_id, visibility)
+        scope = await resource_scope(hierarchy, kind, resource_id, visibility)
         await check(cache, repository, principal, capability, scope)
         return principal
 
@@ -204,7 +206,7 @@ class IngestDrive:
 
 
 async def _raw_write(
-    cache: BindingCacheMap, repository: HierarchyRepository, principal: Principal, scope: Scope
+    cache: BindingCacheMap, repository: BindingFacts, principal: Principal, scope: Scope
 ) -> None:
     """Refuse a raw-layer write the kind rule or the caller's bindings forbid.
 
@@ -227,8 +229,9 @@ async def _raw_write(
 async def dataset_raw_writer(
     dataset_id: UUID,
     principal: CurrentPrincipal,
-    repository: Repository,
+    repository: Bindings,
     cache: BindingCache,
+    hierarchy: Hierarchy,
     visibility: CurrentVisibility,
 ) -> Principal:
     """Guard opening a raw ingest session on an existing dataset.
@@ -242,13 +245,14 @@ async def dataset_raw_writer(
         repository: Resolves the dataset's ancestry and the caller's
             bindings.
         cache: The request's binding cache.
+        hierarchy: Typed catalog readers used for authoritative ancestry.
         visibility: The caller's discovery rights, used to resolve
             ``dataset_id``.
 
     Returns:
         The caller, as proof the checks passed.
     """
-    scope = await dataset_scope(repository, dataset_id, visibility)
+    scope = await dataset_scope(hierarchy, dataset_id, visibility)
     await _raw_write(cache, repository, principal, scope)
     return principal
 
@@ -256,8 +260,9 @@ async def dataset_raw_writer(
 async def project_intake(
     project_id: UUID,
     principal: CurrentPrincipal,
-    repository: Repository,
+    repository: Bindings,
     cache: BindingCache,
+    hierarchy: Hierarchy,
     visibility: CurrentVisibility,
 ) -> Principal:
     """Guard minting a dataset at intake and opening its first raw ingest session.
@@ -273,13 +278,14 @@ async def project_intake(
         repository: Resolves the project's ancestry and the caller's
             bindings.
         cache: The request's binding cache.
+        hierarchy: Typed catalog readers used for authoritative ancestry.
         visibility: The caller's discovery rights, used to resolve
             ``project_id``.
 
     Returns:
         The caller, as proof the checks passed.
     """
-    scope = await project_scope(repository, project_id, visibility)
+    scope = await project_scope(hierarchy, project_id, visibility)
     await _raw_write(cache, repository, principal, scope)
     await check(cache, repository, principal, "dataset.create", scope)
     return principal
@@ -288,9 +294,10 @@ async def project_intake(
 async def session_overseer(
     session_id: UUID,
     principal: CurrentPrincipal,
-    repository: Repository,
+    repository: Bindings,
     ingest: Ingest,
     cache: BindingCache,
+    hierarchy: Hierarchy,
     visibility: CurrentVisibility,
 ) -> IngestDrive:
     """Guard reading or aborting a session: the owner, or a project admin.
@@ -302,6 +309,7 @@ async def session_overseer(
             bindings.
         ingest: The ingest service the session's ledger is read from.
         cache: The request's binding cache.
+        hierarchy: Typed catalog readers used for authoritative ancestry.
         visibility: The caller's discovery rights, used to resolve the
             session's dataset.
 
@@ -310,7 +318,7 @@ async def session_overseer(
         the caller is the session's owner.
     """
     ledger = await ingest.ledger(session_id)
-    scope = await dataset_scope(repository, ledger.dataset_id, visibility)
+    scope = await dataset_scope(hierarchy, ledger.dataset_id, visibility)
     owner = ledger.created_by == principal.subject
     if not owner:
         await check(cache, repository, principal, "project.update", scope)
@@ -320,9 +328,10 @@ async def session_overseer(
 async def session_owner(
     session_id: UUID,
     principal: CurrentPrincipal,
-    repository: Repository,
+    repository: Bindings,
     ingest: Ingest,
     cache: BindingCache,
+    hierarchy: Hierarchy,
     visibility: CurrentVisibility,
 ) -> IngestDrive:
     """Guard driving a session: the owner alone, and only while their raw-write binding stands.
@@ -340,6 +349,7 @@ async def session_owner(
             bindings.
         ingest: The ingest service the session's ledger is read from.
         cache: The request's binding cache.
+        hierarchy: Typed catalog readers used for authoritative ancestry.
         visibility: The caller's discovery rights, used to resolve the
             session's dataset.
 
@@ -349,10 +359,12 @@ async def session_owner(
     Raises:
         Forbidden: If the caller does not own the session.
     """
-    drive = await session_overseer(session_id, principal, repository, ingest, cache, visibility)
+    drive = await session_overseer(
+        session_id, principal, repository, ingest, cache, hierarchy, visibility
+    )
     if not drive.owner:
         raise Forbidden(f"{principal.subject} does not own ingest session {session_id}")
-    scope = await dataset_scope(repository, drive.ledger.dataset_id, visibility)
+    scope = await dataset_scope(hierarchy, drive.ledger.dataset_id, visibility)
     await _raw_write(cache, repository, principal, scope)
     return drive
 
@@ -373,9 +385,10 @@ class UploadTarget:
 async def upload_owner(
     file_id: UUID,
     principal: CurrentPrincipal,
-    repository: Repository,
+    repository: Bindings,
     ingest: Ingest,
     cache: BindingCache,
+    hierarchy: Hierarchy,
     visibility: CurrentVisibility,
 ) -> UploadTarget:
     """Guard driving one file's upload: the owner alone, while their raw-write binding stands.
@@ -393,6 +406,7 @@ async def upload_owner(
         ingest: The ingest service the file and its session's ledger are
             read from.
         cache: The request's binding cache.
+        hierarchy: Typed catalog readers used for authoritative ancestry.
         visibility: The caller's discovery rights, used to resolve the
             session's dataset.
 
@@ -405,7 +419,7 @@ async def upload_owner(
             belongs to.
     """
     ledger, file = await ingest.entry(file_id)
-    scope = await dataset_scope(repository, ledger.dataset_id, visibility)
+    scope = await dataset_scope(hierarchy, ledger.dataset_id, visibility)
     if ledger.created_by != principal.subject:
         raise Forbidden(f"{principal.subject} does not own ingest session {ledger.id}")
     await _raw_write(cache, repository, principal, scope)
@@ -428,8 +442,9 @@ async def revision_raw_reader(
     revision_id: UUID,
     principal: CurrentPrincipal,
     revisions: Revisions,
-    repository: Repository,
+    repository: Bindings,
     cache: BindingCache,
+    hierarchy: Hierarchy,
     visibility: CurrentVisibility,
 ) -> RevisionRead:
     """Guard downloading a revision's raw bytes: resolve it, then require ``data.read@raw``.
@@ -447,6 +462,7 @@ async def revision_raw_reader(
         repository: Resolves the revision's dataset scope and the
             caller's bindings.
         cache: The request's binding cache.
+        hierarchy: Typed catalog readers used for authoritative ancestry.
         visibility: The caller's discovery rights, used to resolve
             ``revision_id`` and the dataset scope.
 
@@ -455,7 +471,7 @@ async def revision_raw_reader(
         the resolved record.
     """
     record = await revisions.revision(revision_id, visibility)
-    scope = await dataset_scope(repository, record.dataset_id, visibility)
+    scope = await dataset_scope(hierarchy, record.dataset_id, visibility)
     capability, layer = required_capability(LayerAction.READ, Layer.RAW)
     await check(cache, repository, principal, capability, scope, layer=layer)
     return RevisionRead(principal, record)

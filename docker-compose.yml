@@ -1,5 +1,9 @@
 name: huron
 
+# Development stack: owner credentials and ordinary Compose restart authority
+# are not a writer-exclusion provider. Controlled verification uses the private
+# Linux deployment contract in docs/operations/controlled-cutover.md.
+
 services:
   postgres:
     image: postgres:16

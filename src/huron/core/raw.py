@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from ._ingest import IngestService, SessionLedger
     from .access import AccessPolicy
-    from .catalog import CatalogService
+    from .catalog_creation import CatalogCreation
 
 from huron.pkg.catalog import validate_manifest
 from huron.pkg.catalog.failures import Forbidden
@@ -35,7 +35,7 @@ class RawIngestionService:
     """Authorize every upload step before the internal ingestion workflow executes it."""
 
     def __init__(
-        self, operations: IngestService, access: AccessPolicy, catalog: CatalogService
+        self, operations: IngestService, access: AccessPolicy, catalog: CatalogCreation
     ) -> None:
         """Bind upload operations to one authenticated actor.
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=Huron application restart admission
+Requires=huron-engine.service
+After=huron-engine.service
+
+[Service]
+Type=exec
+User=root
+UMask=0077
+RuntimeDirectory=huron-controller
+RuntimeDirectoryMode=0755
+StateDirectory=huron-controller
+StateDirectoryMode=0700
+ExecStart=/opt/huron/bin/lakectl controller --config /etc/huron/controller.json
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

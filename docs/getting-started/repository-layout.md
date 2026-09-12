@@ -3,7 +3,8 @@
 ```text
 huron/
 ├── design/                  THE authoritative design record (15 cross-linked HTML documents)
-├── IMPLEMENTATION_PLAN.md   build order and code-level mechanics, P0–P10
+├── IMPLEMENTATION_PLAN.md   duplication refactoring sequence and verification gates
+├── AUTH_IMPLEMENTATION_PLAN.md  historical authentication implementation plan
 ├── RBAC_IMPLEMENTATION_PLAN.md
 ├── docs/                    this site — how to work on the repository
 ├── migrations/              Alembic; schema.sql is a read-only summary of the whole metastore

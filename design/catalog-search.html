@@ -502,7 +502,7 @@ Access policy must be restored and unambiguous before activation; governance rea
 removal. No placeholder parents, synthetic approvals or deletion during rebuild. V1 membership is exact
 cutover inventory/digests, not timestamps. Derived-layer registry, lineage and projection rebuilds follow
 in their owning phases. RBAC, credentials, audit, holds, original outbox and idempotency require backups.</li>
-<li>The reconciler (see <a href="layer-raw.html#sweeper">Raw §9</a>) also cross-checks the layer
+<li>The reconciler (see <a href="layer-raw.html#sweeper">Raw §10</a>) also cross-checks the layer
 registry: every PUBLISHED snapshot row must resolve to a live Icechunk ref, and every repo main
 branch must be recorded — disagreement is <code>DEGRADED</code> + alert, never silent repair.</li>
 </ul>

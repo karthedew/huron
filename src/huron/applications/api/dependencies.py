@@ -6,6 +6,7 @@ from fastapi import Depends
 
 from huron.core.access import AccessPolicy
 from huron.core.catalog import CatalogService
+from huron.core.catalog_creation import CatalogCreation
 from huron.core.identity import IdentityService
 from huron.core.raw import RawIngestionService
 from huron.core.revisions import RevisionReadService
@@ -25,11 +26,36 @@ def catalog_service(runtime: Runtime, actor: CurrentPrincipal) -> CatalogService
         Catalog operations that enforce the actor's permissions themselves.
     """
     return CatalogService(
-        runtime.repository, AccessPolicy(actor, runtime.repository, runtime.authorizer)
+        runtime.repository,
+        AccessPolicy(actor, runtime.hierarchy, runtime.rbac, runtime.authorizer),
+        runtime.hierarchy,
     )
 
 
 Catalog = Annotated[CatalogService, Depends(catalog_service)]
+
+
+def catalog_creation(runtime: Runtime, actor: CurrentPrincipal) -> CatalogCreation:
+    """Bind explicit identity creation to the authenticated actor.
+
+    Args:
+        runtime: The process's initialized capabilities and classification settings.
+        actor: The authenticated caller.
+
+    Returns:
+        Authorized creation with transaction-scoped retry and durable publication.
+    """
+    return CatalogCreation(
+        AccessPolicy(actor, runtime.hierarchy, runtime.rbac, runtime.authorizer),
+        runtime.hierarchy,
+        runtime.repository.raw_store,
+        classification_vocabulary=tuple(
+            value.code for value in runtime.settings.classification_vocabulary
+        ),
+    )
+
+
+Creation = Annotated[CatalogCreation, Depends(catalog_creation)]
 
 
 def raw_ingestion_service(runtime: Runtime, actor: CurrentPrincipal) -> RawIngestionService:
@@ -44,8 +70,8 @@ def raw_ingestion_service(runtime: Runtime, actor: CurrentPrincipal) -> RawInges
     """
     return RawIngestionService(
         runtime.ingest,
-        AccessPolicy(actor, runtime.repository, runtime.authorizer),
-        catalog_service(runtime, actor),
+        AccessPolicy(actor, runtime.hierarchy, runtime.rbac, runtime.authorizer),
+        catalog_creation(runtime, actor),
     )
 
 
@@ -63,7 +89,7 @@ def identity_service(runtime: Runtime, actor: CurrentPrincipal) -> IdentityServi
         Authorized identity operations.
     """
     return IdentityService(
-        AccessPolicy(actor, runtime.repository, runtime.authorizer),
+        AccessPolicy(actor, runtime.hierarchy, runtime.rbac, runtime.authorizer),
         runtime.principals,
         runtime.credentials,
         runtime.sessions,
@@ -86,7 +112,7 @@ def revision_service(runtime: Runtime, actor: CurrentPrincipal) -> RevisionReadS
         Authorized revision reads.
     """
     return RevisionReadService(
-        runtime.revisions, AccessPolicy(actor, runtime.repository, runtime.authorizer)
+        runtime.revisions, AccessPolicy(actor, runtime.hierarchy, runtime.rbac, runtime.authorizer)
     )
 
 

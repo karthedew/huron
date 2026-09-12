@@ -54,7 +54,7 @@ versus outstanding. Landing work updates its tag there in the same change. This 
 status copy of its own, so there is exactly one to keep true.
 
 For the day-to-day build order and what's landed in the auth and RBAC slices specifically, see
-`IMPLEMENTATION_PLAN.md` and `RBAC_IMPLEMENTATION_PLAN.md` at the repository root.
+`AUTH_IMPLEMENTATION_PLAN.md` and `RBAC_IMPLEMENTATION_PLAN.md` at the repository root.
 
 !!! warning "One status copy"
 

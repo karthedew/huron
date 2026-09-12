@@ -1,0 +1,24 @@
+{
+  "name": "huron-controlled",
+  "services": {
+    "api": {
+      "image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "user": "1001",
+      "command": ["uvicorn", "huron.applications.api.main:app", "--host", "0.0.0.0", "--port", "8080"],
+      "environment": {
+        "HURON_DATABASE_URL": "postgresql://huron_app_legacy:REPLACE_PRIVATE_PASSWORD@postgres:5432/huron",
+        "HURON_DATA_ROOT": "/data",
+        "HURON_ENV": "production",
+        "HURON_AUTH_MODE": "oidc",
+        "HURON_OIDC__ISSUER": "https://identity.example.invalid/realms/huron",
+        "HURON_OIDC__CLIENT_ID": "huron",
+        "HURON_OIDC__CLIENT_SECRET": "REPLACE_PRIVATE_OIDC_SECRET",
+        "HURON_OIDC__REDIRECT_URL": "https://huron.example.invalid/auth/oidc/callback",
+        "HURON_LOGIN_FLOW_SECRET": "REPLACE_PRIVATE_FLOW_SECRET",
+        "HURON_CLASSIFICATION_VOCABULARY": "[{\"code\":\"internal\",\"order\":0,\"discoverable\":false}]"
+      },
+      "volumes": [{"type": "volume", "source": "huron-raw", "target": "/data"}],
+      "networks": ["huron-controlled"]
+    }
+  }
+}

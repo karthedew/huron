@@ -69,13 +69,14 @@ Directory link counts are not file link counts: require `st_nlink == 1` for
 regular owned files, not directories. Refuse symlinks, special files, escaping
 paths, wrong owners and unexpected entries; do not follow them during scans.
 
-Storage layout: normal upload/completion/envelope separation is implemented; protocol, recovery and cleanup areas remain planned:
+Storage layout: normal upload/completion/envelope separation is implemented. Preparatory protocol evidence and legacy verification are implemented and under review; initialization, activation/startup, recovery and cleanup remain planned:
 
 ```text
 /data/
   protocol/
     000001.json                  immutable cutover record, points to report digest
     reports/<run-id>.json         immutable canonical inventory and fence evidence
+    .maintenance.lock            permanent kernel ownership inode; never unlinked
   .staging/
     <ingest-id>/
       upload/<file-id>            request-writable inputs, never published
@@ -212,6 +213,19 @@ an approved provider or cutover refuses. A Kubernetes provider is an independent
 deployment adapter, required before that environment is supported. Providers
 implement the same contract; a user-supplied JSON assertion is not live proof.
 
+The local implementation provisions a private root-owned Podman engine, local
+named volume and serialized restart controller. Kernel peer UIDs select separate
+maintenance/restart grants. Application users and automation have no alternate
+daemon endpoint, host storage access or privileged restart path. The controller
+persists exclusion before confirmed process removal and invalidates prior evidence
+on generation change. Its complete inventory includes stopped containers and
+refuses foreign volume holders, exposing mounts and host-privileged containers.
+The database owner remains distinct from both application identities and the
+private cutover identity. The [operator contract](docs/operations/controlled-cutover.md)
+and `deploy/controlled/` templates specify this boundary; ordinary development
+Compose remains unsupported for certification. M1b evidence is local and disposable,
+not production readiness, and does not implement M1c activation/startup.
+
 ### 5.2 Ordered, resumable procedure
 
 1. `lakectl protocol cutover --prepare` creates a run identity in `protocol/`'s
@@ -228,8 +242,11 @@ implement the same contract; a user-supplied JSON assertion is not live proof.
    A corrupt byte does not block the healthy population; unresolvable identities,
    missing parents or exclusion failure do. Preserve corrupt content for diagnosis.
 4. Write and fsync a canonical report, then a numbered write-once record binding
-   its digest. Recheck fences before the record. A report without a record is
-   incomplete work; a valid record never points to an undurable report.
+   its digest. Recheck fences after database resolution and before/after each
+   installation. Kernel ownership remains held until actual filesystem writers
+   settle, including cancellation. All local finalization precedes controller
+   endorsement; the report and record alone never assert successful certification.
+
 5. Migration 0011 refuses nonterminal sessions, adds RECOVERING and the new
    ingestion contracts. Apply later P3 migrations as required by the release.
    Migrations do not inspect an assumed filesystem path; startup checks storage
@@ -238,11 +255,37 @@ implement the same contract; a user-supplied JSON assertion is not live proof.
    prerequisites. Only then enable the new application role/deployment. Old
    roles remain disabled. The activation receipt binds this run/report/database.
 
-A crash resumes under the same run while exclusion remains proven. Losing the
-exclusion guarantee invalidates verification results and requires a new full
-verification; do not stitch observations across an unprotected interval. Already
-published records remain historical evidence; a failed activation does not erase
-them. Never rerun a destructive automatic downgrade.
+Prepared report and numbered-record files are immutable forensic evidence, not a
+certificate. Their presence, or absence of another file, never establishes success.
+A permanently named private no-follow lock inode gives one process exclusive
+maintenance ownership. The kernel releases ownership on process death; no marker
+is removed and no lease expires. Cancellation waits for actual filesystem writers
+before releasing ownership. A competing invocation is refused, including the same
+run submitted through another process.
+
+After all local writes, monitor shutdown and ownership release succeed, the
+serialized controller independently claims the root, verifies the exact canonical
+record/report/root/run binding, checks effective PostgreSQL role exclusion and
+checks its live deployment/writer generation. It releases its claim and checks the
+controller fence again before endorsing the exact record digest in its current
+process. No filesystem operation follows that endorsement. Any preceding error
+leaves the prepared files unendorsed. An acknowledgement lost after endorsement is
+explicitly indeterminate, rather than proof of failure.
+
+The implemented consumer contract is `CutoverService.validate(receipt)`, backed by
+`ControllerClient.validate_certificate(receipt)`. It requires the current
+controller endorsement and repeats complete storage, SQL and writer-fence checks
+under exclusive ownership. Any failed authorized validation revokes endorsement; apparently
+restored observations do not revive it. Controller restart also discards all
+endorsements and advances the exclusion generation. Future initialization and
+activation consumers must invoke this authority contract; they cannot infer
+certification from JSON files alone. No M1c activation is implemented here.
+
+Every retry performs a full scan. Same-run report-before-record replay is allowed
+under intact exclusion only when immutable bytes agree. A changed generation
+requires a fresh run; old files remain unchanged and a new numbered record appends
+to history. Failed local finalization may be retried by full verification, but
+cannot be reused merely by presenting its files to the consumer.
 
 A fresh empty root gets an explicit protocol-initialization record with an empty
 inventory before API startup. Starting the API does not silently bless an

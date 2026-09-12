@@ -19,6 +19,7 @@ from huron.applications.api.authorization import (
     require_system,
 )
 from huron.applications.api.dependencies import Catalog as Repository
+from huron.applications.api.dependencies import Creation
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import (
     Page,
@@ -37,8 +38,10 @@ from huron.applications.api.routes.v1.schema.organizations import (
     OrganizationView,
     PatchOrganization,
 )
+from huron.core.catalog_collections import DescriptionChange
 from huron.core.idempotency import request_sha256
 from huron.pkg.auth import Principal
+from huron.pkg.catalog.persistence import PlatformRoot
 from huron.pkg.catalog.records import Organization
 from huron.pkg.metastore import IdempotencyClaim
 
@@ -57,7 +60,7 @@ def _key(item: Organization) -> tuple[str, str]:
 async def create_organization(
     body: CreateOrganization,
     idempotency_key: IdempotencyHeader,
-    repository: Repository,
+    repository: Creation,
     actor: Annotated[Principal, Depends(require_system("organization.create"))],
 ) -> OrganizationView:
     """Create an organization.
@@ -111,7 +114,9 @@ async def list_organizations(
     Returns:
         One page of organizations and the cursor to the next, if any.
     """
-    window = await repository.organizations(limit=limit, after=slug_cursor_key(after))
+    window = await repository.organizations.browse(
+        PlatformRoot.ROOT, limit=limit, after=slug_cursor_key(after)
+    )
     return page(window, OrganizationView, key=_key)
 
 
@@ -132,7 +137,7 @@ async def get_organization(
         The organization as the API renders it, including the ``version``
         that ``If-Match`` carries back on a PATCH.
     """
-    organization = await repository.organization(organization_id)
+    organization = await repository.organizations.get(organization_id)
     return OrganizationView.model_validate(organization)
 
 
@@ -174,11 +179,13 @@ async def patch_organization(
         The updated organization as the API renders it.
     """
     return OrganizationView.model_validate(
-        await repository.patch_organization(
+        await repository.organizations.describe(
             organization_id,
-            expected_version=expected_version(if_match),
-            slug=body.slug,
-            title=body.title,
-            description=body.description,
+            DescriptionChange(
+                expected_version=expected_version(if_match),
+                slug=body.slug,
+                title=body.title,
+                description=body.description,
+            ),
         )
     )

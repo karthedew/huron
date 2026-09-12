@@ -25,7 +25,7 @@ from huron.core.access import (
 )
 from huron.pkg.rbac import Visibility
 
-from ..runtime import Repository, Runtime
+from ..runtime import Bindings, Runtime
 from .credentials import CurrentPrincipal
 
 
@@ -49,7 +49,7 @@ BindingCache = Annotated[BindingCacheMap, Depends(request_binding_cache)]
 
 
 async def current_visibility(
-    cache: BindingCache, repository: Repository, principal: CurrentPrincipal, runtime: Runtime
+    cache: BindingCache, repository: Bindings, principal: CurrentPrincipal, runtime: Runtime
 ) -> Visibility:
     """Compute the caller's discovery rights once per request.
 
@@ -73,7 +73,9 @@ async def current_visibility(
         The organization, project and dataset ids the caller may discover,
         and whether discovery is unrestricted.
     """
-    return await visibility_for_principal(cache, repository, principal, runtime.authorizer)
+    return await visibility_for_principal(
+        cache, repository, principal, runtime.authorizer, runtime.hierarchy
+    )
 
 
 CurrentVisibility = Annotated[Visibility, Depends(current_visibility)]

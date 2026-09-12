@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from uuid import UUID
 
     from .ingest import IngestFile
+
+
+class PlatformRoot(Enum):
+    """The explicit parent of organizations in the catalog hierarchy."""
+
+    ROOT = "platform"
 
 
 @dataclass(frozen=True, slots=True)

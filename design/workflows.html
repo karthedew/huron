@@ -149,7 +149,9 @@ required metadata schemas apply from the first byte.</td></tr>
 
 <p>For a dataset whose entry layer is <code>raw</code>: the scientist holds the original files
 (input decks, outputs, logs), and Huron takes them byte-exact
-(<a href="layer-raw.html#ingest">Raw §4–5</a>).</p>
+(<a href="layer-raw.html#ingest">Raw §4–5</a>; step-by-step control flow in
+<a href="layer-raw.html#flow-new-revision">Raw §6.2</a>, concurrent writers in
+<a href="layer-raw.html#flow-concurrent-writers">Raw §6.4</a>).</p>
 
 <table>
 <tr><th></th><th>Web UI</th><th>Python client</th></tr>
@@ -158,7 +160,7 @@ required metadata schemas apply from the first byte.</td></tr>
 browser-practical deposits, and for bulk data the pre-filled CLI command to copy
 (<code>huron upload ./run-0042 --dataset … --infer --confirm</code>) — the UI explains and hands
 off rather than pretending a browser moves a terabyte. HPC outputs use register-in-place landing
-directories (<a href="layer-raw.html#upload-modes">Raw §10</a>).</td>
+directories (<a href="layer-raw.html#upload-modes">Raw §11</a>).</td>
 <td><code>huron upload ./run-0042 --dataset org/project/run-0042 --infer --confirm</code> —
 manifest built and hashed locally, every submitted file uploaded into an independent revision, resume on
 interruption. <code>--infer</code> shows what the profile extractor found; the human confirms
@@ -241,7 +243,8 @@ ingest.</td></tr>
 </table>
 
 <p>Tags are immutable (invariant <span class="inv">M</span>): <code>dataset@v1.0</code> resolves
-to the same bytes forever, which is what makes it citable in a paper.</p>
+to the same bytes forever, which is what makes it citable in a paper. The control flow, and why a
+tag can only ever name a committed revision, is <a href="layer-raw.html#flow-release">Raw §6.3</a>.</p>
 
 <h2 id="analyze">8. Step 5 — open, analyze, cite</h2>
 
