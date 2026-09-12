@@ -1,0 +1,3 @@
+COMMAND ['uv', 'run', 'radon', 'cc', 'src/huron', '--min', 'C']
+src/huron/applications/lakectl/server.py
+    F 75:0 _dispatch - C

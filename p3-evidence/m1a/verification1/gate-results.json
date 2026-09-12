@@ -1,0 +1,56 @@
+[
+  {
+    "name": "lint",
+    "command": [
+      "make",
+      "lint"
+    ],
+    "exit_code": 2,
+    "seconds": 3.77303720800046
+  },
+  {
+    "name": "unit",
+    "command": [
+      "uv",
+      "run",
+      "pytest",
+      "--cov=src/huron",
+      "--cov-report=term-missing",
+      "--cov-report=json:p3-evidence/m1a/verification1/coverage.json"
+    ],
+    "exit_code": 0,
+    "seconds": 53.90139249999993
+  },
+  {
+    "name": "docs",
+    "command": [
+      "make",
+      "docs"
+    ],
+    "exit_code": 0,
+    "seconds": 0.507154624998293
+  },
+  {
+    "name": "duplication-src",
+    "command": [
+      "uv",
+      "run",
+      "--locked",
+      "python",
+      "scripts/check_duplication.py",
+      "src"
+    ],
+    "exit_code": 1,
+    "seconds": 0.5007592080000904
+  },
+  {
+    "name": "diff-check",
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "seconds": 0.04515683300087403
+  }
+]

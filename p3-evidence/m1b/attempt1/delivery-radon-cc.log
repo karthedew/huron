@@ -1,0 +1,1 @@
+COMMAND ['uv', 'run', 'radon', 'cc', 'src/huron', '--min', 'C']

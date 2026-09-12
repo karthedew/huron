@@ -1,0 +1,14 @@
+{
+  "commit": "db5fc84cd7bfe049692ef2abb16fb32570ccf5a2",
+  "archive_sha256": "b1ad409fb8c193be2c03fb10aa63b0be4d11722cd0f364b52ba0aaab135de4dd",
+  "bytes": 1894400,
+  "scope": [
+    "src",
+    "pyproject.toml",
+    "uv.lock",
+    "migrations",
+    "alembic.ini",
+    "Containerfile",
+    "README.md"
+  ]
+}

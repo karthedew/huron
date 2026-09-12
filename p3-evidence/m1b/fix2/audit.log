@@ -1,0 +1,8 @@
+   Building huron @ file:///Users/karlschmidt/repo/huron
+      Built huron @ file:///Users/karlschmidt/repo/huron
+Uninstalled 1 package in 1ms
+Installed 1 package in 1ms
+Traceback (most recent call last):
+  File "/Users/karlschmidt/repo/huron/p3-evidence/m1b/fix2/audit.py", line 7, in <module>
+    from scripts.check_duplication import duplication_report
+ModuleNotFoundError: No module named 'scripts'

@@ -1,0 +1,339 @@
+src/huron/pkg/metastore/rows.py:261:    nothing in the ``HierarchyStore`` port ever reads a dataset's
+tests/hierarchy_contract.py:1:"""Scenarios pinning ``HierarchyStore`` behavior, run against every backend.
+tests/hierarchy_contract.py:52:    from huron.core.ports import HierarchyStore
+tests/hierarchy_contract.py:174:    store: HierarchyStore,
+tests/hierarchy_contract.py:212:async def scenario_1_write_invisible_until_commit(store: HierarchyStore) -> None:
+tests/hierarchy_contract.py:231:async def scenario_2_uniqueness(store: HierarchyStore) -> None:
+tests/hierarchy_contract.py:295:async def scenario_3_optimistic_concurrency(store: HierarchyStore) -> None:
+tests/hierarchy_contract.py:393:async def scenario_4_idempotency(store: HierarchyStore) -> None:
+tests/hierarchy_contract.py:452:async def scenario_5_revisions(store: HierarchyStore) -> None:
+tests/hierarchy_contract.py:490:async def scenario_6_ordering(store: HierarchyStore) -> None:
+tests/hierarchy_contract.py:536:async def scenario_7_windows(store: HierarchyStore) -> None:
+tests/hierarchy_contract.py:597:async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
+tests/hierarchy_contract.py:805:async def scenario_9_visibility_inputs(store: HierarchyStore) -> None:
+tests/hierarchy_contract.py:914:    store: HierarchyStore, clock: FakeClock
+tests/hierarchy_contract.py:976:    store: HierarchyStore, clock: FakeClock
+tests/hierarchy_contract.py:1028:    store: HierarchyStore, clock: FakeClock
+tests/hierarchy_contract.py:1108:    store: HierarchyStore, clock: FakeClock
+tests/hierarchy_contract.py:1164:    store: HierarchyStore, clock: FakeClock
+tests/hierarchy_contract.py:1236:    store: HierarchyStore, clock: FakeClock
+tests/hierarchy_contract.py:1312:    store: HierarchyStore, clock: FakeClock
+tests/unit/test_catalog_documents.py:37:from huron.pkg.metastore import InMemoryHierarchyStore
+tests/unit/test_catalog_documents.py:533:    store = InMemoryHierarchyStore()
+tests/contract/test_ingest_process_death.py:26:from huron.pkg.metastore import PostgresHierarchyStore, Visibility
+tests/contract/test_ingest_process_death.py:59:    store = PostgresHierarchyStore(pool, clock=FakeClock(_NOW))
+tests/contract/test_ingest_process_death.py:104:        store = PostgresHierarchyStore(pool, clock=FakeClock(_NOW))
+tests/contract/test_ingest_process_death.py:153:        late_store = PostgresHierarchyStore(pool, clock=late_clock)
+tests/contract/test_ingest_process_death.py:194:    store = PostgresHierarchyStore(pool, clock=FakeClock(_NOW))
+tests/contract/test_ingest_process_death.py:235:        store = PostgresHierarchyStore(pool, clock=FakeClock(_NOW))
+tests/contract/test_ingest_process_death.py:345:        store = PostgresHierarchyStore(pool, clock=FakeClock(_NOW))
+tests/contract/test_hierarchy_store.py:1:"""Proves ``PostgresHierarchyStore`` against a migrated PostgreSQL, and against its own reference.
+tests/contract/test_hierarchy_store.py:4:a real, migrated ``postgres:16`` database, driven through ``PostgresHierarchyStore`` exactly as
+tests/contract/test_hierarchy_store.py:34:from huron.core.ports import HierarchyStore, HierarchyWriter
+tests/contract/test_hierarchy_store.py:43:    InMemoryHierarchyStore,
+tests/contract/test_hierarchy_store.py:44:    PostgresHierarchyStore,
+tests/contract/test_hierarchy_store.py:215:_INGEST_SCENARIOS: tuple[Callable[[HierarchyStore, FakeClock], Awaitable[None]], ...] = (
+tests/contract/test_hierarchy_store.py:227:    """Every hierarchy_contract scenario holds against PostgresHierarchyStore on a real database."""
+tests/contract/test_hierarchy_store.py:239:    ``InMemoryHierarchyStore`` per scenario. The ingest scenarios run second, over the same pool
+tests/contract/test_hierarchy_store.py:248:        store = PostgresHierarchyStore(pool, clock=clock)
+tests/contract/test_hierarchy_store.py:327:async def _seed_fixture(store: HierarchyStore, fixture: _VisibilityFixture) -> None:
+tests/contract/test_hierarchy_store.py:348:    store: HierarchyStore, fixture: _VisibilityFixture, visibility: Visibility
+tests/contract/test_hierarchy_store.py:383:    """InMemoryHierarchyStore and PostgresHierarchyStore agree on every id, under every Visibility.
+tests/contract/test_hierarchy_store.py:405:    memory_store = InMemoryHierarchyStore()
+tests/contract/test_hierarchy_store.py:410:        postgres_store = PostgresHierarchyStore(pool)
+tests/contract/test_hierarchy_store.py:461:        store = PostgresHierarchyStore(pool)
+tests/contract/test_hierarchy_store.py:551:        store = PostgresHierarchyStore(pool)
+tests/contract/test_hierarchy_store.py:612:        store = PostgresHierarchyStore(pool, clock=clock)
+tests/contract/test_hierarchy_store.py:678:        store = PostgresHierarchyStore(pool)
+tests/contract/test_hierarchy_store.py:772:        store = PostgresHierarchyStore(pool, clock=clock)
+tests/contract/test_hierarchy_store.py:793:    """Neither store inherits HierarchyStore; conformance to the port stays purely structural."""
+tests/contract/test_hierarchy_store.py:794:    assert HierarchyStore not in PostgresHierarchyStore.__mro__
+tests/contract/test_hierarchy_store.py:795:    assert HierarchyStore not in InMemoryHierarchyStore.__mro__
+tests/contract/test_hierarchy_store.py:808:        store = PostgresHierarchyStore(pool)
+tests/contract/test_hierarchy_store.py:827:        duplicates: tuple[Callable[[HierarchyWriter], Awaitable[None]], ...] = (
+tests/unit/test_authorization_guards.py:29:from huron.core._catalog import HierarchyRepository
+tests/unit/test_authorization_guards.py:39:    InMemoryHierarchyStore,
+tests/unit/test_authorization_guards.py:54:def _repository(tmp_path: Path) -> HierarchyRepository:
+tests/unit/test_authorization_guards.py:55:    """A real, filesystem-backed HierarchyRepository for the guard tests."""
+tests/unit/test_authorization_guards.py:56:    return HierarchyRepository(
+tests/unit/test_authorization_guards.py:58:        InMemoryHierarchyStore(),
+tests/unit/test_authorization_guards.py:64:def _stack(tmp_path: Path) -> tuple[HierarchyRepository, IngestService]:
+tests/unit/test_authorization_guards.py:66:    hierarchy = InMemoryHierarchyStore()
+tests/unit/test_authorization_guards.py:68:    repository = HierarchyRepository(
+tests/unit/test_authorization_guards.py:81:async def _organization(repository: HierarchyRepository) -> Organization:
+tests/unit/test_authorization_guards.py:91:async def _project(repository: HierarchyRepository, organization_id: UUID) -> Project:
+tests/unit/test_authorization_guards.py:104:async def _dataset(repository: HierarchyRepository, project_id: UUID) -> Dataset:
+tests/contract/test_commit_intents.py:34:from huron.pkg.metastore import PostgresHierarchyStore, Visibility
+tests/contract/test_commit_intents.py:64:        store = PostgresHierarchyStore(pool, clock=clock)
+tests/contract/test_commit_intents.py:231:        store = PostgresHierarchyStore(pool, clock=clock)
+tests/contract/test_commit_intents.py:281:        store = PostgresHierarchyStore(pool, clock=clock)
+tests/unit/test_api_api_keys.py:4:``HierarchyRepository`` and dev-header auth, ``root`` bootstrapped as
+src/huron/applications/api/dependencies.py:8:from huron.core.catalog import CatalogService
+src/huron/applications/api/dependencies.py:17:def catalog_service(runtime: Runtime, actor: CurrentPrincipal) -> CatalogService:
+src/huron/applications/api/dependencies.py:25:        Catalog operations that enforce the actor's permissions themselves.
+src/huron/applications/api/dependencies.py:27:    return CatalogService(
+src/huron/applications/api/dependencies.py:32:Catalog = Annotated[CatalogService, Depends(catalog_service)]
+src/huron/pkg/metastore/hierarchy.py:3:``InMemoryHierarchyStore`` is the reference every other backend is compared
+src/huron/pkg/metastore/hierarchy.py:6:and ``PostgresHierarchyStore`` is held to the same scenarios against a
+src/huron/pkg/metastore/hierarchy.py:128:    the store's live dicts; ``InMemoryHierarchyStore.transaction`` applies
+src/huron/pkg/metastore/hierarchy.py:132:    def __init__(self, store: InMemoryHierarchyStore, buffer: TransactionBuffer) -> None:
+src/huron/pkg/metastore/hierarchy.py:234:        record of it because nothing in the ``HierarchyStore`` port ever
+src/huron/pkg/metastore/hierarchy.py:488:class InMemoryHierarchyStore(InMemoryIngestReader):
+src/huron/pkg/metastore/hierarchy.py:489:    """The reference ``HierarchyStore``: dicts and lists held in process memory.
+src/huron/pkg/metastore/hierarchy.py:894:    :meth:`PostgresHierarchyStore.transaction` opened on it; nothing it
+src/huron/pkg/metastore/hierarchy.py:1286:class PostgresHierarchyStore(PostgresIngestReader):
+src/huron/pkg/metastore/__init__.py:15:from .hierarchy import InMemoryHierarchyStore, PostgresHierarchyStore, SystemClock
+src/huron/pkg/metastore/__init__.py:23:    "InMemoryHierarchyStore",
+src/huron/pkg/metastore/__init__.py:28:    "PostgresHierarchyStore",
+tests/unit/test_hierarchy_store_memory.py:1:"""Direct unit tests for ``InMemoryHierarchyStore``.
+tests/unit/test_hierarchy_store_memory.py:25:from huron.pkg.metastore.hierarchy import InMemoryHierarchyStore, SystemClock
+tests/unit/test_hierarchy_store_memory.py:78:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:84:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:90:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:96:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:102:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:108:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:114:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:120:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:126:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:133:    store = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_hierarchy_store_memory.py:177:    store = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_hierarchy_store_memory.py:198:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:212:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:233:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:272:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:282:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:289:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:296:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:303:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:312:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:322:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:333:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:342:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:353:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:364:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:377:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:392:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:409:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:421:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:430:    store = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_hierarchy_store_memory.py:437:    store = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_hierarchy_store_memory.py:444:    store = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_hierarchy_store_memory.py:451:    store = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_hierarchy_store_memory.py:458:    store = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_hierarchy_store_memory.py:465:    store = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_hierarchy_store_memory.py:472:    store = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_hierarchy_store_memory.py:478:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:485:    store = InMemoryHierarchyStore()
+tests/unit/test_hierarchy_store_memory.py:492:    store = InMemoryHierarchyStore()
+src/huron/pkg/metastore/rbac.py:50:    This is what every unit test runs against, and what ``HierarchyRepository``
+src/huron/pkg/metastore/rbac.py:232:        here; ``HierarchyRepository`` has already resolved it to derive
+src/huron/pkg/catalog/records.py:1:"""Catalog entities and persistence records shared by core and adapters.
+src/huron/pkg/metastore/ingest.py:12:The port stays ``HierarchyWriter``/``HierarchyStore`` in ``huron.core.ports``,
+src/huron/pkg/metastore/ingest.py:56:    from .hierarchy import InMemoryHierarchyStore, TransactionBuffer
+src/huron/pkg/metastore/ingest.py:247:    _store: InMemoryHierarchyStore
+src/huron/pkg/metastore/ingest.py:444:    """The ingest half of ``InMemoryHierarchyStore``'s read surface.
+src/huron/pkg/metastore/ingest.py:446:    Mixed into ``hierarchy.InMemoryHierarchyStore``, which supplies
+src/huron/pkg/metastore/ingest.py:842:    """The ingest half of ``PostgresHierarchyStore``'s read surface.
+src/huron/pkg/metastore/ingest.py:844:    Mixed into ``hierarchy.PostgresHierarchyStore``, which supplies
+tests/unit/test_api_ingest_sessions.py:4:``HierarchyStore`` with dev-header auth. Covers opening a session on an
+tests/unit/test_stores_ports.py:3:``HierarchyWriter`` and ``HierarchyStore`` are bare ``Protocol`` bodies with
+tests/unit/test_core_workflows.py:14:from huron.core._catalog import HierarchyRepository
+tests/unit/test_core_workflows.py:18:from huron.core.catalog import CatalogService
+tests/unit/test_core_workflows.py:26:from huron.pkg.metastore import InMemoryHierarchyStore, InMemoryRbacStore
+tests/unit/test_core_workflows.py:58:    CatalogService,
+tests/unit/test_core_workflows.py:62:    HierarchyRepository,
+tests/unit/test_core_workflows.py:63:    InMemoryHierarchyStore,
+tests/unit/test_core_workflows.py:68:    hierarchy = InMemoryHierarchyStore(clock=Clock())
+tests/unit/test_core_workflows.py:69:    repository = HierarchyRepository(
+tests/unit/test_core_workflows.py:82:    catalog = CatalogService(repository, access)
+tests/unit/test_core_workflows.py:157:    catalog = CatalogService(repository, access)
+tests/unit/test_core_workflows.py:215:        CatalogService(repository, other_access),
+tests/unit/test_api_ingest_expiry.py:3:Every test shares one ``FakeClock`` between an ``InMemoryHierarchyStore``
+tests/unit/test_api_ingest_expiry.py:22:from huron.pkg.metastore.hierarchy import InMemoryHierarchyStore
+tests/unit/test_api_ingest_expiry.py:31:    from huron.core.ports import HierarchyWriter
+tests/unit/test_api_ingest_expiry.py:40:    hierarchy: InMemoryHierarchyStore,
+tests/unit/test_api_ingest_expiry.py:100:class _RenewingListStore(InMemoryHierarchyStore):
+tests/unit/test_api_ingest_expiry.py:133:    def __init__(self, inner: HierarchyWriter) -> None:
+tests/unit/test_api_ingest_expiry.py:166:class _AuditFailingStore(InMemoryHierarchyStore):
+tests/unit/test_api_ingest_expiry.py:185:    async def transaction(self) -> AsyncIterator[HierarchyWriter]:
+tests/unit/test_api_ingest_expiry.py:199:    hierarchy = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_api_ingest_expiry.py:220:    hierarchy = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_api_ingest_expiry.py:239:    hierarchy = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_api_ingest_expiry.py:285:    hierarchy = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_api_ingest_expiry.py:315:    hierarchy = InMemoryHierarchyStore(clock=clock)
+tests/unit/test_api_ingest_expiry.py:360:    hierarchy = InMemoryHierarchyStore(clock=clock)
+src/huron/applications/api/routes/auth/endpoints/session.py:23:from huron.applications.api.runtime import Repository, Settings
+src/huron/applications/api/routes/auth/endpoints/session.py:32:    repository: Repository,
+tests/unit/test_api_revisions.py:4:``HierarchyStore`` with dev-header auth. The commit half asserts the three
+tests/unit/test_api_app.py:202:    ``HierarchyRepository.__init__`` initializes the raw store's directory
+tests/unit/support.py:28:from huron.pkg.metastore import InMemoryHierarchyStore, InMemoryRbacStore
+tests/unit/support.py:101:        hierarchy=InMemoryHierarchyStore(clock=clock),
+tests/unit/test_execution_model.py:40:    from huron.core._catalog import HierarchyRepository
+tests/unit/test_execution_model.py:245:    def _tracking_raw_store_failure(repository: HierarchyRepository) -> str | None:
+tests/unit/test_api_policies.py:31:    from huron.core._catalog import HierarchyRepository
+tests/unit/test_api_policies.py:63:def repository(client: TestClient) -> HierarchyRepository:
+tests/unit/test_api_policies.py:216:    repository: HierarchyRepository, client: TestClient
+tests/unit/test_repository_hierarchy.py:1:"""Direct unit tests for ``HierarchyRepository``'s write paths, over the in-memory hierarchy store.
+tests/unit/test_repository_hierarchy.py:21:from huron.core._catalog import HierarchyRepository
+tests/unit/test_repository_hierarchy.py:33:from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
+tests/unit/test_repository_hierarchy.py:46:) -> HierarchyRepository:
+tests/unit/test_repository_hierarchy.py:47:    """Build a ``HierarchyRepository`` at ``tmp_path`` over a fresh in-memory hierarchy store."""
+tests/unit/test_repository_hierarchy.py:48:    return HierarchyRepository(
+tests/unit/test_repository_hierarchy.py:50:        InMemoryHierarchyStore(),
+tests/unit/test_repository_hierarchy.py:63:async def _hierarchy(repository: HierarchyRepository) -> tuple[UUID, UUID, UUID]:
+tests/unit/test_repository_hierarchy.py:660:    repository: HierarchyRepository, dataset_id: UUID, *, number: int = 1
+tests/unit/test_repository_rbac.py:3:Covers ``InMemoryRbacStore``, ``HierarchyRepository``'s delegation to it, the
+tests/unit/test_repository_rbac.py:21:from huron.core._catalog import HierarchyRepository
+tests/unit/test_repository_rbac.py:27:from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
+tests/unit/test_repository_rbac.py:47:def _repository(tmp_path: Path) -> HierarchyRepository:
+tests/unit/test_repository_rbac.py:48:    """Build a ``HierarchyRepository`` at ``tmp_path`` with only "open" classification allowed."""
+tests/unit/test_repository_rbac.py:49:    return HierarchyRepository(
+tests/unit/test_repository_rbac.py:51:        InMemoryHierarchyStore(),
+tests/unit/test_repository_rbac.py:270:# -- HierarchyRepository delegation -------------------------------------------
+src/huron/core/_ingest.py:4:It follows the opposite discipline from :class:`~huron.core._catalog.HierarchyRepository`:
+src/huron/core/_ingest.py:68:    from .ports import HierarchyStore
+src/huron/core/_ingest.py:244:    The opposite discipline from ``HierarchyRepository``: no store
+src/huron/core/_ingest.py:249:    def __init__(self, raw_store: RawStore, hierarchy: HierarchyStore, *, clock: Clock) -> None:
+tests/unit/test_catalog_lifecycle.py:9:from huron.core._catalog import HierarchyRepository
+tests/unit/test_catalog_lifecycle.py:12:from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
+tests/unit/test_catalog_lifecycle.py:42:    repository = HierarchyRepository(
+tests/unit/test_catalog_lifecycle.py:44:        InMemoryHierarchyStore(),
+tests/unit/test_authorization_decisions.py:24:from huron.core._catalog import HierarchyRepository
+tests/unit/test_authorization_decisions.py:30:from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
+tests/unit/test_authorization_decisions.py:49:def _repository(tmp_path: Path) -> HierarchyRepository:
+tests/unit/test_authorization_decisions.py:50:    """A real, filesystem-backed HierarchyRepository for the service-account synthesis tests."""
+tests/unit/test_authorization_decisions.py:51:    return HierarchyRepository(
+tests/unit/test_authorization_decisions.py:53:        InMemoryHierarchyStore(),
+tests/unit/test_authorization_decisions.py:70:    filesystem-backed ``HierarchyRepository``: its bindings never change.
+tests/unit/test_api_login.py:4:``HierarchyRepository`` with dev-header auth, seeding principals and
+tests/unit/test_stores_rows.py:251:        "title": "Flare Catalog",
+tests/unit/test_api_bindings.py:4:``HierarchyRepository`` with dev-header auth and ``root`` bootstrapped as
+tests/unit/test_api_bindings.py:31:    from huron.core._catalog import HierarchyRepository
+tests/unit/test_api_bindings.py:58:def repository(client: TestClient) -> HierarchyRepository:
+tests/unit/test_api_bindings.py:459:    client: TestClient, repository: HierarchyRepository, scope: str
+src/huron/core/identity.py:28:    from .catalog import CatalogService
+src/huron/core/identity.py:42:        catalog: CatalogService,
+tests/unit/test_api_catalog_hierarchy.py:4:``HierarchyStore`` with dev-header auth and ``root`` bootstrapped as
+src/huron/core/access.py:31:    from ._catalog import HierarchyRepository
+src/huron/core/access.py:54:    cache: BindingCacheMap, repository: HierarchyRepository, identifiers: frozenset[str]
+src/huron/core/access.py:84:    cache: BindingCacheMap, repository: HierarchyRepository, actor: RbacPrincipal
+src/huron/core/access.py:127:    repository: HierarchyRepository,
+src/huron/core/access.py:169:    repository: HierarchyRepository,
+src/huron/core/access.py:212:        self, actor: Principal, repository: HierarchyRepository, authorizer: RoleBindingAuthorizer
+src/huron/core/access.py:218:            repository: Catalog and role-binding operations.
+src/huron/core/__init__.py:10:from .catalog import CatalogService
+src/huron/core/__init__.py:17:    "CatalogService",
+src/huron/core/raw.py:22:    from .catalog import CatalogService
+src/huron/core/raw.py:38:        self, operations: IngestService, access: AccessPolicy, catalog: CatalogService
+src/huron/core/scopes.py:20:    from huron.core._catalog import HierarchyRepository
+src/huron/core/scopes.py:24:    repository: HierarchyRepository,
+src/huron/core/scopes.py:53:    repository: HierarchyRepository, organization_id: UUID, visibility: Visibility
+src/huron/core/scopes.py:76:    repository: HierarchyRepository, project_id: UUID, visibility: Visibility
+src/huron/core/scopes.py:101:    repository: HierarchyRepository, dataset_id: UUID, visibility: Visibility
+tests/unit/test_authorization_credentials.py:20:from huron.core._catalog import HierarchyRepository
+tests/unit/test_authorization_credentials.py:52:def _repository(tmp_path: Path, stores: ApiStores) -> HierarchyRepository:
+tests/unit/test_authorization_credentials.py:53:    """A real, filesystem-backed HierarchyRepository over ``stores``' hierarchy and rbac stores."""
+tests/unit/test_authorization_credentials.py:54:    return HierarchyRepository(
+tests/unit/test_authorization_credentials.py:62:def _ingest(repository: HierarchyRepository, stores: ApiStores) -> IngestService:
+tests/unit/test_authorization_credentials.py:67:def _revisions(repository: HierarchyRepository, stores: ApiStores) -> RevisionService:
+tests/unit/test_authorization_credentials.py:73:    *, repository: HierarchyRepository, stores: ApiStores, settings: ApiSettings
+src/huron/core/ports.py:4:HierarchyStore, HierarchyWriter, RbacStore and ApiKeyWriter. Adapters conform
+src/huron/core/ports.py:42:    """What ``HierarchyRepository`` needs from an RBAC storage backend.
+src/huron/core/ports.py:48:    hierarchy concern and stays on ``HierarchyRepository``; a store only
+src/huron/core/ports.py:168:        supplies ``subject`` (``HierarchyRepository`` derives it from the
+src/huron/core/ports.py:362:class HierarchyWriter(Protocol):
+src/huron/core/ports.py:363:    """One transaction's write surface; obtained from ``HierarchyStore.transaction()``.
+src/huron/core/ports.py:687:class HierarchyStore(Protocol):
+src/huron/core/ports.py:699:    def transaction(self) -> AbstractAsyncContextManager[HierarchyWriter]:
+src/huron/core/ports.py:702:        Every write the returned ``HierarchyWriter`` performs is invisible
+src/huron/core/_revision_reader.py:31:    from .ports import HierarchyStore
+src/huron/core/_revision_reader.py:59:    def __init__(self, raw_store: RawStore, hierarchy: HierarchyStore) -> None:
+src/huron/applications/api/authorization/decisions.py:28:from ..runtime import Repository, Runtime
+src/huron/applications/api/authorization/decisions.py:52:    cache: BindingCache, repository: Repository, principal: CurrentPrincipal, runtime: Runtime
+src/huron/core/_catalog.py:3::class:`HierarchyRepository` implements persistence for the authorized core catalog over the
+src/huron/core/_catalog.py:5:an injected :class:`~huron.core.ports.HierarchyStore` - and over the
+src/huron/core/_catalog.py:62:    from .ports import HierarchyStore, HierarchyWriter, RbacStore
+src/huron/core/_catalog.py:66:class HierarchyRepository:
+src/huron/core/_catalog.py:72:    injected ``HierarchyStore``; role bindings, service accounts and
+src/huron/core/_catalog.py:99:        hierarchy: HierarchyStore,
+src/huron/core/_catalog.py:140:        writer: HierarchyWriter,
+src/huron/core/_catalog.py:527:        writer: HierarchyWriter,
+src/huron/core/catalog.py:26:    from ._catalog import HierarchyRepository
+src/huron/core/catalog.py:35:class CatalogService:
+src/huron/core/catalog.py:38:    def __init__(self, operations: HierarchyRepository, access: AccessPolicy) -> None:
+src/huron/applications/api/runtime.py:5:operations and guards declare ``Repository``/``Settings`` rather than a
+src/huron/applications/api/runtime.py:18:from huron.core._catalog import HierarchyRepository
+src/huron/applications/api/runtime.py:21:from huron.core.ports import ApiKeyWriter, HierarchyStore, RbacStore
+src/huron/applications/api/runtime.py:46:    hierarchy: HierarchyStore
+src/huron/applications/api/runtime.py:69:    repository: HierarchyRepository
+src/huron/applications/api/runtime.py:112:async def api_repository(runtime: Runtime) -> HierarchyRepository:
+src/huron/applications/api/runtime.py:119:        The one ``HierarchyRepository`` every request in this process
+src/huron/applications/api/runtime.py:212:Repository = Annotated[HierarchyRepository, Depends(api_repository)]
+src/huron/applications/api/runtime.py:228:    "Repository",
+src/huron/applications/api/routes/v1/endpoints/policies.py:23:from huron.applications.api.dependencies import Catalog as Repository
+src/huron/applications/api/routes/v1/endpoints/policies.py:54:    body: CreatePolicy, repository: Repository, actor: CurrentPrincipal
+src/huron/applications/api/routes/v1/endpoints/policies.py:82:    repository: Repository, limit: PageLimit = 50, after: PageCursor = None
+src/huron/applications/api/routes/v1/endpoints/policies.py:113:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/policies.py:152:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/policies.py:191:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/service_accounts.py:21:from huron.applications.api.dependencies import Catalog as Repository
+src/huron/applications/api/routes/v1/endpoints/service_accounts.py:57:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/service_accounts.py:92:    organization_id: UUID, repository: Repository, limit: PageLimit = 50, after: PageCursor = None
+src/huron/applications/api/authorization/guards.py:19:from huron.core._catalog import HierarchyRepository
+src/huron/applications/api/authorization/guards.py:33:from ..runtime import Ingest, Repository, Revisions
+src/huron/applications/api/authorization/guards.py:59:        principal: CurrentPrincipal, repository: Repository, cache: BindingCache
+src/huron/applications/api/authorization/guards.py:94:        repository: Repository,
+src/huron/applications/api/authorization/guards.py:207:    cache: BindingCacheMap, repository: HierarchyRepository, principal: Principal, scope: Scope
+src/huron/applications/api/authorization/guards.py:230:    repository: Repository,
+src/huron/applications/api/authorization/guards.py:259:    repository: Repository,
+src/huron/applications/api/authorization/guards.py:291:    repository: Repository,
+src/huron/applications/api/authorization/guards.py:323:    repository: Repository,
+src/huron/applications/api/authorization/guards.py:376:    repository: Repository,
+src/huron/applications/api/authorization/guards.py:431:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/datasets.py:24:from huron.applications.api.dependencies import Catalog as Repository
+src/huron/applications/api/routes/v1/endpoints/datasets.py:76:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/datasets.py:141:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/datasets.py:169:    dataset_id: UUID, repository: Repository, visibility: CurrentVisibility
+src/huron/applications/api/routes/v1/endpoints/datasets.py:200:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/datasets.py:248:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/datasets.py:308:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/datasets.py:338:    dataset_id: UUID, tag: str, repository: Repository, visibility: CurrentVisibility
+src/huron/applications/api/routes/v1/endpoints/datasets.py:363:    repository: Repository,
+src/huron/applications/api/app.py:21:from huron.core._catalog import HierarchyRepository
+src/huron/applications/api/app.py:29:    PostgresHierarchyStore,
+src/huron/applications/api/app.py:64:        hierarchy=PostgresHierarchyStore(pool, clock=clock),
+src/huron/applications/api/app.py:104:    repository = HierarchyRepository(
+src/huron/applications/api/app.py:380:async def _raw_store_probe(repository: HierarchyRepository) -> str | None:
+src/huron/applications/api/app.py:409:def _raw_store_failure(repository: HierarchyRepository) -> str | None:
+src/huron/applications/api/app.py:456:async def _bootstrap(repository: HierarchyRepository, settings: ApiSettings) -> None:
+src/huron/applications/api/routes/v1/endpoints/search.py:1:"""Catalog search.
+src/huron/applications/api/routes/v1/endpoints/organizations.py:21:from huron.applications.api.dependencies import Catalog as Repository
+src/huron/applications/api/routes/v1/endpoints/organizations.py:60:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/organizations.py:94:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/organizations.py:120:    organization_id: UUID, repository: Repository, visibility: CurrentVisibility
+src/huron/applications/api/routes/v1/endpoints/organizations.py:151:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/projects.py:21:from huron.applications.api.dependencies import Catalog as Repository
+src/huron/applications/api/routes/v1/endpoints/projects.py:67:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/projects.py:127:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/projects.py:155:    project_id: UUID, repository: Repository, visibility: CurrentVisibility
+src/huron/applications/api/routes/v1/endpoints/projects.py:186:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/bindings.py:29:from huron.applications.api.dependencies import Catalog as Repository
+src/huron/applications/api/routes/v1/endpoints/bindings.py:74:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/bindings.py:98:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/bindings.py:128:    repository: Repository, binding_id: UUID, scope_type: ScopeType, scope_id: UUID | None
+src/huron/applications/api/routes/v1/endpoints/bindings.py:153:    repository: Repository, limit: PageLimit = 50, after: PageCursor = None
+src/huron/applications/api/routes/v1/endpoints/bindings.py:178:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/bindings.py:212:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/bindings.py:248:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/bindings.py:283:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/bindings.py:315:    organization_id: UUID, repository: Repository, limit: PageLimit = 50, after: PageCursor = None
+src/huron/applications/api/routes/v1/endpoints/bindings.py:345:    project_id: UUID, repository: Repository, limit: PageLimit = 50, after: PageCursor = None
+src/huron/applications/api/routes/v1/endpoints/bindings.py:376:    dataset_id: UUID, repository: Repository, limit: PageLimit = 50, after: PageCursor = None
+src/huron/applications/api/routes/v1/endpoints/bindings.py:402:async def revoke_system_binding(repository: Repository, binding_id: UUID) -> None:
+src/huron/applications/api/routes/v1/endpoints/bindings.py:421:    repository: Repository, organization_id: UUID, binding_id: UUID
+src/huron/applications/api/routes/v1/endpoints/bindings.py:442:    repository: Repository, project_id: UUID, binding_id: UUID
+src/huron/applications/api/routes/v1/endpoints/bindings.py:463:    repository: Repository, dataset_id: UUID, binding_id: UUID
+src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py:28:from huron.applications.api.dependencies import Catalog as Repository
+src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py:134:    repository: Repository,
+src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py:192:    repository: Repository,

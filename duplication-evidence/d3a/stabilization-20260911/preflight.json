@@ -1,0 +1,47 @@
+[
+  {
+    "command": "ruff --version",
+    "exit": 0,
+    "output": "ruff 0.16.3\n"
+  },
+  {
+    "command": "ty --version",
+    "exit": 0,
+    "output": "ty 0.0.75 (a553dcc1a 2026-08-26)\n"
+  },
+  {
+    "command": "mypy --version",
+    "exit": 0,
+    "output": "mypy 2.3.1 (compiled: yes)\n"
+  },
+  {
+    "command": "lint-imports --version",
+    "exit": 0,
+    "output": "import-linter 2.13\n"
+  },
+  {
+    "command": "pytest --version",
+    "exit": 0,
+    "output": "pytest 9.1.1\n"
+  },
+  {
+    "command": "python -c \"import pytest_cov\"",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "command": "radon --version",
+    "exit": 0,
+    "output": "6.0.1\n"
+  },
+  {
+    "command": "complexipy --version",
+    "exit": 0,
+    "output": "7.0.1\n"
+  },
+  {
+    "command": "pyscn --version",
+    "exit": 0,
+    "output": "pyscn version 1.31.1\n"
+  }
+]

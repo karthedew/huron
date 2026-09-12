@@ -1,0 +1,1 @@
+COMMAND ['uv', 'run', 'python', 'scripts/check_schema_map.py']

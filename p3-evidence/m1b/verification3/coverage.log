@@ -1,0 +1,2 @@
+$ uv run coverage json -o p3-evidence/m1b/verification3/coverage.json
+Wrote JSON report to p3-evidence/m1b/verification3/coverage.json

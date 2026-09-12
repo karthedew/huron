@@ -1,0 +1,104 @@
+[
+  {
+    "name": "lint",
+    "command": "make lint",
+    "exit": 2,
+    "seconds": 5.310905933380127
+  },
+  {
+    "name": "ruff",
+    "command": "uv run ruff check src",
+    "exit": 0,
+    "seconds": 0.11250519752502441
+  },
+  {
+    "name": "format",
+    "command": "uv run ruff format --check src",
+    "exit": 0,
+    "seconds": 0.0451960563659668
+  },
+  {
+    "name": "pydoclint",
+    "command": "uv run pydoclint src",
+    "exit": 0,
+    "seconds": 0.6799707412719727
+  },
+  {
+    "name": "ty",
+    "command": "uv run ty check src",
+    "exit": 0,
+    "seconds": 0.20710086822509766
+  },
+  {
+    "name": "mypy",
+    "command": "uv run mypy src",
+    "exit": 0,
+    "seconds": 0.3285653591156006
+  },
+  {
+    "name": "imports",
+    "command": "uv run lint-imports",
+    "exit": 0,
+    "seconds": 0.160614013671875
+  },
+  {
+    "name": "unit",
+    "command": "uv run pytest --cov=src/huron --cov-report=term-missing",
+    "exit": 0,
+    "seconds": 66.26012802124023
+  },
+  {
+    "name": "coverage",
+    "command": "uv run coverage json -o p3-evidence/m1b/fix1/coverage.json",
+    "exit": 0,
+    "seconds": 0.6759979724884033
+  },
+  {
+    "name": "radon-cc",
+    "command": "uv run radon cc src/huron --min C",
+    "exit": 0,
+    "seconds": 0.23859286308288574
+  },
+  {
+    "name": "radon-mi",
+    "command": "uv run radon mi src/huron --min B",
+    "exit": 0,
+    "seconds": 0.49141812324523926
+  },
+  {
+    "name": "complexipy",
+    "command": "uv run complexipy src/huron --max-complexity-allowed 15",
+    "exit": 0,
+    "seconds": 0.487062931060791
+  },
+  {
+    "name": "pyscn",
+    "command": "uv run --locked pyscn check src/huron",
+    "exit": 0,
+    "seconds": 0.6156187057495117
+  },
+  {
+    "name": "duplication",
+    "command": "uv run --locked python scripts/check_duplication.py src/huron",
+    "exit": 1,
+    "seconds": 0.5391988754272461
+  },
+  {
+    "name": "docs",
+    "command": "make docs",
+    "exit": 0,
+    "seconds": 0.611626148223877
+  },
+  {
+    "name": "diff-check",
+    "command": "git diff --check",
+    "exit": 0,
+    "seconds": 0.12120699882507324
+  },
+  {
+    "name": "native-full-final",
+    "command": "uv run --locked pyscn analyze --json src",
+    "exit": 0,
+    "seconds": 0.5535967350006104
+  }
+]

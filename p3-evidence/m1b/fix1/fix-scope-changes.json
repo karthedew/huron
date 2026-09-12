@@ -1,0 +1,206 @@
+[
+  {
+    "before": {
+      "path": "P3_DESIGN.md",
+      "bytes": 42521,
+      "sha256": "2bdaf8c630db04b71e5d868abb04b66e160ee810cf35ac05cce224ece0877122"
+    },
+    "after": {
+      "path": "P3_DESIGN.md",
+      "bytes": 43936,
+      "sha256": "e91bd6cd69da7e5a51631e20f70cc7dd36709b4e08d583d38e7c5d57c888091c"
+    }
+  },
+  {
+    "before": {
+      "path": "P3_IMPLEMENTATION_PLAN.md",
+      "bytes": 28795,
+      "sha256": "a7653597cf2ecd6215d802985543e40902d141e534fa01e630a309e7f8531196"
+    },
+    "after": {
+      "path": "P3_IMPLEMENTATION_PLAN.md",
+      "bytes": 28901,
+      "sha256": "441b8233b97ebcfd906bdbecfc7c6a63235658624b92f64b632f05e90734bca9"
+    }
+  },
+  {
+    "before": {
+      "path": "P3_M1B_VALIDATION.md",
+      "bytes": 2959,
+      "sha256": "53241b08c178ea6d394fadb77eb5d78492ef15581919e6ac0ebcde35f07d8c2b"
+    },
+    "after": {
+      "path": "P3_M1B_VALIDATION.md",
+      "bytes": 2940,
+      "sha256": "ec225540790fc9443319e1adeafbdf95a33512086876ac709efac702467a4ca4"
+    }
+  },
+  {
+    "before": {
+      "path": "docs/operations/controlled-cutover.md",
+      "bytes": 8415,
+      "sha256": "17511a4db5ce04c1b3ae3d9723aee6232c7ea4221ad8b08f3e77030093daf32e"
+    },
+    "after": {
+      "path": "docs/operations/controlled-cutover.md",
+      "bytes": 9633,
+      "sha256": "672a0128d21232c0aa488b379c155b0dd0454d6e21c71150c9afc13339dbf617"
+    }
+  },
+  {
+    "before": {
+      "path": "pyproject.toml",
+      "bytes": 9561,
+      "sha256": "4ad801d59c9e2824f9bb9ab789a4f04e60c7c1d7701d76a9a2fdb5e6c0ff8ce4"
+    },
+    "after": {
+      "path": "pyproject.toml",
+      "bytes": 9561,
+      "sha256": "87b52f69a684794936da4aeb1b8e2fdc9327b4782c9800c3dca0ecff7545da9a"
+    }
+  },
+  {
+    "before": {
+      "path": "src/huron/applications/lakectl/controller.py",
+      "bytes": 9766,
+      "sha256": "8f7df63e4d7b38e0f555d425215669f80e2d4aee853605fcb22e81ae1a313873"
+    },
+    "after": {
+      "path": "src/huron/applications/lakectl/controller.py",
+      "bytes": 10090,
+      "sha256": "1f8355fe2a80add11a57cc896e6fefb49b139fc33f33c52109d6acf45a6bc54d"
+    }
+  },
+  {
+    "before": {
+      "path": "src/huron/core/integrity/cutover.py",
+      "bytes": 6844,
+      "sha256": "cf6eab3a79eac0cd2c29ff0b270de65844f69c1b6dc0280aa9a10e1ec41f2c5f"
+    },
+    "after": {
+      "path": "src/huron/core/integrity/cutover.py",
+      "bytes": 9189,
+      "sha256": "48c62e1d0098d90407f602737b863abf398d9e2b2aaf8a7087aa6e0431513e7e"
+    }
+  },
+  {
+    "before": {
+      "path": "src/huron/core/integrity/ports.py",
+      "bytes": 6107,
+      "sha256": "a58e5be45f0d7c1e509990c73e72082b94759488352cf87399f5681adbc8ecd6"
+    },
+    "after": {
+      "path": "src/huron/core/integrity/ports.py",
+      "bytes": 6354,
+      "sha256": "96772fe30c930ef43da9364565de994b27dd2288a9dbe598333c1b8ea48828c2"
+    }
+  },
+  {
+    "before": {
+      "path": "src/huron/pkg/rawstore/maintenance.py",
+      "bytes": 10403,
+      "sha256": "23ef0a4a0e4b4f54f6895cb2f7b6bf9f031949f0249f09ecb5c093360a7907ca"
+    },
+    "after": {
+      "path": "src/huron/pkg/rawstore/maintenance.py",
+      "bytes": 11061,
+      "sha256": "56d9ac5c67130fa85cc1e5fdd3d77f52c8c199a6bb7a8387c1edf24908a130dd"
+    }
+  },
+  {
+    "before": {
+      "path": "tests/contract/test_writer_exclusion.py",
+      "bytes": 7847,
+      "sha256": "479d63e8987eb8dd4c0fd81d8ec09f0e05bd3006385108309c4284e861b3db52"
+    },
+    "after": {
+      "path": "tests/contract/test_writer_exclusion.py",
+      "bytes": 9145,
+      "sha256": "df88e0a40ef92f15a4956ab5ae3c32cb4a2697994ce39c40edf3870f6aaf6bc6"
+    }
+  },
+  {
+    "before": {
+      "path": "tests/controlled_deployment.py",
+      "bytes": 20919,
+      "sha256": "9e8cef14ffa17d92cdeac84ed61dc6a638764bd1c7a5e46f21bec193a926b058"
+    },
+    "after": {
+      "path": "tests/controlled_deployment.py",
+      "bytes": 22426,
+      "sha256": "a56f06c0e1bcf894510fb6dd3a18af2a29098255e94037fc181996973aefa092"
+    }
+  },
+  {
+    "before": {
+      "path": "tests/integration/test_protocol_cutover.py",
+      "bytes": 3799,
+      "sha256": "366fa80a81e682b1caef083b921d9d51338e1e7d85326c1f590ce3307001d765"
+    },
+    "after": {
+      "path": "tests/integration/test_protocol_cutover.py",
+      "bytes": 3869,
+      "sha256": "92ba9d3890cd7e13e815a9d41429bf6e054515ff15b9d94dd0e66874a33a776f"
+    }
+  },
+  {
+    "before": {
+      "path": "tests/unit/test_integrity_cutover.py",
+      "bytes": 10905,
+      "sha256": "5e520fb70a7469e66e1eef9a51a2fdd33efb3205aa8938a9ef182b6760e082b8"
+    },
+    "after": {
+      "path": "tests/unit/test_integrity_cutover.py",
+      "bytes": 17699,
+      "sha256": "98b6fd509f9410b09dc63d087000b40e6d2e169e9ffbbf0a76e79a9ebf331b44"
+    }
+  },
+  {
+    "before": {
+      "path": "tests/unit/test_integrity_storage.py",
+      "bytes": 7626,
+      "sha256": "2cdaf11382ab03a2073040f83997a9c258b871d65e25562e5f7459a2d10385b1"
+    },
+    "after": {
+      "path": "tests/unit/test_integrity_storage.py",
+      "bytes": 8619,
+      "sha256": "8c63faf9e5ffeeffcce78eb3aa07c7fd8c9c2ff11ee58b37bc1ff4871b4f9255"
+    }
+  },
+  {
+    "before": {
+      "path": "tests/unit/test_lakectl_main.py",
+      "bytes": 5139,
+      "sha256": "a7e7e737a3278c762ddbe60623609a4d842330b1e5688352f6c132d06100f468"
+    },
+    "after": {
+      "path": "tests/unit/test_lakectl_main.py",
+      "bytes": 5158,
+      "sha256": "305b22127520c87a882ccd165fcff9b1ae42bb4de024afd15b1bbc3c49bedea3"
+    }
+  },
+  {
+    "before": {
+      "path": "tests/unit/test_maintenance_adapters.py",
+      "bytes": 9203,
+      "sha256": "6ac25fae3f8f5056af014dc653aea8f5eef81523ed3d28a3c12514328d2e345d"
+    },
+    "after": {
+      "path": "tests/unit/test_maintenance_adapters.py",
+      "bytes": 8625,
+      "sha256": "bd2decf8bd0707148b7a52febc746664a7125e75f2679f1bfbfb38445691187d"
+    }
+  },
+  {
+    "before": {
+      "path": "tests/unit/test_managed_controller.py",
+      "bytes": 8686,
+      "sha256": "e821bf9387d8b8daca5ee5e9f41339130575a5f92af3c4fb868f1204c6044f2b"
+    },
+    "after": {
+      "path": "tests/unit/test_managed_controller.py",
+      "bytes": 10991,
+      "sha256": "937ef3e6237f8bc4b6f22e1548b973a0bac3694286efe3361a1a85a7305e99c4"
+    }
+  }
+]

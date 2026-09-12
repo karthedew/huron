@@ -1,0 +1,9 @@
+{
+  "command": [
+    "podman",
+    "machine",
+    "ssh",
+    "sudo python3 -c 'import glob,json; print(json.dumps({\"controlled_roots\":glob.glob(\"/var/lib/huron-controlled-test-*\"),\"controller_sockets\":glob.glob(\"/run/huron-controller-test-*\")}))'"
+  ],
+  "exit": 125
+}

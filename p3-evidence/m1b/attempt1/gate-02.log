@@ -1,0 +1,1 @@
+COMMAND ['uv', 'run', 'pydoclint', 'src', 'migrations', 'scripts']

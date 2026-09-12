@@ -1,0 +1,53 @@
+import csv
+import datetime
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import time
+
+out = Path('p3-evidence/m1a/verification1').resolve()
+work = Path(tempfile.mkdtemp(prefix='huron-m1a-verification1-'))
+base = work / 'pytest'
+start = time.monotonic()
+meta = {'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'work_directory': str(work), 'sample_interval_seconds': 0.2, 'initial_free_bytes': shutil.disk_usage(work).free}
+if meta['initial_free_bytes'] < 25 * 1024**3:
+    raise RuntimeError('Independent acceptance preflight requires at least 25 GiB')
+(out / 'acceptance-work.json').write_text(json.dumps(meta, indent=2) + '\n')
+env = dict(os.environ, PYTEST_ADDOPTS=f'--basetemp={base} --junitxml={out / "acceptance.xml"}')
+with (out / 'acceptance.log').open('w') as log, (out / 'storage-samples.csv').open('w') as samples:
+    writer = csv.writer(samples)
+    writer.writerow(['elapsed_seconds', 'allocated_bytes', 'free_bytes', 'vanished_entries'])
+    process = subprocess.Popen(['make', 'test-acceptance'], env=env, stdout=log, stderr=subprocess.STDOUT)
+    peak = 0
+    minimum_free = meta['initial_free_bytes']
+    count = 0
+    while True:
+        allocated = vanished = 0
+        seen = set()
+        for root, dirs, files in os.walk(work, followlinks=False):
+            for name in files:
+                try:
+                    info = os.stat(Path(root) / name, follow_symlinks=False)
+                except FileNotFoundError:
+                    vanished += 1
+                    continue
+                identity = (info.st_dev, info.st_ino)
+                if identity not in seen:
+                    allocated += info.st_blocks * 512
+                    seen.add(identity)
+        free = shutil.disk_usage(work).free
+        peak = max(peak, allocated)
+        minimum_free = min(minimum_free, free)
+        count += 1
+        writer.writerow([time.monotonic() - start, allocated, free, vanished])
+        samples.flush()
+        if process.poll() is not None:
+            break
+        time.sleep(0.2)
+meta.update(exit_code=process.returncode, elapsed_seconds=time.monotonic()-start, sampled_peak_allocated_bytes=peak, minimum_observed_free_bytes=minimum_free, samples=count, final_free_bytes=shutil.disk_usage(work).free)
+(out / 'acceptance-storage.json').write_text(json.dumps(meta, indent=2) + '\n')
+print(json.dumps(meta, indent=2))
+raise SystemExit(process.returncode)

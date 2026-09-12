@@ -1,0 +1,2 @@
+COMMAND ['uv', 'run', 'ruff', 'format', '--check', 'src/huron', 'tests', 'migrations', 'scripts']
+256 files already formatted

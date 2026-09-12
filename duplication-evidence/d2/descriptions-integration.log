@@ -1,0 +1,16 @@
+Command: DOCKER_HOST=unix:///var/folders/3t/dsbbphj948x65zmvkftl97580000gn/T/podman/podman-machine-default-api.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/podman/podman.sock uv run --locked pytest tests/integration/test_catalog_descriptions.py -m integration --no-cov -q
+Exit code: 0
+
+......                                                                   [100%]
+=============================== warnings summary ===============================
+tests/integration/test_catalog_descriptions.py:15
+  /Users/karlschmidt/repo/huron/tests/integration/test_catalog_descriptions.py:15: DeprecationWarning: testcontainers.postgres is deprecated, use testcontainers.community.postgres instead
+    from testcontainers.postgres import PostgresContainer
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+6 passed, 1 warning in 7.36s
+
+Earlier setup feedback: six cases initially failed before exercising the workflow
+because the new fixture omitted insert_dataset's required data_classification
+argument. The fixture now passes its seeded project's classification. Production
+code and behavioral assertions were unchanged by that correction.

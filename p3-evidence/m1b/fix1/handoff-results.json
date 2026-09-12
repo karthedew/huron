@@ -1,0 +1,20 @@
+[
+  {
+    "name": "docs-handoff",
+    "command": "make docs",
+    "exit": 0,
+    "seconds": 0.6468908786773682
+  },
+  {
+    "name": "diff-handoff",
+    "command": "git diff --check",
+    "exit": 0,
+    "seconds": 0.08062887191772461
+  },
+  {
+    "name": "inventory-audit",
+    "command": "PYTHONPATH=. uv run python p3-evidence/m1b/fix1/audit.py",
+    "exit": 0,
+    "seconds": 0.14987897872924805
+  }
+]

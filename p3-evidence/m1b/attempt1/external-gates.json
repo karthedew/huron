@@ -1,0 +1,35 @@
+[
+  {
+    "name": "contract-full",
+    "command": [
+      "uv",
+      "run",
+      "pytest",
+      "-m",
+      "contract",
+      "-v"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "integration-full",
+    "command": [
+      "uv",
+      "run",
+      "pytest",
+      "-m",
+      "integration",
+      "-v",
+      "-s"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "acceptance-full",
+    "command": [
+      "make",
+      "test-acceptance"
+    ],
+    "exit": 0
+  }
+]

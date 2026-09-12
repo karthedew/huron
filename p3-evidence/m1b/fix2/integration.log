@@ -1,0 +1,397 @@
+$ uv run pytest -m integration -s
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/karlschmidt/repo/huron
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.1.0, asyncio-1.4.0, anyio-4.14.2, respx-0.23.1, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1691 items / 1677 deselected / 14 selected
+
+tests/integration/test_catalog_creation.py ......
+tests/integration/test_catalog_descriptions.py ......
+tests/integration/test_protocol_cutover.py Resolved 116 packages in 8ms
+ROOT /var/lib/huron-controlled-test-dlxh3eg3
+Ignoring colorama: markers 'sys_platform == "win32"' don't match your environment
+Collecting aiobotocore==3.9.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 3))
+  Using cached aiobotocore-3.9.0-py3-none-any.whl (100 kB)
+Collecting aiohappyeyeballs==2.7.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 7))
+  Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl (15 kB)
+Collecting aiohttp==3.14.3 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 11))
+  Using cached aiohttp-3.14.3-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (1.8 MB)
+Collecting aioitertools==0.13.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 96))
+  Using cached aioitertools-0.13.0-py3-none-any.whl (24 kB)
+Collecting aiosignal==1.4.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 100))
+  Using cached aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Collecting alembic==1.19.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 104))
+  Using cached alembic-1.19.1-py3-none-any.whl (265 kB)
+Collecting annotated-doc==0.0.5 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 108))
+  Using cached annotated_doc-0.0.5-py3-none-any.whl (5.3 kB)
+Collecting annotated-types==0.8.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 112))
+  Using cached annotated_types-0.8.0-py3-none-any.whl (13 kB)
+Collecting anyio==4.14.2 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 116))
+  Using cached anyio-4.14.2-py3-none-any.whl (125 kB)
+Collecting argon2-cffi==25.1.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 124))
+  Using cached argon2_cffi-25.1.0-py3-none-any.whl (14 kB)
+Collecting argon2-cffi-bindings==26.1.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 128))
+  Using cached argon2_cffi_bindings-26.1.0-cp310-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl (27 kB)
+Collecting arrow==1.4.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 163))
+  Using cached arrow-1.4.0-py3-none-any.whl (68 kB)
+Collecting asyncer==0.0.18 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 167))
+  Using cached asyncer-0.0.18-py3-none-any.whl (12 kB)
+Collecting asyncpg==0.31.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 171))
+  Using cached asyncpg-0.31.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (3.4 MB)
+Collecting attrs==26.1.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 206))
+  Using cached attrs-26.1.0-py3-none-any.whl (67 kB)
+Collecting botocore==1.43.56 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 213))
+  Using cached botocore-1.43.56-py3-none-any.whl (15.4 MB)
+Collecting certifi==2026.7.22 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 217))
+  Using cached certifi-2026.7.22-py3-none-any.whl (136 kB)
+Collecting cffi==2.1.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 223))
+  Using cached cffi-2.1.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl (222 kB)
+Collecting click==8.4.2 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 302))
+  Using cached click-8.4.2-py3-none-any.whl (119 kB)
+Collecting cryptography==50.0.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 310))
+  Using cached cryptography-50.0.1-cp311-abi3-manylinux_2_34_aarch64.whl (4.7 MB)
+Collecting fastapi==0.141.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 352))
+  Using cached fastapi-0.141.1-py3-none-any.whl (131 kB)
+Collecting fqdn==1.5.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 356))
+  Using cached fqdn-1.5.1-py3-none-any.whl (9.1 kB)
+Collecting frozenlist==1.8.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 360))
+  Using cached frozenlist-1.8.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (233 kB)
+Collecting greenlet==3.5.5 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 446))
+  Using cached greenlet-3.5.5-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl (614 kB)
+Collecting h11==0.16.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 510))
+  Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+Collecting httpcore==1.0.9 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 516))
+  Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+Collecting httptools==0.8.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 520))
+  Using cached httptools-0.8.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (482 kB)
+Collecting httpx==0.28.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 551))
+  Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+Collecting idna==3.18 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 555))
+  Using cached idna-3.18-py3-none-any.whl (65 kB)
+Collecting isoduration==20.11.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 563))
+  Using cached isoduration-20.11.0-py3-none-any.whl (11 kB)
+Collecting jmespath==1.1.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 567))
+  Using cached jmespath-1.1.0-py3-none-any.whl (20 kB)
+Collecting jsonpointer==3.1.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 573))
+  Using cached jsonpointer-3.1.1-py3-none-any.whl (7.7 kB)
+Collecting jsonschema==4.26.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 577))
+  Using cached jsonschema-4.26.0-py3-none-any.whl (90 kB)
+Collecting jsonschema-specifications==2025.9.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 581))
+  Using cached jsonschema_specifications-2025.9.1-py3-none-any.whl (18 kB)
+Collecting lark==1.3.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 585))
+  Using cached lark-1.3.1-py3-none-any.whl (113 kB)
+Collecting mako==1.4.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 589))
+  Using cached mako-1.4.1-py3-none-any.whl (80 kB)
+Collecting markupsafe==3.0.3 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 593))
+  Using cached markupsafe-3.0.3-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (24 kB)
+Collecting multidict==6.7.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 651))
+  Using cached multidict-6.7.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (256 kB)
+Collecting prometheus-client==0.26.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 748))
+  Using cached prometheus_client-0.26.0-py3-none-any.whl (64 kB)
+Collecting propcache==0.5.2 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 752))
+  Using cached propcache-0.5.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (59 kB)
+Collecting pycparser==3.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 843))
+  Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+Collecting pydantic==2.13.4 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 847))
+  Using cached pydantic-2.13.4-py3-none-any.whl (472 kB)
+Collecting pydantic-core==2.46.4 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 854))
+  Using cached pydantic_core-2.46.4-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (2.0 MB)
+Collecting pydantic-settings==2.15.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 921))
+  Using cached pydantic_settings-2.15.0-py3-none-any.whl (69 kB)
+Collecting pyjwt==2.13.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 925))
+  Using cached pyjwt-2.13.0-py3-none-any.whl (31 kB)
+Collecting python-dateutil==2.9.0.post0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 929))
+  Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+Collecting python-dotenv==1.2.3 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 936))
+  Using cached python_dotenv-1.2.3-py3-none-any.whl (22 kB)
+Collecting pyyaml==6.0.3 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 942))
+  Using cached pyyaml-6.0.3-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (767 kB)
+Collecting referencing==0.37.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 985))
+  Using cached referencing-0.37.0-py3-none-any.whl (26 kB)
+Collecting rfc3339-validator==0.1.4 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 991))
+  Using cached rfc3339_validator-0.1.4-py2.py3-none-any.whl (3.5 kB)
+Collecting rfc3986-validator==0.1.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 995))
+  Using cached rfc3986_validator-0.1.1-py2.py3-none-any.whl (4.2 kB)
+Collecting rfc3987-syntax==1.1.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 999))
+  Using cached rfc3987_syntax-1.1.0-py3-none-any.whl (8.0 kB)
+Collecting rfc8785==0.1.4 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1003))
+  Using cached rfc8785-0.1.4-py3-none-any.whl (9.2 kB)
+Collecting rpds-py==2026.6.3 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1007))
+  Using cached rpds_py-2026.6.3-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (367 kB)
+Collecting six==1.17.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1100))
+  Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+Collecting sniffio==1.3.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1106))
+  Using cached sniffio-1.3.1-py3-none-any.whl (10 kB)
+Collecting sqlalchemy==2.0.52 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1110))
+  Using cached sqlalchemy-2.0.52-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (3.3 MB)
+Collecting starlette==1.6.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1138))
+  Using cached starlette-1.6.0-py3-none-any.whl (75 kB)
+Collecting structlog==26.1.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1142))
+  Using cached structlog-26.1.0-py3-none-any.whl (73 kB)
+Collecting typing-extensions==4.16.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1146))
+  Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Collecting typing-inspection==0.4.4 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1162))
+  Using cached typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+Collecting tzdata==2026.3 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1169))
+  Using cached tzdata-2026.3-py2.py3-none-any.whl (348 kB)
+Collecting uri-template==1.3.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1173))
+  Using cached uri_template-1.3.0-py3-none-any.whl (11 kB)
+Collecting urllib3==2.7.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1177))
+  Using cached urllib3-2.7.0-py3-none-any.whl (131 kB)
+Collecting uvicorn==0.52.3 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1181))
+  Using cached uvicorn-0.52.3-py3-none-any.whl (79 kB)
+Collecting uvloop==0.22.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1185))
+  Using cached uvloop-0.22.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (4.3 MB)
+Collecting watchfiles==1.2.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1212))
+  Using cached watchfiles-1.2.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (452 kB)
+Collecting webcolors==25.10.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1290))
+  Using cached webcolors-25.10.0-py3-none-any.whl (14 kB)
+Collecting websockets==17.0.1 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1294))
+  Using cached websockets-17.0.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (221 kB)
+Collecting wrapt==2.3.0 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1378))
+  Using cached wrapt-2.3.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (170 kB)
+Collecting yarl==1.24.5 (from -r /var/lib/huron-controlled-test-dlxh3eg3/requirements.txt (line 1437))
+  Using cached yarl-1.24.5-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (107 kB)
+Installing collected packages: wrapt, websockets, webcolors, uvloop, urllib3, uri-template, tzdata, typing-extensions, structlog, sniffio, six, rpds-py, rfc8785, rfc3986-validator, pyyaml, python-dotenv, pyjwt, pycparser, propcache, prometheus-client, multidict, markupsafe, lark, jsonpointer, jmespath, idna, httptools, h11, greenlet, frozenlist, fqdn, click, certifi, attrs, asyncpg, annotated-types, annotated-doc, aioitertools, aiohappyeyeballs, yarl, uvicorn, typing-inspection, sqlalchemy, rfc3987-syntax, rfc3339-validator, referencing, python-dateutil, pydantic-core, mako, httpcore, cffi, anyio, aiosignal, watchfiles, starlette, pydantic, jsonschema-specifications, httpx, cryptography, botocore, asyncer, arrow, argon2-cffi-bindings, alembic, aiohttp, pydantic-settings, jsonschema, isoduration, fastapi, argon2-cffi, aiobotocore
+Successfully installed aiobotocore-3.9.0 aiohappyeyeballs-2.7.1 aiohttp-3.14.3 aioitertools-0.13.0 aiosignal-1.4.0 alembic-1.19.1 annotated-doc-0.0.5 annotated-types-0.8.0 anyio-4.14.2 argon2-cffi-25.1.0 argon2-cffi-bindings-26.1.0 arrow-1.4.0 asyncer-0.0.18 asyncpg-0.31.0 attrs-26.1.0 botocore-1.43.56 certifi-2026.7.22 cffi-2.1.1 click-8.4.2 cryptography-50.0.1 fastapi-0.141.1 fqdn-1.5.1 frozenlist-1.8.0 greenlet-3.5.5 h11-0.16.0 httpcore-1.0.9 httptools-0.8.0 httpx-0.28.1 idna-3.18 isoduration-20.11.0 jmespath-1.1.0 jsonpointer-3.1.1 jsonschema-4.26.0 jsonschema-specifications-2025.9.1 lark-1.3.1 mako-1.4.1 markupsafe-3.0.3 multidict-6.7.1 prometheus-client-0.26.0 propcache-0.5.2 pycparser-3.0 pydantic-2.13.4 pydantic-core-2.46.4 pydantic-settings-2.15.0 pyjwt-2.13.0 python-dateutil-2.9.0.post0 python-dotenv-1.2.3 pyyaml-6.0.3 referencing-0.37.0 rfc3339-validator-0.1.4 rfc3986-validator-0.1.1 rfc3987-syntax-1.1.0 rfc8785-0.1.4 rpds-py-2026.6.3 six-1.17.0 sniffio-1.3.1 sqlalchemy-2.0.52 starlette-1.6.0 structlog-26.1.0 typing-extensions-4.16.0 typing-inspection-0.4.4 tzdata-2026.3 uri-template-1.3.0 urllib3-2.7.0 uvicorn-0.52.3 uvloop-0.22.1 watchfiles-1.2.0 webcolors-25.10.0 websockets-17.0.1 wrapt-2.3.0 yarl-1.24.5
+
+[notice] A new release of pip is available: 24.2 -> 26.2.1
+[notice] To update, run: python3 -m pip install --upgrade pip
+[1/2] STEP 1/9: FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
+Trying to pull ghcr.io/astral-sh/uv:python3.12-bookworm-slim...
+Getting image source signatures
+Copying blob sha256:b430d5868e3f8ca7da0f85cbe0f75394261e91102ef254d6bdfdf284f65b65b0
+Copying blob sha256:d3d5d8ab26d25b9040a3c2160d7ddfe3911ae81035d5b1b0904f3ebda32476b6
+Copying blob sha256:1d9465254344bba93c2b09681312ee7d85d5c1eee4980f8f190097eec6b381a4
+Copying blob sha256:2303e2d3c9c7978038a2fbf564a0881004b132a31adb2508945ab40d727fdb16
+Copying blob sha256:8e7b605afee8090e449b0ddb35aa30e10c3808261c18b1f2dac69c0402907757
+Copying config sha256:f1ec535b79003d491fd9d60a223904a31e0032cca185cf1e0c8694bef863c7b1
+Writing manifest to image destination
+[1/2] STEP 2/9: WORKDIR /app
+--> 27676a5dd567
+[1/2] STEP 3/9: ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+--> 01449a04aa7f
+[1/2] STEP 4/9: COPY pyproject.toml uv.lock README.md ./
+--> f8f10f78d057
+[1/2] STEP 5/9: RUN uv sync --frozen --no-install-project --no-dev
+Using CPython 3.12.12 interpreter at: /usr/local/bin/python3
+Creating virtual environment at: .venv
+Downloading cryptography (4.5MiB)
+Downloading botocore (14.7MiB)
+Downloading uvloop (4.1MiB)
+Downloading asyncpg (3.3MiB)
+Downloading sqlalchemy (3.2MiB)
+Downloading pydantic-core (1.9MiB)
+Downloading aiohttp (1.7MiB)
+ Downloaded aiohttp
+ Downloaded pydantic-core
+ Downloaded asyncpg
+ Downloaded sqlalchemy
+ Downloaded uvloop
+ Downloaded cryptography
+ Downloaded botocore
+Prepared 71 packages in 1.19s
+Installed 71 packages in 371ms
+Bytecode compiled 1560 files in 979ms
+ + aiobotocore==3.9.0
+ + aiohappyeyeballs==2.7.1
+ + aiohttp==3.14.3
+ + aioitertools==0.13.0
+ + aiosignal==1.4.0
+ + alembic==1.19.1
+ + annotated-doc==0.0.5
+ + annotated-types==0.8.0
+ + anyio==4.14.2
+ + argon2-cffi==25.1.0
+ + argon2-cffi-bindings==26.1.0
+ + arrow==1.4.0
+ + asyncer==0.0.18
+ + asyncpg==0.31.0
+ + attrs==26.1.0
+ + botocore==1.43.56
+ + certifi==2026.7.22
+ + cffi==2.1.1
+ + click==8.4.2
+ + cryptography==50.0.1
+ + fastapi==0.141.1
+ + fqdn==1.5.1
+ + frozenlist==1.8.0
+ + greenlet==3.5.5
+ + h11==0.16.0
+ + httpcore==1.0.9
+ + httptools==0.8.0
+ + httpx==0.28.1
+ + idna==3.18
+ + isoduration==20.11.0
+ + jmespath==1.1.0
+ + jsonpointer==3.1.1
+ + jsonschema==4.26.0
+ + jsonschema-specifications==2025.9.1
+ + lark==1.3.1
+ + mako==1.4.1
+ + markupsafe==3.0.3
+ + multidict==6.7.1
+ + prometheus-client==0.26.0
+ + propcache==0.5.2
+ + pycparser==3.0
+ + pydantic==2.13.4
+ + pydantic-core==2.46.4
+ + pydantic-settings==2.15.0
+ + pyjwt==2.13.0
+ + python-dateutil==2.9.0.post0
+ + python-dotenv==1.2.3
+ + pyyaml==6.0.3
+ + referencing==0.37.0
+ + rfc3339-validator==0.1.4
+ + rfc3986-validator==0.1.1
+ + rfc3987-syntax==1.1.0
+ + rfc8785==0.1.4
+ + rpds-py==2026.6.3
+ + six==1.17.0
+ + sniffio==1.3.1
+ + sqlalchemy==2.0.52
+ + starlette==1.6.0
+ + structlog==26.1.0
+ + typing-extensions==4.16.0
+ + typing-inspection==0.4.4
+ + tzdata==2026.3
+ + uri-template==1.3.0
+ + urllib3==2.7.0
+ + uvicorn==0.52.3
+ + uvloop==0.22.1
+ + watchfiles==1.2.0
+ + webcolors==25.10.0
+ + websockets==17.0.1
+ + wrapt==2.3.0
+ + yarl==1.24.5
+--> ce4a30fe506b
+[1/2] STEP 6/9: COPY src ./src
+--> 9c71ffe94327
+[1/2] STEP 7/9: COPY migrations ./migrations
+--> 36fb772c6034
+[1/2] STEP 8/9: COPY alembic.ini ./
+--> 62b3cf12a6f9
+[1/2] STEP 9/9: RUN uv sync --frozen --no-dev
+   Building huron @ file:///app
+      Built huron @ file:///app
+Prepared 1 package in 811ms
+Installed 1 package in 1ms
+Bytecode compiled 1560 files in 80ms
+ + huron==0.1.0 (from file:///app)
+--> 88e87efba31b
+[2/2] STEP 1/8: FROM python:3.12-slim-bookworm
+Resolved "python" as an alias (/etc/containers/registries.conf.d/000-shortnames.conf)
+Trying to pull docker.io/library/python:3.12-slim-bookworm...
+Getting image source signatures
+Copying blob sha256:2df4c82f5bdbf667d202cadaffe51eeee7b81febb397af587551022611d12740
+Copying blob sha256:75782e20ea1f4a9d9259bc20a5ecbbea8d5943bf5370bf0f5727900728f1cc9a
+Copying blob sha256:8662a60b808caf0f481c858e870db63699ac351820bd1577fb560dc553e72c38
+Copying blob sha256:4e1d2fc0dabb6394acabd86d1fd491fb5ed1dbec8818a32cd064357348bb1323
+Copying config sha256:a74ddf067736251b63204a4d7a26411cffa3da75600b4e67ad54c9c79f3f81cb
+Writing manifest to image destination
+[2/2] STEP 2/8: RUN useradd --system --uid 1001 huron
+useradd warning: huron's uid 1001 is greater than SYS_UID_MAX 999
+--> f354b907d133
+[2/2] STEP 3/8: WORKDIR /app
+--> 9dce8cf733b4
+[2/2] STEP 4/8: COPY --from=build --chown=huron:huron /app /app
+--> 283711d4a52b
+[2/2] STEP 5/8: ENV PATH="/app/.venv/bin:$PATH"
+--> 005d5a916f5b
+[2/2] STEP 6/8: USER huron
+--> ce0c6001f188
+[2/2] STEP 7/8: EXPOSE 8080
+--> e58f6300878b
+[2/2] STEP 8/8: CMD ["uvicorn", "huron.service.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+[2/2] COMMIT
+--> 8fb3570d7546
+8fb3570d7546d50bfd3d207c978828250de72f634fce5d12ddb3420f7843df4f
+LEGACY_IMAGE sha256:8fb3570d7546d50bfd3d207c978828250de72f634fce5d12ddb3420f7843df4f
+huron-proof
+huron-proof
+    system_u:object_r:container_var_lib_t:s0 /var/lib/huron-controlled-test-dlxh3eg3/storage
+unconfined_u:object_r:container_ro_file_t:s0 /var/lib/huron-controlled-test-dlxh3eg3/storage/overlay
+Trying to pull docker.io/library/postgres:16...
+Getting image source signatures
+Copying blob sha256:ebe3b74b62b86929d3f548a489b6f72fb09df0452f33b517ee13edeece9e8f1b
+Copying blob sha256:93eeac19656f3715478c4668897424a046327c33055cba27d6f5e095726c130c
+Copying blob sha256:6437d6ec8fee240e8f39c319270c007ae4b54550515565c3da37ef8f4a4ddb11
+Copying blob sha256:bf7af0229701decd1b9f42143504fc8f69e5664c37e57001d198e731e4f86c2e
+Copying blob sha256:3e1f39995a92649f3b285b74dae221f40dee5f6f62e34cbd64c5282bb3639c80
+Copying blob sha256:1a59b8215a09d233a387cb001c778468c3ab67a8a1fd244bcd8d1b67d4fdfffe
+Copying blob sha256:4f28b201a80ce9b9d2a3a02cf30fa97ad44ad0364113db2f79483a2a2623b24e
+Copying blob sha256:4e582dc1d360ca6a0edd4e80b3b00290a58a8a51dec1a5b24d602fcabc810fe7
+Copying blob sha256:a4818e049c44fbf32eb0710fda46639f56f1860e76b51c4440ab4c3c189e1390
+Copying blob sha256:3d9d92530136ca9144206edfb8c123b2dd733fc3befb1d99d69edd40c0ee5c1e
+Copying blob sha256:f72fc08c8aac5e3497b9dd62c3f76fb01aae54cdde5405e585366a6aab4a5bd0
+Copying blob sha256:1b1a24f650cfb06cf056691a043c23a72773b3ed8be248ef7009ea4d86c07904
+Copying blob sha256:ca8b58d10fb747a8ede64657963ae73db7657386968025c1d4f12f0b74f0caf1
+Copying blob sha256:daeef00fd6aa5c940a82d797534d4ed2dfec55728df8b7fb7140c1ac0df5d5ac
+Copying config sha256:43064e70a75c153a0ea5abed66b08e2981b7b43088bd59fb4b9f1a20ae4b62b0
+Writing manifest to image destination
+8f8a8295ebf67eafbbf720e8807859a6da6d7d80e0a2d6ca58465ee7ab34e3e4
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_foundations, P1 foundations plus registries required by later phases.
+INFO  [alembic.runtime.migration] Running upgrade 0001_foundations -> 0002_rbac, RBAC: principals, service accounts, the role catalog, guarded bindings, and policies.
+INFO  [alembic.runtime.migration] Running upgrade 0002_rbac -> 0003_layer_paths, Products attach to a dataset or a project, matching the layer-path split.
+INFO  [alembic.runtime.migration] Running upgrade 0003_layer_paths -> 0004_entry_layers, Entry layers, invariant N, and the ingest_pipeline role.
+INFO  [alembic.runtime.migration] Running upgrade 0004_entry_layers -> 0005_auth, Local password credentials, server-side browser sessions, and the ``user.manage`` capability.
+INFO  [alembic.runtime.migration] Running upgrade 0005_auth -> 0006_role_simplification, Role simplification: the data-steward role is removed and the dataset activation gate with it.
+INFO  [alembic.runtime.migration] Running upgrade 0006_role_simplification -> 0007_roleless_service_accounts, Service accounts hold no roles: their authority is intrinsic.
+INFO  [alembic.runtime.migration] Running upgrade 0007_roleless_service_accounts -> 0008_schema_conformance, Bring the metastore into conformance with the house PostgreSQL table-design rules.
+INFO  [alembic.runtime.migration] Running upgrade 0008_schema_conformance -> 0009_ingest_ledger, Give the raw ingest ledger its declared vocabulary, and the allocator its lookup paths.
+INFO  [alembic.runtime.migration] Running upgrade 0009_ingest_ledger -> 0010_independent_raw, Make Raw revisions independent submissions rather than parent-derived manifests.
+CREATE ROLE
+CREATE ROLE
+CREATE ROLE
+GRANT
+GRANT
+GRANT
+LEGACY_READY a52ea9620f150d6223fe973f1ad8ee77d37271b23915324412d784070404ae1c
+LEGACY_HTTP_UPLOAD_ADMITTED
+LEGACY_HTTP_WRITE_SURVIVED_SQL_FENCE
+LEGACY_WRITER_TERMINATED_RESTART_EXCLUDED a52ea9620f150d6223fe973f1ad8ee77d37271b23915324412d784070404ae1c
+LEGACY_REVOKED_IDENTITY_STARTUP_REFUSED
+bae79ede809e31ac1ff826e5de8a41cf803e4618e9db4255700c9916b59a972f
+ALTER ROLE
+ALTER ROLE
+LIVE_SQL_CONSUMER_REVOCATION_AND_FRESH_VERIFICATION_PROVED
+AUTHENTICATED_WIRED_CUTOVER_RECORDED e76c9d53fff6dac0a25957946176216c6fc8a89e1c4e0ef16222a164a1df50d5
+ec4254f36c15a3ae270e0488ad817a95715a33495d10310fa63473294578fa44
+FOREIGN_DESCENDANT_WRITER_REFUSED organization
+time="2026-09-11T19:30:12-06:00" level=warning msg="StopSignal SIGTERM failed to stop container recursing_lehmann in 10 seconds, resorting to SIGKILL"
+af88e3851ac3884587f21db2ea981e33ff21005c8cf334879b283942f08d1cee
+FOREIGN_DESCENDANT_WRITER_REFUSED organization/proof-org--01a0933c12e377858a56696855e25d19/CURRENT.json
+time="2026-09-11T19:30:23-06:00" level=warning msg="StopSignal SIGTERM failed to stop container tender_buck in 10 seconds, resorting to SIGKILL"
+f1454e196f675b00f3a24257e456f19f195cd5823bf6d6f45123b38fe74405a4
+CONTROLLER_FOREIGN_GENERATION_UNREACHABLE_REFUSED
+8f8a8295ebf67eafbbf720e8807859a6da6d7d80e0a2d6ca58465ee7ab34e3e4
+huron-proof
+d13128fc2ac2a8bf47fdf2b46ac6f3b6a7e55b51a9d4541ec2d3447d81229c25
+huron-proof
+Untagged: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+Untagged: docker.io/library/python:3.12-slim-bookworm
+Untagged: docker.io/library/postgres:16
+Deleted: 88e87efba31ba89fe536be85910a915471b6ebd0540bd7b6aec42a88d19211e9
+Deleted: 8fb3570d7546d50bfd3d207c978828250de72f634fce5d12ddb3420f7843df4f
+Deleted: 43064e70a75c153a0ea5abed66b08e2981b7b43088bd59fb4b9f1a20ae4b62b0
+CLEANED /var/lib/huron-controlled-test-dlxh3eg3
+
+.
+tests/integration/test_verified_raw_ingest.py .
+
+=============================== warnings summary ===============================
+tests/contract/test_auth_store.py:55
+  /Users/karlschmidt/repo/huron/tests/contract/test_auth_store.py:55: DeprecationWarning: testcontainers.postgres is deprecated, use testcontainers.community.postgres instead
+    from testcontainers.postgres import PostgresContainer
+
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /Users/karlschmidt/repo/huron/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+========== 14 passed, 1677 deselected, 2 warnings in 99.59s (0:01:39) ==========

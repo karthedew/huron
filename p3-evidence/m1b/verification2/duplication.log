@@ -1,0 +1,19 @@
+$ uv run --locked python scripts/check_duplication.py src/huron
+📊 Unified JSON report generated: /Users/karlschmidt/repo/huron/.pyscn/reports/analyze_20260911_190054.json
+
+📊 Analysis Summary:
+Health Score: 92/100 (Grade: A)
+Total time: 386ms
+
+📈 Detailed Scores:
+  Duplication:     60/100 ⚠️  (23.0% fragments cloned, 58 groups)
+
+
+--------------------------------------------------
+[Badge] Add this to your README to show off your score:
+[![pyscn quality](https://img.shields.io/badge/pyscn-A-brightgreen)](https://github.com/ludo-technologies/pyscn)
+
+[Star] Finding pyscn useful? https://github.com/ludo-technologies/pyscn
+--------------------------------------------------
+pyscn 1.31.1 native duplication score: 60/100 (required: >=90/100)
+Cloned fragments: 213/925; clone pairs: 253; clone groups: 58

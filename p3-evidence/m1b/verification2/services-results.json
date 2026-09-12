@@ -1,0 +1,20 @@
+[
+  {
+    "name": "contract",
+    "command": "uv run pytest -m contract",
+    "exit": 0,
+    "seconds": 97.9553771018982
+  },
+  {
+    "name": "integration",
+    "command": "uv run pytest -m integration -s",
+    "exit": 0,
+    "seconds": 99.88262391090393
+  },
+  {
+    "name": "acceptance",
+    "command": "make test-acceptance",
+    "exit": 0,
+    "seconds": 95.24916195869446
+  }
+]

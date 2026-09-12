@@ -1,0 +1,22 @@
+[
+  {
+    "document": "P3_IMPLEMENTATION_PLAN.md",
+    "target": "P3_M1A_VALIDATION.md",
+    "exists": true
+  },
+  {
+    "document": "P3_IMPLEMENTATION_PLAN.md",
+    "target": "P3_DESIGN.md",
+    "exists": true
+  },
+  {
+    "document": "P3_M1A_VALIDATION.md",
+    "target": "p3-evidence/m1a/attempt1/",
+    "exists": true
+  },
+  {
+    "document": "P3_M1A_VALIDATION.md",
+    "target": "p3-evidence/m1a/attempt1/audit.md",
+    "exists": true
+  }
+]

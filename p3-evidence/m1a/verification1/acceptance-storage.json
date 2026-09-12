@@ -1,0 +1,12 @@
+{
+  "started_utc": "2026-09-11T18:44:28.848908+00:00",
+  "work_directory": "/var/folders/3t/dsbbphj948x65zmvkftl97580000gn/T/huron-m1a-verification1-3nm09ku0",
+  "sample_interval_seconds": 0.2,
+  "initial_free_bytes": 61053358080,
+  "exit_code": 0,
+  "elapsed_seconds": 84.13567308400161,
+  "sampled_peak_allocated_bytes": 19341541376,
+  "minimum_observed_free_bytes": 41707143168,
+  "samples": 409,
+  "final_free_bytes": 51373985792
+}

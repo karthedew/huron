@@ -1,0 +1,39 @@
+$ PYTHONPATH=. uv run python p3-evidence/m1b/fix1/audit.py
+{
+  "source_files": 132,
+  "scope_files": 58,
+  "new_files": 17,
+  "coverage": {
+    "covered_lines": 6475,
+    "num_statements": 6756,
+    "percent_covered": 95.84073416222617,
+    "percent_covered_display": "95.84",
+    "missing_lines": 281,
+    "excluded_lines": 488,
+    "percent_statements_covered": 95.84073416222617,
+    "percent_statements_covered_display": "95.84"
+  },
+  "native": {
+    "full-src": {
+      "score": 60,
+      "total_fragments": 925,
+      "total_clones": 213,
+      "clone_pairs": 253,
+      "clone_groups": 58
+    },
+    "native-src": {
+      "score": 60,
+      "total_fragments": 925,
+      "total_clones": 213,
+      "clone_pairs": 253,
+      "clone_groups": 58
+    },
+    "native-src-huron": {
+      "score": 60,
+      "total_fragments": 925,
+      "total_clones": 213,
+      "clone_pairs": 253,
+      "clone_groups": 58
+    }
+  }
+}

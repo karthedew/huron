@@ -1,0 +1,152 @@
+Client:
+  APIVersion: 6.0.2
+  BuildOrigin: brew
+  Built: 1784664683
+  BuiltTime: Tue Jul 21 14:11:23 2026
+  GitCommit: ""
+  GoVersion: go1.26.5
+  Os: darwin
+  OsArch: darwin/arm64
+  Version: 6.0.2
+host:
+  arch: arm64
+  buildahVersion: 1.39.2
+  cdiSpecDirs: null
+  cgroupControllers:
+  - cpuset
+  - cpu
+  - io
+  - memory
+  - pids
+  - rdma
+  - misc
+  cgroupManager: systemd
+  cgroupVersion: v2
+  conmon:
+    package: conmon-2.1.12-3.fc41.aarch64
+    path: /usr/bin/conmon
+    version: 'conmon version 2.1.12, commit: '
+  cpuUtilization:
+    idlePercent: 75.95
+    systemPercent: 14.64
+    userPercent: 9.41
+  cpus: 4
+  databaseBackend: sqlite
+  distribution:
+    distribution: fedora
+    variant: coreos
+    version: "41"
+  eventLogger: journald
+  freeLocks: 2020
+  hostname: localhost.localdomain
+  idMappings:
+    gidmap: null
+    uidmap: null
+  kernel: 6.12.13-200.fc41.aarch64
+  linkmode: dynamic
+  logDriver: journald
+  memFree: 3170684928
+  memTotal: 3792150528
+  networkBackend: netavark
+  networkBackendInfo:
+    backend: netavark
+    dns:
+      package: aardvark-dns-1.14.0-1.fc41.aarch64
+      path: /usr/libexec/podman/aardvark-dns
+      version: aardvark-dns 1.14.0
+    package: netavark-1.14.0-1.fc41.aarch64
+    path: /usr/libexec/podman/netavark
+    version: netavark 1.14.0
+  ociRuntime:
+    name: crun
+    package: crun-1.20-2.fc41.aarch64
+    path: /usr/bin/crun
+    version: |-
+      crun version 1.20
+      commit: 9c9a76ac11994701dd666c4f0b869ceffb599a66
+      rundir: /run/crun
+      spec: 1.0.0
+      +SYSTEMD +SELINUX +APPARMOR +CAP +SECCOMP +EBPF +CRIU +LIBKRUN +WASM:wasmedge +YAJL
+  os: linux
+  pasta:
+    executable: /usr/bin/pasta
+    package: passt-0^20250121.g4f2c8e7-2.fc41.aarch64
+    version: |
+      pasta 0^20250121.g4f2c8e7-2.fc41.aarch64-pasta
+      Copyright Red Hat
+      GNU General Public License, version 2 or later
+        <https://www.gnu.org/licenses/old-licenses/gpl-2.0.html>
+      This is free software: you are free to change and redistribute it.
+      There is NO WARRANTY, to the extent permitted by law.
+  remoteSocket:
+    exists: true
+    path: unix:///run/podman/podman.sock
+  rootlessNetworkCmd: pasta
+  rootlessPortForwarder: ""
+  security:
+    apparmorEnabled: false
+    capabilities: CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_FOWNER,CAP_FSETID,CAP_KILL,CAP_NET_BIND_SERVICE,CAP_SETFCAP,CAP_SETGID,CAP_SETPCAP,CAP_SETUID,CAP_SYS_CHROOT
+    rootless: false
+    seccompEnabled: true
+    seccompProfilePath: /usr/share/containers/seccomp.json
+    selinuxEnabled: true
+  serviceIsRemote: true
+  swapFree: 0
+  swapTotal: 0
+  uptime: 0h 0m 6.00s
+  variant: v8
+plugins:
+  authorization: null
+  log:
+  - k8s-file
+  - none
+  - passthrough
+  - journald
+  network:
+  - bridge
+  - macvlan
+  - ipvlan
+  volume:
+  - local
+registries:
+  search:
+  - docker.io
+store:
+  containerStore:
+    number: 6
+    paused: 0
+    running: 0
+    stopped: 6
+  graphDriverName: overlay
+  graphOptions:
+    overlay.additionalImageStores:
+    - /usr/lib/containers/storage
+    overlay.imagestore: /usr/lib/containers/storage
+    overlay.mountopt: nodev,metacopy=on
+  graphRoot: /var/lib/containers/storage
+  graphRootAllocated: 98899800064
+  graphRootUsed: 33740558336
+  graphStatus:
+    Backing Filesystem: xfs
+    Native Overlay Diff: "false"
+    Supports d_type: "true"
+    Supports shifting: "true"
+    Supports volatile: "true"
+    Using metacopy: "true"
+  imageCopyTmpDir: /var/tmp
+  imageStore:
+    number: 46
+  runRoot: /run/containers/storage
+  transientStore: false
+  volumePath: /var/lib/containers/storage/volumes
+version:
+  APIVersion: 5.4.1
+  BuildOrigin: Fedora Project
+  Built: 1741651200
+  BuiltTime: Mon Mar 10 18:00:00 2025
+  GitCommit: b79bc8afe796cba51dd906270a7e1056ccdfcf9e
+  GoVersion: go1.23.7
+  Os: linux
+  OsArch: linux/arm64
+  Version: 5.4.1
+

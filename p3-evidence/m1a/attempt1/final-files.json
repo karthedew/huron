@@ -1,0 +1,11 @@
+{
+  "AGENTS.md": "1f089a7d05762223a776c8367692051eb780290502ca6fc9bdcd2ca0f56bdf63",
+  "Makefile": "dc80838c60eb6716e528e3f183b3af7635d3d230eea3504dc000e59435944f91",
+  "tests/acceptance_support.py": "76ca2e0abfc5bbd8e436a0ed40abe8fa1127e4987b0e27b6dba4cb76334e6da2",
+  "tests/unit/test_acceptance_capacity.py": "d2321536a5c2b38c755d141e62b5f621f11bdff46a82ce219fedfc9d83aaeb9e",
+  "tests/acceptance/test_raw_ingest_gate.py": "ae19e47e50fbcb4b6a95e5b593e7a79241fef65aee26f64e0bfc5d2c6c5ddbf6",
+  "docs/getting-started/testing.md": "b682073a39ff6132473fcff09e3676d9f79fb097b371d57e5836d2aeb60ab8d9",
+  "P3_IMPLEMENTATION_PLAN.md": "12f7898bc8f2090eb1aefe20c5f3910114605cfe7288f92dfe8a63c59643050c",
+  "P3_M1A_VALIDATION.md": "1c8e9a6f9c23a2672a270195c00d94e9d881f6796194ec030ea7d5fced0677a3",
+  "design/roadmap.html": "06fc7d9292d6de92f5cb48dd63d6f02bcf99c9f50924dda64415472974037b98"
+}

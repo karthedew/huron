@@ -1,0 +1,156 @@
+..........FF...............                                              [100%]
+=================================== FAILURES ===================================
+____ test_unsafe_known_envelope_remains_degraded_without_following_it[file] ____
+
+tmp_path = PosixPath('/private/var/folders/3t/dsbbphj948x65zmvkftl97580000gn/T/pytest-of-karlschmidt/pytest-46/test_unsafe_known_envelope_rem0')
+legacy = (<huron.core.integrity.verification.RevisionVerifier object at 0x10c190470>, 'organization/organization--0000000000000...entist', committed_at=datetime.datetime(2026, 1, 1, 0, 0, tzinfo=datetime.timezone.utc), file_count=1, total_bytes=11))
+kind = 'file'
+
+    @pytest.mark.parametrize("kind", ["file", "symlink"])
+    def test_unsafe_known_envelope_remains_degraded_without_following_it(
+        tmp_path: Path,
+        legacy: tuple[RevisionVerifier, str, RevisionRecord],
+        kind: str,
+    ) -> None:
+        """A corrupt final entry retains trusted identity but cannot supply orphan certification."""
+        verifier, path, record = legacy
+        target = tmp_path / path
+        for entry in (target, target / "payload"):
+            entry.chmod(0o755)
+        shutil.rmtree(target)
+        if kind == "file":
+            target.write_bytes(b"corrupt envelope")
+        else:
+            target.symlink_to(tmp_path)
+        try:
+            store = MaintenanceStore(tmp_path, os.geteuid())
+>           assert list(store.revision_paths()) == [path]
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_legacy_verification.py:266: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/huron/pkg/rawstore/maintenance.py:40: in revision_paths
+    yield from _revision_paths(root, (), ("organization", "project", "dataset"))
+src/huron/pkg/rawstore/maintenance.py:202: in _revision_paths
+    yield from _revision_paths(entity, (*prefix, kind, name), kinds[1:])
+src/huron/pkg/rawstore/maintenance.py:202: in _revision_paths
+    yield from _revision_paths(entity, (*prefix, kind, name), kinds[1:])
+src/huron/pkg/rawstore/maintenance.py:202: in _revision_paths
+    yield from _revision_paths(entity, (*prefix, kind, name), kinds[1:])
+src/huron/pkg/rawstore/maintenance.py:197: in _revision_paths
+    with descendant(revisions, (name,)):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent = 20, parts = ('000001--0000000000000000000000000000000e',)
+create = False
+
+    @contextmanager
+    def descendant(parent: int, parts: tuple[str, ...], *, create: bool = False) -> Iterator[int]:
+        """Traverse beneath a held directory without following links or recreating it.
+    
+        Args:
+            parent: Existing ancestor descriptor.
+            parts: Validated relative directory components.
+            create: Whether missing descendants may be created privately.
+    
+        Yields:
+            The final directory descriptor.
+        """
+        descriptor = os.dup(parent)
+        try:
+            for part in parts:
+                if create:
+                    with suppress(FileExistsError):
+                        os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                    os.fsync(descriptor)
+>               child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               NotADirectoryError: [Errno 20] Not a directory: '000001--0000000000000000000000000000000e'
+
+src/huron/pkg/rawstore/materialize.py:67: NotADirectoryError
+__ test_unsafe_known_envelope_remains_degraded_without_following_it[symlink] ___
+
+tmp_path = PosixPath('/private/var/folders/3t/dsbbphj948x65zmvkftl97580000gn/T/pytest-of-karlschmidt/pytest-46/test_unsafe_known_envelope_rem1')
+legacy = (<huron.core.integrity.verification.RevisionVerifier object at 0x10c21d490>, 'organization/organization--0000000000000...entist', committed_at=datetime.datetime(2026, 1, 1, 0, 0, tzinfo=datetime.timezone.utc), file_count=1, total_bytes=11))
+kind = 'symlink'
+
+    @pytest.mark.parametrize("kind", ["file", "symlink"])
+    def test_unsafe_known_envelope_remains_degraded_without_following_it(
+        tmp_path: Path,
+        legacy: tuple[RevisionVerifier, str, RevisionRecord],
+        kind: str,
+    ) -> None:
+        """A corrupt final entry retains trusted identity but cannot supply orphan certification."""
+        verifier, path, record = legacy
+        target = tmp_path / path
+        for entry in (target, target / "payload"):
+            entry.chmod(0o755)
+        shutil.rmtree(target)
+        if kind == "file":
+            target.write_bytes(b"corrupt envelope")
+        else:
+            target.symlink_to(tmp_path)
+        try:
+            store = MaintenanceStore(tmp_path, os.geteuid())
+>           assert list(store.revision_paths()) == [path]
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_legacy_verification.py:266: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/huron/pkg/rawstore/maintenance.py:40: in revision_paths
+    yield from _revision_paths(root, (), ("organization", "project", "dataset"))
+src/huron/pkg/rawstore/maintenance.py:202: in _revision_paths
+    yield from _revision_paths(entity, (*prefix, kind, name), kinds[1:])
+src/huron/pkg/rawstore/maintenance.py:202: in _revision_paths
+    yield from _revision_paths(entity, (*prefix, kind, name), kinds[1:])
+src/huron/pkg/rawstore/maintenance.py:202: in _revision_paths
+    yield from _revision_paths(entity, (*prefix, kind, name), kinds[1:])
+src/huron/pkg/rawstore/maintenance.py:197: in _revision_paths
+    with descendant(revisions, (name,)):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent = 20, parts = ('000001--0000000000000000000000000000000e',)
+create = False
+
+    @contextmanager
+    def descendant(parent: int, parts: tuple[str, ...], *, create: bool = False) -> Iterator[int]:
+        """Traverse beneath a held directory without following links or recreating it.
+    
+        Args:
+            parent: Existing ancestor descriptor.
+            parts: Validated relative directory components.
+            create: Whether missing descendants may be created privately.
+    
+        Yields:
+            The final directory descriptor.
+        """
+        descriptor = os.dup(parent)
+        try:
+            for part in parts:
+                if create:
+                    with suppress(FileExistsError):
+                        os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                    os.fsync(descriptor)
+>               child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               NotADirectoryError: [Errno 20] Not a directory: '000001--0000000000000000000000000000000e'
+
+src/huron/pkg/rawstore/materialize.py:67: NotADirectoryError
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /Users/karlschmidt/repo/huron/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/unit/test_legacy_verification.py::test_unsafe_known_envelope_remains_degraded_without_following_it[file]
+FAILED tests/unit/test_legacy_verification.py::test_unsafe_known_envelope_remains_degraded_without_following_it[symlink]
+2 failed, 25 passed, 1 warning in 0.56s

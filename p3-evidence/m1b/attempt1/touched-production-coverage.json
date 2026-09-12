@@ -1,0 +1,87 @@
+{
+  "src/huron/applications/lakectl/__init__.py": {
+    "statements": 0,
+    "covered": 0,
+    "missing": []
+  },
+  "src/huron/applications/lakectl/controller.py": {
+    "statements": 113,
+    "covered": 113,
+    "missing": []
+  },
+  "src/huron/applications/lakectl/engine.py": {
+    "statements": 73,
+    "covered": 73,
+    "missing": []
+  },
+  "src/huron/applications/lakectl/exclusion.py": {
+    "statements": 42,
+    "covered": 42,
+    "missing": []
+  },
+  "src/huron/applications/lakectl/main.py": {
+    "statements": 38,
+    "covered": 38,
+    "missing": []
+  },
+  "src/huron/applications/lakectl/server.py": {
+    "statements": 91,
+    "covered": 91,
+    "missing": []
+  },
+  "src/huron/applications/lakectl/settings.py": {
+    "statements": 79,
+    "covered": 79,
+    "missing": []
+  },
+  "src/huron/applications/lakectl/wiring.py": {
+    "statements": 36,
+    "covered": 36,
+    "missing": []
+  },
+  "src/huron/core/integrity/__init__.py": {
+    "statements": 0,
+    "covered": 0,
+    "missing": []
+  },
+  "src/huron/core/integrity/cutover.py": {
+    "statements": 75,
+    "covered": 75,
+    "missing": []
+  },
+  "src/huron/core/integrity/generations.py": {
+    "statements": 74,
+    "covered": 74,
+    "missing": []
+  },
+  "src/huron/core/integrity/models.py": {
+    "statements": 114,
+    "covered": 114,
+    "missing": []
+  },
+  "src/huron/core/integrity/ports.py": {
+    "statements": 23,
+    "covered": 23,
+    "missing": []
+  },
+  "src/huron/core/integrity/verification.py": {
+    "statements": 92,
+    "covered": 92,
+    "missing": []
+  },
+  "src/huron/pkg/metastore/legacy.py": {
+    "statements": 69,
+    "covered": 69,
+    "missing": []
+  },
+  "src/huron/pkg/metastore/maintenance.py": {
+    "statements": 57,
+    "covered": 57,
+    "missing": []
+  },
+  "src/huron/pkg/rawstore/maintenance.py": {
+    "statements": 140,
+    "covered": 140,
+    "missing": []
+  }
+}

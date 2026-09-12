@@ -1,0 +1,14 @@
+[
+  {
+    "command": "make lint",
+    "exit": 2
+  },
+  {
+    "command": "uv run --locked pytest --cov=src/huron --cov-report=term-missing",
+    "exit": 0
+  },
+  {
+    "command": "uv run --locked python scripts/check_duplication.py src",
+    "exit": 1
+  }
+]

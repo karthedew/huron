@@ -1,0 +1,61 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_________ test_observed_unreachable_engine_permanently_revokes_receipt _________
+
+prepared = (<huron.applications.lakectl.controller.ManagedComposeController object at 0x10af538f0>, ProtocolTransition(schema_id=...0-0000-0000-000000000001'), operator='local:1002', terminated_writers=(), old_roles=('old_app',), new_role='new_app')))
+engine_boundary = <tests.unit.test_managed_controller.EngineBoundary object at 0x10b95c860>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b95cc50>
+
+    async def test_observed_unreachable_engine_permanently_revokes_receipt(prepared, engine_boundary, monkeypatch):
+        controller, record = prepared
+        await controller.certify(1002, record)
+        def unavailable(name):
+            raise httpx.ConnectError('engine unavailable')
+        with monkeypatch.context() as patch:
+            patch.setattr(engine_boundary, 'volume_path', unavailable)
+            with pytest.raises(httpx.ConnectError):
+                controller.check(1002, record.fence)
+>       with pytest.raises(ValueError, match='endorsement'):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+p3-evidence/m1b/verification3/test_authority_repro.py:21: Failed
+_____ test_changed_maintenance_database_configuration_invalidates_receipt ______
+
+prepared = (<huron.applications.lakectl.controller.ManagedComposeController object at 0x10b95c7a0>, ProtocolTransition(schema_id=...0-0000-0000-000000000001'), operator='local:1002', terminated_writers=(), old_roles=('old_app',), new_role='new_app')))
+controller_settings = ControllerSettings(root_id=UUID('00000000-0000-0000-0000-000000000001'), controller_id=UUID('00000000-0000-0000-0000-0...w', owner_uid=1001, cutover_operators=(0, 1002), restart_operators=(1003,), old_roles=('old_app',), new_role='new_app')
+
+    async def test_changed_maintenance_database_configuration_invalidates_receipt(prepared, controller_settings):
+        controller, record = prepared
+        await controller.certify(1002, record)
+        path = controller_settings.maintenance_path
+        changed = json.loads(path.read_bytes())
+        changed['database_url'] = 'postgresql://cutover@different-database/unrelated'
+        path.write_text(json.dumps(changed))
+>       with pytest.raises(ValueError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+p3-evidence/m1b/verification3/test_authority_repro.py:31: Failed
+____ test_revoked_receipt_cannot_be_reendorsed_without_full_reverification _____
+
+prepared = (<huron.applications.lakectl.controller.ManagedComposeController object at 0x10b95e8d0>, ProtocolTransition(schema_id=...0-0000-0000-000000000001'), operator='local:1002', terminated_writers=(), old_roles=('old_app',), new_role='new_app')))
+engine_boundary = <tests.unit.test_managed_controller.EngineBoundary object at 0x10b95ea80>
+
+    async def test_revoked_receipt_cannot_be_reendorsed_without_full_reverification(prepared, engine_boundary):
+        controller, record = prepared
+        await controller.certify(1002, record)
+        engine_boundary.containers = (writer(engine_boundary),)
+        with pytest.raises(ValueError):
+            await controller.validate_certificate(1002, record)
+        engine_boundary.containers = ()
+>       with pytest.raises(ValueError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+p3-evidence/m1b/verification3/test_authority_repro.py:41: Failed
+=========================== short test summary info ============================
+FAILED p3-evidence/m1b/verification3/test_authority_repro.py::test_observed_unreachable_engine_permanently_revokes_receipt
+FAILED p3-evidence/m1b/verification3/test_authority_repro.py::test_changed_maintenance_database_configuration_invalidates_receipt
+FAILED p3-evidence/m1b/verification3/test_authority_repro.py::test_revoked_receipt_cannot_be_reendorsed_without_full_reverification
+3 failed in 2.28s

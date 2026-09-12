@@ -1,0 +1,30 @@
+$ uv run lint-imports
+
+╔══╗─────────▶╔╗ ╔╗      ╔╗◀───┐
+╚╣╠╝◀─────┐  ╔╝╚╗║║────▶╔╝╚╗   │
+ ║║   ╔══╦══╦╩╗╔╝║║  ╔╦═╩╗╔╝╔═╦══╗
+ ║║╔══╣╔╗║╔╗║╔╣║ ║║ ╔╬╣╔╗║║ ║│║╔═╝
+╔╣╠╣║║║╚╝║╚╝║║║╚╗║╚═╝║║║║║╚╗║═╣║
+╚══╩╩╩╣╔═╩══╩╝╚═╝╚═══╩╩╝╚╩═╩╩═╩╝
+  └──▶║║                    ▲ 
+      ╚╝────────────────────┘
+
+
+---------
+Contracts
+---------
+
+Analyzed 185 files, 1083 dependencies.
+--------------------------------------
+
+applications depend on core then packages then schema KEPT
+Packages are independent of one another KEPT
+Applications are independent of one another KEPT
+catalog and rbac are framework-free KEPT
+auth is web-framework-free KEPT
+the authorization package is entered through its public surface KEPT
+domain packages do not depend on persistence adapters KEPT
+core uses ports rather than concrete infrastructure KEPT
+API endpoints cannot call internal workflow implementations KEPT
+
+Contracts: 9 kept, 0 broken.

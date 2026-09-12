@@ -1,0 +1,201 @@
+ M .agents/skills/codebase-design/SKILL.md
+ M .agents/skills/grill-with-docs/SKILL.md
+ M .claude/commands/architectural-review.md
+ M .claude/commands/design-plan.md
+ M .claude/commands/implement-markdown.md
+ D .claude/skills/codebase-design/SKILL.md
+ D .claude/skills/grill-with-docs/SKILL.md
+ M .github/workflows/ci.yml
+ M .gitignore
+ M AGENTS.md
+ M API_DESIGN.md
+ M API_IMPLEMENTATION_PLAN.md
+ M CLAUDE.md
+ M Containerfile
+ M FINDINGS_IMPLEMENTATION_PLAN.md
+ M IMPLEMENTATION_PLAN.md
+ M Makefile
+ M P1_IMPLEMENTATION_PLAN.md
+ M P2_DESIGN.md
+ M P3_DESIGN.md
+ M P3_IMPLEMENTATION_PLAN.md
+ M P3_M1A_VALIDATION.md
+ M RBAC_IMPLEMENTATION_PLAN.md
+ M README.md
+ M SCHEMA_DESIGN.md
+ M SCHEMA_IMPLEMENTATION_PLAN.md
+ M design/catalog-search.html
+ M design/layer-raw.html
+ M design/layer-silver.html
+ M design/rbac.html
+ M design/roadmap.html
+ M design/workflows.html
+ M docker-compose.yml
+ M docs/backend-design.md
+ M docs/getting-started/conventions.md
+ M docs/getting-started/docstrings.md
+ M docs/getting-started/repository-layout.md
+ M docs/getting-started/testing.md
+ M pyproject.toml
+ M skills-lock.json
+ M src/huron/applications/api/app.py
+ M src/huron/applications/api/authorization/decisions.py
+ M src/huron/applications/api/authorization/guards.py
+ M src/huron/applications/api/dependencies.py
+ M src/huron/applications/api/routes/auth/endpoints/session.py
+ M src/huron/applications/api/routes/v1/endpoints/datasets.py
+ M src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py
+ M src/huron/applications/api/routes/v1/endpoints/organizations.py
+ M src/huron/applications/api/routes/v1/endpoints/projects.py
+ M src/huron/applications/api/runtime.py
+ M src/huron/core/__init__.py
+ M src/huron/core/_catalog.py
+ M src/huron/core/_ingest.py
+ M src/huron/core/_revision_reader.py
+ M src/huron/core/access.py
+ M src/huron/core/catalog.py
+ M src/huron/core/ports.py
+ M src/huron/core/raw.py
+ M src/huron/core/scopes.py
+ M src/huron/pkg/catalog/persistence.py
+ M src/huron/pkg/metastore/hierarchy.py
+ M tests/acceptance/test_raw_ingest_gate.py
+ M tests/contract/test_commit_intents.py
+ M tests/contract/test_hierarchy_store.py
+ M tests/contract/test_ingest_process_death.py
+ M tests/hierarchy_contract.py
+ M tests/unit/test_api_app.py
+ M tests/unit/test_authorization_credentials.py
+ M tests/unit/test_authorization_decisions.py
+ M tests/unit/test_authorization_guards.py
+ M tests/unit/test_catalog_lifecycle.py
+ M tests/unit/test_core_workflows.py
+ M tests/unit/test_hierarchy_store_memory.py
+ M tests/unit/test_repository_hierarchy.py
+ M tests/unit/test_repository_rbac.py
+ M zensical.toml
+?? .agents/skills/ask-matt/
+?? .agents/skills/claude-handoff/
+?? .agents/skills/code-review/
+?? .agents/skills/codebase-design/DEEPENING.md
+?? .agents/skills/codebase-design/DESIGN-IT-TWICE.md
+?? .agents/skills/codebase-design/agents/
+?? .agents/skills/diagnosing-bugs/
+?? .agents/skills/domain-modeling/
+?? .agents/skills/git-guardrails-claude-code/
+?? .agents/skills/grill-me/
+?? .agents/skills/grill-with-docs/agents/
+?? .agents/skills/grilling/
+?? .agents/skills/handoff/
+?? .agents/skills/implement-spec/
+?? .agents/skills/implement/
+?? .agents/skills/improve-codebase-architecture/
+?? .agents/skills/loop-me/
+?? .agents/skills/migrate-to-shoehorn/
+?? .agents/skills/prototype/
+?? .agents/skills/research/
+?? .agents/skills/resolving-merge-conflicts/
+?? .agents/skills/retro/
+?? .agents/skills/scaffold-exercises/
+?? .agents/skills/setup-matt-pocock-skills/
+?? .agents/skills/setup-pre-commit/
+?? .agents/skills/setup-ts-deep-modules/
+?? .agents/skills/tdd/
+?? .agents/skills/teach/
+?? .agents/skills/to-questionnaire/
+?? .agents/skills/to-spec/
+?? .agents/skills/to-tickets/
+?? .agents/skills/triage/
+?? .agents/skills/wait-what/
+?? .agents/skills/wayfinder/
+?? .agents/skills/wizard/
+?? .agents/skills/writing-beats/
+?? .agents/skills/writing-for-agents/
+?? .agents/skills/writing-fragments/
+?? .agents/skills/writing-shape/
+?? .claude/skills/ask-matt
+?? .claude/skills/claude-handoff
+?? .claude/skills/code-review
+?? .claude/skills/codebase-design
+?? .claude/skills/diagnosing-bugs
+?? .claude/skills/domain-modeling
+?? .claude/skills/git-guardrails-claude-code
+?? .claude/skills/grill-me
+?? .claude/skills/grill-with-docs
+?? .claude/skills/grilling
+?? .claude/skills/handoff
+?? .claude/skills/implement
+?? .claude/skills/implement-spec
+?? .claude/skills/improve-codebase-architecture
+?? .claude/skills/loop-me
+?? .claude/skills/migrate-to-shoehorn
+?? .claude/skills/prototype
+?? .claude/skills/research
+?? .claude/skills/resolving-merge-conflicts
+?? .claude/skills/retro
+?? .claude/skills/scaffold-exercises
+?? .claude/skills/setup-matt-pocock-skills
+?? .claude/skills/setup-pre-commit
+?? .claude/skills/setup-ts-deep-modules
+?? .claude/skills/tdd
+?? .claude/skills/teach
+?? .claude/skills/to-questionnaire
+?? .claude/skills/to-spec
+?? .claude/skills/to-tickets
+?? .claude/skills/triage
+?? .claude/skills/wait-what
+?? .claude/skills/wayfinder
+?? .claude/skills/wizard
+?? .claude/skills/writing-beats
+?? .claude/skills/writing-for-agents
+?? .claude/skills/writing-fragments
+?? .claude/skills/writing-shape
+?? .opencode/
+?? .pyscn/
+?? AUTH_IMPLEMENTATION_PLAN.md
+?? P3_EXECUTION.md
+?? P3_M1B_VALIDATION.md
+?? deploy/
+?? design/duplication-architecture.md
+?? docs/agents/
+?? docs/operations/
+?? duplication-evidence/
+?? opencode.json
+?? p3-evidence/
+?? src/huron/applications/lakectl/
+?? src/huron/core/catalog_claims.py
+?? src/huron/core/catalog_collections.py
+?? src/huron/core/catalog_creation.py
+?? src/huron/core/catalog_documents.py
+?? src/huron/core/catalog_ports.py
+?? src/huron/core/integrity/
+?? src/huron/pkg/metastore/legacy.py
+?? src/huron/pkg/metastore/maintenance.py
+?? src/huron/pkg/metastore/queries.py
+?? src/huron/pkg/rawstore/maintenance.py
+?? src/huron/schema/documents/protocol-inventory-v1.json
+?? src/huron/schema/documents/protocol-transition-v1.json
+?? tests/acceptance_support.py
+?? tests/catalog_creation_support.py
+?? tests/contract/test_integrity_store.py
+?? tests/contract/test_maintenance_ownership.py
+?? tests/contract/test_writer_exclusion.py
+?? tests/controlled_deployment.py
+?? tests/integration/conftest.py
+?? tests/integration/test_catalog_creation.py
+?? tests/integration/test_catalog_descriptions.py
+?? tests/integration/test_protocol_cutover.py
+?? tests/unit/test_acceptance_capacity.py
+?? tests/unit/test_controller_certificates.py
+?? tests/unit/test_controller_engine.py
+?? tests/unit/test_controller_settings.py
+?? tests/unit/test_controller_transport.py
+?? tests/unit/test_integrity_cutover.py
+?? tests/unit/test_integrity_generations.py
+?? tests/unit/test_integrity_storage.py
+?? tests/unit/test_lakectl_main.py
+?? tests/unit/test_lakectl_wiring.py
+?? tests/unit/test_legacy_verification.py
+?? tests/unit/test_maintenance_adapters.py
+?? tests/unit/test_managed_controller.py
+?? tests/unit/test_protocol_documents.py

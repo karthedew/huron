@@ -1,0 +1,38 @@
+[
+  {
+    "name": "unit-final",
+    "command": "uv run pytest --cov=src/huron --cov-report=term-missing",
+    "exit": 0,
+    "seconds": 64.09556889533997
+  },
+  {
+    "name": "coverage-final",
+    "command": "uv run coverage json -o p3-evidence/m1b/fix1/coverage.json",
+    "exit": 0,
+    "seconds": 0.8473179340362549
+  },
+  {
+    "name": "native-full-final",
+    "command": "uv run --locked pyscn analyze --json src",
+    "exit": 0,
+    "seconds": 0.7227909564971924
+  },
+  {
+    "name": "tool-version",
+    "command": "uv run --locked pyscn --version",
+    "exit": 0,
+    "seconds": 0.18606972694396973
+  },
+  {
+    "name": "docs-final",
+    "command": "make docs",
+    "exit": 0,
+    "seconds": 0.8200440406799316
+  },
+  {
+    "name": "diff-final",
+    "command": "git diff --check",
+    "exit": 0,
+    "seconds": 0.19060826301574707
+  }
+]

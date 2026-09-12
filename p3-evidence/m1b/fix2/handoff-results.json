@@ -1,0 +1,17 @@
+[
+  {
+    "name": "handoff-docs",
+    "command": "make docs",
+    "exit": 0
+  },
+  {
+    "name": "handoff-diff",
+    "command": "git diff --check",
+    "exit": 0
+  },
+  {
+    "name": "handoff-audit",
+    "command": "PYTHONPATH=. uv run python p3-evidence/m1b/fix2/audit.py",
+    "exit": 0
+  }
+]

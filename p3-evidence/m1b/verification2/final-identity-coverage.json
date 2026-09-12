@@ -1,0 +1,187 @@
+{
+  "source_inventory_sha256": "0dedb64b30388547fd3220bc9a70890cb5f58813a2a66e1ad815d53aed31094b",
+  "source_count": 132,
+  "scope_count": 58,
+  "coverage": {
+    "covered_lines": 6475,
+    "num_statements": 6756,
+    "percent_covered": 95.84073416222617,
+    "percent_covered_display": "95.84",
+    "missing_lines": 281,
+    "excluded_lines": 488,
+    "percent_statements_covered": 95.84073416222617,
+    "percent_statements_covered_display": "95.84"
+  },
+  "touched_coverage": {
+    "src/huron/applications/lakectl/__init__.py": {
+      "covered_lines": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 0,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/applications/lakectl/controller.py": {
+      "covered_lines": 117,
+      "num_statements": 117,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 4,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/applications/lakectl/engine.py": {
+      "covered_lines": 73,
+      "num_statements": 73,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 0,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/applications/lakectl/exclusion.py": {
+      "covered_lines": 42,
+      "num_statements": 42,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 3,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/applications/lakectl/main.py": {
+      "covered_lines": 38,
+      "num_statements": 38,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 0,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/applications/lakectl/server.py": {
+      "covered_lines": 91,
+      "num_statements": 91,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 2,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/applications/lakectl/settings.py": {
+      "covered_lines": 79,
+      "num_statements": 79,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 0,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/applications/lakectl/wiring.py": {
+      "covered_lines": 36,
+      "num_statements": 36,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 4,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/core/integrity/__init__.py": {
+      "covered_lines": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 0,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/core/integrity/cutover.py": {
+      "covered_lines": 127,
+      "num_statements": 127,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 5,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/core/integrity/generations.py": {
+      "covered_lines": 74,
+      "num_statements": 74,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 3,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/core/integrity/models.py": {
+      "covered_lines": 114,
+      "num_statements": 114,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 0,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/core/integrity/ports.py": {
+      "covered_lines": 24,
+      "num_statements": 24,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 43,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/core/integrity/verification.py": {
+      "covered_lines": 92,
+      "num_statements": 92,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 4,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/pkg/metastore/legacy.py": {
+      "covered_lines": 69,
+      "num_statements": 69,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 7,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/pkg/metastore/maintenance.py": {
+      "covered_lines": 57,
+      "num_statements": 57,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 2,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    },
+    "src/huron/pkg/rawstore/maintenance.py": {
+      "covered_lines": 146,
+      "num_statements": 146,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 2,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00"
+    }
+  }
+}

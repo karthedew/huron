@@ -1,0 +1,8 @@
+ruff 0.16.3
+ty 0.0.75 (a553dcc1a 2026-08-26)
+mypy 2.3.1 (compiled: yes)
+import-linter 2.13
+pytest 9.1.1
+6.0.1
+7.0.1
+pyscn version 1.31.1

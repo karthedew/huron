@@ -1,0 +1,30 @@
+$ uv run pytest -m contract
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/karlschmidt/repo/huron
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.1.0, asyncio-1.4.0, anyio-4.14.2, respx-0.23.1, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1648 items / 1602 deselected / 46 selected
+
+tests/contract/test_auth_store.py .                                      [  2%]
+tests/contract/test_catalog_store.py .......                             [ 17%]
+tests/contract/test_commit_intents.py ....                               [ 26%]
+tests/contract/test_hierarchy_store.py .........                         [ 45%]
+tests/contract/test_ingest_process_death.py .......                      [ 60%]
+tests/contract/test_integrity_store.py ....                              [ 69%]
+tests/contract/test_rbac_store.py ..                                     [ 73%]
+tests/contract/test_writer_exclusion.py ............                     [100%]
+
+=============================== warnings summary ===============================
+tests/contract/test_auth_store.py:55
+  /Users/karlschmidt/repo/huron/tests/contract/test_auth_store.py:55: DeprecationWarning: testcontainers.postgres is deprecated, use testcontainers.community.postgres instead
+    from testcontainers.postgres import PostgresContainer
+
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /Users/karlschmidt/repo/huron/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+========== 46 passed, 1602 deselected, 2 warnings in 99.31s (0:01:39) ==========

@@ -1,0 +1,20 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-9.1.1, pluggy-1.6.0 -- /Users/karlschmidt/repo/huron/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/karlschmidt/repo/huron
+configfile: pyproject.toml
+plugins: cov-7.1.0, asyncio-1.4.0, anyio-4.14.2, respx-0.23.1, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+tests/contract/test_writer_exclusion.py::test_database_exclusion_revokes_inherited_rights_and_terminates_admitted_sessions PASSED [ 50%]
+tests/contract/test_writer_exclusion.py::test_database_owner_and_administrative_roles_are_not_eligible_application_identities PASSED [100%]
+
+=============================== warnings summary ===============================
+tests/contract/test_writer_exclusion.py:7
+  /Users/karlschmidt/repo/huron/tests/contract/test_writer_exclusion.py:7: DeprecationWarning: testcontainers.postgres is deprecated, use testcontainers.community.postgres instead
+    from testcontainers.postgres import PostgresContainer
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+========================= 2 passed, 1 warning in 4.65s =========================

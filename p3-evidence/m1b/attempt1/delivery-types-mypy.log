@@ -1,0 +1,2 @@
+COMMAND ['uv', 'run', 'mypy']
+Success: no issues found in 132 source files

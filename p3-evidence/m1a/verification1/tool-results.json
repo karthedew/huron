@@ -1,0 +1,85 @@
+[
+  {
+    "command": [
+      "uv",
+      "run",
+      "ruff",
+      "--version"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "ty",
+      "--version"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "mypy",
+      "--version"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "lint-imports",
+      "--version"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "pytest",
+      "--version"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "python",
+      "-c",
+      "import pytest_cov"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "radon",
+      "--version"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "complexipy",
+      "--version"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "--locked",
+      "pyscn",
+      "--version"
+    ],
+    "exit_code": 0
+  }
+]

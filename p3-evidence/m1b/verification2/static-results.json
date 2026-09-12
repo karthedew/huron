@@ -1,0 +1,98 @@
+[
+  {
+    "name": "lint",
+    "command": "make lint",
+    "exit": 2,
+    "seconds": 3.8598220348358154
+  },
+  {
+    "name": "ruff",
+    "command": "uv run ruff check src",
+    "exit": 0,
+    "seconds": 0.038487911224365234
+  },
+  {
+    "name": "format",
+    "command": "uv run ruff format --check src",
+    "exit": 0,
+    "seconds": 0.04107785224914551
+  },
+  {
+    "name": "pydoclint",
+    "command": "uv run pydoclint src",
+    "exit": 0,
+    "seconds": 0.5880258083343506
+  },
+  {
+    "name": "ty",
+    "command": "uv run ty check src",
+    "exit": 0,
+    "seconds": 0.15995383262634277
+  },
+  {
+    "name": "mypy",
+    "command": "uv run mypy src",
+    "exit": 0,
+    "seconds": 0.1634540557861328
+  },
+  {
+    "name": "imports",
+    "command": "uv run lint-imports",
+    "exit": 0,
+    "seconds": 0.1271049976348877
+  },
+  {
+    "name": "unit",
+    "command": "uv run pytest --cov=src/huron --cov-report=term-missing",
+    "exit": 0,
+    "seconds": 61.495880126953125
+  },
+  {
+    "name": "coverage",
+    "command": "uv run coverage json -o p3-evidence/m1b/verification2/coverage.json",
+    "exit": 0,
+    "seconds": 0.5892632007598877
+  },
+  {
+    "name": "radon-cc",
+    "command": "uv run radon cc src/huron --min C",
+    "exit": 0,
+    "seconds": 0.21589398384094238
+  },
+  {
+    "name": "radon-mi",
+    "command": "uv run radon mi src/huron --min B",
+    "exit": 0,
+    "seconds": 0.47183799743652344
+  },
+  {
+    "name": "complexipy",
+    "command": "uv run complexipy src/huron --max-complexity-allowed 15",
+    "exit": 0,
+    "seconds": 0.4243161678314209
+  },
+  {
+    "name": "pyscn",
+    "command": "uv run --locked pyscn check src/huron",
+    "exit": 0,
+    "seconds": 0.5765886306762695
+  },
+  {
+    "name": "duplication",
+    "command": "uv run --locked python scripts/check_duplication.py src/huron",
+    "exit": 1,
+    "seconds": 0.57110595703125
+  },
+  {
+    "name": "docs",
+    "command": "make docs",
+    "exit": 0,
+    "seconds": 0.514941930770874
+  },
+  {
+    "name": "diff-check",
+    "command": "git diff --check",
+    "exit": 0,
+    "seconds": 0.08542704582214355
+  }
+]

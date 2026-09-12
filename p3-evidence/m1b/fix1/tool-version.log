@@ -1,0 +1,2 @@
+$ uv run --locked pyscn --version
+pyscn version 1.31.1

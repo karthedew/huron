@@ -1,0 +1,46 @@
+[
+  {
+    "wrapper": [
+      "uv",
+      "run",
+      "--locked",
+      "python",
+      "scripts/check_duplication.py",
+      "src/huron"
+    ],
+    "native": [
+      "uv",
+      "run",
+      "--locked",
+      "pyscn",
+      "analyze",
+      "--select",
+      "clones",
+      "--json",
+      "src/huron"
+    ],
+    "report": "lint-native.json"
+  },
+  {
+    "wrapper": [
+      "uv",
+      "run",
+      "--locked",
+      "python",
+      "scripts/check_duplication.py",
+      "src"
+    ],
+    "native": [
+      "uv",
+      "run",
+      "--locked",
+      "pyscn",
+      "analyze",
+      "--select",
+      "clones",
+      "--json",
+      "src"
+    ],
+    "report": "duplication-src-native.json"
+  }
+]

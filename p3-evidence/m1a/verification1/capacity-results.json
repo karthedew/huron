@@ -1,0 +1,12 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "pytest",
+    "tests/unit/test_acceptance_capacity.py",
+    "--cov=tests.acceptance_support",
+    "--cov-report=term-missing",
+    "--cov-report=json:p3-evidence/m1a/verification1/capacity-coverage.json"
+  ],
+  "exit_code": 0
+}

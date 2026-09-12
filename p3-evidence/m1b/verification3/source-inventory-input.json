@@ -1,0 +1,662 @@
+[
+  {
+    "path": "src/huron/__init__.py",
+    "bytes": 391,
+    "sha256": "bb89ccc8d172f916e8c78151687ecc2470c9f5c210d8260d3fb31f920afd5b5d"
+  },
+  {
+    "path": "src/huron/applications/__init__.py",
+    "bytes": 319,
+    "sha256": "2546f553d1869fab116636b3443103308a0bd47a5e3418482fc6ca927f09a2b9"
+  },
+  {
+    "path": "src/huron/applications/api/__init__.py",
+    "bytes": 651,
+    "sha256": "b2b65557a9d181dddbb24412fb9c2f3e5e25555ac27d7b8896c0956d7e7a9be3"
+  },
+  {
+    "path": "src/huron/applications/api/app.py",
+    "bytes": 20160,
+    "sha256": "eb2222c60b763657ee70aa519d8e4227eaa4c002fcd938175c80457893ba0ceb"
+  },
+  {
+    "path": "src/huron/applications/api/authorization/__init__.py",
+    "bytes": 2237,
+    "sha256": "3dd598c492851d0da3c49cae3e9ed247418aec61ea1cca09c2f9cf28bbe465f4"
+  },
+  {
+    "path": "src/huron/applications/api/authorization/cookies.py",
+    "bytes": 4519,
+    "sha256": "6866bb85f03692457c2e478bfb35f7c8ba094e8d2e32d666417157b00e6f6b0c"
+  },
+  {
+    "path": "src/huron/applications/api/authorization/credentials.py",
+    "bytes": 6670,
+    "sha256": "d6a2358b9d0f16610f16116a58c406674a1beb8ef7af6fc7cb38710dd66e767e"
+  },
+  {
+    "path": "src/huron/applications/api/authorization/decisions.py",
+    "bytes": 3265,
+    "sha256": "8f2915367cd03ac5a25efa3382d24bf59de512b531dfc83b8e26fb06be16405e"
+  },
+  {
+    "path": "src/huron/applications/api/authorization/guards.py",
+    "bytes": 18422,
+    "sha256": "5a51b8a5e8edea9f513702882f0fd8c93a65ad3face489572df1a6d6d20e9f8c"
+  },
+  {
+    "path": "src/huron/applications/api/dependencies.py",
+    "bytes": 3639,
+    "sha256": "282f292b211fe01bff8dd4abafae7b96e77c95bc5183d7dc306b594c46206d3e"
+  },
+  {
+    "path": "src/huron/applications/api/expiry.py",
+    "bytes": 3324,
+    "sha256": "ff9e309d23371b6b722de8eaeb5f9f2712748eddd764382059122e2196cc203c"
+  },
+  {
+    "path": "src/huron/applications/api/main.py",
+    "bytes": 658,
+    "sha256": "a2062247c6640c22fb6e439c0a1209334f3a0f1bf18b96491bf9436893a9a33f"
+  },
+  {
+    "path": "src/huron/applications/api/problems.py",
+    "bytes": 14833,
+    "sha256": "dcb1451dc86835ed100b9708ff7e78a40b81ddda8d9713d6f88ab658449c94b2"
+  },
+  {
+    "path": "src/huron/applications/api/routes/__init__.py",
+    "bytes": 402,
+    "sha256": "f8f06d5c9e5fbbbddc9d09389e2046fea3077022eb0f36f7d8c000f5b7799d27"
+  },
+  {
+    "path": "src/huron/applications/api/routes/auth/__init__.py",
+    "bytes": 728,
+    "sha256": "7771fa75461232861a624b9017fe58966db02cbd57dd75d4894ddb9b238a92c7"
+  },
+  {
+    "path": "src/huron/applications/api/routes/auth/endpoints/__init__.py",
+    "bytes": 305,
+    "sha256": "44653d83066dbcd37ff73bcef7b8419ba3066c14c170a0eaad16c604bdaf9735"
+  },
+  {
+    "path": "src/huron/applications/api/routes/auth/endpoints/login.py",
+    "bytes": 8082,
+    "sha256": "e8297ba6379037abfed232a7aa33a11fd813e4e4a6d26041bbf1a24faf0042a9"
+  },
+  {
+    "path": "src/huron/applications/api/routes/auth/endpoints/oidc.py",
+    "bytes": 9219,
+    "sha256": "eb91f6194380be1c1c223a01830e014366d1bbe4345e8eb47a174e6beef23a37"
+  },
+  {
+    "path": "src/huron/applications/api/routes/auth/endpoints/session.py",
+    "bytes": 3962,
+    "sha256": "d47c6ed5e34929469881ad2040ab63f9d77ea0797c28faa83a744e0aaa22f17c"
+  },
+  {
+    "path": "src/huron/applications/api/routes/auth/schema/__init__.py",
+    "bytes": 285,
+    "sha256": "11070f0187b44292c0160b9273d1c54152069980ab1f0542954c7801ea4173c4"
+  },
+  {
+    "path": "src/huron/applications/api/routes/auth/schema/login.py",
+    "bytes": 1174,
+    "sha256": "c8896872614fba949ad5325b6a55029dbe085b4b326248a996a98747cacfe615"
+  },
+  {
+    "path": "src/huron/applications/api/routes/auth/schema/session.py",
+    "bytes": 1970,
+    "sha256": "210bf238a0757cc723467ba27284cc8b987dcef76d40d94e1ada6ec2f226de79"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/__init__.py",
+    "bytes": 1896,
+    "sha256": "e6fbd1b2c7fd2b2fcc5466b967df7c6c0c87c4242e23d2b50b804d3ede05b952"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/__init__.py",
+    "bytes": 271,
+    "sha256": "eb9dd0f444e42b38b9d2a4d807305fdc58182dfd612d8bcc58b9b5f6df0f9244"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/api_keys.py",
+    "bytes": 2626,
+    "sha256": "3994a89447d264a9cb6f919a49025629129fb132f835f41f6203cb6d86f004a9"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/bindings.py",
+    "bytes": 18459,
+    "sha256": "af8768d0c1e999735a14aa979828840a4c8d06ab7729025891a21a5a85e1fda3"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/datasets.py",
+    "bytes": 13669,
+    "sha256": "004345dcf4a9903a95f487f6599d63899984c6255e98f191779f5a91e301e42e"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py",
+    "bytes": 19024,
+    "sha256": "32b1c06e59d2f8ce5f01e545a1447a41c00261659476e946419c21e2661638c0"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/organizations.py",
+    "bytes": 6821,
+    "sha256": "46404f78e2718a8917e1db811cb17cdf3d806f7e58686157e691235029cea67b"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/policies.py",
+    "bytes": 7338,
+    "sha256": "3db574effa9869f71ff053c55cea89f8d2b08a63530ff02a1aefa5992b294216"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/projects.py",
+    "bytes": 7716,
+    "sha256": "b8ebf9996be13972399ec7d9925cd0db9cfae9d38ccfce5fbf3d6d53464ef056"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/revisions.py",
+    "bytes": 3858,
+    "sha256": "bf36802576f5ffd6c8e0ce9b1413bef55b1fd6f70877f2b618afa758236b3c91"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/roles.py",
+    "bytes": 2196,
+    "sha256": "49440c629e97e544e3d1234461e5ede33b233ef50a5e0c9678830f7057f0e2d9"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/search.py",
+    "bytes": 1081,
+    "sha256": "e61423d7758c60ff223618c3904034b72813e7cccfee66db58e0df2e933815b2"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/service_accounts.py",
+    "bytes": 6979,
+    "sha256": "cf6e23945082b5258652fff2dd842ea1b54878909c3e0c3a2a5a0cd3083918cf"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/endpoints/users.py",
+    "bytes": 4637,
+    "sha256": "6312cda989dea275df627f5722aaff5d1c5924c225f38c907db7510474efc1a4"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/pagination.py",
+    "bytes": 8735,
+    "sha256": "b8112e2600b942355ca5b81439119a12c50264eec77c89614c064eb5244d7a86"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/preconditions.py",
+    "bytes": 2905,
+    "sha256": "13aa459bbbf9abb9f0bbbbc7c0391820053acdfd6e19ccc95b5f8a75fd916a57"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/__init__.py",
+    "bytes": 308,
+    "sha256": "6b235f749a575079c7982f0b84db04d7d3482574e814006730d140056eb4d07f"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/api_keys.py",
+    "bytes": 1333,
+    "sha256": "019f8b3780d501e9e45d8701deb84558d3807cde1f0215183cc77fe8dd3e0ba0"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/bindings.py",
+    "bytes": 1130,
+    "sha256": "1a243fa7e8c7368dc72dbc3f7fb8dd8d80f6ba58c505cf4c548203d8390f42e7"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/datasets.py",
+    "bytes": 3685,
+    "sha256": "f26978949be5a9f082bfa273f6d9af35742aa7a757bad44f3271cbf78393c0a7"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/ingest_sessions.py",
+    "bytes": 3503,
+    "sha256": "b56bf7490cf1a7583ea9e93f3991428ce9c1f77374990303ffbf89a4f8c1af59"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/organizations.py",
+    "bytes": 1486,
+    "sha256": "bd67d073c1b74739c3df43f86853d4544b06cee19642df406bb078a3e457ed08"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/policies.py",
+    "bytes": 3722,
+    "sha256": "b0417f59aab3923ddcc686e55909b6700786da9b9788fe651050c689524b48e1"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/projects.py",
+    "bytes": 1742,
+    "sha256": "f67dfcd229588414b731149ae4edcf655146089be4a148f2ae5a4742c3aacb03"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/revisions.py",
+    "bytes": 1018,
+    "sha256": "3484bed8a361ea825e88153367e8bbfb4aadc3eb6ef4952aa0e11310a2a0603e"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/roles.py",
+    "bytes": 1035,
+    "sha256": "8d53b1fca184c49bb4b76cec5f9ddd38ef2b33d7fe903722daece8ab1d706351"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/service_accounts.py",
+    "bytes": 1445,
+    "sha256": "841dd338dd65d7b225987c480d4da29723f61ac631c328c1bbd614d7b2397642"
+  },
+  {
+    "path": "src/huron/applications/api/routes/v1/schema/users.py",
+    "bytes": 2033,
+    "sha256": "344b4ac6d57df5860b1c8260bb571bb3a66dd987d47ae704127094688784eb7e"
+  },
+  {
+    "path": "src/huron/applications/api/runtime.py",
+    "bytes": 8479,
+    "sha256": "13608863f7d93d4e6fa47113f9278e87ef214b8f2ea154256d9fb4ab083a8a51"
+  },
+  {
+    "path": "src/huron/applications/api/settings.py",
+    "bytes": 7329,
+    "sha256": "78bfa79f6368d298d2a08315de3a1904f536348683ab0ee7c3e21d742f80d7b2"
+  },
+  {
+    "path": "src/huron/applications/lakectl/__init__.py",
+    "bytes": 77,
+    "sha256": "de0e6c917b3129e5c026d72669c00252f5e7a1fa10244c1a79e58d675798694a"
+  },
+  {
+    "path": "src/huron/applications/lakectl/controller.py",
+    "bytes": 13197,
+    "sha256": "6bec8ed569a2379f5de2bb924ac1cde89dd79cd95687100b746a099d74c8db9d"
+  },
+  {
+    "path": "src/huron/applications/lakectl/engine.py",
+    "bytes": 6533,
+    "sha256": "b41d7fa961a40e1fa58ad1cf5cf59a9cc1948f0437232c22cd642804ad3cd675"
+  },
+  {
+    "path": "src/huron/applications/lakectl/exclusion.py",
+    "bytes": 5600,
+    "sha256": "0ce502013050aaf57e879a2de24f4197f5c5fb394c0053e8af777104ffd7ca51"
+  },
+  {
+    "path": "src/huron/applications/lakectl/main.py",
+    "bytes": 2400,
+    "sha256": "987ac68b08167250b7b830fc84928e09a6811b2b7e377af5a1b0d8dd3300b795"
+  },
+  {
+    "path": "src/huron/applications/lakectl/server.py",
+    "bytes": 6148,
+    "sha256": "60821766ef61c386e7c0986f93cde3f43241d7e4bc20f7e98b117f5700150c6b"
+  },
+  {
+    "path": "src/huron/applications/lakectl/settings.py",
+    "bytes": 5834,
+    "sha256": "1c67f382e94439ba76c77cbd991c4047f23421db3c138fb871b7ec28601142ea"
+  },
+  {
+    "path": "src/huron/applications/lakectl/wiring.py",
+    "bytes": 2729,
+    "sha256": "668c19d98b94eba72e6ee8056be56c5611a922c79c3770ac5dfc7f0b26af7b5e"
+  },
+  {
+    "path": "src/huron/core/__init__.py",
+    "bytes": 816,
+    "sha256": "97e5ed91057b88cd01b4abc1af568626a1f6397c5426054a690d7ef996285084"
+  },
+  {
+    "path": "src/huron/core/_catalog.py",
+    "bytes": 21277,
+    "sha256": "302e81385dc50432be23167e39a0d7ab8cabd5237fb8f2f9afb4900546cbef74"
+  },
+  {
+    "path": "src/huron/core/_ingest.py",
+    "bytes": 44624,
+    "sha256": "77c4a481dcd0746a6f6b53cb4225e09b6fa46298db4309c8fbb07b652645251f"
+  },
+  {
+    "path": "src/huron/core/_revision_reader.py",
+    "bytes": 5704,
+    "sha256": "83333769af77861f17770ee8e1a2301498d03c43a382f7519b20d0be12018a60"
+  },
+  {
+    "path": "src/huron/core/access.py",
+    "bytes": 12571,
+    "sha256": "97a8d8d6d06937edf74de479fcb1f1341e7a9a0864a8211d590239b42f3861ea"
+  },
+  {
+    "path": "src/huron/core/catalog.py",
+    "bytes": 12217,
+    "sha256": "2663c01fa01ed857e02f98280dc881e2283d78431423642f4a923b4a6cdc54ce"
+  },
+  {
+    "path": "src/huron/core/catalog_claims.py",
+    "bytes": 1254,
+    "sha256": "859d438ae1266baf3db7998b85fcf396784ea00b440b74da4c366ca17d4e9ec0"
+  },
+  {
+    "path": "src/huron/core/catalog_collections.py",
+    "bytes": 8280,
+    "sha256": "3e8b9d70ddca2f37a975852195ba3339629191011fbafff41b8246189caf5262"
+  },
+  {
+    "path": "src/huron/core/catalog_creation.py",
+    "bytes": 11939,
+    "sha256": "d481e52333f8b21c673f0d0650355415ebbdaf76bd5f89700467f74cfc210852"
+  },
+  {
+    "path": "src/huron/core/catalog_documents.py",
+    "bytes": 1581,
+    "sha256": "5a98d462236a87e7370c046e3f513aa27f72e70c2eba63b3460fd88eb80bba73"
+  },
+  {
+    "path": "src/huron/core/catalog_ports.py",
+    "bytes": 10130,
+    "sha256": "fee10a453b51f1db5a7a83401502277a3098bb41ffe36980def9a207395a6f9c"
+  },
+  {
+    "path": "src/huron/core/idempotency.py",
+    "bytes": 2218,
+    "sha256": "1427d0e8a4518984c20e968f8cd80204d1621fc46133bf215cc9f8df6adc54f6"
+  },
+  {
+    "path": "src/huron/core/identity.py",
+    "bytes": 8944,
+    "sha256": "eee9a85af75c1b79ba43012cef957b3d6ab9471cd9d369976756370e3fa7a45a"
+  },
+  {
+    "path": "src/huron/core/integrity/__init__.py",
+    "bytes": 63,
+    "sha256": "65da5343ba89847a2f6468891286a9558f779c33486cfe87951e1f80cb2199c7"
+  },
+  {
+    "path": "src/huron/core/integrity/cutover.py",
+    "bytes": 9328,
+    "sha256": "fc1307f3d7833688c544bcc13feced7f0c15413cd8d48a9351d06bef23958e49"
+  },
+  {
+    "path": "src/huron/core/integrity/generations.py",
+    "bytes": 5645,
+    "sha256": "ad506cc3989c8210fbb0089405a0966d80c2fcdab2411c3dd0845f683eb08369"
+  },
+  {
+    "path": "src/huron/core/integrity/models.py",
+    "bytes": 10535,
+    "sha256": "6e8607580bd2ab1f0ec0cb1a06616d2c0d91fdebfc7dc2dd078a2e83e69d89da"
+  },
+  {
+    "path": "src/huron/core/integrity/ports.py",
+    "bytes": 7067,
+    "sha256": "af9355bf86fd77a8043cdaa5b9efd35024287e2acbef3f3f23ff2f966c3eea26"
+  },
+  {
+    "path": "src/huron/core/integrity/verification.py",
+    "bytes": 7240,
+    "sha256": "ebdcf00fedc4db4ede628dc946bc960e35f6657f22a3a53e98f704e42a75ad3f"
+  },
+  {
+    "path": "src/huron/core/ports.py",
+    "bytes": 26752,
+    "sha256": "a176d968b101c305290f99bf485f4e7cf663756220da19e3bd9fdffe132b6d9d"
+  },
+  {
+    "path": "src/huron/core/raw.py",
+    "bytes": 10780,
+    "sha256": "acc1fee190546437ca90eff46526cd80ea24c169b5602af4b8132d9606512235"
+  },
+  {
+    "path": "src/huron/core/revisions.py",
+    "bytes": 2594,
+    "sha256": "d70d5a75dc9a41120cc91600e347276d394f3e6708cabffccc4fc9f3f7c8bb49"
+  },
+  {
+    "path": "src/huron/core/scopes.py",
+    "bytes": 4759,
+    "sha256": "f9083f1a018692b21cae88be3dd4d94e842f5357501175e9a7ed4c7a93752d4e"
+  },
+  {
+    "path": "src/huron/pkg/__init__.py",
+    "bytes": 365,
+    "sha256": "9ac7dec3993ec7decaa0c9d3917cf403cd3188fc875dbfedd16a7d705e6cac76"
+  },
+  {
+    "path": "src/huron/pkg/auth/__init__.py",
+    "bytes": 2738,
+    "sha256": "9de8f95629912ddbe34dc4f11da64445bba7ac8561bc40f4b7208fd59e6138c2"
+  },
+  {
+    "path": "src/huron/pkg/auth/apikeys.py",
+    "bytes": 12090,
+    "sha256": "d63c5331512c7ebbab1f072fdadd8d9e779d511663914089a6840339ee355142"
+  },
+  {
+    "path": "src/huron/pkg/auth/dev.py",
+    "bytes": 2778,
+    "sha256": "b045256db34edc1bcc5d0f92f246a2ba5ff61add675e933ae1806abf2192dc93"
+  },
+  {
+    "path": "src/huron/pkg/auth/errors.py",
+    "bytes": 1975,
+    "sha256": "cb63d9b3caa88bf112222831abd10646c2fc992a0f6437e41082422bc5d18af7"
+  },
+  {
+    "path": "src/huron/pkg/auth/oidc.py",
+    "bytes": 24584,
+    "sha256": "ab0c6913042666f548618c2e187f4165df4671a2f8a7f56df29cab50c1503131"
+  },
+  {
+    "path": "src/huron/pkg/auth/password.py",
+    "bytes": 8461,
+    "sha256": "3c70dae38208df68837a060e9827668667b4c9ed6aaadca8b29d734164ecaa78"
+  },
+  {
+    "path": "src/huron/pkg/auth/principal.py",
+    "bytes": 1656,
+    "sha256": "51e802c782bac4ccf5ea859b80e731367f43233deb0862f376de5e76d79dfb47"
+  },
+  {
+    "path": "src/huron/pkg/auth/principals.py",
+    "bytes": 12035,
+    "sha256": "6cd0bf0ad7b9393a6da3738b5f9ea35acad15d493a36a2f167f9c6308f6b7832"
+  },
+  {
+    "path": "src/huron/pkg/auth/sessions.py",
+    "bytes": 15750,
+    "sha256": "f91c396dceb9d97b267aec9884c3701f9f8529008a174e6e14f7c249f37271b7"
+  },
+  {
+    "path": "src/huron/pkg/catalog/__init__.py",
+    "bytes": 3261,
+    "sha256": "31a6dc5ec8b0804c96b1a0d023f93b8712a067d071f5d179972121354d0e6449"
+  },
+  {
+    "path": "src/huron/pkg/catalog/amendments.py",
+    "bytes": 5065,
+    "sha256": "7e695dceff9657cac32619c7c8fe6057aa4a2272199fb4ed1b4ae3170378a117"
+  },
+  {
+    "path": "src/huron/pkg/catalog/documents.py",
+    "bytes": 27423,
+    "sha256": "75a5507b3ed7e025c13c38f1d290be377e75f83832b6bf53a06a0ef18898664c"
+  },
+  {
+    "path": "src/huron/pkg/catalog/errors.py",
+    "bytes": 11372,
+    "sha256": "9e50a8698256449d417284e232ad1fbf3f1aeda1d8000a90cff4ff7c8151c9ac"
+  },
+  {
+    "path": "src/huron/pkg/catalog/failures.py",
+    "bytes": 3739,
+    "sha256": "385497b4931cadaf92db3baf1f0ec6eb84edddb9e49289de9c83f5edb5915604"
+  },
+  {
+    "path": "src/huron/pkg/catalog/ids.py",
+    "bytes": 1954,
+    "sha256": "910e7ab3ed47488cf287afde71afbc0b4386e59863901cce212b1999b5a1b7ef"
+  },
+  {
+    "path": "src/huron/pkg/catalog/ingest.py",
+    "bytes": 24773,
+    "sha256": "0bd44fc2363b6537d262450693b7a96b772b7152603d8ab766c1d59b1eeed22f"
+  },
+  {
+    "path": "src/huron/pkg/catalog/layers.py",
+    "bytes": 11947,
+    "sha256": "4113d3657ae7ff5fd1488ffe994ddf40c7768680477e01123b33039f66118f5f"
+  },
+  {
+    "path": "src/huron/pkg/catalog/lifecycle.py",
+    "bytes": 887,
+    "sha256": "709e733932f7724d2684ed3caf2d248f7f30ce7974ee24f98f68ca7e0821c1df"
+  },
+  {
+    "path": "src/huron/pkg/catalog/manifest.py",
+    "bytes": 12435,
+    "sha256": "0467e7aa8ecbe07c768c7de16f7dc5243acf16094557c1851dc4c9912434a2cd"
+  },
+  {
+    "path": "src/huron/pkg/catalog/metadata.py",
+    "bytes": 1003,
+    "sha256": "bd897f3ba2734ba217e50b9e02db16964cca82a596513403919d9e9cabd6553c"
+  },
+  {
+    "path": "src/huron/pkg/catalog/models.py",
+    "bytes": 3744,
+    "sha256": "b11a1ec284e8339c548537d40cd8cc178ded9905f484449ccd31bd08456da024"
+  },
+  {
+    "path": "src/huron/pkg/catalog/paths.py",
+    "bytes": 21320,
+    "sha256": "e658c02f74a8ed91185058aa0100918d06c19ae31632d17f3a9bf0bdbbe23da3"
+  },
+  {
+    "path": "src/huron/pkg/catalog/persistence.py",
+    "bytes": 2418,
+    "sha256": "b17984ae7e67c22d799ee5dbf9bf5823e58746149372f88ed59594a53cbd36e1"
+  },
+  {
+    "path": "src/huron/pkg/catalog/ports.py",
+    "bytes": 14675,
+    "sha256": "1c68c21e0fdfd05e488bdec330f57aef7c2252dd49e117c7a32924d2d22aceb4"
+  },
+  {
+    "path": "src/huron/pkg/catalog/records.py",
+    "bytes": 12271,
+    "sha256": "4e8a3a9e912d6307a0ab569f4a726b9b14f21c4cbf721cc5fe6acac3e4a64fb0"
+  },
+  {
+    "path": "src/huron/pkg/metastore/__init__.py",
+    "bytes": 1247,
+    "sha256": "4d5639e7919aa2b8a27ff08055745044401524a8d3b6a02d433a810f7a564293"
+  },
+  {
+    "path": "src/huron/pkg/metastore/api_keys.py",
+    "bytes": 5753,
+    "sha256": "3edf7258a729b43e6b803231ad90dac8c3d2e5cfde130675bc81f4cb0354b6b1"
+  },
+  {
+    "path": "src/huron/pkg/metastore/credentials.py",
+    "bytes": 4929,
+    "sha256": "003c8093fa33bbac5d59a75fb8e9552d16f3eac8e3cedf53e4729a0ea6970f70"
+  },
+  {
+    "path": "src/huron/pkg/metastore/hierarchy.py",
+    "bytes": 54479,
+    "sha256": "6262dfb0a2c5f0836a070b67193fbdb61cce8967af7323551a525521562dd1b2"
+  },
+  {
+    "path": "src/huron/pkg/metastore/ingest.py",
+    "bytes": 35972,
+    "sha256": "ac4b70a622c235e08146500a716362c2f2b64ebd2da293e6e4fab37016665a06"
+  },
+  {
+    "path": "src/huron/pkg/metastore/legacy.py",
+    "bytes": 10162,
+    "sha256": "1335485f76bcae05af57180e17553665f998b28d0523b7d688c626d670b9d9d7"
+  },
+  {
+    "path": "src/huron/pkg/metastore/maintenance.py",
+    "bytes": 6847,
+    "sha256": "9df42063b1c6ace5636d2f1e1f57dd7bfe38edb43f7206e54e9d733ff2ea5bcd"
+  },
+  {
+    "path": "src/huron/pkg/metastore/principals.py",
+    "bytes": 8989,
+    "sha256": "ff88a48148a03c8adb6918ac26ac4629395685e54706199718a9dbddd8925148"
+  },
+  {
+    "path": "src/huron/pkg/metastore/queries.py",
+    "bytes": 5620,
+    "sha256": "60f3b32c7eb12d97507e2df406f68407027c3ebb10ec44b3ae44d1800526e843"
+  },
+  {
+    "path": "src/huron/pkg/metastore/rbac.py",
+    "bytes": 40301,
+    "sha256": "f09c4a023c2e77bb9923feb3260e0099a96232ac52079f83f7ba53911d678e6f"
+  },
+  {
+    "path": "src/huron/pkg/metastore/rows.py",
+    "bytes": 13506,
+    "sha256": "86dcdfd907a7c810b1c3df623dfaceaee8107e1e13adbe9f0f70c9a2c053633b"
+  },
+  {
+    "path": "src/huron/pkg/metastore/sessions.py",
+    "bytes": 5940,
+    "sha256": "b94016b15c9aaa0fe23864310f9a53530c6aadd4762fa14a968ab3d38960054b"
+  },
+  {
+    "path": "src/huron/pkg/rawstore/__init__.py",
+    "bytes": 636,
+    "sha256": "4ac9365a54cfc9ee3cb6ccb02c9b5cc1e128f05ecaea946410009d036388d54b"
+  },
+  {
+    "path": "src/huron/pkg/rawstore/commit.py",
+    "bytes": 7591,
+    "sha256": "247e0235abbb8ab177f57c7e95c893d7a989b6a87b8ec8d5ea7df8e3a6cbe74b"
+  },
+  {
+    "path": "src/huron/pkg/rawstore/completion.py",
+    "bytes": 3528,
+    "sha256": "40f2fa5f840d6f63bb01b83270a3148a32db44806f9b45847588186ffd0881e4"
+  },
+  {
+    "path": "src/huron/pkg/rawstore/inspection.py",
+    "bytes": 2762,
+    "sha256": "04e95cf6086455f8763129a01fd4b27a127d28152301954a0fa9430f0bc46717"
+  },
+  {
+    "path": "src/huron/pkg/rawstore/maintenance.py",
+    "bytes": 11804,
+    "sha256": "d20fefd2447c7e894c453756e4850e946eeda77641de311538c93a65f1af8195"
+  },
+  {
+    "path": "src/huron/pkg/rawstore/materialize.py",
+    "bytes": 9464,
+    "sha256": "095b11537ae93ddddee9dd09e909190f6a06cd7bb4833b119d7d5fda51985272"
+  },
+  {
+    "path": "src/huron/pkg/rawstore/store.py",
+    "bytes": 25034,
+    "sha256": "e2806c1cd27f761761fafd682fcbca204a51795c20cc6f8fdbe701260f37b268"
+  },
+  {
+    "path": "src/huron/pkg/rbac/__init__.py",
+    "bytes": 32552,
+    "sha256": "899cc0c1874d5d1b7a5665adb51b37e38a9e437d1b12649fdea4f31640168260"
+  },
+  {
+    "path": "src/huron/pkg/rbac/roles.py",
+    "bytes": 18174,
+    "sha256": "0ba96fffa70181e8b23e6422031dbc1840665a77a58aba1e7068de3f767719fe"
+  },
+  {
+    "path": "src/huron/schema/__init__.py",
+    "bytes": 3891,
+    "sha256": "7133fc19b32e00287e4c806f6d6b86066335b58e120c7a055a7ba8eef07cf8d8"
+  },
+  {
+    "path": "src/huron/schema/storage.py",
+    "bytes": 179,
+    "sha256": "6e99182570f765f87f8c3019a632e67aa8d4254c607739052abab0fd0b0101f9"
+  }
+]

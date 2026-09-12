@@ -1,0 +1,934 @@
+uv run ruff check .
+D103 Missing docstring in public function
+  --> learning/assets/scripts/create_organization.py:43:11
+   |
+43 | async def main() -> None:
+   |           ^^^^
+44 |     root = Path(tempfile.mkdtemp(prefix="huron-lesson-0002-")) / "raw"
+45 |     repository = HierarchyRepository(
+   |
+
+E501 Line too long (107 > 100)
+  --> learning/assets/scripts/create_organization.py:56:101
+   |
+54 |         scope_type=ScopeType.SYSTEM, scope_id=None, created_by="bootstrap",
+55 |     )
+56 |     access = AccessPolicy(Principal("you"), repository.hierarchy, repository.rbac, RoleBindingAuthorizer())
+   |                                                                                                     ^^^^^^^
+57 |     creation = CatalogCreation(
+58 |         access, repository.hierarchy, repository.raw_store, classification_vocabulary=("open",)
+   |
+
+E501 Line too long (104 > 100)
+  --> learning/assets/scripts/create_organization.py:64:101
+   |
+62 |         slug="astro", title="Astro", description="", claim=claim("k1", "astro", "Astro", "")
+63 |     )
+64 |     print(f"\n2. created slug={org.slug} id={org.id} generation={org.generation} version={org.version}")
+   |                                                                                                     ^^^^
+65 |     print("   on disk now:")
+66 |     tree(root)
+   |
+
+F401 [*] `os` imported but unused
+  --> learning/assets/scripts/durability_primitives.py:10:8
+   |
+ 8 | from __future__ import annotations
+ 9 |
+10 | import os
+   |        ^^
+11 | import stat
+12 | import tempfile
+   |
+help: Remove unused import: `os`
+   |
+9  |
+   - import os
+10 | import stat
+   |
+
+F401 [*] `stat` imported but unused
+  --> learning/assets/scripts/durability_primitives.py:11:8
+   |
+10 | import os
+11 | import stat
+   |        ^^^^
+12 | import tempfile
+13 | from pathlib import Path, PurePosixPath
+   |
+help: Remove unused import: `stat`
+   |
+10 | import os
+   - import stat
+11 | import tempfile
+   |
+
+D103 Missing docstring in public function
+  --> learning/assets/scripts/durability_primitives.py:18:5
+   |
+18 | def mode(path: Path) -> str:
+   |     ^^^^
+19 |     return oct(path.stat().st_mode & 0o777)
+   |
+
+D103 Missing docstring in public function
+  --> learning/assets/scripts/durability_primitives.py:22:5
+   |
+22 | def main() -> None:
+   |     ^^^^
+23 |     root = Path(tempfile.mkdtemp(prefix="huron-lesson-0003-")) / "raw"
+24 |     store = PosixRawStore(root)
+   |
+
+E501 Line too long (126 > 100)
+  --> learning/assets/scripts/durability_primitives.py:29:101
+   |
+27 |     staging_dev = (root / ".staging").stat().st_dev
+28 |     final_dev = (root / "organization").stat().st_dev
+29 |     print(f"1. initialize(): .staging st_dev={staging_dev}, organization st_dev={final_dev}, same={staging_dev == final_dev}")
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+30 |
+31 |     print("\n2. atomic_replace: a reader holding the old file keeps reading old bytes")
+   |
+
+E501 Line too long (120 > 100)
+  --> learning/assets/scripts/durability_primitives.py:49:101
+   |
+47 |         store.write_tag_once(tag, b'{"revision_number": 2}')
+48 |     except FileExistsError as error:
+49 |         print(f"   FileExistsError: {Path(error.filename or error.args[0]).name}   bytes on disk: {tag.read_bytes()!r}")
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^
+50 |
+51 |     print("\n4. commit_envelope: publish by one rename, refuse without COMMITTED, tolerate a retry")
+   |
+
+E501 Line too long (120 > 100)
+  --> learning/assets/scripts/durability_primitives.py:64:101
+   |
+62 |     (envelope / "COMMITTED").write_bytes(b"{}")
+63 |     store.commit_envelope(PurePosixPath(envelope), PurePosixPath(final))
+64 |     print(f"   published: {final.relative_to(root)}  dir mode {mode(final)}  staging still exists: {envelope.exists()}")
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^
+65 |     print(f"   payload/data.bin mode {mode(final / 'payload' / 'data.bin')} (commit fsyncs; seal() would make it 0o444)")
+66 |     store.commit_envelope(PurePosixPath(envelope), PurePosixPath(final))
+   |
+
+E501 Line too long (121 > 100)
+  --> learning/assets/scripts/durability_primitives.py:65:101
+   |
+63 |     store.commit_envelope(PurePosixPath(envelope), PurePosixPath(final))
+64 |     print(f"   published: {final.relative_to(root)}  dir mode {mode(final)}  staging still exists: {envelope.exists()}")
+65 |     print(f"   payload/data.bin mode {mode(final / 'payload' / 'data.bin')} (commit fsyncs; seal() would make it 0o444)")
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^
+66 |     store.commit_envelope(PurePosixPath(envelope), PurePosixPath(final))
+67 |     print("   committing again with staging gone and COMMITTED present: no error (crashed-driver retry)")
+   |
+
+E501 Line too long (105 > 100)
+  --> learning/assets/scripts/durability_primitives.py:67:101
+   |
+65 |     print(f"   payload/data.bin mode {mode(final / 'payload' / 'data.bin')} (commit fsyncs; seal() would make it 0o444)")
+66 |     store.commit_envelope(PurePosixPath(envelope), PurePosixPath(final))
+67 |     print("   committing again with staging gone and COMMITTED present: no error (crashed-driver retry)")
+   |                                                                                                     ^^^^^
+68 |     (root / ".staging" / "other").mkdir()
+69 |     (root / ".staging" / "other" / "COMMITTED").write_bytes(b"{}")
+   |
+
+E501 Line too long (135 > 100)
+  --> learning/assets/scripts/durability_primitives.py:73:101
+   |
+71 |         store.commit_envelope(PurePosixPath(root / ".staging" / "other"), PurePosixPath(final))
+72 |     except FileExistsError as error:
+73 |         print(f"   a different envelope aimed at the same final name -> FileExistsError: {Path(error.filename or error.args[0]).name}")
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+74 |
+75 |     print("\n5. seal: files 0o444, directories 0o555, root untouched")
+   |
+
+E501 Line too long (143 > 100)
+  --> learning/assets/scripts/durability_primitives.py:77:101
+   |
+75 | …oot untouched")
+76 | …
+77 | …load' / 'data.bin')}, payload/ mode {mode(final / 'payload')}, root mode {mode(final)}")
+   |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+78 | …
+79 | …tamper")
+   |
+
+D101 Missing docstring in public class
+  --> learning/assets/scripts/edit_a_dataset.py:53:7
+   |
+52 | @dataclass(frozen=True)
+53 | class Clock:
+   |       ^^^^^
+54 |     def now(self) -> datetime:
+55 |         return datetime.now(UTC)
+   |
+
+D102 Missing docstring in public method
+  --> learning/assets/scripts/edit_a_dataset.py:54:9
+   |
+52 | @dataclass(frozen=True)
+53 | class Clock:
+54 |     def now(self) -> datetime:
+   |         ^^^
+55 |         return datetime.now(UTC)
+   |
+
+D103 Missing docstring in public function
+  --> learning/assets/scripts/edit_a_dataset.py:68:5
+   |
+68 | def tree(root: Path, under: str) -> None:
+   |     ^^^^
+69 |     for path in sorted((root / under).rglob("*")):
+70 |         if path.is_file():
+   |
+
+E501 Line too long (106 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:100:101
+    |
+ 98 |     ledger = await raw.create(dataset_id, files=entries,
+ 99 |                               claim=session_claim(ACTOR, key, dataset_id, tuple(entries)))
+100 |     print(f"      create  -> session {ledger.id} state={ledger.state} revision #{ledger.revision_number}")
+    |                                                                                                     ^^^^^^
+101 |     for file in ledger.files:
+102 |         data = files[file.path]
+    |
+
+E501 Line too long (101 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:106:101
+    |
+104 |             offset = (part - 1) * ledger.part_bytes
+105 |             chunk = data[offset: offset + ledger.part_bytes]
+106 |             await raw.receive_part(ledger.id, file.file_id, part, [chunk], content_length=len(chunk))
+    |                                                                                                     ^
+107 |         print(f"      parts   -> {file.path}: {file.part_count} part(s) of <= {ledger.part_bytes} B")
+108 |         if file.part_count > 1:
+    |
+
+E501 Line too long (101 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:107:101
+    |
+105 |             chunk = data[offset: offset + ledger.part_bytes]
+106 |             await raw.receive_part(ledger.id, file.file_id, part, [chunk], content_length=len(chunk))
+107 |         print(f"      parts   -> {file.path}: {file.part_count} part(s) of <= {ledger.part_bytes} B")
+    |                                                                                                     ^
+108 |         if file.part_count > 1:
+109 |             await raw.complete_file(ledger.id, file.file_id)
+    |
+
+D103 Missing docstring in public function
+   --> learning/assets/scripts/edit_a_dataset.py:120:11
+    |
+120 | async def main() -> None:
+    |           ^^^^
+121 |     root = Path(tempfile.mkdtemp(prefix="huron-edit-")) / "raw"
+122 |     storage, repository, catalog, creation, raw, revisions = await wire(root)
+    |
+
+E501 Line too long (103 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:128:101
+    |
+126 |                                              claim=claim("org", "astro"))
+127 |     project = await creation.create_project(org.id, slug="sims", title="Sims", description="",
+128 |                                             data_classification="open", claim=claim("project", "sims"))
+    |                                                                                                     ^^^
+129 |     await repository.grant_role(principal=f"user:{ACTOR}", role_code="developer",
+130 |                                 scope_type=ScopeType.PROJECT, scope_id=project.id, created_by="bootstrap")
+    |
+
+E501 Line too long (106 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:130:101
+    |
+128 |                                             data_classification="open", claim=claim("project", "sims"))
+129 |     await repository.grant_role(principal=f"user:{ACTOR}", role_code="developer",
+130 |                                 scope_type=ScopeType.PROJECT, scope_id=project.id, created_by="bootstrap")
+    |                                                                                                     ^^^^^^
+131 |     dataset = await creation.create_dataset(project.id, slug="run-0042", title="Run 42", description="",
+132 |                                             profile_name="mcnp-run", profile_version="1.0",
+    |
+
+E501 Line too long (104 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:131:101
+    |
+129 |     await repository.grant_role(principal=f"user:{ACTOR}", role_code="developer",
+130 |                                 scope_type=ScopeType.PROJECT, scope_id=project.id, created_by="bootstrap")
+131 |     dataset = await creation.create_dataset(project.id, slug="run-0042", title="Run 42", description="",
+    |                                                                                                     ^^^^
+132 |                                             profile_name="mcnp-run", profile_version="1.0",
+133 |                                             claim=claim("dataset", "run-0042"))
+    |
+
+E501 Line too long (104 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:139:101
+    |
+137 |     print("\n1. DESCRIBE: change the title. Facade -> DatasetCollection.describe -> generation 2")
+138 |     current = await catalog.datasets.get(dataset.id)                     # discovery + read
+139 |     updated = await catalog.datasets.describe(                            # data.update at dataset scope
+    |                                                                                                     ^^^^
+140 |         current.id, DescriptionChange(expected_version=current.version, title="Run 42 (reprocessed)"))
+141 |     print(f"   version {current.version} -> {updated.version}, generation {current.generation} -> {updated.generation}")
+    |
+
+E501 Line too long (102 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:140:101
+    |
+138 |     current = await catalog.datasets.get(dataset.id)                     # discovery + read
+139 |     updated = await catalog.datasets.describe(                            # data.update at dataset scope
+140 |         current.id, DescriptionChange(expected_version=current.version, title="Run 42 (reprocessed)"))
+    |                                                                                                     ^^
+141 |     print(f"   version {current.version} -> {updated.version}, generation {current.generation} -> {updated.generation}")
+142 |     try:                                                                  # stale If-Match
+    |
+
+E501 Line too long (120 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:141:101
+    |
+139 |     updated = await catalog.datasets.describe(                            # data.update at dataset scope
+140 |         current.id, DescriptionChange(expected_version=current.version, title="Run 42 (reprocessed)"))
+141 |     print(f"   version {current.version} -> {updated.version}, generation {current.generation} -> {updated.generation}")
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^
+142 |     try:                                                                  # stale If-Match
+143 |         await catalog.datasets.describe(current.id, DescriptionChange(expected_version=current.version, title="x"))
+    |
+
+E501 Line too long (115 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:143:101
+    |
+141 |     print(f"   version {current.version} -> {updated.version}, generation {current.generation} -> {updated.generation}")
+142 |     try:                                                                  # stale If-Match
+143 |         await catalog.datasets.describe(current.id, DescriptionChange(expected_version=current.version, title="x"))
+    |                                                                                                     ^^^^^^^^^^^^^^^
+144 |     except PreconditionFailed as error:
+145 |         print(f"   replaying with the old version -> PreconditionFailed: {error}")
+    |
+
+E501 Line too long (139 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:146:101
+    |
+144 | …
+145 | …reconditionFailed: {error}")
+146 | …x}/project/{project.slug}--{project.id.hex}/dataset/{dataset.slug}--{dataset.id.hex}"
+    |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+147 | …nerations"); tree(root, entity_dir + "/CURRENT.json")
+148 | …CURRENT.json").read_text())
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> learning/assets/scripts/edit_a_dataset.py:147:25
+    |
+145 |         print(f"   replaying with the old version -> PreconditionFailed: {error}")
+146 |     entity_dir = f"organization/{org.slug}--{org.id.hex}/project/{project.slug}--{project.id.hex}/dataset/{dataset.slug}--{dataset.id…
+147 |     print("   on disk:"); tree(root, entity_dir + "/generations"); tree(root, entity_dir + "/CURRENT.json")
+    |                         ^
+148 |     print("   CURRENT.json ->", (root / entity_dir / "CURRENT.json").read_text())
+149 |     print("   revision 1 untouched:", (root / first.revision_path).exists())
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> learning/assets/scripts/edit_a_dataset.py:147:66
+    |
+145 |         print(f"   replaying with the old version -> PreconditionFailed: {error}")
+146 |     entity_dir = f"organization/{org.slug}--{org.id.hex}/project/{project.slug}--{project.id.hex}/dataset/{dataset.slug}--{dataset.id…
+147 |     print("   on disk:"); tree(root, entity_dir + "/generations"); tree(root, entity_dir + "/CURRENT.json")
+    |                                                                  ^
+148 |     print("   CURRENT.json ->", (root / entity_dir / "CURRENT.json").read_text())
+149 |     print("   revision 1 untouched:", (root / first.revision_path).exists())
+    |
+
+E501 Line too long (107 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:147:101
+    |
+145 |         print(f"   replaying with the old version -> PreconditionFailed: {error}")
+146 |     entity_dir = f"organization/{org.slug}--{org.id.hex}/project/{project.slug}--{project.id.hex}/dataset/{dataset.slug}--{dataset.id…
+147 |     print("   on disk:"); tree(root, entity_dir + "/generations"); tree(root, entity_dir + "/CURRENT.json")
+    |                                                                                                     ^^^^^^^
+148 |     print("   CURRENT.json ->", (root / entity_dir / "CURRENT.json").read_text())
+149 |     print("   revision 1 untouched:", (root / first.revision_path).exists())
+    |
+
+E501 Line too long (108 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:152:101
+    |
+151 |     print("\n2. NEW REVISION: add data. Facade -> IngestService -> RawStore, five steps")
+152 |     ingest_rules.PART_BYTES = 8                    # the module-level constant from the finding; shrunk so a
+    |                                                                                                     ^^^^^^^^
+153 |     second = await upload_revision(               # 20-byte file needs 3 parts and a completion step
+154 |         raw, dataset.id,
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> learning/assets/scripts/edit_a_dataset.py:157:25
+    |
+155 |         {"payload/inp.txt": b"cells and surfaces\n", "payload/outp.txt": b"tally results, 20 B\n"},
+156 |         key="rev2", title="Run 42, with output")
+157 |     print("   on disk:"); tree(root, entity_dir + "/raw/revision")
+    |                         ^
+158 |     print(f"   revision 1 still sealed and complete: {(root / first.revision_path / 'COMMITTED').exists()}")
+    |
+
+E501 Line too long (108 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:158:101
+    |
+156 |         key="rev2", title="Run 42, with output")
+157 |     print("   on disk:"); tree(root, entity_dir + "/raw/revision")
+158 |     print(f"   revision 1 still sealed and complete: {(root / first.revision_path / 'COMMITTED').exists()}")
+    |                                                                                                     ^^^^^^^^
+159 |
+160 |     print("\n3. AMENDMENT: correct committed metadata. pkg rules exist; no core service or route yet")
+    |
+
+E501 Line too long (102 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:160:101
+    |
+158 |     print(f"   revision 1 still sealed and complete: {(root / first.revision_path / 'COMMITTED').exists()}")
+159 |
+160 |     print("\n3. AMENDMENT: correct committed metadata. pkg rules exist; no core service or route yet")
+    |                                                                                                     ^^
+161 |     record = await revisions.revision(second.id)                          # data.read at dataset scope
+162 |     base = json.loads(storage.read_document(Path(record.revision_path) / "metadata.json"))
+    |
+
+E501 Line too long (102 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:161:101
+    |
+160 |     print("\n3. AMENDMENT: correct committed metadata. pkg rules exist; no core service or route yet")
+161 |     record = await revisions.revision(second.id)                          # data.read at dataset scope
+    |                                                                                                     ^^
+162 |     base = json.loads(storage.read_document(Path(record.revision_path) / "metadata.json"))
+163 |     changes = validate_amendment({"tags": ["reprocessed", "2026"], "description": "Output added"})
+    |
+
+E501 Line too long (110 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:164:101
+    |
+162 |     base = json.loads(storage.read_document(Path(record.revision_path) / "metadata.json"))
+163 |     changes = validate_amendment({"tags": ["reprocessed", "2026"], "description": "Output added"})
+164 |     amendment = Amendment(id=uuid4(), sequence=1, created_by=ACTOR, created_at=Clock().now(), changes=changes)
+    |                                                                                                     ^^^^^^^^^^
+165 |     effective = fold_amendments(base, [amendment])
+166 |     print("   validate_amendment accepted:", sorted(changes))
+    |
+
+E501 Line too long (101 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:173:101
+    |
+171 |     print("   effective metadata title/tags/description:",
+172 |           effective["title"], effective.get("tags"), effective.get("description"))
+173 |     print("   NOT DONE BY ANY SERVICE: writing amendments/0001.json beside the revision, the route,")
+    |                                                                                                     ^
+174 |     print("   and the metadata.amend / metadata.reclassify capability checks (design/layer-raw.html section 3).")
+    |
+
+E501 Line too long (113 > 100)
+   --> learning/assets/scripts/edit_a_dataset.py:174:101
+    |
+172 |           effective["title"], effective.get("tags"), effective.get("description"))
+173 |     print("   NOT DONE BY ANY SERVICE: writing amendments/0001.json beside the revision, the route,")
+174 |     print("   and the metadata.amend / metadata.reclassify capability checks (design/layer-raw.html section 3).")
+    |                                                                                                     ^^^^^^^^^^^^^
+
+D104 Missing docstring in public package
+--> learning/demo/minihuron/__init__.py:1:1
+
+D104 Missing docstring in public package
+--> learning/demo/minihuron/api/__init__.py:1:1
+
+D104 Missing docstring in public package
+--> learning/demo/minihuron/client/__init__.py:1:1
+
+D104 Missing docstring in public package
+--> learning/demo/minihuron/core/__init__.py:1:1
+
+D104 Missing docstring in public package
+--> learning/demo/minihuron/pkg/__init__.py:1:1
+
+TC003 Move standard library import `pathlib.Path` into a type-checking block
+ --> learning/demo/minihuron/pkg/layout.py:7:21
+  |
+5 | import re
+6 | from dataclasses import dataclass
+7 | from pathlib import Path
+  |                     ^^^^
+8 | from typing import NamedTuple, Protocol
+9 | from uuid import UUID
+  |
+help: Move into type-checking block
+
+TC003 Move standard library import `uuid.UUID` into a type-checking block
+  --> learning/demo/minihuron/pkg/layout.py:9:18
+   |
+ 7 | from pathlib import Path
+ 8 | from typing import NamedTuple, Protocol
+ 9 | from uuid import UUID
+   |                  ^^^^
+10 |
+11 | SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,79}$")
+   |
+help: Move into type-checking block
+
+N818 Exception name `PathRuleViolation` should be named with an Error suffix
+  --> learning/demo/minihuron/pkg/layout.py:17:7
+   |
+17 | class PathRuleViolation(ValueError):
+   |       ^^^^^^^^^^^^^^^^^
+18 |     """A slug, tag or number that may not appear in a path."""
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:25:9
+   |
+24 |     @property
+25 |     def id(self) -> UUID: ...
+   |         ^^
+26 |     @property
+27 |     def slug(self) -> str: ...
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:27:9
+   |
+25 |     def id(self) -> UUID: ...
+26 |     @property
+27 |     def slug(self) -> str: ...
+   |         ^^^^
+
+D101 Missing docstring in public class
+  --> learning/demo/minihuron/pkg/layout.py:30:7
+   |
+30 | class RevisionPath(NamedTuple):
+   |       ^^^^^^^^^^^^
+31 |     org_slug: str
+32 |     org_id: UUID
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/minihuron/pkg/layout.py:41:5
+   |
+41 | def validate_slug(slug: str, max_len: int) -> None:
+   |     ^^^^^^^^^^^^^
+42 |     raise NotImplementedError
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/minihuron/pkg/layout.py:45:5
+   |
+45 | def validate_tag(tag: str) -> None:
+   |     ^^^^^^^^^^^^
+46 |     raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:59:9
+   |
+58 |     @property
+59 |     def dataset_dir(self) -> Path:
+   |         ^^^^^^^^^^^
+60 |         raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:62:9
+   |
+60 |         raise NotImplementedError
+61 |
+62 |     def revision_dir(self, number: int, revision_id: UUID) -> Path:
+   |         ^^^^^^^^^^^^
+63 |         raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:65:9
+   |
+63 |         raise NotImplementedError
+64 |
+65 |     def release_tag_file(self, tag: str) -> Path:
+   |         ^^^^^^^^^^^^^^^^
+66 |         raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:68:9
+   |
+66 |         raise NotImplementedError
+67 |
+68 |     def generation_file(self, generation: int) -> Path:
+   |         ^^^^^^^^^^^^^^^
+69 |         raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:71:9
+   |
+69 |         raise NotImplementedError
+70 |
+71 |     def current_pointer(self) -> Path:
+   |         ^^^^^^^^^^^^^^^
+72 |         raise NotImplementedError
+   |
+
+D107 Missing docstring in `__init__`
+  --> learning/demo/minihuron/pkg/layout.py:78:9
+   |
+76 |     """The path layout under one data root. Builds every path; parses revision paths back."""
+77 |
+78 |     def __init__(self, root: Path) -> None:
+   |         ^^^^^^^^
+79 |         self.root = root
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:81:9
+   |
+79 |         self.root = root
+80 |
+81 |     def organization_dir(self, org: Slugged) -> Path:
+   |         ^^^^^^^^^^^^^^^^
+82 |         raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:84:9
+   |
+82 |         raise NotImplementedError
+83 |
+84 |     def project_dir(self, org: Slugged, project: Slugged) -> Path:
+   |         ^^^^^^^^^^^
+85 |         raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:87:9
+   |
+85 |         raise NotImplementedError
+86 |
+87 |     def dataset_dir(self, org: Slugged, project: Slugged, dataset: Slugged) -> Path:
+   |         ^^^^^^^^^^^
+88 |         raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:90:9
+   |
+88 |         raise NotImplementedError
+89 |
+90 |     def staging_dir(self, ingest_id: UUID) -> Path:
+   |         ^^^^^^^^^^^
+91 |         raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:93:9
+   |
+91 |         raise NotImplementedError
+92 |
+93 |     def placement(self, org: Slugged, project: Slugged, dataset: Slugged) -> Placement:
+   |         ^^^^^^^^^
+94 |         raise NotImplementedError
+   |
+
+D102 Missing docstring in public method
+  --> learning/demo/minihuron/pkg/layout.py:96:9
+   |
+94 |         raise NotImplementedError
+95 |
+96 |     def parse_revision_dir(self, path: Path) -> RevisionPath:
+   |         ^^^^^^^^^^^^^^^^^^
+97 |         raise NotImplementedError
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> learning/demo/tests/test_01_layout.py:3:1
+   |
+ 1 |   """Step 01 tests. Each test pins one rule from steps/01-layout.md."""
+ 2 |
+ 3 | / from dataclasses import dataclass
+ 4 | | from pathlib import Path
+ 5 | | from uuid import UUID, uuid4
+ 6 | |
+ 7 | | import pytest
+ 8 | |
+ 9 | | from minihuron.pkg.layout import Layout, PathRuleViolation, Placement, validate_slug, validate_tag
+   | |__________________________________________________________________________________________________^
+10 |
+11 |   pytestmark = pytest.mark.unit
+   |
+help: Organize imports
+  |
+7 | import pytest
+  -
+8 | from minihuron.pkg.layout import Layout, PathRuleViolation, Placement, validate_slug, validate_tag
+  |
+
+D101 Missing docstring in public class
+  --> learning/demo/tests/test_01_layout.py:15:7
+   |
+14 | @dataclass(frozen=True)
+15 | class Ref:
+   |       ^^^
+16 |     id: UUID
+17 |     slug: str
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:26:5
+   |
+26 | def test_entity_directories_are_slug_and_hex_id_on_one_spine():
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+27 |     layout = Layout(ROOT)
+28 |     assert layout.organization_dir(ORG) == ROOT / "organization" / "astro--01a091dcbc7c70ed965ae7932905514d"
+   |
+
+E501 Line too long (108 > 100)
+  --> learning/demo/tests/test_01_layout.py:28:101
+   |
+26 | def test_entity_directories_are_slug_and_hex_id_on_one_spine():
+27 |     layout = Layout(ROOT)
+28 |     assert layout.organization_dir(ORG) == ROOT / "organization" / "astro--01a091dcbc7c70ed965ae7932905514d"
+   |                                                                                                     ^^^^^^^^
+29 |     assert layout.project_dir(ORG, PROJ) == layout.organization_dir(ORG) / "project" / "sims--01a091dcbc81799c8df1b4bffb3422ba"
+30 |     assert layout.dataset_dir(ORG, PROJ, DS) == layout.project_dir(ORG, PROJ) / "dataset" / "run-0042--01a091dcbc827d40b59664cedc74ae8…
+   |
+
+E501 Line too long (127 > 100)
+  --> learning/demo/tests/test_01_layout.py:29:101
+   |
+27 |     layout = Layout(ROOT)
+28 |     assert layout.organization_dir(ORG) == ROOT / "organization" / "astro--01a091dcbc7c70ed965ae7932905514d"
+29 |     assert layout.project_dir(ORG, PROJ) == layout.organization_dir(ORG) / "project" / "sims--01a091dcbc81799c8df1b4bffb3422ba"
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+30 |     assert layout.dataset_dir(ORG, PROJ, DS) == layout.project_dir(ORG, PROJ) / "dataset" / "run-0042--01a091dcbc827d40b59664cedc74ae8…
+   |
+
+E501 Line too long (136 > 100)
+  --> learning/demo/tests/test_01_layout.py:30:101
+   |
+28 | …rganization" / "astro--01a091dcbc7c70ed965ae7932905514d"
+29 | …rganization_dir(ORG) / "project" / "sims--01a091dcbc81799c8df1b4bffb3422ba"
+30 | …ut.project_dir(ORG, PROJ) / "dataset" / "run-0042--01a091dcbc827d40b59664cedc74ae83"
+   |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:33:5
+   |
+33 | def test_placement_builds_every_dataset_path_without_being_handed_the_ancestry_again():
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+34 |     placement = Layout(ROOT).placement(ORG, PROJ, DS)
+35 |     assert isinstance(placement, Placement)
+   |
+
+E501 Line too long (141 > 100)
+  --> learning/demo/tests/test_01_layout.py:37:101
+   |
+35 | …
+36 | …304c07")
+37 | …placement.dataset_dir / "raw" / "revision" / "000042--01a091dcbc83784fae73d3cbdc304c07"
+   |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+38 | …ment.dataset_dir / "releases" / "v1.0.json"
+39 | …ataset_dir / "generations" / "000007.json"
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:43:5
+   |
+43 | def test_revision_numbers_are_six_digits_and_bounded():
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+44 |     placement = Layout(ROOT).placement(ORG, PROJ, DS)
+45 |     assert placement.revision_dir(1, uuid4()).name.startswith("000001--")
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:51:5
+   |
+51 | def test_staging_lives_beside_organization_under_the_same_root():
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+52 |     layout = Layout(ROOT)
+53 |     ingest_id = UUID("01a091dc-bc96-7bfd-83a1-8a2626be4f2e")
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:59:5
+   |
+59 | def test_parse_revision_dir_is_the_exact_inverse_of_revision_dir():
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+60 |     layout = Layout(ROOT)
+61 |     revision_id = uuid4()
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:67:5
+   |
+67 | def test_parse_refuses_paths_outside_the_root_or_off_the_spine():
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+68 |     layout = Layout(ROOT)
+69 |     with pytest.raises(PathRuleViolation):
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:76:5
+   |
+75 | @pytest.mark.parametrize("slug", ["ok-slug", "a1", "x" * 62])
+76 | def test_valid_slugs_pass(slug):
+   |     ^^^^^^^^^^^^^^^^^^^^^
+77 |     validate_slug(slug, 62)
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:81:5
+   |
+80 | @pytest.mark.parametrize("slug", ["", "A", "-lead", "dou--ble", "x" * 63, "with space", "ünïcode"])
+81 | def test_invalid_slugs_are_refused(slug):
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+82 |     with pytest.raises(PathRuleViolation):
+83 |         validate_slug(slug, 62)
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:86:5
+   |
+86 | def test_dataset_slugs_may_be_longer_than_organization_slugs():
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+87 |     validate_slug("x" * 80, 80)
+88 |     with pytest.raises(PathRuleViolation):
+   |
+
+E501 Line too long (156 > 100)
+  --> learning/demo/tests/test_01_layout.py:92:101
+   |
+92 | …, True), ("v1.0_final", True), ("", False), ("V1", False), ("a/b", False), ("x" * 64, False)])
+   |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+93 | …percase(tag, ok):
+94 | …
+   |
+
+D103 Missing docstring in public function
+  --> learning/demo/tests/test_01_layout.py:93:5
+   |
+92 | @pytest.mark.parametrize("tag,ok", [("v1.0", True), ("2026-q3", True), ("v1.0_final", True), ("", False), ("V1", False), ("a/b", False…
+93 | def test_tags_allow_dots_and_underscores_but_not_slashes_or_uppercase(tag, ok):
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+94 |     if ok:
+95 |         validate_tag(tag)
+   |
+
+D103 Missing docstring in public function
+   --> learning/demo/tests/test_01_layout.py:101:5
+    |
+101 | def test_a_bad_slug_is_refused_before_any_path_is_built():
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+102 |     with pytest.raises(PathRuleViolation):
+103 |         Layout(ROOT).organization_dir(Ref(uuid4(), "Bad Slug"))
+    |
+
+E501 Line too long (101 > 100)
+   --> tests/contract/test_integrity_store.py:130:101
+    |
+128 | @pytest.mark.parametrize("case", ["changed_record", "session_digest", "session_identity"])
+129 | def test_legacy_ambiguity_rolls_back_import_findings_audit_and_session_updates(case: str) -> None:
+130 |     """Real transaction rollback preserves prior state when a final or session identity conflicts."""
+    |                                                                                                     ^
+131 |     with PostgresContainer("postgres:16") as postgres:
+132 |         command.upgrade(
+    |
+
+D102 Missing docstring in public method
+  --> tests/unit/test_maintenance_adapters.py:32:15
+   |
+30 |         self.statements: list[str] = []
+31 |
+32 |     async def fetchval(self, query: str, *arguments: object) -> bool:
+   |               ^^^^^^^^
+33 |         if "SELECT NOT (rolsuper" in query:
+34 |             return self.safe
+   |
+
+D102 Missing docstring in public method
+  --> tests/unit/test_maintenance_adapters.py:39:15
+   |
+37 |         return self.effective
+38 |
+39 |     async def fetch(self, query: str, *arguments: object) -> list[dict[str, object]]:
+   |               ^^^^^
+40 |         if "pg_terminate_backend" in query:
+41 |             return [{"stopped": self.stopped}]
+   |
+
+D102 Missing docstring in public method
+  --> tests/unit/test_maintenance_adapters.py:46:15
+   |
+44 |         return [{"nspname": 'quoted"schema'}]
+45 |
+46 |     async def execute(self, query: str, *arguments: object) -> str:
+   |               ^^^^^^^
+47 |         self.statements.append(query)
+48 |         return "REVOKE"
+   |
+
+D102 Missing docstring in public method
+   --> tests/unit/test_maintenance_adapters.py:108:9
+    |
+107 |     @staticmethod
+108 |     def revision_row(record: RevisionRecord) -> dict[str, object]:
+    |         ^^^^^^^^^^^^
+109 |         document = asdict(record)
+110 |         document["revision_number"] = document.pop("number")
+    |
+
+D102 Missing docstring in public method
+   --> tests/unit/test_maintenance_adapters.py:113:15
+    |
+111 |         return document
+112 |
+113 |     async def fetchval(self, query: str, *arguments: object) -> object:
+    |               ^^^^^^^^
+114 |         return self.schema if "version_num" in query else self.parents
+    |
+
+D102 Missing docstring in public method
+   --> tests/unit/test_maintenance_adapters.py:116:15
+    |
+114 |         return self.schema if "version_num" in query else self.parents
+115 |
+116 |     async def fetch(self, query: str, *arguments: object) -> list[dict[str, object]]:
+    |               ^^^^^
+117 |         organization, project, dataset = (asdict(item) for item in legacy_records())
+118 |         project["classification_default"] = project.pop("data_classification")
+    |
+
+D102 Missing docstring in public method
+   --> tests/unit/test_maintenance_adapters.py:125:15
+    |
+123 |         return self.sessions if "FROM ingest_sessions" in query else self.records
+124 |
+125 |     async def fetchrow(self, query: str, *arguments: object) -> dict[str, object] | None:
+    |               ^^^^^^^^
+126 |         return self.imported
+    |
+
+D102 Missing docstring in public method
+   --> tests/unit/test_maintenance_adapters.py:128:15
+    |
+126 |         return self.imported
+127 |
+128 |     async def execute(self, query: str, *arguments: object) -> str:
+    |               ^^^^^^^
+129 |         self.writes.append((query, arguments))
+130 |         return "UPDATE 1"
+    |
+
+E501 Line too long (102 > 100)
+   --> tests/unit/test_maintenance_adapters.py:165:101
+    |
+163 |     case: str,
+164 | ) -> None:
+165 |     """Only an exact healthy committing session receives success; identity ambiguity blocks import."""
+    |                                                                                                     ^^
+166 |     record = legacy[2]
+167 |     database = LegacyDatabaseBoundary(record)
+    |
+
+Found 93 errors.
+[*] 3 fixable with the `--fix` option (2 hidden fixes can be enabled with the `--unsafe-fixes` option).
+make: *** [lint] Error 1

@@ -1,0 +1,41 @@
+COMMAND ['uv', 'run', 'ruff', 'check', 'src/huron', 'tests', 'migrations', 'scripts']
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/unit/test_integrity_cutover.py:3:1
+   |
+ 1 |   """Core cutover enforces external authority and orders durable report certification."""
+ 2 |
+ 3 | / import asyncio
+ 4 | | import hashlib
+ 5 | | import json
+ 6 | | import shutil
+ 7 | | from dataclasses import replace
+ 8 | | from datetime import UTC, datetime
+ 9 | | from pathlib import Path, PurePosixPath
+10 | | from uuid import UUID
+11 | |
+12 | | import pytest
+13 | |
+14 | | from huron.core.integrity.cutover import CutoverService
+15 | | from huron.core.integrity.models import FenceEvidence, MaintenanceGrant, ProtocolInventory
+16 | | from huron.pkg.catalog.documents import CommitRecord
+17 | | from huron.pkg.catalog.manifest import canonical_bytes
+18 | | from huron.pkg.catalog.models import RevisionRecord
+19 | | from huron.pkg.rawstore.maintenance import MaintenanceStore
+20 | | from tests.unit.test_legacy_verification import legacy as legacy
+21 | | from tests.unit.test_legacy_verification import legacy_records
+22 | | from tests.unit.test_legacy_verification import overwrite
+   | |_________________________________________________________^
+23 |
+24 |   pytestmark = pytest.mark.unit
+   |
+help: Organize imports
+   |
+20 | from tests.unit.test_legacy_verification import legacy as legacy
+   - from tests.unit.test_legacy_verification import legacy_records
+   - from tests.unit.test_legacy_verification import overwrite
+21 + from tests.unit.test_legacy_verification import legacy_records, overwrite
+22 |
+   |
+
+Found 1 error.
+[*] 1 fixable with the `--fix` option.

@@ -1,0 +1,1402 @@
+$ make lint
+uv run ruff check src
+All checks passed!
+uv run ruff format --check src
+132 files already formatted
+uv run pydoclint src
+uv run mypy
+Success: no issues found in 132 source files
+uv run ty check
+All checks passed!
+uv run lint-imports
+
+╔══╗─────────▶╔╗ ╔╗      ╔╗◀───┐
+╚╣╠╝◀─────┐  ╔╝╚╗║║────▶╔╝╚╗   │
+ ║║   ╔══╦══╦╩╗╔╝║║  ╔╦═╩╗╔╝╔═╦══╗
+ ║║╔══╣╔╗║╔╗║╔╣║ ║║ ╔╬╣╔╗║║ ║│║╔═╝
+╔╣╠╣║║║╚╝║╚╝║║║╚╗║╚═╝║║║║║╚╗║═╣║
+╚══╩╩╩╣╔═╩══╩╝╚═╝╚═══╩╩╝╚╩═╩╩═╩╝
+  └──▶║║                    ▲ 
+      ╚╝────────────────────┘
+
+
+---------
+Contracts
+---------
+
+Analyzed 185 files, 1083 dependencies.
+--------------------------------------
+
+applications depend on core then packages then schema KEPT
+Packages are independent of one another KEPT
+Applications are independent of one another KEPT
+catalog and rbac are framework-free KEPT
+auth is web-framework-free KEPT
+the authorization package is entered through its public surface KEPT
+domain packages do not depend on persistence adapters KEPT
+core uses ports rather than concrete infrastructure KEPT
+API endpoints cannot call internal workflow implementations KEPT
+
+Contracts: 9 kept, 0 broken.
+uv run python scripts/check_schema_map.py
+uv run radon cc src --min C
+uv run radon mi src --min B
+uv run complexipy src --max-complexity-allowed 15
+──────────────────────────────── 🐙 complexipy ─────────────────────────────────
+src/huron/applications/api/app.py
+    _build_runtime 0  ✅ PASSED 
+    _postgres_stores 0  ✅ PASSED 
+    _HuronFastAPI::openapi 1  ✅ PASSED 
+    _database_failure 1  ✅ PASSED 
+    _dependency_checks 1  ✅ PASSED 
+    _raw_store_failure 1  ✅ PASSED 
+    _raw_store_probe 1  ✅ PASSED 
+    _configure_oidc 3  ✅ PASSED 
+    _bootstrap 4  ✅ PASSED 
+    create_app 12  ✅ PASSED 
+
+src/huron/applications/api/authorization/cookies.py
+    CookieSpec::issue 0  ✅ PASSED 
+    CookieSpec::read 0  ✅ PASSED 
+    CookieSpec::revoke 0  ✅ PASSED 
+    login_flow_cookie 0  ✅ PASSED 
+    session_cookie 0  ✅ PASSED 
+
+src/huron/applications/api/authorization/credentials.py
+    current_session 0  ✅ PASSED 
+    _touch_api_key 1  ✅ PASSED 
+    _enforce_csrf 2  ✅ PASSED 
+    current_principal 7  ✅ PASSED 
+
+src/huron/applications/api/authorization/decisions.py
+    current_visibility 0  ✅ PASSED 
+    request_binding_cache 0  ✅ PASSED 
+
+src/huron/applications/api/authorization/guards.py
+    _raw_write 0  ✅ PASSED 
+    _require_resource 0  ✅ PASSED 
+    dataset_raw_writer 0  ✅ PASSED 
+    project_intake 0  ✅ PASSED 
+    require_dataset 0  ✅ PASSED 
+    require_organization 0  ✅ PASSED 
+    require_project 0  ✅ PASSED 
+    require_system 0  ✅ PASSED 
+    revision_raw_reader 0  ✅ PASSED 
+    session_overseer 1  ✅ PASSED 
+    session_owner 1  ✅ PASSED 
+    upload_owner 1  ✅ PASSED 
+
+src/huron/applications/api/dependencies.py
+    catalog_creation 0  ✅ PASSED 
+    catalog_service 0  ✅ PASSED 
+    identity_service 0  ✅ PASSED 
+    raw_ingestion_service 0  ✅ PASSED 
+    revision_service 0  ✅ PASSED 
+
+src/huron/applications/api/expiry.py
+    ExpirySweep::__aenter__ 0  ✅ PASSED 
+    ExpirySweep::__aexit__ 0  ✅ PASSED 
+    ExpirySweep::__init__ 0  ✅ PASSED 
+    ExpirySweep::run 6  ✅ PASSED 
+
+src/huron/applications/api/problems.py
+    problem_response 0  ✅ PASSED 
+    problem 1  ✅ PASSED 
+    install_error_handlers 2  ✅ PASSED 
+    wire_error_codes 2  ✅ PASSED 
+    _descendant_codes 3  ✅ PASSED 
+    _path_rule_violation_codes 10  ✅ PASSED 
+
+src/huron/applications/api/routes/auth/endpoints/login.py
+    _rehash_credential 1  ✅ PASSED 
+    logout 1  ✅ PASSED 
+    password_login 5  ✅ PASSED 
+
+src/huron/applications/api/routes/auth/endpoints/oidc.py
+    _app_url 0  ✅ PASSED 
+    _flow_secret 0  ✅ PASSED 
+    oidc_start 0  ✅ PASSED 
+    _configured_oidc_client 1  ✅ PASSED 
+    _safe_return_path 2  ✅ PASSED 
+    oidc_callback 4  ✅ PASSED 
+
+src/huron/applications/api/routes/auth/endpoints/session.py
+    providers 0  ✅ PASSED 
+    session_info 1  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/api_keys.py
+    _require_idempotency_key 0  ✅ PASSED 
+    issue_api_key 0  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/bindings.py
+    _binding_page 0  ✅ PASSED 
+    _grant_binding 0  ✅ PASSED 
+    _key 0  ✅ PASSED 
+    create_dataset_binding 0  ✅ PASSED 
+    create_organization_binding 0  ✅ PASSED 
+    create_project_binding 0  ✅ PASSED 
+    create_system_binding 0  ✅ PASSED 
+    list_dataset_bindings 0  ✅ PASSED 
+    list_organization_bindings 0  ✅ PASSED 
+    list_project_bindings 0  ✅ PASSED 
+    list_system_bindings 0  ✅ PASSED 
+    revoke_dataset_binding 0  ✅ PASSED 
+    revoke_organization_binding 0  ✅ PASSED 
+    revoke_project_binding 0  ✅ PASSED 
+    revoke_system_binding 0  ✅ PASSED 
+    _expires 1  ✅ PASSED 
+    _revoke_binding 2  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/datasets.py
+    _key 0  ✅ PASSED 
+    _release_key 0  ✅ PASSED 
+    create_dataset 0  ✅ PASSED 
+    create_release 0  ✅ PASSED 
+    get_dataset 0  ✅ PASSED 
+    list_datasets 0  ✅ PASSED 
+    list_releases 0  ✅ PASSED 
+    patch_dataset 0  ✅ PASSED 
+    resolve_release 0  ✅ PASSED 
+    list_layers 1  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py
+    _open_session 0  ✅ PASSED 
+    abort_ingest_session 0  ✅ PASSED 
+    commit_ingest_session 0  ✅ PASSED 
+    complete_upload 0  ✅ PASSED 
+    create_dataset_ingest_session 0  ✅ PASSED 
+    create_project_ingest_session 0  ✅ PASSED 
+    get_ingest_session 0  ✅ PASSED 
+    heartbeat_ingest_session 0  ✅ PASSED 
+    upload_part 0  ✅ PASSED 
+    verify_ingest_session 0  ✅ PASSED 
+    _entries 1  ✅ PASSED 
+    _body_chunks 5  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/organizations.py
+    _key 0  ✅ PASSED 
+    create_organization 0  ✅ PASSED 
+    get_organization 0  ✅ PASSED 
+    list_organizations 0  ✅ PASSED 
+    patch_organization 0  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/policies.py
+    _key 0  ✅ PASSED 
+    attach_to_dataset 0  ✅ PASSED 
+    attach_to_organization 0  ✅ PASSED 
+    attach_to_project 0  ✅ PASSED 
+    create_policy 0  ✅ PASSED 
+    list_policies 0  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/projects.py
+    _key 0  ✅ PASSED 
+    create_project 0  ✅ PASSED 
+    get_project 0  ✅ PASSED 
+    list_projects 0  ✅ PASSED 
+    patch_project 0  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/revisions.py
+    get_revision 0  ✅ PASSED 
+    get_revision_file 0  ✅ PASSED 
+    get_revision_manifest 0  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/roles.py
+    _role_view 0  ✅ PASSED 
+    list_roles 1  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/search.py
+    search_unavailable 0  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/service_accounts.py
+    _key 0  ✅ PASSED 
+    create_service_account 0  ✅ PASSED 
+    disable_service_account 0  ✅ PASSED 
+    issue_service_account_key 0  ✅ PASSED 
+    list_service_accounts 0  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/endpoints/users.py
+    create_user 0  ✅ PASSED 
+    disable_user 0  ✅ PASSED 
+    set_password 0  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/pagination.py
+    encode_cursor 0  ✅ PASSED 
+    page 0  ✅ PASSED 
+    after_key 1  ✅ PASSED 
+    decode_cursor 2  ✅ PASSED 
+    tag_cursor_key 2  ✅ PASSED 
+    slug_cursor_key 3  ✅ PASSED 
+    paginate 4  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/preconditions.py
+    expected_version 2  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/schema/ingest_sessions.py
+    IngestFileView::_sorted 0  ✅ PASSED 
+
+src/huron/applications/api/routes/v1/schema/policies.py
+    CreatePolicy::_bounded_spec 1  ✅ PASSED 
+
+src/huron/applications/api/runtime.py
+    api_api_keys 0  ✅ PASSED 
+    api_binding_facts 0  ✅ PASSED 
+    api_credentials 0  ✅ PASSED 
+    api_hierarchy 0  ✅ PASSED 
+    api_ingest 0  ✅ PASSED 
+    api_principals 0  ✅ PASSED 
+    api_repository 0  ✅ PASSED 
+    api_revisions 0  ✅ PASSED 
+    api_sessions 0  ✅ PASSED 
+    api_settings 0  ✅ PASSED 
+    api_runtime 1  ✅ PASSED 
+
+src/huron/applications/api/settings.py
+    settings_from_environment 0  ✅ PASSED 
+    ApiSettings::_refuse_ambiguous_vocabulary 5  ✅ PASSED 
+    ApiSettings::_refuse_unsafe_authentication 6  ✅ PASSED 
+
+src/huron/applications/lakectl/controller.py
+    ManagedComposeController::__init__ 0  ✅ PASSED 
+    ManagedComposeController::_evidence 0  ✅ PASSED 
+    ManagedComposeController::_persist 0  ✅ PASSED 
+    ManagedComposeController::certify 0  ✅ PASSED 
+    ManagedComposeController::describe 0  ✅ PASSED 
+    ManagedComposeController::_check_volume 1  ✅ PASSED 
+    ManagedComposeController::_load_state 1  ✅ PASSED 
+    ManagedComposeController::authenticate 1  ✅ PASSED 
+    ManagedComposeController::establish 1  ✅ PASSED 
+    ManagedComposeController::validate_certificate 1  ✅ PASSED 
+    ManagedComposeController::_validate_evidence 2  ✅ PASSED 
+    ManagedComposeController::restart 2  ✅ PASSED 
+    _private_directory 2  ✅ PASSED 
+    _require_isolated_container 2  ✅ PASSED 
+    _exposes 3  ✅ PASSED 
+    ManagedComposeController::check 5  ✅ PASSED 
+    ManagedComposeController::_writers 13  ✅ PASSED 
+
+src/huron/applications/lakectl/engine.py
+    LocalEngine::_request 0  ✅ PASSED 
+    LocalEngine::image_identity 0  ✅ PASSED 
+    LocalEngine::inventory 1  ✅ PASSED 
+    LocalEngine::start 1  ✅ PASSED 
+    require_local_administrator 1  ✅ PASSED 
+    LocalEngine::__init__ 2  ✅ PASSED 
+    LocalEngine::terminate 3  ✅ PASSED 
+    LocalEngine::volume_path 6  ✅ PASSED 
+
+src/huron/applications/lakectl/exclusion.py
+    ControllerClient::__init__ 0  ✅ PASSED 
+    ControllerClient::authenticate 0  ✅ PASSED 
+    ControllerClient::check 0  ✅ PASSED 
+    ControllerClient::describe 0  ✅ PASSED 
+    ControllerClient::restart 0  ✅ PASSED 
+    ControllerClient::validate_certificate 0  ✅ PASSED 
+    ControllerClient::establish 1  ✅ PASSED 
+    ControllerClient::certify 2  ✅ PASSED 
+    ControllerClient::_call 4  ✅ PASSED 
+
+src/huron/applications/lakectl/main.py
+    main 5  ✅ PASSED 
+
+src/huron/applications/lakectl/server.py
+    ControllerServer::__init__ 0  ✅ PASSED 
+    ControllerHandler::handle 1  ✅ PASSED 
+    _peer_uid 1  ✅ PASSED 
+    _request 2  ✅ PASSED 
+    _require_request_fields 2  ✅ PASSED 
+    _remove_stale_socket 3  ✅ PASSED 
+    serve 3  ✅ PASSED 
+    _dispatch 7  ✅ PASSED 
+
+src/huron/applications/lakectl/settings.py
+    ControllerSettings::load 0  ✅ PASSED 
+    MaintenanceSettings::load 0  ✅ PASSED 
+    private_document 3  ✅ PASSED 
+    _protected_ancestors 4  ✅ PASSED 
+    ControllerSettings::application_specification 6  ✅ PASSED 
+
+src/huron/applications/lakectl/wiring.py
+    _now 0  ✅ PASSED 
+    _implementation_digest 1  ✅ PASSED 
+    prepare 2  ✅ PASSED 
+
+src/huron/core/_catalog.py
+    HierarchyRepository::__init__ 0  ✅ PASSED 
+    HierarchyRepository::attach_policy 0  ✅ PASSED 
+    HierarchyRepository::bindings_at 0  ✅ PASSED 
+    HierarchyRepository::create_policy 0  ✅ PASSED 
+    HierarchyRepository::create_service_account 0  ✅ PASSED 
+    HierarchyRepository::data_root 0  ✅ PASSED 
+    HierarchyRepository::disable_service_account 0  ✅ PASSED 
+    HierarchyRepository::get_role_binding 0  ✅ PASSED 
+    HierarchyRepository::get_service_account 0  ✅ PASSED 
+    HierarchyRepository::grant_role 0  ✅ PASSED 
+    HierarchyRepository::list_policies 0  ✅ PASSED 
+    HierarchyRepository::list_service_accounts 0  ✅ PASSED 
+    HierarchyRepository::release 0  ✅ PASSED 
+    HierarchyRepository::releases 0  ✅ PASSED 
+    HierarchyRepository::revoke_role 0  ✅ PASSED 
+    HierarchyRepository::create_release 2  ✅ PASSED 
+    HierarchyRepository::_require_scope 7  ✅ PASSED 
+
+src/huron/core/_ingest.py
+    IngestService::__init__ 0  ✅ PASSED 
+    IngestService::_audit 0  ✅ PASSED 
+    IngestService::_fail 0  ✅ PASSED 
+    IngestService::create 0  ✅ PASSED 
+    IngestService::entry 0  ✅ PASSED 
+    IngestService::heartbeat 0  ✅ PASSED 
+    IngestService::ledger 0  ✅ PASSED 
+    IngestService::receive_part 0  ✅ PASSED 
+    IngestService::verify 0  ✅ PASSED 
+    SessionLedger::created_by 0  ✅ PASSED 
+    SessionLedger::dataset_id 0  ✅ PASSED 
+    SessionLedger::etag 0  ✅ PASSED 
+    SessionLedger::expires_at 0  ✅ PASSED 
+    SessionLedger::id 0  ✅ PASSED 
+    SessionLedger::manifest_sha256 0  ✅ PASSED 
+    SessionLedger::part_bytes 0  ✅ PASSED 
+    SessionLedger::revision_id 0  ✅ PASSED 
+    SessionLedger::revision_number 0  ✅ PASSED 
+    SessionLedger::state 0  ✅ PASSED 
+    _MeasuredChunks::__init__ 0  ✅ PASSED 
+    _MeasuredChunks::__iter__ 0  ✅ PASSED 
+    _MeasuredChunks::__next__ 0  ✅ PASSED 
+    IngestService::_compose_commit 1  ✅ PASSED 
+    IngestService::_current_upload_file 1  ✅ PASSED 
+    IngestService::_observe_part 1  ✅ PASSED 
+    IngestService::_plan 1  ✅ PASSED 
+    IngestService::_read_declared_manifest 1  ✅ PASSED 
+    IngestService::abort 1  ✅ PASSED 
+    IngestService::complete_file 1  ✅ PASSED 
+    IngestService::_open_envelope 2  ✅ PASSED 
+    IngestService::_reserve 2  ✅ PASSED 
+    IngestService::_write_index 2  ✅ PASSED 
+    IngestService::expire_lapsed 3  ✅ PASSED 
+    IngestService::_authorize_part 5  ✅ PASSED 
+    IngestService::_record_revision 5  ✅ PASSED 
+    IngestService::_publish_envelope 6  ✅ PASSED 
+    IngestService::_record_part 7  ✅ PASSED 
+    IngestService::commit 7  ✅ PASSED 
+    IngestService::_materialize_file 10  ✅ PASSED 
+
+src/huron/core/_revision_reader.py
+    RevisionService::__init__ 0  ✅ PASSED 
+    RevisionService::manifest_file 0  ✅ PASSED 
+    RevisionService::revision 0  ✅ PASSED 
+    RevisionService::payload_file 5  ✅ PASSED 
+
+src/huron/core/access.py
+    AccessPolicy::__init__ 0  ✅ PASSED 
+    AccessPolicy::_resolve_scope 0  ✅ PASSED 
+    AccessPolicy::bindings 0  ✅ PASSED 
+    AccessPolicy::dataset 0  ✅ PASSED 
+    AccessPolicy::require 0  ✅ PASSED 
+    AccessPolicy::visibility 0  ✅ PASSED 
+    as_rbac_principal 0  ✅ PASSED 
+    AccessPolicy::require_claim 1  ✅ PASSED 
+    _cached_bindings_for 1  ✅ PASSED 
+    AccessPolicy::scope 2  ✅ PASSED 
+    check 3  ✅ PASSED 
+    visibility_for_principal 5  ✅ PASSED 
+    bindings_for_principal 6  ✅ PASSED 
+
+src/huron/core/catalog.py
+    CatalogService::__init__ 0  ✅ PASSED 
+    CatalogService::attach_policy 0  ✅ PASSED 
+    CatalogService::bindings_at 0  ✅ PASSED 
+    CatalogService::create_policy 0  ✅ PASSED 
+    CatalogService::create_release 0  ✅ PASSED 
+    CatalogService::create_service_account 0  ✅ PASSED 
+    CatalogService::disable_service_account 0  ✅ PASSED 
+    CatalogService::get_role_binding 0  ✅ PASSED 
+    CatalogService::get_service_account 0  ✅ PASSED 
+    CatalogService::grant_role 0  ✅ PASSED 
+    CatalogService::list_policies 0  ✅ PASSED 
+    CatalogService::list_service_accounts 0  ✅ PASSED 
+    CatalogService::release 0  ✅ PASSED 
+    CatalogService::releases 0  ✅ PASSED 
+    CatalogService::revoke_role 0  ✅ PASSED 
+    CatalogService::layers 3  ✅ PASSED 
+
+src/huron/core/catalog_claims.py
+    claimed_result 1  ✅ PASSED 
+
+src/huron/core/catalog_collections.py
+    DatasetCollection::__init__ 0  ✅ PASSED 
+    OrganizationCollection::__init__ 0  ✅ PASSED 
+    ProjectCollection::__init__ 0  ✅ PASSED 
+    _Collection::__init__ 0  ✅ PASSED 
+    _Collection::get 0  ✅ PASSED 
+    _Collection::browse 1  ✅ PASSED 
+    _Collection::describe 1  ✅ PASSED 
+    _Collection::_persist 2  ✅ PASSED 
+
+src/huron/core/catalog_creation.py
+    CatalogCreation::__init__ 0  ✅ PASSED 
+    CatalogCreation::create_dataset 1  ✅ PASSED 
+    CatalogCreation::create_organization 1  ✅ PASSED 
+    CatalogCreation::create_project 2  ✅ PASSED 
+
+src/huron/core/catalog_documents.py
+    GenerationDocuments::__init__ 0  ✅ PASSED 
+    GenerationDocuments::write 0  ✅ PASSED 
+
+src/huron/core/catalog_ports.py
+    BindingFacts::bindings_for 0  ✅ PASSED 
+    BindingFacts::service_account_by_subject 0  ✅ PASSED 
+    CatalogReaders::datasets 0  ✅ PASSED 
+    CatalogReaders::organizations 0  ✅ PASSED 
+    CatalogReaders::projects 0  ✅ PASSED 
+    CollectionReader::browse 0  ✅ PASSED 
+    CollectionReader::get 0  ✅ PASSED 
+    CreationStore::transaction 0  ✅ PASSED 
+    CreationTransaction::insert_dataset 0  ✅ PASSED 
+    CreationTransaction::insert_organization 0  ✅ PASSED 
+    CreationTransaction::insert_project 0  ✅ PASSED 
+    DescriptionStore::transaction 0  ✅ PASSED 
+    DescriptionTransaction::datasets 0  ✅ PASSED 
+    DescriptionTransaction::organizations 0  ✅ PASSED 
+    DescriptionTransaction::projects 0  ✅ PASSED 
+    DescriptionWriter::describe 0  ✅ PASSED 
+    HierarchyFacts::dataset_parents 0  ✅ PASSED 
+    HierarchyFacts::project_visibilities 0  ✅ PASSED 
+    RetryTransaction::claim 0  ✅ PASSED 
+    RetryTransaction::remember 0  ✅ PASSED 
+
+src/huron/core/idempotency.py
+    request_sha256 0  ✅ PASSED 
+    session_claim 0  ✅ PASSED 
+
+src/huron/core/identity.py
+    IdentityService::__init__ 0  ✅ PASSED 
+    IdentityService::_revoke 0  ✅ PASSED 
+    IdentityService::issue_key 0  ✅ PASSED 
+    IdentityService::set_password 0  ✅ PASSED 
+    IdentityService::_account 1  ✅ PASSED 
+    IdentityService::create_user 1  ✅ PASSED 
+    IdentityService::disable_user 1  ✅ PASSED 
+    IdentityService::issue_service_account_key 1  ✅ PASSED 
+    IdentityService::_user 2  ✅ PASSED 
+    IdentityService::disable_service_account 2  ✅ PASSED 
+
+src/huron/core/integrity/cutover.py
+    CutoverService::_prepare_owned 0  ✅ PASSED 
+    CutoverService::_publish 0  ✅ PASSED 
+    CutoverService::__init__ 1  ✅ PASSED 
+    CutoverService::_record 2  ✅ PASSED 
+    _Fence::check 2  ✅ PASSED 
+    CutoverService::prepare 3  ✅ PASSED 
+    _Fence::monitor 3  ✅ PASSED 
+    CutoverService::validate 4  ✅ PASSED 
+    _settled_write 4  ✅ PASSED 
+    CutoverService::_transition 5  ✅ PASSED 
+
+src/huron/core/integrity/generations.py
+    GenerationVerifier::__init__ 0  ✅ PASSED 
+    _validate_pointer 1  ✅ PASSED 
+    _generation_identity 2  ✅ PASSED 
+    _entity_path 3  ✅ PASSED 
+    _validate_document 5  ✅ PASSED 
+    GenerationVerifier::verify 6  ✅ PASSED 
+    _documents 6  ✅ PASSED 
+    _parents 6  ✅ PASSED 
+
+src/huron/core/integrity/models.py
+    EvidenceDocument::canonical 0  ✅ PASSED 
+    EvidenceDocument::sha256 0  ✅ PASSED 
+    DocumentObservation::consistent_digest 1  ✅ PASSED 
+    EvidenceDocument::decode 1  ✅ PASSED 
+    ProtocolInventory::certifies 1  ✅ PASSED 
+    ProtocolTransition::validate_inventory 1  ✅ PASSED 
+    ProtocolTransition::bind 2  ✅ PASSED 
+    LegacyRevision::consistent_outcome 5  ✅ PASSED 
+    ProtocolInventory::unique_membership 7  ✅ PASSED 
+
+src/huron/core/integrity/ports.py
+    DatabaseExclusion::check 0  ✅ PASSED 
+    DatabaseExclusion::exclude 0  ✅ PASSED 
+    LegacyMaintenance::generation_records 0  ✅ PASSED 
+    LegacyMaintenance::lookup 0  ✅ PASSED 
+    LegacyMaintenance::resolve 0  ✅ PASSED 
+    LegacyMaintenance::revision_paths 0  ✅ PASSED 
+    LegacyStorage::claim 0  ✅ PASSED 
+    LegacyStorage::generation_paths 0  ✅ PASSED 
+    LegacyStorage::inspect_revision 0  ✅ PASSED 
+    LegacyStorage::read_control 0  ✅ PASSED 
+    LegacyStorage::read_generation 0  ✅ PASSED 
+    LegacyStorage::revision_paths 0  ✅ PASSED 
+    LegacyStorage::write_evidence 0  ✅ PASSED 
+    MaintenanceAuthority::authenticate 0  ✅ PASSED 
+    WriterExclusion::certify 0  ✅ PASSED 
+    WriterExclusion::check 0  ✅ PASSED 
+    WriterExclusion::establish 0  ✅ PASSED 
+    WriterExclusion::validate_certificate 0  ✅ PASSED 
+
+src/huron/core/integrity/verification.py
+    RevisionVerifier::__init__ 0  ✅ PASSED 
+    RevisionVerifier::verify 3  ✅ PASSED 
+    _legacy_marker 3  ✅ PASSED 
+    _validate_metadata_identity 3  ✅ PASSED 
+    RevisionVerifier::_documents 5  ✅ PASSED 
+    _document_inventory 5  ✅ PASSED 
+    _identity_record 10  ✅ PASSED 
+
+src/huron/core/ports.py
+    ApiKeyWriter::add 0  ✅ PASSED 
+    ApiKeyWriter::revoke_all_for 0  ✅ PASSED 
+    ApiKeyWriter::touch_last_used 0  ✅ PASSED 
+    HierarchyStore::ingest_file 0  ✅ PASSED 
+    HierarchyStore::ingest_files 0  ✅ PASSED 
+    HierarchyStore::ingest_session 0  ✅ PASSED 
+    HierarchyStore::lapsed_ingest_sessions 0  ✅ PASSED 
+    HierarchyStore::latest_committed_revision 0  ✅ PASSED 
+    HierarchyStore::release 0  ✅ PASSED 
+    HierarchyStore::releases 0  ✅ PASSED 
+    HierarchyStore::revision 0  ✅ PASSED 
+    HierarchyStore::revision_ref 0  ✅ PASSED 
+    HierarchyStore::transaction 0  ✅ PASSED 
+    HierarchyWriter::begin_ingest 0  ✅ PASSED 
+    HierarchyWriter::expire_ingest_session 0  ✅ PASSED 
+    HierarchyWriter::freeze_commit 0  ✅ PASSED 
+    HierarchyWriter::insert_audit_event 0  ✅ PASSED 
+    HierarchyWriter::insert_outbox_event 0  ✅ PASSED 
+    HierarchyWriter::insert_release 0  ✅ PASSED 
+    HierarchyWriter::insert_revision 0  ✅ PASSED 
+    HierarchyWriter::lock_ingest_session 0  ✅ PASSED 
+    HierarchyWriter::renew_ingest_session 0  ✅ PASSED 
+    HierarchyWriter::update_ingest_file 0  ✅ PASSED 
+    HierarchyWriter::update_ingest_session 0  ✅ PASSED 
+    RbacStore::attach_policy 0  ✅ PASSED 
+    RbacStore::bindings_at 0  ✅ PASSED 
+    RbacStore::create_policy 0  ✅ PASSED 
+    RbacStore::create_service_account 0  ✅ PASSED 
+    RbacStore::disable_service_account 0  ✅ PASSED 
+    RbacStore::get_role_binding 0  ✅ PASSED 
+    RbacStore::get_service_account 0  ✅ PASSED 
+    RbacStore::grant_role 0  ✅ PASSED 
+    RbacStore::list_policies 0  ✅ PASSED 
+    RbacStore::list_service_accounts 0  ✅ PASSED 
+    RbacStore::revoke_role 0  ✅ PASSED 
+
+src/huron/core/raw.py
+    RawIngestionService::__init__ 0  ✅ PASSED 
+    RawIngestionService::commit 0  ✅ PASSED 
+    RawIngestionService::complete_file 0  ✅ PASSED 
+    RawIngestionService::create 0  ✅ PASSED 
+    RawIngestionService::create_in_project 0  ✅ PASSED 
+    RawIngestionService::heartbeat 0  ✅ PASSED 
+    RawIngestionService::receive_part 0  ✅ PASSED 
+    RawIngestionService::verify 0  ✅ PASSED 
+    RawIngestionService::_owned 1  ✅ PASSED 
+    RawIngestionService::_owned_file 1  ✅ PASSED 
+    RawIngestionService::abort 1  ✅ PASSED 
+    RawIngestionService::ledger 1  ✅ PASSED 
+
+src/huron/core/revisions.py
+    RevisionReadService::__init__ 0  ✅ PASSED 
+    RevisionReadService::_readable 0  ✅ PASSED 
+    RevisionReadService::manifest_file 0  ✅ PASSED 
+    RevisionReadService::payload_file 0  ✅ PASSED 
+    RevisionReadService::revision 0  ✅ PASSED 
+
+src/huron/core/scopes.py
+    dataset_scope 0  ✅ PASSED 
+    organization_scope 0  ✅ PASSED 
+    project_scope 0  ✅ PASSED 
+    resource_scope 3  ✅ PASSED 
+
+src/huron/pkg/auth/apikeys.py
+    ApiKeyResolver::__init__ 0  ✅ PASSED 
+    ApiKeyStore::get 0  ✅ PASSED 
+    MemoryApiKeyStore::add 0  ✅ PASSED 
+    MemoryApiKeyStore::get 0  ✅ PASSED 
+    MemoryApiKeyStore::touch_last_used 0  ✅ PASSED 
+    _digest 0  ✅ PASSED 
+    MemoryApiKeyStore::__init__ 1  ✅ PASSED 
+    parse_api_key 2  ✅ PASSED 
+    create_api_key 3  ✅ PASSED 
+    MemoryApiKeyStore::revoke_all_for 4  ✅ PASSED 
+    ApiKeyResolver::resolve 6  ✅ PASSED 
+
+src/huron/pkg/auth/dev.py
+    DevHeaderResolver::__init__ 1  ✅ PASSED 
+    DevHeaderResolver::resolve_headers 3  ✅ PASSED 
+
+src/huron/pkg/auth/oidc.py
+    JwksVerifier::__init__ 0  ✅ PASSED 
+    LoginFlow::encode 0  ✅ PASSED 
+    OidcClient::__init__ 0  ✅ PASSED 
+    OidcClient::authorization_url 0  ✅ PASSED 
+    OidcClient::provider 0  ✅ PASSED 
+    OidcResolver::__init__ 0  ✅ PASSED 
+    code_challenge_s256 0  ✅ PASSED 
+    JwksVerifier::__call__ 1  ✅ PASSED 
+    LoginFlow::new 1  ✅ PASSED 
+    OidcClient::discover 1  ✅ PASSED 
+    LoginFlow::__post_init__ 2  ✅ PASSED 
+    OidcResolver::resolve 2  ✅ PASSED 
+    _split_signed_payload 2  ✅ PASSED 
+    OidcClient::exchange_code 3  ✅ PASSED 
+    _validate_discovery_document 4  ✅ PASSED 
+    OidcClient::_map_claims 5  ✅ PASSED 
+    LoginFlow::decode 7  ✅ PASSED 
+
+src/huron/pkg/auth/password.py
+    CredentialStore::get 0  ✅ PASSED 
+    CredentialStore::upsert 0  ✅ PASSED 
+    MemoryCredentialStore::get 0  ✅ PASSED 
+    MemoryCredentialStore::upsert 0  ✅ PASSED 
+    make_credential 0  ✅ PASSED 
+    needs_rehash 0  ✅ PASSED 
+    MemoryCredentialStore::__init__ 1  ✅ PASSED 
+    hash_password 1  ✅ PASSED 
+    verify_password 2  ✅ PASSED 
+
+src/huron/pkg/auth/principals.py
+    MemoryPrincipalStore::get_by_id 0  ✅ PASSED 
+    PrincipalStore::create_user 0  ✅ PASSED 
+    PrincipalStore::disable 0  ✅ PASSED 
+    PrincipalStore::get_by_id 0  ✅ PASSED 
+    PrincipalStore::get_user_by_subject 0  ✅ PASSED 
+    PrincipalStore::upsert_oidc_user 0  ✅ PASSED 
+    PrincipalSubjectExists::__init__ 0  ✅ PASSED 
+    MemoryPrincipalStore::__init__ 1  ✅ PASSED 
+    MemoryPrincipalStore::disable 1  ✅ PASSED 
+    MemoryPrincipalStore::create_user 2  ✅ PASSED 
+    MemoryPrincipalStore::upsert_oidc_user 5  ✅ PASSED 
+    MemoryPrincipalStore::get_user_by_subject 6  ✅ PASSED 
+
+src/huron/pkg/auth/sessions.py
+    MemorySessionStore::add 0  ✅ PASSED 
+    MemorySessionStore::get 0  ✅ PASSED 
+    SessionResolver::__init__ 0  ✅ PASSED 
+    SessionStore::add 0  ✅ PASSED 
+    SessionStore::get 0  ✅ PASSED 
+    SessionStore::revoke 0  ✅ PASSED 
+    SessionStore::revoke_all_for 0  ✅ PASSED 
+    SessionStore::touch 0  ✅ PASSED 
+    MemorySessionStore::__init__ 1  ✅ PASSED 
+    MemorySessionStore::revoke 1  ✅ PASSED 
+    MemorySessionStore::touch 1  ✅ PASSED 
+    _parse_session_id 1  ✅ PASSED 
+    create_session 1  ✅ PASSED 
+    parse_session_token 2  ✅ PASSED 
+    MemorySessionStore::revoke_all_for 4  ✅ PASSED 
+    SessionResolver::resolve 8  ✅ PASSED 
+
+src/huron/pkg/catalog/amendments.py
+    fold_amendments 3  ✅ PASSED 
+    validate_amendment 4  ✅ PASSED 
+
+src/huron/pkg/catalog/documents.py
+    CommitIntent::documents 0  ✅ PASSED 
+    CommitRecord::as_dict 0  ✅ PASSED 
+    CommitRecord::canonical 0  ✅ PASSED 
+    CommitRecord::of 0  ✅ PASSED 
+    CommitRecord::revision_record 0  ✅ PASSED 
+    MetadataDocument::as_dict 0  ✅ PASSED 
+    MetadataDocument::canonical 0  ✅ PASSED 
+    MetadataDocument::committed_at 0  ✅ PASSED 
+    MetadataDocument::committed_by 0  ✅ PASSED 
+    MetadataDocument::manifest_sha256 0  ✅ PASSED 
+    MetadataDocument::sha256 0  ✅ PASSED 
+    RevisionIndex::canonical 0  ✅ PASSED 
+    RevisionIndex::empty 0  ✅ PASSED 
+    _entry_as_dict 0  ✅ PASSED 
+    _entry_from_dict 0  ✅ PASSED 
+    _parse_instant 0  ✅ PASSED 
+    _ref 0  ✅ PASSED 
+    _render_instant 0  ✅ PASSED 
+    manifest_bytes 0  ✅ PASSED 
+    CommitIntent::require_session 1  ✅ PASSED 
+    MetadataDocument::decode 1  ✅ PASSED 
+    RevisionIndex::as_dict 1  ✅ PASSED 
+    revision_from_storage 1  ✅ PASSED 
+    CommitIntent::require_same_command 2  ✅ PASSED 
+    CommitRecord::decode 2  ✅ PASSED 
+    _decode_canonical 2  ✅ PASSED 
+    decode_manifest 2  ✅ PASSED 
+    CommitIntent::__post_init__ 3  ✅ PASSED 
+    MetadataDocument::compose 3  ✅ PASSED 
+    RevisionIndex::including 3  ✅ PASSED 
+    RevisionIndex::decode 5  ✅ PASSED 
+
+src/huron/pkg/catalog/errors.py
+    DomainError::as_problem 1  ✅ PASSED 
+    PathRuleViolation::__init__ 2  ✅ PASSED 
+    DomainError::__init__ 3  ✅ PASSED 
+
+src/huron/pkg/catalog/ids.py
+    id_for_path 0  ✅ PASSED 
+    uuid7 1  ✅ PASSED 
+
+src/huron/pkg/catalog/ingest.py
+    IngestFile::received 0  ✅ PASSED 
+    IngestSession::abort 0  ✅ PASSED 
+    IngestSession::commit 0  ✅ PASSED 
+    IngestSession::fail 0  ✅ PASSED 
+    IngestSession::open 0  ✅ PASSED 
+    IngestSession::recover 0  ✅ PASSED 
+    revision_committed 0  ✅ PASSED 
+    IngestSession::_advance 1  ✅ PASSED 
+    IngestSession::_fence 1  ✅ PASSED 
+    IngestSession::_lapsed 1  ✅ PASSED 
+    IngestSession::expire 1  ✅ PASSED 
+    IngestSession::require 1  ✅ PASSED 
+    IngestSession::begin_commit 2  ✅ PASSED 
+    IngestSession::renew 2  ✅ PASSED 
+    compute_upload_plan 2  ✅ PASSED 
+    revision_record 2  ✅ PASSED 
+    IngestFile::part_received 3  ✅ PASSED 
+    IngestFile::completed 4  ✅ PASSED 
+    IngestSession::verify 4  ✅ PASSED 
+
+src/huron/pkg/catalog/layers.py
+    parse_entry_layer 0  ✅ PASSED 
+    required_capability 0  ✅ PASSED 
+    parse_layer 1  ✅ PASSED 
+    validate_entry 1  ✅ PASSED 
+    entry_layers 2  ✅ PASSED 
+    validate_promotion 2  ✅ PASSED 
+    writable_layers_for_kind 3  ✅ PASSED 
+    ensure_layer_writable 4  ✅ PASSED 
+
+src/huron/pkg/catalog/manifest.py
+    Manifest::sha256 0  ✅ PASSED 
+    ManifestEntry::as_dict 0  ✅ PASSED 
+    canonical_bytes 0  ✅ PASSED 
+    content_identity 0  ✅ PASSED 
+    Manifest::as_dict 1  ✅ PASSED 
+    Manifest::total_bytes 1  ✅ PASSED 
+    _is_sha256 1  ✅ PASSED 
+    validate_manifest_path 9  ✅ PASSED 
+    _assert_ints_safe 12  ✅ PASSED 
+    validate_manifest 13  ✅ PASSED 
+
+src/huron/pkg/catalog/paths.py
+    Slugged::id 0  ✅ PASSED 
+    Slugged::slug 0  ✅ PASSED 
+    dataset_dir 0  ✅ PASSED 
+    organization_dir 0  ✅ PASSED 
+    project_dir 0  ✅ PASSED 
+    release_tag_file 0  ✅ PASSED 
+    staging_dir 0  ✅ PASSED 
+    staging_paths 0  ✅ PASSED 
+    generation_file 1  ✅ PASSED 
+    parse_revision_dir 1  ✅ PASSED 
+    product_dir 1  ✅ PASSED 
+    revision_dir 1  ✅ PASSED 
+    validate_org_slug 1  ✅ PASSED 
+    validate_tag 1  ✅ PASSED 
+    _parse_revision_component 2  ✅ PASSED 
+    _validate_revision_layout 2  ✅ PASSED 
+    dataset_layer_dir 2  ✅ PASSED 
+    validate_slug 2  ✅ PASSED 
+    _split 3  ✅ PASSED 
+
+src/huron/pkg/catalog/ports.py
+    Clock::now 0  ✅ PASSED 
+    CredentialVendor::vend_read_only 0  ✅ PASSED 
+    JobDispatcher::submit 0  ✅ PASSED 
+    PrincipalResolver::resolve 0  ✅ PASSED 
+    RawStore::atomic_replace 0  ✅ PASSED 
+    RawStore::commit_envelope 0  ✅ PASSED 
+    RawStore::create_staging 0  ✅ PASSED 
+    RawStore::discard_file 0  ✅ PASSED 
+    RawStore::finish_file 0  ✅ PASSED 
+    RawStore::initialize 0  ✅ PASSED 
+    RawStore::read_document 0  ✅ PASSED 
+    RawStore::root 0  ✅ PASSED 
+    RawStore::seal 0  ✅ PASSED 
+    RawStore::stat_document 0  ✅ PASSED 
+    RawStore::verify_envelope 0  ✅ PASSED 
+    RawStore::write_document 0  ✅ PASSED 
+    RawStore::write_generation 0  ✅ PASSED 
+    RawStore::write_part 0  ✅ PASSED 
+    RawStore::write_tag_once 0  ✅ PASSED 
+    SearchProjection::query 0  ✅ PASSED 
+    SearchProjection::upsert 0  ✅ PASSED 
+
+src/huron/pkg/catalog/records.py
+    Dataset::describe 0  ✅ PASSED 
+    Organization::describe 0  ✅ PASSED 
+    Project::describe 0  ✅ PASSED 
+    jsonable 1  ✅ PASSED 
+    jsonable_value 2  ✅ PASSED 
+    _describe 6  ✅ PASSED 
+
+src/huron/pkg/metastore/api_keys.py
+    PostgresApiKeyStore::__init__ 0  ✅ PASSED 
+    PostgresApiKeyStore::revoke_all_for 0  ✅ PASSED 
+    PostgresApiKeyStore::touch_last_used 0  ✅ PASSED 
+    PostgresApiKeyStore::get 1  ✅ PASSED 
+    PostgresApiKeyStore::add 3  ✅ PASSED 
+
+src/huron/pkg/metastore/credentials.py
+    PostgresCredentialStore::__init__ 0  ✅ PASSED 
+    PostgresCredentialStore::get 1  ✅ PASSED 
+    PostgresCredentialStore::upsert 3  ✅ PASSED 
+
+src/huron/pkg/metastore/hierarchy.py
+    InMemoryHierarchyStore::latest_committed_revision 0  ✅ PASSED 
+    InMemoryHierarchyStore::transaction 0  ✅ PASSED 
+    PostgresHierarchyStore::transaction 0  ✅ PASSED 
+    SystemClock::now 0  ✅ PASSED 
+    _MemoryCollection::__init__ 0  ✅ PASSED 
+    _MemoryDescriptionWriter::__init__ 0  ✅ PASSED 
+    _PostgresDescriptionWriter::__init__ 0  ✅ PASSED 
+    _PostgresTransactionWriter::__init__ 0  ✅ PASSED 
+    _PostgresTransactionWriter::insert_audit_event 0  ✅ PASSED 
+    _PostgresTransactionWriter::insert_outbox_event 0  ✅ PASSED 
+    _PostgresTransactionWriter::insert_revision 0  ✅ PASSED 
+    _PostgresTransactionWriter::remember 0  ✅ PASSED 
+    _TransactionWriter::__init__ 0  ✅ PASSED 
+    _TransactionWriter::insert_audit_event 0  ✅ PASSED 
+    _TransactionWriter::insert_outbox_event 0  ✅ PASSED 
+    _TransactionWriter::insert_revision 0  ✅ PASSED 
+    _TransactionWriter::remember 0  ✅ PASSED 
+    _trim_window 0  ✅ PASSED 
+    InMemoryHierarchyStore::__init__ 1  ✅ PASSED 
+    InMemoryHierarchyStore::project_visibilities 1  ✅ PASSED 
+    InMemoryHierarchyStore::revision 1  ✅ PASSED 
+    InMemoryHierarchyStore::revision_ref 1  ✅ PASSED 
+    PostgresHierarchyStore::__init__ 1  ✅ PASSED 
+    PostgresHierarchyStore::dataset_parents 1  ✅ PASSED 
+    PostgresHierarchyStore::latest_committed_revision 1  ✅ PASSED 
+    PostgresHierarchyStore::project_visibilities 1  ✅ PASSED 
+    PostgresHierarchyStore::release 1  ✅ PASSED 
+    PostgresHierarchyStore::revision 1  ✅ PASSED 
+    PostgresHierarchyStore::revision_ref 1  ✅ PASSED 
+    _PostgresDescriptionWriter::describe 1  ✅ PASSED 
+    _dataset_visible 1  ✅ PASSED 
+    _window 1  ✅ PASSED 
+    InMemoryHierarchyStore::dataset_parents 2  ✅ PASSED 
+    InMemoryHierarchyStore::release 2  ✅ PASSED 
+    InMemoryHierarchyStore::releases 2  ✅ PASSED 
+    PostgresHierarchyStore::releases 2  ✅ PASSED 
+    _MemoryCollection::get 2  ✅ PASSED 
+    _MemoryDescriptionWriter::describe 2  ✅ PASSED 
+    _TransactionWriter::insert_organization 2  ✅ PASSED 
+    _MemoryCollection::browse 3  ✅ PASSED 
+    _PostgresTransactionWriter::claim 3  ✅ PASSED 
+    _PostgresTransactionWriter::insert_dataset 3  ✅ PASSED 
+    _PostgresTransactionWriter::insert_organization 3  ✅ PASSED 
+    _PostgresTransactionWriter::insert_project 3  ✅ PASSED 
+    _TransactionWriter::insert_dataset 3  ✅ PASSED 
+    _TransactionWriter::insert_project 3  ✅ PASSED 
+    _TransactionWriter::insert_release 3  ✅ PASSED 
+    _find_revision 4  ✅ PASSED 
+    _organization_visible 4  ✅ PASSED 
+    _project_visible 4  ✅ PASSED 
+    _PostgresTransactionWriter::insert_release 6  ✅ PASSED 
+    _TransactionWriter::claim 9  ✅ PASSED 
+
+src/huron/pkg/metastore/ingest.py
+    InMemoryIngestWriter::lock_ingest_session 0  ✅ PASSED 
+    PostgresIngestWriter::_insert_ingest_file_rows 0  ✅ PASSED 
+    _dataset_row_exists 0  ✅ PASSED 
+    _pg_next_revision_number 0  ✅ PASSED 
+    _pg_open_ingest_session 0  ✅ PASSED 
+    _reserve_ingest_session 0  ✅ PASSED 
+    _reserved_file 0  ✅ PASSED 
+    InMemoryIngestReader::ingest_file 1  ✅ PASSED 
+    InMemoryIngestReader::ingest_session 1  ✅ PASSED 
+    PostgresIngestReader::ingest_file 1  ✅ PASSED 
+    PostgresIngestReader::ingest_files 1  ✅ PASSED 
+    PostgresIngestReader::ingest_session 1  ✅ PASSED 
+    PostgresIngestReader::lapsed_ingest_sessions 1  ✅ PASSED 
+    PostgresIngestWriter::expire_ingest_session 1  ✅ PASSED 
+    PostgresIngestWriter::lock_ingest_session 1  ✅ PASSED 
+    PostgresIngestWriter::renew_ingest_session 1  ✅ PASSED 
+    PostgresIngestWriter::update_ingest_file 1  ✅ PASSED 
+    PostgresIngestWriter::update_ingest_session 1  ✅ PASSED 
+    InMemoryIngestWriter::expire_ingest_session 2  ✅ PASSED 
+    InMemoryIngestWriter::renew_ingest_session 2  ✅ PASSED 
+    InMemoryIngestWriter::update_ingest_file 2  ✅ PASSED 
+    InMemoryIngestWriter::update_ingest_session 2  ✅ PASSED 
+    PostgresIngestWriter::begin_ingest 2  ✅ PASSED 
+    InMemoryIngestReader::ingest_files 3  ✅ PASSED 
+    InMemoryIngestReader::lapsed_ingest_sessions 3  ✅ PASSED 
+    PostgresIngestWriter::_insert_ingest_session_row 3  ✅ PASSED 
+    latest_revision 3  ✅ PASSED 
+    InMemoryIngestWriter::begin_ingest 4  ✅ PASSED 
+    _find_open_ingest_session 4  ✅ PASSED 
+    InMemoryIngestWriter::freeze_commit 6  ✅ PASSED 
+    PostgresIngestWriter::freeze_commit 6  ✅ PASSED 
+
+src/huron/pkg/metastore/legacy.py
+    PostgresLegacyMaintenance::__init__ 0  ✅ PASSED 
+    PostgresLegacyMaintenance::generation_records 0  ✅ PASSED 
+    _audit 0  ✅ PASSED 
+    PostgresLegacyMaintenance::revision_paths 1  ✅ PASSED 
+    _findings 1  ✅ PASSED 
+    _require_legacy 1  ✅ PASSED 
+    PostgresLegacyMaintenance::lookup 3  ✅ PASSED 
+    PostgresLegacyMaintenance::resolve 3  ✅ PASSED 
+    _import_revision 3  ✅ PASSED 
+    _session_outcome 8  ✅ PASSED 
+
+src/huron/pkg/metastore/maintenance.py
+    PostgresRoleExclusion::__init__ 0  ✅ PASSED 
+    _effective_access 0  ✅ PASSED 
+    _identifier 1  ✅ PASSED 
+    _require_dedicated 1  ✅ PASSED 
+    _roles 3  ✅ PASSED 
+    PostgresRoleExclusion::exclude 4  ✅ PASSED 
+    _revoke_access 4  ✅ PASSED 
+    PostgresRoleExclusion::check 5  ✅ PASSED 
+
+src/huron/pkg/metastore/principals.py
+    PostgresPrincipalStore::__init__ 0  ✅ PASSED 
+    PostgresPrincipalStore::create_user 1  ✅ PASSED 
+    PostgresPrincipalStore::disable 1  ✅ PASSED 
+    PostgresPrincipalStore::get_by_id 1  ✅ PASSED 
+    PostgresPrincipalStore::get_user_by_subject 1  ✅ PASSED 
+    PostgresPrincipalStore::upsert_oidc_user 3  ✅ PASSED 
+
+src/huron/pkg/metastore/queries.py
+    _PostgresCollection::__init__ 0  ✅ PASSED 
+    _visibility_parameters 0  ✅ PASSED 
+    _PostgresCollection::get 1  ✅ PASSED 
+    _PostgresCollection::browse 2  ✅ PASSED 
+
+src/huron/pkg/metastore/rbac.py
+    InMemoryRbacStore::__init__ 0  ✅ PASSED 
+    InMemoryRbacStore::create_policy 0  ✅ PASSED 
+    InMemoryRbacStore::list_policies 0  ✅ PASSED 
+    PostgresRbacStore::__init__ 0  ✅ PASSED 
+    PostgresRbacStore::disable_service_account 0  ✅ PASSED 
+    InMemoryRbacStore::get_role_binding 1  ✅ PASSED 
+    InMemoryRbacStore::get_service_account 1  ✅ PASSED 
+    InMemoryRbacStore::revoke_role 1  ✅ PASSED 
+    PostgresRbacStore::bindings_at 1  ✅ PASSED 
+    PostgresRbacStore::create_policy 1  ✅ PASSED 
+    PostgresRbacStore::get_role_binding 1  ✅ PASSED 
+    PostgresRbacStore::get_service_account 1  ✅ PASSED 
+    PostgresRbacStore::list_policies 1  ✅ PASSED 
+    PostgresRbacStore::list_service_accounts 1  ✅ PASSED 
+    PostgresRbacStore::revoke_role 1  ✅ PASSED 
+    PostgresRbacStore::service_account_by_subject 1  ✅ PASSED 
+    InMemoryRbacStore::disable_service_account 2  ✅ PASSED 
+    InMemoryRbacStore::list_service_accounts 2  ✅ PASSED 
+    PostgresRbacStore::grant_role 2  ✅ PASSED 
+    InMemoryRbacStore::bindings_at 3  ✅ PASSED 
+    InMemoryRbacStore::bindings_for 3  ✅ PASSED 
+    InMemoryRbacStore::create_service_account 3  ✅ PASSED 
+    InMemoryRbacStore::service_account_by_subject 3  ✅ PASSED 
+    PostgresRbacStore::attach_policy 3  ✅ PASSED 
+    InMemoryRbacStore::attach_policy 4  ✅ PASSED 
+    InMemoryRbacStore::grant_role 4  ✅ PASSED 
+    PostgresRbacStore::create_service_account 6  ✅ PASSED 
+    PostgresRbacStore::bindings_for 13  ✅ PASSED 
+
+src/huron/pkg/metastore/rows.py
+    affected_row_count 0  ✅ PASSED 
+    api_key_record 0  ✅ PASSED 
+    binding_record 0  ✅ PASSED 
+    credential_record 0  ✅ PASSED 
+    dataset 0  ✅ PASSED 
+    ingest_file 0  ✅ PASSED 
+    ingest_session 0  ✅ PASSED 
+    organization 0  ✅ PASSED 
+    policy 0  ✅ PASSED 
+    principal_record 0  ✅ PASSED 
+    project 0  ✅ PASSED 
+    release 0  ✅ PASSED 
+    revision_record 0  ✅ PASSED 
+    revision_ref 0  ✅ PASSED 
+    service_account 0  ✅ PASSED 
+    session_record 0  ✅ PASSED 
+
+src/huron/pkg/metastore/sessions.py
+    PostgresSessionStore::__init__ 0  ✅ PASSED 
+    PostgresSessionStore::add 0  ✅ PASSED 
+    PostgresSessionStore::revoke 0  ✅ PASSED 
+    PostgresSessionStore::revoke_all_for 0  ✅ PASSED 
+    PostgresSessionStore::touch 0  ✅ PASSED 
+    PostgresSessionStore::get 1  ✅ PASSED 
+
+src/huron/pkg/rawstore/commit.py
+    _finish_publication 0  ✅ PASSED 
+    fsync_dir 0  ✅ PASSED 
+    assert_same_filesystem 1  ✅ PASSED 
+    commit_envelope 1  ✅ PASSED 
+    fsync_tree 6  ✅ PASSED 
+    _publish 7  ✅ PASSED 
+
+src/huron/pkg/rawstore/completion.py
+    CompletionAdmission::slot 0  ✅ PASSED 
+    CompletionAdmission::__init__ 2  ✅ PASSED 
+    CompletionAdmission::reserve 2  ✅ PASSED 
+
+src/huron/pkg/rawstore/inspection.py
+    _verify_directory 3  ✅ PASSED 
+    verify_envelope 6  ✅ PASSED 
+    _verify_tree 8  ✅ PASSED 
+
+src/huron/pkg/rawstore/maintenance.py
+    MaintenanceStore::__init__ 0  ✅ PASSED 
+    MaintenanceStore::generation_paths 0  ✅ PASSED 
+    MaintenanceStore::read_generation 0  ✅ PASSED 
+    MaintenanceStore::revision_paths 0  ✅ PASSED 
+    MaintenanceStore::write_evidence 0  ✅ PASSED 
+    MaintenanceStore::read_control 1  ✅ PASSED 
+    _chunks 1  ✅ PASSED 
+    MaintenanceStore::claim 2  ✅ PASSED 
+    MaintenanceStore::inspect_revision 2  ✅ PASSED 
+    _inspect_file 2  ✅ PASSED 
+    _relative 2  ✅ PASSED 
+    _read_control 3  ✅ PASSED 
+    _check_attributes 4  ✅ PASSED 
+    _complete_inventory 4  ✅ PASSED 
+    _read_document 5  ✅ PASSED 
+    _generation_paths 6  ✅ PASSED 
+    _inspect_tree 9  ✅ PASSED 
+    _revision_paths 10  ✅ PASSED 
+
+src/huron/pkg/rawstore/materialize.py
+    candidate 1  ✅ PASSED 
+    descendant 3  ✅ PASSED 
+    file_chunks 3  ✅ PASSED 
+    install 3  ✅ PASSED 
+    directory 4  ✅ PASSED 
+    observe 5  ✅ PASSED 
+    rename_exclusive 5  ✅ PASSED 
+    write_all 7  ✅ PASSED 
+    flush_tree 15  ✅ PASSED 
+
+src/huron/pkg/rawstore/store.py
+    PosixRawStore::__init__ 0  ✅ PASSED 
+    PosixRawStore::_write_once 0  ✅ PASSED 
+    PosixRawStore::initialize 0  ✅ PASSED 
+    PosixRawStore::read_document 0  ✅ PASSED 
+    PosixRawStore::seal 0  ✅ PASSED 
+    PosixRawStore::stat_document 0  ✅ PASSED 
+    PosixRawStore::write_tag_once 0  ✅ PASSED 
+    PosixRawStore::atomic_replace 1  ✅ PASSED 
+    PosixRawStore::commit_envelope 1  ✅ PASSED 
+    PosixRawStore::discard_file 1  ✅ PASSED 
+    PosixRawStore::verify_envelope 1  ✅ PASSED 
+    PosixRawStore::write_generation 1  ✅ PASSED 
+    _installed_payload 1  ✅ PASSED 
+    PosixRawStore::create_staging 2  ✅ PASSED 
+    PosixRawStore::finish_file 2  ✅ PASSED 
+    PosixRawStore::write_document 2  ✅ PASSED 
+    PosixRawStore::write_part 2  ✅ PASSED 
+    PosixRawStore::_copy_file 3  ✅ PASSED 
+    _safe_relative 4  ✅ PASSED 
+    _stream_part 4  ✅ PASSED 
+
+src/huron/pkg/rbac/__init__.py
+    Binding::matches 0  ✅ PASSED 
+    ProjectVisibility::scope 0  ✅ PASSED 
+    Scope::system 0  ✅ PASSED 
+    _dataset_scope 0  ✅ PASSED 
+    Binding::is_expired 1  ✅ PASSED 
+    Principal::identifiers 1  ✅ PASSED 
+    RoleBindingAuthorizer::decide 1  ✅ PASSED 
+    _organization_visible 1  ✅ PASSED 
+    _permits_layer 1  ✅ PASSED 
+    RoleBindingAuthorizer::visibility 2  ✅ PASSED 
+    _applicable_bindings 3  ✅ PASSED 
+    _classified_scope_visible 3  ✅ PASSED 
+    _organization_ids 3  ✅ PASSED 
+    Binding::covers 4  ✅ PASSED 
+    RoleBindingAuthorizer::visible_project_ids 4  ✅ PASSED 
+    _dataset_ids 4  ✅ PASSED 
+    _has_clearance 4  ✅ PASSED 
+    decide 10  ✅ PASSED 
+
+src/huron/pkg/rbac/roles.py
+    service_account_bindings 0  ✅ PASSED 
+    role 1  ✅ PASSED 
+    compile_binding 2  ✅ PASSED 
+    roles_granting_write 2  ✅ PASSED 
+    RoleDefinition::grants_write 3  ✅ PASSED 
+    validate_binding 4  ✅ PASSED 
+
+src/huron/schema/__init__.py
+    validate 0  ✅ PASSED 
+    validator 0  ✅ PASSED 
+    load_schema 3  ✅ PASSED 
+
+All functions are within the allowed complexity.
+────────────────────────── 🎉 Analysis completed! 🎉 ───────────────────────────
+uv run --locked pyscn check src
+🔍 Running quality check (complexity, deadcode, clones)...
+src/huron/core/catalog_collections.py:163:1: clone of src/huron/core/catalog_collections.py:191:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:209:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:245:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:314:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:344:1 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:942:5: clone of src/huron/pkg/metastore/principals.py:83:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:618:5: clone of src/huron/pkg/metastore/ingest.py:484:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py:264:1: clone of src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py:293:1 (similarity: 85.0%)
+src/huron/pkg/metastore/credentials.py:44:5: clone of src/huron/pkg/metastore/sessions.py:46:5 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:161:5: clone of src/huron/pkg/metastore/rbac.py:785:5 (similarity: 85.0%)
+src/huron/pkg/catalog/records.py:40:5: clone of src/huron/pkg/catalog/records.py:144:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1307:5: clone of src/huron/pkg/metastore/rbac.py:645:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:453:5: clone of src/huron/pkg/metastore/ingest.py:652:5 (similarity: 85.0%)
+src/huron/core/_ingest.py:322:9: clone of src/huron/core/catalog_creation.py:242:9 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:850:5: clone of src/huron/pkg/metastore/rbac.py:161:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:484:5: clone of src/huron/pkg/metastore/rbac.py:516:5 (similarity: 85.0%)
+src/huron/core/catalog.py:153:5: clone of src/huron/core/catalog.py:168:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:484:5: clone of src/huron/pkg/metastore/ingest.py:652:5 (similarity: 85.0%)
+src/huron/core/catalog_collections.py:163:1: clone of src/huron/core/catalog_collections.py:177:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:245:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:280:1 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:974:5: clone of src/huron/pkg/metastore/ingest.py:584:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:453:5: clone of src/huron/pkg/metastore/rbac.py:543:5 (similarity: 85.0%)
+src/huron/pkg/auth/principals.py:247:5: clone of src/huron/pkg/metastore/credentials.py:44:5 (similarity: 85.0%)
+src/huron/pkg/catalog/paths.py:116:1: clone of src/huron/pkg/catalog/paths.py:160:1 (similarity: 85.0%)
+src/huron/pkg/catalog/records.py:40:5: clone of src/huron/pkg/catalog/records.py:87:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:453:5: clone of src/huron/pkg/metastore/rbac.py:785:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:618:5: clone of src/huron/pkg/metastore/rbac.py:261:5 (similarity: 85.0%)
+src/huron/pkg/metastore/api_keys.py:47:5: clone of src/huron/pkg/metastore/credentials.py:44:5 (similarity: 85.0%)
+src/huron/pkg/catalog/records.py:87:5: clone of src/huron/pkg/catalog/records.py:144:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:484:5: clone of src/huron/pkg/metastore/rbac.py:785:5 (similarity: 85.0%)
+src/huron/pkg/auth/principals.py:247:5: clone of src/huron/pkg/metastore/sessions.py:46:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:652:5: clone of src/huron/pkg/metastore/rbac.py:261:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1239:5: clone of src/huron/pkg/metastore/rbac.py:261:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:90:1: clone of src/huron/pkg/metastore/rbac.py:296:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:484:5: clone of src/huron/pkg/metastore/rbac.py:757:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/schema/datasets.py:37:1: clone of src/huron/applications/api/routes/v1/schema/organizations.py:24:1 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:116:9: clone of src/huron/pkg/metastore/rbac.py:249:9 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:261:5: clone of src/huron/pkg/metastore/rbac.py:543:5 (similarity: 85.0%)
+src/huron/core/identity.py:205:5: clone of src/huron/core/raw.py:71:5 (similarity: 85.0%)
+src/huron/core/catalog_creation.py:64:5: clone of src/huron/core/catalog_creation.py:242:9 (similarity: 85.0%)
+src/huron/core/catalog_collections.py:177:1: clone of src/huron/core/catalog_collections.py:191:1 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:161:5: clone of src/huron/pkg/metastore/rbac.py:757:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:198:1: clone of src/huron/applications/api/routes/v1/endpoints/organizations.py:152:1 (similarity: 85.0%)
+src/huron/applications/api/authorization/guards.py:119:1: clone of src/huron/applications/api/authorization/guards.py:143:1 (similarity: 85.0%)
+src/huron/applications/api/authorization/guards.py:194:1: clone of src/huron/applications/api/authorization/guards.py:373:1 (similarity: 85.0%)
+src/huron/core/_catalog.py:370:5: clone of src/huron/core/catalog.py:234:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:441:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:462:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:314:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:375:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:420:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:441:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:420:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:462:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:198:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:186:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:310:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:127:1 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:261:5: clone of src/huron/pkg/metastore/rbac.py:516:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/organizations.py:152:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:186:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/policies.py:110:1: clone of src/huron/applications/api/routes/v1/endpoints/policies.py:149:1 (similarity: 85.0%)
+src/huron/applications/api/authorization/guards.py:143:1: clone of src/huron/applications/api/authorization/guards.py:168:1 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:261:5: clone of src/huron/pkg/metastore/rbac.py:785:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:850:5: clone of src/huron/pkg/metastore/rbac.py:261:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:584:5: clone of src/huron/pkg/metastore/principals.py:83:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:344:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:375:1 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1342:5: clone of src/huron/pkg/metastore/ingest.py:453:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/policies.py:149:1: clone of src/huron/applications/api/routes/v1/endpoints/policies.py:188:1 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1342:5: clone of src/huron/pkg/metastore/ingest.py:484:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1239:5: clone of src/huron/pkg/metastore/rbac.py:161:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1239:5: clone of src/huron/pkg/metastore/ingest.py:484:5 (similarity: 85.0%)
+src/huron/pkg/catalog/records.py:21:1: clone of src/huron/pkg/catalog/records.py:66:1 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:618:5: clone of src/huron/pkg/metastore/hierarchy.py:705:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:618:5: clone of src/huron/pkg/metastore/ingest.py:453:5 (similarity: 85.0%)
+src/huron/pkg/auth/principals.py:247:5: clone of src/huron/pkg/auth/sessions.py:221:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/schema/organizations.py:24:1: clone of src/huron/applications/api/routes/v1/schema/projects.py:27:1 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/ingest.py:652:5 (similarity: 85.0%)
+src/huron/pkg/auth/apikeys.py:91:5: clone of src/huron/pkg/auth/sessions.py:168:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/rbac.py:516:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/ingest.py:850:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/hierarchy.py:1239:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1009:5: clone of src/huron/pkg/metastore/ingest.py:584:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1239:5: clone of src/huron/pkg/metastore/ingest.py:453:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/rbac.py:785:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1342:5: clone of src/huron/pkg/metastore/rbac.py:261:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:389:5: clone of src/huron/pkg/metastore/ingest.py:416:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:618:5: clone of src/huron/pkg/metastore/rbac.py:161:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:618:5: clone of src/huron/pkg/metastore/hierarchy.py:1239:5 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:139:5: clone of src/huron/pkg/metastore/rbac.py:313:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:474:5: clone of src/huron/pkg/metastore/hierarchy.py:618:5 (similarity: 85.0%)
+src/huron/pkg/auth/apikeys.py:278:1: clone of src/huron/pkg/auth/sessions.py:317:1 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:516:5: clone of src/huron/pkg/metastore/rbac.py:543:5 (similarity: 85.0%)
+src/huron/pkg/auth/principals.py:247:5: clone of src/huron/pkg/metastore/principals.py:56:5 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:757:5: clone of src/huron/pkg/metastore/rbac.py:785:5 (similarity: 85.0%)
+src/huron/core/_ingest.py:766:5: clone of src/huron/core/_ingest.py:1088:5 (similarity: 85.0%)
+src/huron/pkg/catalog/paths.py:271:1: clone of src/huron/pkg/rawstore/store.py:479:5 (similarity: 85.0%)
+src/huron/pkg/auth/principals.py:247:5: clone of src/huron/pkg/metastore/api_keys.py:47:5 (similarity: 85.0%)
+src/huron/pkg/metastore/api_keys.py:47:5: clone of src/huron/pkg/metastore/sessions.py:46:5 (similarity: 85.0%)
+src/huron/pkg/auth/apikeys.py:135:5: clone of src/huron/pkg/auth/sessions.py:232:5 (similarity: 85.0%)
+src/huron/core/raw.py:133:5: clone of src/huron/core/raw.py:300:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:209:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:280:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py:293:1: clone of src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py:440:1 (similarity: 85.0%)
+src/huron/pkg/metastore/api_keys.py:131:5: clone of src/huron/pkg/metastore/sessions.py:138:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:334:5: clone of src/huron/pkg/metastore/ingest.py:355:5 (similarity: 85.0%)
+src/huron/core/_ingest.py:450:5: clone of src/huron/core/_ingest.py:1088:5 (similarity: 85.0%)
+src/huron/core/_ingest.py:322:9: clone of src/huron/core/catalog_collections.py:105:5 (similarity: 85.0%)
+src/huron/core/raw.py:51:5: clone of src/huron/core/raw.py:133:5 (similarity: 85.0%)
+src/huron/pkg/auth/sessions.py:200:5: clone of src/huron/pkg/auth/sessions.py:221:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/rbac.py:543:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/schema/datasets.py:37:1: clone of src/huron/applications/api/routes/v1/schema/projects.py:27:1 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:368:1: clone of src/huron/pkg/metastore/hierarchy.py:391:1 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/hierarchy.py:1342:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:1342:5: clone of src/huron/pkg/metastore/rbac.py:161:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/rbac.py:757:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:942:5: clone of src/huron/pkg/metastore/hierarchy.py:974:5 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:942:5: clone of src/huron/pkg/metastore/ingest.py:584:5 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/policies.py:110:1: clone of src/huron/applications/api/routes/v1/endpoints/policies.py:188:1 (similarity: 85.0%)
+src/huron/pkg/metastore/hierarchy.py:974:5: clone of src/huron/pkg/metastore/principals.py:83:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:453:5: clone of src/huron/pkg/metastore/rbac.py:516:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:453:5: clone of src/huron/pkg/metastore/rbac.py:757:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:453:5: clone of src/huron/pkg/metastore/ingest.py:850:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:484:5: clone of src/huron/pkg/metastore/ingest.py:850:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:484:5: clone of src/huron/pkg/metastore/rbac.py:543:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:652:5: clone of src/huron/pkg/metastore/ingest.py:850:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:652:5: clone of src/huron/pkg/metastore/rbac.py:161:5 (similarity: 85.0%)
+src/huron/pkg/metastore/ingest.py:470:5: clone of src/huron/pkg/metastore/ingest.py:501:5 (similarity: 85.0%)
+src/huron/pkg/metastore/rbac.py:116:9: clone of src/huron/pkg/metastore/rbac.py:383:9 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:141:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:127:1 (similarity: 85.0%)
+src/huron/applications/api/authorization/guards.py:119:1: clone of src/huron/applications/api/authorization/guards.py:168:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:141:1: clone of src/huron/applications/api/routes/v1/endpoints/datasets.py:310:1 (similarity: 85.0%)
+src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py:264:1: clone of src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py:440:1 (similarity: 84.9%)
+src/huron/pkg/metastore/hierarchy.py:1009:5: clone of src/huron/pkg/metastore/principals.py:83:5 (similarity: 84.6%)
+src/huron/core/_catalog.py:299:5: clone of src/huron/core/catalog.py:183:5 (similarity: 84.2%)
+src/huron/pkg/metastore/api_keys.py:47:5: clone of src/huron/pkg/metastore/principals.py:56:5 (similarity: 83.9%)
+src/huron/applications/api/routes/v1/schema/organizations.py:38:1: clone of src/huron/applications/api/routes/v1/schema/policies.py:80:1 (similarity: 83.8%)
+src/huron/pkg/catalog/records.py:66:1: clone of src/huron/pkg/catalog/records.py:113:1 (similarity: 82.6%)
+src/huron/core/identity.py:61:5: clone of src/huron/core/identity.py:123:5 (similarity: 82.5%)
+src/huron/pkg/metastore/hierarchy.py:1342:5: clone of src/huron/pkg/metastore/ingest.py:850:5 (similarity: 81.7%)
+src/huron/pkg/metastore/principals.py:56:5: clone of src/huron/pkg/metastore/sessions.py:46:5 (similarity: 81.4%)
+src/huron/pkg/metastore/credentials.py:44:5: clone of src/huron/pkg/metastore/principals.py:56:5 (similarity: 81.4%)
+src/huron/pkg/metastore/rbac.py:139:5: clone of src/huron/pkg/metastore/rbac.py:278:5 (similarity: 81.4%)
+src/huron/applications/api/routes/v1/endpoints/policies.py:81:1: clone of src/huron/applications/api/routes/v1/endpoints/service_accounts.py:91:1 (similarity: 81.0%)
+src/huron/pkg/metastore/rbac.py:516:5: clone of src/huron/pkg/metastore/rbac.py:757:5 (similarity: 81.0%)
+src/huron/pkg/metastore/rbac.py:543:5: clone of src/huron/pkg/metastore/rbac.py:757:5 (similarity: 81.0%)
+src/huron/pkg/metastore/ingest.py:453:5: clone of src/huron/pkg/metastore/ingest.py:484:5 (similarity: 80.7%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/ingest.py:484:5 (similarity: 80.7%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/ingest.py:453:5 (similarity: 80.7%)
+src/huron/pkg/metastore/rbac.py:161:5: clone of src/huron/pkg/metastore/rbac.py:261:5 (similarity: 80.7%)
+src/huron/core/catalog.py:219:5: clone of src/huron/core/catalog.py:248:5 (similarity: 80.5%)
+src/huron/applications/api/dependencies.py:18:1: clone of src/huron/applications/api/dependencies.py:104:1 (similarity: 80.4%)
+src/huron/core/catalog_ports.py:31:5: clone of src/huron/core/ports.py:577:5 (similarity: 80.4%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:74:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:65:1 (similarity: 80.2%)
+src/huron/pkg/metastore/principals.py:135:5: clone of src/huron/pkg/metastore/principals.py:195:5 (similarity: 80.0%)
+src/huron/pkg/metastore/hierarchy.py:1119:5: clone of src/huron/pkg/metastore/hierarchy.py:1140:5 (similarity: 80.0%)
+src/huron/applications/api/routes/v1/endpoints/organizations.py:124:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:158:1 (similarity: 79.7%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:170:1: clone of src/huron/applications/api/routes/v1/endpoints/organizations.py:124:1 (similarity: 79.7%)
+src/huron/pkg/metastore/hierarchy.py:1342:5: clone of src/huron/pkg/metastore/ingest.py:652:5 (similarity: 79.7%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:170:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:158:1 (similarity: 79.7%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:141:1: clone of src/huron/applications/api/routes/v1/endpoints/organizations.py:96:1 (similarity: 79.7%)
+src/huron/applications/api/routes/v1/endpoints/organizations.py:96:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:127:1 (similarity: 79.7%)
+src/huron/pkg/metastore/hierarchy.py:200:5: clone of src/huron/pkg/metastore/hierarchy.py:220:5 (similarity: 79.4%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:402:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:420:1 (similarity: 79.1%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:402:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:462:1 (similarity: 79.1%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:402:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:441:1 (similarity: 79.1%)
+src/huron/pkg/metastore/hierarchy.py:673:5: clone of src/huron/pkg/metastore/rbac.py:296:5 (similarity: 79.1%)
+src/huron/applications/api/routes/v1/schema/ingest_sessions.py:43:1: clone of src/huron/applications/api/routes/v1/schema/projects.py:11:1 (similarity: 78.9%)
+src/huron/pkg/metastore/rbac.py:516:5: clone of src/huron/pkg/metastore/rbac.py:785:5 (similarity: 78.7%)
+src/huron/pkg/metastore/rbac.py:543:5: clone of src/huron/pkg/metastore/rbac.py:785:5 (similarity: 78.7%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:176:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:280:1 (similarity: 78.5%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:176:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:245:1 (similarity: 78.5%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:176:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:209:1 (similarity: 78.5%)
+src/huron/core/integrity/verification.py:114:5: clone of src/huron/pkg/catalog/documents.py:764:9 (similarity: 78.4%)
+src/huron/pkg/auth/password.py:53:1: clone of src/huron/pkg/catalog/models.py:40:1 (similarity: 78.3%)
+src/huron/pkg/metastore/rows.py:207:1: clone of src/huron/pkg/metastore/rows.py:228:1 (similarity: 78.3%)
+src/huron/applications/api/routes/v1/schema/organizations.py:11:1: clone of src/huron/applications/api/routes/v1/schema/projects.py:11:1 (similarity: 78.3%)
+src/huron/pkg/metastore/rbac.py:139:5: clone of src/huron/pkg/metastore/rbac.py:261:5 (similarity: 78.1%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/rbac.py:139:5 (similarity: 78.1%)
+src/huron/pkg/metastore/rbac.py:139:5: clone of src/huron/pkg/metastore/rbac.py:161:5 (similarity: 78.1%)
+src/huron/pkg/metastore/ingest.py:453:5: clone of src/huron/pkg/metastore/rbac.py:139:5 (similarity: 78.1%)
+src/huron/pkg/metastore/ingest.py:484:5: clone of src/huron/pkg/metastore/rbac.py:139:5 (similarity: 78.1%)
+src/huron/pkg/metastore/rbac.py:139:5: clone of src/huron/pkg/metastore/rbac.py:757:5 (similarity: 77.9%)
+src/huron/pkg/metastore/rbac.py:139:5: clone of src/huron/pkg/metastore/rbac.py:543:5 (similarity: 77.9%)
+src/huron/pkg/metastore/rbac.py:139:5: clone of src/huron/pkg/metastore/rbac.py:785:5 (similarity: 77.9%)
+src/huron/pkg/metastore/rbac.py:139:5: clone of src/huron/pkg/metastore/rbac.py:516:5 (similarity: 77.9%)
+src/huron/applications/api/dependencies.py:18:1: clone of src/huron/applications/api/dependencies.py:61:1 (similarity: 77.8%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:152:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:375:1 (similarity: 77.7%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:152:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:344:1 (similarity: 77.7%)
+src/huron/applications/api/routes/v1/endpoints/bindings.py:152:1: clone of src/huron/applications/api/routes/v1/endpoints/bindings.py:314:1 (similarity: 77.7%)
+src/huron/pkg/rbac/__init__.py:421:5: clone of src/huron/pkg/rbac/__init__.py:468:5 (similarity: 77.6%)
+src/huron/applications/api/authorization/guards.py:373:1: clone of src/huron/pkg/catalog/persistence.py:36:1 (similarity: 77.5%)
+src/huron/applications/api/routes/v1/schema/organizations.py:38:1: clone of src/huron/applications/api/routes/v1/schema/projects.py:42:1 (similarity: 77.5%)
+src/huron/applications/api/authorization/guards.py:194:1: clone of src/huron/pkg/catalog/persistence.py:36:1 (similarity: 77.5%)
+src/huron/pkg/catalog/persistence.py:36:1: clone of src/huron/pkg/rbac/__init__.py:271:1 (similarity: 77.5%)
+src/huron/applications/api/authorization/guards.py:194:1: clone of src/huron/pkg/rbac/__init__.py:271:1 (similarity: 77.5%)
+src/huron/core/_ingest.py:81:1: clone of src/huron/pkg/rbac/__init__.py:271:1 (similarity: 77.5%)
+src/huron/core/_ingest.py:81:1: clone of src/huron/pkg/catalog/ingest.py:227:1 (similarity: 77.5%)
+src/huron/pkg/metastore/hierarchy.py:220:5: clone of src/huron/pkg/metastore/hierarchy.py:240:5 (similarity: 77.1%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:248:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:65:1 (similarity: 76.9%)
+src/huron/core/catalog_collections.py:76:5: clone of src/huron/core/revisions.py:33:5 (similarity: 76.3%)
+src/huron/applications/api/authorization/guards.py:229:1: clone of src/huron/applications/api/authorization/guards.py:260:1 (similarity: 76.3%)
+src/huron/pkg/metastore/hierarchy.py:974:5: clone of src/huron/pkg/metastore/hierarchy.py:1009:5 (similarity: 76.0%)
+src/huron/pkg/catalog/documents.py:618:5: clone of src/huron/pkg/catalog/manifest.py:93:5 (similarity: 75.8%)
+src/huron/applications/api/routes/v1/endpoints/policies.py:110:1: clone of src/huron/applications/api/routes/v1/endpoints/service_accounts.py:54:1 (similarity: 75.6%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:310:1: clone of src/huron/applications/api/routes/v1/endpoints/organizations.py:96:1 (similarity: 75.3%)
+src/huron/pkg/metastore/rows.py:186:1: clone of src/huron/pkg/metastore/rows.py:207:1 (similarity: 75.3%)
+src/huron/pkg/catalog/records.py:21:1: clone of src/huron/pkg/catalog/records.py:113:1 (similarity: 75.1%)
+src/huron/pkg/catalog/layers.py:146:1: clone of src/huron/pkg/rbac/roles.py:283:1 (similarity: 74.6%)
+src/huron/pkg/metastore/hierarchy.py:1051:5: clone of src/huron/pkg/metastore/ingest.py:584:5 (similarity: 74.5%)
+src/huron/pkg/metastore/hierarchy.py:974:5: clone of src/huron/pkg/metastore/hierarchy.py:1051:5 (similarity: 74.4%)
+src/huron/pkg/metastore/rbac.py:161:5: clone of src/huron/pkg/metastore/rbac.py:313:5 (similarity: 74.2%)
+src/huron/pkg/metastore/ingest.py:453:5: clone of src/huron/pkg/metastore/rbac.py:313:5 (similarity: 74.2%)
+src/huron/pkg/metastore/rbac.py:261:5: clone of src/huron/pkg/metastore/rbac.py:313:5 (similarity: 74.2%)
+src/huron/pkg/metastore/hierarchy.py:705:5: clone of src/huron/pkg/metastore/rbac.py:313:5 (similarity: 74.2%)
+src/huron/pkg/metastore/ingest.py:484:5: clone of src/huron/pkg/metastore/rbac.py:313:5 (similarity: 74.2%)
+src/huron/pkg/metastore/hierarchy.py:942:5: clone of src/huron/pkg/metastore/hierarchy.py:1051:5 (similarity: 74.2%)
+src/huron/pkg/metastore/hierarchy.py:1009:5: clone of src/huron/pkg/metastore/hierarchy.py:1051:5 (similarity: 74.1%)
+src/huron/core/_ingest.py:499:9: clone of src/huron/core/_ingest.py:1088:5 (similarity: 71.3%)
+src/huron/pkg/metastore/rows.py:141:1: clone of src/huron/pkg/metastore/rows.py:317:1 (similarity: 69.2%)
+src/huron/applications/api/routes/v1/schema/organizations.py:38:1: clone of src/huron/applications/api/routes/v1/schema/service_accounts.py:25:1 (similarity: 69.2%)
+src/huron/applications/api/expiry.py:30:5: clone of src/huron/core/raw.py:37:5 (similarity: 69.2%)
+src/huron/applications/api/routes/v1/schema/policies.py:80:1: clone of src/huron/applications/api/routes/v1/schema/policies.py:97:1 (similarity: 69.1%)
+src/huron/applications/api/routes/v1/schema/organizations.py:38:1: clone of src/huron/applications/api/routes/v1/schema/policies.py:97:1 (similarity: 69.1%)
+src/huron/applications/api/authorization/cookies.py:41:5: clone of src/huron/applications/api/authorization/cookies.py:59:5 (similarity: 69.0%)
+src/huron/applications/api/routes/v1/schema/policies.py:80:1: clone of src/huron/applications/api/routes/v1/schema/projects.py:42:1 (similarity: 68.8%)
+src/huron/pkg/metastore/rbac.py:645:5: clone of src/huron/pkg/metastore/rbac.py:811:5 (similarity: 68.6%)
+src/huron/pkg/metastore/rows.py:44:1: clone of src/huron/pkg/metastore/rows.py:207:1 (similarity: 68.6%)
+src/huron/pkg/metastore/rows.py:207:1: clone of src/huron/pkg/metastore/rows.py:288:1 (similarity: 68.6%)
+src/huron/pkg/metastore/rows.py:44:1: clone of src/huron/pkg/metastore/rows.py:186:1 (similarity: 68.6%)
+src/huron/pkg/metastore/rows.py:44:1: clone of src/huron/pkg/metastore/rows.py:67:1 (similarity: 68.6%)
+src/huron/pkg/metastore/rows.py:186:1: clone of src/huron/pkg/metastore/rows.py:288:1 (similarity: 68.6%)
+src/huron/core/catalog.py:153:5: clone of src/huron/core/catalog.py:219:5 (similarity: 68.5%)
+src/huron/core/catalog.py:168:5: clone of src/huron/core/catalog.py:219:5 (similarity: 68.5%)
+src/huron/pkg/metastore/rows.py:228:1: clone of src/huron/pkg/metastore/rows.py:288:1 (similarity: 68.3%)
+src/huron/pkg/catalog/documents.py:465:1: clone of src/huron/pkg/catalog/models.py:58:1 (similarity: 68.1%)
+src/huron/applications/api/routes/v1/schema/bindings.py:23:1: clone of src/huron/applications/api/routes/v1/schema/datasets.py:90:1 (similarity: 68.0%)
+src/huron/pkg/metastore/rows.py:67:1: clone of src/huron/pkg/metastore/rows.py:186:1 (similarity: 67.9%)
+src/huron/core/access.py:296:5: clone of src/huron/core/revisions.py:33:5 (similarity: 67.9%)
+src/huron/pkg/metastore/rows.py:67:1: clone of src/huron/pkg/metastore/rows.py:207:1 (similarity: 67.9%)
+src/huron/applications/api/routes/v1/schema/datasets.py:66:1: clone of src/huron/applications/api/routes/v1/schema/revisions.py:21:1 (similarity: 67.9%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:341:1: clone of src/huron/applications/api/routes/v1/endpoints/projects.py:158:1 (similarity: 67.7%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:341:1: clone of src/huron/applications/api/routes/v1/endpoints/organizations.py:124:1 (similarity: 67.7%)
+src/huron/pkg/metastore/ingest.py:850:5: clone of src/huron/pkg/metastore/ingest.py:888:5 (similarity: 67.7%)
+src/huron/pkg/metastore/hierarchy.py:1342:5: clone of src/huron/pkg/metastore/ingest.py:888:5 (similarity: 67.7%)
+src/huron/pkg/auth/password.py:53:1: clone of src/huron/pkg/catalog/persistence.py:36:1 (similarity: 67.5%)
+src/huron/applications/api/routes/v1/schema/datasets.py:66:1: clone of src/huron/applications/api/routes/v1/schema/ingest_sessions.py:104:1 (similarity: 67.4%)
+src/huron/pkg/auth/oidc.py:158:1: clone of src/huron/pkg/catalog/ingest.py:105:1 (similarity: 67.3%)
+src/huron/core/integrity/models.py:279:5: clone of src/huron/pkg/metastore/rbac.py:161:5 (similarity: 67.1%)
+src/huron/core/integrity/models.py:279:5: clone of src/huron/pkg/metastore/hierarchy.py:705:5 (similarity: 67.1%)
+src/huron/core/integrity/models.py:279:5: clone of src/huron/pkg/metastore/ingest.py:453:5 (similarity: 67.1%)
+src/huron/core/integrity/models.py:279:5: clone of src/huron/pkg/metastore/ingest.py:484:5 (similarity: 67.1%)
+src/huron/core/integrity/models.py:279:5: clone of src/huron/pkg/metastore/rbac.py:261:5 (similarity: 67.1%)
+src/huron/applications/api/routes/v1/endpoints/organizations.py:124:1: clone of src/huron/applications/api/routes/v1/endpoints/service_accounts.py:168:1 (similarity: 66.9%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:74:1: clone of src/huron/applications/api/routes/v1/endpoints/organizations.py:60:1 (similarity: 66.9%)
+src/huron/pkg/rawstore/store.py:231:9: clone of src/huron/pkg/rawstore/store.py:282:9 (similarity: 66.8%)
+src/huron/applications/api/routes/v1/schema/ingest_sessions.py:43:1: clone of src/huron/applications/api/routes/v1/schema/organizations.py:11:1 (similarity: 66.7%)
+src/huron/pkg/metastore/ingest.py:652:5: clone of src/huron/pkg/metastore/ingest.py:888:5 (similarity: 66.0%)
+src/huron/applications/api/routes/v1/schema/datasets.py:90:1: clone of src/huron/applications/api/routes/v1/schema/policies.py:80:1 (similarity: 66.0%)
+src/huron/core/_ingest.py:436:5: clone of src/huron/core/_ingest.py:766:5 (similarity: 66.0%)
+src/huron/applications/api/routes/v1/endpoints/datasets.py:248:1: clone of src/huron/applications/api/routes/v1/endpoints/organizations.py:60:1 (similarity: 65.4%)
+src/huron/pkg/metastore/rows.py:44:1: clone of src/huron/pkg/metastore/rows.py:228:1 (similarity: 65.2%)
+src/huron/pkg/metastore/rows.py:228:1: clone of src/huron/pkg/metastore/rows.py:337:1 (similarity: 65.2%)
+⚠️  Found 253 code clone(s) (informational)
+✅ Code quality check passed
+uv run --locked python scripts/check_duplication.py src
+📊 Unified JSON report generated: /Users/karlschmidt/repo/huron/.pyscn/reports/analyze_20260911_193638.json
+
+📊 Analysis Summary:
+Health Score: 92/100 (Grade: A)
+Total time: 348ms
+
+📈 Detailed Scores:
+  Duplication:     60/100 ⚠️  (22.8% fragments cloned, 58 groups)
+
+
+--------------------------------------------------
+[Badge] Add this to your README to show off your score:
+[![pyscn quality](https://img.shields.io/badge/pyscn-A-brightgreen)](https://github.com/ludo-technologies/pyscn)
+
+[Star] Finding pyscn useful? https://github.com/ludo-technologies/pyscn
+--------------------------------------------------
+pyscn 1.31.1 native duplication score: 60/100 (required: >=90/100)
+Cloned fragments: 213/935; clone pairs: 253; clone groups: 58
+make: *** [lint] Error 1
