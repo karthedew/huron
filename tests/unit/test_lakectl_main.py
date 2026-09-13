@@ -1,5 +1,6 @@
 """Operator commands expose receipts and safe failures without accepting actor assertions."""
 
+import asyncio
 import runpy
 import sys
 from pathlib import Path
@@ -11,11 +12,12 @@ import httpx
 import pytest
 
 from huron.applications.lakectl import main as cli, wiring
-from huron.applications.lakectl.settings import ControllerSettings
-from huron.core.integrity.models import CertificationIndeterminateError, ProtocolTransition
+from huron.applications.lakectl.settings import ControllerSettings, MaintenanceSettings
+from huron.core.integrity.models import ProtocolTransition
 from tests.unit.test_controller_settings import controller_settings as controller_settings
 from tests.unit.test_controller_settings import root_metadata as root_metadata
 from tests.unit.test_lakectl_wiring import ControllerBoundary, EmptyDatabaseBoundary
+from tests.unit.test_managed_controller import raising
 
 pytestmark = pytest.mark.unit
 
@@ -55,24 +57,17 @@ def test_restart_command_prints_only_the_controller_result(
     assert capsys.readouterr().out == "a" * 64 + "\n"
 
 
-@pytest.mark.parametrize("lost_acknowledgement", [False, True])
 def test_cutover_command_prints_the_exact_canonical_transition(
     tmp_path: Path,
     root_metadata: None,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    lost_acknowledgement: bool,
 ) -> None:
     """A preparatory cutover reports its immutable receipt without activation or credentials."""
     path = tmp_path / "maintenance.json"
     path.write_text('{"controller_socket":"controller.sock","database_url":"private"}')
     path.chmod(0o600)
-    class AcknowledgementBoundary(ControllerBoundary):
-        async def certify(self, transition: ProtocolTransition) -> None:
-            if lost_acknowledgement:
-                raise CertificationIndeterminateError("private controller details")
-
-    controller = AcknowledgementBoundary(tmp_path)
+    controller = ControllerBoundary(tmp_path)
     database = EmptyDatabaseBoundary()
     monkeypatch.setattr(wiring, "sys", SimpleNamespace(platform="linux"))
     monkeypatch.setattr(wiring, "ControllerClient", lambda socket: controller)
@@ -91,24 +86,103 @@ def test_cutover_command_prints_the_exact_canonical_transition(
             str(UUID(int=2)),
         ],
     )
-    if lost_acknowledgement:
-        with pytest.raises(SystemExit) as stopped:
-            cli.main()
-        assert stopped.value.code == 1
-    else:
-        cli.main()
+    cli.main()
     stored = (tmp_path / "protocol/000001.json").read_bytes()
     receipt = ProtocolTransition.decode(stored)
     assert receipt.run_id == UUID(int=2)
     assert receipt.root_id == UUID(int=1)
     assert database.closed
+    assert capsys.readouterr().out == stored.decode() + "\n"
+
+
+def test_validate_command_prints_the_admitted_record_and_refuses_an_absent_sequence(
+    tmp_path: Path,
+    root_metadata: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A validated stored record prints the same bytes a lost prepare reply would have."""
+    path = tmp_path / "maintenance.json"
+    path.write_text('{"controller_socket":"controller.sock","database_url":"private"}')
+    path.chmod(0o600)
+    controller = ControllerBoundary(tmp_path)
+    database = EmptyDatabaseBoundary()
+    monkeypatch.setattr(wiring, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(wiring, "ControllerClient", lambda socket: controller)
+    monkeypatch.setattr(wiring.asyncpg, "create_pool", lambda url: database)
+    asyncio.run(wiring.prepare(MaintenanceSettings.load(path), UUID(int=2)))
+    database.closed = False
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "lakectl",
+            "protocol",
+            "cutover",
+            "--validate",
+            "--config",
+            str(path),
+            "--sequence",
+            "1",
+        ],
+    )
+    cli.main()
+    stored = (tmp_path / "protocol/000001.json").read_bytes()
+    assert capsys.readouterr().out == stored.decode() + "\n"
+    assert database.closed
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "lakectl",
+            "protocol",
+            "cutover",
+            "--validate",
+            "--config",
+            str(path),
+            "--sequence",
+            "2",
+        ],
+    )
+    with pytest.raises(SystemExit) as stopped:
+        cli.main()
+    assert stopped.value.code == 1
     output = capsys.readouterr()
-    if lost_acknowledgement:
-        assert not output.out
-        assert "indeterminate" in output.err
-        assert "private controller details" not in output.err
-    else:
-        assert output.out == stored.decode() + "\n"
+    assert not output.out
+    assert "refused the operation" in output.err
+    assert "000002" not in output.err
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ["--prepare"],
+        ["--validate"],
+        ["--prepare", "--run-id", str(UUID(int=1)), "--sequence", "1"],
+        ["--validate", "--sequence", "1", "--run-id", str(UUID(int=1))],
+        ["--prepare", "--validate", "--run-id", str(UUID(int=1)), "--sequence", "1"],
+        [],
+        ["--validate", "--sequence", "0"],
+        ["--validate", "--sequence", "1000000"],
+    ],
+)
+def test_cutover_usage_errors_exit_two(
+    case: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every unsupported cutover argument combination is refused before any composition runs."""
+    monkeypatch.setattr(cli, "prepare", raising(AssertionError("prepare ran")))
+    monkeypatch.setattr(cli, "validate", raising(AssertionError("validate ran")))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["lakectl", "protocol", "cutover", "--config", "maintenance.json", *case],
+    )
+    with pytest.raises(SystemExit) as stopped:
+        cli.main()
+    assert stopped.value.code == 2
+    assert "usage:" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

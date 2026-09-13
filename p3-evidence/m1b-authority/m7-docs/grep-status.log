@@ -1,0 +1,4 @@
+P3_EXECUTION.md:187:lint scope and the unchanged native-90 reporting exception. Its verdict is pending;
+P3_DESIGN.md:510:An interrupted operation is pending; holds can stop subsequent steps. Missing
+design/layer-raw.html:344:committer, timestamp in one small JCS document: <code>urn:huron:committed:1</code> for legacy data and <code>urn:huron:committed:2</code> for implemented verified materialization (under validation; deployment still requires M1b/M1c) — as the
+design/layer-raw.html:703:file details. A valid intent with files still present is pending removal; missing files without

@@ -14,9 +14,6 @@ import sys
 from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
-import asyncpg
-import httpx
-
 from huron.core.integrity.models import FenceEvidence, ProtocolTransition
 
 from .controller import ManagedComposeController, _private_directory
@@ -51,7 +48,7 @@ class ControllerHandler(socketserver.StreamRequestHandler):
             uid = _peer_uid(self.request)
             result = _dispatch(server.controller, uid, request)
             response = {"ok": True, "result": result}
-        except (ValueError, OSError, httpx.HTTPError, asyncpg.PostgresError):
+        except Exception:
             response = {"ok": False, "error": "CONTROLLER_REFUSED"}
         self.wfile.write(json.dumps(response).encode() + b"\n")
 
@@ -84,13 +81,17 @@ def _dispatch(controller: ManagedComposeController, uid: int, request: dict[str,
     if operation == "restart":
         return controller.restart(uid)
     if operation == "establish":
-        return controller.establish(uid, UUID(str(request["run_id"]))).model_dump(mode="json")
-    if operation in {"certify", "validate_certificate"}:
+        run_id = UUID(str(request["run_id"]))
+        return asyncio.run(controller.establish(uid, run_id)).model_dump(mode="json")
+    if operation == "validate":
         transition = ProtocolTransition.model_validate(request["transition"])
-        action = controller.certify if operation == "certify" else controller.validate_certificate
-        asyncio.run(action(uid, transition))
+        asyncio.run(controller.validate(uid, transition))
         return None
-    controller.check(uid, FenceEvidence.model_validate(request["evidence"]))
+    evidence = FenceEvidence.model_validate(request["evidence"])
+    if operation == "abandon":
+        controller.abandon(uid, evidence)
+    else:
+        controller.check(uid, evidence)
     return None
 
 
@@ -101,8 +102,8 @@ def _require_request_fields(request: dict[str, object]) -> None:
         "restart": {"operation"},
         "establish": {"operation", "run_id"},
         "check": {"operation", "evidence"},
-        "certify": {"operation", "transition"},
-        "validate_certificate": {"operation", "transition"},
+        "abandon": {"operation", "evidence"},
+        "validate": {"operation", "transition"},
     }
     operation = request.get("operation")
     if not isinstance(operation, str) or set(request) != fields.get(operation):

@@ -6,6 +6,7 @@ import hashlib
 import os
 import stat
 import tempfile
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,7 @@ from .engine import LocalEngine, require_local_administrator
 from .settings import ControlledRoot, ControllerState, MaintenanceSettings, private_document
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Iterator
     from uuid import UUID
 
     from .engine import Container
@@ -34,20 +36,22 @@ class ManagedComposeController:
     """Own application restart authority and preserve exclusion across process restarts."""
 
     def __init__(self, settings: ControllerSettings) -> None:
-        """Validate actual local authority and capture the isolated volume's identity.
+        """Validate local authority, load private configuration once and mint the start epoch.
 
         Args:
             settings: Private administrator-provisioned deployment configuration.
         """
         require_local_administrator()
         self._settings = settings
+        self._maintenance = MaintenanceSettings.load(settings.maintenance_path)
         self._engine = LocalEngine(settings.engine_socket)
         self._specification = settings.application_specification()
         self._image = self._engine.image_identity(str(self._specification["Image"]))
         self._volume = self._engine.volume_path(settings.volume_name)
         self._composition = hashlib.sha256(private_document(settings.compose_path)).hexdigest()
         self._state = self._load_state()
-        self._certificate: str | None = None
+        self._check_volume()
+        self._advance()
 
     def authenticate(self, peer_uid: int) -> MaintenanceGrant:
         """Authorize the kernel-authenticated peer for this root's maintenance.
@@ -86,8 +90,9 @@ class ManagedComposeController:
             raise PermissionError("operator has no application restart grant")
         if self._state.run_id is not None:
             raise ValueError("application restart is excluded by the durable cutover fence")
-        self._check_volume()
-        return self._engine.start(self._specification)
+        with self._observing():
+            self._check_volume()
+            return self._engine.start(self._specification)
 
     def describe(self, peer_uid: int) -> ControlledRoot:
         """Bind maintenance inspection to the actual protected storage namespace.
@@ -99,7 +104,8 @@ class ManagedComposeController:
             Live root identity after deployment and storage validation.
         """
         self.authenticate(peer_uid)
-        self._check_volume()
+        with self._observing():
+            self._check_volume()
         return ControlledRoot(
             root_id=self._state.root_id,
             path=self._volume,
@@ -108,113 +114,107 @@ class ManagedComposeController:
             inode=self._state.inode,
         )
 
-    def establish(self, peer_uid: int, run_id: UUID) -> FenceEvidence:
-        """Persist restart exclusion before terminating all application volume holders.
+    async def establish(self, peer_uid: int, run_id: UUID) -> FenceEvidence:
+        """Mint a new exclusion epoch, persist it, then terminate every application volume holder.
 
         Args:
             peer_uid: Kernel-authenticated maintenance operator.
-            run_id: Immutable cutover attempt identity.
+            run_id: Audit and database-idempotence identity of this cutover attempt.
 
         Returns:
-            Actual controller, volume, process-termination and restart-exclusion evidence.
-
+            Receipt naming the new generation, operator, the writers this call terminated,
+            the excluded roles and the maintenance database identity observed before minting.
         """
         grant = self.authenticate(peer_uid)
-        self._certificate = None
-        self._check_volume()
-        writers = self._writers()
-        previous = self._state.writers
-        writer_ids = sorted(set(previous) | {writer.identifier for writer in writers})
-        self._state = self._state.model_copy(
-            update={
-                "run_id": run_id,
-                "operator": grant.operator,
-                "writers": tuple(writer_ids),
-                "generation": self._state.generation
-                + int(self._state.run_id not in (None, run_id)),
-            }
+        with self._observing():
+            self._check_volume()
+            writers = self._writers()
+            async with self._database() as roles:
+                database = await roles.identify()
+        self._advance(
+            run_id=run_id,
+            operator=grant.operator,
+            writers=tuple(sorted(writer.identifier for writer in writers)),
+            database=database,
         )
-        self._persist()
-        for writer in writers:
-            self._engine.terminate(writer.identifier)
+        with self._observing():
+            for writer in writers:
+                self._engine.terminate(writer.identifier)
         evidence = self._evidence()
         self.check(peer_uid, evidence)
         return evidence
 
     def check(self, peer_uid: int, evidence: FenceEvidence) -> None:
-        """Verify the same live controller generation, root and persistent restart exclusion.
+        """Observe the volume and writer inventory afresh, then require the live epoch.
 
         Args:
             peer_uid: Kernel-authenticated maintenance operator.
-            evidence: Original exclusion receipt.
+            evidence: Receipt returned by ``establish``, compared whole.
 
         Raises:
-            ValueError: If the fence identity changed or any writer has appeared.
-            OSError: If live storage or controller observations fail.
+            ValueError: If a writer holds the volume, the receipt names another
+                generation or database, or the peer is not the receipt's operator.
         """
         grant = self.authenticate(peer_uid)
-        try:
+        with self._observing():
             self._check_volume()
-            if self._state.run_id is None or evidence != self._evidence():
-                raise ValueError("controller exclusion generation changed")
-            if evidence.operator != grant.operator or self._writers():
+            if self._writers():
                 raise ValueError("controller exclusion was lost or a foreign writer appeared")
-        except (OSError, ValueError):
-            self._certificate = None
-            raise
+        if not self._live(evidence):
+            raise ValueError("controller exclusion generation changed")
+        if evidence.operator != grant.operator:
+            raise ValueError("receipt names another maintenance operator")
 
-    async def certify(self, peer_uid: int, transition: ProtocolTransition) -> None:
-        """Endorse durable prepared evidence only after every fallible finalization step.
+    def abandon(self, peer_uid: int, evidence: FenceEvidence) -> None:
+        """End the epoch this receipt names, observing nothing.
+
+        A receipt that does not name the live epoch is ignored, so a stale or foreign
+        receipt cannot end a newer epoch.
 
         Args:
             peer_uid: Kernel-authenticated maintenance operator.
-            transition: Exact prepared record; its presence is not prior certification.
+            evidence: Receipt whose run did not complete.
         """
         self.authenticate(peer_uid)
-        self._certificate = None
-        await self._validate_evidence(peer_uid, transition)
-        self._certificate = transition.sha256
+        if self._live(evidence):
+            self._advance()
 
-    async def validate_certificate(self, peer_uid: int, transition: ProtocolTransition) -> None:
-        """Require current endorsement and fresh complete storage, SQL and controller proof.
+    async def validate(self, peer_uid: int, transition: ProtocolTransition) -> None:
+        """Admit a stored record only under the live epoch and fresh complete observations.
 
         Args:
-            peer_uid: Kernel-authenticated maintenance consumer.
-            transition: Previously acknowledged or indeterminately acknowledged receipt.
+            peer_uid: Kernel-authenticated maintenance operator or consumer.
+            transition: Record exactly as stored under ``protocol/{sequence:06d}.json``.
 
         Raises:
-            ValueError: If this controller has not endorsed the exact record.
+            ValueError: If the record's run disagrees with the established run.
         """
-        self.authenticate(peer_uid)
-        expected = self._certificate
-        self._certificate = None
-        if expected != transition.sha256:
-            raise ValueError("prepared evidence has no current controller endorsement")
-        await self._validate_evidence(peer_uid, transition)
-        self._certificate = expected
-
-    async def _validate_evidence(self, peer_uid: int, transition: ProtocolTransition) -> None:
         self.check(peer_uid, transition.fence)
         if transition.run_id != self._state.run_id:
-            raise ValueError("certificate run differs from current controller ownership")
-        store = MaintenanceStore(self._volume, self._settings.owner_uid)
-        with store.claim():
-            record = ProtocolTransition.decode(
-                store.read_control("protocol", f"{transition.sequence:06d}.json")
-            )
-            if record != transition:
-                raise ValueError("stored protocol record differs from presented receipt")
-            inventory = ProtocolInventory.decode(
-                store.read_control("protocol/reports", f"{transition.run_id}.json")
-            )
-            transition.validate_inventory(inventory)
-            settings = MaintenanceSettings.load(self._settings.maintenance_path)
-            async with asyncpg.create_pool(settings.database_url.get_secret_value()) as pool:
-                await PostgresRoleExclusion(pool).check(
-                    transition.fence.old_roles, transition.fence.new_role
-                )
-            self.check(peer_uid, transition.fence)
+            raise ValueError("record run differs from current controller ownership")
+        await self._validate_evidence(transition)
         self.check(peer_uid, transition.fence)
+
+    async def _validate_evidence(self, transition: ProtocolTransition) -> None:
+        name = f"{transition.sequence:06d}.json"
+        with self._observing():
+            store = MaintenanceStore(self._volume, self._settings.owner_uid)
+            with store.claim():
+                stored = _stored(store, "protocol", name)
+                report = _stored(store, "protocol/reports", name)
+        if stored is None or report is None:
+            raise ValueError("no stored evidence at the presented sequence")
+        if ProtocolTransition.decode(stored) != transition:
+            raise ValueError("stored protocol record differs from presented receipt")
+        transition.validate_inventory(ProtocolInventory.decode(report))
+        with self._observing():
+            async with self._database() as roles:
+                await roles.check(transition.fence)
+
+    @asynccontextmanager
+    async def _database(self) -> AsyncIterator[PostgresRoleExclusion]:
+        async with asyncpg.create_pool(self._maintenance.database_url.get_secret_value()) as pool:
+            yield PostgresRoleExclusion(pool)
 
     def _writers(self) -> tuple[Container, ...]:
         writers = []
@@ -237,11 +237,11 @@ class ManagedComposeController:
         path = self._settings.state_path
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         _private_directory(path.parent)
-        info = self._volume.stat()
         try:
-            state = ControllerState.model_validate_json(private_document(path))
+            return ControllerState.model_validate_json(private_document(path))
         except FileNotFoundError:
-            state = ControllerState(
+            info = self._volume.stat()
+            return ControllerState(
                 root_id=self._settings.root_id,
                 controller_id=self._settings.controller_id,
                 device=info.st_dev,
@@ -249,10 +249,6 @@ class ManagedComposeController:
                 composition=self._composition,
                 generation=0,
             )
-        self._state = state.model_copy(update={"generation": state.generation + 1})
-        self._check_volume()
-        self._persist()
-        return self._state
 
     def _check_volume(self) -> None:
         path = self._engine.volume_path(self._settings.volume_name)
@@ -274,12 +270,23 @@ class ManagedComposeController:
         if expected != actual:
             raise ValueError("controller root or deployment identity changed")
 
-    def _persist(self) -> None:
+    def _advance(self, **changes: object) -> None:
+        advanced = self._state.model_copy(
+            update={**changes, "generation": self._state.generation + 1}
+        )
+        try:
+            self._persist(advanced)
+        finally:
+            # Memory adopts the new epoch even when the write fails, so this process
+            # keeps refusing the old receipt; the next start advances disk again.
+            self._state = advanced
+
+    def _persist(self, state: ControllerState) -> None:
         path = self._settings.state_path
         descriptor, temporary = tempfile.mkstemp(dir=path.parent)
         try:
             with os.fdopen(descriptor, "wb") as output:
-                output.write(self._state.model_dump_json().encode())
+                output.write(state.model_dump_json().encode())
                 output.flush()
                 os.fsync(output.fileno())
             os.replace(temporary, path)
@@ -291,6 +298,17 @@ class ManagedComposeController:
         finally:
             Path(temporary).unlink(missing_ok=True)
 
+    @contextmanager
+    def _observing(self) -> Iterator[None]:
+        try:
+            yield
+        except BaseException:
+            self._advance()
+            raise
+
+    def _live(self, evidence: FenceEvidence) -> bool:
+        return self._state.database is not None and evidence == self._evidence()
+
     def _evidence(self) -> FenceEvidence:
         return FenceEvidence.model_validate(
             {
@@ -301,8 +319,16 @@ class ManagedComposeController:
                 "terminated_writers": self._state.writers,
                 "old_roles": self._settings.old_roles,
                 "new_role": self._settings.new_role,
+                "database": self._state.database,
             }
         )
+
+
+def _stored(store: MaintenanceStore, directory: str, name: str) -> bytes | None:
+    try:
+        return store.read_control(directory, name)
+    except FileNotFoundError:
+        return None
 
 
 def _private_directory(path: Path) -> None:

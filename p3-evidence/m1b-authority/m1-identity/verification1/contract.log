@@ -1,0 +1,8 @@
+.............                                                            [100%]
+=============================== warnings summary ===============================
+tests/contract/test_writer_exclusion.py:9
+  /home/karl/repo/huron/tests/contract/test_writer_exclusion.py:9: DeprecationWarning: testcontainers.postgres is deprecated, use testcontainers.community.postgres instead
+    from testcontainers.postgres import PostgresContainer
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+13 passed, 1 warning in 23.57s

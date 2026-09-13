@@ -3,8 +3,10 @@
 Status: M1a passed independent functional verification on 2026-09-11; see the
 [independent report](p3-evidence/m1a/verification1/report.md) and
 [validation record](P3_M1A_VALIDATION.md). M1b failed independent verification
-attempt 3; implementation is stopped pending architectural review. See
-[Escalation](#escalation). M1c activation/startup remains required. The original planning change
+attempt 3 and stopped at [Escalation](#escalation); the architectural review is
+complete and M1b resumes only under the companion
+[P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md) and its implementation
+plan (see [Resolution](#resolution)). M1c activation/startup remains required. The original planning change
 performed no implementation. Read [P3_DESIGN.md](P3_DESIGN.md) first. The
 architecture authority is `design/`; the phase remains `todo` in
 `design/roadmap.html` until gates pass.
@@ -163,10 +165,12 @@ in `docker-compose.yml`, `deploy/controlled/`, and operator documentation.
 5. Use a narrowly scoped maintenance adapter for schema 0010. It resolves legacy
    sessions and writes existing audit/findings before migration; it is not an
    API fallback or general old-schema compatibility layer.
-6. Require process-exclusive storage ownership through settled writes and live
-   controller endorsement after durable preparation. Consumer validation rechecks
-   exact stored bindings, SQL exclusion and controller generation; file presence
-   never certifies failed or indeterminately acknowledged preparation.
+6. Require process-exclusive storage ownership through settled writes. The
+   controller's persisted generation is the verification epoch (ADR-0001):
+   `establish` mints it, every failed observation, `abandon` and restart end
+   it, and a stateless `validate` admits only a record whose fence names the
+   live generation and the bound database identity. File presence never
+   establishes admission; a lost reply is resolved by validating again.
 7. Define authenticated maintenance grants in core; CLI actor text alone cannot
    authorize certification. Report evidence without credentials or file contents.
 
@@ -179,9 +183,11 @@ in `docker-compose.yml`, `deploy/controlled/`, and operator documentation.
 - Old release restart uses the actual old application artifact and revoked
   identity. Observe failed readiness/write access; do not spoof old version input
   to new startup code. Pin the pre-change artifact digest in the test fixture.
-- Foreign writer/startup, changed controller generation, unreachable node,
-  lost DB fence or lost proof mid-scan invalidate certification.
-- Report-before-record crash is resumable; exclusion loss forces reverification.
+- Foreign writer/startup, unreachable node, lost DB fence, changed database
+  identity or lost proof mid-scan end the epoch; the record is refused
+  afterwards even if the condition is restored.
+- A report without its record is history; the next `--prepare` appends the
+  next sequence number; any epoch end forces a full rescan.
 - Corrupt legacy payload is reported DEGRADED without blocking healthy inventory;
   ambiguous identity/missing parent blocks certification.
 
@@ -194,9 +200,11 @@ volume, with a serialized controller as the application's only restart authority
 See [the operator contract](docs/operations/controlled-cutover.md). Trusted host,
 engine and database administrators provision that boundary; ordinary application
 or automation users have no alternate daemon/storage grant. The development
-Compose stack remains explicitly unsupported for certification. M1b corrective implementation is under
-review after independent verification attempts 1 and 2 failed; these implementation
-details do not mark M1c delivered. See [the receipt](P3_M1B_VALIDATION.md).
+Compose stack remains explicitly unsupported for certification. All three M1b
+verification attempts failed ([the record](P3_M1B_VALIDATION.md)); the
+authority model is redesigned under ADR-0001 in
+[P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md) and delivered by its
+own plan. These implementation details do not mark M1c delivered.
 
 ### M1c. Cutover, migration and startup as one deliverable
 
@@ -206,9 +214,14 @@ API error mappings; `.github/workflows/acceptance.yml`, acceptance fixtures and
 
 **Implement:**
 
-1. Wire `lakectl protocol init` for genuinely empty roots and cutover prepare/
-   validate commands. API startup requires a valid initialized/cutover root and
-   compatible schema head before serving. Do not let startup certify a legacy root.
+1. Wire `lakectl protocol init` for genuinely empty roots. **Roadmap drift
+   (2026-09-12):** `lakectl protocol cutover --validate --sequence N` moves out
+   of this item into the M1b authority plan, because it is the only operator
+   resolution of a lost `validate` reply that does not rescan
+   (`P3_M1B_AUTHORITY_DESIGN.md`, "Design: T3b", "Roadmap drift recorded
+   here"); `protocol init` and API startup gating stay here. API startup
+   requires a valid initialized/cutover root and compatible schema head before
+   serving. Do not let startup certify a legacy root.
 2. Prepare verifies final orphans and terminalizes legacy sessions under exclusion.
    An ambiguous final identity blocks, not fails-and-reuses its number. Migration
    refuses remaining nonterminal sessions. Validate before re-enabling the new app.
@@ -535,7 +548,8 @@ fail; its replacement finalization tests and original controller regressions pas
 
 ### Retained tree and verification state
 
-The incomplete changes remain uncommitted and explicitly unverified, described by
+The incomplete changes are committed as `f619342` on `p3/integrity-and-raw-flows`
+and remain explicitly unverified, described by
 the final review's 60-file scoped inventory. No broad revert was performed because
 the shared tree contains unrelated work. All 115 pre-existing production Python
 files still match verified M1a; M1b adds 17 production files. Packaging, source-only
@@ -573,4 +587,16 @@ context, preserving the broader P3 plan:
 .claude/commands/design-plan.md src/huron P3_M1B_AUTHORITY_DESIGN.md P3_M1B_AUTHORITY_IMPLEMENTATION_PLAN.md "Resolve M1b authority and reverification; preserve later P3 scope" design/roadmap.html "P3_IMPLEMENTATION_PLAN.md#escalation; P3_M1B_ARCHITECTURAL_REVIEW.md"
 ```
 
-The architecture review and replanning have not been started by this execution.
+### Resolution
+
+Both invocations ran on 2026-09-12.
+[P3_M1B_ARCHITECTURAL_REVIEW.md](P3_M1B_ARCHITECTURAL_REVIEW.md) (Task E)
+accepted [ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md)
+with amendments and answers decisions 1–4: the controller's persisted
+generation is the sole authority (1, 2); `establish`, `check`, `abandon` and a
+stateless `validate` are the only operations, a lost reply is resolved by
+validating again, and nothing is re-endorsed (3); the recoverable states are
+the epoch-end table in the design (4).
+[P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md) and its
+implementation plan carry the work; `--validate --sequence N` moves there from
+M1c item 1. This section stays as the record of why.

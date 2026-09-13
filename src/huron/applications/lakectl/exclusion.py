@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import socket
 import stat
@@ -10,12 +9,7 @@ from typing import TYPE_CHECKING
 
 from asyncer import asyncify
 
-from huron.core.integrity.models import (
-    CertificationIndeterminateError,
-    FenceEvidence,
-    MaintenanceGrant,
-    ProtocolTransition,
-)
+from huron.core.integrity.models import FenceEvidence, MaintenanceGrant, ProtocolTransition
 
 from .settings import ControlledRoot
 
@@ -85,39 +79,25 @@ class ControllerClient:
             }
         )
 
-    async def certify(self, transition: ProtocolTransition) -> None:
-        """Request endorsement, distinguishing an uncertain acknowledgement from rejection.
+    async def abandon(self, evidence: FenceEvidence) -> None:
+        """Declare that this receipt's run did not complete, ending its epoch.
 
         Args:
-            transition: Complete immutable prepared evidence.
-
-        Raises:
-            CertificationIndeterminateError: If the authority's reply is lost or unreadable.
-            PermissionError: If the authority definitively refuses the request.
+            evidence: Receipt whose continuous observation failed or whose run did not return.
         """
-        try:
-            await asyncify(self._call)(
-                {
-                    "operation": "certify",
-                    "transition": transition.model_dump(mode="json", by_alias=True),
-                }
-            )
-        except PermissionError:
-            raise
-        except (OSError, ValueError, asyncio.CancelledError) as exc:
-            raise CertificationIndeterminateError(
-                "certificate acknowledgement is indeterminate"
-            ) from exc
+        await asyncify(self._call)(
+            {"operation": "abandon", "evidence": evidence.model_dump(mode="json")}
+        )
 
-    async def validate_certificate(self, transition: ProtocolTransition) -> None:
-        """Ask the authority to validate exact evidence and current exclusion for a consumer.
+    async def validate(self, transition: ProtocolTransition) -> None:
+        """Ask the controller to admit a stored record under the live epoch.
 
         Args:
-            transition: Receipt whose current endorsement must be checked.
+            transition: Record exactly as stored under ``protocol/{sequence:06d}.json``.
         """
         await asyncify(self._call)(
             {
-                "operation": "validate_certificate",
+                "operation": "validate",
                 "transition": transition.model_dump(mode="json", by_alias=True),
             }
         )
@@ -145,10 +125,30 @@ class ControllerClient:
             connection.connect(str(self._socket_path))
             connection.sendall(json.dumps(request).encode() + b"\n")
             with connection.makefile("rb") as response:
-                payload = response.readline(65537)
-        if len(payload) > 65536:
-            raise ValueError("controller response exceeds its bound")
-        result = json.loads(payload)
-        if not result["ok"]:
-            raise PermissionError("controller refused the requested maintenance operation")
-        return result["result"]
+                return _reply(response.readline(65537))
+
+
+def _reply(payload: bytes) -> object:
+    """Map one bounded response line to its result or the failure it represents.
+
+    Args:
+        payload: Raw bytes read from the controller's response line, bound-limited.
+
+    Returns:
+        The reply's ``result`` field.
+
+    Raises:
+        ValueError: If the payload exceeds its bound or is not a reply object.
+        ConnectionError: If the connection closed before a complete reply arrived.
+        PermissionError: If the controller refused the requested operation.
+    """
+    if len(payload) > 65536:
+        raise ValueError("controller response exceeds its bound")
+    if not payload.endswith(b"\n"):
+        raise ConnectionError("controller closed the connection without a reply")
+    reply = json.loads(payload)
+    if not isinstance(reply, dict) or "ok" not in reply:
+        raise ValueError("controller reply is not a reply object")
+    if not reply["ok"]:
+        raise PermissionError("controller refused the requested maintenance operation")
+    return reply.get("result")

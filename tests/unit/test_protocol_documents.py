@@ -37,6 +37,7 @@ def inventory() -> ProtocolInventory:
             terminated_writers=("container-identity",),
             old_roles=("legacy_writer",),
             new_role="verified_writer",
+            database="7367538914089103371/16384/huron",
         ),
         revisions=(
             LegacyRevision(
@@ -194,6 +195,26 @@ def test_runtime_binding_refuses_changed_path_identity_and_duplicate_generations
     document["generations"] = [generation, generation]
     with pytest.raises(ValueError, match="ambiguous generation paths"):
         ProtocolInventory.model_validate(document)
+
+
+@pytest.mark.parametrize("database", ["", "abc/1/huron", "1/2", "1/2/", "1/2/hur/on"])
+def test_fence_binds_one_bounded_database_identity(database: str) -> None:
+    """A malformed database identity is refused by both the runtime model and the schema."""
+    report = inventory()
+    record = ProtocolTransition.bind(
+        report, sequence=1, instant=datetime(2026, 1, 1, tzinfo=UTC), code_digest="b" * 64
+    )
+    document = record.model_dump(mode="json", by_alias=True)
+    document["fence"]["database"] = database
+    with pytest.raises(ValueError):
+        FenceEvidence.model_validate(document["fence"])
+    with pytest.raises(ValidationError):
+        validate("protocol-transition-v1.json", document)
+    del document["fence"]["database"]
+    with pytest.raises(ValueError):
+        FenceEvidence.model_validate(document["fence"])
+    with pytest.raises(ValidationError):
+        validate("protocol-transition-v1.json", document)
 
 
 @pytest.mark.parametrize(

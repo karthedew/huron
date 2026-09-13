@@ -1,0 +1,81 @@
+"""Scratch probes for the ADR clauses the repo matrix does not parametrize."""
+
+from datetime import UTC, datetime
+from uuid import UUID
+
+import httpx
+import pytest
+
+from huron.applications.lakectl.controller import ManagedComposeController
+from huron.core.integrity.models import ProtocolInventory, ProtocolTransition
+from huron.pkg.rawstore.maintenance import MaintenanceStore
+from tests.unit.test_controller_settings import controller_settings as controller_settings
+from tests.unit.test_controller_settings import root_metadata as root_metadata
+from tests.unit.test_lakectl_wiring import EmptyDatabaseBoundary
+from tests.unit.test_managed_controller import EngineBoundary, raising
+from tests.unit.test_managed_controller import database_boundary as database_boundary
+from tests.unit.test_managed_controller import engine_boundary as engine_boundary
+from tests.unit.test_managed_controller import generation_on_disk
+
+pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+async def prepared(controller_settings, engine_boundary, database_boundary):
+    controller = ManagedComposeController(controller_settings)
+    fence = await controller.establish(1002, UUID(int=3))
+    inventory = ProtocolInventory(
+        root_id=fence.root_id, run_id=UUID(int=3), fence=fence, revisions=(), generations=()
+    )
+    record = ProtocolTransition.bind(
+        inventory, sequence=1, instant=datetime(2026, 1, 1, tzinfo=UTC), code_digest="b" * 64
+    )
+    store = MaintenanceStore(engine_boundary.volume, controller_settings.owner_uid)
+    store.write_evidence(record.report_path, inventory.canonical)
+    store.write_evidence("000001.json", record.canonical)
+    await controller.validate(1002, record)
+    return controller, record
+
+
+def _status_error() -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "http://localhost/v1.41/info")
+    return httpx.HTTPStatusError(
+        "Server error '500'", request=request, response=httpx.Response(500, request=request)
+    )
+
+
+async def test_http_status_error_ends_the_epoch(
+    prepared, controller_settings, engine_boundary, monkeypatch
+):
+    """ADR C2 names 'status' explicitly; the repo matrix parametrizes only connect and timeout."""
+    controller, record = prepared
+    with monkeypatch.context() as patch:
+        patch.setattr(engine_boundary, "volume_path", raising(_status_error()))
+        with pytest.raises(httpx.HTTPStatusError):
+            await controller.validate(1002, record)
+    assert generation_on_disk(controller_settings) == record.fence.generation + 1
+    with pytest.raises(ValueError, match="generation changed"):
+        await controller.validate(1002, record)
+
+
+async def test_describe_and_authenticate_still_answer_after_a_failed_persist(
+    prepared, controller_settings, engine_boundary, monkeypatch
+):
+    """The operator contract says a controller that cannot persist 'refuses every request'."""
+    controller, record = prepared
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            ManagedComposeController,
+            "_persist",
+            lambda self, state: (_ for _ in ()).throw(OSError("state device is read-only")),
+        )
+        patch.setattr(engine_boundary, "volume_path", raising(_status_error()))
+        with pytest.raises(OSError, match="read-only"):
+            await controller.validate(1002, record)
+    grant = controller.authenticate(1002)
+    root = controller.describe(1002)
+    print(
+        f"\nafter a failed persist: authenticate -> {grant.operator}; "
+        f"describe -> root_id {root.root_id}; disk generation "
+        f"{generation_on_disk(controller_settings)} (in-memory advanced)"
+    )

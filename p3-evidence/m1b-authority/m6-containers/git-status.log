@@ -1,0 +1,38 @@
+ M .opencode/package-lock.json
+ M .opencode/package.json
+ M design/index.html
+ M design/roadmap.html
+ M pyproject.toml
+ M src/huron/applications/lakectl/controller.py
+ M src/huron/applications/lakectl/exclusion.py
+ M src/huron/applications/lakectl/main.py
+ M src/huron/applications/lakectl/server.py
+ M src/huron/applications/lakectl/settings.py
+ M src/huron/applications/lakectl/wiring.py
+ M src/huron/core/integrity/cutover.py
+ M src/huron/core/integrity/generations.py
+ M src/huron/core/integrity/models.py
+ M src/huron/core/integrity/ports.py
+ M src/huron/pkg/metastore/maintenance.py
+ M src/huron/schema/documents/protocol-inventory-v1.json
+ M src/huron/schema/documents/protocol-transition-v1.json
+ M tests/contract/test_writer_exclusion.py
+ M tests/controlled_deployment.py
+RM tests/unit/test_controller_certificates.py -> tests/unit/test_controller_epoch.py
+ M tests/unit/test_controller_transport.py
+ M tests/unit/test_integrity_cutover.py
+ M tests/unit/test_lakectl_main.py
+ M tests/unit/test_lakectl_wiring.py
+ M tests/unit/test_maintenance_adapters.py
+ M tests/unit/test_managed_controller.py
+ M tests/unit/test_protocol_documents.py
+?? .pyscn/
+?? P3_M1B_ARCHITECTURAL_REVIEW.md
+?? P3_M1B_AUTHORITY_DESIGN.md
+?? P3_M1B_AUTHORITY_IMPLEMENTATION_PLAN.md
+?? design/core-map.html
+?? docs/adr/
+?? minihuron/
+?? p3-evidence/m1b-authority/
+?? scripts/main.py
+?? tests/unit/test_books_upload_script.py

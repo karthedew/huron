@@ -1,6 +1,8 @@
 """Application database fencing against real PostgreSQL identities and surviving sessions."""
 
 import asyncio
+import re
+from dataclasses import dataclass
 
 import asyncpg
 import pytest
@@ -9,6 +11,21 @@ from testcontainers.postgres import PostgresContainer
 from huron.pkg.metastore.maintenance import PostgresRoleExclusion
 
 pytestmark = pytest.mark.contract
+
+
+@dataclass(frozen=True)
+class Fence:
+    """A receipt as the adapter sees it; the identity is always observed, never assumed."""
+
+    database: str
+    old_roles: tuple[str, ...] = ("old_app",)
+    new_role: str = "new_app"
+
+
+async def _fence(
+    exclusion: PostgresRoleExclusion, old_roles: tuple[str, ...] = ("old_app",)
+) -> Fence:
+    return Fence(database=await exclusion.identify(), old_roles=old_roles)
 
 
 def test_database_exclusion_revokes_inherited_rights_and_terminates_admitted_sessions() -> None:
@@ -20,6 +37,8 @@ def test_database_exclusion_revokes_inherited_rights_and_terminates_admitted_ses
 async def _exercise_exclusion(dsn: str) -> None:
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
     try:
+        exclusion = PostgresRoleExclusion(pool)
+        fence = await _fence(exclusion)
         async with pool.acquire() as admin:
             await admin.execute("CREATE ROLE old_app LOGIN PASSWORD 'old-app-test'")
             await admin.execute("CREATE ROLE new_app LOGIN PASSWORD 'new-app-test'")
@@ -36,15 +55,14 @@ async def _exercise_exclusion(dsn: str) -> None:
         old = await asyncpg.connect(dsn, user="old_app", password="old-app-test")
         new = await asyncpg.connect(dsn, user="new_app", password="new-app-test")
         await old.execute("INSERT INTO scientific_values VALUES (1)")
-        fence = PostgresRoleExclusion(pool)
-        await fence.exclude(("old_app",), "new_app")
+        await exclusion.exclude(fence)
         assert old.is_closed()
         assert new.is_closed()
         with pytest.raises(asyncpg.InvalidAuthorizationSpecificationError):
             await asyncpg.connect(dsn, user="old_app", password="old-app-test")
         with pytest.raises(asyncpg.InvalidAuthorizationSpecificationError):
             await asyncpg.connect(dsn, user="new_app", password="new-app-test")
-        await fence.check(("old_app",), "new_app")
+        await exclusion.check(fence)
         async with pool.acquire() as admin:
             assert not await admin.fetchval(
                 "SELECT has_table_privilege('old_app','scientific_values','INSERT')"
@@ -67,12 +85,12 @@ async def _exercise_exclusion(dsn: str) -> None:
             )
             await admin.execute("ALTER ROLE new_app LOGIN")
         with pytest.raises(ValueError, match="login or session fence was lost"):
-            await fence.check(("old_app",), "new_app")
-        await fence.exclude(("old_app",), "new_app")
+            await exclusion.check(fence)
+        await exclusion.exclude(fence)
         async with pool.acquire() as admin:
             await admin.execute("GRANT INSERT ON scientific_values TO PUBLIC")
         with pytest.raises(ValueError, match="effective application access"):
-            await fence.check(("old_app",), "new_app")
+            await exclusion.check(fence)
     finally:
         await pool.close()
 
@@ -91,8 +109,9 @@ async def _exercise_owner_refusal(dsn: str) -> None:
             await admin.execute("CREATE ROLE new_app LOGIN")
             await admin.execute("CREATE TABLE preserved(value integer)")
             await admin.execute("ALTER TABLE preserved OWNER TO old_owner")
+        exclusion = PostgresRoleExclusion(pool)
         with pytest.raises(ValueError, match="owns database objects"):
-            await PostgresRoleExclusion(pool).exclude(("old_owner",), "new_app")
+            await exclusion.exclude(await _fence(exclusion, ("old_owner",)))
         async with pool.acquire() as admin:
             assert await admin.fetchval(
                 "SELECT rolcanlogin FROM pg_roles WHERE rolname='old_owner'"
@@ -145,15 +164,16 @@ async def _exercise_effective_access(dsn: str, grant: str, revoke: str) -> None:
                 "SECURITY DEFINER AS 'INSERT INTO scientific_values VALUES (1)'"
             )
             await admin.execute("REVOKE EXECUTE ON FUNCTION scientific_write() FROM PUBLIC")
-        fence = PostgresRoleExclusion(pool)
-        await fence.exclude(("old_app",), "new_app")
+        exclusion = PostgresRoleExclusion(pool)
+        fence = await _fence(exclusion)
+        await exclusion.exclude(fence)
         async with pool.acquire() as admin:
             await admin.execute(grant)
         with pytest.raises(ValueError, match="effective application access"):
-            await fence.check(("old_app",), "new_app")
+            await exclusion.check(fence)
         async with pool.acquire() as admin:
             await admin.execute(revoke)
-        await fence.check(("old_app",), "new_app")
+        await exclusion.check(fence)
     finally:
         await pool.close()
 
@@ -182,9 +202,43 @@ async def _exercise_unsafe_role(dsn: str, setup: str) -> None:
         await pool.execute("CREATE ROLE new_app LOGIN")
         await pool.execute("CREATE TABLE preserved(value integer)")
         await pool.execute(setup)
+        exclusion = PostgresRoleExclusion(pool)
         with pytest.raises(ValueError, match="missing, administrative or owns"):
-            await PostgresRoleExclusion(pool).exclude(("old_app",), "new_app")
+            await exclusion.exclude(await _fence(exclusion))
         assert await pool.fetchval("SELECT rolcanlogin FROM pg_roles WHERE rolname='new_app'")
         if setup != "DROP ROLE old_app":
             assert await pool.fetchval("SELECT rolcanlogin FROM pg_roles WHERE rolname='old_app'")
         assert await pool.fetchval("SELECT to_regclass('preserved') IS NOT NULL")
+
+
+def test_identify_binds_cluster_and_database_and_refuses_a_foreign_fence() -> None:
+    """A non-superuser observes the catalog's identity; a foreign fence touches no role."""
+    with PostgresContainer("postgres:16") as postgres:
+        asyncio.run(_exercise_identity(postgres.get_connection_url(driver=None)))
+
+
+async def _exercise_identity(dsn: str) -> None:
+    async with asyncpg.create_pool(dsn, min_size=1, max_size=2) as admin:
+        await admin.execute("CREATE ROLE old_app LOGIN")
+        await admin.execute("CREATE ROLE new_app LOGIN")
+        await admin.execute("CREATE ROLE probe LOGIN PASSWORD 'probe-test'")
+        assert not await admin.fetchval("SELECT rolsuper FROM pg_roles WHERE rolname = 'probe'")
+        system = await admin.fetchval("SELECT system_identifier FROM pg_control_system()")
+        oid = await admin.fetchval("SELECT oid FROM pg_database WHERE datname = current_database()")
+        datname = await admin.fetchval("SELECT current_database()")
+        expected = f"{system % 2**64}/{oid}/{datname}"
+        async with asyncpg.create_pool(
+            dsn, user="probe", password="probe-test", min_size=1, max_size=1
+        ) as pool:
+            identity = await PostgresRoleExclusion(pool).identify()
+        assert identity == expected
+        assert re.fullmatch(r"[0-9]{1,20}/[0-9]{1,10}/[^/]{1,63}", identity)
+        exclusion = PostgresRoleExclusion(admin)
+        foreign = Fence(database="1/16384/other")
+        with pytest.raises(ValueError, match="database identity differs from the fence"):
+            await exclusion.exclude(foreign)
+        with pytest.raises(ValueError, match="database identity differs from the fence"):
+            await exclusion.check(foreign)
+        assert await admin.fetchval("SELECT rolcanlogin FROM pg_roles WHERE rolname = 'old_app'")
+        await exclusion.exclude(Fence(database=identity))
+        await exclusion.check(Fence(database=identity))

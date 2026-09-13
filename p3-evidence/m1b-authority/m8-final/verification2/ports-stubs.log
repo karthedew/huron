@@ -1,0 +1,7 @@
+109:    async def establish(self, grant: MaintenanceGrant, run_id: UUID) -> FenceEvidence:
+127:    async def check(self, evidence: FenceEvidence) -> None:
+139:    async def abandon(self, evidence: FenceEvidence) -> None:
+154:    async def validate(self, transition: ProtocolTransition) -> None:
+172:    async def identify(self) -> str:
+182:    async def exclude(self, fence: FenceEvidence) -> None:
+193:    async def check(self, fence: FenceEvidence) -> None:

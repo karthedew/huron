@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from itertools import count
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -16,7 +18,7 @@ from .models import FenceEvidence, MaintenanceGrant, ProtocolInventory, Protocol
 from .verification import RevisionVerifier
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Callable
     from datetime import datetime
     from uuid import UUID
 
@@ -78,17 +80,20 @@ class CutoverService:
         self._check_interval = check_interval
 
     async def prepare(self, run_id: UUID) -> ProtocolTransition:
-        """Verify and record the complete legacy population under uninterrupted exclusion.
+        """Verify and record the complete legacy population under one exclusion epoch.
 
         No application role is enabled here. Activation belongs to the separately
-        validated deployment transition. A crash can repeat this operation with the
-        same run only while the original exclusion generation remains in force.
+        validated deployment transition. Every invocation appends one report and one
+        record at the next free sequence number; an invocation that does not return
+        ends its own epoch, so nothing under ``protocol/`` is reused or admitted from
+        an earlier attempt. A root owned by another coordinator, an authority refusal
+        and a lost reply propagate unchanged from the claim, the authority and the scan.
 
         Args:
-            run_id: Immutable retry identity for this cutover attempt.
+            run_id: Audit and database-idempotence identity of this cutover attempt.
 
         Returns:
-            Durable report-bound transition, leaving application writers excluded.
+            Durable record admitted by the live authority, leaving application writers excluded.
 
         Raises:
             PermissionError: If external authority lacks this root's cutover grant.
@@ -97,35 +102,45 @@ class CutoverService:
         grant = await self._authority.authenticate()
         if grant.root_id != self._root_id or "cutover" not in grant.operations:
             raise PermissionError("operator is not authorized for this root's cutover")
-        evidence = await self._writers.establish(grant, run_id)
-        if (evidence.root_id, evidence.operator) != (grant.root_id, grant.operator):
-            raise ValueError("controller evidence disagrees with authenticated authority")
         with self._storage.claim():
-            result = await self._prepare_owned(grant, evidence, run_id)
-        await self._writers.certify(result)
+            evidence = await self._writers.establish(grant, run_id)
+            async with self._abandoning(evidence):
+                if (evidence.root_id, evidence.operator) != (grant.root_id, grant.operator):
+                    raise ValueError("controller evidence disagrees with authenticated authority")
+                result = await self._prepare_owned(grant, evidence, run_id)
+        await self._writers.validate(result)
         return result
 
     async def validate(self, transition: ProtocolTransition) -> None:
-        """Admit a receipt only through the live authority's complete certificate validation.
+        """Admit a record only through the live authority's complete validation.
 
         Args:
-            transition: Previously returned or indeterminately acknowledged receipt.
+            transition: Record to admit, exactly as stored under ``protocol/{sequence:06d}.json``.
 
         Raises:
-            PermissionError: If the caller or receipt belongs to another maintenance root.
+            PermissionError: If the caller or record belongs to another maintenance root.
         """
         grant = await self._authority.authenticate()
         if grant.root_id != self._root_id or transition.root_id != grant.root_id:
-            raise PermissionError("certificate belongs to another maintenance root")
+            raise PermissionError("record belongs to another maintenance root")
         if "cutover" not in grant.operations or transition.actor != grant.operator:
-            raise PermissionError("operator is not authorized for this certificate")
-        await self._writers.validate_certificate(transition)
+            raise PermissionError("operator is not authorized for this record")
+        await self._writers.validate(transition)
+
+    @asynccontextmanager
+    async def _abandoning(self, evidence: FenceEvidence) -> AsyncIterator[None]:
+        try:
+            yield
+        except BaseException:
+            with suppress(Exception):
+                await self._writers.abandon(evidence)
+            raise
 
     async def _prepare_owned(
         self, grant: MaintenanceGrant, evidence: FenceEvidence, run_id: UUID
     ) -> ProtocolTransition:
         fence = _Fence(self._writers, self._roles, evidence)
-        await self._roles.exclude(evidence.old_roles, evidence.new_role)
+        await self._roles.exclude(evidence)
         await fence.check()
         stop = asyncio.Event()
         async with asyncio.TaskGroup() as tasks:
@@ -169,25 +184,26 @@ class CutoverService:
             tuple((record, entry.findings) for entry, record in scanned),
         )
         await fence.check()
-        await self._publish(f"reports/{run_id}.json", inventory.canonical, fence)
-        transition = self._transition(inventory)
-        await self._publish(f"{transition.sequence:06d}.json", transition.canonical, fence)
+        sequence = await asyncify(self._next_sequence)()
+        await self._publish(f"reports/{sequence:06d}.json", inventory.canonical, fence)
+        transition = ProtocolTransition.bind(
+            inventory, sequence=sequence, instant=self._now(), code_digest=self._code_digest
+        )
+        await self._publish(f"{sequence:06d}.json", transition.canonical, fence)
         return transition
 
-    def _transition(self, inventory: ProtocolInventory) -> ProtocolTransition:
-        sequence = 1
-        while True:
+    def _next_sequence(self) -> int:
+        return next(sequence for sequence in count(1) if not self._occupied(sequence))
+
+    def _occupied(self, sequence: int) -> bool:
+        name = f"{sequence:06d}.json"
+        for directory in ("protocol/reports", "protocol"):
             try:
-                existing = self._storage.read_control("protocol", f"{sequence:06d}.json")
+                self._storage.read_control(directory, name)
             except FileNotFoundError:
-                return ProtocolTransition.bind(
-                    inventory, sequence=sequence, instant=self._now(), code_digest=self._code_digest
-                )
-            transition = ProtocolTransition.decode(existing)
-            if transition.run_id == inventory.run_id:
-                transition.validate_inventory(inventory)
-                return transition
-            sequence += 1
+                continue
+            return True
+        return False
 
     async def _publish(self, path: str, payload: bytes, fence: _Fence) -> None:
         await fence.check()
@@ -209,7 +225,7 @@ class _Fence:
                 raise ValueError("exclusion was lost during this verification run")
             try:
                 await self.writers.check(self.evidence)
-                await self.roles.check(self.evidence.old_roles, self.evidence.new_role)
+                await self.roles.check(self.evidence)
             except Exception:
                 self._lost = True
                 raise

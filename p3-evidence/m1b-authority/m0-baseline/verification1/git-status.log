@@ -1,0 +1,13 @@
+ M .opencode/package-lock.json
+ M .opencode/package.json
+ M design/index.html
+ M design/roadmap.html
+?? .pyscn/
+?? P3_M1B_ARCHITECTURAL_REVIEW.md
+?? P3_M1B_AUTHORITY_DESIGN.md
+?? P3_M1B_AUTHORITY_IMPLEMENTATION_PLAN.md
+?? design/core-map.html
+?? docs/adr/
+?? p3-evidence/m1b-authority/
+?? scripts/main.py
+?? tests/unit/test_books_upload_script.py

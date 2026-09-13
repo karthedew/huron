@@ -163,7 +163,7 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
         bronze/  silver/  gold/                  Icechunk repos on the object store, same spine (§2 of each)
 </pre>
 
-<p class="note"><strong>Layout status.</strong> The upload/completion/envelope split is implemented and under validation. Preparatory protocol report/record storage, exclusive maintenance ownership, live controller certificate validation and legacy verification are implemented and under review. Immutable files alone do not certify successful preparation. Protocol initialization, activation/startup enforcement, recovery and trash cleanup remain planned. Historically, P2 wrote directly into the session envelope; that release did not provide the new separation. See <a href="#p3-integrity">P3 integrity contracts</a>.</p>
+<p class="note"><strong>Layout status.</strong> The upload/completion/envelope split is implemented and independently verified (M1a). Preparatory protocol report/record storage, exclusive maintenance ownership and legacy verification follow the controller-generation epoch of <a href="../docs/adr/0001-controller-generation-is-the-verification-epoch.md">ADR-0001</a>: every <code>prepare</code> appends a report/record pair under <code>protocol/</code>, and a record is admitted only while its fence names the controller's live generation. Immutable files alone never establish admission. Delivery status is <a href="roadmap.html">the roadmap's</a>. Protocol initialization, activation/startup enforcement, recovery and trash cleanup remain planned. Historically, P2 wrote directly into the session envelope; that release did not provide the new separation. See <a href="#p3-integrity">P3 integrity contracts</a>.</p>
 
 <p class="note"><span class="k">One spine, four layers.</span> The
 <code>organization/…/project/…/dataset/…</code> hierarchy is identical for every layer, and the
@@ -288,7 +288,7 @@ can abort eligible pre-commit states (audited). COMMITTING and RECOVERING retain
 
 <h2 id="commit">5. The commit protocol</h2>
 
-<p><strong>Verified completion implementation is under validation.</strong> Part requests write outside the
+<p><strong>Verified completion is implemented and independently verified (M1a, 2026-09-11).</strong> Part requests write outside the
 publishable envelope. Completion copies to a fresh private inode, hashes the written bytes,
 fsyncs and closes it, then installs it without replacement into payload. An overlapping
 completion can only install the same verified content; it cannot delete a winner. No subsequent

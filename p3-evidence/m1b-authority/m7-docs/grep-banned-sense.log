@@ -1,0 +1,17 @@
+P3_M1B_VALIDATION.md:36:prepared history. Attempt 3 required a current controller endorsement, treated
+P3_M1B_VALIDATION.md:37:lost acknowledgements as indeterminate and allowed same-run report-before-record
+P3_M1B_VALIDATION.md:38:replay; verification 3 showed that endorsement could be revoked and re-granted
+P3_M1B_VALIDATION.md:40:that transport errors escaped revocation. ADR-0001 replaces endorsement with
+P3_EXECUTION.md:231:fence loss during clearance can return success, and concurrent same-run calls
+P3_EXECUTION.md:244:live controller endorsement/consumer validation. Claimed final gates pass:
+P3_EXECUTION.md:259:engine HTTP errors can leave endorsement reusable, maintenance database changes
+P3_EXECUTION.md:260:are not bound to prior evidence, and direct re-endorsement can bypass required
+P3_EXECUTION.md:274:[P3_M1B_ARCHITECTURAL_REVIEW.md](P3_M1B_ARCHITECTURAL_REVIEW.md) accepted [ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md) with amendments: the controller's persisted generation is the sole verification epoch; `certify`, `validate_certificate` and `CertificationIndeterminateError` are deleted in favour of a stateless `validate` and a client-declared `abandon`; the fence binds the maintenance database identity; every `prepare` appends a new report/record pair. [P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md) carries the design; its implementation plan carries the tasks. Nothing from that design is implemented or verified by this ledger's entries; M1b, M1c and P3 remain incomplete.
+P3_DESIGN.md:501:must not allow a competing writer to bypass it: mark the operation indeterminate,
+P3_IMPLEMENTATION_PLAN.md:349:   and a shared mutation barrier. Lost ownership is indeterminate and cannot be
+P3_IMPLEMENTATION_PLAN.md:507:   failure, fence loss during clearance and concurrent same-run ownership.
+P3_IMPLEMENTATION_PLAN.md:509:   kernel-lock/controller-endorsement design fixes earlier finalization cases,
+P3_IMPLEMENTATION_PLAN.md:514:- **Engine transport errors do not permanently revoke endorsement.** HTTPX
+P3_IMPLEMENTATION_PLAN.md:522:- **Direct endorsement bypasses full reverification after revocation.** A
+P3_IMPLEMENTATION_PLAN.md:543:3. Which operations may create, endorse, validate or retry evidence? How do they
+P3_IMPLEMENTATION_PLAN.md:598:validating again, and nothing is re-endorsed (3); the recoverable states are

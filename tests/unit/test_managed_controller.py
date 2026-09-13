@@ -1,17 +1,21 @@
 """Persistent restart admission binds real storage identity to authenticated exclusion."""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
+import httpx
 import pytest
 
 from huron.applications.lakectl import controller as controller_module
 from huron.applications.lakectl.controller import ManagedComposeController
 from huron.applications.lakectl.engine import Container
 from huron.applications.lakectl.settings import ControllerSettings, ControllerState
+from huron.core.integrity.models import FenceEvidence
 from tests.unit.test_controller_settings import controller_settings as controller_settings
 from tests.unit.test_controller_settings import root_metadata as root_metadata
+from tests.unit.test_lakectl_wiring import IDENTITY, EmptyDatabaseBoundary
 
 pytestmark = pytest.mark.unit
 IMAGE = "sha256:" + "a" * 64
@@ -55,6 +59,14 @@ class EngineBoundary:
 
 
 @pytest.fixture
+def database_boundary(monkeypatch: pytest.MonkeyPatch) -> EmptyDatabaseBoundary:
+    """Substitute the maintenance database's SQL boundary before any controller is built."""
+    database = EmptyDatabaseBoundary()
+    monkeypatch.setattr(controller_module.asyncpg, "create_pool", lambda url: database)
+    return database
+
+
+@pytest.fixture
 def engine_boundary(
     controller_settings: ControllerSettings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> EngineBoundary:
@@ -91,9 +103,24 @@ def writer(engine: EngineBoundary, **changes: object) -> Container:
     return Container.model_validate(document)
 
 
-def test_controller_persists_exclusion_before_termination_and_refuses_restart(
+def raising(error: BaseException) -> Callable[..., object]:
+    """Build an engine or SQL observation that fails with the given fault."""
+
+    def fail(*arguments: object) -> object:
+        raise error
+
+    return fail
+
+
+def generation_on_disk(settings: ControllerSettings) -> int:
+    """Read the durable epoch exactly as a restarted controller would."""
+    return ControllerState.model_validate_json(settings.state_path.read_bytes()).generation
+
+
+async def test_controller_persists_exclusion_before_termination_and_refuses_restart(
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
+    database_boundary: EmptyDatabaseBoundary,
 ) -> None:
     """Authenticated cutover stops all observed writers only after durable admission closes."""
     controller = ManagedComposeController(controller_settings)
@@ -102,19 +129,25 @@ def test_controller_persists_exclusion_before_termination_and_refuses_restart(
     assert root.path == engine_boundary.volume
     assert root.root_id == controller_settings.root_id
     engine_boundary.containers = (writer(engine_boundary),)
-    evidence = controller.establish(1002, UUID(int=3))
+    evidence = await controller.establish(1002, UUID(int=3))
     assert engine_boundary.observed_durable_fence
     assert evidence.terminated_writers == (WRITER,)
+    assert evidence.database == database_boundary.identity
+    assert generation_on_disk(controller_settings) == evidence.generation
     controller.check(1002, evidence)
-    assert controller.establish(1002, UUID(int=3)) == evidence
-    with pytest.raises(ValueError, match="restart is excluded"):
-        controller.restart(1003)
-    with pytest.raises(ValueError, match="foreign writer"):
-        controller.check(0, evidence)
-    changed = controller.establish(1002, UUID(int=4))
-    assert changed.generation == evidence.generation + 1
+    again = await controller.establish(1002, UUID(int=3))
+    assert again.generation == evidence.generation + 1 == generation_on_disk(controller_settings)
+    assert again.terminated_writers == ()
     with pytest.raises(ValueError, match="generation changed"):
         controller.check(1002, evidence)
+    with pytest.raises(ValueError, match="restart is excluded"):
+        controller.restart(1003)
+    with pytest.raises(ValueError, match="another maintenance operator"):
+        controller.check(0, again)
+    changed = await controller.establish(1002, UUID(int=4))
+    assert changed.generation == again.generation + 1
+    with pytest.raises(ValueError, match="generation changed"):
+        controller.check(1002, again)
     restarted = ManagedComposeController(controller_settings)
     with pytest.raises(ValueError, match="generation changed"):
         restarted.check(1002, changed)
@@ -134,20 +167,21 @@ def test_controller_requires_separate_kernel_peer_grants(
         controller.restart(1002)
 
 
-def test_surviving_or_reappearing_writer_invalidates_exclusion(
+async def test_surviving_or_reappearing_writer_invalidates_exclusion(
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
+    database_boundary: EmptyDatabaseBoundary,
 ) -> None:
-    """A persisted exclusion flag cannot certify a daemon that retains or recreates a writer."""
+    """A persisted exclusion flag cannot admit a daemon that retains or recreates a writer."""
     controller = ManagedComposeController(controller_settings)
     engine_boundary.containers = (writer(engine_boundary),)
     engine_boundary.survives = True
     with pytest.raises(ValueError, match="foreign writer"):
-        controller.establish(1002, UUID(int=3))
+        await controller.establish(1002, UUID(int=3))
     with pytest.raises(ValueError, match="restart is excluded"):
         controller.restart(1003)
     engine_boundary.survives = False
-    evidence = controller.establish(1002, UUID(int=3))
+    evidence = await controller.establish(1002, UUID(int=3))
     engine_boundary.containers = (writer(engine_boundary),)
     with pytest.raises(ValueError, match="foreign writer"):
         controller.check(1002, evidence)
@@ -156,9 +190,10 @@ def test_surviving_or_reappearing_writer_invalidates_exclusion(
 @pytest.mark.parametrize(
     "case", ["image", "source", "ancestor", "directory", "file", "alias", "socket", "privileged", "host", "unrelated"]
 )
-def test_complete_inventory_refuses_unmanaged_storage_and_host_authority(
+async def test_complete_inventory_refuses_unmanaged_storage_and_host_authority(
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
+    database_boundary: EmptyDatabaseBoundary,
     case: str,
 ) -> None:
     """Foreign storage and host privileges block certification independently of labels."""
@@ -186,10 +221,10 @@ def test_complete_inventory_refuses_unmanaged_storage_and_host_authority(
     engine_boundary.containers = (Container.model_validate(item),)
     controller = ManagedComposeController(controller_settings)
     if case == "unrelated":
-        assert controller.establish(1002, UUID(int=3)).terminated_writers == ()
+        assert (await controller.establish(1002, UUID(int=3))).terminated_writers == ()
     else:
         with pytest.raises(ValueError):
-            controller.establish(1002, UUID(int=3))
+            await controller.establish(1002, UUID(int=3))
 
 
 def test_storage_replacement_and_deployment_change_invalidate_controller_state(
@@ -219,14 +254,15 @@ def test_public_state_directory_is_refused(
 
 
 @pytest.mark.parametrize("operation", ["check", "describe", "establish", "restart"])
-def test_live_deployment_change_invalidates_admission_without_controller_restart(
+async def test_live_deployment_change_invalidates_admission_without_controller_restart(
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
+    database_boundary: EmptyDatabaseBoundary,
     operation: str,
 ) -> None:
     """A changed trusted Compose file invalidates cached configuration and prior evidence."""
     controller = ManagedComposeController(controller_settings)
-    evidence = None if operation == "restart" else controller.establish(1002, UUID(int=3))
+    evidence = None if operation == "restart" else await controller.establish(1002, UUID(int=3))
     document = json.loads(controller_settings.compose_path.read_bytes())
     document["services"]["api"]["command"] = ["changed-command"]
     controller_settings.compose_path.write_text(json.dumps(document))
@@ -236,15 +272,16 @@ def test_live_deployment_change_invalidates_admission_without_controller_restart
         elif operation == "describe":
             controller.describe(1002)
         elif operation == "establish":
-            controller.establish(1002, UUID(int=3))
+            await controller.establish(1002, UUID(int=3))
         else:
             controller.restart(1003)
 
 
 @pytest.mark.parametrize("alias", ["relative", "symlink"])
-def test_mount_inventory_refuses_ambiguous_backing_path_identity(
+async def test_mount_inventory_refuses_ambiguous_backing_path_identity(
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
+    database_boundary: EmptyDatabaseBoundary,
     tmp_path: Path,
     alias: str,
 ) -> None:
@@ -258,4 +295,68 @@ def test_mount_inventory_refuses_ambiguous_backing_path_identity(
     ]
     engine_boundary.containers = (Container.model_validate(item),)
     with pytest.raises(ValueError, match="trustworthy normalized"):
-        ManagedComposeController(controller_settings).establish(1002, UUID(int=3))
+        await ManagedComposeController(controller_settings).establish(1002, UUID(int=3))
+
+
+async def test_establish_mints_before_terminating_and_a_survivor_ends_the_new_epoch(
+    controller_settings: ControllerSettings,
+    engine_boundary: EngineBoundary,
+    database_boundary: EmptyDatabaseBoundary,
+) -> None:
+    """A minted epoch a survivor invalidates still ends once, then mints again on retry."""
+    controller = ManagedComposeController(controller_settings)
+    assert generation_on_disk(controller_settings) == 1
+    engine_boundary.containers = (writer(engine_boundary),)
+    engine_boundary.survives = True
+    with pytest.raises(ValueError, match="foreign writer"):
+        await controller.establish(1002, UUID(int=3))
+    assert generation_on_disk(controller_settings) == 3
+    with pytest.raises(ValueError, match="restart is excluded"):
+        controller.restart(1003)
+    engine_boundary.survives = False
+    evidence = await controller.establish(1002, UUID(int=3))
+    assert evidence.generation == 4
+
+
+@pytest.mark.parametrize("operation", ["describe", "restart"])
+def test_engine_failure_during_describe_or_restart_ends_the_epoch(
+    controller_settings: ControllerSettings,
+    engine_boundary: EngineBoundary,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """An unreachable engine during a live observation ends the epoch, not just the call."""
+    controller = ManagedComposeController(controller_settings)
+    monkeypatch.setattr(
+        engine_boundary, "volume_path", raising(httpx.ConnectError("engine unavailable"))
+    )
+    with pytest.raises(httpx.ConnectError):
+        if operation == "describe":
+            controller.describe(1002)
+        else:
+            controller.restart(1003)
+    assert generation_on_disk(controller_settings) == 2
+
+
+def test_check_and_abandon_refuse_before_any_epoch_is_established(
+    controller_settings: ControllerSettings,
+    engine_boundary: EngineBoundary,
+) -> None:
+    """A presented fence is refused, never mistaken live, before any establish ever ran."""
+    controller = ManagedComposeController(controller_settings)
+    fence = FenceEvidence(
+        controller_id=UUID(int=2),
+        root_id=UUID(int=1),
+        generation=1,
+        operator="local:1002",
+        terminated_writers=(),
+        old_roles=("old_app",),
+        new_role="new_app",
+        database=IDENTITY,
+    )
+    with pytest.raises(ValueError, match="generation changed"):
+        controller.check(1002, fence)
+    controller.abandon(1002, fence)
+    assert generation_on_disk(controller_settings) == 1
+    with pytest.raises(PermissionError, match="maintenance grant"):
+        controller.abandon(1003, fence)

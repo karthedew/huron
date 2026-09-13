@@ -11,12 +11,10 @@ from uuid import UUID
 import asyncpg
 import httpx
 
-from huron.core.integrity.models import CertificationIndeterminateError
-
 from .exclusion import ControllerClient
 from .server import serve
 from .settings import ControllerSettings, MaintenanceSettings
-from .wiring import prepare
+from .wiring import prepare, validate
 
 
 def main() -> None:
@@ -34,32 +32,53 @@ def main() -> None:
     protocol = commands.add_parser("protocol")
     operations = protocol.add_subparsers(dest="operation", required=True)
     cutover = operations.add_parser("cutover")
-    cutover.add_argument("--prepare", action="store_true", required=True)
+    action = cutover.add_mutually_exclusive_group(required=True)
+    action.add_argument("--prepare", action="store_true")
+    action.add_argument("--validate", action="store_true")
     cutover.add_argument("--config", type=Path, required=True)
-    cutover.add_argument("--run-id", type=UUID, required=True)
+    cutover.add_argument("--run-id", type=UUID)
+    cutover.add_argument("--sequence", type=_sequence)
     arguments = parser.parse_args()
+    if arguments.command == "protocol" and (
+        arguments.prepare != (arguments.run_id is not None)
+        or arguments.validate != (arguments.sequence is not None)
+    ):
+        cutover.error("--prepare takes --run-id and --validate takes --sequence")
     try:
         if arguments.command == "controller":
             serve(ControllerSettings.load(arguments.config))
         elif arguments.command == "restart":
             print(asyncio.run(ControllerClient(arguments.socket).restart()))
+        elif arguments.prepare:
+            settings = MaintenanceSettings.load(arguments.config)
+            print(asyncio.run(prepare(settings, arguments.run_id)).canonical.decode())
         else:
-            result = asyncio.run(
-                prepare(MaintenanceSettings.load(arguments.config), arguments.run_id)
-            )
-            print(result.canonical.decode())
-    except CertificationIndeterminateError:
-        print(
-            "lakectl certificate acknowledgement is indeterminate; validate the receipt before use",
-            file=sys.stderr,
-        )
-        raise SystemExit(1) from None
+            settings = MaintenanceSettings.load(arguments.config)
+            print(asyncio.run(validate(settings, arguments.sequence)).canonical.decode())
     except (ValueError, OSError, ExceptionGroup, asyncpg.PostgresError, httpx.HTTPError):
         print(
             "lakectl refused the operation; application activation was not performed",
             file=sys.stderr,
         )
         raise SystemExit(1) from None
+
+
+def _sequence(text: str) -> int:
+    """Parse and bound an operator-supplied stored-record number.
+
+    Args:
+        text: Raw ``--sequence`` argument text.
+
+    Returns:
+        The parsed sequence number.
+
+    Raises:
+        argparse.ArgumentTypeError: If the value is outside the storable record range.
+    """
+    value = int(text)
+    if not 1 <= value <= 999_999:
+        raise argparse.ArgumentTypeError("sequence must be between 1 and 999999")
+    return value
 
 
 if __name__ == "__main__":

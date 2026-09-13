@@ -1,0 +1,111 @@
+M7 documentation reconciliation — independent verification 1 passage check
+Date: 2026-09-12  Repo: /home/karl/repo/huron  HEAD: e22d000 (working tree, uncommitted)
+Method: each T6 §1.x replacement text extracted from P3_M1B_AUTHORITY_DESIGN.md and
+matched against the target document after whitespace normalisation (line rewrapping
+is the only tolerated deviation). §3 deletions matched as must-be-absent strings.
+
+== A. Literal replacement texts (T6 §1.1-§1.4, fenced texts A-G) ==
+PRESENT  P3_DESIGN.md                           text A (887 chars)
+PRESENT  P3_DESIGN.md                           text B (1217 chars)
+PRESENT  P3_DESIGN.md                           text C (762 chars)
+PRESENT  docs/operations/controlled-cutover.md  text D (722 chars)
+PRESENT  docs/operations/controlled-cutover.md  text E (3708 chars)
+PRESENT  P3_EXECUTION.md                        text F (262 chars)
+PRESENT  P3_EXECUTION.md                        text G (159 chars)
+
+== B. Inline table-cell replacements (T6 §1.1-§1.8) ==
+PRESENT  P3_DESIGN.md                           `:3`
+PRESENT  P3_DESIGN.md                           `:72`
+POINTER  P3_DESIGN.md                           `:231–233` step 1  (cell points at a fenced text / manual check below)
+PRESENT  P3_DESIGN.md                           `:247–248` step 4, last sentence
+PRESENT  P3_DESIGN.md                           `:254–256` step 6
+UNCHANGED P3_DESIGN.md                           `:258–264`  (design says leave as-is)
+POINTER  P3_DESIGN.md                           `:266–273`  (cell points at a fenced text / manual check below)
+POINTER  P3_DESIGN.md                           `:275–282`  (cell points at a fenced text / manual check below)
+POINTER  P3_DESIGN.md                           `:284–288`  (cell points at a fenced text / manual check below)
+UNCHANGED P3_DESIGN.md                           `:290–296`  (design says leave as-is)
+POINTER  docs/operations/controlled-cutover.md  `:37–38`  (cell points at a fenced text / manual check below)
+PRESENT  docs/operations/controlled-cutover.md  `:100`
+POINTER  docs/operations/controlled-cutover.md  `:113–120`  (cell points at a fenced text / manual check below)
+UNCHANGED docs/operations/controlled-cutover.md  `:122–128`  (design says leave as-is)
+POINTER  docs/operations/controlled-cutover.md  `:130–152`  (cell points at a fenced text / manual check below)
+PRESENT  P3_M1B_VALIDATION.md                   `:3–7`
+UNCHANGED P3_M1B_VALIDATION.md                   `:15`  (design says leave as-is)
+PRESENT  P3_M1B_VALIDATION.md                   `:26–33`
+POINTER  P3_EXECUTION.md                        `:28` M1b row  (cell points at a fenced text / manual check below)
+POINTER  P3_EXECUTION.md                        `:29` M1c row  (cell points at a fenced text / manual check below)
+PRESENT  P3_EXECUTION.md                        `:45`
+PRESENT  P3_EXECUTION.md                        `:85`
+PRESENT  P3_EXECUTION.md                        `:269–270`
+PRESENT  P3_IMPLEMENTATION_PLAN.md              `:5–7`
+PRESENT  P3_IMPLEMENTATION_PLAN.md              `:166–169` item 6
+PRESENT  P3_IMPLEMENTATION_PLAN.md              `:182–183`
+PRESENT  P3_IMPLEMENTATION_PLAN.md              `:184`
+PRESENT  P3_IMPLEMENTATION_PLAN.md              `:197–199`
+PRESENT  P3_IMPLEMENTATION_PLAN.md              `:209–210` M1c item 1
+UNCHANGED P3_IMPLEMENTATION_PLAN.md              `:486–534`  (design says leave as-is)
+PRESENT  P3_IMPLEMENTATION_PLAN.md              `:538`
+UNCHANGED P3_IMPLEMENTATION_PLAN.md              `:548`  (design says leave as-is)
+POINTER  P3_IMPLEMENTATION_PLAN.md              `:576`  (cell points at a fenced text / manual check below)
+POINTER  design/core-map.html                   `:165` models row  (cell points at a fenced text / manual check below)
+PRESENT  design/core-map.html                   `:336`
+PRESENT  design/core-map.html                   `:339`
+PRESENT  design/core-map.html                   `:340`
+PRESENT  design/core-map.html                   `:343`
+PRESENT  design/core-map.html                   `:346` warning
+PRESENT  design/core-map.html                   `:363` ports row
+PRESENT  design/core-map.html                   `:391` card
+
+== C. Manual checks for cells whose replacement is embedded in prose ==
+PRESENT  P3_DESIGN.md                           §1.1 :231-233 step 1
+PRESENT  docs/operations/controlled-cutover.md  §1.2 :37-38
+PRESENT  P3_IMPLEMENTATION_PLAN.md              §1.5 :576 ### Resolution
+PRESENT  design/core-map.html                   §1.7 :165 symbols
+PRESENT  design/core-map.html                   §1.7 :165 description
+NOTE     design/core-map.html §1.7 :165 — the design cell lists the symbols in one backtick
+         span; the file renders one <code> element per symbol, matching the table's own
+         convention. Content identical; formatting adaptation accepted.
+
+== D. T6 §3 deletions (must be ABSENT) ==
+GONE     'An acknowledgement lost after endorsement is explicitly indeterminate'
+GONE     'Same-run report-before-record replay is allowed under intact exclusion'
+GONE     'CutoverService.validate(receipt)`, backed by'
+GONE     'validate_certificate(receipt)'
+GONE     'Any failed authorized validation revokes endorsement'
+GONE     'Controller restart also discards all endorsements'
+GONE     'protocol/reports/RUN_UUID.json'
+GONE     'Lost acknowledgements are explicitly indeterminate'
+GONE     'intact-fence report-before-record replay remain supported'
+GONE     'live controller endorsement after durable preparation'
+GONE     'indeterminately acknowledged preparation'
+GONE     'Report-before-record crash is resumable'
+GONE     'WriterExclusion.certify()'
+GONE     'live controller certificate validation'
+GONE     'Verified completion implementation is under validation'
+GONE     'Implementation in progress'
+GONE     'The command prints only its canonical'
+GONE     "creates a run identity in `protocol/`'s"
+GONE     'Every retry performs a full scan'
+GONE     'The architecture review and replanning have not been started'
+GONE     'The incomplete changes remain uncommitted'
+GONE     'verified-completion implementation is under validation'
+GONE     'are implemented and under review'
+GONE     'certification from JSON files alone'
+GONE     'is not itself a live certificate'
+GONE     'certificate checks'
+EXPECTED 'CertificationIndeterminateError' -> P3_EXECUTION.md (§3 scopes its deletion to design/core-map.html:165,
+         which is clean; the P3_EXECUTION.md occurrence is inside T6 §1.4's mandated
+         2026-09-12 entry, which names the deleted symbols verbatim)
+
+== E. Cross-reference and drift-statement counts ==
+  P3_DESIGN.md: "M1c item 1" x1
+  P3_EXECUTION.md: "M1c item 1" x1
+  P3_IMPLEMENTATION_PLAN.md: "M1c item 1" x1
+  docs/operations/controlled-cutover.md: "M1c item 1" x0
+  "Roadmap drift (2026-09-12)" statements across the eight documents: 1 (expected 1, in P3_IMPLEMENTATION_PLAN.md M1c item 1)
+
+== F. Numbering invariant (start 1, first mint 2, every epoch end adds one) ==
+  PRESENT P3_DESIGN.md x1
+  PRESENT docs/operations/controlled-cutover.md x1
+  Both occurrences are T6 texts B and E, worded identically; consistent with
+  controller.py (fresh state generation=0, __init__ _advance() -> 1, first establish -> 2).

@@ -24,6 +24,7 @@ class ControllerState(BaseModel):
     run_id: UUID | None = None
     writers: tuple[str, ...] = ()
     operator: str | None = None
+    database: str | None = None
 
 
 class ControlledRoot(BaseModel):

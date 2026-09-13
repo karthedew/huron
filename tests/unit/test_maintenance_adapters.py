@@ -1,21 +1,31 @@
 """Maintenance SQL boundaries reject incomplete exclusion and ambiguous legacy records."""
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from uuid import UUID
 
+import asyncpg
 import pytest
 
 from huron.pkg.catalog.models import RevisionRecord
 from huron.pkg.catalog.paths import parse_revision_dir
 from huron.pkg.metastore.legacy import PostgresLegacyMaintenance
 from huron.pkg.metastore.maintenance import PostgresRoleExclusion
-from tests.unit.test_lakectl_wiring import EmptyDatabaseBoundary
+from tests.unit.test_lakectl_wiring import IDENTITY, EmptyDatabaseBoundary
 from tests.unit.test_legacy_verification import legacy as legacy
 from tests.unit.test_legacy_verification import legacy_records
 
 pytestmark = pytest.mark.unit
+
+
+@dataclass(frozen=True)
+class Fence:
+    """The three attributes the adapter reads from a receipt: pkg's structural ``DatabaseFence``."""
+
+    database: str = IDENTITY
+    old_roles: tuple[str, ...] = ("old_app",)
+    new_role: str = "new_app"
 
 
 class RoleDatabaseBoundary(EmptyDatabaseBoundary):
@@ -27,10 +37,14 @@ class RoleDatabaseBoundary(EmptyDatabaseBoundary):
         self.admitted = False
         self.effective = False
         self.stopped = True
+        self.queries: list[str] = []
         self.statements: list[str] = []
 
-    async def fetchval(self, query: str, *arguments: object) -> bool:
-        """Supply externally observed role attributes and admission facts."""
+    async def fetchval(self, query: str, *arguments: object) -> object:
+        """Route the identity probe and injected faults to the shared seam, then role facts."""
+        self.queries.append(query)
+        if self.failure is not None or "pg_control_system" in query:
+            return await super().fetchval(query, *arguments)
         if "SELECT NOT (rolsuper" in query:
             return self.safe
         if "rolcanlogin" in query:
@@ -61,8 +75,9 @@ async def test_role_adapter_refuses_ambiguous_or_unquotable_application_identiti
     """Invalid role sets fail before any SQL mutation reaches the connection boundary."""
     database = RoleDatabaseBoundary()
     with pytest.raises(ValueError):
-        await PostgresRoleExclusion(database).exclude(old, new)
+        await PostgresRoleExclusion(database).exclude(Fence(old_roles=old, new_role=new))
     assert not database.statements
+    assert not database.queries
 
 
 @pytest.mark.parametrize(
@@ -81,7 +96,45 @@ async def test_role_adapter_refuses_unconfirmed_external_exclusion(
     database = RoleDatabaseBoundary()
     setattr(database, field, field in {"admitted", "effective"})
     with pytest.raises(ValueError, match=message):
-        await PostgresRoleExclusion(database).exclude(("old_app",), "new_app")
+        await PostgresRoleExclusion(database).exclude(Fence())
+
+
+async def test_role_adapter_identifies_the_primary_and_refuses_an_empty_identity() -> None:
+    """The primary's identity is observed directly, with no role read or altered."""
+    database = RoleDatabaseBoundary()
+    assert await PostgresRoleExclusion(database).identify() == IDENTITY
+    assert len(database.queries) == 1
+    assert "pg_control_system" in database.queries[0]
+    assert "NOT pg_is_in_recovery()" in database.queries[0]
+    database.identity = None
+    with pytest.raises(ValueError, match="is not a primary"):
+        await PostgresRoleExclusion(database).identify()
+    database.failure = asyncpg.PostgresError("private")
+    with pytest.raises(asyncpg.PostgresError):
+        await PostgresRoleExclusion(database).identify()
+
+
+@pytest.mark.parametrize("method", ["exclude", "check"])
+async def test_role_adapter_refuses_a_foreign_fence_before_any_role_change(method: str) -> None:
+    """A fence naming another database is refused before any role read or mutation."""
+    database = RoleDatabaseBoundary()
+    with pytest.raises(ValueError, match="database identity differs from the fence"):
+        await getattr(PostgresRoleExclusion(database), method)(Fence(database="1/16384/other"))
+    assert database.statements == []
+    assert len(database.queries) == 1
+    assert "pg_control_system" in database.queries[0]
+
+
+async def test_role_adapter_observes_identity_before_every_role_statement() -> None:
+    """The identity is the first query in both ``exclude`` and ``check``."""
+    database = RoleDatabaseBoundary()
+    await PostgresRoleExclusion(database).exclude(Fence())
+    assert "pg_control_system" in database.queries[0]
+    assert database.statements[0] == 'ALTER ROLE "old_app" NOLOGIN'
+    assert sum("pg_control_system" in query for query in database.queries) == 2
+    database.queries.clear()
+    await PostgresRoleExclusion(database).check(Fence())
+    assert "pg_control_system" in database.queries[0]
 
 
 class LegacyDatabaseBoundary(EmptyDatabaseBoundary):

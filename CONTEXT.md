@@ -28,4 +28,4 @@ Huron preserves scientific submissions as immutable revisions within datasets.
 ## Flagged ambiguities
 
 - Register-in-place avoids a second upload; it does not promise to avoid a verified storage copy.
-- Verified payload isolation is agreed design; its completion-path implementation is planned for P3.
+- Verified payload isolation is agreed design; its completion path is implemented and independently verified (M1a, 2026-09-11).

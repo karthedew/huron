@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import json
 import os
 import pathlib
@@ -14,6 +15,19 @@ import sys
 import tempfile
 import time
 import uuid
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from huron.applications.lakectl.settings import ControllerSettings
+
+
+@dataclasses.dataclass(frozen=True)
+class Fence:
+    """Receipt shape the maintenance adapter reads; built from the observed identity."""
+
+    database: str
+    old_roles: tuple[str, ...] = ("old_app",)
+    new_role: str = "new_app"
 
 
 def provision(
@@ -362,9 +376,12 @@ def scenario(root: pathlib.Path) -> None:
         async with asyncpg.create_pool(
             host=ip, user="cutover", password="maintenance-password", database="huron"
         ) as pool:
-            await PostgresRoleExclusion(pool).exclude(("old_app",), "new_app")
+            exclusion = PostgresRoleExclusion(pool)
+            identity = await exclusion.identify()
+            await exclusion.exclude(Fence(database=identity))
+            return identity
 
-    asyncio.run(fence_database())
+    identity = asyncio.run(fence_database())
     connection.sendall(content[65536:131072])
     for _ in range(100):
         if target.stat().st_size == 131072:
@@ -372,7 +389,8 @@ def scenario(root: pathlib.Path) -> None:
         time.sleep(0.1)
     assert target.stat().st_size == 131072
     print("LEGACY_HTTP_WRITE_SURVIVED_SQL_FENCE", flush=True)
-    evidence = controller.establish(0, uuid.uuid4())
+    evidence = asyncio.run(controller.establish(0, uuid.uuid4()))
+    assert evidence.database == identity
     assert writer in evidence.terminated_writers
     controller.check(0, evidence)
     after = target.read_bytes()
@@ -479,34 +497,41 @@ def _socket_cutover(root: pathlib.Path, engine: list[str], database_address: str
             )
             record = asyncio.run(prepare(maintenance, uuid.uuid4()))
             asyncio.run(client.check(record.fence))
-            asyncio.run(client.validate_certificate(record))
+            asyncio.run(client.validate(record))
+            asyncio.run(client.validate(record))
+            assert _generation_on_disk(settings) == record.fence.generation
             subprocess.run([*engine, "exec", "postgres", "psql", "-U", "owner", "-d", "huron",
                             "-c", "ALTER ROLE new_app LOGIN"], check=True)
             try:
-                asyncio.run(client.validate_certificate(record))
+                asyncio.run(client.validate(record))
             except PermissionError:
                 pass
             else:
                 raise AssertionError("consumer accepted a live SQL exclusion loss")
+            assert _generation_on_disk(settings) == record.fence.generation + 1
             subprocess.run([*engine, "exec", "postgres", "psql", "-U", "owner", "-d", "huron",
                             "-c", "ALTER ROLE new_app NOLOGIN"], check=True)
             try:
-                asyncio.run(client.validate_certificate(record))
+                asyncio.run(client.validate(record))
             except PermissionError:
                 pass
             else:
-                raise AssertionError("restored SQL observations revived endorsement")
+                raise AssertionError("restored SQL observations revived an ended epoch")
+            assert _generation_on_disk(settings) == record.fence.generation + 1
             record = asyncio.run(prepare(maintenance, uuid.uuid4()))
-            asyncio.run(client.validate_certificate(record))
+            assert record.sequence == 2
+            asyncio.run(client.validate(record))
             print("LIVE_SQL_CONSUMER_REVOCATION_AND_FRESH_VERIFICATION_PROVED", flush=True)
             print("AUTHENTICATED_WIRED_CUTOVER_RECORDED", record.report_digest, flush=True)
             _foreign_writer_refused(engine, client, record.fence)
             _descendant_writers_refused(engine, client, record.fence)
+            before = _generation_on_disk(settings)
             process.terminate()
             process.wait(timeout=20)
             settings.socket_path.unlink(missing_ok=True)
             process = subprocess.Popen(invocation, stdout=output, stderr=subprocess.STDOUT)
             _await_controller(settings.socket_path, process)
+            assert _generation_on_disk(settings) == before + 1
             try:
                 asyncio.run(client.check(record.fence))
             except PermissionError:
@@ -538,6 +563,13 @@ def _await_controller(path: pathlib.Path, process: subprocess.Popen) -> None:
             return
         time.sleep(0.1)
     raise AssertionError("controller socket never became available")
+
+
+def _generation_on_disk(settings: ControllerSettings) -> int:
+    """Read the durable epoch exactly as a restarted controller would."""
+    from huron.applications.lakectl.settings import ControllerState
+
+    return ControllerState.model_validate_json(settings.state_path.read_bytes()).generation
 
 
 def _foreign_writer_refused(engine: list[str], client, evidence) -> None:

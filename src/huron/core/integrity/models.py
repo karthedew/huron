@@ -153,6 +153,7 @@ class FenceEvidence(EvidenceDocument):
     terminated_writers: tuple[str, ...]
     old_roles: tuple[str, ...]
     new_role: Annotated[str, Field(min_length=1)]
+    database: Annotated[str, Field(pattern=r"^[0-9]{1,20}/[0-9]{1,10}/[^/]{1,63}$")]
 
 
 class MaintenanceGrant(EvidenceDocument):
@@ -249,7 +250,7 @@ class ProtocolTransition(EvidenceDocument):
 
         Args:
             inventory: Durable report to bind into the protocol history.
-            sequence: Next immutable record number.
+            sequence: Record number, shared with the report this record binds.
             instant: Audit instant, never a legacy-membership criterion.
             code_digest: Immutable identity of the verification implementation.
 
@@ -266,7 +267,7 @@ class ProtocolTransition(EvidenceDocument):
             instant=instant,
             actor=inventory.fence.operator,
             code_digest=code_digest,
-            report_path=f"reports/{inventory.run_id}.json",
+            report_path=f"reports/{sequence:06d}.json",
             report_digest=inventory.sha256,
             verified_count=len(verified),
             verified_bytes=sum(item.total_bytes for item in verified),
@@ -290,7 +291,3 @@ class ProtocolTransition(EvidenceDocument):
         )
         if self != expected:
             raise ValueError("protocol record disagrees with its inventory")
-
-
-class CertificationIndeterminateError(RuntimeError):
-    """The authority may have endorsed complete evidence, but its acknowledgement was lost."""

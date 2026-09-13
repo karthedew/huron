@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 class GenerationVerifier:
-    """Refuse missing, stale or ambiguous hierarchy evidence before certifying revisions."""
+    """Refuse missing, stale or ambiguous hierarchy evidence before verifying revisions."""
 
     def __init__(self, storage: LegacyStorage) -> None:
         """Bind no-follow inventory and sealed structural document reads.

@@ -1,4 +1,4 @@
-"""Core cutover enforces external authority and orders durable report certification."""
+"""Core cutover enforces external authority and appends one report and one record per epoch."""
 
 import asyncio
 import hashlib
@@ -17,6 +17,7 @@ from huron.pkg.catalog.documents import CommitRecord
 from huron.pkg.catalog.manifest import canonical_bytes
 from huron.pkg.catalog.models import RevisionRecord
 from huron.pkg.rawstore.maintenance import MaintenanceStore
+from tests.unit.test_lakectl_wiring import IDENTITY
 from tests.unit.test_legacy_verification import legacy as legacy
 from tests.unit.test_legacy_verification import legacy_records, overwrite
 
@@ -24,7 +25,12 @@ pytestmark = pytest.mark.unit
 
 
 class DeploymentBoundary:
-    """Deterministic external authentication, controller and role-fence boundary."""
+    """Deterministic authentication, controller epoch and role-fence boundary.
+
+    The start receipt is generation 1 and is never issued; ``establish`` mints 2, and every
+    observed loss, ``abandon`` of the live receipt and later mint adds one, as the real
+    controller's durable state does.
+    """
 
     def __init__(self) -> None:
         self.grant = MaintenanceGrant(
@@ -38,39 +44,51 @@ class DeploymentBoundary:
             terminated_writers=("terminated-process",),
             old_roles=("old",),
             new_role="new",
+            database=IDENTITY,
         )
         self.valid = True
         self.excluded = False
-        self.certificate = None
+        self.abandoned: list[int] = []
 
     async def authenticate(self) -> MaintenanceGrant:
         """Supply the grant from the injected authentication boundary."""
         return self.grant
 
     async def establish(self, grant: MaintenanceGrant, run_id: UUID) -> FenceEvidence:
-        """Supply the controller's independently established exclusion evidence."""
-        self.certificate = None
+        """Mint the next epoch unconditionally and issue its receipt."""
+        self._advance()
         return self.evidence
 
-    async def exclude(self, old_roles: tuple[str, ...], new_role: str) -> None:
+    async def identify(self) -> str:
+        """Report the maintenance database identity the receipts carry."""
+        return self.evidence.database
+
+    async def exclude(self, fence: FenceEvidence) -> None:
         """Record exclusion at the database I/O boundary."""
         self.excluded = True
 
-    async def check(self, *arguments: object) -> None:
-        """Refuse when the external enforced fence has been invalidated."""
+    async def check(self, evidence: FenceEvidence) -> None:
+        """Observe the fence first, ending the epoch on loss; then compare the receipt whole."""
         if not self.valid:
+            self._advance()
             raise ValueError("external fence lost")
+        if evidence != self.evidence:
+            raise ValueError("controller exclusion generation changed")
 
-    async def certify(self, transition: ProtocolTransition) -> None:
-        """Endorse only while the external authority still excludes writers."""
-        await self.check()
-        self.certificate = transition
+    async def abandon(self, evidence: FenceEvidence) -> None:
+        """End the epoch this receipt names; ignore a receipt that is already stale."""
+        if evidence == self.evidence:
+            self.abandoned.append(evidence.generation)
+            self._advance()
 
-    async def validate_certificate(self, transition: ProtocolTransition) -> None:
-        """Refuse prepared evidence that was never endorsed by this authority."""
-        await self.check()
-        if self.certificate != transition:
-            raise ValueError("no current endorsement")
+    async def validate(self, transition: ProtocolTransition) -> None:
+        """Admit a record only while its fence is the live, intact receipt."""
+        await self.check(transition.fence)
+
+    def _advance(self) -> None:
+        self.evidence = self.evidence.model_copy(
+            update={"generation": self.evidence.generation + 1}
+        )
 
 
 class EmptyCatalog:
@@ -110,20 +128,29 @@ def service(
     )
 
 
-async def test_cutover_writes_bound_report_before_record_and_replays_same_receipt(
+async def test_cutover_writes_bound_report_before_record_and_a_second_run_appends(
     tmp_path: Path,
 ) -> None:
-    """An authenticated complete scan leaves writers disabled and one immutable receipt."""
+    """An authenticated complete scan leaves writers disabled and appends one immutable record."""
     boundary = DeploymentBoundary()
     cutover = service(tmp_path, boundary)
     record = await cutover.prepare(UUID(int=2))
     report = ProtocolInventory.decode(
-        (tmp_path / "protocol/reports" / f"{UUID(int=2)}.json").read_bytes()
+        (tmp_path / "protocol/reports/000001.json").read_bytes()
     )
     record.validate_inventory(report)
     assert boundary.excluded
-    assert (tmp_path / "protocol/000001.json").read_bytes() == record.canonical
-    assert await cutover.prepare(UUID(int=2)) == record
+    assert record.fence.generation == 2
+    first_record = (tmp_path / "protocol/000001.json").read_bytes()
+    assert first_record == record.canonical
+    second = await cutover.prepare(UUID(int=2))
+    assert second.sequence == 2
+    assert second.fence.generation == 3
+    assert second.report_path == "reports/000002.json"
+    assert (tmp_path / "protocol/reports/000002.json").is_file()
+    assert (tmp_path / "protocol/000002.json").is_file()
+    assert (tmp_path / "protocol/000001.json").read_bytes() == first_record
+    assert boundary.abandoned == []
 
 
 @pytest.mark.parametrize("changes", [{"root_id": UUID(int=99)}, {"operations": frozenset()}])
@@ -137,6 +164,8 @@ async def test_cutover_requires_an_authenticated_root_and_operation_grant(
         await service(tmp_path, boundary).prepare(UUID(int=2))
     assert not boundary.excluded
     assert not (tmp_path / "protocol/000001.json").exists()
+    assert boundary.abandoned == []
+    assert boundary.evidence.generation == 1
 
 
 async def test_controller_evidence_must_match_external_authentication(tmp_path: Path) -> None:
@@ -146,15 +175,20 @@ async def test_controller_evidence_must_match_external_authentication(tmp_path: 
     with pytest.raises(ValueError, match="authenticated authority"):
         await service(tmp_path, boundary).prepare(UUID(int=2))
     assert not (tmp_path / "protocol/000001.json").exists()
+    assert boundary.abandoned == [2]
+    assert not boundary.excluded
 
 
 async def test_lost_external_fence_prevents_a_report(tmp_path: Path) -> None:
-    """No observation can certify a root after its exclusion proof is lost."""
+    """No observation can admit a root after its exclusion proof is lost."""
     boundary = DeploymentBoundary()
     boundary.valid = False
     with pytest.raises(ValueError, match="external fence lost"):
         await service(tmp_path, boundary).prepare(UUID(int=2))
     assert not (tmp_path / "protocol/000001.json").exists()
+    assert boundary.abandoned == []
+    assert boundary.evidence.generation == 3
+    assert boundary.excluded
 
 
 def test_fence_observation_interval_must_be_positive(tmp_path: Path) -> None:
@@ -190,7 +224,7 @@ async def test_complete_scan_records_exact_healthy_orphan_membership(
     monkeypatch.setattr(EmptyCatalog, "generation_records", records)
     result = await service(tmp_path, boundary).prepare(UUID(int=2))
     report = ProtocolInventory.decode(
-        (tmp_path / "protocol/reports" / f"{UUID(int=2)}.json").read_bytes()
+        (tmp_path / "protocol/reports/000001.json").read_bytes()
     )
     assert len(report.revisions) == 1
     assert report.revisions[0].path == legacy[1]
@@ -198,10 +232,10 @@ async def test_complete_scan_records_exact_healthy_orphan_membership(
     result.validate_inventory(report)
 
 
-async def test_report_without_record_is_resumable_under_the_same_fence(
+async def test_stranded_report_is_history_and_retry_appends(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A crash after durable report installation can replay without fabricating a record."""
+    """A stranded report becomes permanent history and a retry appends a fresh pair."""
     original = MaintenanceStore.write_evidence
 
     def write(store: MaintenanceStore, path: str, payload: bytes) -> None:
@@ -215,13 +249,17 @@ async def test_report_without_record_is_resumable_under_the_same_fence(
         patch.setattr(MaintenanceStore, "write_evidence", write)
         with pytest.raises(ExceptionGroup, match="TaskGroup"):
             await service(tmp_path, boundary).prepare(UUID(int=2))
-    report = tmp_path / "protocol/reports" / f"{UUID(int=2)}.json"
+    report = tmp_path / "protocol/reports/000001.json"
     assert report.is_file()
     assert not (tmp_path / "protocol/000001.json").exists()
+    assert boundary.abandoned == [2]
     before = report.read_bytes()
-    await service(tmp_path, boundary).prepare(UUID(int=2))
+    retry = await service(tmp_path, boundary).prepare(UUID(int=2))
+    assert retry.sequence == 2
+    assert retry.fence.generation == 4
     assert report.read_bytes() == before
-    assert (tmp_path / "protocol/000001.json").is_file()
+    assert not (tmp_path / "protocol/000001.json").exists()
+    assert (tmp_path / "protocol/000002.json").is_file()
 
 
 async def test_periodic_fence_loss_interrupts_an_incomplete_scan(
@@ -242,6 +280,8 @@ async def test_periodic_fence_loss_interrupts_an_incomplete_scan(
             service(tmp_path, boundary, check_interval=0.001).prepare(UUID(int=2)), 1
         )
     assert not (tmp_path / "protocol/000001.json").exists()
+    assert boundary.abandoned == []
+    assert boundary.evidence.generation == 3
 
 
 async def test_corrupt_revision_does_not_prevent_exact_healthy_population_certification(
@@ -249,7 +289,7 @@ async def test_corrupt_revision_does_not_prevent_exact_healthy_population_certif
     legacy: tuple[object, str, RevisionRecord],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The complete population retains degraded evidence while certifying only healthy members."""
+    """The complete population retains degraded evidence while admitting only healthy members."""
     _, first_path, first = legacy
     second_path = str(PurePosixPath(first_path).parent / f"000002--{UUID(int=15).hex}")
     shutil.copytree(tmp_path / first_path, tmp_path / second_path)
@@ -275,7 +315,7 @@ async def test_corrupt_revision_does_not_prevent_exact_healthy_population_certif
     monkeypatch.setattr(EmptyCatalog, "generation_records", records)
     receipt = await service(tmp_path, DeploymentBoundary()).prepare(UUID(int=2))
     report = ProtocolInventory.decode(
-        (tmp_path / "protocol/reports" / f"{UUID(int=2)}.json").read_bytes()
+        (tmp_path / "protocol/reports/000001.json").read_bytes()
     )
     assert [(entry.revision_id, entry.outcome) for entry in report.revisions] == [
         (first.id, "DEGRADED"),
@@ -299,21 +339,28 @@ async def test_database_resolution_fence_loss_cannot_publish_or_resume_old_evide
         patch.setattr(EmptyCatalog, "resolve", resolve)
         with pytest.raises(ExceptionGroup):
             await service(tmp_path, boundary).prepare(UUID(int=2))
-    assert not (tmp_path / "protocol/reports" / f"{UUID(int=2)}.json").exists()
+    assert not (tmp_path / "protocol/reports/000001.json").exists()
+    assert boundary.abandoned == []
+    assert boundary.evidence.generation == 3
     boundary.valid = True
-    assert (await service(tmp_path, boundary).prepare(UUID(int=2))).run_id == UUID(int=2)
+    first = await service(tmp_path, boundary).prepare(UUID(int=2))
+    assert first.sequence == 1
+    assert first.run_id == UUID(int=2)
+    assert first.fence.generation == 4
     result = await service(tmp_path, boundary).prepare(UUID(int=4))
+    assert result.sequence == 2
     assert result.run_id == UUID(int=4)
+    assert result.fence.generation == 5
 
 
 @pytest.mark.parametrize("destination", ["report", "record"])
 async def test_lost_fence_during_installation_retains_unusable_history_and_allows_fresh_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, destination: str
 ) -> None:
-    """Installed bytes remain forensic history until a complete new preparation is endorsed."""
+    """Installed bytes remain forensic history until a complete new preparation is admitted."""
     boundary = DeploymentBoundary()
     original = MaintenanceStore.write_evidence
-    report = f"reports/{UUID(int=2)}.json"
+    report = "reports/000001.json"
     selected = report if destination == "report" else "000001.json"
 
     def write(store: MaintenanceStore, path: str, payload: bytes) -> None:
@@ -326,19 +373,23 @@ async def test_lost_fence_during_installation_retains_unusable_history_and_allow
         with pytest.raises(ExceptionGroup):
             await service(tmp_path, boundary).prepare(UUID(int=2))
     stranded = (tmp_path / "protocol" / selected).read_bytes()
-    assert boundary.certificate is None
+    assert boundary.abandoned == []
+    assert boundary.evidence.generation == 3
     boundary.valid = True
     result = await service(tmp_path, boundary).prepare(UUID(int=4))
-    assert result.sequence == (2 if destination == "record" else 1)
+    assert result.sequence == 2
     assert (tmp_path / "protocol" / selected).read_bytes() == stranded
-    assert await service(tmp_path, boundary).prepare(UUID(int=4)) == result
+    third = await service(tmp_path, boundary).prepare(UUID(int=4))
+    assert third.sequence == 3
+    assert third.fence.generation == result.fence.generation + 1
+    assert third != result
 
 
 @pytest.mark.parametrize("fence_intact", [False, True])
 async def test_cancelled_installation_waits_for_its_actual_writer_before_resolving_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fence_intact: bool
 ) -> None:
-    """Cancellation cannot abandon an in-flight write or certify it after its fence is lost."""
+    """Cancellation cannot abandon an in-flight write or admit it after its fence is lost."""
     import threading
 
     boundary = DeploymentBoundary()
@@ -368,15 +419,17 @@ async def test_cancelled_installation_waits_for_its_actual_writer_before_resolvi
     with pytest.raises(asyncio.CancelledError):
         await task
     assert finished.is_set()
-    assert boundary.certificate is None
+    assert boundary.abandoned == [2]
     boundary.valid = True
-    assert (await service(tmp_path, boundary).prepare(UUID(int=2))).sequence == 1
+    retry = await service(tmp_path, boundary).prepare(UUID(int=2))
+    assert retry.sequence == 2
+    assert retry.fence.generation == 4
 
 
-async def test_failed_directory_sync_leaves_prepared_record_without_endorsement(
+async def test_failed_directory_sync_leaves_a_complete_record_that_no_epoch_admits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A write that mutates storage then fails cannot certify its stranded immutable bytes."""
+    """A write that mutates storage then fails cannot let any epoch admit its stranded bytes."""
     import os
 
     original = os.fsync
@@ -392,11 +445,17 @@ async def test_failed_directory_sync_leaves_prepared_record_without_endorsement(
         patch.setattr(os, "fsync", sync)
         with pytest.raises(ExceptionGroup):
             await service(tmp_path, boundary).prepare(UUID(int=2))
+    assert boundary.abandoned == [2]
     record = ProtocolTransition.decode(record_path.read_bytes())
-    with pytest.raises(ValueError, match="no current endorsement"):
+    unchanged = record_path.read_bytes()
+    with pytest.raises(ValueError, match="generation changed"):
         await service(tmp_path, boundary).validate(record)
-    assert await service(tmp_path, boundary).prepare(UUID(int=2)) == record
-    await service(tmp_path, boundary).validate(record)
+    retry = await service(tmp_path, boundary).prepare(UUID(int=2))
+    assert retry.sequence == 2
+    assert retry.fence.generation == 4
+    assert retry != record
+    assert record_path.read_bytes() == unchanged
+    await service(tmp_path, boundary).validate(retry)
 
 
 async def test_observed_fence_loss_stays_invalid_after_external_observations_recover(
@@ -412,10 +471,11 @@ async def test_observed_fence_loss_stays_invalid_after_external_observations_rec
     original = MaintenanceStore.write_evidence
 
     class RecoveringBoundary(DeploymentBoundary):
-        async def check(self, *arguments: object) -> None:
+        async def check(self, evidence: FenceEvidence) -> None:
             if entered.is_set() and not observed.is_set():
                 observed.set()
                 raise ValueError("one observed exclusion loss")
+            await super().check(evidence)
 
     def write(store: MaintenanceStore, path: str, payload: bytes) -> None:
         if path == "000001.json":
@@ -424,8 +484,9 @@ async def test_observed_fence_loss_stays_invalid_after_external_observations_rec
         original(store, path, payload)
 
     monkeypatch.setattr(MaintenanceStore, "write_evidence", write)
+    boundary = RecoveringBoundary()
     task = asyncio.create_task(
-        service(tmp_path, RecoveringBoundary(), check_interval=0.001).prepare(UUID(int=2))
+        service(tmp_path, boundary, check_interval=0.001).prepare(UUID(int=2))
     )
     try:
         await asyncio.wait_for(observed.wait(), 5)
@@ -434,10 +495,10 @@ async def test_observed_fence_loss_stays_invalid_after_external_observations_rec
     with pytest.raises(ExceptionGroup):
         await task
     assert (tmp_path / "protocol/000001.json").is_file()
-    replacement = DeploymentBoundary()
+    assert boundary.abandoned == [2]
     record = ProtocolTransition.decode((tmp_path / "protocol/000001.json").read_bytes())
-    with pytest.raises(ValueError, match="no current endorsement"):
-        await service(tmp_path, replacement).validate(record)
+    with pytest.raises(ValueError, match="generation changed"):
+        await service(tmp_path, boundary).validate(record)
 
 
 async def test_independent_cutovers_cannot_share_a_live_same_run_owner(
@@ -463,9 +524,14 @@ async def test_independent_cutovers_cannot_share_a_live_same_run_owner(
         assert not (tmp_path / "protocol/000001.json").exists()
     finally:
         release.set()
+    assert boundary.abandoned == []
+    assert boundary.evidence.generation == 2
     record = await first
     await service(tmp_path, boundary).validate(record)
-    assert await service(tmp_path, boundary).prepare(UUID(int=2)) == record
+    again = await service(tmp_path, boundary).prepare(UUID(int=2))
+    assert again.sequence == 2
+    assert again.fence.generation == 3
+    assert again != record
 
 
 @pytest.mark.parametrize("change", ["root", "actor", "grant", "operation"])
@@ -491,7 +557,7 @@ async def test_consumer_requires_exact_root_and_operator_authority(
 async def test_exclusion_loss_at_ownership_release_cannot_return_a_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, after_close: bool
 ) -> None:
-    """Final ownership release remains inside the exclusion-to-endorsement boundary."""
+    """A loss observed at the final validation ends the epoch, so the complete record is never admitted."""
     import os
 
     boundary = DeploymentBoundary()
@@ -511,9 +577,11 @@ async def test_exclusion_loss_at_ownership_release_cannot_return_a_receipt(
         patch.setattr(os, "close", close)
         with pytest.raises(ValueError, match="external fence lost"):
             await service(tmp_path, boundary).prepare(UUID(int=2))
+    assert boundary.abandoned == []
+    assert boundary.evidence.generation == 3
     record = ProtocolTransition.decode(record_path.read_bytes())
     boundary.valid = True
-    with pytest.raises(ValueError, match="no current endorsement"):
+    with pytest.raises(ValueError, match="generation changed"):
         await service(tmp_path, boundary).validate(record)
 
 
@@ -526,11 +594,12 @@ async def test_concurrent_observations_cannot_replace_a_lost_fence_with_recovere
     release = asyncio.Event()
 
     class ObservationBoundary(DeploymentBoundary):
-        async def check(self, *arguments: object) -> None:
+        async def check(self, evidence: FenceEvidence) -> None:
             if resolving.is_set() and not observing.is_set():
                 observing.set()
                 await release.wait()
                 raise ValueError("observed exclusion loss")
+            await super().check(evidence)
 
     async def resolve(*arguments: object) -> None:
         resolving.set()
@@ -540,6 +609,8 @@ async def test_concurrent_observations_cannot_replace_a_lost_fence_with_recovere
     monkeypatch.setattr(EmptyCatalog, "resolve", resolve)
     boundary = ObservationBoundary()
     with pytest.raises(ExceptionGroup):
-        await asyncio.wait_for(service(tmp_path, boundary, check_interval=0.001).prepare(UUID(int=2)), 5)
-    assert boundary.certificate is None
+        await asyncio.wait_for(
+            service(tmp_path, boundary, check_interval=0.001).prepare(UUID(int=2)), 5
+        )
+    assert boundary.abandoned == [2]
     assert not (tmp_path / "protocol/000001.json").exists()

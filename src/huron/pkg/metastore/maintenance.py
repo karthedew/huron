@@ -3,10 +3,35 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import asyncpg
+
+_IDENTITY_SQL = (
+    "SELECT format('%s/%s/%s', (system_identifier::numeric + 18446744073709551616) "
+    "% 18446744073709551616, d.oid, d.datname) FROM pg_control_system(), pg_database d "
+    "WHERE d.datname = current_database() AND NOT pg_is_in_recovery()"
+)
+
+
+class DatabaseFence(Protocol):
+    """Receipt naming the database and the application roles it holds excluded."""
+
+    @property
+    def database(self) -> str:
+        """Identity string the maintenance database must report."""
+        ...
+
+    @property
+    def old_roles(self) -> tuple[str, ...]:
+        """Permanent legacy application exclusions."""
+        ...
+
+    @property
+    def new_role(self) -> str:
+        """Replacement role kept disabled during the verification interval."""
+        ...
 
 
 class PostgresRoleExclusion:
@@ -20,27 +45,43 @@ class PostgresRoleExclusion:
         """
         self._pool = pool
 
-    async def exclude(self, old_roles: tuple[str, ...], new_role: str) -> None:
-        """Disable logins, remove old inherited/direct access and terminate application sessions.
+    async def identify(self) -> str:
+        """Observe the live primary's identity without asserting any role fence.
+
+        Returns:
+            ``<system_identifier>/<database_oid>/<datname>`` of the connected database.
+
+        Raises:
+            ValueError: If the connected database is not a primary.
+        """
+        async with self._pool.acquire() as connection:
+            identity = await connection.fetchval(_IDENTITY_SQL)
+        if identity is None:
+            raise ValueError("maintenance database is not a primary")
+        return str(identity)
+
+    async def exclude(self, fence: DatabaseFence) -> None:
+        """Disable the fenced roles, revoke legacy access and terminate their sessions.
 
         Dedicated application roles must own no objects and hold no administrative
         attributes. The adapter refuses owner-role deployments instead of deleting or
         transferring their objects.
 
         Args:
-            old_roles: Permanent legacy application exclusions.
-            new_role: Replacement role kept disabled during the verification interval.
+            fence: Receipt naming the database whose ``old_roles`` and ``new_role`` to fence.
 
         Raises:
-            ValueError: If a role is unsafe or a backend cannot be terminated.
+            ValueError: If the live identity differs from ``fence.database``, a role is
+                unsafe, a session survived, or the fence does not hold afterwards.
         """
-        roles = _roles(old_roles, new_role)
+        roles = _roles(fence.old_roles, fence.new_role)
         async with self._pool.acquire() as connection:
             async with connection.transaction():
+                await _require_identity(connection, fence)
                 for role in roles:
                     await _require_dedicated(connection, role)
                     await connection.execute(f"ALTER ROLE {_identifier(role)} NOLOGIN")
-                for role in old_roles:
+                for role in fence.old_roles:
                     await _revoke_access(connection, role)
             stopped = await connection.fetch(
                 "SELECT pg_terminate_backend(pid, 10000) AS stopped FROM pg_stat_activity "
@@ -49,20 +90,21 @@ class PostgresRoleExclusion:
             )
             if any(not row["stopped"] for row in stopped):
                 raise ValueError("application database session termination was not confirmed")
-        await self.check(old_roles, new_role)
+        await self.check(fence)
 
-    async def check(self, old_roles: tuple[str, ...], new_role: str) -> None:
-        """Verify live login, session, ownership, inherited and effective application access.
+    async def check(self, fence: DatabaseFence) -> None:
+        """Verify identity, login, session, ownership and effective access under the fence.
 
         Args:
-            old_roles: Permanently excluded legacy application roles.
-            new_role: Replacement role excluded until validated activation.
+            fence: Receipt naming the database and roles that must remain excluded.
 
         Raises:
-            ValueError: If any application identity has escaped its database fence.
+            ValueError: If the live identity differs from ``fence.database`` or any
+                application identity has escaped its fence.
         """
-        roles = _roles(old_roles, new_role)
+        roles = _roles(fence.old_roles, fence.new_role)
         async with self._pool.acquire() as connection:
+            await _require_identity(connection, fence)
             for role in roles:
                 await _require_dedicated(connection, role)
             admitted = await connection.fetchval(
@@ -73,9 +115,14 @@ class PostgresRoleExclusion:
             )
             if admitted:
                 raise ValueError("application database login or session fence was lost")
-            for role in old_roles:
+            for role in fence.old_roles:
                 if await _effective_access(connection, role):
                     raise ValueError("legacy role retains effective application access")
+
+
+async def _require_identity(connection: asyncpg.Connection, fence: DatabaseFence) -> None:
+    if await connection.fetchval(_IDENTITY_SQL) != fence.database:
+        raise ValueError("maintenance database identity differs from the fence")
 
 
 def _identifier(value: str) -> str:

@@ -1,0 +1,13 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 2b89246..6fe1cf3 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -258,7 +258,7 @@ include = ["src"]
+ # Ratchet floor: the measured value at the last raise, rounded down. Never
+ # lower it; raise it as coverage climbs. New or touched files are covered in
+ # full.
+-fail_under = 95.88
++fail_under = 95.92
+ precision = 2
+ 
+ [[tool.importlinter.contracts]]

@@ -34,8 +34,10 @@ containers. Relative or symlink-aliased backing paths are refused because they
 cannot reliably identify an already-mounted backing object. Live admission
 revalidates the trusted Compose file identity. It persists restart exclusion
 before stopping each application writer, verifies process termination and removes
-the restartable container identity. Controller restart advances the generation;
-old evidence is then invalid. Periodic checks detect fence loss while the private
+the restartable container identity. Controller restart, every observed loss and
+every client-declared abandonment advance the generation; evidence naming an
+earlier generation is then refused (see [Verification epoch](#verification-epoch)).
+Periodic checks detect fence loss while the private
 engine and admission policy enforce exclusion between checks.
 
 ## Administrator provisioning
@@ -96,8 +98,8 @@ lakectl protocol cutover --prepare --config /etc/huron/maintenance.json --run-id
 ```
 
 There is no actor-name argument. The core authenticates the controller's grant and
-binds it to the actual root before scanning. The command prints only its canonical
-transition receipt; refusal exits 1 without echoing database credentials. Existing
+binds it to the actual root before scanning. The command prints only the canonical
+bytes of its numbered record; refusal exits 1 without echoing database credentials. Existing
 application sessions are terminated independently of writer-process shutdown.
 Effective inherited, ownership, column, sequence, security-definer-function,
 database-create and public write privileges are checked. Unsafe public or owner
@@ -110,10 +112,15 @@ file link count are checked. Missing or unreadable documents retain explicit
 ABSENT/ERROR observations without invented digests. Trusted corrupt revisions
 remain visible as DEGRADED; conflicting identity or missing parents block the run.
 
-`protocol/reports/RUN_UUID.json` contains per-revision observations and structural
-document digests. The controller reads its private `maintenance_path` configuration to independently
-check the database fence. `protocol/000001.json` binds the root, run, controller generation
-and exact report digest. The report is fsynced before the record is installed.
+`protocol/reports/000001.json` contains per-revision observations and structural
+document digests; `protocol/000001.json` is the numbered record binding the root,
+run, controller generation, maintenance database identity and exact report digest.
+Report and record of one `--prepare` share one sequence number; every `--prepare`
+appends the next free pair and nothing under `protocol/` is reused or rewritten. A
+report without its record is history left by a failed run, not something a later
+run resumes. The controller reads its private `maintenance_path` configuration once
+at start to check the database fence independently; editing it takes effect only at
+restart. The report is fsynced before the record is installed.
 Only exact VERIFIED membership certifies a revision; historic commit timestamps
 do not confer certification. Portable JSON Schemas validate document structure and
 local digest/outcome conditions; runtime validation additionally checks cross-field
@@ -127,29 +134,69 @@ is removed and no lease expires. Cancellation waits for actual filesystem writer
 before releasing ownership. A competing invocation is refused, including the same
 run submitted through another process.
 
-After all local writes, monitor shutdown and ownership release succeed, the
-serialized controller independently claims the root, verifies the exact canonical
-record/report/root/run binding, checks effective PostgreSQL role exclusion and
-checks its live deployment/writer generation. It releases its claim and checks the
-controller fence again before endorsing the exact record digest in its current
-process. No filesystem operation follows that endorsement. Any preceding error
-leaves the prepared files unendorsed. An acknowledgement lost after endorsement is
-explicitly indeterminate, rather than proof of failure.
+## Verification epoch
 
-The implemented consumer contract is `CutoverService.validate(receipt)`, backed by
-`ControllerClient.validate_certificate(receipt)`. It requires the current
-controller endorsement and repeats complete storage, SQL and writer-fence checks
-under exclusive ownership. Any failed authorized validation revokes endorsement; apparently
-restored observations do not revive it. Controller restart also discards all
-endorsements and advances the exclusion generation. Future initialization and
-activation consumers must invoke this authority contract; they cannot infer
-certification from JSON files alone. No M1c activation is implemented here.
+The controller's durably persisted generation is the verification epoch and its only
+authority state
+([ADR-0001](../adr/0001-controller-generation-is-the-verification-epoch.md)). The
+controller mints generation 1 at every start and never issues it. `--prepare` begins
+with `establish`, which mints the next generation and returns fence evidence naming
+it, the run, the operator and the maintenance database identity
+`<system_identifier>/<database_oid>/<datname>`, captured from the database before any
+writer is terminated. A database that is not a primary refuses `--prepare`
+("maintenance database is not a primary"). Every later database observation compares
+the live identity with the fence before any role change and refuses on disagreement
+("maintenance database identity differs from the fence").
 
-Every retry performs a full scan. Same-run report-before-record replay is allowed
-under intact exclusion only when immutable bytes agree. A changed generation
-requires a fresh run; old files remain unchanged and a new numbered record appends
-to history. Failed local finalization may be retried by full verification, but
-cannot be reused merely by presenting its files to the consumer.
+An epoch ends in exactly three ways, each advancing the generation on disk before
+the refusal is reported: the controller observes a loss (volume identity, engine
+transport, writer inventory, storage I/O under its claim, the role fence or the
+database identity, or cancellation during any of these); the client declares one
+through `abandon`, which `--prepare` sends for any failure after `establish`; or the
+controller restarts. Restoring the database, volume or engine afterwards revives
+nothing, because the generation already moved. A mismatched argument (wrong run,
+stored record, report digest, operator or peer) refuses the presented record without
+ending the epoch. If the controller cannot persist an advance, its memory still
+moves to the new generation, so it keeps refusing the old record; the next start
+advances the durable generation again.
+
+After all local writes, monitor shutdown and ownership release succeed, `--prepare`
+asks the controller to validate the record. `validate` is stateless: under its own
+claim the controller re-reads the record and report, checks the exact
+record/report/root/run binding, the live role fence and database identity and its
+deployment/writer generation, and admits the record only if the fence names the
+live epoch. Because `establish` is the first step of `--prepare` and every failure
+after it ends the epoch, an admitted record proves that the scan producing it
+completed under that epoch. Every refusal reaches the client as `CONTROLLER_REFUSED`
+and the command exits 1 with one fixed message, never the reason. Later
+initialization and activation consumers must call the same `validate`; JSON files
+alone never establish admission. No M1c activation is implemented here.
+
+!!! note "Residual windows"
+    Three windows are bounded, not closed: a writer loss between two fence checks is
+    unobserved until the next check; an `abandon` that fails to reach a live
+    controller, or a client that dies before sending it, leaves the epoch open until
+    the controller's next observation. Each closes at the next fence check or
+    observation, and `validate`'s own observations refuse a record whose fence names
+    an ended epoch.
+
+## Recovering a lost reply
+
+A controller interrupted while handling a request sends no reply; the client reports
+"controller closed the connection without a reply" and the command exits 1. The
+record may still be admissible. Find `N` as the highest `protocol/NNNNNN.json` and
+run:
+
+```sh
+lakectl protocol cutover --validate --config /etc/huron/maintenance.json --sequence N
+```
+
+Exit 0 prints the admitted record, exactly the bytes the lost `--prepare` would have
+printed. Exit 1 while the controller is unreachable is another lost reply; run
+`--validate` again once it answers. Exit 1 from an answering controller means the
+epoch ended and only a new `--prepare`, with its full scan, can produce an admissible
+record. Exit 2 is a usage error. `--validate` never rescans and never changes the
+epoch when it admits.
 
 ## Verification evidence
 

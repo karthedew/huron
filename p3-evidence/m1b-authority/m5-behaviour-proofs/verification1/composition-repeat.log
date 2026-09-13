@@ -1,0 +1,9 @@
+--- run 1
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 17 deselected, 1 warning in 0.53s
+--- run 2
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 17 deselected, 1 warning in 0.50s
+--- run 3
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 17 deselected, 1 warning in 0.52s

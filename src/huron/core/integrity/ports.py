@@ -104,63 +104,100 @@ class MaintenanceAuthority(Protocol):
 
 
 class WriterExclusion(Protocol):
-    """Terminate every inventoried writer and continuously exclude application restarts."""
+    """Mint, observe, end and admit the controller epoch that excludes application writers."""
 
     async def establish(self, grant: MaintenanceGrant, run_id: UUID) -> FenceEvidence:
-        """Establish enforced exclusion before returning a writer inventory receipt.
+        """Begin a new exclusion epoch, terminating every application writer.
+
+        Refuses with ``PermissionError`` if the authority refuses the operator or its
+        identity changed. Propagates ``OSError`` if the authority could not be reached
+        or replied incompletely.
 
         Args:
             grant: Authenticated authority accepted by the workflow.
-            run_id: Immutable cutover run identity.
+            run_id: Audit and database-idempotence identity of this cutover attempt.
 
         Returns:
-            Controller identity, generation, complete writer inventory and role names.
+            Receipt naming the live generation, root, operator, terminated writers,
+            excluded roles and the maintenance database identity captured before any
+            role was fenced.
         """
         ...
 
     async def check(self, evidence: FenceEvidence) -> None:
-        """Refuse if the continuously enforced exclusion no longer matches its receipt.
+        """Require a fresh proof that the receipt still names the live, intact epoch.
+
+        Refuses with ``PermissionError`` if the epoch ended, a writer appeared or the
+        receipt differs. Propagates ``OSError`` if the authority could not be observed;
+        the caller treats this as loss.
 
         Args:
-            evidence: Original controller and inventory evidence.
+            evidence: Receipt returned by ``establish``; compared whole, ``database`` included.
         """
         ...
 
-    async def certify(self, transition: ProtocolTransition) -> None:
-        """Endorse prepared evidence after exclusive validation of storage and both live fences.
+    async def abandon(self, evidence: FenceEvidence) -> None:
+        """Declare that this receipt's run did not complete, ending its epoch.
+
+        A receipt that no longer names the live epoch is ignored, so a stale or foreign
+        receipt cannot end a newer epoch. Writers stay terminated and restart stays
+        excluded; only admissibility of records under this generation ends. Refuses
+        with ``PermissionError`` if the authority refuses the operator. Propagates
+        ``OSError`` if the authority could not be reached; the epoch then ends at the
+        authority's next observation or restart.
 
         Args:
-            transition: Exact durable record proposed for current-controller endorsement.
+            evidence: Receipt whose continuous observation failed or whose run did not return.
         """
         ...
 
-    async def validate_certificate(self, transition: ProtocolTransition) -> None:
-        """Require current endorsement, exact durable evidence and both live exclusion proofs.
+    async def validate(self, transition: ProtocolTransition) -> None:
+        """Admit a record only while its fence names the live epoch and every observation passes.
+
+        The authority keeps no per-call state: a lost reply is resolved by calling again
+        under the same generation, and every failed observation ends the epoch before the
+        refusal is reported. Refuses with ``PermissionError`` if the record, its report,
+        the fence or any live observation is refused. Propagates ``OSError`` if the reply
+        was lost; call again.
 
         Args:
-            transition: Receipt presented by a consumer; document presence alone is insufficient.
+            transition: Exact record as stored under ``protocol/{sequence:06d}.json``.
         """
         ...
 
 
 class DatabaseExclusion(Protocol):
-    """Permanent old-role and temporary new-role database access exclusion."""
+    """Identify the maintenance database and hold its application roles excluded."""
 
-    async def exclude(self, old_roles: tuple[str, ...], new_role: str) -> None:
-        """Disable dedicated application logins and terminate surviving sessions.
+    async def identify(self) -> str:
+        """Observe the live primary's identity without asserting any role fence.
 
-        Args:
-            old_roles: Dedicated legacy application role names.
-            new_role: Replacement role excluded throughout verification.
+        A connected standby refuses this call with ``ValueError``.
+
+        Returns:
+            ``<system_identifier>/<database_oid>/<datname>`` of the connected database.
         """
         ...
 
-    async def check(self, old_roles: tuple[str, ...], new_role: str) -> None:
-        """Verify role ownership, effective access and absence of application sessions.
+    async def exclude(self, fence: FenceEvidence) -> None:
+        """Disable the fenced roles, revoke legacy access and terminate their sessions.
+
+        Refuses with ``ValueError`` if the live identity differs from ``fence.database``,
+        a role is unsafe, a session survived, or the fence does not hold afterwards.
 
         Args:
-            old_roles: Permanently excluded legacy application roles.
-            new_role: Replacement role excluded throughout verification.
+            fence: Receipt naming the database whose ``old_roles`` and ``new_role`` to fence.
+        """
+        ...
+
+    async def check(self, fence: FenceEvidence) -> None:
+        """Verify identity, login, session, ownership and effective access under the fence.
+
+        Refuses with ``ValueError`` if the live identity differs from ``fence.database`` or
+        any application identity has escaped its fence.
+
+        Args:
+            fence: Receipt naming the database and roles that must remain excluded.
         """
         ...
 

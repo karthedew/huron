@@ -13,12 +13,16 @@ from tests.unit.test_controller_settings import root_metadata as root_metadata
 
 pytestmark = pytest.mark.unit
 
+IDENTITY = "7367538914089103371/16384/huron"
+
 
 class EmptyDatabaseBoundary:
-    """Supply an empty schema-0010 database through its external SQL boundary."""
+    """Supply an empty schema-0010 primary through its external SQL boundary."""
 
     def __init__(self) -> None:
         self.closed = False
+        self.identity: str | None = IDENTITY
+        self.failure: BaseException | None = None
 
     def acquire(self) -> "EmptyDatabaseBoundary":
         """Acquire the same disposable connection boundary."""
@@ -40,7 +44,11 @@ class EmptyDatabaseBoundary:
         self.closed = True
 
     async def fetchval(self, query: str, *arguments: object) -> object:
-        """Report dedicated roles and the exact supported schema, with no effective access."""
+        """Answer the identity, schema and safety probes, or raise the injected fault."""
+        if self.failure is not None:
+            raise self.failure
+        if "pg_control_system" in query:
+            return self.identity
         if "version_num" in query:
             return "0010_independent_raw"
         return "SELECT NOT (rolsuper" in query
@@ -60,6 +68,7 @@ class ControllerBoundary:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.wrong_inode = False
+        self.abandoned: list[int] = []
 
     async def describe(self) -> ControlledRoot:
         """Supply the real local directory's identity from the controller boundary."""
@@ -86,16 +95,18 @@ class ControllerBoundary:
             terminated_writers=(),
             old_roles=("old_app",),
             new_role="new_app",
+            database=IDENTITY,
         )
 
     async def check(self, evidence: FenceEvidence) -> None:
         """Keep the independently enforced boundary valid for this deterministic scenario."""
 
-    async def certify(self, transition: ProtocolTransition) -> None:
-        """Acknowledge the external controller's endorsement."""
+    async def abandon(self, evidence: FenceEvidence) -> None:
+        """Record the generation the coordinator declared lost."""
+        self.abandoned.append(evidence.generation)
 
-    async def validate_certificate(self, transition: ProtocolTransition) -> None:
-        """Accept the deterministic controller's live certificate."""
+    async def validate(self, transition: ProtocolTransition) -> None:
+        """Admit the deterministic controller's record."""
 
 
 async def test_wiring_runs_actual_core_and_adapters_with_dedicated_pool_lifetime(
@@ -118,6 +129,30 @@ async def test_wiring_runs_actual_core_and_adapters_with_dedicated_pool_lifetime
     assert receipt.instant.utcoffset().total_seconds() == 0
     assert database.closed
     assert (tmp_path / "protocol/000001.json").read_bytes() == receipt.canonical
+    assert controller.abandoned == []
+
+
+async def test_wiring_validates_a_stored_record_through_the_same_boundaries(
+    tmp_path: Path,
+    root_metadata: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stored record is admitted through the same authenticated boundaries as prepare."""
+    monkeypatch.setattr(wiring, "sys", SimpleNamespace(platform="linux"))
+    controller = ControllerBoundary(tmp_path)
+    database = EmptyDatabaseBoundary()
+    monkeypatch.setattr(wiring, "ControllerClient", lambda socket: controller)
+    monkeypatch.setattr(wiring.asyncpg, "create_pool", lambda url: database)
+    settings = MaintenanceSettings(
+        controller_socket=tmp_path / "controller.sock", database_url="secret"
+    )
+    receipt = await wiring.prepare(settings, UUID(int=3))
+    database.closed = False
+    assert await wiring.validate(settings, 1) == receipt
+    assert database.closed
+    with pytest.raises(FileNotFoundError):
+        await wiring.validate(settings, 2)
+    assert not (tmp_path / "protocol/000002.json").exists()
 
 
 async def test_wiring_refuses_unsupported_namespace_and_controller_inode_mismatch(

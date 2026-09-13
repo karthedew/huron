@@ -25,8 +25,8 @@ or live deployment is part of this checkpoint.
 | --- | --- | --- | --- |
 | D3a stabilization | 1, `/root/stabilize_d3a` | 1/3, `/root/verify_d3a` | Functional PASS; overall gate fails duplication; redesign paused |
 | M1a functional acceptance | 1, `/root/m1a_acceptance` | 1/3, `/root/verify_m1a` | Functional PASS; overall quality fails duplication; not independently deployable |
-| M1b exclusion and legacy verifier | 1, `/root/implement_m1b` | Not started | Implementation in progress; disposable test environments only |
-| M1c cutover/startup | Not started | Not started | Pending |
+| M1b exclusion and legacy verifier | 3 (attempt 1, fix passes 1–2), `/root/implement_m1b` | 3/3 exhausted, `/root/verify_m1b` | Functional FAIL on three authority regressions; stopped at escalation; authority redesign under ADR-0001 (see the 2026-09-12 entry) |
+| M1c cutover/startup | Not started | Not started | Pending; `--validate --sequence N` moved to the M1b authority plan (P3_IMPLEMENTATION_PLAN.md M1c item 1) |
 | M2 governance and read admission | Not started | Not started | Pending |
 | M3 recovery | Not started | Not started | Pending |
 | M4 reconciliation and findings | Not started | Not started | Pending |
@@ -42,7 +42,7 @@ PostgreSQL exclusion contracts passed. Filesystem/model/verifier coverage reache
 100%; coordinator coverage still needs completion. Controller settings, engine,
 persistent admission and client pass focused type/docstring checks; peer-authenticated
 server, CLI wiring and the actual Linux old-artifact fixture remain outstanding.
-No M1b certification has run. Implementation attempt 1; verification not yet started.
+No M1b certification has run. This paragraph is the 2026-09-11 19:27 UTC snapshot; the M1b rows above and the entries below carry the outcome.
 The preceding M1a implementation started 18:29:23 UTC and independent
 verification started 18:40:16 UTC; both finished before this child launched.
 
@@ -82,8 +82,7 @@ evidence rather than proof of a later tree.
 
 ## Deployment baseline to reconcile in M1b/M1c
 
-Inspection found `Containerfile` still starts `huron.service.api.main:app`, while
-the implemented application lives at `huron.applications.api.main:app`. The
+Inspection on 2026-09-11 found `Containerfile` starting `huron.service.api.main:app`; `Containerfile:30` and `deploy/controlled/compose.json.example:7` now start `huron.applications.api.main:app`, and `src/huron/service` no longer exists. The
 Compose application and migration services also share the development database
 owner identity. These are concrete deployment integration work for the first
 cutover release, not evidence that its old-writer exclusion contract exists.
@@ -267,5 +266,11 @@ but three independent authority regressions fail.
 All three verification attempts are exhausted. No active child, fourth fix pass
 or next-milestone implementation remains. All owned processes/fixtures ended and
 the VM stopped. [The escalation](P3_IMPLEMENTATION_PLAN.md#escalation) records all
-reviews, the retained uncommitted tree, design decisions and exact architecture
+reviews, the retained tree (committed as `f619342` on `p3/integrity-and-raw-flows`, unverified), design decisions and exact architecture
 review/replanning invocations. M1b and P3 remain incomplete.
+
+## Architectural review and authority design — 2026-09-12
+
+[P3_M1B_ARCHITECTURAL_REVIEW.md](P3_M1B_ARCHITECTURAL_REVIEW.md) accepted [ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md) with amendments: the controller's persisted generation is the sole verification epoch; `certify`, `validate_certificate` and `CertificationIndeterminateError` are deleted in favour of a stateless `validate` and a client-declared `abandon`; the fence binds the maintenance database identity; every `prepare` appends a new report/record pair. [P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md) carries the design; its implementation plan carries the tasks. Nothing from that design is implemented or verified by this ledger's entries; M1b, M1c and P3 remain incomplete.
+
+2026-09-12: [P3_M1B_AUTHORITY_IMPLEMENTATION_PLAN.md](P3_M1B_AUTHORITY_IMPLEMENTATION_PLAN.md) was executed on this host, with evidence at `p3-evidence/m1b-authority/`; the deployment-script integration node (`tests/integration/test_protocol_cutover.py::test_actual_legacy_http_request_is_terminated_and_cannot_restart`) was unrunnable here for lack of a root/Podman environment; independent verification of M1b has not started.

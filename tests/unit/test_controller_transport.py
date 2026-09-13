@@ -11,12 +11,14 @@ from uuid import UUID
 
 import pytest
 
-from huron.applications.lakectl.exclusion import ControllerClient
+from huron.applications.lakectl.exclusion import ControllerClient, _reply
 from huron.applications.lakectl.server import ControllerServer, serve
 from huron.applications.lakectl.settings import ControllerSettings
 from tests.unit.test_controller_settings import controller_settings as controller_settings
 from tests.unit.test_controller_settings import root_metadata as root_metadata
-from tests.unit.test_managed_controller import EngineBoundary
+from tests.unit.test_lakectl_wiring import EmptyDatabaseBoundary
+from tests.unit.test_managed_controller import EngineBoundary, generation_on_disk
+from tests.unit.test_managed_controller import database_boundary as database_boundary
 from tests.unit.test_managed_controller import engine_boundary as engine_boundary
 
 pytestmark = pytest.mark.unit
@@ -63,6 +65,7 @@ def live_server(transport_settings: ControllerSettings) -> Iterator[ControllerSe
 async def test_client_authenticates_describes_establishes_and_checks_real_requests(
     transport_settings: ControllerSettings,
     live_server: ControllerServer,
+    database_boundary: EmptyDatabaseBoundary,
 ) -> None:
     """The wire carries controller grants and exclusion receipts without accepting actor text."""
     client = ControllerClient(transport_settings.socket_path)
@@ -76,6 +79,10 @@ async def test_client_authenticates_describes_establishes_and_checks_real_reques
         await client.restart()
     with pytest.raises(PermissionError, match="authentication changed"):
         await client.establish(grant.model_copy(update={"operator": "forged"}), UUID(int=3))
+    await client.abandon(evidence)
+    assert generation_on_disk(transport_settings) == evidence.generation + 1
+    with pytest.raises(PermissionError, match="refused"):
+        await client.check(evidence)
 
 
 async def test_restart_response_returns_the_real_admitted_identity(
@@ -101,6 +108,8 @@ async def test_restart_response_returns_the_real_admitted_identity(
         b"x" * 65537,
         b'{"operation":"authenticate","actor":"root"}\n',
         b'{"operation":"unknown"}\n',
+        b'{"operation":"certify","transition":{}}\n',
+        b'{"operation":"validate","transition":{}}\n',
     ],
 )
 def test_server_refuses_malformed_oversized_and_actor_supplied_requests(
@@ -156,6 +165,30 @@ async def test_client_refuses_replaceable_socket_and_oversized_response(
             path.unlink()
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected", "match"),
+    [
+        (b"x" * 65537, ValueError, "response exceeds"),
+        (b"", ConnectionError, "without a reply"),
+        (b'{"ok": true, "result": null}', ConnectionError, "without a reply"),
+        (b"x\n", ValueError, None),
+        (b"[1]\n", ValueError, "not a reply object"),
+        (b'{"result": 1}\n', ValueError, "not a reply object"),
+        (b'{"ok": false, "error": "CONTROLLER_REFUSED"}\n', PermissionError, "refused"),
+        (b'{"ok": true, "result": 7}\n', None, None),
+    ],
+)
+def test_reply_maps_bound_newline_shape_and_refusal(
+    payload: bytes, expected: type[BaseException] | None, match: str | None
+) -> None:
+    """Every wire-visible reply shape maps to exactly one client class or accepted result."""
+    if expected is None:
+        assert _reply(payload) == 7
+        return
+    with pytest.raises(expected, match=match):
+        _reply(payload)
+
+
 def test_server_requires_linux_and_a_protected_socket_parent(
     transport_settings: ControllerSettings,
     monkeypatch: pytest.MonkeyPatch,
@@ -202,7 +235,7 @@ def test_server_owns_state_lock_and_cleans_its_socket_on_shutdown(
         assert not path.exists()
 
 
-async def test_real_transport_endorses_and_validates_exact_durable_evidence(
+async def test_real_transport_validates_exact_durable_evidence(
     transport_settings: ControllerSettings, live_server: ControllerServer,
     engine_boundary: EngineBoundary, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -211,7 +244,6 @@ async def test_real_transport_endorses_and_validates_exact_durable_evidence(
     from huron.applications.lakectl import controller as controller_module
     from huron.core.integrity.models import ProtocolInventory, ProtocolTransition
     from huron.pkg.rawstore.maintenance import MaintenanceStore
-    from tests.unit.test_lakectl_wiring import EmptyDatabaseBoundary
 
     monkeypatch.setattr(controller_module.asyncpg, "create_pool", lambda url: EmptyDatabaseBoundary())
     client = ControllerClient(transport_settings.socket_path)
@@ -223,27 +255,29 @@ async def test_real_transport_endorses_and_validates_exact_durable_evidence(
     store = MaintenanceStore(engine_boundary.volume, 1001)
     store.write_evidence(record.report_path, inventory.canonical)
     store.write_evidence("000001.json", record.canonical)
+    await client.validate(record)
+    await client.validate(record)
+    assert generation_on_disk(transport_settings) == fence.generation
+    forged = record.model_copy(update={"run_id": UUID(int=4)})
     with pytest.raises(PermissionError, match="refused"):
-        await client.validate_certificate(record)
-    await client.certify(record)
-    await client.validate_certificate(record)
+        await client.validate(forged)
+    assert generation_on_disk(transport_settings) == fence.generation
+    await client.abandon(fence)
     with pytest.raises(PermissionError, match="refused"):
-        await client.certify(record.model_copy(update={"run_id": UUID(int=4)}))
-    with pytest.raises(PermissionError, match="refused"):
-        await client.validate_certificate(record)
+        await client.validate(record)
+    assert generation_on_disk(transport_settings) == fence.generation + 1
 
 
-async def test_lost_endorsement_reply_is_indeterminate_and_live_validation_resolves_it(
+async def test_lost_reply_is_resolved_by_validating_again(
     transport_settings: ControllerSettings, live_server: ControllerServer,
     engine_boundary: EngineBoundary, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A dropped acknowledgement does not turn truly endorsed evidence into a claimed failure."""
+    """A dropped acknowledgement does not turn a truly admitted record into a claimed failure."""
     from datetime import UTC, datetime
     import socketserver
     from huron.applications.lakectl import controller as controller_module
-    from huron.core.integrity.models import CertificationIndeterminateError, ProtocolInventory, ProtocolTransition
+    from huron.core.integrity.models import ProtocolInventory, ProtocolTransition
     from huron.pkg.rawstore.maintenance import MaintenanceStore
-    from tests.unit.test_lakectl_wiring import EmptyDatabaseBoundary
 
     monkeypatch.setattr(controller_module.asyncpg, "create_pool", lambda url: EmptyDatabaseBoundary())
     client = ControllerClient(transport_settings.socket_path)
@@ -261,6 +295,7 @@ async def test_lost_endorsement_reply_is_indeterminate_and_live_validation_resol
 
     with monkeypatch.context() as patch:
         patch.setattr(socketserver._SocketWriter, "write", dropped)
-        with pytest.raises(CertificationIndeterminateError, match="indeterminate"):
-            await client.certify(record)
-    await client.validate_certificate(record)
+        with pytest.raises(ConnectionError, match="without a reply"):
+            await client.validate(record)
+    await client.validate(record)
+    assert generation_on_disk(transport_settings) == fence.generation

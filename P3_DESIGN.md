@@ -1,6 +1,6 @@
 # P3 — Integrity services: final design
 
-Status: design agreed 2026-09-08; verified-completion implementation is under validation.
+Status: design agreed 2026-09-08; M1a passed independent verification on 2026-09-11 ([P3_M1A_VALIDATION.md](P3_M1A_VALIDATION.md)). M1b's authority model is superseded by [ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md) and designed in [P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md); its delivery is tracked by that design's implementation plan and `design/roadmap.html`.
 Implementation follows the separately authorized [P3_IMPLEMENTATION_PLAN.md](P3_IMPLEMENTATION_PLAN.md). `design/` remains the architecture authority; its affected pages
 are reconciled in this change. [P3_PROPOSAL.md](P3_PROPOSAL.md) is historical
 interview input and is superseded wherever this final design differs.
@@ -69,7 +69,7 @@ Directory link counts are not file link counts: require `st_nlink == 1` for
 regular owned files, not directories. Refuse symlinks, special files, escaping
 paths, wrong owners and unexpected entries; do not follow them during scans.
 
-Storage layout: normal upload/completion/envelope separation is implemented. Preparatory protocol evidence and legacy verification are implemented and under review; initialization, activation/startup, recovery and cleanup remain planned:
+Storage layout: normal upload/completion/envelope separation is implemented. Preparatory protocol evidence and legacy verification follow §5.2 and ADR-0001, with delivery status in `design/roadmap.html`; initialization, activation/startup, recovery and cleanup remain planned:
 
 ```text
 /data/
@@ -228,9 +228,12 @@ not production readiness, and does not implement M1c activation/startup.
 
 ### 5.2 Ordered, resumable procedure
 
-1. `lakectl protocol cutover --prepare` creates a run identity in `protocol/`'s
-   report workspace and establishes exclusion. It supports exactly schema 0010
-   as a legacy maintenance mode, never as an API startup compatibility mode.
+1. `lakectl protocol cutover --prepare` takes the storage claim, then asks the
+   controller to establish exclusion. `establish` mints a new controller
+   generation — the verification epoch — and returns fence evidence naming
+   that generation, the run, the operator and the maintenance database
+   identity. It supports exactly schema 0010 as a legacy maintenance mode,
+   never as an API startup compatibility mode.
 2. Verify structural generation documents and every legacy final envelope, full
    payload included. Resolve final orphans from verified documents. Resolve
    COMMITTING sessions with valid matching final envelopes as COMMITTED; fail
@@ -244,16 +247,20 @@ not production readiness, and does not implement M1c activation/startup.
 4. Write and fsync a canonical report, then a numbered write-once record binding
    its digest. Recheck fences after database resolution and before/after each
    installation. Kernel ownership remains held until actual filesystem writers
-   settle, including cancellation. All local finalization precedes controller
-   endorsement; the report and record alone never assert successful certification.
+   settle, including cancellation. All local finalization precedes the
+   controller's `validate`; the report and record alone never establish that
+   their epoch is live.
 
 5. Migration 0011 refuses nonterminal sessions, adds RECOVERING and the new
    ingestion contracts. Apply later P3 migrations as required by the release.
    Migrations do not inspect an assumed filesystem path; startup checks storage
    and database compatibility together.
-6. `--validate` checks report digests, protocol, database head and activation
-   prerequisites. Only then enable the new application role/deployment. Old
-   roles remain disabled. The activation receipt binds this run/report/database.
+6. `--validate --sequence N` asks the controller to admit record `N` under the
+   live epoch; this command is delivered by the M1b authority plan, not M1c
+   (see `P3_IMPLEMENTATION_PLAN.md` M1c item 1). Database head, migration and
+   activation prerequisites remain M1c checks. Only then enable the new
+   application role/deployment. Old roles remain disabled. The activation
+   receipt binds this run/report/database.
 
 Prepared report and numbered-record files are immutable forensic evidence, not a
 certificate. Their presence, or absence of another file, never establishes success.
@@ -263,29 +270,44 @@ is removed and no lease expires. Cancellation waits for actual filesystem writer
 before releasing ownership. A competing invocation is refused, including the same
 run submitted through another process.
 
-After all local writes, monitor shutdown and ownership release succeed, the
-serialized controller independently claims the root, verifies the exact canonical
-record/report/root/run binding, checks effective PostgreSQL role exclusion and
-checks its live deployment/writer generation. It releases its claim and checks the
-controller fence again before endorsing the exact record digest in its current
-process. No filesystem operation follows that endorsement. Any preceding error
-leaves the prepared files unendorsed. An acknowledgement lost after endorsement is
-explicitly indeterminate, rather than proof of failure.
+After all local writes, monitor shutdown and ownership release succeed, `prepare`
+asks the controller to validate the record. The controller's durably persisted
+generation is the verification epoch and its only authority state
+([ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md)).
+`validate` is stateless: under its own claim the controller re-reads the record and
+report, checks the exact record/report/root/run binding, the live PostgreSQL role
+fence and database identity and its live deployment/writer generation, and admits
+the record only if its fence names the live generation. Because `establish` is the
+first step of `prepare` and every failure after it ends the epoch, an admitted record
+proves that the scan producing it completed under the live epoch. A lost reply is
+resolved by calling `validate` again (step 6); it is neither success nor failure.
 
-The implemented consumer contract is `CutoverService.validate(receipt)`, backed by
-`ControllerClient.validate_certificate(receipt)`. It requires the current
-controller endorsement and repeats complete storage, SQL and writer-fence checks
-under exclusive ownership. Any failed authorized validation revokes endorsement; apparently
-restored observations do not revive it. Controller restart also discards all
-endorsements and advances the exclusion generation. Future initialization and
-activation consumers must invoke this authority contract; they cannot infer
-certification from JSON files alone. No M1c activation is implemented here.
+An epoch ends in exactly three ways, each advancing the generation on disk before
+any refusal is reported: the controller observes a loss (volume identity, engine
+transport, writer inventory, storage I/O under its claim, the role fence or the
+database identity, or cancellation during any of these); the client declares one
+through `abandon`, which `prepare` sends for any failure after `establish`; or the
+controller restarts. Apparently restored observations revive nothing, because the
+generation already moved. A mismatched argument (wrong run, stored record, report
+digest, operator or peer) refuses the presented record without ending the epoch.
+The controller mints generation 1 at every start and never issues it; the first
+`establish` mints 2 and every epoch end adds one. The fence binds the maintenance
+database as `<system_identifier>/<database_oid>/<datname>`, captured at `establish`
+and compared at every later database observation; the private maintenance settings
+are read once at controller start and are never digested or emitted. Future
+initialization and activation consumers must call the same `validate`; they cannot
+infer admission from JSON files alone. No M1c activation is implemented here.
 
-Every retry performs a full scan. Same-run report-before-record replay is allowed
-under intact exclusion only when immutable bytes agree. A changed generation
-requires a fresh run; old files remain unchanged and a new numbered record appends
-to history. Failed local finalization may be retried by full verification, but
-cannot be reused merely by presenting its files to the consumer.
+Every `prepare` performs a full scan and appends a new report/record pair at the
+next free sequence number; report and record share the number and nothing under
+`protocol/` is reused or rewritten. A report without its record is history left by a
+failed run, not something a later run resumes. A retry after any epoch end is a
+fresh `prepare` under a fresh generation; `run_id` remains only the audit and
+database-idempotence key, so the same run identity may be resubmitted. Residual
+windows — an unobserved loss between fence checks, an `abandon` that fails against
+a live controller, a client that dies before sending it — are bounded by the
+fence-check interval and the controller's next observation; the operator contract
+documents them, nothing closes them.
 
 A fresh empty root gets an explicit protocol-initialization record with an empty
 inventory before API startup. Starting the API does not silently bless an
