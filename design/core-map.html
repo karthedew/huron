@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A source-linked map of Huron core: classes, functions, authorization, Raw ingestion, catalog transactions, identity and integrity maintenance.">
+<title>Huron — Core Code Map</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #faf9f7; --fg: #1f2933; --muted: #5f6b76; --line: #e3e0da;
+  --accent: #0b6e6e; --card: #fff; --code: #f0eeea;
+  --note: #e9f2f2; --note-line: #7fb5b5; --warn: #fdf3e3; --warn-line: #a66d15;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181c; --fg: #dce3e8; --muted: #a4b0bc; --line: #39434d;
+    --accent: #5cc8c8; --card: #191f24; --code: #1d2329;
+    --note: #15262a; --note-line: #5ca1a8; --warn: #2a2315; --warn-line: #d5a247;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.65 system-ui, sans-serif; }
+a { color: var(--accent); text-underline-offset: .18em; }
+a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+.skip { position: absolute; left: 1rem; top: -6rem; padding: .7rem; background: var(--card); z-index: 5; }
+.skip:focus { top: 1rem; }
+.site-nav { display: flex; flex-wrap: wrap; gap: .5rem 1.2rem; padding: .8rem 1.5rem; border-bottom: 1px solid var(--line); }
+.brand { font-weight: 750; }
+.layout { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: 2.5rem; max-width: 1380px; margin: auto; padding: 2rem 1.5rem 5rem; }
+.toc { position: sticky; top: 1.5rem; align-self: start; font-size: .9rem; }
+.toc ol { padding-left: 1.3rem; }
+.toc li { margin: .6rem 0; }
+main { min-width: 0; }
+h1 { font-size: clamp(2rem, 4vw, 3rem); line-height: 1.15; margin: .4rem 0 1rem; }
+h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-bottom: .4rem; border-bottom: 1px solid var(--line); }
+h3 { font-size: 1.12rem; margin: 1.7rem 0 .6rem; }
+p { max-width: 85ch; }
+.eyebrow, .muted { color: var(--muted); }
+.eyebrow { font-size: .8rem; letter-spacing: .09em; text-transform: uppercase; font-weight: 700; }
+.lead { font-size: 1.14rem; }
+code, pre { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .87em; }
+code { background: var(--code); padding: .12em .3em; border-radius: 4px; overflow-wrap: anywhere; }
+pre { margin: 1rem 0; padding: 1rem; background: var(--code); border: 1px solid var(--line); border-radius: 8px; overflow: auto; line-height: 1.65; }
+pre code { background: none; padding: 0; overflow-wrap: normal; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.card { padding: 1rem 1.2rem; border: 1px solid var(--line); border-radius: 9px; background: var(--card); }
+.card h3 { margin-top: 0; }
+.card p:last-child { margin-bottom: 0; }
+.note, .warning { padding: .9rem 1.1rem; border-left: 4px solid var(--note-line); background: var(--note); border-radius: 0 8px 8px 0; }
+.warning { border-color: var(--warn-line); background: var(--warn); }
+.table-wrap { overflow-x: auto; margin: 1rem 0; }
+table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: .91rem; }
+caption { text-align: left; color: var(--muted); margin-bottom: .6rem; }
+th, td { text-align: left; vertical-align: top; border: 1px solid var(--line); padding: .65rem .75rem; }
+th { background: var(--code); }
+td:first-child { width: 25%; }
+td ul { padding-left: 1.2rem; margin: 0; }
+details { border: 1px solid var(--line); border-radius: 8px; margin: .9rem 0; padding: .8rem 1rem; }
+summary { cursor: pointer; font-weight: 650; }
+li { margin: .3rem 0; }
+section, tr[id], article[id] { scroll-margin-top: 1.5rem; }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+  .toc { position: static; border-bottom: 1px solid var(--line); }
+  .toc ol { columns: 2; }
+}
+@media (max-width: 540px) {
+  .layout { padding: 1.25rem .9rem 3rem; }
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  th, td { padding: .5rem; }
+}
+@media print {
+  :root { color-scheme: light; --bg: #fff; --fg: #111; --muted: #444; --line: #bbb; --accent: #075252; --card: #fff; --code: #f3f3f3; --note: #f3f3f3; --warn: #f3f3f3; }
+  .site-nav, .toc, .skip { display: none; }
+  .layout { display: block; padding: 0; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .table-wrap { overflow: visible; }
+  table { min-width: 0; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the code map</a>
+<nav class="site-nav" aria-label="Design documents">
+  <a class="brand" href="index.html">Huron</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="layer-raw.html">Raw storage</a>
+  <a href="catalog-search.html">Catalog</a>
+  <a href="roadmap.html">Roadmap</a>
+</nav>
+<div class="layout">
+<nav class="toc" aria-label="On this page">
+  <strong>Core code map</strong>
+  <ol>
+    <li><a href="#orientation">Orientation</a></li>
+    <li><a href="#modules">Every module</a></li>
+    <li><a href="#collaborations">Class relationships</a></li>
+    <li><a href="#authorization">Authorization</a></li>
+    <li><a href="#catalog">Catalog operations</a></li>
+    <li><a href="#raw">Raw ingestion &amp; commit</a></li>
+    <li><a href="#reads">Revision reads</a></li>
+    <li><a href="#identity">Identity operations</a></li>
+    <li><a href="#integrity">Integrity maintenance</a></li>
+    <li><a href="#ports">Interfaces &amp; adapters</a></li>
+    <li><a href="#reading">Reading &amp; test guide</a></li>
+  </ol>
+</nav>
+<main id="main">
+<header>
+  <p class="eyebrow">Implementation atlas · inspected 12 September 2026</p>
+  <h1><code>huron/core</code></h1>
+  <p class="lead">Where authenticated Huron operations coordinate domain rules, storage, database transactions, and retry behavior.</p>
+  <p>This is a source-linked map of <a href="../src/huron/core/">src/huron/core/</a>, including its <code>integrity/</code> subpackage. It describes the inspected implementation; delivery status remains in the <a href="roadmap.html">roadmap</a>. Source links are relative to this repository, so keep the HTML in <code>design/</code> when opening it locally.</p>
+</header>
+
+<section id="orientation">
+<h2>1. Orientation</h2>
+<p><strong>Core chooses the operation and its ordering. Injected adapters perform the I/O.</strong> For example, <code>IngestService</code> coordinates a Raw commit through <code>RawStore</code> and <code>HierarchyStore</code>; the POSIX and PostgreSQL implementations live in <code>pkg/</code>.</p>
+<div class="cards">
+  <article class="card"><h3>Actor-bound operations</h3><p><code>CatalogCreation</code>, <code>CatalogService</code>, <code>RawIngestionService</code>, <code>RevisionReadService</code>, and <code>IdentityService</code> use an <code>AccessPolicy</code> bound to an authenticated actor.</p></article>
+  <article class="card"><h3>Internal workflow implementations</h3><p><code>_catalog.py</code>, <code>_ingest.py</code>, and <code>_revision_reader.py</code> implement the work behind those operations. Their methods are not substitutes for actor-bound authorization.</p></article>
+  <article class="card"><h3>Interfaces and shared helpers</h3><p><code>catalog_ports.py</code> and <code>ports.py</code> define injected capabilities. Scope resolution, retry claims, fingerprints, and generation documents have focused helper modules.</p></article>
+  <article class="card"><h3>Externally authorized maintenance</h3><p><code>integrity/CutoverService</code> uses external operator authority and continuous writer/database exclusion. It has a separate interface from normal scientist operations.</p></article>
+</div>
+<p class="note">The root <a href="../src/huron/core/__init__.py"><code>__init__.py</code></a> re-exports exactly six names: <code>AccessPolicy</code> and the five actor-bound classes above. Other classes remain available from their defining modules. Injected interfaces connect the implementations; <a href="../pyproject.toml">import-linter contracts</a> enforce dependency direction and exclude concrete adapters from core.</p>
+<pre tabindex="0" aria-label="Layer dependency direction"><code>applications  →  core  →  pkg  →  schema
+      │                    ▲
+      └─ constructs adapters┘
+
+core imports domain values and protocols.
+core does not import FastAPI, asyncpg, or concrete storage adapters.</code></pre>
+</section>
+
+<section id="modules">
+<h2>2. Every module</h2>
+<p>All 23 Python files in the inspected tree are listed here. The symbols column names the main classes and functions, including internal helpers useful for navigation. On narrow screens, tables and call diagrams scroll horizontally within their own frames.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Core module inventory">
+<table>
+<caption>Paths below are relative to src/huron/core/.</caption>
+<thead><tr><th scope="col">Module</th><th scope="col">Classes / functions</th><th scope="col">Responsibility</th></tr></thead>
+<tbody>
+<tr><td><a href="../src/huron/core/__init__.py"><code>__init__.py</code></a></td><td>Six public re-exports</td><td>Declares the intended actor-bound entry surface.</td></tr>
+<tr><td><a href="../src/huron/core/access.py"><code>access.py</code></a></td><td><code>AccessPolicy</code>; <code>as_rbac_principal()</code>, <code>bindings_for_principal()</code>, <code>visibility_for_principal()</code>, <code>check()</code></td><td>Current discovery and capability decisions; <code>BindingCacheMap</code> and <code>_cached_bindings_for()</code> support caller-scoped caching.</td></tr>
+<tr><td><a href="../src/huron/core/scopes.py"><code>scopes.py</code></a></td><td><code>resource_scope()</code>, <code>organization_scope()</code>, <code>project_scope()</code>, <code>dataset_scope()</code></td><td>Resolve authoritative ancestry after target discovery.</td></tr>
+<tr><td><a href="../src/huron/core/catalog.py"><code>catalog.py</code></a></td><td><code>CatalogService</code></td><td>Compose typed collections; expose release, governance, service-account, policy, and layer-description operations.</td></tr>
+<tr><td><a href="../src/huron/core/catalog_creation.py"><code>catalog_creation.py</code></a></td><td><code>CatalogCreation</code></td><td>Create organization, project, and dataset identities with retry receipts and generation files.</td></tr>
+<tr><td><a href="../src/huron/core/catalog_collections.py"><code>catalog_collections.py</code></a></td><td><code>DescriptionChange</code>, <code>_Collection</code>, <code>OrganizationCollection</code>, <code>ProjectCollection</code>, <code>DatasetCollection</code></td><td>Typed discovery, keyset browsing, and version-guarded descriptive updates.</td></tr>
+<tr><td><a href="../src/huron/core/catalog_documents.py"><code>catalog_documents.py</code></a></td><td><code>GenerationDocuments.write()</code></td><td>Serialize canonical hierarchy documents and install them through storage.</td></tr>
+<tr><td><a href="../src/huron/core/catalog_claims.py"><code>catalog_claims.py</code></a></td><td><code>claimed_result()</code></td><td>Claim a mutation or resolve its prior receipt within the caller’s transaction.</td></tr>
+<tr><td><a href="../src/huron/core/catalog_ports.py"><code>catalog_ports.py</code></a></td><td>Reader, authorization-fact, creation, description, and retry protocols</td><td>Focused catalog persistence interfaces; <a href="#ports">full grouping below</a>.</td></tr>
+<tr><td><a href="../src/huron/core/_catalog.py"><code>_catalog.py</code></a></td><td><code>HierarchyRepository</code></td><td>Internal release and governance operations; initializes the injected Raw store during construction.</td></tr>
+<tr><td><a href="../src/huron/core/raw.py"><code>raw.py</code></a></td><td><code>RawIngestionService</code></td><td>Actor-bound upload operations and combined create-dataset/open-upload intake.</td></tr>
+<tr><td><a href="../src/huron/core/_ingest.py"><code>_ingest.py</code></a></td><td><code>IngestService</code>, <code>SessionLedger</code>, <code>ExpiryReport</code>, <code>_MeasuredChunks</code></td><td>Upload planning, byte transfer, verified completion, publication, ledger persistence, and lease expiry.</td></tr>
+<tr><td><a href="../src/huron/core/idempotency.py"><code>idempotency.py</code></a></td><td><code>request_sha256()</code>, <code>session_claim()</code></td><td>Request fingerprints and manifest-identity-based upload claims.</td></tr>
+<tr><td><a href="../src/huron/core/revisions.py"><code>revisions.py</code></a></td><td><code>RevisionReadService</code></td><td>Actor-bound discovery and Raw-read authorization.</td></tr>
+<tr><td><a href="../src/huron/core/_revision_reader.py"><code>_revision_reader.py</code></a></td><td><code>RevisionService</code>, <code>PayloadFile</code></td><td>Resolve database records, check stored manifests, and return file locations and stats.</td></tr>
+<tr><td><a href="../src/huron/core/identity.py"><code>identity.py</code></a></td><td><code>IdentityService</code></td><td>User provisioning, password changes, credential issuance and revocation.</td></tr>
+<tr><td><a href="../src/huron/core/ports.py"><code>ports.py</code></a></td><td><code>RbacStore</code>, <code>ApiKeyWriter</code>, <code>HierarchyWriter</code>, <code>HierarchyStore</code></td><td>Governance, API-key writes, and the broader transactional upload/revision interfaces.</td></tr>
+<tr><td><a href="../src/huron/core/integrity/__init__.py"><code>integrity/__init__.py</code></a></td><td>Package docstring</td><td>Names the maintenance and immutable-evidence subpackage; no re-exports.</td></tr>
+<tr><td><a href="../src/huron/core/integrity/cutover.py"><code>integrity/cutover.py</code></a></td><td><code>CutoverService</code>, <code>_Fence</code>, <code>_settled_write()</code></td><td>Prepare and validate legacy cutover evidence under uninterrupted exclusion.</td></tr>
+<tr><td><a href="../src/huron/core/integrity/generations.py"><code>integrity/generations.py</code></a></td><td><code>GenerationVerifier</code></td><td>Check the exact hierarchy-document inventory and acknowledged generations.</td></tr>
+<tr><td><a href="../src/huron/core/integrity/verification.py"><code>integrity/verification.py</code></a></td><td><code>RevisionVerifier</code></td><td>Verify legacy revision documents and payloads against trustworthy identity.</td></tr>
+<tr><td><a href="../src/huron/core/integrity/models.py"><code>integrity/models.py</code></a></td><td><code>EvidenceDocument</code>, <code>DocumentObservation</code>, <code>LegacyRevision</code>, <code>FenceEvidence</code>, <code>MaintenanceGrant</code>, <code>GenerationObservation</code>, <code>ProtocolInventory</code>, <code>ProtocolTransition</code></td><td>Canonical evidence, exact membership, and the fence/record models bound to the controller generation and database identity.</td></tr>
+<tr><td><a href="../src/huron/core/integrity/ports.py"><code>integrity/ports.py</code></a></td><td><code>LegacyStorage</code>, <code>MaintenanceAuthority</code>, <code>WriterExclusion</code>, <code>DatabaseExclusion</code>, <code>LegacyMaintenance</code></td><td>External authority, writer fencing, storage inspection, and legacy database maintenance interfaces.</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="collaborations">
+<h2>3. Class relationships</h2>
+<p>Arrows below mean “uses or delegates to,” not inheritance. Database and filesystem arrows are calls through interfaces; concrete adapters are shown in <a href="#ports">section 10</a>.</p>
+<pre tabindex="0" aria-label="Core class collaboration map"><code>Authenticated actor
+└─ AccessPolicy ──→ HierarchyFacts + BindingFacts + RoleBindingAuthorizer
+   │
+   ├─ CatalogCreation ──→ CreationStore + GenerationDocuments ──→ RawStore
+   │
+   ├─ CatalogService
+   │  ├─ OrganizationCollection / ProjectCollection / DatasetCollection
+   │  │  └─ DescriptionStore + GenerationDocuments ──→ RawStore
+   │  └─ HierarchyRepository ──→ HierarchyStore + RbacStore + RawStore
+   │
+   ├─ RawIngestionService ──→ CatalogCreation (combined intake)
+   │  └─ IngestService ──→ HierarchyStore + RawStore + Clock
+   │
+   ├─ RevisionReadService
+   │  └─ RevisionService ──→ HierarchyStore + RawStore
+   │
+   └─ IdentityService ──→ CatalogService
+      └─ PrincipalStore + CredentialStore + SessionStore + ApiKeyWriter
+
+External maintenance authority
+└─ CutoverService
+   ├─ MaintenanceAuthority + WriterExclusion + DatabaseExclusion
+   ├─ LegacyMaintenance + LegacyStorage
+   └─ GenerationVerifier + RevisionVerifier</code></pre>
+<p><strong>Actual inheritance:</strong> the three typed catalog collections inherit <code>_Collection</code>. Evidence models inherit <code>EvidenceDocument</code>. Protocols compose other protocols, such as <code>HierarchyWriter(CreationTransaction, DescriptionTransaction)</code>. The main operation classes collaborate through composition.</p>
+</section>
+
+<section id="authorization">
+<h2>4. Authorization: actor → discovery → capability</h2>
+<p><a href="../src/huron/core/access.py"><code>AccessPolicy</code></a> owns the actor reference and uses injected catalog/RBAC facts. Its <code>visibility()</code>, <code>require()</code>, and <code>bindings()</code> calls use fresh local binding caches rather than retaining grants across operations.</p>
+<ol>
+  <li><code>visibility_for_principal()</code> combines current bindings, project classifications, and the parents of dataset-scoped grants through <code>RoleBindingAuthorizer.visibility()</code>.</li>
+  <li><code>scope()</code> calls <a href="../src/huron/core/scopes.py"><code>resource_scope()</code></a>. Hidden and absent target resources fail discovery before a capability denial. Dataset scope resolves the owning project and organization from server records.</li>
+  <li><code>require()</code> calls <code>check()</code>, which accepts only <code>Decision.ALLOW</code> from <code>pkg.rbac.decide()</code>.</li>
+  <li><code>require_claim()</code> separately checks that an idempotency claim belongs to the authenticated actor.</li>
+</ol>
+<p><code>bindings_for_principal()</code> reads stored human/group bindings. For service accounts, it resolves the account and synthesizes organization-scoped authority; missing or disabled accounts get no bindings.</p>
+<p class="note"><strong>Read the operation’s actual rule.</strong> Upload mutation methods use <code>_owned()</code> / <code>_owned_file()</code>. An owner can abort their session without the normal Raw-write check; a different actor needs project-update authority. The root package’s “authorized” intent is not proof of a check on every method: <code>CatalogService.create_policy()</code> and <code>list_policies()</code> currently delegate without an explicit <code>AccessPolicy.require()</code> call. This map records that behavior rather than implying universal capability checks.</p>
+</section>
+
+<section id="catalog">
+<h2>5. Catalog operations</h2>
+<h3>Create identities: CatalogCreation</h3>
+<p><code>create_organization()</code>, <code>create_project()</code>, and <code>create_dataset()</code> authorize, validate configuration, and claim the operation. A dataset is a stable identity; creation alone does not produce a Raw revision.</p>
+<pre tabindex="0" aria-label="Catalog creation and description transaction ordering"><code>CatalogCreation.create_dataset()
+  AccessPolicy.require() + require_claim()
+  validate slug / entry layer; resolve authoritative parents
+  CreationStore.transaction():
+    claimed_result() → existing record on a matching retry
+    writer.insert_dataset()
+    GenerationDocuments.write() → RawStore.write_generation()
+    writer.remember()
+  database transaction commits
+
+CatalogService.datasets.describe(id, DescriptionChange)
+  authorize → Dataset.describe(expected_version, ...)
+  unchanged object? return without opening a transaction
+  DescriptionStore.transaction():
+    writer.datasets.describe() → compare-and-swap version check
+    read committed ancestry → GenerationDocuments.write()
+  database transaction commits</code></pre>
+<p><code>GenerationDocuments.write()</code> adds the generation schema identifier and canonicalizes the record. Storage writes <code>generations/NNNNNN.json</code>, then atomically replaces <code>CURRENT.json</code>. <code>DescriptionChange</code> distinguishes omitted values from empty replacements; slug changes are refused.</p>
+<h3>Discover and govern: CatalogService</h3>
+<ul>
+  <li><code>organizations</code>, <code>projects</code>, <code>datasets</code>: typed <code>get()</code>, <code>browse()</code>, and <code>describe()</code>. Browse checks parent discovery and returns visibility-filtered keyset windows.</li>
+  <li><code>create_release()</code>, <code>release()</code>, <code>releases()</code>: delegate to <code>HierarchyRepository</code>. Tag creation resolves an exact revision, inserts a release row, and writes <code>RawStore.write_tag_once()</code> within the open transaction.</li>
+  <li><code>grant_role()</code>, <code>revoke_role()</code>, <code>get_role_binding()</code>, <code>bindings_at()</code>: scoped role administration through <code>RbacStore</code>.</li>
+  <li><code>create_service_account()</code>, <code>get_service_account()</code>, <code>list_service_accounts()</code>, <code>disable_service_account()</code>: organization-scoped account administration.</li>
+  <li><code>create_policy()</code>, <code>attach_policy()</code>, <code>list_policies()</code>: policy persistence; attachment checks the target’s policy-attach capability.</li>
+  <li><code>layers()</code>: describes declared layer capabilities and current caller decisions. It does not execute Bronze, Silver, or Gold processing.</li>
+</ul>
+<p class="warning"><strong>Two stores, ordered writes.</strong> Creation, description, and release-tag workflows perform filesystem I/O while a database transaction is open. A filesystem exception rolls back database work, but a database rollback cannot undo an already-durable filesystem write. This is different from the short, separated database transactions in Raw commit below.</p>
+</section>
+
+<section id="raw">
+<h2>6. Raw ingestion: the filesystem/database crossing</h2>
+<p><a href="../src/huron/core/raw.py"><code>RawIngestionService</code></a> is the actor-bound interface. <a href="../src/huron/core/_ingest.py"><code>IngestService</code></a> owns the sequencing. The state machine itself is <a href="../src/huron/pkg/catalog/ingest.py"><code>pkg.catalog.ingest.IngestSession</code></a>; core persists the successor values it returns.</p>
+<pre tabindex="0" aria-label="Normal Raw ingest state path"><code>PREPARING → UPLOADING → VERIFYING → COMMITTING → COMMITTED
+                                     │
+                                     └─ matching commit retries reuse frozen evidence
+
+Each submission uploads its complete file inventory.
+No inherited files or cross-revision hardlink deduplication.</code></pre>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Raw operation inventory">
+<table>
+<thead><tr><th scope="col">Operation</th><th scope="col">Internal methods</th><th scope="col">I/O and result</th></tr></thead>
+<tbody>
+<tr><td><code>create()</code></td><td><code>_plan()</code> → <code>_reserve()</code> → <code>_open_envelope()</code></td><td>Validate Raw entry layer and manifest; claim and reserve database session/file rows; create staging and manifest; persist <code>UPLOADING</code>.</td></tr>
+<tr><td><code>create_in_project()</code></td><td><code>CatalogCreation.create_dataset()</code> → <code>create()</code></td><td>Use related retry identities for dataset creation and its first session. These are ordered operations, not one joint transaction.</td></tr>
+<tr><td><code>receive_part()</code></td><td><code>_authorize_part()</code> → <code>_observe_part()</code> → <code>_record_part()</code></td><td>Check session/part conditions; call <code>write_part()</code>; persist progress after durable bytes. A valid single-part file completes through materialization immediately.</td></tr>
+<tr><td><code>complete_file()</code></td><td><code>_materialize_file()</code>, <code>_current_upload_file()</code></td><td><code>finish_file()</code> installs a verified independent payload copy; guarded ledger update records <code>COMPLETE</code>; <code>discard_file()</code> removes upload input. Mismatch resets recorded parts for retry.</td></tr>
+<tr><td><code>verify()</code></td><td><code>IngestSession.verify()</code></td><td>Require every declared file complete and persist <code>VERIFYING</code>. Exact physical envelope verification occurs during publication too.</td></tr>
+<tr><td><code>commit()</code></td><td><code>_compose_commit()</code>, <code>_publish_envelope()</code>, <code>_record_revision()</code>, <code>_write_index()</code></td><td>Freeze the command and documents, publish durable evidence, record completion, and update derived navigation.</td></tr>
+<tr><td><code>ledger()</code>, <code>heartbeat()</code>, <code>abort()</code></td><td><code>ledger()</code>, <code>entry()</code>, lease/state operations</td><td>Read current session/files; renew lease or persist abort and audit. Aborting does not delete staging files here.</td></tr>
+<tr><td>Trusted expiry sweep</td><td><code>expire_lapsed()</code></td><td>List eligible lapsed sessions, compare state/version/lease, persist <code>ABORTED</code> and audit; return <code>ExpiryReport</code>. Does not reclaim <code>COMMITTING</code> or delete staging.</td></tr>
+</tbody>
+</table>
+</div>
+<h3>Commit, expanded</h3>
+<pre tabindex="0" aria-label="Raw commit sequence showing separate database transactions"><code>RawIngestionService.commit()
+  owner / current Raw-write check; claim ownership; MetadataSubmission validation
+  └─ IngestService.commit()
+     ├─ _compose_commit()
+     │  └─ read dataset → project → organization; compose metadata and final path
+     │
+     ├─ DATABASE TRANSACTION A
+     │  ├─ writer.claim()
+     │  ├─ writer.freeze_commit()       ← COMMITTING + canonical CommitIntent
+     │  └─ writer.remember()            ← pending-commit replay receipt
+     │
+     ├─ FILESYSTEM: _publish_envelope()
+     │  ├─ write_document()            ← manifest, metadata, COMMITTED
+     │  ├─ verify_envelope() → seal()
+     │  ├─ commit_envelope()           ← durable same-filesystem publication
+     │  └─ verify final envelope; finish/replay publication durability
+     │
+     ├─ DATABASE TRANSACTION B: _record_revision()
+     │  ├─ claim() → lock_ingest_session() → check state and etag
+     │  ├─ insert_revision() + update_ingest_session(COMMITTED)
+     │  ├─ insert_audit_event() + insert_outbox_event()
+     │  └─ remember()                  ← completed-revision replay receipt
+     │
+     └─ FILESYSTEM: _write_index()      ← best-effort INDEX.json replacement</code></pre>
+<p><strong>The crash seam:</strong> publication may be durable before transaction B succeeds. A matching retry uses the frozen <code>CommitIntent</code>, verifies the exact stored evidence, and finishes the database work. Existing final storage is verified on replay; an index-write failure is logged without failing an already successful commit.</p>
+<p><strong>Values crossing the interfaces:</strong> <code>ManifestEntry</code>, <code>IngestFile</code>, <code>IngestSession</code>, <code>CommitIntent</code>, and <code>RevisionRecord</code> belong to <code>pkg/catalog</code>. Core’s <code>SessionLedger</code> pairs a session with its file records. <code>Clock</code> is injected into <code>IngestService</code>; blocking Raw-store operations generally run through <code>asyncify()</code>.</p>
+</section>
+
+<section id="reads">
+<h2>7. Revision reads</h2>
+<pre tabindex="0" aria-label="Revision read sequence"><code>RevisionReadService.revision(id)
+  → RevisionService.revision(id, visibility)
+    → HierarchyStore.revision(id)
+    → HierarchyStore.datasets.get(dataset_id, visibility)
+
+RevisionReadService.payload_file(record, path)
+  → _readable(record.id): freshly resolve identity + require Raw data.read
+  → RevisionService.payload_file(authoritative_record, path)
+    → validate_manifest_path(path)
+    → RawStore.read_document(manifest.json) → decode_manifest()
+    → compare manifest digest with database record
+    → resolve a listed entry → RawStore.stat_document(payload path)
+    → compare file size → PayloadFile(entry, location, stat)</code></pre>
+<p><code>manifest_file()</code> returns a manifest location and stat after authorization. <code>PayloadFile</code> also contains a path and stat, not an open file descriptor or the payload bytes. The transport streams the returned location. Individual payload reads check the stored manifest digest and file size; they do not hash the full file on each download.</p>
+</section>
+
+<section id="identity">
+<h2>8. Identity operations</h2>
+<p><a href="../src/huron/core/identity.py"><code>IdentityService</code></a> consumes <code>AccessPolicy</code>, <code>PrincipalStore</code>, <code>CredentialStore</code>, <code>SessionStore</code>, <code>ApiKeyWriter</code>, and the actor-bound <code>CatalogService</code>.</p>
+<ul>
+  <li><code>create_user()</code>: require system user-management capability, create identity, hash the initial password off-thread, and persist its credential.</li>
+  <li><code>set_password()</code>: <code>_user()</code> resolves an authorized human identity; persist the new credential, then <code>_revoke()</code> browser sessions and API keys.</li>
+  <li><code>disable_user()</code>: disable the principal, then revoke sessions and keys.</li>
+  <li><code>issue_key()</code>: create a key for the authenticated actor and return the record plus its one-time cleartext token.</li>
+  <li><code>issue_service_account_key()</code>: <code>_account()</code> checks management authority and exact organization membership; reject disabled accounts before storing a new key.</li>
+  <li><code>disable_service_account()</code>: disable through the catalog, then revoke programmatic credentials, with an early return for an account disabled before this invocation.</li>
+</ul>
+<p>These methods sequence calls to individual stores. There is no shared transaction spanning principal, credential, session, and API-key adapters in this class. Several timestamps use <code>datetime.now(UTC)</code> directly; clock injection is not uniform across core.</p>
+</section>
+
+<section id="integrity">
+<h2>9. Integrity maintenance</h2>
+<p><a href="../src/huron/core/integrity/cutover.py"><code>CutoverService</code></a> prepares legacy storage for a protocol transition. <code>prepare(run_id)</code> returns a <code>ProtocolTransition</code>; <code>validate(transition)</code> asks the live authority to admit the record under its current generation.</p>
+<ol>
+  <li><code>MaintenanceAuthority.authenticate()</code> supplies a root-scoped operator grant. <code>WriterExclusion.establish()</code> mints a new controller generation and returns fence evidence naming it, the run, the operator and the database identity; the returned actor/root must match the grant.</li>
+  <li><code>LegacyStorage.claim()</code> holds exclusive local ownership. <code>DatabaseExclusion.exclude()</code> compares the fence's database identity with the live database, then excludes application database roles. <code>_Fence.check()</code> and <code>monitor()</code> continuously verify both forms of exclusion.</li>
+  <li><code>GenerationVerifier.verify()</code> compares the exact control-file inventory, historical generation identities, current document contents, and <code>CURRENT.json</code> pointers against authoritative hierarchy records.</li>
+  <li>Scan the union of filesystem and database revision paths. <code>LegacyMaintenance.lookup()</code> resolves trusted identity. <code>RevisionVerifier.verify()</code> inspects documents and delegates full payload inspection, producing <code>VERIFIED</code> or <code>DEGRADED</code> evidence; ambiguous identity is refused.</li>
+  <li><code>LegacyMaintenance.resolve()</code> persists trusted records and legacy-session resolution. Write the canonical inventory report and numbered transition record through <code>_publish()</code>.</li>
+  <li>Any failure after <code>establish</code> ends the epoch through <code>WriterExclusion.abandon()</code>. After releasing local ownership, <code>WriterExclusion.validate()</code> asks the controller to admit the record; it is admitted only while its fence names the live generation, and a lost reply is resolved by validating again.</li>
+</ol>
+<p><code>_settled_write()</code> waits for a started evidence write to settle even if the coroutine is cancelled. <code>ProtocolInventory.certifies()</code> checks exact verified membership; <code>ProtocolTransition.bind()</code> and <code>validate_inventory()</code> bind the receipt to the report’s digest, identities, counts, and findings.</p>
+<p class="warning"><strong>Preparation is not activation.</strong> This workflow leaves application writers excluded. The existence of an immutable report or record does not establish admission; only the controller's live generation does. Protocol initialization, activation/startup enforcement, general recovery, and trash cleanup are separate planned capabilities in the <a href="layer-raw.html#p3-integrity">Raw integrity design</a>; the classes here do not establish their delivery.</p>
+</section>
+
+<section id="ports">
+<h2>10. Interfaces and concrete adapters</h2>
+<p>Core owns the workflow; SQL and filesystem implementations are outside this directory. These links are the next stops when following a core call into actual I/O.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Interfaces and adapters">
+<table>
+<thead><tr><th scope="col">Interface location</th><th scope="col">Interface and consumers</th><th scope="col">Implementation to follow</th></tr></thead>
+<tbody>
+<tr><td><a href="../src/huron/core/catalog_ports.py"><code>catalog_ports.py</code></a></td><td><code>CollectionReader</code>, <code>CatalogReaders</code>, <code>HierarchyFacts</code>: typed discovery and authorization ancestry.</td><td><a href="../src/huron/pkg/metastore/hierarchy.py"><code>PostgresHierarchyStore</code></a> and <a href="../src/huron/pkg/metastore/queries.py">typed SQL collections</a>; <code>InMemoryHierarchyStore</code> provides a second adapter.</td></tr>
+<tr><td><a href="../src/huron/core/catalog_ports.py"><code>catalog_ports.py</code></a></td><td><code>CreationStore</code>, <code>CreationTransaction</code>, <code>RetryTransaction</code>; <code>DescriptionStore</code>, <code>DescriptionTransaction</code>, <code>DescriptionWriter</code>.</td><td><a href="../src/huron/pkg/metastore/hierarchy.py"><code>PostgresHierarchyStore.transaction()</code></a> yields <code>_PostgresTransactionWriter</code>; typed description writers perform version-guarded SQL updates.</td></tr>
+<tr><td><a href="../src/huron/core/ports.py"><code>ports.py</code></a></td><td><code>HierarchyStore</code>, <code>HierarchyWriter</code>: ingestion, revision reads, releases, and transactional audit/outbox.</td><td><a href="../src/huron/pkg/metastore/hierarchy.py"><code>PostgresHierarchyStore</code></a> inherits <a href="../src/huron/pkg/metastore/ingest.py"><code>PostgresIngestReader</code></a>; its transaction writer inherits <code>PostgresIngestWriter</code>.</td></tr>
+<tr><td><a href="../src/huron/core/catalog_ports.py"><code>catalog_ports.py</code></a> + <a href="../src/huron/core/ports.py"><code>ports.py</code></a></td><td><code>BindingFacts</code>, <code>RbacStore</code>: access decisions and governance persistence.</td><td><a href="../src/huron/pkg/metastore/rbac.py">RBAC adapters</a>.</td></tr>
+<tr><td><a href="../src/huron/pkg/catalog/ports.py"><code>pkg/catalog/ports.py</code></a></td><td><code>RawStore</code>, <code>Clock</code>: used by ingestion, catalog publication, and revision reading. These protocols currently live in the catalog package.</td><td><a href="../src/huron/pkg/rawstore/store.py"><code>PosixRawStore</code></a>; <a href="../src/huron/pkg/metastore/hierarchy.py"><code>SystemClock</code></a>.</td></tr>
+<tr><td><a href="../src/huron/core/ports.py"><code>ports.py</code></a> + <a href="../src/huron/pkg/auth/">auth package</a></td><td><code>ApiKeyWriter</code>; auth-owned <code>PrincipalStore</code>, <code>CredentialStore</code>, <code>SessionStore</code>.</td><td>Metastore <a href="../src/huron/pkg/metastore/api_keys.py">API keys</a>, <a href="../src/huron/pkg/metastore/principals.py">principals</a>, <a href="../src/huron/pkg/metastore/credentials.py">credentials</a>, and <a href="../src/huron/pkg/metastore/sessions.py">sessions</a>.</td></tr>
+<tr><td><a href="../src/huron/core/integrity/ports.py"><code>integrity/ports.py</code></a></td><td><code>LegacyStorage</code>, <code>LegacyMaintenance</code>, <code>DatabaseExclusion</code>.</td><td><a href="../src/huron/pkg/rawstore/maintenance.py"><code>MaintenanceStore</code></a>, <a href="../src/huron/pkg/metastore/legacy.py"><code>PostgresLegacyMaintenance</code></a>, <a href="../src/huron/pkg/metastore/maintenance.py"><code>PostgresRoleExclusion</code></a>.</td></tr>
+<tr><td><a href="../src/huron/core/integrity/ports.py"><code>integrity/ports.py</code></a></td><td><code>MaintenanceAuthority</code>, <code>WriterExclusion</code>, <code>DatabaseExclusion</code>: external authentication, epoch-bound writer exclusion, database identity and role exclusion.</td><td>Deployment maintenance/controller capabilities supplied by application wiring; core only consumes their interfaces.</td></tr>
+</tbody>
+</table>
+</div>
+<details open>
+<summary>Database calls behind Raw ingestion</summary>
+<ul>
+  <li><code>begin_ingest()</code>: lock the dataset row, check for a nonterminal session, allocate the next committed revision number, and insert <code>ingest_sessions</code> / <code>ingest_files</code>.</li>
+  <li><code>update_ingest_session()</code> and <code>update_ingest_file()</code>: conditional state/progress updates. <code>lock_ingest_session()</code> uses a database row lock.</li>
+  <li><code>freeze_commit()</code>: lock and freeze <code>ingest_commit_intents</code> together with the first <code>COMMITTING</code> transition.</li>
+  <li><code>insert_revision()</code>: insert <code>dataset_revisions</code>. <code>insert_audit_event()</code> / <code>insert_outbox_event()</code> append the corresponding records in the same completion transaction.</li>
+  <li><code>claim()</code> / <code>remember()</code>: compare request identity and persist receipts in <code>idempotency_records</code>.</li>
+  <li><code>ingest_session()</code>, <code>ingest_files()</code>, <code>ingest_file()</code>, <code>revision()</code>: read current database records. <a href="../src/huron/pkg/metastore/rows.py"><code>rows.py</code></a> converts SQL results to domain values.</li>
+</ul>
+</details>
+<details>
+<summary>Filesystem calls behind Raw ingestion</summary>
+<p><code>create_staging()</code> creates <code>upload/</code>, <code>completion/</code>, and <code>envelope/payload/</code>. <code>write_part()</code> writes input byte ranges; <code>finish_file()</code> copies, hashes, and installs independent payload. Only <code>envelope/</code> is published.</p>
+<p><code>write_document()</code>, <code>verify_envelope()</code>, <code>seal()</code>, and <code>commit_envelope()</code> implement publication. Follow <a href="../src/huron/pkg/rawstore/materialize.py"><code>materialize.py</code></a>, <a href="../src/huron/pkg/rawstore/inspection.py"><code>inspection.py</code></a>, and <a href="../src/huron/pkg/rawstore/commit.py"><code>commit.py</code></a> for descriptor traversal, inventory checking, rename, and fsync details.</p>
+</details>
+</section>
+
+<section id="reading">
+<h2>11. Reading and test guide</h2>
+<div class="cards">
+<article class="card"><h3>“How does an upload become durable?”</h3><p>Read <code>raw.py</code> → <code>_ingest.py</code> → <code>pkg/rawstore/store.py</code> and <code>pkg/metastore/ingest.py</code>. Start with <code>IngestService.commit()</code>, then trace file completion backward.</p></article>
+<article class="card"><h3>“Where is a dataset created or renamed?”</h3><p>Read <code>catalog_creation.py</code> and <code>catalog_collections.py</code> → domain record <code>describe()</code> → <code>catalog_documents.py</code> → the hierarchy adapter. Titles/descriptions can change; storage slugs stay fixed.</p></article>
+<article class="card"><h3>“Why can this actor see this resource?”</h3><p>Read <code>access.py</code> → <code>scopes.py</code> → <code>pkg/rbac</code> and the visibility-filtered metastore collections. Discovery and byte-read capability are separate decisions.</p></article>
+<article class="card"><h3>“What proves a legacy root was inspected?”</h3><p>Read <code>integrity/cutover.py</code> → verifiers → evidence models → maintenance adapters. Follow both durable evidence and the controller's live generation checks.</p></article>
+</div>
+<h3>Behavioral evidence to inspect</h3>
+<ul>
+  <li><a href="../tests/unit/test_core_workflows.py">Core workflow unit tests</a>: reusable operations independently of HTTP.</li>
+  <li><a href="../tests/contract/test_catalog_store.py">Catalog-store contract tests</a>; <a href="../tests/integration/test_catalog_creation.py">catalog creation</a> and <a href="../tests/integration/test_catalog_descriptions.py">description integration tests</a>.</li>
+  <li><a href="../tests/integration/test_verified_raw_ingest.py">Verified Raw ingestion integration tests</a>; <a href="../tests/contract/test_ingest_process_death.py">process-death contract tests</a>; <a href="../tests/acceptance/test_raw_ingest_gate.py">Raw acceptance gate</a>.</li>
+  <li><a href="../tests/unit/test_integrity_cutover.py">Cutover unit tests</a>, <a href="../tests/unit/test_integrity_generations.py">generation verification tests</a>, and <a href="../tests/integration/test_protocol_cutover.py">protocol cutover integration tests</a>.</li>
+</ul>
+<p>These are source-navigation links, not a claim that the suites were run to produce this document. The <a href="../Makefile">Makefile</a> and <a href="../AGENTS.md">repository instructions</a> define implementation gates.</p>
+</section>
+<footer>
+<p>Scope: observed core implementation, including preparatory integrity work. Search projection, Ray/Zarr execution, derived-snapshot publication, and full automated recovery are not implemented core workflows in this map. Consult <a href="architecture.html">architecture</a>, <a href="layer-raw.html">Raw contracts</a>, and <a href="roadmap.html">delivery status</a> for their design context.</p>
+<p><a href="#main">Back to the top</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

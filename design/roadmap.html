@@ -356,17 +356,26 @@ into an independent revision, including unchanged bytes. Every path-rejection ru
 proves the on-disk state each crash leaves.</td></tr>
 
 <tr><td class="k">P3 — Integrity services<br><span class="tag">todo</span></td>
-<td><strong>Design complete; implementation partial and under validation.</strong> M1a implements verified completion and frozen commit documents, but is not deployable until M1b writer exclusion/legacy verification and M1c cutover/startup/acceptance pass.
+<td><strong>Design complete; implementation partial; M1a verified, M1b unverified.</strong> M1a implements verified completion and frozen commit documents, but is not deployable until M1b writer exclusion/legacy verification and M1c cutover/startup/acceptance pass.
 <a href="../P3_DESIGN.md">Design</a> · <a href="../P3_IMPLEMENTATION_PLAN.md">Implementation plan</a>.
 <a href="../P3_M1A_VALIDATION.md">M1a validation record (2026-09-11)</a>: local functional acceptance
 passed, including the real-socket 9 GiB round trip and separate PostgreSQL/POSIX suites.
 <a href="../p3-evidence/m1a/verification1/report.md">Independent M1a functional verification passed</a>;
 the native duplication gate remains 55/100 against 90. M1a alone is not deployable.
-M1b implements controlled local Linux exclusion and legacy verification and has
-<a href="../P3_M1B_VALIDATION.md">local functional acceptance</a>, with independent verification pending;
+M1b implements controlled local Linux exclusion and legacy verification (commit <code>f619342</code>) and has
+<a href="../P3_M1B_VALIDATION.md">local functional acceptance</a>, but
+<a href="../p3-evidence/m1b/verification3/report.md">independent functional verification failed</a> on all three
+attempts (2026-09-11/12) and M1b is unverified;
 <a href="../docs/operations/controlled-cutover.md">its deployment contract</a> excludes ordinary development
 Compose and unmanaged host writers. M1b's native duplication score remains 60/100 against 90.
-M1c activation and startup remain required.
+Next: the <a href="../P3_M1B_AUTHORITY_IMPLEMENTATION_PLAN.md">M1b authority plan</a> (§ "3. Milestone sequence",
+M0–M8), from the <a href="../P3_M1B_AUTHORITY_DESIGN.md">authority design</a> (§ "Roadmap Drift"),
+<a href="../docs/adr/0001-controller-generation-is-the-verification-epoch.md">ADR-0001</a> and the
+<a href="../P3_M1B_ARCHITECTURAL_REVIEW.md">architectural review</a> (§ "Task E — synthesis"); it is designed
+only, neither implemented nor verified. It takes over the <code>lakectl protocol cutover --validate --sequence N</code>
+operator command from M1c; <code>protocol init</code> and API startup gating stay M1c. Duplication-reduction work
+(D3b+) is outside its scope.
+M1c activation and startup remain required; M1c–M7 are unchanged and todo.
 First deployable slice: verified file-completion copies, frozen commit documents and externally fenced
 protocol cutover. Then recovery orchestration using the implemented RECOVERING state and safe orphan import, versioned governance evidence, integrity/read
 rules, findings, staging-only guarded cleanup and offline Raw catalog rebuild. P5 originates governance
