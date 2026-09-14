@@ -10,11 +10,9 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from huron.pkg.catalog.persistence import IdempotencyClaim, Window
     from huron.pkg.catalog.records import (
         Policy,
         PolicyAttachment,
-        Release,
         RoleBindingRecord,
         ServiceAccount,
     )
@@ -48,73 +46,6 @@ class CatalogService:
         self.organizations = OrganizationCollection(access, readers, operations.raw_store)
         self.projects = ProjectCollection(access, readers, operations.raw_store)
         self.datasets = DatasetCollection(access, readers, operations.raw_store)
-
-    async def create_release(
-        self,
-        dataset_id: UUID,
-        *,
-        tag: str,
-        revision_number: int,
-        title: str | None,
-        created_by: str,
-        claim: IdempotencyClaim,
-    ) -> Release:
-        """Authorize and execute create release.
-
-        A claim belonging to another actor raises ``Forbidden``.
-
-        Args:
-            dataset_id: Authoritative dataset identifier.
-            tag: Immutable release tag.
-            revision_number: Exact committed revision number.
-            title: Descriptive title.
-            created_by: Caller label; provenance uses the authenticated actor.
-            claim: Retry identity and request fingerprint.
-
-        Returns:
-            The operation result after authorization.
-        """
-        await self._access.require("release.create", ScopeType.DATASET, dataset_id)
-        self._access.require_claim(claim)
-        created_by = self._access.actor.subject
-        return await self._operations.create_release(
-            dataset_id,
-            await self._access.visibility(),
-            tag=tag,
-            revision_number=revision_number,
-            title=title,
-            created_by=created_by,
-            claim=claim,
-        )
-
-    async def release(self, dataset_id: UUID, tag: str) -> Release:
-        """Authorize and execute release.
-
-        Args:
-            dataset_id: Authoritative dataset identifier.
-            tag: Immutable release tag.
-
-        Returns:
-            The operation result after authorization.
-        """
-        return await self._operations.release(dataset_id, tag, await self._access.visibility())
-
-    async def releases(
-        self, dataset_id: UUID, *, limit: int, after: tuple[str] | None
-    ) -> Window[Release]:
-        """Authorize and execute releases.
-
-        Args:
-            dataset_id: Authoritative dataset identifier.
-            limit: Maximum number of records.
-            after: Exclusive pagination cursor.
-
-        Returns:
-            The operation result after authorization.
-        """
-        return await self._operations.releases(
-            dataset_id, await self._access.visibility(), limit=limit, after=after
-        )
 
     async def grant_role(
         self,

@@ -13,8 +13,11 @@ from huron.pkg.rbac.roles import (
     SERVICE_ACCOUNT_CAPABILITIES,
     SERVICE_ACCOUNT_LAYERS,
     PrincipalKindNotAllowed,
+    RoleDefinition,
     ScopeNotBindable,
+    UnknownRole,
     compile_binding,
+    role,
     roles_granting_write,
     service_account_bindings,
     validate_binding,
@@ -44,6 +47,48 @@ def test_service_accounts_hold_no_roles() -> None:
     for code in ROLES:
         with pytest.raises(PrincipalKindNotAllowed):
             validate_binding(code, "service_account", ScopeType.ORGANIZATION)
+
+
+def test_role_raises_unknown_role_for_a_code_never_registered() -> None:
+    """``role()`` raises ``UnknownRole`` when the code names nothing in ``ROLES``."""
+    with pytest.raises(UnknownRole, match="unknown role: astronaut"):
+        role("astronaut")
+
+
+def test_validate_binding_raises_unknown_role_for_a_code_never_registered() -> None:
+    """``validate_binding`` surfaces the same ``UnknownRole`` before checking the principal."""
+    with pytest.raises(UnknownRole, match="unknown role: astronaut"):
+        validate_binding("astronaut", "user", ScopeType.ORGANIZATION)
+
+
+def test_validate_binding_raises_principal_kind_not_allowed_for_an_unrecognized_kind() -> None:
+    """A principal kind outside ``PRINCIPAL_KINDS`` is rejected before any role-specific check."""
+    with pytest.raises(PrincipalKindNotAllowed, match="unknown principal kind: robot"):
+        validate_binding("reader", "robot", ScopeType.ORGANIZATION)
+
+
+def test_validate_binding_raises_principal_kind_not_allowed_for_a_kind_the_role_excludes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recognized kind the role's own ``allowed_principal_kinds`` excludes is still refused.
+
+    Every shipped role currently allows ``user``, so this path is exercised
+    against a role definition scoped to a narrower set than the vocabulary's
+    ``PRINCIPAL_KINDS`` allows, the situation the check exists to guard.
+    """
+    restricted = RoleDefinition(
+        code="quarantine",
+        title="Quarantine",
+        capabilities=frozenset(),
+        layer_grants=(),
+        bindable_scopes=frozenset({ScopeType.ORGANIZATION}),
+        allowed_principal_kinds=frozenset(),
+    )
+    monkeypatch.setitem(ROLES, restricted.code, restricted)
+    with pytest.raises(
+        PrincipalKindNotAllowed, match="role quarantine may not be held by a user principal"
+    ):
+        validate_binding("quarantine", "user", ScopeType.ORGANIZATION)
 
 
 def test_service_account_authority_is_org_scoped_silver_gold_crud() -> None:

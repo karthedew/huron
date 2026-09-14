@@ -9,6 +9,7 @@ from huron.core.catalog import CatalogService
 from huron.core.catalog_creation import CatalogCreation
 from huron.core.identity import IdentityService
 from huron.core.raw import RawIngestionService
+from huron.core.releases import Releases
 from huron.core.revisions import RevisionReadService
 
 from .authorization.credentials import CurrentPrincipal
@@ -56,6 +57,26 @@ def catalog_creation(runtime: Runtime, actor: CurrentPrincipal) -> CatalogCreati
 
 
 Creation = Annotated[CatalogCreation, Depends(catalog_creation)]
+
+
+def catalog_releases(runtime: Runtime, actor: CurrentPrincipal) -> Releases:
+    """Bind immutable release publication and resolution to the authenticated actor.
+
+    Args:
+        runtime: The process's configured capabilities.
+        actor: The authenticated caller.
+
+    Returns:
+        Authorized release creation, resolution and browsing.
+    """
+    return Releases(
+        AccessPolicy(actor, runtime.hierarchy, runtime.rbac, runtime.authorizer),
+        runtime.hierarchy,
+        runtime.repository.raw_store,
+    )
+
+
+ReleaseWorkflow = Annotated[Releases, Depends(catalog_releases)]
 
 
 def raw_ingestion_service(runtime: Runtime, actor: CurrentPrincipal) -> RawIngestionService:

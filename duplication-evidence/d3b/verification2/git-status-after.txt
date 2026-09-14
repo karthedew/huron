@@ -1,0 +1,20 @@
+ M .opencode/package-lock.json
+ M .opencode/package.json
+ M design/index.html
+ M pyproject.toml
+ M src/huron/applications/api/dependencies.py
+ M src/huron/applications/api/routes/v1/endpoints/datasets.py
+ M src/huron/core/_catalog.py
+ M src/huron/core/catalog.py
+ M src/huron/core/catalog_ports.py
+ M src/huron/core/ports.py
+ M tests/unit/test_core_workflows.py
+ M tests/unit/test_repository_hierarchy.py
+?? .pyscn/
+?? duplication-evidence/d3b/
+?? minihuron/
+?? scripts/main.py
+?? src/huron/core/releases.py
+?? tests/catalog_release_support.py
+?? tests/integration/test_catalog_releases.py
+?? tests/unit/test_books_upload_script.py

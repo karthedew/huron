@@ -1,60 +1,39 @@
-"""Internal release publication and governance coordination.
+"""Internal governance coordination and Raw storage initialization.
 
-Release publication claims its retry identity, inserts the pinned tag, writes
-its durable document off the event loop, and records the receipt before database
-commit. Governance operations validate their scope and delegate to RBAC storage.
-Catalog identity creation and descriptive updates have their own authorized
-workflow modules and use the hierarchy adapter directly.
+Governance operations validate their scope and delegate to RBAC storage.
+Catalog identity creation, descriptive updates and immutable releases have
+their own authorized workflow modules and use the hierarchy adapter directly.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from asyncer import asyncify
-
-from huron.pkg.catalog.errors import (
-    TagExists,
-)
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.catalog.manifest import canonical_bytes
-from huron.pkg.catalog.paths import (
-    release_tag_file,
-    validate_slug,
-    validate_tag,
-)
-from huron.pkg.catalog.persistence import Replay
-from huron.pkg.catalog.records import (
-    Policy,
-    PolicyAttachment,
-    Release,
-    RoleBindingRecord,
-    ServiceAccount,
-    jsonable,
-)
+from huron.pkg.catalog.paths import validate_slug
 from huron.pkg.rbac import ScopeType, Visibility
 
-from .catalog_claims import claimed_result
-
 if TYPE_CHECKING:
+    from datetime import datetime
     from uuid import UUID
 
     from huron.pkg.catalog.ports import RawStore
+    from huron.pkg.catalog.records import (
+        Policy,
+        PolicyAttachment,
+        RoleBindingRecord,
+        ServiceAccount,
+    )
 
     from .ports import HierarchyStore, RbacStore
-from huron.pkg.catalog.persistence import IdempotencyClaim, Window
 
 
 class HierarchyRepository:
-    """Remaining release and governance operations plus Raw storage initialization.
+    """Remaining governance operations plus Raw storage initialization.
 
-    Release rows and retry claims share the hierarchy transaction; roles,
-    service accounts and policies use the injected RBAC adapter. Release reads
-    enforce the supplied discovery context, while governance scope validation
-    uses committed hierarchy readers. Actor-bound workflows enforce authority
-    before invoking these internal operations.
+    Roles, service accounts and policies use the injected RBAC adapter.
+    Governance scope validation uses committed hierarchy readers.
+    Actor-bound workflows enforce authority before invoking these internal
+    operations.
 
     Attributes:
         raw_store: Initialized storage for durable documents.
@@ -87,136 +66,6 @@ class HierarchyRepository:
         self.raw_store.initialize()
         self.hierarchy = hierarchy
         self.rbac = rbac_store
-
-    @property
-    def data_root(self) -> PurePosixPath:
-        """Return the raw store's root in the form the layout functions take.
-
-        Every ``organization/...`` directory and release-tag file is derived
-        from this root by :mod:`huron.pkg.catalog.paths`.
-
-        Returns:
-            The raw store's root directory as a ``PurePosixPath``.
-        """
-        return PurePosixPath(self.raw_store.root)
-
-    async def create_release(
-        self,
-        dataset_id: UUID,
-        visibility: Visibility,
-        *,
-        tag: str,
-        revision_number: int,
-        title: str | None,
-        created_by: str,
-        claim: IdempotencyClaim,
-    ) -> Release:
-        """Pin a release tag to a registered revision of a dataset.
-
-        ``tag`` must satisfy the tag rules (``validate_tag`` raises
-        ``PathRuleViolation`` otherwise) and is unique within the dataset for
-        all time: the release is stored as a write-once file under the
-        dataset's ``releases/`` directory, so a tag is refused both when the
-        store already holds it and when the file already exists on disk.
-        The dataset is read with ``visibility``, so an invisible or absent
-        dataset is ``ResourceNotFound``; its project and organization are
-        then read with unrestricted visibility purely to build the storage
-        path, and the revision is resolved by ``revision_number`` - an
-        unregistered number is ``ResourceNotFound``. Creation is idempotent
-        per ``claim``: staking an identical claim returns the original
-        release without writing, and staking one whose key was used for a
-        different request is refused with ``IdempotencyKeyReused``. The tag
-        file is written after the row is inserted and before the
-        transaction commits.
-
-        Args:
-            dataset_id: The dataset the tag belongs to.
-            visibility: The caller's discovery rights, used to resolve
-                ``dataset_id``.
-            tag: The release tag; 2 to 63 characters of lowercase letters,
-                digits, dots, underscores and hyphens.
-            revision_number: The number of a revision already registered for
-                the dataset.
-            title: An optional human-readable name for the release.
-            created_by: The subject of the principal creating the release.
-            claim: The caller's idempotency claim for this request.
-
-        Returns:
-            The stored release, pinned to the revision's id and number.
-
-        Raises:
-            TagExists: If the dataset already has a release with ``tag``,
-                in the store or on disk.
-        """
-        validate_tag(tag)
-        async with self.hierarchy.transaction() as writer:
-            dataset = await self.hierarchy.datasets.get(dataset_id, visibility)
-            project = await self.hierarchy.projects.get(dataset.project_id, Visibility.ALL)
-            organization = await self.hierarchy.organizations.get(
-                project.organization_id, Visibility.ALL
-            )
-            revision = await self.hierarchy.revision_ref(dataset_id, revision_number)
-            replayed = await claimed_result(
-                writer, claim, lambda _: self.release(dataset_id, tag, Visibility.ALL)
-            )
-            if replayed is not None:
-                return replayed
-            item = Release(
-                uuid7(),
-                dataset_id,
-                tag,
-                revision.id,
-                revision.number,
-                title,
-                created_by,
-                datetime.now(UTC),
-            )
-            await writer.insert_release(item)
-            payload = canonical_bytes(jsonable(item))
-            tag_path = release_tag_file(self.data_root, organization, project, dataset, tag)
-            try:
-                await asyncify(self.raw_store.write_tag_once)(tag_path, payload)
-            except FileExistsError as exc:
-                raise TagExists(f"release tag already exists: {tag}") from exc
-            await writer.remember(claim, Replay(kind="release", resource_id=item.id))
-            return item
-
-    async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
-        """Return the release a dataset publishes under a tag, if ``visibility`` admits the dataset.
-
-        Args:
-            dataset_id: The dataset the tag belongs to.
-            tag: The release tag to resolve.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The release created under that tag. The store raises
-            ``ResourceNotFound`` when the dataset has no release with
-            ``tag``, or ``visibility`` does not admit the dataset.
-        """
-        return await self.hierarchy.release(dataset_id, tag, visibility)
-
-    async def releases(
-        self, dataset_id: UUID, visibility: Visibility, *, limit: int, after: tuple[str] | None
-    ) -> Window[Release]:
-        """Return a window of one dataset's releases ordered by ``tag``.
-
-        The dataset is read with ``visibility`` first, so an invisible or
-        absent dataset is ``ResourceNotFound`` rather than an empty window.
-
-        Args:
-            dataset_id: The dataset whose releases to list.
-            visibility: The caller's discovery rights, checked against the
-                dataset itself.
-            limit: The maximum number of releases to return.
-            after: The tag of the last release already seen, excluded from
-                the window, or ``None`` to start from the beginning.
-
-        Returns:
-            The next window of the dataset's releases.
-        """
-        await self.hierarchy.datasets.get(dataset_id, visibility)
-        return await self.hierarchy.releases(dataset_id, visibility, limit=limit, after=after)
 
     # -- RBAC ------------------------------------------------------------
     # Every method below delegates to ``self.rbac``; the only logic

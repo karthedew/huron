@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING, Protocol
 
 from huron.pkg.auth import ApiKeyRecord, ApiKeyStore
 
-from .catalog_ports import BindingFacts, CreationTransaction, DescriptionTransaction, HierarchyFacts
+from .catalog_ports import (
+    BindingFacts,
+    CreationTransaction,
+    DescriptionTransaction,
+    HierarchyFacts,
+    ReleaseStore,
+    ReleaseTransaction,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -24,17 +31,16 @@ if TYPE_CHECKING:
 
     from huron.pkg.catalog.documents import CommitIntent
     from huron.pkg.catalog.ingest import IngestFile, IngestSession
-    from huron.pkg.catalog.models import OutboxEvent, RevisionRecord, RevisionRef
-    from huron.pkg.catalog.persistence import LedgerEntry, Window
+    from huron.pkg.catalog.models import OutboxEvent, RevisionRecord
+    from huron.pkg.catalog.persistence import LedgerEntry
     from huron.pkg.catalog.records import (
         AuditEvent,
         Policy,
         PolicyAttachment,
-        Release,
         RoleBindingRecord,
         ServiceAccount,
     )
-    from huron.pkg.rbac import ScopeType, Visibility
+    from huron.pkg.rbac import ScopeType
 
 
 class RbacStore(BindingFacts, Protocol):
@@ -321,7 +327,7 @@ class ApiKeyWriter(ApiKeyStore, Protocol):
         ...
 
 
-class HierarchyWriter(CreationTransaction, DescriptionTransaction, Protocol):
+class HierarchyWriter(CreationTransaction, DescriptionTransaction, ReleaseTransaction, Protocol):
     """One transaction's write surface; obtained from ``HierarchyStore.transaction()``.
 
     Every method runs inside the same transaction; nothing is visible to a
@@ -331,21 +337,6 @@ class HierarchyWriter(CreationTransaction, DescriptionTransaction, Protocol):
     because the database refused it, and every other rule belongs to the
     caller assembling the item this writer is given.
     """
-
-    async def insert_release(self, item: Release) -> None:
-        """Insert one release row, tagging a dataset revision.
-
-        A second release with the same ``item.tag`` under
-        ``item.dataset_id`` raises ``TagExists``. A release naming a
-        revision that ``revision_ref`` cannot resolve for
-        ``item.dataset_id`` raises ``ResourceNotFound``; a caller that
-        resolved the revision through ``revision_ref`` first will not
-        observe this.
-
-        Args:
-            item: The release to insert, fully formed.
-        """
-        ...
 
     async def insert_revision(self, record: RevisionRecord) -> None:
         """Insert the row a COMMITTING session publishes when its commit lands.
@@ -519,7 +510,7 @@ class HierarchyWriter(CreationTransaction, DescriptionTransaction, Protocol):
         ...
 
 
-class HierarchyStore(HierarchyFacts, Protocol):
+class HierarchyStore(HierarchyFacts, ReleaseStore, Protocol):
     """The hierarchy's durable state and the ingest workflow that extends it.
 
     A point read raises ``ResourceNotFound`` both when the id names
@@ -541,55 +532,6 @@ class HierarchyStore(HierarchyFacts, Protocol):
 
         Returns:
             An async context manager yielding the transaction's writer.
-        """
-        ...
-
-    async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
-        """Return one release by its dataset and tag, if ``visibility`` admits the dataset.
-
-        Args:
-            dataset_id: The dataset the release belongs to.
-            tag: The release's tag, unique within the dataset.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The stored release.
-        """
-        ...
-
-    async def revision_ref(self, dataset_id: UUID, revision_number: int) -> RevisionRef:
-        """Return the identity of one committed revision by its dataset and sequential number.
-
-        Unlike the other point reads, this one carries no ``visibility``:
-        a revision is resolved only in service of a release the caller has
-        already been authorized to create on ``dataset_id``.
-
-        Args:
-            dataset_id: The dataset the revision belongs to.
-            revision_number: The revision's 1-based position within the
-                dataset.
-
-        Returns:
-            The revision's identity and manifest digest.
-        """
-        ...
-
-    async def releases(
-        self, dataset_id: UUID, visibility: Visibility, *, limit: int, after: tuple[str] | None
-    ) -> Window[Release]:
-        """Return a window of one dataset's releases ordered by ``tag``.
-
-        Args:
-            dataset_id: The dataset the releases belong to.
-            visibility: The caller's discovery rights, checked against the
-                dataset itself; every release of an admitted dataset is
-                returned.
-            limit: The maximum number of releases to return.
-            after: The tag of the last release already seen, excluded
-                from the window, or ``None`` to start from the beginning.
-
-        Returns:
-            The next window of the dataset's releases.
         """
         ...
 

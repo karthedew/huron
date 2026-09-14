@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 import pytest
@@ -39,6 +39,7 @@ from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemo
 from huron.pkg.rawstore import PosixRawStore
 from huron.pkg.rbac import RoleBindingAuthorizer, ScopeType, Visibility
 from tests.catalog_creation_support import creation_for
+from tests.catalog_release_support import releases_for
 from tests.hierarchy_contract import committed_revision
 
 if TYPE_CHECKING:
@@ -115,6 +116,11 @@ async def _hierarchy(repository: HierarchyRepository) -> tuple[UUID, UUID, UUID]
         ),
     )
     return organization.id, project.id, dataset.id
+
+
+def _data_root(repository: HierarchyRepository) -> PurePosixPath:
+    """Return the raw store's root in the form the layout functions take."""
+    return PurePosixPath(repository.raw_store.root)
 
 
 def _generation_files(entity_dir: object) -> list[Path]:
@@ -568,7 +574,7 @@ async def test_patch_dataset_naming_no_field_is_a_no_op(tmp_path: Path) -> None:
     organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
     project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
     dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
-    before = _generation_files(dataset_dir(repository.data_root, organization, project, dataset))
+    before = _generation_files(dataset_dir(_data_root(repository), organization, project, dataset))
 
     patched = await _descriptions(repository, Visibility.ALL).datasets.describe(
         dataset_id, DescriptionChange(expected_version=1, slug=None, title=None, description=None)
@@ -576,7 +582,7 @@ async def test_patch_dataset_naming_no_field_is_a_no_op(tmp_path: Path) -> None:
 
     assert patched == dataset
     assert patched.version == 1
-    after = _generation_files(dataset_dir(repository.data_root, organization, project, dataset))
+    after = _generation_files(dataset_dir(_data_root(repository), organization, project, dataset))
     assert after == before
 
 
@@ -587,7 +593,7 @@ async def test_patch_dataset_naming_the_current_values_is_a_no_op(tmp_path: Path
     organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
     project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
     dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
-    before = _generation_files(dataset_dir(repository.data_root, organization, project, dataset))
+    before = _generation_files(dataset_dir(_data_root(repository), organization, project, dataset))
 
     patched = await _descriptions(repository, Visibility.ALL).datasets.describe(
         dataset_id,
@@ -598,7 +604,7 @@ async def test_patch_dataset_naming_the_current_values_is_a_no_op(tmp_path: Path
 
     assert patched == dataset
     assert patched.version == 1
-    after = _generation_files(dataset_dir(repository.data_root, organization, project, dataset))
+    after = _generation_files(dataset_dir(_data_root(repository), organization, project, dataset))
     assert after == before
 
 
@@ -683,23 +689,11 @@ async def test_create_release_replays_an_identical_request(tmp_path: Path) -> No
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
     claim = _claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1")
-    first = await repository.create_release(
-        dataset_id,
-        Visibility.ALL,
-        tag="v1",
-        revision_number=1,
-        title=None,
-        created_by="alice",
-        claim=claim,
+    first = await releases_for(repository).create_release(
+        dataset_id, tag="v1", revision_number=1, title=None, claim=claim
     )
-    second = await repository.create_release(
-        dataset_id,
-        Visibility.ALL,
-        tag="v1",
-        revision_number=1,
-        title=None,
-        created_by="alice",
-        claim=claim,
+    second = await releases_for(repository).create_release(
+        dataset_id, tag="v1", revision_number=1, title=None, claim=claim
     )
     assert second == first
 
@@ -709,23 +703,19 @@ async def test_create_release_rejects_a_duplicate_tag(tmp_path: Path) -> None:
     repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
-    await repository.create_release(
+    await releases_for(repository).create_release(
         dataset_id,
-        Visibility.ALL,
         tag="v1",
         revision_number=1,
         title=None,
-        created_by="alice",
         claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
     )
     with pytest.raises(TagExists):
-        await repository.create_release(
+        await releases_for(repository).create_release(
             dataset_id,
-            Visibility.ALL,
             tag="v1",
             revision_number=1,
             title=None,
-            created_by="alice",
             claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k2"),
         )
 
@@ -744,18 +734,16 @@ async def test_create_release_translates_a_raw_store_collision_into_tag_exists(
     organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
     project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
     dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
-    tag_path = release_tag_file(repository.data_root, organization, project, dataset, "v1")
+    tag_path = release_tag_file(_data_root(repository), organization, project, dataset, "v1")
     Path(str(tag_path)).parent.mkdir(parents=True, exist_ok=True)
     Path(str(tag_path)).write_bytes(b"{}")
 
     with pytest.raises(TagExists):
-        await repository.create_release(
+        await releases_for(repository).create_release(
             dataset_id,
-            Visibility.ALL,
             tag="v1",
             revision_number=1,
             title=None,
-            created_by="alice",
             claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
         )
 
@@ -767,19 +755,17 @@ async def test_create_release_persists_a_tag_document_with_no_withdrawal_keys(
     repository = await _repository(tmp_path)
     organization_id, project_id, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
-    await repository.create_release(
+    await releases_for(repository).create_release(
         dataset_id,
-        Visibility.ALL,
         tag="v1",
         revision_number=1,
         title=None,
-        created_by="alice",
         claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
     )
     organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
     project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
     dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
-    tag_path = release_tag_file(repository.data_root, organization, project, dataset, "v1")
+    tag_path = release_tag_file(_data_root(repository), organization, project, dataset, "v1")
     document = json.loads(Path(str(tag_path)).read_text())
 
     assert document.keys() == {
@@ -801,51 +787,41 @@ async def test_create_release_replay_with_a_title_of_none_differs_from_the_empty
     repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
-    await repository.create_release(
+    await releases_for(repository).create_release(
         dataset_id,
-        Visibility.ALL,
         tag="v1",
         revision_number=1,
         title=None,
-        created_by="alice",
         claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
     )
     with pytest.raises(IdempotencyKeyReused):
-        await repository.create_release(
+        await releases_for(repository).create_release(
             dataset_id,
-            Visibility.ALL,
             tag="v1",
             revision_number=1,
             title="",
-            created_by="alice",
             claim=_claim("release", str(dataset_id), "v1", "1", "", "alice", key="k1"),
         )
 
 
-async def test_create_release_replay_with_a_different_created_by_is_a_reuse(
-    tmp_path: Path,
-) -> None:
-    """Reusing a release-create key with only ``created_by`` changed is a reuse."""
+async def test_create_release_replay_with_a_different_digest_is_a_reuse(tmp_path: Path) -> None:
+    """Reusing a release-create key whose fingerprint differs elsewhere is a reuse."""
     repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
-    await repository.create_release(
+    await releases_for(repository).create_release(
         dataset_id,
-        Visibility.ALL,
         tag="v1",
         revision_number=1,
         title=None,
-        created_by="alice",
         claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
     )
     with pytest.raises(IdempotencyKeyReused):
-        await repository.create_release(
+        await releases_for(repository).create_release(
             dataset_id,
-            Visibility.ALL,
             tag="v1",
             revision_number=1,
             title=None,
-            created_by="bob",
             claim=_claim("release", str(dataset_id), "v1", "1", None, "bob", key="k1"),
         )
 
@@ -856,13 +832,11 @@ async def test_create_release_under_an_invisible_dataset_is_not_found(tmp_path: 
     _, _, dataset_id = await _hierarchy(repository)
     await _commit_revision(repository, dataset_id)
     with pytest.raises(ResourceNotFound):
-        await repository.create_release(
+        await releases_for(repository, visible=False).create_release(
             dataset_id,
-            Visibility(),
             tag="v1",
             revision_number=1,
             title=None,
-            created_by="alice",
             claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
         )
 
@@ -872,13 +846,11 @@ async def test_create_release_without_a_registered_revision_is_not_found(tmp_pat
     repository = await _repository(tmp_path)
     _, _, dataset_id = await _hierarchy(repository)
     with pytest.raises(ResourceNotFound):
-        await repository.create_release(
+        await releases_for(repository).create_release(
             dataset_id,
-            Visibility.ALL,
             tag="v1",
             revision_number=1,
             title=None,
-            created_by="alice",
             claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
         )
 
@@ -915,7 +887,7 @@ async def test_patch_organization_naming_no_field_is_a_no_op(tmp_path: Path) -> 
     repository = await _repository(tmp_path)
     organization_id, _, _ = await _hierarchy(repository)
     organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
-    before = _generation_files(organization_dir(repository.data_root, organization))
+    before = _generation_files(organization_dir(_data_root(repository), organization))
 
     patched = await _descriptions(repository, Visibility.ALL).organizations.describe(
         organization_id,
@@ -923,7 +895,7 @@ async def test_patch_organization_naming_no_field_is_a_no_op(tmp_path: Path) -> 
     )
 
     assert patched == organization
-    after = _generation_files(organization_dir(repository.data_root, organization))
+    after = _generation_files(organization_dir(_data_root(repository), organization))
     assert after == before
 
 
@@ -968,14 +940,14 @@ async def test_patch_project_naming_no_field_is_a_no_op(tmp_path: Path) -> None:
     organization_id, project_id, _ = await _hierarchy(repository)
     organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
     project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
-    before = _generation_files(project_dir(repository.data_root, organization, project))
+    before = _generation_files(project_dir(_data_root(repository), organization, project))
 
     patched = await _descriptions(repository, Visibility.ALL).projects.describe(
         project_id, DescriptionChange(expected_version=1, slug=None, title=None, description=None)
     )
 
     assert patched == project
-    after = _generation_files(project_dir(repository.data_root, organization, project))
+    after = _generation_files(project_dir(_data_root(repository), organization, project))
     assert after == before
 
 

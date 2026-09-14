@@ -1,0 +1,8 @@
+ M .opencode/package-lock.json
+ M .opencode/package.json
+ M design/index.html
+?? .pyscn/
+?? duplication-evidence/d3b/
+?? minihuron/
+?? scripts/main.py
+?? tests/unit/test_books_upload_script.py

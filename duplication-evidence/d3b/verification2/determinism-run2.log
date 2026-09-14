@@ -1,0 +1,8 @@
+.
+=============================== warnings summary ===============================
+tests/integration/conftest.py:8
+  /home/karl/repo/huron/tests/integration/conftest.py:8: DeprecationWarning: testcontainers.postgres is deprecated, use testcontainers.community.postgres instead
+    from testcontainers.postgres import PostgresContainer
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 3.06s

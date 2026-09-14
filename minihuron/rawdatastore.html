@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Minihuron · Raw datastore UML</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --ink: #182737; --muted: #526477; --line: #64788c; --accent: #086d72; --header: #e2f1f0; --border: #cdd6df; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #111923; --card: #192532; --ink: #e0e9f2; --muted: #afbfce; --line: #a3b6c9; --accent: #76d7d2; --header: #213e45; --border: #425366; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, sans-serif; }
+    main { max-width: 1800px; margin: auto; padding: clamp(16px, 3vw, 48px); }
+    h1 { margin: 0; font-size: clamp(26px, 4vw, 42px); line-height: 1.2; }
+    h2 { margin: 32px 0 8px; font-size: 22px; }
+    p { max-width: 100ch; }
+    a { color: var(--accent); }
+    code { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+    .eyebrow { color: var(--accent); font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .muted, figcaption { color: var(--muted); }
+    .toolbar, .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin: 20px 0; }
+    button, summary { cursor: pointer; }
+    button { border: 1px solid var(--border); border-radius: 6px; padding: 10px 16px; background: var(--card); color: var(--ink); font: inherit; }
+    :focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+    figure { margin: 16px 0; }
+    .canvas { overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+    .canvas svg { display: block; width: 100%; height: auto; }
+    figcaption { margin-top: 8px; font-size: 14px; }
+    svg .box { fill: var(--card); stroke: var(--line); stroke-width: 1.5; }
+    svg .heading { fill: var(--header); }
+    svg .divider, svg .edge { fill: none; stroke: var(--line); stroke-width: 1.5; }
+    svg .dependency { stroke-dasharray: 7 5; }
+    svg text { fill: var(--ink); font: 15px ui-monospace, monospace; }
+    svg .class-name { font: 700 20px system-ui, sans-serif; }
+    svg .stereotype, svg .edge-label { font: 14px system-ui, sans-serif; fill: var(--muted); }
+    svg .edge-label { paint-order: stroke; stroke: var(--card); stroke-width: 5px; stroke-linejoin: round; }
+    svg .arrow { fill: none; stroke: var(--line); stroke-width: 1.5; }
+    svg .diamond { fill: var(--line); }
+    svg .triangle { fill: var(--card); stroke: var(--line); stroke-width: 1.5; }
+    .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 20px; }
+    .note, details { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 18px 22px; }
+    .note h3 { margin-top: 0; }
+    ul { padding-left: 22px; }
+    li { margin-bottom: 6px; }
+    details { margin-top: 20px; }
+    summary { font-weight: 700; }
+    @media print { .toolbar { display: none; } .canvas { overflow: visible; } .canvas svg { width: 100% !important; } figure { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Minihuron / Code map</p>
+  <h1>Raw datastore · UML class diagram</h1>
+  <p>A class-level view of <a href="rawdatastore.py"><code>rawdatastore.py</code></a>: the upload orchestrator, its injected catalog protocol, filesystem operations, and immutable records.</p>
+  <p class="muted">Manual snapshot of the Python source. Method parameter lists are abbreviated; all explicitly declared class methods are shown. Field types on ordinary classes are inferred from assignments. Generated dataclass methods are omitted.</p>
+  <div class="toolbar" role="group" aria-label="Diagram sizing">
+    <button type="button" id="fit" aria-pressed="true">Fit to window</button>
+    <button type="button" id="actual" aria-pressed="false">Full size</button>
+    <span class="muted">Use full size for readable signatures, then scroll inside each diagram.</span>
+  </div>
+  <div class="legend" aria-label="UML notation legend">
+    <span><strong>+</strong> public · <strong>−</strong> internal</span>
+    <span><strong>◆──</strong> composition</span>
+    <span><strong>──›</strong> association</span>
+    <span><strong>┄┄›</strong> dependency</span>
+    <span><strong>──▷</strong> inheritance</span>
+    <span><code>«async»</code> coroutine method</span>
+  </div>
+  <noscript><p>This offline diagram uses inline JavaScript to draw SVG. Enable JavaScript to see the class boxes; the relationship notes below remain readable.</p></noscript>
+
+  <h2>1. Orchestration and storage</h2>
+  <figure>
+    <div class="canvas" tabindex="0" role="region" aria-label="Orchestration class diagram, horizontally scrollable">
+      <svg id="operations" viewBox="0 0 1660 900" role="img" aria-labelledby="operations-title operations-desc">
+        <title id="operations-title">RawstoreService and its collaborators</title>
+        <desc id="operations-desc">RawstoreService holds one injected Catalog, owns one Filesystem, creates a StreamingFile per write_file call, and returns Revision from ingest. StreamingFile uses Filesystem during construction. Class members and operations are listed in the diagram.</desc>
+      </svg>
+    </div>
+    <figcaption>The catalog is a Python Protocol, not a concrete database adapter in this file. Solid associations describe stored references; dashed arrows describe temporary use, creation, or returned values.</figcaption>
+  </figure>
+
+  <h2>2. Immutable upload records</h2>
+  <figure>
+    <div class="canvas" tabindex="0" role="region" aria-label="Upload record class diagram, horizontally scrollable">
+      <svg id="records" viewBox="0 0 1660 350" role="img" aria-labelledby="records-title records-desc">
+        <title id="records-title">Ingest, DatasetRef, and FileSpec</title>
+        <desc id="records-desc">Each Ingest references one DatasetRef and holds a tuple of FileSpec records. RawstoreService.stage requires one or more files. All three classes, and Revision above, are frozen dataclasses.</desc>
+      </svg>
+    </div>
+    <figcaption><code>State = Literal["OPEN", "SEALED", "COMMITTED", "CONFLICT"]</code>. The tuple annotation permits zero files, but <code>RawstoreService.stage()</code> enforces a nonempty manifest.</figcaption>
+  </figure>
+
+  <h2>3. Exceptions</h2>
+  <figure>
+    <div class="canvas" tabindex="0" role="region" aria-label="Exception inheritance diagram, horizontally scrollable">
+      <svg id="exceptions" viewBox="0 0 1660 220" role="img" aria-labelledby="exceptions-title exceptions-desc">
+        <title id="exceptions-title">Custom exception inheritance</title>
+        <desc id="exceptions-desc">IntegrityError inherits ValueError. RevisionConflict inherits RuntimeError. Neither custom exception declares fields or methods.</desc>
+      </svg>
+    </div>
+    <figcaption><code>IntegrityError</code> signals invalid upload/storage contents. <code>RevisionConflict</code> is the catalog publication contract's concurrent-head-change error.</figcaption>
+  </figure>
+
+  <h2>Reading the relationships</h2>
+  <div class="notes">
+    <section class="note">
+      <h3>Object ownership</h3>
+      <ul>
+        <li><code>RawstoreService.catalog → Catalog</code>: injected, one per service.</li>
+        <li><code>RawstoreService.fs ◆→ Filesystem</code>: created and retained by the service.</li>
+        <li><code>RawstoreService → StreamingFile</code>: creates a temporary writer per file transfer; no stored writer field.</li>
+        <li><code>StreamingFile.spec → FileSpec</code>: retains one file declaration. Its constructor uses <code>Filesystem</code> and <code>Ingest</code> to derive paths without retaining those objects.</li>
+        <li><code>Ingest.dataset → DatasetRef</code> and <code>Ingest.files → FileSpec</code>: references to frozen records, with no exclusive ownership implied.</li>
+      </ul>
+    </section>
+    <section class="note">
+      <h3>Data dependencies</h3>
+      <ul>
+        <li><code>Catalog</code> looks up <code>DatasetRef</code>, reserves and claims <code>Ingest</code>, records <code>FileSpec</code> receipts, and publishes <code>Revision</code>.</li>
+        <li><code>Filesystem</code> accepts <code>DatasetRef</code> and <code>Ingest</code> for layout, validation, and finalization.</li>
+        <li><code>RawstoreService.stage()</code> consumes file declarations and returns <code>Ingest</code>; <code>ingest()</code> returns <code>Revision</code>.</li>
+        <li><code>Revision</code> carries identifiers and a relative path, rather than retaining an <code>Ingest</code> object.</li>
+      </ul>
+    </section>
+    <section class="note">
+      <h3>Upload lifecycle</h3>
+      <ol>
+        <li><code>stage()</code>: initialize storage, reserve ingest, create staging workspace.</li>
+        <li><code>write_file()</code>: claim session, stream bounded blocks, verify size/hash, record receipt.</li>
+        <li><code>ingest()</code>: claim/seal, validate, rename, mark storage-ready, publish through the catalog.</li>
+      </ol>
+      <p>The on-disk <code>COMMITTED</code> marker means storage validation succeeded. Catalog publication is the visibility boundary. Authorization and a persistent PostgreSQL catalog are external to this example.</p>
+    </section>
+  </div>
+  <details>
+    <summary>Module-level helpers and notation</summary>
+    <p>These are functions, not class methods, so they sit outside the UML class boxes:</p>
+    <ul>
+      <li><code>relative_path(value) → PurePosixPath</code> — canonical relative path validation.</li>
+      <li><code>«async» finish_awaitable(operation) → T</code> — drain an owned task before propagating cancellation.</li>
+      <li><code>«async» finish_thread(function, *args) → T</code> — run and drain blocking I/O off the event loop.</li>
+      <li><code>fsync_directory(path) → None</code> — sync directory metadata.</li>
+      <li><code>ensure_directory(path) → None</code> — create one directory and sync its parent.</li>
+      <li><code>ensure_tree(base, relative) → Path</code> — create a relative directory tree.</li>
+      <li><code>sha256_file(path) → str</code> — hash a file using bounded reads.</li>
+      <li><code>manifest_bytes(ingest) → bytes</code> — deterministic manifest serialization.</li>
+      <li><code>atomic_document(path, contents) → None</code> — idempotent sidecar installation.</li>
+    </ul>
+    <p><code>BUFFER_SIZE = 4 × 1024 × 1024</code> bytes. <code>T</code> is a type variable. <code>AsyncCM[Ingest]</code> abbreviates <code>AbstractAsyncContextManager[Ingest]</code>; <code>Plan</code> abbreviates <code>Literal["NEW_DATASET", "NEW_REVISION"]</code>. “Binary writer” and “SHA-256 hash” describe inferred runtime objects, not source annotations.</p>
+  </details>
+</main>
+<script>
+  "use strict";
+  // Manual source model: keep member names aligned with rawdatastore.py.
+  const classes = [
+    { diagram: "operations", name: "Catalog", kind: "«protocol»", x: 20, y: 30, fields: [], methods: [
+      "+ «async» get_dataset(dataset_id)", "    → DatasetRef | None",
+      "+ «async» begin_ingest(dataset_id,", "    files, idempotency_key) → Ingest",
+      "+ upload_access(ingest_id)", "    → AsyncCM[Ingest]",
+      "+ «async» file_received(ingest_id, spec)", "    → None",
+      "+ finalize_access(ingest_id)", "    → AsyncCM[Ingest]",
+      "+ «async» publish(ingest, revision)", "    → None"
+    ] },
+    { diagram: "operations", name: "RawstoreService", kind: "«async orchestrator»", x: 600, y: 30, fields: [
+      "+ catalog: Catalog", "+ fs: Filesystem", "− _io_slots: BoundedSemaphore",
+      "− _upload_slots: BoundedSemaphore", "− _validation_slots: BoundedSemaphore", "− _ingest_slots: BoundedSemaphore"
+    ], methods: [
+      "+ __init__(root, catalog, *, max_io=8,", "    max_uploads=4, max_validations=2,", "    max_ingests=4) → None",
+      "− «async» _io(function, *args) → T",
+      "+ «async» check(dataset_id) → Plan",
+      "+ «async» initialize(dataset_id) → Path",
+      "+ «async» stage(dataset_id, files, *,", "    idempotency_key) → Ingest",
+      "+ «async» write_file(ingest_id,", "    filename, chunks) → None",
+      "+ «async» validate(ingest, *, final,", "    full=True) → None",
+      "+ «async» ingest(ingest_id) → Revision"
+    ] },
+    { diagram: "operations", name: "Filesystem", kind: "«blocking I/O»", x: 1180, y: 30, fields: ["+ root: Path"], methods: [
+      "+ __init__(root) → None",
+      "+ dataset_root(dataset) → Path", "+ staging_root(ingest) → Path",
+      "+ revision_root(ingest) → Path", "+ initialize(dataset) → Path",
+      "+ stage(ingest) → Path", "+ validate(directory, ingest, full)", "    → None",
+      "+ locate(ingest) → tuple[Path, bool]", "+ finalize(ingest) → Path",
+      "+ mark_ready(directory, ingest) → None"
+    ] },
+    { diagram: "operations", name: "StreamingFile", kind: "«blocking writer»", x: 20, y: 450, fields: [
+      "+ stage: Path", "+ spec: FileSpec", "+ temporary: Path", "+ final: Path",
+      "+ output: binary writer | None", "+ count: int", "+ digest: SHA-256 hash"
+    ], methods: [
+      "+ __init__(filesystem, ingest, spec)", "    → None", "+ start() → None",
+      "+ write(block: bytes | memoryview)", "    → None", "+ finish() → None", "+ close() → None"
+    ] },
+    { diagram: "operations", name: "Revision", kind: "«frozen dataclass»", x: 1180, y: 590, fields: [
+      "+ revision_id: UUID", "+ revision_number: int", "+ relative_path: str", "+ manifest_sha256: str"
+    ], methods: [] },
+    { diagram: "records", name: "DatasetRef", kind: "«frozen dataclass»", x: 20, y: 30, fields: [
+      "+ dataset_id: UUID", "+ relative_root: str"
+    ], methods: [] },
+    { diagram: "records", name: "Ingest", kind: "«frozen dataclass»", x: 600, y: 30, fields: [
+      "+ ingest_id: UUID", "+ dataset: DatasetRef", "+ revision_id: UUID", "+ revision_number: int",
+      "+ expected_current_revision: UUID | None", "+ files: tuple[FileSpec, ...]", "+ state: State = 'OPEN'"
+    ], methods: [] },
+    { diagram: "records", name: "FileSpec", kind: "«frozen dataclass»", x: 1180, y: 30, fields: [
+      "+ path: str", "+ size_bytes: int", "+ sha256: str"
+    ], methods: ["+ __post_init__() → None"] },
+    { diagram: "exceptions", name: "IntegrityError", kind: "«exception»", x: 20, y: 55, fields: [], methods: [] },
+    { diagram: "exceptions", name: "ValueError", kind: "«Python built-in»", x: 600, y: 20, fields: [], methods: [], width: 300 },
+    { diagram: "exceptions", name: "RevisionConflict", kind: "«exception»", x: 1180, y: 110, fields: [], methods: [] },
+    { diagram: "exceptions", name: "RuntimeError", kind: "«Python built-in»", x: 600, y: 130, fields: [], methods: [], width: 300 }
+  ];
+
+  function element(tag, attributes, text) {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function drawClass(item) {
+    const group = element("g", { transform: `translate(${item.x} ${item.y})`, "data-class": item.name });
+    const width = item.width || 460;
+    const fieldHeight = item.fields.length ? item.fields.length * 22 + 18 : 0;
+    const methodHeight = item.methods.length ? item.methods.length * 22 + 18 : 0;
+    group.append(element("rect", { width, height: 66 + fieldHeight + methodHeight, rx: 5, class: "box" }));
+    group.append(element("rect", { x: 1, y: 1, width: width - 2, height: 64, rx: 4, class: "heading" }));
+    group.append(element("text", { x: width / 2, y: 23, "text-anchor": "middle", class: "stereotype" }, item.kind));
+    group.append(element("text", { x: width / 2, y: 49, "text-anchor": "middle", class: "class-name" }, item.name));
+    let top = 66;
+    for (const members of [item.fields, item.methods]) {
+      if (!members.length) continue;
+      group.append(element("path", { d: `M0 ${top} H${width}`, class: "divider" }));
+      members.forEach((member, index) => group.append(element("text", { x: 14, y: top + 25 + index * 22 }, member)));
+      top += members.length * 22 + 18;
+    }
+    document.getElementById(item.diagram).append(group);
+  }
+
+  function edge(diagram, path, label, x, y, type = "association") {
+    const svg = document.getElementById(diagram);
+    const attributes = { d: path, class: `edge ${type}` };
+    if (type === "composition") attributes["marker-start"] = `url(#${diagram}-diamond)`;
+    attributes["marker-end"] = `url(#${diagram}-${type === "inheritance" ? "triangle" : "arrow"})`;
+    svg.append(element("path", attributes));
+    if (label) svg.append(element("text", { x, y, "text-anchor": "middle", class: "edge-label" }, label));
+  }
+
+  for (const svg of document.querySelectorAll(".canvas svg")) {
+    const defs = element("defs", {});
+    for (const [name, path, refX] of [
+      ["arrow", "M1 1 L10 6 L1 11", 10],
+      ["diamond", "M0 6 L8 1 L16 6 L8 11 Z", 0],
+      ["triangle", "M1 1 L11 6 L1 11 Z", 11]
+    ]) {
+      const marker = element("marker", { id: `${svg.id}-${name}`, viewBox: "0 0 17 12", refX, refY: 6, markerWidth: 17, markerHeight: 12, orient: "auto", markerUnits: "userSpaceOnUse" });
+      marker.append(element("path", { d: path, class: name }));
+      defs.append(marker);
+    }
+    svg.append(defs);
+  }
+
+  edge("operations", "M600 150 H480", "catalog · 1", 540, 135);
+  edge("operations", "M1060 150 H1180", "fs · 1", 1120, 135, "composition");
+  edge("operations", "M600 500 H540 V600 H480", "creates", 540, 480, "dependency");
+  edge("operations", "M480 785 H1120 V470 H1410 V396", "constructor uses", 820, 772, "dependency");
+  edge("operations", "M1060 550 H1090 V650 H1180", "returns", 1135, 635, "dependency");
+  edge("records", "M600 140 H480", "dataset · 1", 540, 125);
+  edge("records", "M1060 140 H1180", "files · 1..*", 1120, 125);
+  edge("exceptions", "M480 88 H540 V53 H600", "extends", 540, 38, "inheritance");
+  edge("exceptions", "M1180 143 H1040 V163 H900", "extends", 1040, 130, "inheritance");
+  classes.forEach(drawClass);
+
+  function sizeDiagrams(fullSize) {
+    for (const svg of document.querySelectorAll(".canvas svg")) svg.style.width = fullSize ? "1660px" : "100%";
+    document.getElementById("fit").setAttribute("aria-pressed", String(!fullSize));
+    document.getElementById("actual").setAttribute("aria-pressed", String(fullSize));
+  }
+  document.getElementById("fit").addEventListener("click", () => sizeDiagrams(false));
+  document.getElementById("actual").addEventListener("click", () => sizeDiagrams(true));
+</script>
+</body>
+</html>

@@ -8,8 +8,9 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
     from uuid import UUID
 
+    from huron.pkg.catalog.models import RevisionRef
     from huron.pkg.catalog.persistence import IdempotencyClaim, PlatformRoot, Replay, Window
-    from huron.pkg.catalog.records import Dataset, Organization, Project, ServiceAccount
+    from huron.pkg.catalog.records import Dataset, Organization, Project, Release, ServiceAccount
     from huron.pkg.rbac import Binding, ProjectVisibility, Visibility
 
 
@@ -276,5 +277,85 @@ class CreationStore(CatalogReaders, Protocol):
 
         Returns:
             A context whose mutation and receipt commit only on clean exit.
+        """
+        ...
+
+
+class ReleaseTransaction(RetryTransaction, Protocol):
+    """A release insert sharing the claimed release-publication transaction."""
+
+    async def insert_release(self, item: Release) -> None:
+        """Insert one release row, tagging a dataset revision.
+
+        A second release with the same ``item.tag`` under
+        ``item.dataset_id`` raises ``TagExists``. A release naming a
+        revision that ``revision_ref`` cannot resolve for
+        ``item.dataset_id`` raises ``ResourceNotFound``; a caller that
+        resolved the revision through ``revision_ref`` first will not
+        observe this.
+
+        Args:
+            item: The release to insert, fully formed.
+        """
+        ...
+
+
+class ReleaseStore(CatalogReaders, Protocol):
+    """Committed ancestry, release resolution and transaction-scoped tag publication."""
+
+    def transaction(self) -> AbstractAsyncContextManager[ReleaseTransaction]:
+        """Open one atomic release creation and retry transaction.
+
+        Returns:
+            A context whose insert and receipt commit only on clean exit.
+        """
+        ...
+
+    async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
+        """Return one release by its dataset and tag, if ``visibility`` admits the dataset.
+
+        Args:
+            dataset_id: The dataset the release belongs to.
+            tag: The release's tag, unique within the dataset.
+            visibility: The caller's discovery rights.
+
+        Returns:
+            The stored release.
+        """
+        ...
+
+    async def revision_ref(self, dataset_id: UUID, revision_number: int) -> RevisionRef:
+        """Return the identity of one committed revision by its dataset and sequential number.
+
+        Unlike the other point reads, this one carries no ``visibility``:
+        a revision is resolved only in service of a release the caller has
+        already been authorized to create on ``dataset_id``.
+
+        Args:
+            dataset_id: The dataset the revision belongs to.
+            revision_number: The revision's 1-based position within the
+                dataset.
+
+        Returns:
+            The revision's identity and manifest digest.
+        """
+        ...
+
+    async def releases(
+        self, dataset_id: UUID, visibility: Visibility, *, limit: int, after: tuple[str] | None
+    ) -> Window[Release]:
+        """Return a window of one dataset's releases ordered by ``tag``.
+
+        Args:
+            dataset_id: The dataset the releases belong to.
+            visibility: The caller's discovery rights, checked against the
+                dataset itself; every release of an admitted dataset is
+                returned.
+            limit: The maximum number of releases to return.
+            after: The tag of the last release already seen, excluded
+                from the window, or ``None`` to start from the beginning.
+
+        Returns:
+            The next window of the dataset's releases.
         """
         ...

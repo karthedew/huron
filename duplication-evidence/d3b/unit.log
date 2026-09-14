@@ -1,0 +1,264 @@
+   Building huron @ file:///home/karl/repo/huron
+      Built huron @ file:///home/karl/repo/huron
+Uninstalled 1 package in 0.26ms
+Installed 1 package in 0.27ms
+============================= test session starts ==============================
+platform linux -- Python 3.12.4, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/karl/repo/huron
+configfile: pyproject.toml
+testpaths: tests
+plugins: respx-0.23.1, hypothesis-6.165.10, anyio-4.14.2, asyncio-1.4.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1741 items / 64 deselected / 1677 selected
+
+tests/unit/test_acceptance_capacity.py .....                             [  0%]
+tests/unit/test_api_api_keys.py ...                                      [  0%]
+tests/unit/test_api_app.py ..................                            [  1%]
+tests/unit/test_api_bindings.py ........................................ [  3%]
+........................                                                 [  5%]
+tests/unit/test_api_catalog_hierarchy.py ............................... [  7%]
+.......................                                                  [  8%]
+tests/unit/test_api_completion_capacity.py .                             [  8%]
+tests/unit/test_api_errors.py ...................                        [  9%]
+tests/unit/test_api_expiry.py ....                                       [ 10%]
+tests/unit/test_api_ingest_crash_matrix.py ............                  [ 10%]
+tests/unit/test_api_ingest_expiry.py ........                            [ 11%]
+tests/unit/test_api_ingest_sessions.py ................................. [ 13%]
+.........                                                                [ 13%]
+tests/unit/test_api_login.py .....................                       [ 14%]
+tests/unit/test_api_main.py ..                                           [ 15%]
+tests/unit/test_api_oidc.py ..........                                   [ 15%]
+tests/unit/test_api_pagination.py .....................                  [ 16%]
+tests/unit/test_api_policies.py ...............                          [ 17%]
+tests/unit/test_api_preconditions.py ..................                  [ 18%]
+tests/unit/test_api_problems.py ...............                          [ 19%]
+tests/unit/test_api_raw_revisions.py ....                                [ 20%]
+tests/unit/test_api_rbac.py .....                                        [ 20%]
+tests/unit/test_api_revisions.py ...............                         [ 21%]
+tests/unit/test_api_roles.py ...                                         [ 21%]
+tests/unit/test_api_router_composition.py ..............                 [ 22%]
+tests/unit/test_api_search.py ...                                        [ 22%]
+tests/unit/test_api_service_accounts.py ...........                      [ 23%]
+tests/unit/test_api_settings.py ..............                           [ 23%]
+tests/unit/test_api_users.py ............                                [ 24%]
+tests/unit/test_api_visibility.py ........                               [ 25%]
+tests/unit/test_auth_oidc.py ....................................        [ 27%]
+tests/unit/test_auth_password.py ..........                              [ 27%]
+tests/unit/test_auth_principals.py ...............                       [ 28%]
+tests/unit/test_auth_sessions.py .....................                   [ 29%]
+tests/unit/test_authorization_cookies.py ........                        [ 30%]
+tests/unit/test_authorization_credentials.py ............                [ 31%]
+tests/unit/test_authorization_decisions.py ...............               [ 32%]
+tests/unit/test_authorization_guards.py .........................        [ 33%]
+tests/unit/test_books_upload_script.py ......                            [ 33%]
+tests/unit/test_catalog_documents.py ................................... [ 36%]
+...........                                                              [ 36%]
+tests/unit/test_catalog_errors.py ...                                    [ 36%]
+tests/unit/test_catalog_hierarchy_records.py ........................... [ 38%]
+                                                                         [ 38%]
+tests/unit/test_catalog_ingest.py ...................................... [ 40%]
+.......................................................                  [ 44%]
+tests/unit/test_catalog_layers.py ......                                 [ 44%]
+tests/unit/test_catalog_lifecycle.py ...                                 [ 44%]
+tests/unit/test_catalog_paths.py ....................................... [ 46%]
+......                                                                   [ 47%]
+tests/unit/test_catalog_ports.py ..                                      [ 47%]
+tests/unit/test_catalog_properties.py ..........                         [ 47%]
+tests/unit/test_check_duplication.py ................................... [ 50%]
+........................................................................ [ 54%]
+........................................................................ [ 58%]
+......................................                                   [ 60%]
+tests/unit/test_check_schema_map.py ...                                  [ 61%]
+tests/unit/test_controller_engine.py .................                   [ 62%]
+tests/unit/test_controller_epoch.py ....................                 [ 63%]
+tests/unit/test_controller_settings.py .............                     [ 64%]
+tests/unit/test_controller_transport.py .........................        [ 65%]
+tests/unit/test_core_workflows.py .........                              [ 66%]
+tests/unit/test_error_contract.py ............                           [ 66%]
+tests/unit/test_execution_model.py ........                              [ 67%]
+tests/unit/test_hierarchy_store_memory.py .............................. [ 69%]
+.........                                                                [ 69%]
+tests/unit/test_integrity_cutover.py .........................           [ 71%]
+tests/unit/test_integrity_generations.py ..............                  [ 71%]
+tests/unit/test_integrity_storage.py ....................                [ 73%]
+tests/unit/test_lakectl_main.py ..................                       [ 74%]
+tests/unit/test_lakectl_wiring.py ...                                    [ 74%]
+tests/unit/test_legacy_verification.py .............                     [ 75%]
+tests/unit/test_maintenance_adapters.py .....................            [ 76%]
+tests/unit/test_managed_controller.py .........................          [ 77%]
+tests/unit/test_postgres_api_key_conflicts.py ..                         [ 77%]
+tests/unit/test_postgres_credential_conflicts.py ....                    [ 78%]
+tests/unit/test_postgres_rbac_conflicts.py .........                     [ 78%]
+tests/unit/test_protocol_documents.py .......................            [ 80%]
+tests/unit/test_rawstore_commit.py ...................                   [ 81%]
+tests/unit/test_rawstore_completion_admission.py ..................      [ 82%]
+tests/unit/test_rawstore_generation.py .....                             [ 82%]
+tests/unit/test_rawstore_inspection.py ..............                    [ 83%]
+tests/unit/test_rawstore_materialize.py ................................ [ 85%]
+.................................................                        [ 88%]
+tests/unit/test_rawstore_store.py ..............................         [ 90%]
+tests/unit/test_rbac_roles.py .........                                  [ 90%]
+tests/unit/test_rbac_visibility.py .................                     [ 91%]
+tests/unit/test_repository_hierarchy.py ................................ [ 93%]
+........                                                                 [ 94%]
+tests/unit/test_repository_rbac.py ........................              [ 95%]
+tests/unit/test_schema_committed.py ...................                  [ 96%]
+tests/unit/test_schema_loading.py .....                                  [ 96%]
+tests/unit/test_schema_revision_index.py ......................          [ 98%]
+tests/unit/test_schema_snapshot_provenance.py ........                   [ 98%]
+tests/unit/test_stores_ports.py ...                                      [ 98%]
+tests/unit/test_stores_rows.py ...................                       [100%]
+
+=============================== warnings summary ===============================
+tests/contract/test_auth_store.py:55
+  /home/karl/repo/huron/tests/contract/test_auth_store.py:55: DeprecationWarning: testcontainers.postgres is deprecated, use testcontainers.community.postgres instead
+    from testcontainers.postgres import PostgresContainer
+
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/karl/repo/huron/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.4-final-0 ________________
+
+Name                                                                 Stmts   Miss   Cover   Missing
+---------------------------------------------------------------------------------------------------
+src/huron/__init__.py                                                    0      0 100.00%
+src/huron/applications/__init__.py                                       0      0 100.00%
+src/huron/applications/api/__init__.py                                   3      0 100.00%
+src/huron/applications/api/app.py                                      116      0 100.00%
+src/huron/applications/api/authorization/__init__.py                     6      0 100.00%
+src/huron/applications/api/authorization/cookies.py                     22      0 100.00%
+src/huron/applications/api/authorization/credentials.py                 48      0 100.00%
+src/huron/applications/api/authorization/decisions.py                   14      0 100.00%
+src/huron/applications/api/authorization/guards.py                      87      0 100.00%
+src/huron/applications/api/dependencies.py                              29      0 100.00%
+src/huron/applications/api/expiry.py                                    27      0 100.00%
+src/huron/applications/api/main.py                                       4      0 100.00%
+src/huron/applications/api/problems.py                                  96      0 100.00%
+src/huron/applications/api/routes/__init__.py                            0      0 100.00%
+src/huron/applications/api/routes/auth/__init__.py                       9      0 100.00%
+src/huron/applications/api/routes/auth/endpoints/__init__.py             0      0 100.00%
+src/huron/applications/api/routes/auth/endpoints/login.py               42      0 100.00%
+src/huron/applications/api/routes/auth/endpoints/oidc.py                51      0 100.00%
+src/huron/applications/api/routes/auth/endpoints/session.py             19      0 100.00%
+src/huron/applications/api/routes/auth/schema/__init__.py                0      0 100.00%
+src/huron/applications/api/routes/auth/schema/login.py                  12      0 100.00%
+src/huron/applications/api/routes/auth/schema/session.py                20      0 100.00%
+src/huron/applications/api/routes/v1/__init__.py                        30      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/__init__.py               0      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/api_keys.py              13      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/bindings.py              74      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/datasets.py              53      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py       89      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/organizations.py         35      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/policies.py              38      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/projects.py              35      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/revisions.py             23      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/roles.py                 11      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/search.py                 9      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/service_accounts.py      34      0 100.00%
+src/huron/applications/api/routes/v1/endpoints/users.py                 23      0 100.00%
+src/huron/applications/api/routes/v1/pagination.py                      57      0 100.00%
+src/huron/applications/api/routes/v1/preconditions.py                   13      0 100.00%
+src/huron/applications/api/routes/v1/schema/__init__.py                  0      0 100.00%
+src/huron/applications/api/routes/v1/schema/api_keys.py                 14      0 100.00%
+src/huron/applications/api/routes/v1/schema/bindings.py                 20      0 100.00%
+src/huron/applications/api/routes/v1/schema/datasets.py                 55      0 100.00%
+src/huron/applications/api/routes/v1/schema/ingest_sessions.py          53      0 100.00%
+src/huron/applications/api/routes/v1/schema/organizations.py            20      0 100.00%
+src/huron/applications/api/routes/v1/schema/policies.py                 36      0 100.00%
+src/huron/applications/api/routes/v1/schema/projects.py                 23      0 100.00%
+src/huron/applications/api/routes/v1/schema/revisions.py                17      0 100.00%
+src/huron/applications/api/routes/v1/schema/roles.py                    15      0 100.00%
+src/huron/applications/api/routes/v1/schema/service_accounts.py         18      0 100.00%
+src/huron/applications/api/routes/v1/schema/users.py                    20      0 100.00%
+src/huron/applications/api/runtime.py                                   74      2  97.30%   125, 174
+src/huron/applications/api/settings.py                                  56      0 100.00%
+src/huron/applications/lakectl/__init__.py                               0      0 100.00%
+src/huron/applications/lakectl/controller.py                           174      0 100.00%
+src/huron/applications/lakectl/engine.py                                73      0 100.00%
+src/huron/applications/lakectl/exclusion.py                             51      0 100.00%
+src/huron/applications/lakectl/main.py                                  51      0 100.00%
+src/huron/applications/lakectl/server.py                                99      0 100.00%
+src/huron/applications/lakectl/settings.py                              81      0 100.00%
+src/huron/applications/lakectl/wiring.py                                49      0 100.00%
+src/huron/core/__init__.py                                               7      0 100.00%
+src/huron/core/_catalog.py                                              55      0 100.00%
+src/huron/core/_ingest.py                                              321      6  98.13%   749-751, 758-760
+src/huron/core/_revision_reader.py                                      40      0 100.00%
+src/huron/core/access.py                                                64      0 100.00%
+src/huron/core/catalog.py                                               59      0 100.00%
+src/huron/core/catalog_claims.py                                         7      0 100.00%
+src/huron/core/catalog_collections.py                                   64      0 100.00%
+src/huron/core/catalog_creation.py                                      69      0 100.00%
+src/huron/core/catalog_documents.py                                     11      0 100.00%
+src/huron/core/catalog_ports.py                                         45      0 100.00%
+src/huron/core/idempotency.py                                           11      0 100.00%
+src/huron/core/identity.py                                              75      0 100.00%
+src/huron/core/integrity/__init__.py                                     0      0 100.00%
+src/huron/core/integrity/cutover.py                                    134      0 100.00%
+src/huron/core/integrity/generations.py                                 74      0 100.00%
+src/huron/core/integrity/models.py                                     115      0 100.00%
+src/huron/core/integrity/ports.py                                       27      0 100.00%
+src/huron/core/integrity/verification.py                                92      0 100.00%
+src/huron/core/ports.py                                                 39      0 100.00%
+src/huron/core/raw.py                                                   75      0 100.00%
+src/huron/core/releases.py                                              49      0 100.00%
+src/huron/core/revisions.py                                             17      0 100.00%
+src/huron/core/scopes.py                                                21      0 100.00%
+src/huron/pkg/__init__.py                                                0      0 100.00%
+src/huron/pkg/auth/__init__.py                                           9      0 100.00%
+src/huron/pkg/auth/apikeys.py                                           73      4  94.52%   201, 264, 268, 300
+src/huron/pkg/auth/dev.py                                               15      1  93.33%   45
+src/huron/pkg/auth/errors.py                                             8      0 100.00%
+src/huron/pkg/auth/oidc.py                                             164      0 100.00%
+src/huron/pkg/auth/password.py                                          44      0 100.00%
+src/huron/pkg/auth/principal.py                                         11      0 100.00%
+src/huron/pkg/auth/principals.py                                        62      0 100.00%
+src/huron/pkg/auth/sessions.py                                         100      0 100.00%
+src/huron/pkg/catalog/__init__.py                                        8      0 100.00%
+src/huron/pkg/catalog/amendments.py                                     31     17  45.16%   82-90, 114-123
+src/huron/pkg/catalog/documents.py                                     197      0 100.00%
+src/huron/pkg/catalog/errors.py                                         91      0 100.00%
+src/huron/pkg/catalog/failures.py                                       21      0 100.00%
+src/huron/pkg/catalog/ids.py                                            13      2  84.62%   32, 52
+src/huron/pkg/catalog/ingest.py                                        131      0 100.00%
+src/huron/pkg/catalog/layers.py                                         59      0 100.00%
+src/huron/pkg/catalog/lifecycle.py                                       6      0 100.00%
+src/huron/pkg/catalog/manifest.py                                       94      2  97.87%   291, 295
+src/huron/pkg/catalog/metadata.py                                       10      0 100.00%
+src/huron/pkg/catalog/models.py                                         32      0 100.00%
+src/huron/pkg/catalog/paths.py                                         109      0 100.00%
+src/huron/pkg/catalog/persistence.py                                    23      0 100.00%
+src/huron/pkg/catalog/ports.py                                          34      0 100.00%
+src/huron/pkg/catalog/records.py                                       117      0 100.00%
+src/huron/pkg/metastore/__init__.py                                     10      0 100.00%
+src/huron/pkg/metastore/api_keys.py                                     29      7  75.86%   60-70, 127, 144-154
+src/huron/pkg/metastore/credentials.py                                  22      0 100.00%
+src/huron/pkg/metastore/hierarchy.py                                   311     80  74.28%   777, 796-799, 815-828, 849-855, 880-921, 932, 953-972, 986-1007, 1023-1049, 1070-1092, 1102, 1125, 1146, 1200-1201, 1218-1237, 1254-1266, 1289-1305, 1313-1316, 1336-1340, 1354-1359, 1371-1379
+src/huron/pkg/metastore/ingest.py                                      198     69  65.15%   195-196, 212, 232-236, 558-582, 601-624, 636, 664-670, 692-730, 743-755, 767-777, 795-807, 823-838, 862-867, 879-886, 900-906, 930
+src/huron/pkg/metastore/legacy.py                                       69      0 100.00%
+src/huron/pkg/metastore/maintenance.py                                  76      0 100.00%
+src/huron/pkg/metastore/principals.py                                   35     20  42.86%   71-81, 115-133, 147-154, 180-193, 210-218
+src/huron/pkg/metastore/queries.py                                      32      9  71.88%   96-103, 124-141, 158
+src/huron/pkg/metastore/rbac.py                                        195     49  74.87%   514, 531-541, 555-565, 590-643, 666-677, 734, 755, 772-783, 798-809, 827-837, 862-871, 917, 970, 985-992
+src/huron/pkg/metastore/rows.py                                         40      0 100.00%
+src/huron/pkg/metastore/sessions.py                                     20      9  55.00%   58-68, 81, 117, 134, 154-159
+src/huron/pkg/rawstore/__init__.py                                       4      0 100.00%
+src/huron/pkg/rawstore/commit.py                                        65      0 100.00%
+src/huron/pkg/rawstore/completion.py                                    35      0 100.00%
+src/huron/pkg/rawstore/inspection.py                                    32      0 100.00%
+src/huron/pkg/rawstore/maintenance.py                                  153      0 100.00%
+src/huron/pkg/rawstore/materialize.py                                  127      0 100.00%
+src/huron/pkg/rawstore/store.py                                        161      0 100.00%
+src/huron/pkg/rbac/__init__.py                                         132      0 100.00%
+src/huron/pkg/rbac/roles.py                                             65      4  93.85%   297-298, 327, 333
+src/huron/schema/__init__.py                                            23      0 100.00%
+src/huron/schema/storage.py                                              1      0 100.00%
+---------------------------------------------------------------------------------------------------
+TOTAL                                                                 6909    281  95.93%
+Required test coverage of 95.93% reached. Total coverage: 95.93%
+========= 1677 passed, 64 deselected, 2 warnings in 125.56s (0:02:05) ==========
+exit:0

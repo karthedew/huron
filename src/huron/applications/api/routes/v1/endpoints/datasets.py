@@ -22,7 +22,7 @@ from huron.applications.api.authorization import (
     require_project,
 )
 from huron.applications.api.dependencies import Catalog as Repository
-from huron.applications.api.dependencies import Creation
+from huron.applications.api.dependencies import Creation, ReleaseWorkflow
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import (
     Page,
@@ -249,7 +249,7 @@ async def create_release(
     dataset_id: UUID,
     body: CreateRelease,
     idempotency_key: IdempotencyHeader,
-    repository: Repository,
+    repository: ReleaseWorkflow,
     visibility: CurrentVisibility,
     actor: Annotated[Principal, Depends(require_dataset("release.create"))],
 ) -> ReleaseView:
@@ -267,7 +267,7 @@ async def create_release(
         dataset_id: The dataset whose revision is being tagged.
         body: The tag, the revision number it names and an optional title.
         idempotency_key: The caller's ``Idempotency-Key`` header.
-        repository: The wired hierarchy repository.
+        repository: The wired release workflow.
         visibility: The caller's discovery rights, used to resolve
             ``dataset_id``.
         actor: The caller, recorded as the release's creator and whose
@@ -294,7 +294,6 @@ async def create_release(
             tag=body.tag,
             revision_number=body.revision_number,
             title=body.title,
-            created_by=actor.subject,
             claim=claim,
         )
     )
@@ -309,7 +308,7 @@ async def create_release(
 )
 async def list_releases(
     dataset_id: UUID,
-    repository: Repository,
+    repository: ReleaseWorkflow,
     visibility: CurrentVisibility,
     limit: PageLimit = 50,
     after: PageCursor = None,
@@ -323,7 +322,7 @@ async def list_releases(
     \f
     Args:
         dataset_id: The dataset whose releases to list.
-        repository: The wired hierarchy repository.
+        repository: The wired release workflow.
         visibility: The caller's discovery rights.
         limit: The most releases to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
@@ -339,7 +338,7 @@ async def list_releases(
     "/{dataset_id}/releases/{tag}", responses={404: problem_response("no such release tag")}
 )
 async def resolve_release(
-    dataset_id: UUID, tag: str, repository: Repository, visibility: CurrentVisibility
+    dataset_id: UUID, tag: str, repository: ReleaseWorkflow, visibility: CurrentVisibility
 ) -> ReleaseView:
     """Resolve a release tag to the revision it names.
 
@@ -350,7 +349,7 @@ async def resolve_release(
     Args:
         dataset_id: The dataset the tag belongs to.
         tag: The release tag to resolve.
-        repository: The wired hierarchy repository.
+        repository: The wired release workflow.
         visibility: The caller's discovery rights.
 
     Returns:

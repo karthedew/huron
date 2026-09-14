@@ -1,0 +1,6 @@
+.pyscn/reports/analyze_20260913_162616.json
+-rw-rw-r-- 1 karl karl 639362 2026-09-13 15:52:29.484075421 -0600 .pyscn/reports/analyze_20260913_155229.json
+-rw-rw-r-- 1 karl karl 639361 2026-09-13 15:52:32.051024849 -0600 .pyscn/reports/analyze_20260913_155232.json
+-rw-rw-r-- 1 karl karl 639366 2026-09-13 16:15:16.127575101 -0600 .pyscn/reports/analyze_20260913_161516.json
+-rw-rw-r-- 1 karl karl 639369 2026-09-13 16:15:38.948590141 -0600 .pyscn/reports/analyze_20260913_161538.json
+-rw-rw-r-- 1 karl karl 639365 2026-09-13 16:26:16.141871175 -0600 .pyscn/reports/analyze_20260913_162616.json

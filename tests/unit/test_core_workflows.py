@@ -18,6 +18,7 @@ from huron.core.access import AccessPolicy
 from huron.core.catalog import CatalogService
 from huron.core.catalog_creation import CatalogCreation
 from huron.core.raw import RawIngestionService
+from huron.core.releases import Releases
 from huron.core.revisions import RevisionReadService
 from huron.pkg.auth import Principal
 from huron.pkg.catalog import FileState, ManifestEntry
@@ -120,7 +121,8 @@ async def workspace(
 
 async def test_catalog_does_not_accept_a_foreign_claim(workspace) -> None:
     """Every create rejects a claim naming someone other than the authenticated actor."""
-    catalog, _, _, dataset, _, _, _, creation = workspace
+    catalog, _, access, dataset, repository, _, _, creation = workspace
+    releases = Releases(access, repository.hierarchy, repository.raw_store)
     org = await catalog.projects.get(dataset.project_id)
     for operation in (
         creation.create_organization(
@@ -143,12 +145,11 @@ async def test_catalog_does_not_accept_a_foreign_claim(workspace) -> None:
             profile_version="1.0",
             claim=claim("d", "other"),
         ),
-        catalog.create_release(
+        releases.create_release(
             dataset.id,
             tag="v1",
             revision_number=1,
             title=None,
-            created_by="root",
             claim=claim("r", "other"),
         ),
     ):
