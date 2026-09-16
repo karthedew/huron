@@ -377,15 +377,15 @@ transaction. The reconciler is a detection path, not a guard.</td></tr>
 its inputs.</td></tr>
 <tr><td>An ingest session that reaches <code>COMMITTED</code> claims the revision that was
 created</td>
-<td><code>schema_audit.md</code> F8</td>
+<td><a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/schema_audit.md">Archived schema audit</a> F8</td>
 <td><span class="inv">[db 0008]</span> <code>ingest_sessions_revision_guard</code></td>
-<td>Today a session commits against a dangling UUID; a plain foreign key is not representable
+<td>The pre-0008 audit admitted a committed session with a dangling UUID; a plain foreign key is not representable
 because <code>revision_id</code> is minted hours earlier, in <code>PREPARING</code>.</td></tr>
 <tr><td>A release cites a revision of its own dataset</td>
-<td><code>schema_audit.md</code> F1</td>
+<td><a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/schema_audit.md">Archived schema audit</a> F1</td>
 <td><span class="inv">[db 0008]</span> <code>releases_revision_dataset_fk</code></td>
-<td>Today the two foreign keys are independent and a cross-dataset citation inserts cleanly —
-permanently, since releases are withdrawn, never repointed.</td></tr>
+<td>The pre-0008 audit admitted cross-dataset citations through independent foreign keys;
+the composite foreign key closes that gap.</td></tr>
 <tr><td>Every role is user-only, and no role carries <code>data.write</code> at silver or gold</td>
 <td><a href="rbac.html#roles">RBAC §2</a>, <a href="rbac.html#authn">§6</a></td>
 <td><span class="inv">[app: <a href="../src/huron/core/security/roles.py"><code>core.security.roles</code></a>]</span></td>

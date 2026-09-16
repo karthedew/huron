@@ -1,9 +1,14 @@
 # P3 — Integrity services: final design
 
-Status: design agreed 2026-09-08; M1a passed independent verification on 2026-09-11 ([P3_M1A_VALIDATION.md](P3_M1A_VALIDATION.md)). M1b's authority model is superseded by [ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md) and designed in [P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md); its delivery is tracked by that design's implementation plan and `design/roadmap.html`.
-Implementation follows the separately authorized [P3_IMPLEMENTATION_PLAN.md](P3_IMPLEMENTATION_PLAN.md). `design/` remains the architecture authority; its affected pages
-are reconciled in this change. [P3_PROPOSAL.md](P3_PROPOSAL.md) is historical
-interview input and is superseded wherever this final design differs.
+Status: design agreed 2026-09-08; implementation remains partial. Verified completion
+and the local controller/cutover workflows have [recorded verification](docs/history.md),
+including the domain-owned Core migration. M1c activation/startup and later milestones
+remain outstanding. [ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md)
+governs verification authority; `design/roadmap.html` owns current delivery status.
+
+The [implementation plan](P3_IMPLEMENTATION_PLAN.md) retains the remaining work.
+`design/` remains authoritative. Original proposals, authority investigations and
+attempt reports are available through [Implementation history](docs/history.md).
 
 ## 1. Outcome and scope
 

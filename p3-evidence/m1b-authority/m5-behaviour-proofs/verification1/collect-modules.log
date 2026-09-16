@@ -1,5 +1,0 @@
-test_managed_controller: 25 tests collected in 0.08s
-test_controller_epoch: 20 tests collected in 0.08s
-test_controller_transport: 25 tests collected in 0.08s
-test_lakectl_wiring: 3 tests collected in 0.07s
-test_lakectl_main: 18 tests collected in 0.08s

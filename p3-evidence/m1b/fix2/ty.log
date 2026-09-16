@@ -1,2 +1,0 @@
-$ uv run ty check src
-All checks passed!

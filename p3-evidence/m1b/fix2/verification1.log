@@ -1,3 +1,0 @@
-$ PYTHONPATH=. uv run pytest -q p3-evidence/m1b/verification1/test_review_repro.py
-....                                                                     [100%]
-4 passed in 1.74s

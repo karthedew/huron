@@ -45,12 +45,12 @@ or Gold, only service accounts can.
 Open any of them directly (`design/index.html` in a browser is the front door); they are not part
 of this site's build, so there is exactly one copy.
 
-## Architecture decisions and migration plans
+## Architecture decisions and implementation history
 
 The [domain-owned Core decision](adr/0002-domain-owned-core-workflows.md) explains the
 trade-off behind the target in `design/architecture.html#domain-owned-core`. Its
-[migration plan](plans/domain-owned-core.md) maps current source to the agreed owners
-and specifies the cutover checks. Delivery status remains in
+[historical receipt](history.md#domain-owned-core) links to the complete migration
+plan and verification record. Delivery status remains in
 `design/roadmap.html#domain-owned-core-migration`.
 
 ## Where build status lives
@@ -61,8 +61,9 @@ status tag — `done`, `partial`, or `todo` — and the partial rows say exactly
 versus outstanding. Landing work updates its tag there in the same change. This page keeps no
 status copy of its own, so there is exactly one to keep true.
 
-For the day-to-day build order and what's landed in the auth and RBAC slices specifically, see
-`AUTH_IMPLEMENTATION_PLAN.md` and `RBAC_IMPLEMENTATION_PLAN.md` at the repository root.
+Completed authentication, RBAC, schema and migration plans are available through
+[Implementation history](history.md). The remaining P3 design and implementation
+plan stay at the repository root; current phase status remains in the roadmap.
 
 !!! warning "One status copy"
 

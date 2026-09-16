@@ -34,5 +34,5 @@ remain part of the supported contract.
 This is an accepted architecture decision, not an implementation receipt. The target
 graph is recorded in `design/architecture.html#domain-owned-core`; delivery status
 is in `design/roadmap.html#domain-owned-core-migration`. The
-[migration plan](../plans/domain-owned-core.md) records the resolved ownership and
-removal inventory and the behavior-preserving cutover and verification requirements.
+[implementation history](../history.md#domain-owned-core) records verification and
+links to the archived complete migration plan, ownership and removal inventory.

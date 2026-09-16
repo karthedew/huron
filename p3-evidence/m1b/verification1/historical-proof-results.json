@@ -1,8 +1,0 @@
-[
-  {
-    "name": "historical-proof",
-    "command": "uv run pytest -m integration -s tests/integration/test_protocol_cutover.py",
-    "exit": 0,
-    "seconds": 66.48668885231018
-  }
-]

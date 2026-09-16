@@ -11,7 +11,7 @@ rules belong here so the two files do not maintain competing copies.
 - Core domain subpackages own their values, rules and reusable workflows;
   applications expose their public interfaces. Future compute, client and
   transformation capabilities remain planned. Migration evidence is recorded in
-  `docs/plans/domain-owned-core.md`.
+  `docs/history.md#domain-owned-core`.
 - These agreed boundaries and ingestion rules supersede conflicting older design
   descriptions. Reconcile affected design pages, imports, tooling, tests, and
   entry points when implementing the relevant migration. Do not silently change

@@ -1,4 +1,0 @@
-uv run --group docs zensical build --strict
-Build started
-No issues found
-Build finished in 0.19s

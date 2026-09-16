@@ -16,6 +16,7 @@ site, so there is exactly one copy of it.
     | How are the four storage layers laid out? | `design/layer-raw.html` and its siblings |
     | Who can write Silver? | `design/rbac.html` |
     | What order is this being built in? | `design/roadmap.html`, `IMPLEMENTATION_PLAN.md` |
+    | Where are completed plans and old verification reports? | [Implementation history](history.md) |
     | How do I run the tests? | [Testing](getting-started/testing.md) |
     | Why did my PR fail CI? | [Conventions](getting-started/conventions.md) |
 

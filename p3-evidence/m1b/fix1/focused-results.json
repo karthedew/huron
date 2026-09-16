@@ -1,5 +1,0 @@
-{
-  "command": "PYTHONPATH=. uv run pytest -q tests/unit/test_integrity_cutover.py tests/unit/test_integrity_storage.py tests/unit/test_lakectl_main.py tests/unit/test_managed_controller.py tests/unit/test_maintenance_adapters.py p3-evidence/m1b/verification1/test_review_repro.py",
-  "exit": 0,
-  "seconds": 3.7514891624450684
-}

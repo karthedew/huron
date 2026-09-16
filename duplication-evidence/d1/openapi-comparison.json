@@ -1,6 +1,0 @@
-{
-  "baseline": "../d0/openapi.json",
-  "actual": "openapi.json",
-  "normalization": null,
-  "exact_equal": true
-}

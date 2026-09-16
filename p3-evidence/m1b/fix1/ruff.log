@@ -1,2 +1,0 @@
-$ uv run ruff check src
-All checks passed!

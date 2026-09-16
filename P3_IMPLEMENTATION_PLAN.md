@@ -1,15 +1,15 @@
 # P3 — Integrity services: implementation plan
 
-Status: M1a passed independent functional verification on 2026-09-11; see the
-[independent report](p3-evidence/m1a/verification1/report.md) and
-[validation record](P3_M1A_VALIDATION.md). M1b failed independent verification
-attempt 3 and stopped at [Escalation](#escalation); the architectural review is
-complete and M1b resumes only under the companion
-[P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md) and its implementation
-plan (see [Resolution](#resolution)). M1c activation/startup remains required. The original planning change
-performed no implementation. Read [P3_DESIGN.md](P3_DESIGN.md) first. The
-architecture authority is `design/`; the phase remains `todo` in
-`design/roadmap.html` until gates pass.
+Status: **implementation partial; M1c activation/startup and M2–M7 remain open.**
+Verified completion and local controller/cutover workflows have
+[recorded verification](docs/history.md), including the domain-owned Core migration.
+[ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md) supersedes
+the earlier failed endorsement design. Read [P3_DESIGN.md](P3_DESIGN.md) first;
+`design/` owns architecture and `design/roadmap.html` owns delivery status.
+
+M1a/M1b sections retain prerequisite contracts; file lists reflect the original
+planning tree and must be resolved through the current [Core map](design/core-map.html).
+Earlier execution/escalation reports are archived through [Implementation history](docs/history.md).
 
 ## Acceptance outcome
 
@@ -27,16 +27,10 @@ authorization history or healthy status for damaged content.
   migration schema-map validation remain required separately. Source thresholds,
   coverage ratchets and import contracts are unchanged. `make lint` is canonical.
 
-- **Execution priority agreed 2026-09-11:** stabilize and verify the existing D3a
-  catalog-creation changes, then pause `IMPLEMENTATION_PLAN.md` before D3b and
-  resume this plan. Duplication reduction is a separate workstream. Continue to
-  run the unchanged native-90 duplication check and report its failure; that
-  known failure does not block P3 implementation or functional acceptance.
-  All other applicable checks remain required. Distinguish functional acceptance
-  from repository quality/release readiness: a sub-90 score never constitutes a
-  clean `make lint`, passing CI, or completion of the duplication plan. This
-  user-approved exception also applies to `/implement-markdown`'s baseline and
-  serial verification gates for this execution; it does not change tool settings.
+- Use current [AGENTS.md](AGENTS.md) gates and the committed duplication regression
+  contract. The old native-score exception and machine-specific gate receipts are
+  historical; they do not override current configuration. Duplication improvement
+  remains a separate workstream under `IMPLEMENTATION_PLAN.md`.
 - This is implementation guidance, not permission from the planning task to run
   migrations, revoke roles, stop services or delete data. Execute actual cutover
   only in the deployment explicitly selected for implementation/acceptance.
@@ -200,11 +194,10 @@ volume, with a serialized controller as the application's only restart authority
 See [the operator contract](docs/operations/controlled-cutover.md). Trusted host,
 engine and database administrators provision that boundary; ordinary application
 or automation users have no alternate daemon/storage grant. The development
-Compose stack remains explicitly unsupported for certification. All three M1b
-verification attempts failed ([the record](P3_M1B_VALIDATION.md)); the
-authority model is redesigned under ADR-0001 in
-[P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md) and delivered by its
-own plan. These implementation details do not mark M1c delivered.
+Compose stack remains explicitly unsupported for certification. The earlier failed
+M1b attempts and authority redesign are [archived](docs/history.md); ADR-0001 and the
+current Integrity/controller tests describe the implemented model. Local verification
+does not mark M1c delivered or certify an NFS deployment.
 
 ### M1c. Cutover, migration and startup as one deliverable
 
@@ -218,8 +211,8 @@ API error mappings; `.github/workflows/acceptance.yml`, acceptance fixtures and
    (2026-09-12):** `lakectl protocol cutover --validate --sequence N` moves out
    of this item into the M1b authority plan, because it is the only operator
    resolution of a lost `validate` reply that does not rescan
-   (`P3_M1B_AUTHORITY_DESIGN.md`, "Design: T3b", "Roadmap drift recorded
-   here"); `protocol init` and API startup gating stay here. API startup
+   (see the [archived authority design](docs/history.md#archived-plans-and-investigations));
+   `protocol init` and API startup gating stay here. API startup
    requires a valid initialized/cutover root and compatible schema head before
    serving. Do not let startup certify a legacy root.
 2. Prepare verifies final orphans and terminalizes legacy sessions under exclusion.
@@ -450,10 +443,9 @@ no fabricated governance authority.
 
 ## Commands and evidence
 
-For the 2026-09-11 execution, record functional acceptance and the outstanding
-duplication quality gate separately under the execution-priority rule above.
-Deployment certification still requires the actual exclusion and storage proofs;
-the sequencing decision does not waive any integrity or deployment requirement.
+Use the current repository gates. Deployment certification additionally requires
+the actual exclusion and storage proofs; local functional acceptance does not
+establish production or NFS support.
 
 ```sh
 make lint
@@ -479,124 +471,11 @@ consistency and `git diff --check`; run strict docs build if site content change
 Python/application tests do not validate these documents and are not required
 until implementation starts.
 
-### Planning verification receipt — 2026-09-08
+## Historical execution and escalation
 
-- Strict documentation build passed using the existing environment:
-  `UV_CACHE_DIR=/tmp/huron-p3-uv-cache UV_NO_SYNC=1 make docs`. The initial plain
-  invocation was blocked by sandbox access to the shared uv cache; the scoped
-  cache retry passed without changing dependencies.
-- All 166 local links/HTML anchors across the six edited architecture pages and
-  four planning/glossary documents passed a local path/anchor check.
-- `git diff --check` passed. Source files, migrations and deployment settings
-  were not modified or executed; runtime tests and NFS proofs await implementation.
-- The documentation-site build does not include `design/`; the separate link/
-  anchor check covers those pages. P3 remains unimplemented in the roadmap.
-
-## Escalation
-
-### M1b authority and reverification — 2026-09-12 UTC
-
-**Stopped: M1b is incomplete after three failed independent verification attempts.**
-The `/implement-markdown` iteration cap prohibits a fourth fix pass or progress
-to M1c. The authorized native-duplication exception does not cover these functional
-defects. All three independent reports remain available:
-
-1. [Verification 1](p3-evidence/m1b/verification1/report.md): descendant mounts,
-   live configuration changes and persistence fence-loss gaps, plus test/prose fixes.
-2. [Verification 2](p3-evidence/m1b/verification2/report.md): pending-marker fsync
-   failure, fence loss during clearance and concurrent same-run ownership.
-3. [Verification 3](p3-evidence/m1b/verification3/report.md): the replacement
-   kernel-lock/controller-endorsement design fixes earlier finalization cases,
-   but three authority regressions remain.
-
-### Remaining findings and diagnosis
-
-- **Engine transport errors do not permanently revoke endorsement.** HTTPX
-  connection, timeout and status errors escape controller invalidation handling.
-  A receipt refused during an observed outage can become usable after recovery.
-  This is an implementation defect within the explicit plan requirement.
-- **Maintenance database identity/configuration is not bound to evidence.**
-  Changing the private maintenance configuration can validate an old receipt
-  against another database with similarly named excluded roles. This is an
-  implementation defect within the configuration-binding requirement.
-- **Direct endorsement bypasses full reverification after revocation.** A
-  maintenance UID can present an old receipt to the exposed `certify` operation
-  after writer loss and restoration. The controller checks current conditions
-  and stored bytes but cannot establish that a fresh complete scan occurred.
-  This is a missing authority/reverification decision in the design.
-
-The plan states the safety invariant but does not define a controller-verifiable
-handoff from the client-owned scan to controller-owned certification. Successive
-persistence fixes moved completion authority without settling that handoff.
-Additional local checks cannot prove that payload was rescanned after lost
-exclusion. The final review's three deterministic
-[authority regressions](p3-evidence/m1b/verification3/test_authority_repro.py)
-fail; its replacement finalization tests and original controller regressions pass.
-
-### Decisions required before resuming
-
-1. Which trusted authority owns complete verification and proves its completion:
-   the controller, or a constrained verifier with an enforceable handoff?
-2. How are the verification epoch, root, exact database identity/configuration,
-   controller generation, report and record bound together? Which changes and
-   failed observations irrevocably end that epoch?
-3. Which operations may create, endorse, validate or retry evidence? How do they
-   distinguish a lost acknowledgement from stale/revoked evidence without letting
-   a maintenance caller bypass rescanning?
-4. What are the recoverable crash, RPC, database/engine-loss and process-death states
-   across that boundary? Define consumer validity and adversarial tests for each.
-
-### Retained tree and verification state
-
-The incomplete changes are committed as `f619342` on `p3/integrity-and-raw-flows`
-and remain explicitly unverified, described by
-the final review's 60-file scoped inventory. No broad revert was performed because
-the shared tree contains unrelated work. All 115 pre-existing production Python
-files still match verified M1a; M1b adds 17 production files. Packaging, source-only
-lint configuration, tests and documentation also changed. No application was
-activated or deployed. M1c through M7 remain outstanding; these changes are not
-deployment-ready.
-
-Final independent source-inventory SHA-256:
-`0a9ad1351a5f21902266e21e90884988b15d749e5cd72238327cfec3729efff8`.
-Existing suites pass: 1,628 units at 95.880973% (floor 95.88), 48 contracts,
-14 integrations and unchanged full 9 GiB acceptance. All 17 added source files
-have 100% coverage. Types, imports, schema-map, other source static checks, strict
-docs and diff checks pass. These results do not override the failing authority
-regressions.
-
-`make lint` exits 2 solely at native duplication: 60/100 versus unchanged 90,
-213/935 fragments, 253 pairs and 58 groups; exact 132-file inventory, zero skips.
-This is not a clean lint/CI gate. Lint targets `src/` as directed; tests and
-migration schema-map validation remain required. All owned processes/fixtures
-ended and the VM stopped. No production database/service change, commit, push,
-activation or NFS certification occurred.
-
-### Required follow-up
-
-Submit this Codex prompt invocation, not a shell command:
-
-```text
-.claude/commands/architectural-review.md src/huron P3_M1B_ARCHITECTURAL_REVIEW.md "Resolve M1b verification authority, epoch revocation and certification handoff" P3_IMPLEMENTATION_PLAN.md#escalation
-```
-
-After review, regenerate a scoped companion design/plan using both reports as
-context, preserving the broader P3 plan:
-
-```text
-.claude/commands/design-plan.md src/huron P3_M1B_AUTHORITY_DESIGN.md P3_M1B_AUTHORITY_IMPLEMENTATION_PLAN.md "Resolve M1b authority and reverification; preserve later P3 scope" design/roadmap.html "P3_IMPLEMENTATION_PLAN.md#escalation; P3_M1B_ARCHITECTURAL_REVIEW.md"
-```
-
-### Resolution
-
-Both invocations ran on 2026-09-12.
-[P3_M1B_ARCHITECTURAL_REVIEW.md](P3_M1B_ARCHITECTURAL_REVIEW.md) (Task E)
-accepted [ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md)
-with amendments and answers decisions 1–4: the controller's persisted
-generation is the sole authority (1, 2); `establish`, `check`, `abandon` and a
-stateless `validate` are the only operations, a lost reply is resolved by
-validating again, and nothing is re-endorsed (3); the recoverable states are
-the epoch-end table in the design (4).
-[P3_M1B_AUTHORITY_DESIGN.md](P3_M1B_AUTHORITY_DESIGN.md) and its
-implementation plan carry the work; `--validate --sequence N` moves there from
-M1c item 1. This section stays as the record of why.
+The original planning receipts, failed M1b attempts and authority redesign are
+linked from [Implementation history](docs/history.md). The
+[archived escalation](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P3_IMPLEMENTATION_PLAN.md#escalation)
+records why endorsement was replaced by the controller generation as verification
+epoch. [ADR-0001](docs/adr/0001-controller-generation-is-the-verification-epoch.md)
+contains the accepted rationale and continuing failure/retry semantics.

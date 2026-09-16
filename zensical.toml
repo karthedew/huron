@@ -23,6 +23,7 @@ nav = [
     { "Testing" = "getting-started/testing.md" },
   ] },
   { "Backend design" = "backend-design.md" },
+  { "Implementation history" = "history.md" },
   { "Controlled cutover" = "operations/controlled-cutover.md" },
 ]
 

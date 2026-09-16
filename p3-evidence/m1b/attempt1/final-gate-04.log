@@ -1,2 +1,0 @@
-COMMAND ['uv', 'run', 'ty', 'check']
-All checks passed!

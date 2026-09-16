@@ -1,5 +1,0 @@
-Starting machine "podman-machine-default"
-API forwarding listening on: /var/run/docker.sock
-Docker API clients default to this address. You do not need to set DOCKER_HOST.
-
-Machine "podman-machine-default" started successfully

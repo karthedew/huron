@@ -135,7 +135,7 @@ and verified. The final gate passed 1,797 unit tests (96.39% coverage), 49 contr
 all 15 integration tests including controlled cutover in an isolated runner, Raw acceptance,
 lint and documentation checks. Canonical OpenAPI is unchanged; both review axes are closed.
 See the <a href="architecture.html#domain-owned-core">implemented graph</a> and
-<a href="../docs/plans/domain-owned-core.md">migration plan</a>. Existing delivered phase
+<a href="../docs/history.md#domain-owned-core">migration receipt</a>. Existing delivered phase
 statuses describe the current implementation; future scientific capabilities retain their
 existing delivery status.</p>
 
@@ -198,7 +198,8 @@ the keyset (<code>slug_cursor_key</code>/<code>tag_cursor_key</code> in
 window, so a walk at <code>limit=1</code> enumerates every visible row exactly once. The verification
 debts — property tests over the pure core, a
 CI that runs the gate, and this write-back — are closed:
-<code>P1_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M1–M6, fifteen tasks) is done; the
+the <a href="../docs/history.md#archived-plans-and-investigations">archived P1 plan</a>
+(M1–M6, fifteen tasks) is complete; the
 release-tag contract is covered against SQL-seeded revisions, and P2 now also creates a release
 after a real HTTP ingest and commit in <code>tests/unit/test_api_ingest_sessions.py</code>.
 Withdrawn: the audit table was delivered without the pre-created partitions this row once
@@ -210,7 +211,7 @@ rather than completed: the partitioning is <strong>dropped</strong>, decided 202
 <code>PRIMARY KEY (id)</code> — a uniqueness guarantee the partitioned shape cannot express — and
 one btree on <code>(created_at, id)</code>, the first index <code>created_at</code> has ever had.
 Reasoning, rejected alternative and live-database proof:
-<code>SCHEMA_DESIGN.md</code> § "S6 — <code>audit_events</code> partitioning (design)".</td>
+the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/SCHEMA_DESIGN.md">archived schema design</a>, S6.</td>
 <td>Create org → project → dataset via HTTP; generation docs and <code>CURRENT.json</code>
 at the exact documented paths; a release tag resolves to one revision and a second write of the
 same tag is <code>409 TAG_EXISTS</code>; slug-change attempts 409; API-key auth round-trip; a principal
@@ -231,13 +232,10 @@ under the total unique constraint <code>0001</code> shipped, the retry was refus
 also
 converts <code>migrations/schema.sql</code> from a "regenerate with <code>pg_dump</code>" claim it
 cannot support into a hand-maintained architecture map carrying a <code>Reflects:</code> stamp
-that <code>make lint</code> checks. Target design: <code>SCHEMA_DESIGN.md</code>, design records
-S1–S8 plus S7a. Execution order: <code>SCHEMA_IMPLEMENTATION_PLAN.md</code> § "4. Milestone sequence"
-(M1–M10). No milestone is gated: the two decisions the plan waited on — the
-<code>audit_events</code> partitioning and the reservation semantics above — were both settled
-2026-08-31, per that plan's § "2. Gates". Shipped in <code>da03ece</code>, applied and
-round-tripped 2026-09-01 (<code>P1_DESIGN.md</code> § "Roadmap Drift", Drift 4).</td>
-<td>Per <code>SCHEMA_IMPLEMENTATION_PLAN.md</code> § "7. Definition of done": every constraint,
+that <code>make lint</code> checks. The design, decision register and M1–M10 execution plan
+are <a href="../docs/history.md#archived-plans-and-investigations">archived</a>.
+Shipped in <code>da03ece</code>, applied and round-tripped 2026-09-01.</td>
+<td>Every constraint,
 referential action and trigger the revision adds is pinned by a write that must fail and a write
 that must succeed, in the contract suites against a live <code>postgres:16</code>; upgrade →
 downgrade → upgrade round-trips on a clean database; <code>make lint</code> fails when the schema
@@ -252,11 +250,8 @@ decomposed so storage adapters stop importing the application service; a router 
 tags and authentication are declared once and <strong>the whole versioned surface is closed to
 anonymous callers</strong>; a declared response type and a real pagination envelope on every
 operation; one uniform <code>application/problem+json</code> contract with a mechanically checked
-code table; and the binding surface completed. Target design:
-<code>API_DESIGN.md</code>, § "Design 1" through § "Design 8", with the ten findings its
-§ "Roadmap Drift" records against this page, <a href="api.html">API</a>,
-<a href="auth.html">Authentication</a> and the two shipped plans. Execution order:
-<code>API_IMPLEMENTATION_PLAN.md</code> § "3. Milestone sequence" (M1–M11, twenty-seven tasks).
+code table; and the binding surface completed. The original design, audit and M1–M11
+execution plan are <a href="../docs/history.md#archived-plans-and-investigations">archived</a>.
 <strong>Shipped as <code>600ff2a</code> on 2026-09-02 — every task is <code>Status: done</code>.</strong>
 Its § "2. Human decision register" holds seventeen decisions <code>D-1</code>–<code>D-17</code>,
 all answered 2026-09-01. Six of them (<code>D-3</code>,
@@ -265,7 +260,7 @@ visible contract breaks, shipped together as one grouped release. Sequencing: it
 milestone 1, whose committed <code>openapi/v1.json</code> and generated TypeScript client would
 otherwise be generated from the envelope and error shapes this sweep replaces; it does not block
 any backend phase.</td>
-<td>Per <code>API_IMPLEMENTATION_PLAN.md</code> § "5. Definition of done": the full validation gate
+<td>The full validation gate
 green after every task; every <code>/api/v1</code> operation answers <code>401
 application/problem+json</code> without a credential and the requirement is declared on one router;
 every response with status ≥ 400 is <code>application/problem+json</code> with a code that is a row
@@ -316,7 +311,7 @@ frozen <code>EntityRef</code> satisfies it structurally (<code>core/foundation/n
 protocol's read-only properties are enforced by mypy on <code>src/huron</code> only where a
 caller passes an <code>EntityRef</code> where a <code>Slugged</code> is expected, and no shipped
 caller does yet, so no gate step pins the protocol shape today.
-Excluded (<code>P2_DESIGN.md</code> § "Design 7" › "Excluded clauses"): the staging sweeper and
+Excluded from the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_DESIGN.md">historical P2 scope</a>: the staging sweeper and
 the post-rename orphan importer are P3's (P7, P8); the search projection consuming the
 <code>revision.committed</code> outbox row is P4's (M4).
 Decision register, <code>D-1</code>–<code>D-23</code>, each with the answer the tree implements:
@@ -366,31 +361,22 @@ crashes invisible and swept; post-rename crash imported as an orphan with no dup
 Resume re-sends only incomplete files. Two racing <code>BeginIngest</code> calls: exactly one wins;
 100 sequential ingests number 1..100 gap-free. Replayed commit returns the same revision. Each new submission uploads every declared file
 into an independent revision, including unchanged bytes. Every path-rejection rule produces its documented error code. Per
-<code>P2_DESIGN.md</code> § "Design 7" › "Excluded clauses", "staging crashes … swept" and
+the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_DESIGN.md">historical P2 design</a>, "staging crashes … swept" and
 "post-rename crash imported as an orphan" are proven by P3's sweeper and reconciler, not here; P2
 proves the on-disk state each crash leaves.</td></tr>
 
-<tr><td class="k">P3 — Integrity services<br><span class="tag">todo</span></td>
-<td><strong>Design complete; implementation partial; M1a verified, M1b unverified.</strong> M1a implements verified completion and frozen commit documents, but is not deployable until M1b writer exclusion/legacy verification and M1c cutover/startup/acceptance pass.
+<tr><td class="k">P3 — Integrity services<br><span class="tag">partial</span></td>
+<td><strong>Implementation partial; activation/startup and later integrity workflows remain open.</strong>
+Verified completion and frozen commit documents are implemented. The local controller,
+writer-exclusion and legacy-verification workflows were exercised by the complete
+domain-owned Core verification, including the isolated controlled-cutover integration.
 <a href="../P3_DESIGN.md">Design</a> · <a href="../P3_IMPLEMENTATION_PLAN.md">Implementation plan</a>.
-<a href="../P3_M1A_VALIDATION.md">M1a validation record (2026-09-11)</a>: local functional acceptance
-passed, including the real-socket 9 GiB round trip and separate PostgreSQL/POSIX suites.
-<a href="../p3-evidence/m1a/verification1/report.md">Independent M1a functional verification passed</a>;
-the native duplication gate remains 55/100 against 90. M1a alone is not deployable.
-M1b implements controlled local Linux exclusion and legacy verification (commit <code>f619342</code>) and has
-<a href="../P3_M1B_VALIDATION.md">local functional acceptance</a>, but
-<a href="../p3-evidence/m1b/verification3/report.md">independent functional verification failed</a> on all three
-attempts (2026-09-11/12) and M1b is unverified;
-<a href="../docs/operations/controlled-cutover.md">its deployment contract</a> excludes ordinary development
-Compose and unmanaged host writers. M1b's native duplication score remains 60/100 against 90.
-Next: the <a href="../P3_M1B_AUTHORITY_IMPLEMENTATION_PLAN.md">M1b authority plan</a> (§ "3. Milestone sequence",
-M0–M8), from the <a href="../P3_M1B_AUTHORITY_DESIGN.md">authority design</a> (§ "Roadmap Drift"),
-<a href="../docs/adr/0001-controller-generation-is-the-verification-epoch.md">ADR-0001</a> and the
-<a href="../P3_M1B_ARCHITECTURAL_REVIEW.md">architectural review</a> (§ "Task E — synthesis"); it is designed
-only, neither implemented nor verified. It takes over the <code>lakectl protocol cutover --validate --sequence N</code>
-operator command from M1c; <code>protocol init</code> and API startup gating stay M1c. Duplication-reduction work
-(D3b+) is outside its scope.
-M1c activation and startup remain required; M1c–M7 are unchanged and todo.
+<a href="../docs/history.md">Implementation history</a> retains the earlier failed attempts
+and authority redesign. <a href="../docs/adr/0001-controller-generation-is-the-verification-epoch.md">ADR-0001</a>
+governs the controller-generation epoch; the <a href="../docs/operations/controlled-cutover.md">operator contract</a>
+limits supported deployments. Local verification does not certify production or NFS support.
+The stored-sequence validation command exists; <code>protocol init</code>, activation and
+API startup gating remain M1c work. M1c–M7 remain incomplete.
 First deployable slice: verified file-completion copies, frozen commit documents and externally fenced
 protocol cutover. Then recovery orchestration using the implemented RECOVERING state and safe orphan import, versioned governance evidence, integrity/read
 rules, findings, staging-only guarded cleanup and offline Raw catalog rebuild. P5 originates governance
@@ -614,20 +600,20 @@ Dataset-creation-at-intake is open to humans with <code>dataset.create</code> an
 <code>data.write@raw</code>; an organization service account may mint the dataset but
 cannot upload to <code>raw</code> (<code>D-9</code>). An expiry sweep is a lifespan-owned task
 in every
-API replica, not a service (<code>P2_DESIGN.md</code> § "Design 6"), reaping leases past the
+API replica, not a separate service (the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_DESIGN.md">historical P2 design</a>, Design 6), reaping leases past the
 lease TTL plus one sweep interval. Commit persists the revision and emits the audit and outbox
 events milestones 6 and 18 consume, and writes <code>INDEX.json</code> best-effort
 (<code>D-12</code>). Raw-file downloads are re-authorized per request under
 <code>data.read@raw</code> — nothing is minted, the authorized response is the capability itself
-(<code>D-13</code>). Milestones M0–M10 of <code>P2_IMPLEMENTATION_PLAN.md</code> § "3. Milestone
-sequence" deliver this row. The final acceptance gate is closed by the
+(<code>D-13</code>). The <a href="../docs/history.md#archived-plans-and-investigations">archived P2 plan</a>
+records milestones M0–M10. The final acceptance gate is closed by the
 <a href="#p2-verified">recorded successful run in §2</a>.</td>
 <td>An interrupted multi-GB upload resumes without re-sending completed parts — proven at the
 real 64&nbsp;MiB part size by <code>tests/acceptance/test_raw_ingest_gate.py</code>, collected and
 scheduled by <code>.github/workflows/acceptance.yml</code>, and passed in
 <a href="https://github.com/karthedew/huron/actions/runs/34177077449">run 34177077449</a>; two
 sessions racing one dataset serialize on the lock; a committed revision appears in the catalog and
-the audit stream. Per <code>P2_DESIGN.md</code> § "Design 7" › "Excluded clauses", "appears in …
+the audit stream. Per the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_DESIGN.md">historical P2 scope</a>, "appears in …
 the search projection" is P4's consumer; P2 proves the outbox row.</td></tr>
 
 <tr><td class="k">9 — Automatic bronze builds<br><span class="tag">deferred</span><br>backend P6</td>
@@ -677,15 +663,9 @@ page tracks a running job's progress with no fixture data.</td></tr>
 
 <tr><td class="k">12 — Organization users &amp; teams<br><span class="tag">todo</span></td>
 <td>Built: admin-provisioned users (<code>user.manage</code>, platform-owner only), binding
-creation at all four scopes and binding listing at the organization and project scopes, with a flat
-<code>DELETE /bindings/{id}</code> that re-derives the binding's scope — binding create, list and
-revoke, no update verb, and <strong>not</strong> "CRUD at all scopes": <code>GET /bindings</code>
-and <code>GET /datasets/{id}/bindings</code> answer 405 today, so a SYSTEM- or dataset-scoped
-binding can be created and never enumerated (receipts: <code>API_DESIGN.md</code> § "Roadmap
-Drift" → "Drift 4"). Completing the surface is the
-<a href="#api-sweep">API tier clean sweep</a>'s M9 and is gated on decisions D-12 and D-13, so the
-inherited-vs-direct binding view this milestone adds cannot be built at two of its four scopes
-until that lands. Also built: OIDC upsert-on-login, the Keycloak groups mapper. Adds: user/group listing
+creation, listing and scoped revocation at all four roots, with no update verb, as completed
+by the <a href="#api-sweep">API tier clean sweep</a>. Also built: OIDC upsert-on-login,
+the Keycloak groups mapper. Adds: user/group listing
 with invitation state and last activity; invitations with email delivery — the platform's first
 outbound email, a path chosen once and shared with milestone 18; OIDC group synchronization
 resolving IdP groups to principals and teams; binding management showing inherited-vs-direct;
@@ -854,8 +834,9 @@ milestone commits <code>openapi/v1.json</code> and generates the TypeScript clie
 sweep is what replaces the pagination envelope, the response models and the error contract that
 document would otherwise pin. Generating a client first means regenerating it, and deleting
 <code>types.ts</code> against a contract that is about to break. The sweep blocks no backend phase;
-it is gated instead on the seventeen decisions in <code>API_IMPLEMENTATION_PLAN.md</code> § "2. Human
-decision register", six of which are visible contract breaks that ship as one grouped release.</li>
+its seventeen settled decisions are retained in the
+<a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/API_IMPLEMENTATION_PLAN.md">archived API plan</a>,
+including six visible contract breaks shipped as one grouped release.</li>
 <li><strong>T0 in strict order (contract → session → visibility):</strong> the generated client
 first, then the browser session, then the visibility layer, so every later listing endpoint is
 born authorization-filtered rather than retrofitted.</li>

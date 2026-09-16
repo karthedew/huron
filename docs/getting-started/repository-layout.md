@@ -4,8 +4,8 @@
 huron/
 ├── design/                  authoritative architecture record and source-linked atlases
 ├── IMPLEMENTATION_PLAN.md   duplication refactoring sequence and verification gates
-├── AUTH_IMPLEMENTATION_PLAN.md  historical authentication implementation plan
-├── RBAC_IMPLEMENTATION_PLAN.md
+├── P3_DESIGN.md              remaining integrity-service contracts
+├── P3_IMPLEMENTATION_PLAN.md integrity-service execution plan
 ├── docs/                    this site — how to work on the repository
 ├── migrations/              Alembic; schema.sql is a read-only summary of the whole metastore
 ├── scripts/                 bucket bootstrap and other operational helpers
@@ -52,3 +52,7 @@ packages when implemented. Unused future-facing placeholder protocols are retire
 
 See [conventions](conventions.md#import-boundaries), root `AGENTS.md`, and
 `design/architecture.html` for package rules and workflow responsibilities.
+
+Completed plans and per-attempt report dumps are archived through
+[Implementation history](../history.md). Generated analysis reports and coverage
+JSON stay out of version control; `scripts/duplication_baseline.json` remains tracked.

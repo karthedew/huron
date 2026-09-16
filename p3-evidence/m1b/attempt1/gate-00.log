@@ -1,2 +1,0 @@
-COMMAND ['uv', 'run', 'ruff', 'check', 'src/huron', 'tests', 'migrations', 'scripts']
-All checks passed!

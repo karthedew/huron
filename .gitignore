@@ -19,6 +19,12 @@ site/
 .import_linter_cache/
 .coverage
 htmlcov/
+/coverage.json
+
+# Generated analysis and per-attempt report dumps; final receipts belong in docs/ or CI artifacts.
+/.pyscn/reports/
+/p3-evidence/
+/duplication-evidence/
 
 # macOS
 .DS_Store

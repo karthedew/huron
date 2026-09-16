@@ -1,2 +1,0 @@
-# Command run: docker ps  (recipe file name kept as podman-after.log; Podman is not installed on this host, Docker is used per orchestrator environment facts)
-CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
