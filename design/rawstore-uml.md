@@ -250,8 +250,9 @@ with every current caller.
 The application lifespan constructs one `PosixRawStore` from `ApiSettings`, calls
 `initialize()` so a cross-device layout fails at startup, and publishes it in
 `ApiRuntime`. Raw workflows receive it typed as `RawStore`; Catalog receives
-`GenerationStorage`. Blocking workflow calls run
-through `asyncify`, because the store is synchronous and blocking. `Clock` is a
+`GenerationStorage`. Catalog's asynchronous `GenerationDocuments.write()` owns
+off-thread serialization and storage. Other blocking workflow calls run through
+`asyncify`, because the store is synchronous and blocking. `Clock` is a
 Foundation port. The application-owned combined `Storage` capability verifies
 that one POSIX object satisfies both consumer interfaces at wiring time.
 
@@ -461,7 +462,7 @@ class commit["rawstore.commit"] {
 }
 class GenerationDocuments {
   <<Neighbor>>
-  +write(directory, item) None
+  +async write(directory, item) None
 }
 class Releases {
   <<Neighbor>>

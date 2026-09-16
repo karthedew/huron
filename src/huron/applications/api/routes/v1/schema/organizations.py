@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from huron.applications.api.routes.v1.schema.descriptions import DescriptionPatch
+
 
 class CreateOrganization(BaseModel):
     """The body of ``POST /organizations``.
@@ -21,18 +23,12 @@ class CreateOrganization(BaseModel):
     description: str = ""
 
 
-class PatchOrganization(BaseModel):
+class PatchOrganization(DescriptionPatch):
     """The body of ``PATCH /organizations/{organization_id}``: the changeable fields.
 
     A field left out or sent as ``null`` keeps its value; the patch is
     applied only against the version the ``If-Match`` header names.
     """
-
-    #: Accepted only so an attempted change is refused explicitly; slugs are
-    #: immutable at every level, for everyone.
-    slug: str | None = None
-    title: str | None = None
-    description: str | None = None
 
 
 class OrganizationView(BaseModel):

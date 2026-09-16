@@ -10,7 +10,6 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
-from asyncer import asyncify
 
 from huron.core.security import AccessPolicy
 from huron.core.catalog import (
@@ -50,7 +49,7 @@ async def _workspace(pool: asyncpg.Pool, root: Path, kind: str):
     )
     documents = GenerationDocuments(storage)
     for directory, item in zip(directories, (organization, project, dataset), strict=True):
-        await asyncify(documents.write)(directory, item)
+        await documents.write(directory, item)
     bindings = InMemoryRbacStore()
     await bindings.grant_role(
         principal="user:scientist",

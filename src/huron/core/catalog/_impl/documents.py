@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from asyncer import asyncify
+
 from huron.core.foundation.canonical import canonical_bytes, jsonable
 
 if TYPE_CHECKING:
@@ -24,12 +26,21 @@ class GenerationDocuments:
         """
         self._storage = storage
 
-    def write(self, directory: PurePosixPath, item: Organization | Project | Dataset) -> None:
+    async def write(self, directory: PurePosixPath, item: Organization | Project | Dataset) -> None:
         """Write the canonical generation, replacing an unacknowledged crashed attempt.
 
         The calling workflow stages the database mutation first and commits afterward.
-        Run this blocking filesystem operation off the event loop. Generation
-        numbers outside the storage contract's range raise ValueError.
+        Serialization and durable filesystem writes run together off the event loop.
+        Generation numbers outside the storage contract's range raise ValueError.
+
+        Args:
+            directory: The immutable catalog entity directory.
+            item: The entity whose canonical generation is being published.
+        """
+        await asyncify(self._write)(directory, item)
+
+    def _write(self, directory: PurePosixPath, item: Organization | Project | Dataset) -> None:
+        """Serialize and install a generation in the worker thread.
 
         Args:
             directory: The immutable catalog entity directory.

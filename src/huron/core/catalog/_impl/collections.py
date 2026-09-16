@@ -7,8 +7,6 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, ClassVar
 from uuid import UUID
 
-from asyncer import asyncify
-
 from huron.core.catalog.layers import LAYER_ORDER, LAYER_SPECS
 from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
 from huron.core.catalog.types import Dataset, DescriptionChange, Organization, PlatformRoot, Project
@@ -117,7 +115,7 @@ class _Collection[ItemT: (Organization, Project, Dataset), ParentT: (PlatformRoo
             return item
         async with self._store.transaction() as writer:
             directory = await self._persist(writer, successor, item.version)
-            await asyncify(self._generations.write)(directory, successor)
+            await self._generations.write(directory, successor)
         return successor
 
     async def _persist(

@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from huron.applications.api.routes.v1.schema.descriptions import DescriptionPatch
+
 
 class CreateProject(BaseModel):
     """The body of ``POST /organizations/{organization_id}/projects``.
@@ -24,19 +26,13 @@ class CreateProject(BaseModel):
     data_classification: str
 
 
-class PatchProject(BaseModel):
+class PatchProject(DescriptionPatch):
     """The body of ``PATCH /projects/{project_id}``: the changeable fields.
 
     A field left out or sent as ``null`` keeps its value; the patch is
     applied only against the version the ``If-Match`` header names. The
     classification is fixed at creation and is not part of this body.
     """
-
-    #: Accepted only so an attempted change is refused explicitly; slugs are
-    #: immutable at every level, for everyone.
-    slug: str | None = None
-    title: str | None = None
-    description: str | None = None
 
 
 class ProjectView(BaseModel):

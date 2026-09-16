@@ -45,7 +45,7 @@ from huron.applications.api.routes.v1.schema.datasets import (
     PatchDataset,
     ReleaseView,
 )
-from huron.core.catalog.types import Dataset, DescriptionChange
+from huron.core.catalog.types import Dataset
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
 from huron.core.raw.types import Release
 from huron.core.security.principal import Principal
@@ -65,6 +65,7 @@ def _release_key(item: Release) -> tuple[str]:
 @project_datasets.post(
     "",
     status_code=201,
+    response_model=DatasetView,
     responses={
         404: problem_response("no such project"),
         409: problem_response("dataset slug already exists"),
@@ -77,7 +78,7 @@ async def create_dataset(
     repository: Creation,
     visibility: CurrentVisibility,
     actor: Annotated[Principal, Depends(require_project("dataset.create"))],
-) -> DatasetView:
+) -> Dataset:
     """Create a dataset in a project.
 
     Requires ``dataset.create`` on the project. The slug must be unique
@@ -116,17 +117,15 @@ async def create_dataset(
             body.entry_layer,
         ),
     )
-    return DatasetView.model_validate(
-        await repository.create_dataset(
-            project_id,
-            slug=body.slug,
-            title=body.title,
-            description=body.description,
-            profile_name=body.profile_name,
-            profile_version=body.profile_version,
-            entry_layer=body.entry_layer,
-            claim=claim,
-        )
+    return await repository.create_dataset(
+        project_id,
+        slug=body.slug,
+        title=body.title,
+        description=body.description,
+        profile_name=body.profile_name,
+        profile_version=body.profile_version,
+        entry_layer=body.entry_layer,
+        claim=claim,
     )
 
 
@@ -165,10 +164,14 @@ async def list_datasets(
     return page(window, DatasetView, key=_key)
 
 
-@router.get("/{dataset_id}", responses={404: problem_response("no such dataset")})
+@router.get(
+    "/{dataset_id}",
+    response_model=DatasetView,
+    responses={404: problem_response("no such dataset")},
+)
 async def get_dataset(
     dataset_id: UUID, repository: Repository, visibility: CurrentVisibility
-) -> DatasetView:
+) -> Dataset:
     """Fetch one dataset by id.
 
     An id that is absent or not discoverable by the caller is 404.
@@ -182,12 +185,12 @@ async def get_dataset(
         The dataset as the API renders it, including the ``version`` that
         ``If-Match`` carries back on a PATCH.
     """
-    dataset = await repository.get(dataset_id)
-    return DatasetView.model_validate(dataset)
+    return await repository.get(dataset_id)
 
 
 @router.patch(
     "/{dataset_id}",
+    response_model=DatasetView,
     responses={
         404: problem_response("no such dataset"),
         409: problem_response("the slug on an existing dataset cannot change"),
@@ -201,7 +204,7 @@ async def patch_dataset(
     repository: Repository,
     visibility: CurrentVisibility,
     _actor: Annotated[Principal, Depends(require_dataset("dataset.update"))],
-) -> DatasetView:
+) -> Dataset:
     """Update a dataset's title or description.
 
     Requires ``dataset.update`` on the dataset. ``If-Match`` must carry the
@@ -223,22 +226,13 @@ async def patch_dataset(
     Returns:
         The updated dataset as the API renders it.
     """
-    return DatasetView.model_validate(
-        await repository.describe(
-            dataset_id,
-            DescriptionChange(
-                expected_version=expected_version(if_match),
-                slug=body.slug,
-                title=body.title,
-                description=body.description,
-            ),
-        )
-    )
+    return await repository.describe(dataset_id, body.to_change(expected_version(if_match)))
 
 
 @router.post(
     "/{dataset_id}/releases",
     status_code=201,
+    response_model=ReleaseView,
     responses={
         404: problem_response("no such dataset"),
         409: problem_response("release tag already exists"),
@@ -251,7 +245,7 @@ async def create_release(
     repository: ReleaseWorkflow,
     visibility: CurrentVisibility,
     actor: Annotated[Principal, Depends(require_dataset("release.create"))],
-) -> ReleaseView:
+) -> Release:
     """Tag a revision of a dataset as a release.
 
     Requires ``release.create`` on the dataset. A tag resolves to exactly
@@ -287,14 +281,12 @@ async def create_release(
             actor.subject,
         ),
     )
-    return ReleaseView.model_validate(
-        await repository.create_release(
-            dataset_id,
-            tag=body.tag,
-            revision_number=body.revision_number,
-            title=body.title,
-            claim=claim,
-        )
+    return await repository.create_release(
+        dataset_id,
+        tag=body.tag,
+        revision_number=body.revision_number,
+        title=body.title,
+        claim=claim,
     )
 
 
@@ -334,11 +326,13 @@ async def list_releases(
 
 
 @router.get(
-    "/{dataset_id}/releases/{tag}", responses={404: problem_response("no such release tag")}
+    "/{dataset_id}/releases/{tag}",
+    response_model=ReleaseView,
+    responses={404: problem_response("no such release tag")},
 )
 async def resolve_release(
     dataset_id: UUID, tag: str, repository: ReleaseWorkflow, visibility: CurrentVisibility
-) -> ReleaseView:
+) -> Release:
     """Resolve a release tag to the revision it names.
 
     A tag resolves to the same revision forever. A tag the dataset does not
@@ -354,8 +348,7 @@ async def resolve_release(
     Returns:
         The release, including the id and number of the revision it names.
     """
-    release = await repository.release(dataset_id, tag)
-    return ReleaseView.model_validate(release)
+    return await repository.release(dataset_id, tag)
 
 
 @router.get("/{dataset_id}/layers", responses={404: problem_response("no such dataset")})

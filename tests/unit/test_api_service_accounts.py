@@ -239,6 +239,16 @@ def test_disabling_a_service_account_twice_keeps_the_original_disabled_at(
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json()["disabled_at"] == second.json()["disabled_at"]
+    expected_keys = {
+        "principal_id",
+        "organization_id",
+        "name",
+        "subject",
+        "created_by",
+        "created_at",
+        "disabled_at",
+    }
+    assert account.keys() == first.json().keys() == second.json().keys() == expected_keys
 
 
 class _CountingApiKeyStore(MemoryApiKeyStore):

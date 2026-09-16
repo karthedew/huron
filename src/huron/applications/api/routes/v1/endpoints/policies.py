@@ -31,7 +31,7 @@ from huron.applications.api.routes.v1.schema.policies import (
 )
 from huron.core.security.principal import Principal
 from huron.core.security.rules import ScopeType
-from huron.core.security.types import Policy
+from huron.core.security.types import Policy, PolicyAttachment
 
 router = APIRouter(prefix="/policies", tags=["policies"])
 organization_attachments = APIRouter(
@@ -49,10 +49,10 @@ def _key(item: Policy) -> tuple[str, str]:
     return (item.name, str(item.id))
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, response_model=PolicyView)
 async def create_policy(
     body: CreatePolicy, repository: Repository, actor: CurrentPrincipal
-) -> PolicyView:
+) -> Policy:
     """Create a policy definition.
 
     Creating a policy grants nothing - attachment is the guarded act - so
@@ -68,12 +68,11 @@ async def create_policy(
     Returns:
         The policy as the API renders it.
     """
-    record = await repository.create_policy(
+    return await repository.create_policy(
         policy_type=body.policy_type,
         name=body.name,
         spec=body.spec,
     )
-    return PolicyView.model_validate(record)
 
 
 @router.get("", responses={400: problem_response("cursor is not a valid continuation")})
@@ -101,6 +100,7 @@ async def list_policies(
 @organization_attachments.post(
     "",
     status_code=201,
+    response_model=PolicyAttachmentView,
     responses={
         404: problem_response("no such organization or policy"),
         409: problem_response("policy is already attached at this scope"),
@@ -111,7 +111,7 @@ async def attach_to_organization(
     body: AttachPolicy,
     repository: Repository,
     actor: Annotated[Principal, Depends(require_organization("organization.policy_attach"))],
-) -> PolicyAttachmentView:
+) -> PolicyAttachment:
     """Attach a policy to an organization.
 
     Requires ``organization.policy_attach`` on the organization. An unknown
@@ -128,17 +128,17 @@ async def attach_to_organization(
         The attachment: the policy, the scope it now applies to, who
         attached it and when.
     """
-    attachment = await repository.attach_policy(
+    return await repository.attach_policy(
         body.policy_id,
         scope_type=ScopeType.ORGANIZATION,
         scope_id=organization_id,
     )
-    return PolicyAttachmentView.model_validate(attachment)
 
 
 @project_attachments.post(
     "",
     status_code=201,
+    response_model=PolicyAttachmentView,
     responses={
         404: problem_response("no such project or policy"),
         409: problem_response("policy is already attached at this scope"),
@@ -149,7 +149,7 @@ async def attach_to_project(
     body: AttachPolicy,
     repository: Repository,
     actor: Annotated[Principal, Depends(require_project("project.policy_attach"))],
-) -> PolicyAttachmentView:
+) -> PolicyAttachment:
     """Attach a policy to a project.
 
     Requires ``project.policy_attach`` on the project. An unknown project
@@ -166,17 +166,17 @@ async def attach_to_project(
         The attachment: the policy, the scope it now applies to, who
         attached it and when.
     """
-    attachment = await repository.attach_policy(
+    return await repository.attach_policy(
         body.policy_id,
         scope_type=ScopeType.PROJECT,
         scope_id=project_id,
     )
-    return PolicyAttachmentView.model_validate(attachment)
 
 
 @dataset_attachments.post(
     "",
     status_code=201,
+    response_model=PolicyAttachmentView,
     responses={
         404: problem_response("no such dataset or policy"),
         409: problem_response("policy is already attached at this scope"),
@@ -187,7 +187,7 @@ async def attach_to_dataset(
     body: AttachPolicy,
     repository: Repository,
     actor: Annotated[Principal, Depends(require_dataset("dataset.policy_attach"))],
-) -> PolicyAttachmentView:
+) -> PolicyAttachment:
     """Attach a policy to a dataset.
 
     Requires ``dataset.policy_attach`` on the dataset. An unknown dataset
@@ -204,9 +204,8 @@ async def attach_to_dataset(
         The attachment: the policy, the scope it now applies to, who
         attached it and when.
     """
-    attachment = await repository.attach_policy(
+    return await repository.attach_policy(
         body.policy_id,
         scope_type=ScopeType.DATASET,
         scope_id=dataset_id,
     )
-    return PolicyAttachmentView.model_validate(attachment)

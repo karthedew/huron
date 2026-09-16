@@ -93,6 +93,7 @@ def _organization(client: TestClient, slug: str = "astro") -> str:
         "/api/v1/organizations", json={"slug": slug, "title": slug.title()}, headers=_headers()
     )
     assert response.status_code == 201, response.text
+    assert response.json().keys() == _ORGANIZATION_KEYS
     return str(response.json()["id"])
 
 
@@ -104,6 +105,7 @@ def _project(client: TestClient, organization_id: str, slug: str = "sims") -> st
         headers=_headers(),
     )
     assert response.status_code == 201, response.text
+    assert response.json().keys() == _PROJECT_KEYS
     return str(response.json()["id"])
 
 
@@ -120,6 +122,7 @@ def _dataset(client: TestClient, project_id: str, slug: str = "run-0001") -> str
         headers=_headers(),
     )
     assert response.status_code == 201, response.text
+    assert response.json().keys() == _DATASET_KEYS
     return str(response.json()["id"])
 
 
@@ -232,6 +235,7 @@ def test_get_organization_returns_the_created_organization(client: TestClient) -
     response = client.get(f"/api/v1/organizations/{organization_id}", headers=_headers())
     assert response.status_code == 200
     assert response.json()["id"] == organization_id
+    assert response.json().keys() == _ORGANIZATION_KEYS
 
 
 def test_get_organization_404s_for_an_unknown_id(client: TestClient) -> None:
@@ -350,6 +354,7 @@ def test_get_project_returns_the_created_project(client: TestClient) -> None:
     response = client.get(f"/api/v1/projects/{project_id}", headers=_headers())
     assert response.status_code == 200
     assert response.json()["id"] == project_id
+    assert response.json().keys() == _PROJECT_KEYS
 
 
 def test_get_project_404s_for_an_unknown_id(client: TestClient) -> None:
@@ -528,6 +533,7 @@ def test_get_dataset_returns_the_created_dataset(client: TestClient) -> None:
     response = client.get(f"/api/v1/datasets/{dataset_id}", headers=_headers())
     assert response.status_code == 200
     assert response.json()["id"] == dataset_id
+    assert response.json().keys() == _DATASET_KEYS
 
 
 def test_get_dataset_404s_for_an_unknown_id(client: TestClient) -> None:
@@ -588,6 +594,75 @@ def test_patch_dataset_rejects_a_malformed_if_match_header(client: TestClient) -
     )
     assert response.status_code == 422
     assert response.json()["code"] == "REQUEST_INVALID"
+
+
+@pytest.mark.parametrize("resource", ["organizations", "projects", "datasets"])
+def test_description_patch_preserves_null_empty_extra_and_version_semantics(
+    client: TestClient, resource: str
+) -> None:
+    """PATCH retains omitted/null values, accepts empty strings, and checks slug before version."""
+    organization_id = _organization(client)
+    project_id = _project(client, organization_id)
+    dataset_id = _dataset(client, project_id)
+    ids = dict(organizations=organization_id, projects=project_id, datasets=dataset_id)
+    url = f"/api/v1/{resource}/{ids[resource]}"
+    seeded = client.patch(
+        url,
+        json={"description": "Retain this description"},
+        headers={**_headers(), "If-Match": '"1"'},
+    )
+    assert seeded.status_code == 200, seeded.text
+    before = seeded.json()
+
+    for body in ({}, {"slug": None, "title": None, "description": None}, {"unknown": "ignored"}):
+        unchanged = client.patch(url, json=body, headers={**_headers(), "If-Match": '"2"'})
+        assert unchanged.status_code == 200, unchanged.text
+        assert unchanged.json() == before
+
+    cleared = client.patch(
+        url,
+        json={"slug": before["slug"], "title": "", "description": ""},
+        headers={**_headers(), "If-Match": 'W/"2"'},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json() == {**before, "title": "", "description": "", "version": 3}
+
+    for body, status, code in (
+        ({"slug": "changed"}, 409, "SLUG_IMMUTABLE"),
+        ({"slug": ""}, 409, "SLUG_IMMUTABLE"),
+        ({}, 412, "PRECONDITION_FAILED"),
+        ({"slug": before["slug"]}, 412, "PRECONDITION_FAILED"),
+    ):
+        refused = client.patch(url, json=body, headers={**_headers(), "If-Match": '"2"'})
+        assert refused.status_code == status, refused.text
+        assert refused.json()["code"] == code
+    assert client.get(url, headers=_headers()).json() == cleared.json()
+
+
+@pytest.mark.parametrize("resource", ["organizations", "projects", "datasets"])
+@pytest.mark.parametrize("visible", [False, True], ids=["hidden", "read-only"])
+def test_patch_authority_precedes_malformed_if_match(
+    client: TestClient, resource: str, visible: bool
+) -> None:
+    """A hidden or read-only caller cannot probe PATCH validation with a bad If-Match."""
+    organization_id = _organization(client)
+    project_id = _project(client, organization_id)
+    dataset_id = _dataset(client, project_id)
+    ids = dict(organizations=organization_id, projects=project_id, datasets=dataset_id)
+    if visible:
+        granted = client.post(
+            f"/api/v1/organizations/{organization_id}/bindings",
+            json={"principal": "user:reader", "role": "reader"},
+            headers=_headers(),
+        )
+        assert granted.status_code == 201, granted.text
+    response = client.patch(
+        f"/api/v1/{resource}/{ids[resource]}",
+        json={"slug": "changed", "title": "probe"},
+        headers={**_headers("reader"), "If-Match": "malformed"},
+    )
+    assert response.status_code == (403 if visible else 404), response.text
+    assert response.json()["code"] == ("FORBIDDEN" if visible else "NOT_FOUND")
 
 
 # -- releases -----------------------------------------------------------
@@ -721,6 +796,7 @@ async def test_list_releases_and_resolve_release_return_what_was_created(
         "created_by",
         "created_at",
     }
+    assert created.json().keys() == expected_keys
 
     listed = client.get(f"/api/v1/datasets/{dataset_id}/releases", headers=_headers())
     assert listed.status_code == 200

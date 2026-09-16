@@ -38,7 +38,7 @@ from huron.applications.api.routes.v1.schema.projects import (
     PatchProject,
     ProjectView,
 )
-from huron.core.catalog.types import DescriptionChange, Project
+from huron.core.catalog.types import Project
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
 from huron.core.security.principal import Principal
 
@@ -55,6 +55,7 @@ def _key(item: Project) -> tuple[str, str]:
 @organization_projects.post(
     "",
     status_code=201,
+    response_model=ProjectView,
     responses={
         404: problem_response("no such organization"),
         409: problem_response("project slug already exists"),
@@ -67,7 +68,7 @@ async def create_project(
     repository: Creation,
     visibility: CurrentVisibility,
     actor: Annotated[Principal, Depends(require_organization("project.create"))],
-) -> ProjectView:
+) -> Project:
     """Create a project in an organization.
 
     Requires ``project.create`` on the organization. The slug must be unique
@@ -103,15 +104,13 @@ async def create_project(
             body.data_classification,
         ),
     )
-    return ProjectView.model_validate(
-        await repository.create_project(
-            organization_id,
-            slug=body.slug,
-            title=body.title,
-            description=body.description,
-            data_classification=body.data_classification,
-            claim=claim,
-        )
+    return await repository.create_project(
+        organization_id,
+        slug=body.slug,
+        title=body.title,
+        description=body.description,
+        data_classification=body.data_classification,
+        claim=claim,
     )
 
 
@@ -150,10 +149,14 @@ async def list_projects(
     return page(window, ProjectView, key=_key)
 
 
-@router.get("/{project_id}", responses={404: problem_response("no such project")})
+@router.get(
+    "/{project_id}",
+    response_model=ProjectView,
+    responses={404: problem_response("no such project")},
+)
 async def get_project(
     project_id: UUID, repository: Repository, visibility: CurrentVisibility
-) -> ProjectView:
+) -> Project:
     """Fetch one project by id.
 
     An id that is absent or not discoverable by the caller is 404.
@@ -167,12 +170,12 @@ async def get_project(
         The project as the API renders it, including the ``version`` that
         ``If-Match`` carries back on a PATCH.
     """
-    project = await repository.get(project_id)
-    return ProjectView.model_validate(project)
+    return await repository.get(project_id)
 
 
 @router.patch(
     "/{project_id}",
+    response_model=ProjectView,
     responses={
         404: problem_response("no such project"),
         409: problem_response("the slug on an existing project cannot change"),
@@ -186,7 +189,7 @@ async def patch_project(
     repository: Repository,
     visibility: CurrentVisibility,
     _actor: Annotated[Principal, Depends(require_project("project.update"))],
-) -> ProjectView:
+) -> Project:
     """Update a project's title or description.
 
     Requires ``project.update`` on the project. ``If-Match`` must carry the
@@ -208,14 +211,4 @@ async def patch_project(
     Returns:
         The updated project as the API renders it.
     """
-    return ProjectView.model_validate(
-        await repository.describe(
-            project_id,
-            DescriptionChange(
-                expected_version=expected_version(if_match),
-                slug=body.slug,
-                title=body.title,
-                description=body.description,
-            ),
-        )
-    )
+    return await repository.describe(project_id, body.to_change(expected_version(if_match)))

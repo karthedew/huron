@@ -97,13 +97,13 @@ def test_catalog_ambiguity_and_stale_acknowledged_state_block_certification(
         _verifier(tmp_path).verify(records)
 
 
-def test_historical_descriptions_may_change_without_changing_structural_identity(
+async def test_historical_descriptions_may_change_without_changing_structural_identity(
     tmp_path: Path, legacy: tuple[object, str, object]
 ) -> None:
     """All historical generations remain checked while CURRENT names the acknowledged successor."""
     organization, project, dataset = legacy_records()
     successor = replace(organization, title="New title", generation=2, version=2)
-    GenerationDocuments(PosixRawStore(tmp_path)).write(
+    await GenerationDocuments(PosixRawStore(tmp_path)).write(
         PurePosixPath(_organization(tmp_path)), successor
     )
     assert len(_verifier(tmp_path).verify((successor, project, dataset))) == 7

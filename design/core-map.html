@@ -239,8 +239,9 @@ External maintenance authority
   CreationStore.transaction():
     claimed_result() → existing record on a matching retry
     writer.insert_dataset()
-    GenerationDocuments.write() → GenerationStorage.write_generation()
-    writer.remember()
+     _publish_created():
+       await GenerationDocuments.write() → off-thread GenerationStorage.write_generation()
+       writer.remember() → receipt kind derived from the created entity
   database transaction commits
 
 DatasetCollection.describe(id, DescriptionChange)
@@ -248,10 +249,16 @@ DatasetCollection.describe(id, DescriptionChange)
   unchanged object? return without opening a transaction
   DescriptionStore.transaction():
     writer.datasets.describe() → compare-and-swap version check
-    read committed ancestry → GenerationDocuments.write()
+     read committed ancestry → await GenerationDocuments.write()
   database transaction commits</code></pre>
-<p><code>GenerationDocuments.write()</code> adds the generation schema identifier and canonicalizes the record. Storage writes <code>generations/NNNNNN.json</code>, then atomically replaces <code>CURRENT.json</code>. <code>DescriptionChange</code> distinguishes omitted values from empty replacements; slug changes are refused.</p>
+<p><code>GenerationDocuments.write()</code> is asynchronous and owns off-thread serialization and durable storage. It adds the generation schema identifier and canonicalizes the record; storage writes <code>generations/NNNNNN.json</code>, then atomically replaces <code>CURRENT.json</code>. Creation's shared <code>_publish_created()</code> records the retry receipt only after that write succeeds, with the receipt kind derived from the concrete entity. Each creation operation retains its validation, parent resolution, typed insert and transaction. <code>DescriptionChange</code> distinguishes omitted values from empty replacements; slug changes are refused.</p>
 <h3>Discover, release and govern through their owners</h3>
+<p>The API's named hierarchy PATCH bodies share
+<a href="../src/huron/applications/api/routes/v1/schema/descriptions.py"><code>DescriptionPatch.to_change()</code></a>;
+handlers parse <code>If-Match</code> after discovery/capability guards, then pass
+<code>DescriptionChange</code> into Core. Simple hierarchy, release and governance responses return
+typed Core objects through explicit FastAPI public response models, which filter internal fields.
+See the <a href="api.html#hierarchy">API contract</a> for omitted/null/empty semantics.</p>
 <ul>
   <li>Catalog's organization/project/dataset collections expose typed <code>get()</code>, <code>browse()</code>, and <code>describe()</code>. Browse checks parent discovery and returns visibility-filtered keyset windows.</li>
   <li>Raw's <code>Releases.create_release()</code>, <code>release()</code>, <code>releases()</code>: tag creation resolves an exact registered revision without adding a state or payload-read predicate, inserts a row, and writes <code>RawStore.write_tag_once()</code> within the open transaction.</li>

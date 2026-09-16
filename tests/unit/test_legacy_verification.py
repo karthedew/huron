@@ -50,7 +50,7 @@ def legacy_records() -> tuple[Organization, Project, Dataset]:
 
 
 @pytest.fixture
-def legacy(tmp_path: Path) -> tuple[RevisionVerifier, str, RevisionRecord]:
+async def legacy(tmp_path: Path) -> tuple[RevisionVerifier, str, RevisionRecord]:
     """Materialize a genuine legacy envelope using the catalog's document contracts."""
     organization = EntityRef(UUID(int=11), "organization")
     project = EntityRef(UUID(int=12), "project")
@@ -66,7 +66,7 @@ def legacy(tmp_path: Path) -> tuple[RevisionVerifier, str, RevisionRecord]:
         parents,
         strict=True,
     ):
-        writer.write(path, parent)
+        await writer.write(path, parent)
     payload = b"measurement"
     manifest = validate_manifest(
         [

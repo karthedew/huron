@@ -101,6 +101,11 @@ to the application; <a href="../src/huron/applications/api/capabilities.py">wiri
 prove the adapters satisfy the narrow consumer ports. Migration verification is recorded in the
 <a href="roadmap.html#domain-owned-core-migration">roadmap</a>.</p>
 
+<p>Simple hierarchy, release, policy and service-account handlers return typed Core results;
+explicit FastAPI <code>response_model</code> declarations validate and filter them into the existing
+named public views. Internal fields such as hierarchy <code>generation</code> stay off the wire.
+Pagination, credential issuance and streaming retain their transport-specific representations.</p>
+
 <h2 id="auth">1. Authentication surface</h2>
 
 <table>
@@ -132,6 +137,14 @@ prove the adapters satisfy the narrow consumer ports. Migration verification is 
 the authorization predicate ahead of <code>LIMIT</code>. No free-text parameters — that is
 <code>/search</code>.</p>
 
+<p>The named <code>PatchOrganization</code>, <code>PatchProject</code> and <code>PatchDataset</code>
+bodies inherit their optional fields and <code>to_change(expected_version)</code> translation from
+the application schema's <a href="../src/huron/applications/api/routes/v1/schema/descriptions.py"><code>DescriptionPatch</code></a>.
+Omitted or null fields retain their values; empty strings replace them, and extra fields remain
+ignored. Handlers parse <code>If-Match</code> after their discovery/capability guards. Core rejects
+a changed slug before checking a stale version, checks the version even on a no-op, and performs
+the authorized update. The common input base is not a separate OpenAPI component.</p>
+
 <h2 id="ingest">3. Raw ingest and revisions</h2>
 
 <table>
@@ -148,6 +161,11 @@ the authorization predicate ahead of <code>LIMIT</code>. No free-text parameters
 <tr><td>GET</td><td><code>/revisions/{id}/files/{path}</code></td><td>authorised per request against <code>data.read@raw</code>; the response is the capability, nothing is minted</td></tr>
 <tr><td>POST</td><td><code>/revisions/{id}:amend</code></td><td>project_admin; field allow-list; reclassification separately permissioned</td></tr>
 </table>
+
+<p>Every session-view response uses the transport's private
+<a href="../src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py"><code>_session_view(ledger, response)</code></a>
+to set the quoted <code>ETag</code> header and render the same ledger. Opening, reading, heartbeat,
+abort and verify retain their named Core operations and distinct owner/overseer guards.</p>
 
 <h2 id="layers">4. Layers, snapshots, products</h2>
 

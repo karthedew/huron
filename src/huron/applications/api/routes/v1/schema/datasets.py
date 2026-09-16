@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from huron.applications.api.routes.v1.schema.descriptions import DescriptionPatch
 from huron.core.catalog.layers import Layer
 
 
@@ -34,7 +35,7 @@ class CreateDataset(BaseModel):
     entry_layer: Literal["raw", "bronze", "silver"] = "raw"
 
 
-class PatchDataset(BaseModel):
+class PatchDataset(DescriptionPatch):
     """The body of ``PATCH /datasets/{dataset_id}``: the fields a caller may change.
 
     A field left out or sent as ``null`` keeps its value. ``slug`` is
@@ -43,10 +44,6 @@ class PatchDataset(BaseModel):
     slug is harmless. The patch is applied only against the version the
     ``If-Match`` header names.
     """
-
-    slug: str | None = None
-    title: str | None = None
-    description: str | None = None
 
 
 class CreateRelease(BaseModel):

@@ -46,6 +46,7 @@ def _key(item: ServiceAccount) -> tuple[str]:
 @router.post(
     "",
     status_code=201,
+    response_model=ServiceAccountView,
     responses={
         404: problem_response("no such organization"),
         409: problem_response("service account already exists"),
@@ -56,7 +57,7 @@ async def create_service_account(
     body: CreateServiceAccount,
     repository: Repository,
     actor: Annotated[Principal, Depends(_manage)],
-) -> ServiceAccountView:
+) -> ServiceAccount:
     """Create a service account in an organization.
 
     Requires ``service_account.manage`` on the organization. ``name`` must
@@ -75,8 +76,7 @@ async def create_service_account(
     Returns:
         The account as the API renders it.
     """
-    record = await repository.create_service_account(organization_id, name=body.name)
-    return ServiceAccountView.model_validate(record)
+    return await repository.create_service_account(organization_id, name=body.name)
 
 
 @router.get(
@@ -161,13 +161,15 @@ async def issue_service_account_key(
 
 
 @router.post(
-    "/{principal_id}/disable", responses={404: problem_response("no such service account")}
+    "/{principal_id}/disable",
+    response_model=ServiceAccountView,
+    responses={404: problem_response("no such service account")},
 )
 async def disable_service_account(
     organization_id: UUID,
     principal_id: UUID,
     identity: Identity,
-) -> ServiceAccountView:
+) -> ServiceAccount:
     """Disable a service account and revoke every key it holds.
 
     Requires ``service_account.manage`` on the organization. Once disabled,
@@ -185,5 +187,4 @@ async def disable_service_account(
     Returns:
         The account as the API renders it, with ``disabled_at`` set.
     """
-    account = await identity.disable_service_account(organization_id, principal_id)
-    return ServiceAccountView.model_validate(account)
+    return await identity.disable_service_account(organization_id, principal_id)

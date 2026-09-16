@@ -111,6 +111,13 @@ need review of their actual contents. Do not regenerate a permissive baseline or
 change code merely to evade detection. Ratchet allowances down only after a real
 decrease; do not expand them to hide a failed refactor.
 
+The Catalog publication consolidation narrowed one existing allowance: the group
+containing `_Collection.describe`, all three `CatalogCreation` operations and Raw
+reservation lost `describe`. Its signature now contains only `catalog/_impl/creation.py`
+and `raw/_impl/ingest.py`, and its size allowance fell from five to four. The total
+baseline consequently fell from 145 to 144; all other allowances and scanner settings
+were preserved. This is a reviewed contraction of an existing family, not a new group.
+
 - [ ] Account for remaining matches by current symbol and responsibility, including
   those deliberately retained because their contracts differ.
 - [ ] Run the complete applicable gate on the final tree and inspect findings as

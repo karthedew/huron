@@ -12,7 +12,6 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
-from asyncer import asyncify
 
 from huron.core.security import AccessPolicy
 from huron.core.catalog import CatalogCreation
@@ -48,10 +47,10 @@ async def _workspace(pool: asyncpg.Pool, root: Path, kind: str):
         await writer.insert_organization(organization)
         await writer.insert_project(project)
     documents = GenerationDocuments(storage)
-    await asyncify(documents.write)(
+    await documents.write(
         organization_dir(PurePosixPath(root), organization), organization
     )
-    await asyncify(documents.write)(
+    await documents.write(
         project_dir(PurePosixPath(root), organization, project), project
     )
     bindings = InMemoryRbacStore()

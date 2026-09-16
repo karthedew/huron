@@ -301,6 +301,7 @@ class CatalogCreation {
   +create_organization(slug, title, description, claim) Organization
   +create_project(organization_id, configuration, claim) Project
   +create_dataset(project_id, configuration, claim) Dataset
+  -_publish_created(writer, claim, item, directory) None
 }
 class _Collection~ItemT_ParentT~ {
   -AccessPolicy _access
@@ -327,7 +328,8 @@ class DescriptionChange {
 }
 class GenerationDocuments {
   -GenerationStorage _storage
-  +write(directory, item) None
+  +async write(directory, item) None
+  -_write(directory, item) None
 }
 class Releases {
   -AccessPolicy _access
@@ -381,7 +383,11 @@ the other operation classes use composition.
 
 **Write ordering:** creation and descriptions stage the database change, write
 canonical generation JSON through `GenerationDocuments`, then commit the database
-transaction. Releases similarly insert the release, write its tag document, and
+transaction. Its asynchronous `write()` runs serialization and durable storage together
+off the event loop. Creation's private `_publish_created()` completes the generation
+write before recording the retry receipt, deriving its kind from the concrete entity;
+validation, parent lookup and each typed insert stay in the explicit creation operation.
+Releases similarly insert the release, write its tag document, and
 record the retry receipt inside the transaction. A storage failure rolls back the
 database work; a later database rollback does not undo already-durable filesystem
 writes. These are ordered operations across two stores, not a distributed
@@ -1349,6 +1355,46 @@ factories are functions, not classes. Domain packages never import `ApiRuntime`,
 application's `capabilities.Storage` and `capabilities.HierarchyStore` compose
 narrow ports for wiring only. `ApiStores` is an injection bundle; it is not a
 catalog repository facade and is not itself a stored field of `ApiRuntime`.
+
+The API's [DescriptionPatch](../src/huron/applications/api/routes/v1/schema/descriptions.py)
+shares optional fields and input translation across the named
+[PatchOrganization](../src/huron/applications/api/routes/v1/schema/organizations.py),
+[PatchProject](../src/huron/applications/api/routes/v1/schema/projects.py), and
+[PatchDataset](../src/huron/applications/api/routes/v1/schema/datasets.py) bodies.
+Handlers call `to_change(expected_version(if_match))` after their guards; Core
+owns authorization, immutable-slug and version rules. Omitted/null values retain
+stored values; empty strings are replacements. Leaf names and descriptions remain
+the OpenAPI inputs; the common base adds no exposed component.
+
+```mermaid
+classDiagram
+direction TB
+class DescriptionPatch {
+  <<ApplicationSchema>>
+  +str_or_None slug
+  +str_or_None title
+  +str_or_None description
+  +to_change(expected_version) DescriptionChange
+}
+class PatchOrganization
+class PatchProject
+class PatchDataset
+class DescriptionChange {
+  <<CoreValue>>
+}
+PatchOrganization --|> DescriptionPatch
+PatchProject --|> DescriptionPatch
+PatchDataset --|> DescriptionPatch
+DescriptionPatch ..> DescriptionChange : translates input
+```
+
+Simple single-object hierarchy, release, policy and service-account handlers return
+typed Core results through explicit FastAPI `response_model` declarations. Their
+named public views still validate and filter fields, excluding internal generation
+values. The [ingest transport](../src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py)
+keeps `_session_view(ledger, response)` for the combined quoted ETag/header and
+session-body representation. Pagination, credential mapping and streaming remain
+explicit transport responsibilities.
 
 ## 11. Planned capabilities, not runtime declarations
 

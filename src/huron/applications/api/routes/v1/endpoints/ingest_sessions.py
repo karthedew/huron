@@ -48,6 +48,7 @@ from huron.core.foundation.retry import IdempotencyClaim, request_sha256
 from huron.core.raw import RawIngestionService
 from huron.core.raw.manifest import ManifestEntry
 from huron.core.raw.retry import session_claim
+from huron.core.raw.types import SessionLedger
 from huron.core.security.principal import Principal
 
 if TYPE_CHECKING:
@@ -85,6 +86,20 @@ def _entries(files: list[ManifestFile]) -> tuple[ManifestEntry, ...]:
     )
 
 
+def _session_view(ledger: SessionLedger, response: Response) -> IngestSessionView:
+    """Render a session and its quoted ETag from the same ledger.
+
+    Args:
+        ledger: The session ledger to publish.
+        response: The response carrying the session's ETag header.
+
+    Returns:
+        The session's public view.
+    """
+    response.headers["ETag"] = f'"{ledger.etag}"'
+    return IngestSessionView.model_validate(ledger)
+
+
 async def _open_session(
     ingest: RawIngestionService,
     dataset: Dataset,
@@ -110,8 +125,7 @@ async def _open_session(
     entries = _entries(files)
     claim = session_claim(actor, idempotency_key, dataset.id, entries)
     ledger = await ingest.create(dataset.id, files=entries, claim=claim)
-    response.headers["ETag"] = f'"{ledger.etag}"'
-    return IngestSessionView.model_validate(ledger)
+    return _session_view(ledger, response)
 
 
 @dataset_ingest_sessions.post(
@@ -230,8 +244,7 @@ async def create_project_ingest_session(
         files=_entries(body.files),
         idempotency_key=idempotency_key,
     )
-    response.headers["ETag"] = f'"{ledger.etag}"'
-    return IngestSessionView.model_validate(ledger)
+    return _session_view(ledger, response)
 
 
 @router.get("/{session_id}", responses={404: problem_response("no such ingest session")})
@@ -251,8 +264,7 @@ async def get_ingest_session(
     Returns:
         The session's current view.
     """
-    response.headers["ETag"] = f'"{drive.ledger.etag}"'
-    return IngestSessionView.model_validate(drive.ledger)
+    return _session_view(drive.ledger, response)
 
 
 @router.post(
@@ -279,8 +291,7 @@ async def heartbeat_ingest_session(
         The session's view, with its lease renewed.
     """
     ledger = await ingest.heartbeat(drive.ledger.id)
-    response.headers["ETag"] = f'"{ledger.etag}"'
-    return IngestSessionView.model_validate(ledger)
+    return _session_view(ledger, response)
 
 
 @router.post(
@@ -309,8 +320,7 @@ async def abort_ingest_session(
         The session's view, in state ABORTED.
     """
     ledger = await ingest.abort(drive.ledger.id)
-    response.headers["ETag"] = f'"{ledger.etag}"'
-    return IngestSessionView.model_validate(ledger)
+    return _session_view(ledger, response)
 
 
 _UPLOAD_ERRORS = problem_response(
@@ -456,8 +466,7 @@ async def verify_ingest_session(
         The session's view, in state VERIFYING.
     """
     ledger = await ingest.verify(drive.ledger.id)
-    response.headers["ETag"] = f'"{ledger.etag}"'
-    return IngestSessionView.model_validate(ledger)
+    return _session_view(ledger, response)
 
 
 @router.post(

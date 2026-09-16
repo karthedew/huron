@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING
-
-from asyncer import asyncify
+from typing import TYPE_CHECKING, Literal
 
 from huron.core.catalog.errors import ClassificationUnknown
 from huron.core.catalog.layers import Layer, parse_entry_layer
@@ -29,7 +27,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from huron.core.catalog.ports import CreationStore, GenerationStorage
-    from huron.core.foundation.retry import IdempotencyClaim
+    from huron.core.foundation.retry import IdempotencyClaim, RetryTransaction
     from huron.core.security import AccessPolicy
 
 
@@ -98,8 +96,7 @@ class CatalogCreation:
                 return replayed
             item = Organization(uuid7(), slug, title, description, 1, 1, datetime.now(UTC))
             await writer.insert_organization(item)
-            await asyncify(self._generations.write)(organization_dir(self._root, item), item)
-            await writer.remember(claim, Replay(kind="organization", resource_id=item.id))
+            await self._publish_created(writer, claim, item, organization_dir(self._root, item))
             return item
 
     async def create_project(
@@ -175,10 +172,9 @@ class CatalogCreation:
                 datetime.now(UTC),
             )
             await writer.insert_project(item)
-            await asyncify(self._generations.write)(
-                project_dir(self._root, organization, item), item
+            await self._publish_created(
+                writer, claim, item, project_dir(self._root, organization, item)
             )
-            await writer.remember(claim, Replay(kind="project", resource_id=item.id))
             return item
 
     async def create_dataset(
@@ -263,8 +259,35 @@ class CatalogCreation:
                 datetime.now(UTC),
             )
             await writer.insert_dataset(item, data_classification=project.data_classification)
-            await asyncify(self._generations.write)(
-                dataset_dir(self._root, organization, project, item), item
+            await self._publish_created(
+                writer, claim, item, dataset_dir(self._root, organization, project, item)
             )
-            await writer.remember(claim, Replay(kind="dataset", resource_id=item.id))
             return item
+
+    async def _publish_created(
+        self,
+        writer: RetryTransaction,
+        claim: IdempotencyClaim,
+        item: Organization | Project | Dataset,
+        directory: PurePosixPath,
+    ) -> None:
+        """Publish a created entity's generation before recording its retry receipt.
+
+        The caller has inserted the entity in the transaction holding the claim.
+        Both publication and receipt recording must succeed before that transaction commits.
+
+        Args:
+            writer: The transaction containing the identity insert and retry claim.
+            claim: The creation request's acquired idempotency claim.
+            item: The inserted entity, which determines its receipt kind and identity.
+            directory: The entity's resolved generation directory.
+        """
+        kind: Literal["organization", "project", "dataset"]
+        if isinstance(item, Organization):
+            kind = "organization"
+        elif isinstance(item, Project):
+            kind = "project"
+        else:
+            kind = "dataset"
+        await self._generations.write(directory, item)
+        await writer.remember(claim, Replay(kind=kind, resource_id=item.id))

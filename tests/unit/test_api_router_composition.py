@@ -231,6 +231,42 @@ def test_the_problem_schema_is_registered_exactly_once(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("resource", "parameter", "leaf", "creation_path"),
+    [
+        ("organizations", "organization_id", "Organization", "/api/v1/organizations"),
+        ("projects", "project_id", "Project", "/api/v1/organizations/{organization_id}/projects"),
+        ("datasets", "dataset_id", "Dataset", "/api/v1/projects/{project_id}/datasets"),
+    ],
+)
+def test_hierarchy_keeps_named_patch_and_response_schemas(
+    tmp_path: Path, resource: str, parameter: str, leaf: str, creation_path: str
+) -> None:
+    """Shared PATCH fields retain named leaf inputs and filtered public views on every operation."""
+    schema = create_app(settings=_settings(tmp_path), stores=memory_stores()).openapi()
+    schemas = schema["components"]["schemas"]
+    assert "DescriptionPatch" not in schemas
+    patch_schema = schemas[f"Patch{leaf}"]
+    assert patch_schema["title"] == f"Patch{leaf}"
+    assert f"PATCH /{resource}/{{{parameter}}}" in patch_schema["description"]
+    assert set(patch_schema["properties"]) == {"slug", "title", "description"}
+    assert not patch_schema.get("required")
+    for field in patch_schema["properties"].values():
+        assert "default" not in field
+        assert field["anyOf"] == [{"type": "string"}, {"type": "null"}]
+    path = schema["paths"][f"/api/v1/{resource}/{{{parameter}}}"]
+    body = path["patch"]["requestBody"]["content"]["application/json"]["schema"]
+    assert body == {"$ref": f"#/components/schemas/Patch{leaf}"}
+    for operation, status in (
+        (path["get"], "200"),
+        (path["patch"], "200"),
+        (schema["paths"][creation_path]["post"], "201"),
+    ):
+        result = operation["responses"][status]["content"]["application/json"]["schema"]
+        assert result == {"$ref": f"#/components/schemas/{leaf}View"}
+    assert "generation" not in schemas[f"{leaf}View"]["properties"]
+
+
+@pytest.mark.parametrize(
     ("resource", "parameter"),
     [
         ("organizations", "organization_id"),

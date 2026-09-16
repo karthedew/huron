@@ -263,6 +263,7 @@ def test_create_in_project_mints_the_dataset_then_opens_the_session(client: Test
     ).json()
     assert dataset["entry_layer"] == "raw"
     assert dataset["slug"] == "feed-01"
+    assert first.headers["ETag"] == f'"{first.json()["etag"]}"'
 
     replay = client.post(
         f"/api/v1/projects/{project['id']}/ingest-sessions",
@@ -271,6 +272,7 @@ def test_create_in_project_mints_the_dataset_then_opens_the_session(client: Test
     )
     assert replay.status_code == 201
     assert replay.json()["id"] == first.json()["id"]
+    assert replay.headers["ETag"] == f'"{replay.json()["etag"]}"'
 
     changed = {**body, "files": [{"path": "payload/b.bin", "size": 1, "sha256": "b" * 64}]}
     reused = client.post(
@@ -438,9 +440,41 @@ def test_get_shows_progress_and_the_etag(client: TestClient) -> None:
     )
     as_admin = client.get(f"/api/v1/ingest-sessions/{session_id}", headers=dev_headers("alice"))
     assert as_admin.status_code == 200
+    for operation in ("heartbeat", "verify"):
+        refused = client.post(
+            f"/api/v1/ingest-sessions/{session_id}/{operation}", headers=dev_headers("alice")
+        )
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["code"] == "FORBIDDEN"
 
     unknown = client.get(f"/api/v1/ingest-sessions/{uuid4()}", headers=dev_headers("bob"))
     assert unknown.status_code == 404
+
+
+def test_session_views_keep_the_quoted_header_and_body_etag_in_agreement(client: TestClient) -> None:
+    """Create, read, heartbeat, verify and abort publish the ETag of their returned ledger."""
+    ingest = IngestClient(client)
+    _, dataset_id = ingest.developer_dataset()
+    data = b"hello"
+    created = ingest.create(dataset_id, [manifest_file("payload/a.bin", data)])
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    read = ingest.get(session_id)
+    heartbeat = ingest.heartbeat(session_id)
+    uploaded = ingest.put_part(created.json()["files"][0]["file_id"], 1, data)
+    assert uploaded.status_code == 200, uploaded.text
+    verified = ingest.verify(session_id)
+    aborted = ingest.abort(session_id)
+    for response in (created, read, heartbeat, verified, aborted):
+        assert response.status_code == (201 if response is created else 200), response.text
+        assert response.headers["ETag"] == f'"{response.json()["etag"]}"'
+        assert "commit_intent" not in response.json()
+        assert "request_sha256" not in response.json()
+    assert read.json()["etag"] == heartbeat.json()["etag"] == created.json()["etag"]
+    assert verified.json()["state"] == "VERIFYING"
+    assert aborted.json()["state"] == "ABORTED"
+    assert verified.json()["etag"] > heartbeat.json()["etag"]
+    assert aborted.json()["etag"] > verified.json()["etag"]
 
 
 def test_heartbeat_moves_the_lease_and_not_the_etag(client: TestClient, stores: ApiStores) -> None:

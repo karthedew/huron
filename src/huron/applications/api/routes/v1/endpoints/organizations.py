@@ -38,7 +38,7 @@ from huron.applications.api.routes.v1.schema.organizations import (
     OrganizationView,
     PatchOrganization,
 )
-from huron.core.catalog.types import DescriptionChange, Organization, PlatformRoot
+from huron.core.catalog.types import Organization, PlatformRoot
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
 from huron.core.security.principal import Principal
 
@@ -52,6 +52,7 @@ def _key(item: Organization) -> tuple[str, str]:
 @router.post(
     "",
     status_code=201,
+    response_model=OrganizationView,
     responses={409: problem_response("organization slug already exists")},
 )
 async def create_organization(
@@ -59,7 +60,7 @@ async def create_organization(
     idempotency_key: IdempotencyHeader,
     repository: Creation,
     actor: Annotated[Principal, Depends(require_system("organization.create"))],
-) -> OrganizationView:
+) -> Organization:
     """Create an organization.
 
     Requires ``organization.create`` at SYSTEM scope. The slug must be unique
@@ -82,10 +83,8 @@ async def create_organization(
         key=idempotency_key,
         request_sha256=request_sha256("organization", body.slug, body.title, body.description),
     )
-    return OrganizationView.model_validate(
-        await repository.create_organization(
-            slug=body.slug, title=body.title, description=body.description, claim=claim
-        )
+    return await repository.create_organization(
+        slug=body.slug, title=body.title, description=body.description, claim=claim
     )
 
 
@@ -115,10 +114,14 @@ async def list_organizations(
     return page(window, OrganizationView, key=_key)
 
 
-@router.get("/{organization_id}", responses={404: problem_response("no such organization")})
+@router.get(
+    "/{organization_id}",
+    response_model=OrganizationView,
+    responses={404: problem_response("no such organization")},
+)
 async def get_organization(
     organization_id: UUID, repository: Repository, visibility: CurrentVisibility
-) -> OrganizationView:
+) -> Organization:
     """Fetch one organization by id.
 
     An id that is absent or not discoverable by the caller is 404.
@@ -132,12 +135,12 @@ async def get_organization(
         The organization as the API renders it, including the ``version``
         that ``If-Match`` carries back on a PATCH.
     """
-    organization = await repository.get(organization_id)
-    return OrganizationView.model_validate(organization)
+    return await repository.get(organization_id)
 
 
 @router.patch(
     "/{organization_id}",
+    response_model=OrganizationView,
     responses={
         404: problem_response("no such organization"),
         409: problem_response("the slug on an existing organization cannot change"),
@@ -151,7 +154,7 @@ async def patch_organization(
     repository: Repository,
     visibility: CurrentVisibility,
     _actor: Annotated[Principal, Depends(require_organization("organization.update"))],
-) -> OrganizationView:
+) -> Organization:
     """Update an organization's title or description.
 
     Requires ``organization.update`` on the organization. ``If-Match`` must
@@ -173,14 +176,4 @@ async def patch_organization(
     Returns:
         The updated organization as the API renders it.
     """
-    return OrganizationView.model_validate(
-        await repository.describe(
-            organization_id,
-            DescriptionChange(
-                expected_version=expected_version(if_match),
-                slug=body.slug,
-                title=body.title,
-                description=body.description,
-            ),
-        )
-    )
+    return await repository.describe(organization_id, body.to_change(expected_version(if_match)))
