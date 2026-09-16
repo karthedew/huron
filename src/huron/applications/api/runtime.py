@@ -2,7 +2,7 @@
 
 ``create_app`` builds an :class:`ApiRuntime` once, in the lifespan, and
 publishes it as the application's only piece of mutable state. Path
-operations and guards declare ``Repository``/``Settings`` rather than a
+operations and guards declare ``Runtime``/``Settings`` rather than a
 ``Request``: ``api_runtime`` below is the one function in the tier that
 reaches through the request to read what the app was wired with.
 """
@@ -15,14 +15,19 @@ from typing import Annotated
 import asyncpg
 from fastapi import Depends, Request
 
-from huron.core._catalog import HierarchyRepository
-from huron.core._ingest import IngestService
-from huron.core._revision_reader import RevisionService
-from huron.core.catalog_ports import BindingFacts, HierarchyFacts
-from huron.core.ports import ApiKeyWriter, HierarchyStore, RbacStore
-from huron.pkg.auth import CredentialStore, OidcClient, OidcResolver, PrincipalStore, SessionStore
-from huron.pkg.rbac import RoleBindingAuthorizer
+from huron.core.foundation.clock import Clock
+from huron.core.raw import RawRuntime
+from huron.core.security import CredentialAuthentication, OidcAuthentication, PasswordAuthentication
+from huron.core.security.dev import DevHeaderResolver
+from huron.core.security.facts import BindingFacts, CatalogFacts
+from huron.core.security.oidc import OidcClient, OidcResolver
+from huron.core.security.password import CredentialStore
+from huron.core.security.ports import ApiKeyWriter, RbacStore
+from huron.core.security.principals import PrincipalStore
+from huron.core.security.rules import RoleBindingAuthorizer
+from huron.core.security.sessions import SessionStore
 
+from .capabilities import HierarchyStore, Storage
 from .settings import ApiSettings
 
 
@@ -67,11 +72,10 @@ class ApiRuntime:
     """
 
     settings: ApiSettings
-    repository: HierarchyRepository
+    raw_store: Storage
     hierarchy: HierarchyStore
-    rbac: BindingFacts
-    ingest: IngestService
-    revisions: RevisionService
+    rbac: RbacStore
+    raw: RawRuntime
     authorizer: RoleBindingAuthorizer
     api_keys: ApiKeyWriter
     credentials: CredentialStore
@@ -80,6 +84,7 @@ class ApiRuntime:
     oidc_resolver: OidcResolver | None
     oidc_client: OidcClient | None
     database_pool: asyncpg.Pool | None
+    clock: Clock
 
 
 async def api_runtime(request: Request) -> ApiRuntime:
@@ -112,43 +117,6 @@ async def api_runtime(request: Request) -> ApiRuntime:
 Runtime = Annotated[ApiRuntime, Depends(api_runtime)]
 
 
-async def api_repository(runtime: Runtime) -> HierarchyRepository:
-    """Return the repository the service was wired with.
-
-    Args:
-        runtime: The published wiring, resolved by ``api_runtime``.
-
-    Returns:
-        The one ``HierarchyRepository`` every request in this process
-        shares.
-    """
-    return runtime.repository
-
-
-async def api_ingest(runtime: Runtime) -> IngestService:
-    """Return the ingest service the service was wired with.
-
-    Args:
-        runtime: The published wiring, resolved by ``api_runtime``.
-
-    Returns:
-        The one ``IngestService`` every request in this process shares.
-    """
-    return runtime.ingest
-
-
-async def api_revisions(runtime: Runtime) -> RevisionService:
-    """Return the revision-read service the service was wired with.
-
-    Args:
-        runtime: The published wiring, resolved by ``api_runtime``.
-
-    Returns:
-        The one ``RevisionService`` every request in this process shares.
-    """
-    return runtime.revisions
-
-
 async def api_settings(runtime: Runtime) -> ApiSettings:
     """Return the validated settings the service was wired with.
 
@@ -162,90 +130,89 @@ async def api_settings(runtime: Runtime) -> ApiSettings:
     return runtime.settings
 
 
-async def api_api_keys(runtime: Runtime) -> ApiKeyWriter:
-    """Return the API-key store the service was wired with.
+def credential_authentication(runtime: Runtime) -> CredentialAuthentication:
+    """Wire credential resolution from plain deployment choices and persistence ports.
 
     Args:
         runtime: The published wiring, resolved by ``api_runtime``.
 
     Returns:
-        The one API-key store every request in this process shares.
+        The reusable credential resolution operation.
     """
-    return runtime.api_keys
+    return CredentialAuthentication(
+        runtime.api_keys,
+        runtime.sessions,
+        clock=runtime.clock,
+        oidc=runtime.oidc_resolver,
+        development=(
+            DevHeaderResolver("development")
+            if runtime.settings.auth_mode == "dev-headers"
+            else None
+        ),
+    )
 
 
-async def api_credentials(runtime: Runtime) -> CredentialStore:
-    """Return the credential store the service was wired with.
+def password_authentication(runtime: Runtime) -> PasswordAuthentication:
+    """Wire password login without exposing settings to Security.
 
     Args:
         runtime: The published wiring, resolved by ``api_runtime``.
 
     Returns:
-        The one password-credential store every request in this process
-        shares.
+        The reusable password login operation.
     """
-    return runtime.credentials
+    return PasswordAuthentication(
+        runtime.principals,
+        runtime.credentials,
+        runtime.sessions,
+        clock=runtime.clock,
+        enabled=runtime.settings.password_login_enabled,
+    )
 
 
-async def api_sessions(runtime: Runtime) -> SessionStore:
-    """Return the session store the service was wired with.
+def oidc_authentication(runtime: Runtime) -> OidcAuthentication:
+    """Wire provider login and the transport's pending-state lifetime.
 
     Args:
         runtime: The published wiring, resolved by ``api_runtime``.
 
     Returns:
-        The one browser-session store every request in this process shares.
+        The reusable OIDC begin/finish operation.
     """
-    return runtime.sessions
+    # Authorization dependencies consume Runtime; import its public cookie contract
+    # at composition time, after both modules have initialized.
+    from .authorization import login_flow_cookie
+
+    return OidcAuthentication(
+        runtime.oidc_client,
+        runtime.principals,
+        runtime.sessions,
+        clock=runtime.clock,
+        flow_secret=runtime.settings.login_flow_secret.encode(),
+        flow_max_age=login_flow_cookie(runtime.settings).max_age,
+    )
 
 
-async def api_principals(runtime: Runtime) -> PrincipalStore:
-    """Return the principal store the service was wired with.
-
-    Args:
-        runtime: The published wiring, resolved by ``api_runtime``.
-
-    Returns:
-        The one store of user and service-account identities every request
-        in this process shares.
-    """
-    return runtime.principals
-
-
-Repository = Annotated[HierarchyRepository, Depends(api_repository)]
-Ingest = Annotated[IngestService, Depends(api_ingest)]
-Revisions = Annotated[RevisionService, Depends(api_revisions)]
 Settings = Annotated[ApiSettings, Depends(api_settings)]
-ApiKeys = Annotated[ApiKeyWriter, Depends(api_api_keys)]
-Credentials = Annotated[CredentialStore, Depends(api_credentials)]
-Sessions = Annotated[SessionStore, Depends(api_sessions)]
-Principals = Annotated[PrincipalStore, Depends(api_principals)]
+PasswordAuth = Annotated[PasswordAuthentication, Depends(password_authentication)]
+OidcAuth = Annotated[OidcAuthentication, Depends(oidc_authentication)]
 
 __all__ = [
-    "ApiKeys",
     "ApiRuntime",
     "ApiStores",
-    "Credentials",
-    "Ingest",
-    "Principals",
-    "Repository",
-    "Revisions",
+    "OidcAuth",
+    "PasswordAuth",
     "Runtime",
-    "Sessions",
     "Settings",
-    "api_api_keys",
-    "api_credentials",
-    "api_ingest",
-    "api_principals",
-    "api_repository",
-    "api_revisions",
     "api_runtime",
-    "api_sessions",
     "api_settings",
+    "credential_authentication",
+    "oidc_authentication",
+    "password_authentication",
 ]
 
 
-async def api_hierarchy(runtime: Runtime) -> HierarchyFacts:
+async def api_hierarchy(runtime: Runtime) -> CatalogFacts:
     """Return committed catalog facts and typed readers.
 
     Args:
@@ -269,5 +236,5 @@ async def api_binding_facts(runtime: Runtime) -> BindingFacts:
     return runtime.rbac
 
 
-Hierarchy = Annotated[HierarchyFacts, Depends(api_hierarchy)]
+Hierarchy = Annotated[CatalogFacts, Depends(api_hierarchy)]
 Bindings = Annotated[BindingFacts, Depends(api_binding_facts)]

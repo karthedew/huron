@@ -1,6 +1,6 @@
 """Request and response bodies owned by ``endpoints/ingest_sessions.py``.
 
-The views render :class:`huron.core._ingest.SessionLedger` and its
+The views render :class:`huron.core.raw.types.SessionLedger` and its
 files directly (``model_config = ConfigDict(from_attributes=True)``), so a
 handler never re-shapes a response by hand; only ``completed_parts`` needs a
 validator, because the domain holds it as a ``frozenset`` and the wire
@@ -15,7 +15,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from huron.pkg.catalog import FileState, IngestState, UploadAction
+from huron.core.raw.ingest import FileState, IngestState, UploadAction
 
 from .revisions import MetadataSubmission
 

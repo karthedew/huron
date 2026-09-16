@@ -12,21 +12,20 @@ import asyncpg
 import pytest
 from asyncer import asyncify
 
-from huron.core.access import AccessPolicy
-from huron.core.catalog_collections import (
+from huron.core.security import AccessPolicy
+from huron.core.catalog import (
     DatasetCollection,
-    DescriptionChange,
     OrganizationCollection,
     ProjectCollection,
 )
-from huron.core.catalog_documents import GenerationDocuments
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.errors import PreconditionFailed
-from huron.pkg.catalog.paths import dataset_dir, organization_dir, project_dir
-from huron.pkg.catalog.records import Dataset, Organization, Project
-from huron.pkg.metastore import InMemoryRbacStore, PostgresHierarchyStore
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import Classification, RoleBindingAuthorizer, ScopeType
+from huron.core.catalog._impl.documents import GenerationDocuments
+from huron.core.catalog.types import DescriptionChange, Dataset, Organization, Project
+from huron.core.security.principal import Principal
+from huron.core.foundation.errors import PreconditionFailed
+from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
+from huron.core.metastore import InMemoryRbacStore, PostgresHierarchyStore
+from huron.core.rawstore import PosixRawStore
+from huron.core.security.rules import Classification, RoleBindingAuthorizer, ScopeType
 from tests.hierarchy_contract import _dataset, _organization, _project
 
 pytestmark = pytest.mark.integration

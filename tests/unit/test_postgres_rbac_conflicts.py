@@ -15,16 +15,16 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
-from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.catalog.failures import (
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.security.errors import (
     AttachmentExists,
     BindingExists,
     ServiceAccountExists,
     UsernameTaken,
 )
-from huron.pkg.metastore import PostgresRbacStore
-from huron.pkg.rbac import ScopeType
-from huron.pkg.rbac.roles import ScopeNotBindable
+from huron.core.metastore import PostgresRbacStore
+from huron.core.security.rules import ScopeType
+from huron.core.security.roles import ScopeNotBindable
 
 pytestmark = pytest.mark.unit
 

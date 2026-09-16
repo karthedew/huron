@@ -21,15 +21,14 @@ from huron.applications.api.authorization.decisions import (
     current_visibility,
     request_binding_cache,
 )
-from huron.core._catalog import HierarchyRepository
-from huron.core.access import AccessPolicy
-from huron.core.idempotency import request_sha256
-from huron.core.scopes import resource_scope
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.failures import Forbidden
-from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import (
+from huron.core.security import AccessPolicy
+from huron.core.foundation.retry import request_sha256, IdempotencyClaim
+from huron.core.security.scopes import resource_scope
+from huron.core.security.principal import Principal
+from huron.core.security.errors import Forbidden
+from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
+from huron.core.rawstore import PosixRawStore
+from huron.core.security.rules import (
     Binding,
     Classification,
     Effect,
@@ -38,8 +37,9 @@ from huron.pkg.rbac import (
     ScopeType,
     Visibility,
 )
-from huron.pkg.rbac import Principal as RbacPrincipal
+from huron.core.security.rules import Principal as RbacPrincipal
 from tests.catalog_creation_support import creation_for
+from tests.repository_fixture import RepositoryFixture
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,12 +47,12 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _repository(tmp_path: Path) -> HierarchyRepository:
-    """A real, filesystem-backed HierarchyRepository for the service-account synthesis tests."""
-    return HierarchyRepository(
+def _repository(tmp_path: Path) -> RepositoryFixture:
+    """A real, filesystem-backed storage bundle for the service-account synthesis tests."""
+    return RepositoryFixture(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        rbac_store=InMemoryRbacStore(),
+        InMemoryRbacStore(),
     )
 
 
@@ -67,7 +67,7 @@ class _StaticRepository:
     """A fake repository whose ``bindings_for`` always returns the same fixed bindings.
 
     Exercises ``check``/``bindings_for_principal`` without a
-    filesystem-backed ``HierarchyRepository``: its bindings never change.
+    filesystem-backed repository fixture: its bindings never change.
     """
 
     def __init__(self, bindings: tuple[Binding, ...]) -> None:
@@ -194,8 +194,8 @@ async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_acco
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
-    account = await repository.create_service_account(
-        organization.id, name="feed", created_by="alice"
+    account = await repository.rbac.create_service_account(
+        organization.id, name="feed", subject=f"{organization.slug}/feed", created_by="alice"
     )
     actor = RbacPrincipal(subject=account.subject, kind="service_account")
 
@@ -215,10 +215,12 @@ async def test_bindings_for_principal_synthesizes_nothing_for_a_disabled_service
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
-    account = await repository.create_service_account(
-        organization.id, name="feed", created_by="alice"
+    account = await repository.rbac.create_service_account(
+        organization.id, name="feed", subject=f"{organization.slug}/feed", created_by="alice"
     )
-    await repository.disable_service_account(account.principal_id, disabled_at=account.created_at)
+    await repository.rbac.disable_service_account(
+        account.principal_id, disabled_at=account.created_at
+    )
     actor = RbacPrincipal(subject=account.subject, kind="service_account")
 
     bindings = await bindings_for_principal({}, repository.rbac, actor)
@@ -251,7 +253,7 @@ async def test_current_visibility_for_a_system_platform_owner_is_unrestricted(
 ) -> None:
     """A SYSTEM-scope ``platform_owner`` binding makes ``current_visibility`` unrestricted."""
     repository = _repository(tmp_path)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:root",
         role_code="platform_owner",
         scope_type=ScopeType.SYSTEM,
@@ -284,7 +286,7 @@ async def test_current_visibility_for_a_project_scoped_reader_holds_exactly_that
         data_classification="open",
         claim=_claim("project", str(organization.id), "sims", "Sims", "", "open", key="proj-1"),
     )
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="reader",
         scope_type=ScopeType.PROJECT,
@@ -347,7 +349,7 @@ async def test_current_visibility_for_a_dataset_scoped_reader_holds_that_dataset
             key="ds-1",
         ),
     )
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="reader",
         scope_type=ScopeType.DATASET,
@@ -381,7 +383,7 @@ async def test_core_discovery_reloads_revoked_bindings_while_a_request_keeps_its
 ) -> None:
     """Revocation applies on the next core operation and request; cached bindings stay unchanged."""
     repository = _repository(tmp_path)
-    binding = await repository.grant_role(
+    binding = await repository.rbac.grant_role(
         principal="user:alice",
         role_code="platform_owner",
         scope_type=ScopeType.SYSTEM,
@@ -395,7 +397,7 @@ async def test_core_discovery_reloads_revoked_bindings_while_a_request_keeps_its
     assert (await current_visibility(cache, repository.rbac, alice, runtime)).unrestricted
     assert (await access.visibility()).unrestricted
 
-    await repository.revoke_role(binding.id)
+    await repository.rbac.revoke_role(binding.id)
 
     assert (await current_visibility(cache, repository.rbac, alice, runtime)).unrestricted
     assert await current_visibility({}, repository.rbac, alice, runtime) == Visibility()

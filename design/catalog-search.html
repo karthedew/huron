@@ -83,6 +83,21 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 <p class="sub">PostgreSQL for structure, LanceDB for matching across all four layers, lineage as
 first-class structural data. One store per capability, one index for the whole lake.</p>
 
+<p class="note"><strong>Explore the current implementation:</strong>
+<a href="catalog-uml.html">Catalog UML class atlas</a> — searchable, zoomable diagrams of
+the domain classes, authorized workflows, persistence interfaces and adapters, with
+implemented behavior distinguished from planned capabilities.</p>
+
+<p><strong>Current source ownership:</strong> <a href="../src/huron/core/catalog/__init__.py">Catalog</a>
+owns hierarchy identity, descriptions, discovery collections and layer vocabulary;
+<a href="../src/huron/core/raw/__init__.py">Raw</a> owns uploads, revisions and releases;
+<a href="../src/huron/core/security/__init__.py">Security</a> owns authority and governance;
+<a href="../src/huron/core/foundation/">Foundation</a> owns shared values and pure primitives.
+Rules and complete workflows are colocated. The atlas attributes the former catalog model
+across these owners rather than treating it as one package. Search projection, credential
+vending, compute and lineage publication remain planned; unused placeholder ports were retired.
+The <a href="core-map.html">Core map</a> describes the migrated working tree, not final gate completion.</p>
+
 <h2 id="split">1. The split, restated</h2>
 
 <table>
@@ -373,7 +388,7 @@ because <code>revision_id</code> is minted hours earlier, in <code>PREPARING</co
 permanently, since releases are withdrawn, never repointed.</td></tr>
 <tr><td>Every role is user-only, and no role carries <code>data.write</code> at silver or gold</td>
 <td><a href="rbac.html#roles">RBAC §2</a>, <a href="rbac.html#authn">§6</a></td>
-<td><span class="inv">[app: <code>src/huron/pkg/rbac/roles.py</code>]</span></td>
+<td><span class="inv">[app: <a href="../src/huron/core/security/roles.py"><code>core.security.roles</code></a>]</span></td>
 <td>Seed rows, not constraints. <code>role_binding_guard</code> <span class="inv">[db]</span>
 refuses <code>sa:</code> principals, but the seed's own shape is held by the module and pinned by
 <code>tests/contract/test_rbac_store.py</code>.</td></tr>

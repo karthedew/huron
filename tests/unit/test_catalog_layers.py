@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from huron.pkg.catalog.layers import (
+from huron.core.catalog.layers import (
     Layer,
     LayerAction,
     LayerWorkflowError,

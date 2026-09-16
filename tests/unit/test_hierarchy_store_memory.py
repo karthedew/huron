@@ -17,13 +17,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.catalog.errors import IdempotencyKeyReused, ResourceNotFound
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.catalog.models import OutboxEvent
-from huron.pkg.catalog.persistence import IdempotencyClaim, PlatformRoot, Replay
-from huron.pkg.catalog.records import AuditEvent, Organization, Release
-from huron.pkg.metastore.hierarchy import InMemoryHierarchyStore, SystemClock
-from huron.pkg.rbac import Visibility
+from huron.core.foundation.errors import IdempotencyKeyReused, ResourceNotFound
+from huron.core.foundation.identifiers import uuid7
+from huron.core.raw.types import OutboxEvent, AuditEvent, Release
+from huron.core.foundation.retry import IdempotencyClaim, Replay
+from huron.core.catalog.types import PlatformRoot, Organization
+from huron.core.metastore.hierarchy import InMemoryHierarchyStore, SystemClock
+from huron.core.security.rules import Visibility
 from tests.hierarchy_contract import (
     committed_revision,
     scenario_1_write_invisible_until_commit,

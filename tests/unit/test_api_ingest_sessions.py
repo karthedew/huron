@@ -20,27 +20,27 @@ from uuid import UUID, uuid4
 
 import pytest
 
-import huron.pkg.catalog.ingest as ingest_module
-from huron.core._ingest import IngestService
-from huron.pkg.catalog import (
+import huron.core.raw.ingest as ingest_module
+from huron.core.raw._impl.ingest import IngestService
+from huron.core.raw.ingest import (
     PART_BYTES,
     FileState,
     IngestState,
-    ManifestEntry,
-    RevisionRecord,
-    validate_manifest,
 )
-from huron.pkg.catalog.documents import (
+from huron.core.raw.manifest import ManifestEntry, validate_manifest
+from huron.core.raw.types import RevisionRecord
+from huron.core.raw.documents import (
     CommitRecord,
     MetadataDocument,
     decode_manifest,
     manifest_bytes,
 )
-from huron.pkg.catalog.errors import IdempotencyKeyReused
-from huron.pkg.catalog.manifest import DEFAULT_MAX_FILE_BYTES
-from huron.pkg.catalog.paths import revision_dir, staging_dir
-from huron.pkg.metastore import IdempotencyClaim, Replay, SystemClock
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.foundation.errors import IdempotencyKeyReused
+from huron.core.raw.manifest import DEFAULT_MAX_FILE_BYTES
+from huron.core.raw.paths import revision_dir, staging_dir
+from huron.core.foundation.retry import IdempotencyClaim, Replay
+from huron.core.metastore import SystemClock
+from huron.core.rawstore import PosixRawStore
 from tests.ingest_client import IngestClient, declared_file, dev_headers, manifest_file
 from tests.unit.support import crash_on
 
@@ -421,6 +421,12 @@ def test_get_shows_progress_and_the_etag(client: TestClient) -> None:
     )
     outsider = client.get(f"/api/v1/ingest-sessions/{session_id}", headers=dev_headers("eve"))
     assert outsider.status_code == 403
+    file_id = created.json()["files"][0]["file_id"]
+    denied_file = client.post(
+        f"/api/v1/transfer/uploads/{file_id}/complete", headers=dev_headers("eve")
+    )
+    assert denied_file.status_code == 403
+    assert denied_file.json()["detail"] == f"eve does not own ingest session {session_id}"
 
     assert (
         client.post(

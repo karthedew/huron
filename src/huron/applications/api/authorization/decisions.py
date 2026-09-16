@@ -16,14 +16,14 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from huron.core.access import (
+from huron.core.security import (
     BindingCacheMap,
     as_rbac_principal,
     bindings_for_principal,
     check,
     visibility_for_principal,
 )
-from huron.pkg.rbac import Visibility
+from huron.core.security.rules import Visibility
 
 from ..runtime import Bindings, Runtime
 from .credentials import CurrentPrincipal

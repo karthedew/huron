@@ -1,4 +1,4 @@
-"""The duplication gate uses native scores and fails closed on missing evidence."""
+"""The duplication gate guards against clone regressions and fails closed on missing evidence."""
 
 from __future__ import annotations
 
@@ -96,34 +96,124 @@ def _section(report: dict[str, object], path: tuple[str, ...]) -> dict[str, obje
     return report
 
 
-@pytest.mark.parametrize(
-    ("score", "status"), [(0, 1), (45, 1), (89, 1), (90, 0), (91, 0), (100, 0)]
-)
-def test_native_score_threshold(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], score: int, status: int
-) -> None:
-    """Exactly 90 passes; native scores are never replaced by health or clone-count math."""
-    report = tmp_path / "report with spaces.json"
-    report.write_text(json.dumps(_report(score)))
-    result = subprocess.CompletedProcess([], 0, "", f"Unified JSON report generated: {report}\n")
-    with patch.object(gate.subprocess, "run", return_value=result) as run:
-        assert gate.main("src/huron") == status
-    assert run.call_args.args[0] == [
-        "uv",
-        "run",
-        "--locked",
-        "pyscn",
-        "analyze",
-        "--select",
-        "clones",
-        "--json",
-        "src/huron",
-    ]
-    assert run.call_args.kwargs["check"] is True
-    output = capsys.readouterr()
-    assert f"pyscn 1.31.1 native duplication score: {score}/100 (required: >=90/100)" in output.out
-    assert "Cloned fragments: 2/20; clone pairs: 1; clone groups: 1" in output.out
-    assert str(report) in output.err
+def _clone(clone_id: int, file_path: str) -> dict[str, object]:
+    """Build one minimal, validly-shaped ``clone.clones`` entry."""
+    return {
+        "id": clone_id,
+        "type": 4,
+        "location": {
+            "file_path": file_path,
+            "start_line": 1,
+            "end_line": 10,
+            "start_col": 0,
+            "end_col": 12,
+        },
+        "hash": f"hash{clone_id}",
+        "size": 24,
+        "line_count": 10,
+        "complexity": 0,
+    }
+
+
+def _clone_group(clone_ids: tuple[int, ...], size: int) -> dict[str, object]:
+    """Build one minimal, validly-shaped ``clone.clone_groups`` entry."""
+    return {
+        "id": clone_ids[0],
+        "clones": [{"id": clone_id} for clone_id in clone_ids],
+        "type": 4,
+        "similarity": 0.85,
+        "size": size,
+    }
+
+
+def _scan_report(
+    clones: list[dict[str, object]], groups: list[dict[str, object]]
+) -> dict[str, object]:
+    """Build a complete, valid pyscn report around explicit clones and clone groups."""
+    pairs = (
+        [
+            {
+                "id": 1,
+                "clone1": clones[0],
+                "clone2": clones[1],
+                "similarity": 0.8,
+                "distance": 0.2,
+                "type": 2,
+                "confidence": 1,
+            }
+        ]
+        if len(clones) >= 2
+        else []
+    )
+    return {
+        "version": "1.31.1",
+        "schema_version": 1,
+        "generated_at": "2026-09-09T14:48:12Z",
+        "duration_ms": 2,
+        "summary": {
+            "duplication_score": 75,
+            "health_score": 95,
+            "clone_enabled": True,
+            "total_files": 2,
+            "analyzed_files": 2,
+            "skipped_files": 0,
+            "total_clones": len(clones),
+            "clone_pairs": len(pairs),
+            "clone_groups": len(groups),
+            "code_duplication_percentage": 10.0,
+        },
+        "clone": {
+            "success": True,
+            "duration_ms": 1,
+            "clones": clones,
+            "clone_pairs": pairs,
+            "clone_groups": groups,
+            "statistics": {
+                "total_fragments": 20,
+                "total_clones": len(clones),
+                "total_clone_pairs": len(pairs),
+                "total_clone_groups": len(groups),
+                "clones_by_type": {"Type-4": len(groups)},
+                "average_similarity": 0.85,
+                "lines_analyzed": 200,
+                "nodes_analyzed": 480,
+                "files_analyzed": 2,
+            },
+        },
+    }
+
+
+def _write_baseline(
+    root: Path,
+    *,
+    total_clones: int,
+    groups: list[tuple[tuple[str, ...], int]],
+    clone_threshold: float = 0.8,
+    pyscn_version: str = "1.31.1",
+) -> Path:
+    """Write a ``scripts/duplication_baseline.json`` fixture under ``root``."""
+    path = root / "scripts" / "duplication_baseline.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "pyscn_version": pyscn_version,
+                "clone_threshold": clone_threshold,
+                "total_clones": total_clones,
+                "clone_groups": len(groups),
+                "groups": [{"files": sorted(files), "size": size} for files, size in groups],
+            },
+            sort_keys=True,
+        )
+    )
+    return path
+
+
+def _stub_scan(tmp_path: Path, report: dict[str, object]) -> subprocess.CompletedProcess[str]:
+    """Announce a written report the way a successful pyscn run does."""
+    path = tmp_path / "scan-report.json"
+    path.write_text(json.dumps(report))
+    return subprocess.CompletedProcess([], 0, "", f"Unified JSON report generated: {path}\n")
 
 
 @pytest.mark.parametrize("score", [None, True, "90", 90.0, -1, 101, float("nan")])
@@ -359,6 +449,155 @@ def test_no_clones_in_complete_analysis(results: object, fragments: int) -> None
         gate.duplication_report(report)
 
 
+def test_pyscn_invoked_at_configured_clone_threshold(tmp_path: Path) -> None:
+    """The gate always scans at similarity 0.80, never pyscn's own 0.65 default."""
+    baseline = _write_baseline(tmp_path, total_clones=0, groups=[])
+    report = _scan_report([], [])
+    result = _stub_scan(tmp_path, report)
+    with patch.object(gate.subprocess, "run", return_value=result) as run:
+        assert gate.main("src/huron", baseline_path=baseline) == 0
+    assert run.call_args.args[0] == [
+        "uv",
+        "run",
+        "--locked",
+        "pyscn",
+        "analyze",
+        "--select",
+        "clones",
+        "--json",
+        "--clone-threshold",
+        "0.80",
+        "src/huron",
+    ]
+    assert run.call_args.kwargs["check"] is True
+
+
+def test_guard_passes_when_scan_matches_baseline(tmp_path: Path) -> None:
+    """A scan reproducing the committed inventory exactly passes."""
+    baseline = _write_baseline(tmp_path, total_clones=2, groups=[(("src/a.py", "src/b.py"), 2)])
+    clones = [_clone(1, "src/a.py"), _clone(2, "src/b.py")]
+    groups = [_clone_group((1, 2), 2)]
+    result = _stub_scan(tmp_path, _scan_report(clones, groups))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        assert gate.main("src/huron", baseline_path=baseline) == 0
+
+
+def test_guard_fails_when_total_clones_grow(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """More total clones than the baseline fails even without a new or grown group."""
+    baseline = _write_baseline(tmp_path, total_clones=2, groups=[(("src/a.py", "src/b.py"), 2)])
+    clones = [_clone(1, "src/a.py"), _clone(2, "src/b.py"), _clone(3, "src/c.py")]
+    groups = [_clone_group((1, 2), 2)]
+    result = _stub_scan(tmp_path, _scan_report(clones, groups))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        assert gate.main("src/huron", baseline_path=baseline) == 1
+    err = capsys.readouterr().err
+    assert "Duplication regression" in err
+    assert "delta +1" in err
+
+
+def test_guard_fails_on_new_clone_group_signature(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A clone group whose file signature the baseline has never seen fails."""
+    baseline = _write_baseline(tmp_path, total_clones=2, groups=[(("src/a.py", "src/b.py"), 2)])
+    clones = [_clone(1, "src/a.py"), _clone(2, "src/z.py")]
+    groups = [_clone_group((1, 2), 2)]
+    result = _stub_scan(tmp_path, _scan_report(clones, groups))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        assert gate.main("src/huron", baseline_path=baseline) == 1
+    assert "new clone group" in capsys.readouterr().err
+
+
+def test_guard_fails_when_a_known_group_grows(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A group with a known file signature that grew past its baseline size fails."""
+    baseline = _write_baseline(tmp_path, total_clones=3, groups=[(("src/a.py", "src/b.py"), 2)])
+    clones = [_clone(1, "src/a.py"), _clone(2, "src/b.py"), _clone(3, "src/a.py")]
+    groups = [_clone_group((1, 2, 3), 3)]
+    result = _stub_scan(tmp_path, _scan_report(clones, groups))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        assert gate.main("src/huron", baseline_path=baseline) == 1
+    assert "grown clone group" in capsys.readouterr().err
+
+
+def test_guard_passes_and_hints_at_ratchet_when_clones_decrease(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fewer clones with no new or grown group passes and suggests ratcheting down."""
+    baseline = _write_baseline(tmp_path, total_clones=2, groups=[(("src/a.py", "src/b.py"), 2)])
+    clones = [_clone(1, "src/a.py")]
+    result = _stub_scan(tmp_path, _scan_report(clones, []))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        assert gate.main("src/huron", baseline_path=baseline) == 0
+    assert "--update-baseline" in capsys.readouterr().out
+
+
+def test_guard_fails_closed_on_missing_baseline(tmp_path: Path) -> None:
+    """A missing committed baseline is a tool/report-class failure, not a pass."""
+    clones = [_clone(1, "src/a.py"), _clone(2, "src/b.py")]
+    result = _stub_scan(tmp_path, _scan_report(clones, [_clone_group((1, 2), 2)]))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        assert gate.main("src/huron", baseline_path=tmp_path / "missing.json") == 2
+
+
+@pytest.mark.parametrize("content", ["not json", "[]", "{}", '{"pyscn_version": "1.31.1"}'])
+def test_guard_fails_closed_on_malformed_baseline(tmp_path: Path, content: str) -> None:
+    """A malformed committed baseline cannot substitute for validated evidence."""
+    baseline = tmp_path / "duplication_baseline.json"
+    baseline.write_text(content)
+    clones = [_clone(1, "src/a.py"), _clone(2, "src/b.py")]
+    result = _stub_scan(tmp_path, _scan_report(clones, [_clone_group((1, 2), 2)]))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        assert gate.main("src/huron", baseline_path=baseline) == 2
+
+
+def test_update_baseline_refuses_to_raise(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--update-baseline never writes a baseline that would raise it."""
+    baseline = _write_baseline(tmp_path, total_clones=2, groups=[(("src/a.py", "src/b.py"), 2)])
+    original = baseline.read_text()
+    clones = [_clone(1, "src/a.py"), _clone(2, "src/b.py"), _clone(3, "src/c.py")]
+    groups = [_clone_group((1, 2), 2)]
+    result = _stub_scan(tmp_path, _scan_report(clones, groups))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        status = gate.main("src/huron", update_baseline=True, baseline_path=baseline)
+    assert status == 1
+    assert baseline.read_text() == original
+    assert "refusing to update" in capsys.readouterr().err
+
+
+def test_update_baseline_succeeds_on_decrease(tmp_path: Path) -> None:
+    """--update-baseline ratchets the committed baseline down on genuine improvement."""
+    baseline = _write_baseline(tmp_path, total_clones=2, groups=[(("src/a.py", "src/b.py"), 2)])
+    clones = [_clone(1, "src/a.py")]
+    result = _stub_scan(tmp_path, _scan_report(clones, []))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        status = gate.main("src/huron", update_baseline=True, baseline_path=baseline)
+    assert status == 0
+    updated = json.loads(baseline.read_text())
+    assert updated["total_clones"] == 1
+    assert updated["groups"] == []
+
+
+def test_update_baseline_bootstraps_when_absent(tmp_path: Path) -> None:
+    """--update-baseline may create a baseline that does not yet exist."""
+    baseline = tmp_path / "duplication_baseline.json"
+    clones = [_clone(1, "src/a.py"), _clone(2, "src/b.py")]
+    groups = [_clone_group((1, 2), 2)]
+    result = _stub_scan(tmp_path, _scan_report(clones, groups))
+    with patch.object(gate.subprocess, "run", return_value=result):
+        status = gate.main("src/huron", update_baseline=True, baseline_path=baseline)
+    assert status == 0
+    written = json.loads(baseline.read_text())
+    assert written["total_clones"] == 2
+    assert written["groups"] == [{"files": ["src/a.py", "src/b.py"], "size": 2}]
+    assert baseline.read_text().endswith("\n")
+
+
 @pytest.mark.parametrize("content", [None, "not json", "{}", "null", "[]"])
 def test_missing_or_invalid_report(tmp_path: Path, content: str | None) -> None:
     """An announced but unreadable or invalid report is an analysis failure."""
@@ -399,11 +638,18 @@ def test_tool_failure(error: Exception) -> None:
         assert gate.main("src/huron") == 2
 
 
-def test_command_entrypoint(tmp_path: Path) -> None:
-    """The executable command propagates a passing gate's exit status."""
+def test_command_entrypoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The executable command propagates a passing gate's exit status.
+
+    ``BASELINE_PATH`` is relative, resolved against the process working
+    directory; chdir into a scratch tree carrying a matching baseline so this
+    end-to-end run of ``__main__`` never touches the repository's own baseline.
+    """
     report = tmp_path / "report.json"
     report.write_text(json.dumps(_report()))
     result = subprocess.CompletedProcess([], 0, "", f"Unified JSON report generated: {report}\n")
+    _write_baseline(tmp_path, total_clones=2, groups=[(("src/example1.py", "src/example2.py"), 2)])
+    monkeypatch.chdir(tmp_path)
     with (
         patch.object(subprocess, "run", return_value=result),
         patch.object(sys, "argv", [str(_PATH), "src/huron"]),

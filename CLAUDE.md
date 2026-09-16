@@ -7,12 +7,13 @@ of those rules here.
 
 ## Architecture and skills
 
-The implemented layout is `src/huron/{pkg,core,applications}`, with `schema/` as the
-shared document-contract floor. Follow the ownership and dependency rules in AGENTS.md.
+The layout is `src/huron/{core,applications,schema}`. Core contains domain-owned
+workflows and concrete adapter packages. Follow the ownership and explicit dependency
+graph in AGENTS.md.
 
 Read skills from `.claude/skills/<name>/SKILL.md`:
 
-- `oop-design` when writing, designing, refactoring or reviewing `pkg/` and `core/`
+- `oop-design` when writing, designing, refactoring or reviewing `core/`
   code. Use the project-local copy; the previous encapsulation skill is retired.
 - `fastapi` exclusively for API-service code, in
   `src/huron/applications/api/`. Do not apply

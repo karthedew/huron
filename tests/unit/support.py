@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from huron.applications.api.runtime import ApiStores
-from huron.pkg.auth import (
+from huron.core.metastore import (
     MemoryApiKeyStore,
     MemoryCredentialStore,
     MemoryPrincipalStore,
     MemorySessionStore,
 )
-from huron.pkg.catalog.ingest import (
+from huron.core.raw.ingest import (
     FileState,
     IngestFile,
     IngestLease,
@@ -25,14 +25,14 @@ from huron.pkg.catalog.ingest import (
     IngestState,
     UploadAction,
 )
-from huron.pkg.metastore import InMemoryHierarchyStore, InMemoryRbacStore
+from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
 
 if TYPE_CHECKING:
     from datetime import timedelta
 
     import pytest
 
-    from huron.pkg.catalog.ports import Clock
+    from huron.core.foundation.clock import Clock
 
 #: The instant every ingest-domain test fixture below treats as "now".
 INGEST_NOW: datetime = datetime(2024, 1, 1, tzinfo=UTC)

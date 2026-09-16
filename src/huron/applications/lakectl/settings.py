@@ -11,33 +11,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
-class ControllerState(BaseModel):
-    """Durable restart admission bound to a particular root and controller generation."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    root_id: UUID
-    controller_id: UUID
-    device: int
-    inode: int
-    composition: str
-    generation: Annotated[int, Field(ge=0)]
-    run_id: UUID | None = None
-    writers: tuple[str, ...] = ()
-    operator: str | None = None
-    database: str | None = None
-
-
-class ControlledRoot(BaseModel):
-    """Live storage identity supplied by the authenticated deployment controller."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    root_id: UUID
-    path: Path
-    owner_uid: Annotated[int, Field(ge=1)]
-    device: int
-    inode: int
-
-
 class MaintenanceSettings(BaseModel):
     """Private connection material for the dedicated cutover database identity."""
 

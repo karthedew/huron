@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import pytest
 
-from huron.pkg.catalog.documents import (
+from huron.core.raw.documents import (
     INDEX_SCHEMA,
     METADATA_SCHEMA,
     CommitIntent,
@@ -30,11 +30,14 @@ from huron.pkg.catalog.documents import (
     manifest_bytes,
     revision_from_storage,
 )
-from huron.pkg.catalog.errors import ContractMismatch, PathRuleViolation, PreconditionFailed
-from huron.pkg.catalog.ingest import IngestLease, IngestSession, IngestState
-from huron.pkg.catalog.manifest import Manifest, ManifestEntry, canonical_bytes, validate_manifest
-from huron.pkg.catalog.models import EntityRef, RevisionRecord
-from huron.pkg.metastore import InMemoryHierarchyStore
+from huron.core.catalog.errors import ContractMismatch
+from huron.core.foundation.errors import PathRuleViolation, PreconditionFailed
+from huron.core.raw.ingest import IngestLease, IngestSession, IngestState
+from huron.core.raw.manifest import Manifest, ManifestEntry, validate_manifest
+from huron.core.foundation.canonical import canonical_bytes
+from huron.core.catalog.types import EntityRef
+from huron.core.raw.types import RevisionRecord
+from huron.core.metastore import InMemoryHierarchyStore
 
 pytestmark = pytest.mark.unit
 

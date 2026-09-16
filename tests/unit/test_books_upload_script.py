@@ -7,8 +7,8 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
-import huron.pkg.catalog.ingest as ingest_module
-from huron.pkg.catalog.errors import EmptyRevision
+import huron.core.raw.ingest as ingest_module
+from huron.core.raw.errors import EmptyRevision
 from scripts.main import upload_books
 from tests.ingest_client import IngestClient
 

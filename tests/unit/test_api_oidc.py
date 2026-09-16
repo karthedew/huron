@@ -30,8 +30,9 @@ from jwt.algorithms import RSAAlgorithm
 
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
-from huron.pkg.auth import MemoryPrincipalStore, MemorySessionStore, PrincipalRecord
-from tests.unit.support import memory_stores
+from huron.core.metastore import MemoryPrincipalStore, MemorySessionStore
+from huron.core.security.principals import PrincipalRecord
+from tests.unit.support import FakeClock, memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -40,6 +41,24 @@ if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 pytestmark = pytest.mark.unit
+
+
+def test_unconfigured_oidc_callback_keeps_configuration_refusal_before_query_validation(
+    tmp_path: Path,
+) -> None:
+    """An unconfigured callback still returns 404 before missing code/state produce 422."""
+    settings = ApiSettings(
+        env="development",
+        auth_mode="dev-headers",
+        data_root=str(tmp_path / "data"),
+        database_url="postgresql://unused",
+        classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
+    )
+    with TestClient(create_app(settings=settings, stores=memory_stores())) as client:
+        response = client.get("/auth/oidc/callback")
+    assert response.status_code == 404
+    assert response.json()["code"] == "OIDC_NOT_CONFIGURED"
+
 
 ISSUER = "https://idp.example"
 CLIENT_ID = "huron-web"
@@ -242,6 +261,40 @@ def test_oidc_callback_exchanges_the_code_and_redirects_into_the_web_app(
     assert info["subject"] == "user-123"
     assert info["authentication_method"] == "session"
     assert info["groups"] == ["physics"]
+
+
+@pytest.mark.parametrize("max_age, elapsed, status", [(30, 31, 401), (900, 601, 302)])
+def test_oidc_validation_uses_the_issued_cookie_lifetime(
+    client: TestClient,
+    private_key: RSAPrivateKey,
+    monkeypatch: pytest.MonkeyPatch,
+    max_age: int,
+    elapsed: int,
+    status: int,
+) -> None:
+    """Shorter and longer cookie lifetimes also govern callback validation through wiring."""
+    from huron.applications.api.authorization import cookies
+
+    monkeypatch.setattr(cookies, "LOGIN_FLOW_MAX_AGE", max_age)
+    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
+    client.app.state.runtime = dataclasses.replace(client.app.state.runtime, clock=clock)
+    start = _start(client)
+    assert f"Max-Age={max_age}" in start.headers["set-cookie"]
+    query = parse_qs(urlsplit(start.headers["location"]).query)
+    state, nonce = query["state"][0], query["nonce"][0]
+    with respx.mock(assert_all_called=False):
+        exchange = respx.post(f"{ISSUER}/token").mock(
+            return_value=Response(200, json={"id_token": _id_token(private_key, nonce=nonce)})
+        )
+        clock.advance(timedelta(seconds=elapsed))
+        response = client.get(
+            "/auth/oidc/callback", params={"code": "code", "state": state}, follow_redirects=False
+        )
+    assert response.status_code == status
+    assert exchange.called is (status == 302)
+    if status == 401:
+        assert response.json()["detail"] == "login flow has expired"
+        assert client.cookies.get("huron_session") is None
 
 
 def test_oidc_callback_rejects_a_state_that_does_not_match_the_flow_cookie(

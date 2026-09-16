@@ -243,7 +243,7 @@ async def test_real_transport_validates_exact_durable_evidence(
     from datetime import UTC, datetime
     from huron.applications.lakectl import controller as controller_module
     from huron.core.integrity.models import ProtocolInventory, ProtocolTransition
-    from huron.pkg.rawstore.maintenance import MaintenanceStore
+    from huron.core.rawstore.maintenance import MaintenanceStore
 
     monkeypatch.setattr(controller_module.asyncpg, "create_pool", lambda url: EmptyDatabaseBoundary())
     client = ControllerClient(transport_settings.socket_path)
@@ -277,7 +277,7 @@ async def test_lost_reply_is_resolved_by_validating_again(
     import socketserver
     from huron.applications.lakectl import controller as controller_module
     from huron.core.integrity.models import ProtocolInventory, ProtocolTransition
-    from huron.pkg.rawstore.maintenance import MaintenanceStore
+    from huron.core.rawstore.maintenance import MaintenanceStore
 
     monkeypatch.setattr(controller_module.asyncpg, "create_pool", lambda url: EmptyDatabaseBoundary())
     client = ControllerClient(transport_settings.socket_path)

@@ -97,8 +97,8 @@ Practically:</p>
 nothing is shaped to accommodate what already exists.</li>
 <li>Prototype endpoints, schemas, and plans are retired outright. No dual-running, no
 compatibility shims, no migration tooling.</li>
-<li>Repository hygiene from day one: the layered layout below, with import-linter
-enforcing every boundary in it — domain packages remain independent and infrastructure dependencies point toward domains, and <code>catalog/</code> and <code>rbac/</code> know nothing of FastAPI,
+<li>Repository hygiene from day one: the domain-owned layout below, with import-linter
+enforcing declared acyclic dependencies and infrastructure dependencies pointing toward domains; domain packages know nothing of FastAPI,
 SQLAlchemy, storage SDKs, or LanceDB; a task is done when its gate passes in CI, not when the
 code is written; any change to a decision or invariant updates this design directory in the
 same PR.</li>
@@ -107,22 +107,37 @@ same PR.</li>
 <pre>
 src/huron/
   applications/api/   FastAPI transport, settings, authentication extraction and wiring
-  core/               authorized catalog, identity, Raw-ingestion and revision-read workflows
-  pkg/catalog/        domain entities, immutable transitions, manifests and document contracts
-  pkg/auth/           credential verification and identity primitives
-  pkg/rbac/           role and scope evaluation
-  pkg/rawstore/       POSIX staging, checksums, atomic publication and sealing
-  pkg/metastore/      PostgreSQL and in-memory persistence adapters
+  applications/lakectl/  operator transport, process/deployment I/O and resource lifetimes
+  core/foundation/    shared errors, canonical JSON, IDs/names, retry and clocks
+  core/security/      authentication, identity, authorization and their workflows
+  core/catalog/       hierarchy identity, descriptions, layer configuration and discovery
+  core/raw/           ingestion, revision publication/reads, releases and expiry
+  core/integrity/     verification, cutover and controller admission
+  core/rawstore/      POSIX staging, checksums, atomic publication and sealing
+  core/metastore/     PostgreSQL and in-memory persistence adapters
   schema/             canonical JSON schemas, shared document validation and primitive contracts
 </pre>
 
-<p><strong>Implemented dependency direction: applications → core → pkg → schema.</strong>
-Core owns reusable behavior and uses injected capabilities; the FastAPI application owns transport
-and process wiring. Core public services enforce authorization themselves. Domain and infrastructure
-objects use composition and immutable values where appropriate. Auth, catalog, RBAC and rawstore
-remain independent siblings; metastore may import domain types, while domains cannot import it.
-Import-linter enforces layer direction, domain independence and framework/adapter exclusion from core.
+<p><strong>Implemented dependency direction: applications → core → schema.</strong>
+Domain owners colocate values and workflows and use injected capabilities; applications own
+transport and process wiring. Public scientific operations enforce authorization themselves.
+Metastore implements consumer-owned persistence/fact ports; Rawstore performs filesystem I/O.
+Import-linter enforces the <a href="architecture.html#domain-owned-core">explicit Core graph</a>,
+type-only sibling acyclicity, exhaustive ownership, private interfaces and domain framework/adapter exclusions.
 See <code>AGENTS.md</code> for the current package rules, skills and verification workflow.</p>
+
+<p id="domain-owned-core-migration"><span class="tag">done</span>
+<strong>Domain-owned Core migration:</strong> the replacement architecture was agreed on
+2026-09-15: domain objects and workflows colocate under Core, with explicit acyclic
+subpackage dependencies and metastore/rawstore adapters. Source ownership, public application
+interfaces, authentication and controller workflows, and approved code removals are implemented
+and verified. The final gate passed 1,797 unit tests (96.39% coverage), 49 contract tests,
+all 15 integration tests including controlled cutover in an isolated runner, Raw acceptance,
+lint and documentation checks. Canonical OpenAPI is unchanged; both review axes are closed.
+See the <a href="architecture.html#domain-owned-core">implemented graph</a> and
+<a href="../docs/plans/domain-owned-core.md">migration plan</a>. Existing delivered phase
+statuses describe the current implementation; future scientific capabilities retain their
+existing delivery status.</p>
 
 <p>Worker entry points, objectstore, searchindex, credentials, jobrunner, Polaris and telemetry
 packages remain planned. The Python SDK also remains planned; its Raw interface will create/get a
@@ -147,21 +162,21 @@ P0 ── P1 ── P2 ── P3 ─────────── P5 ── P6 
 <tr><th>Phase</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
 <tr><td class="k">P0 — Bootstrap<br><span class="tag">done</span></td>
-<td>Repository skeleton and dependency groups; tooling (ruff, mypy strict across <code>pkg/</code> and
+<td>Repository skeleton and dependency groups; tooling (ruff, mypy strict across <code>core/</code> and
 <code>schema/</code>, import-linter, pytest markers); compose stack (PostgreSQL, MinIO for derived layers, a local
 volume standing in for NFS); settings module whose startup refusals are tested (dev-auth outside
 development, invalid classification vocabulary); CI with lint → unit → contract → integration
 stages.</td>
 <td>Green CI on the empty tree; a deliberately added <code>import fastapi</code> in
-<code>pkg/catalog/</code>, an import of one package from another, and an import of one service
+<code>core/catalog/</code>, an undeclared domain edge, and an import of one application
 from another each fail their contract; the compose stack boots and bootstraps buckets and
 volumes from a clean checkout.</td></tr>
 
 <tr><td class="k">P1 — Foundations<br><span class="tag">done</span></td>
-<td>Domain model for the three-level hierarchy in <code>pkg/catalog/</code>;
-<code>catalog/paths.py</code> (construction + parsing, per-resource slug limits); manifest/JCS
+<td>Domain model for the three-level hierarchy in <code>core/catalog/</code>;
+Catalog/Raw path construction and parsing with Foundation name validation; Raw manifest/Foundation JCS
 module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
-<code>pkg/rawstore/</code>; migrations (hierarchy, role_bindings, api_keys, audit, outbox);
+<code>core/rawstore/</code>; migrations (hierarchy, role_bindings, api_keys, audit, outbox);
 <code>RoleBindingAuthorizer</code> with discovery gating — the authorizer computes a
 <code>Visibility</code> per request from the caller's role bindings, and every hierarchy read,
 window and mutation resolves it through <code>CurrentVisibility</code> before it reaches the
@@ -171,7 +186,7 @@ HTTP, with generation
 documents at the documented paths <span class="tag">done</span> — verified route by route against
 the built route table and against <a href="api.html">API</a> §2. The hierarchy is persisted in
 PostgreSQL <span class="tag">done</span>: <code>PostgresHierarchyStore</code>
-(<code>pkg/metastore/hierarchy.py</code>) is the only production wiring
+(<code>core/metastore/hierarchy.py</code>) is the only production wiring
 <code>create_app</code> builds, so an organization created over HTTP survives a restart and can own
 a service account or scope an API key in the one deployment shape that exists. Discovery gating
 <span class="tag">done</span>: every hierarchy read, window and mutation resolves the caller's
@@ -267,21 +282,21 @@ state.</td></tr>
 <tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">done</span></td>
 <td>Delivers, each item named with the module it lives in and the test module that pins it
 and verified by the test suites: the session state machine and lease
-(<code>pkg/catalog/ingest.py</code> — <code>tests/unit/test_catalog_ingest.py</code>,
+(<code>core/raw/ingest.py</code> — <code>tests/unit/test_catalog_ingest.py</code>,
 <code>tests/unit/test_catalog_properties.py</code>); the dataset-scoped lock and gap-free
 allocator, migrations <code>0009_ingest_ledger</code> and <code>0010_independent_raw</code>
-(<code>pkg/metastore/ingest.py</code> — <code>tests/unit/test_hierarchy_store_memory.py</code>,
+(<code>core/metastore/ingest.py</code> — <code>tests/unit/test_hierarchy_store_memory.py</code>,
 <code>tests/contract/test_hierarchy_store.py</code>); the upload plan with complete independent uploads
-(<code>pkg/catalog/ingest.py</code>'s <code>compute_upload_plan</code> —
+(<code>core/raw/ingest.py</code>'s <code>compute_upload_plan</code> —
 <code>tests/unit/test_catalog_ingest.py</code>, <code>tests/unit/test_api_raw_revisions.py</code>);
-streaming in-flight hashing (<code>pkg/rawstore/store.py</code>'s <code>write_part</code> —
+streaming in-flight hashing (<code>core/rawstore/store.py</code>'s <code>write_part</code> —
 <code>tests/unit/test_rawstore_store.py</code>, <code>tests/unit/test_api_ingest_sessions.py</code>);
-the POSIX commit protocol and sealing (<code>pkg/rawstore/commit.py</code>,
-<code>pkg/rawstore/store.py</code>'s <code>seal</code> —
+the POSIX commit protocol and sealing (<code>core/rawstore/commit.py</code>,
+<code>core/rawstore/store.py</code>'s <code>seal</code> —
 <code>tests/unit/test_rawstore_commit.py</code>,
 <code>tests/unit/test_api_ingest_crash_matrix.py</code>); the HTTP surface, nine ingest
-operations and three revision read routes (<code>core/_ingest.py</code>,
-<code>core/revisions.py</code>, <code>applications/api/routes/v1/endpoints/ingest_sessions.py</code>,
+operations and three revision read routes (<code>core/raw/_impl/ingest.py</code>,
+<code>core/raw/_impl/revisions.py</code>, <code>applications/api/routes/v1/endpoints/ingest_sessions.py</code>,
 <code>.../revisions.py</code> — <code>tests/unit/test_api_ingest_sessions.py</code>,
 <code>tests/unit/test_api_revisions.py</code>); the expiry sweep
 (<code>applications/api/expiry.py</code> — <code>tests/unit/test_api_expiry.py</code>,
@@ -294,10 +309,10 @@ human's sole binding removes visibility with the grant, so the next request answ
 classification is not discoverable is visible only to a SYSTEM-scope principal and nobody can
 commit into it — the restricted-project download rows therefore use a sibling open project the
 outsider holds no binding on; <code>INDEX.json</code> written best-effort at commit
-(<code>pkg/catalog/documents.py</code>'s <code>RevisionIndex</code> — <code>D-12</code>).
+(<code>core/raw/documents.py</code>'s <code>RevisionIndex</code> — <code>D-12</code>).
 A session whose driver crashed in <code>COMMITTING</code> holds its dataset lock until the P3 reconciler; the owner's abort cannot release it (<code>D-1</code>).
 <code>Slugged</code>'s <code>id</code> and <code>slug</code> are read-only properties, so a
-frozen <code>EntityRef</code> satisfies it structurally (<code>pkg/catalog/paths.py</code>); the
+frozen <code>EntityRef</code> satisfies it structurally (<code>core/foundation/names.py</code>); the
 protocol's read-only properties are enforced by mypy on <code>src/huron</code> only where a
 caller passes an <code>EntityRef</code> where a <code>Slugged</code> is expected, and no shipped
 caller does yet, so no gate step pins the protocol shape today.
@@ -326,8 +341,8 @@ body in memory (a 9 GiB download would need ≈18.5 GiB and be killed on a 16 GB
 four pre-existing <code>radon</code> C-grade items reduced to B before any P2 task ran; D-21 superseded by independent-copy tests: unchanged files are uploaded, repeated content creates
 new revision identities, omitted files are absent, and deleting an earlier revision preserves later bytes; D-22 measured B
 (10.27) after M3.3 with the session and file methods in place, so the split ran there — both
-adapters' ingest methods live in <code>pkg/metastore/ingest.py</code> as four mixin bases
-behind the port in <code>core/ports.py</code>; the historical measurements after that split were
+adapters' ingest methods now live in <code>core/metastore/ingest.py</code> as four mixin bases
+behind the port in <code>core/raw/ports.py</code>; the historical measurements after that split were
 A (25.94) for <code>pkg/metastore/hierarchy.py</code> and A (44.47) for
 <code>pkg/metastore/ingest.py</code>; D-23
 <code>RevisionRecord.metadata_sha256</code> is the digest of <code>metadata.json</code>'s
@@ -406,7 +421,7 @@ published versions mirrored to storage — science profiles and extension schema
 envelope validation against the effective schema at ingest; quota enforcement at
 <code>BeginIngest</code>.
 The amendment fold and field allow-list are implemented
-(<code>pkg/catalog/amendments.py</code>); the rest is not started.</td>
+(<code>core/raw/amendments.py</code>); the rest is not started.</td>
 <td>Every forbidden amendment field rejected; fold correct across 3 chained amendments; two-person
 purge enforced by the database, idempotent on re-run, reported lawful by the reconciler; expiry
 removes only TTL-category files, only after Silver exists, writes the marker, honors holds; the
@@ -518,7 +533,7 @@ catalog page, mutate with CSRF, sign out, confirm the session is dead. This gate
 the compose stack and Keycloak realm import for the first time.</td></tr>
 
 <tr><td class="k">3 — Authorization &amp; discoverability<br><span class="tag">todo</span></td>
-<td>Built: the <code>pkg/rbac</code> engine (exactly the five roles of
+<td>Built: the <code>core/security</code> authorization engine (exactly the five roles of
 <a href="rbac.html">RBAC</a>, deny-overrides, scope walk, layer restrictions),
 request-cached <code>check()</code>; silver/gold writes are service-account-free by
 construction rather than by trigger — no role in the vocabulary carries silver/gold
@@ -630,7 +645,7 @@ revision and transform digest; a contract-incompatible request is refused at enq
 
 <tr><td class="k">10 — Manual bronze intake<br><span class="tag">todo</span><br>backend P6</td>
 <td>Built: <code>entry_layer</code> with the invariant-N checks, entry validation, the external
-provenance schema, and entry validation in <code>pkg/catalog/layers.py</code>. Adds: the
+provenance schema, and entry validation in <code>core/catalog/layers.py</code>. Adds: the
 <a href="layer-bronze.html#manual-intake">manual intake path</a> — scientist/engineer uploads of
 NetCDF/HDF5/zipped-Zarr through UI wizard and <code>huron bronze upload</code>, never requiring
 raw to exist; the one-of-two provenance assertion — a raw revision of the same dataset
@@ -644,7 +659,7 @@ the linked revision; an upload asserting neither or both is refused; a checksum 
 profile violation is refused with structured findings.</td></tr>
 
 <tr><td class="k">11 — Jobs &amp; queue<br><span class="tag">todo</span></td>
-<td><code>pkg/jobrunner</code>, created in the PR that gives it code and joining the
+<td>A domain-owned job-dispatch integration, created with its implementation and joining the
 independence contract in that PR: persistent jobs table with queued / running / succeeded /
 failed states, progress, timestamps, structured failure detail, and validation-result
 attachment; organization-scoped <code>/jobs</code> listing and detail behind the visibility
@@ -747,7 +762,7 @@ generation-versioned and audited; effective-policy resolution (nearest-scope-win
 schema requirements composing through the registry's extends chain); the policy editors with the
 inherited-versus-set-here view; dataset creation validating against the effective policy. Any
 finer capabilities this tier needs (retention, classification-gated discovery, audit read) enter
-<code>pkg/rbac/roles.py</code> with a seed migration in the same change.</td>
+<code>core/security/roles.py</code> with a seed migration in the same change.</td>
 <td>A retention policy attached at the organization governs a dataset created afterward in any
 project with no project-level action; a project override wins over the org value; the dataset
 page shows which scope every effective value came from.</td></tr>
@@ -854,8 +869,8 @@ explicit cross-tier dependencies: 9→11; 18→8, 11, 12, 16; 19→20, 21; 22→
 
 <ol>
 <li>Stand up the fresh repository per §1 — layout, tooling, compose, CI (P0).</li>
-<li>Build the pure core first: <code>pkg/catalog/ids.py</code>,
-<code>pkg/catalog/paths.py</code>, <code>pkg/catalog/manifest.py</code> with their property
+<li>Build the pure rules first: <code>core/foundation/identifiers.py</code>,
+<code>core/catalog/paths.py</code>, <code>core/raw/paths.py</code>, <code>core/raw/manifest.py</code> with their property
 tests — everything else leans on them.</li>
 <li>Prototype in parallel, throwaway-labeled: an Icechunk repo on MinIO exercised through
 <code>xarray.open_zarr</code> on a read-only session, and an STS

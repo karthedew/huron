@@ -22,8 +22,8 @@ from pydantic import ValidationError
 from huron.applications.api.app import create_app
 from huron.applications.api.routes.v1.schema.service_accounts import IssuedServiceAccountKey
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.pkg.auth.apikeys import ApiKeyRecord, MemoryApiKeyStore
-from huron.pkg.metastore import InMemoryRbacStore
+from huron.core.security.apikeys import ApiKeyRecord
+from huron.core.metastore import InMemoryRbacStore, MemoryApiKeyStore
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from uuid import UUID
 
-    from huron.pkg.catalog.records import ServiceAccount
+    from huron.core.security.types import ServiceAccount
 
 pytestmark = pytest.mark.unit
 

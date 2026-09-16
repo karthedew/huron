@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from huron.core.access import AccessPolicy
-from huron.core.releases import Releases
-from huron.pkg.auth import Principal
-from huron.pkg.rbac import RoleBindingAuthorizer
+from huron.core.security import AccessPolicy
+from huron.core.raw import Releases
+from huron.core.security.principal import Principal
+from huron.core.security.rules import RoleBindingAuthorizer
 
 if TYPE_CHECKING:
-    from huron.core._catalog import HierarchyRepository
+    from tests.repository_fixture import RepositoryFixture
 
 
-def releases_for(repository: HierarchyRepository, *, visible: bool = True) -> Releases:
+def releases_for(repository: RepositoryFixture, *, visible: bool = True) -> Releases:
     """Bind a seeded owner or an undiscovering actor to the real release workflow."""
     access = AccessPolicy(
         Principal("tester" if visible else "outsider"),

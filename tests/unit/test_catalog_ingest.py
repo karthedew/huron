@@ -24,8 +24,8 @@ from uuid import uuid4
 
 import pytest
 
-from huron.pkg.catalog.errors import IllegalIngestTransition, IngestSessionExpired, ManifestMismatch
-from huron.pkg.catalog.ingest import (
+from huron.core.raw.errors import IllegalIngestTransition, IngestSessionExpired, ManifestMismatch
+from huron.core.raw.ingest import (
     LEASE_TTL,
     PART_BYTES,
     TRANSITIONS,
@@ -35,8 +35,8 @@ from huron.pkg.catalog.ingest import (
     revision_committed,
     revision_record,
 )
-from huron.pkg.catalog.manifest import Manifest, ManifestEntry
-from huron.pkg.catalog.models import RevisionRecord
+from huron.core.raw.manifest import Manifest, ManifestEntry
+from huron.core.raw.types import RevisionRecord
 
 from .support import (
     INGEST_NOW,

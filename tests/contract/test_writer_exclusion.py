@@ -8,7 +8,7 @@ import asyncpg
 import pytest
 from testcontainers.postgres import PostgresContainer
 
-from huron.pkg.metastore.maintenance import PostgresRoleExclusion
+from huron.core.metastore.maintenance import PostgresRoleExclusion
 
 pytestmark = pytest.mark.contract
 

@@ -20,7 +20,7 @@ uv run radon cc src --min C                      # complexity; output must be em
 uv run radon mi src --min B                      # maintainability; output must be empty
 uv run complexipy src --max-complexity-allowed 15
 uv run --locked pyscn check src                 # dead code, complexity, clones
-uv run --locked python scripts/check_duplication.py src  # native score must reach 90
+uv run --locked python scripts/check_duplication.py src  # source-wide clone regression guard
 ```
 
 ## Formatting and lint
@@ -45,8 +45,8 @@ narrow per-file ignore goes in `pyproject.toml` with a comment saying why.
 
 ## Types
 
-`mypy --strict` and `ty` cover all of `src/`, including application wiring, core,
-packages and schemas. Applications stay thin and reusable workflows belong in core.
+`mypy --strict` and `ty` cover all of `src/`, including application wiring, Core domains,
+adapters and schemas. Applications stay thin and reusable workflows belong to their domains.
 
 Annotate every public function and method. `Any` is for genuinely open types, not for silencing.
 
@@ -56,16 +56,26 @@ Annotate every public function and method. `Any` is for genuinely open types, no
 
 | Boundary | Rule |
 |---|---|
-| Layers | `applications` → `core` → `pkg` → `schema` |
-| Domain independence | auth, catalog, RBAC and rawstore do not import one another |
-| Infrastructure | metastore may import domain types; domains never import metastore |
-| Core | injected ports, no concrete adapters, HTTP framework or compute runtime |
+| Layers | `applications` → `core` → `schema` |
+| Core dependency graph | explicitly permitted direct edges, sibling acyclicity including type-only imports, exhaustive ownership |
+| Infrastructure | Metastore consumes domain types; domains never import adapters, even indirectly |
+| Domain workflows | consumer-owned injected ports, no concrete adapters, HTTP framework or compute runtime |
 | Domain logic | no web framework, database driver or storage SDK |
+| Public surfaces | cross-package callers use published operations/types/ports; `_impl` belongs to its owner |
 | API authorization | routes use the authorization package's public surface |
 
 Applications may import concrete adapters to wire core services. Pydantic and JSON Schema
 validation are allowed in domain contracts. Add appropriate boundaries when introducing
 new packages; do not weaken existing contracts to conceal reverse dependencies.
+Root `AGENTS.md` contains the complete permitted graph. The negative cases in
+`tests/unit/test_domain_import_contracts.py` prove the checker rejects forbidden
+direct/type-only/indirect edges and private or unclassified package imports.
+
+The duplication guard compares source-wide clone totals and group signatures against
+`scripts/duplication_baseline.json`. File moves require an explicit fragment-backed
+path reconciliation; code splits or merges are reviewed against the original evidence.
+Retain baseline counts, group sizes, scanner settings and thresholds. New duplication
+requires an implementation fix rather than regeneration of a permissive baseline.
 
 ## The design record
 
@@ -84,9 +94,10 @@ and a mutable display `title`. **No role can change a slug** — not an organiza
 platform owner. A slug is baked into the storage path, so an immutable slug is what makes paths
 permanently stable, which is what makes citations durable.
 
-`pkg/catalog/paths.py` is the sole constructor **and parser** of storage paths. Never build one by
-string concatenation elsewhere; the reconciler and sweeper depend on the round-trip property that
-`parse_revision_dir(revision_dir(...))` recovers the original identity.
+`core/catalog/paths.py` owns hierarchy/generation and cross-layer layout;
+`core/raw/paths.py` owns staging, revision and release layout. Use these published
+constructors/parsers rather than concatenating paths in callers. The round-trip
+property `parse_revision_dir(revision_dir(...))` preserves revision identity.
 
 ## Comments
 

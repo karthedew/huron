@@ -17,13 +17,13 @@ from huron.applications.api.authorization import current_principal
 from huron.applications.api.authorization.credentials import _enforce_csrf
 from huron.applications.api.runtime import ApiRuntime
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
-from huron.core._catalog import HierarchyRepository
-from huron.core._ingest import IngestService
-from huron.core._revision_reader import RevisionService
-from huron.pkg.auth import AuthError, OidcResolver, SessionRecord, create_session
-from huron.pkg.metastore import SystemClock
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import RoleBindingAuthorizer
+from huron.core.raw import RawRuntime
+from huron.core.security.authentication_errors import AuthError
+from huron.core.security.oidc import OidcResolver
+from huron.core.security.sessions import SessionRecord, create_session
+from huron.core.metastore import SystemClock
+from huron.core.rawstore import PosixRawStore
+from huron.core.security.rules import RoleBindingAuthorizer
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -49,36 +49,21 @@ def _request(
     return Request(scope)
 
 
-def _repository(tmp_path: Path, stores: ApiStores) -> HierarchyRepository:
-    """A real, filesystem-backed HierarchyRepository over ``stores``' hierarchy and rbac stores."""
-    return HierarchyRepository(
-        PosixRawStore(str(tmp_path / "raw")),
-        stores.hierarchy,
-        rbac_store=stores.rbac,
-    )
+def _raw_store(tmp_path: Path) -> PosixRawStore:
+    """An initialized, filesystem-backed raw store under ``tmp_path``."""
+    store = PosixRawStore(str(tmp_path / "raw"))
+    store.initialize()
+    return store
 
 
-def _ingest(repository: HierarchyRepository, stores: ApiStores) -> IngestService:
-    """An IngestService sharing ``repository``'s raw store and ``stores``' hierarchy store."""
-    return IngestService(repository.raw_store, stores.hierarchy, clock=SystemClock())
-
-
-def _revisions(repository: HierarchyRepository, stores: ApiStores) -> RevisionService:
-    """A RevisionService sharing ``repository``'s raw store and ``stores``' hierarchy store."""
-    return RevisionService(repository.raw_store, stores.hierarchy)
-
-
-def _runtime(
-    *, repository: HierarchyRepository, stores: ApiStores, settings: ApiSettings
-) -> ApiRuntime:
-    """An ApiRuntime wired to the given repository and stores, with no OIDC configured."""
+def _runtime(*, raw_store: PosixRawStore, stores: ApiStores, settings: ApiSettings) -> ApiRuntime:
+    """An ApiRuntime wired to the given raw store and stores, with no OIDC configured."""
     return ApiRuntime(
         settings=settings,
-        repository=repository,
+        raw_store=raw_store,
         hierarchy=stores.hierarchy,
         rbac=stores.rbac,
-        ingest=_ingest(repository, stores),
-        revisions=_revisions(repository, stores),
+        raw=RawRuntime(raw_store, stores.hierarchy, clock=SystemClock()),
         authorizer=RoleBindingAuthorizer(),
         api_keys=stores.api_keys,
         credentials=stores.credentials,
@@ -87,6 +72,7 @@ def _runtime(
         oidc_resolver=None,
         oidc_client=None,
         database_pool=None,
+        clock=SystemClock(),
     )
 
 
@@ -173,10 +159,10 @@ def test_enforce_csrf_rejects_a_non_ascii_header_without_raising_type_error() ->
 async def test_current_principal_resolves_a_valid_session_cookie(tmp_path: Path) -> None:
     """A valid session cookie resolves to its principal, with the session left on request.state."""
     stores = memory_stores()
-    repository = _repository(tmp_path, stores)
+    raw_store = _raw_store(tmp_path)
     record, token = create_session("alice", authentication_method="password")
     await stores.sessions.add(record)
-    runtime = _runtime(repository=repository, stores=stores, settings=_settings(env="development"))
+    runtime = _runtime(raw_store=raw_store, stores=stores, settings=_settings(env="development"))
 
     request = _request(method="GET", cookies={"huron_session": token})
     principal = await current_principal(request, runtime)
@@ -189,10 +175,10 @@ async def test_current_principal_resolves_a_valid_session_cookie(tmp_path: Path)
 async def test_current_principal_enforces_csrf_for_a_cookie_authed_write(tmp_path: Path) -> None:
     """A cookie-authenticated POST needs the matching X-Huron-CSRF header to succeed."""
     stores = memory_stores()
-    repository = _repository(tmp_path, stores)
+    raw_store = _raw_store(tmp_path)
     record, token = create_session("alice", authentication_method="password")
     await stores.sessions.add(record)
-    runtime = _runtime(repository=repository, stores=stores, settings=_settings(env="development"))
+    runtime = _runtime(raw_store=raw_store, stores=stores, settings=_settings(env="development"))
 
     denied = _request(method="POST", cookies={"huron_session": token})
     with pytest.raises(AuthError):
@@ -217,10 +203,10 @@ async def test_current_principal_never_downgrades_a_bearer_caller_to_its_cookie(
     fails - it must never silently fall through to the session cookie.
     """
     stores = memory_stores()
-    repository = _repository(tmp_path, stores)
+    raw_store = _raw_store(tmp_path)
     record, token = create_session("alice", authentication_method="password")
     await stores.sessions.add(record)
-    runtime = _runtime(repository=repository, stores=stores, settings=_settings(env="development"))
+    runtime = _runtime(raw_store=raw_store, stores=stores, settings=_settings(env="development"))
 
     request = _request(
         method="GET",
@@ -236,15 +222,14 @@ async def test_current_principal_resolves_a_bearer_jwt_through_the_configured_ve
 ) -> None:
     """A bearer JWT resolves through the configured OIDC verifier to its principal."""
     stores = memory_stores()
-    repository = _repository(tmp_path, stores)
+    raw_store = _raw_store(tmp_path)
     resolver = OidcResolver(lambda _token: {"sub": "carol", "groups": ["astro"]})
     runtime = ApiRuntime(
         settings=_settings(env="production"),
-        repository=repository,
+        raw_store=raw_store,
         hierarchy=stores.hierarchy,
         rbac=stores.rbac,
-        ingest=_ingest(repository, stores),
-        revisions=_revisions(repository, stores),
+        raw=RawRuntime(raw_store, stores.hierarchy, clock=SystemClock()),
         authorizer=RoleBindingAuthorizer(),
         api_keys=stores.api_keys,
         credentials=stores.credentials,
@@ -253,6 +238,7 @@ async def test_current_principal_resolves_a_bearer_jwt_through_the_configured_ve
         oidc_resolver=resolver,
         oidc_client=None,
         database_pool=None,
+        clock=SystemClock(),
     )
 
     request = _request(method="GET", headers={"Authorization": "Bearer some.jwt.token"})
@@ -272,8 +258,8 @@ async def test_current_principal_refuses_an_oidc_deployment_with_no_credential_a
     development header resolver.
     """
     stores = memory_stores()
-    repository = _repository(tmp_path, stores)
-    runtime = _runtime(repository=repository, stores=stores, settings=_settings(env="production"))
+    raw_store = _raw_store(tmp_path)
+    runtime = _runtime(raw_store=raw_store, stores=stores, settings=_settings(env="production"))
 
     request = _request(method="GET")
     with pytest.raises(AuthError, match="a bearer credential is required"):

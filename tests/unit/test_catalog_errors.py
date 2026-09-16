@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from huron.pkg.catalog.errors import DomainError, PathRuleViolation
+from huron.core.foundation.errors import DomainError, PathRuleViolation
 
 pytestmark = pytest.mark.unit
 

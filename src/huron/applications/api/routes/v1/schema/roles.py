@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from huron.pkg.catalog.layers import Layer
-from huron.pkg.rbac import ScopeType
+from huron.core.catalog.layers import Layer
+from huron.core.security.rules import ScopeType
 
 
 class LayerGrantView(BaseModel):

@@ -25,9 +25,10 @@ from huron.applications.api.problems import (
     problem_response,
     wire_error_codes,
 )
-from huron.pkg.auth import AuthError
-from huron.pkg.catalog.failures import Forbidden, SlugExists
-from huron.pkg.rbac.roles import UnknownRole
+from huron.core.security.authentication_errors import AuthError
+from huron.core.security.errors import Forbidden
+from huron.core.catalog.errors import SlugExists
+from huron.core.security.roles import UnknownRole
 
 pytestmark = pytest.mark.unit
 

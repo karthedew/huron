@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from huron.applications.api.expiry import ExpirySweep
-from huron.core._ingest import ExpiryReport
+from huron.core.raw.types import ExpiryReport
 
 pytestmark = pytest.mark.unit
 

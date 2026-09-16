@@ -9,15 +9,124 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from uuid import UUID
 
-    from huron.pkg.catalog.models import RevisionRecord
-    from huron.pkg.catalog.paths import RevisionPath
-    from huron.pkg.catalog.records import Dataset, Organization, Project
+    from huron.core.catalog.types import Dataset, Organization, Project
+    from huron.core.raw.paths import RevisionPath
+    from huron.core.raw.types import RevisionRecord
 
-    from .models import FenceEvidence, MaintenanceGrant, ProtocolTransition
+    from .models import (
+        ControllerState,
+        DeploymentObservation,
+        FenceEvidence,
+        MaintenanceGrant,
+        ProtocolTransition,
+    )
+
+
+class ControllerAuthority(Protocol):
+    """Resolve externally authenticated peers against deployment operator grants."""
+
+    def authenticate(self, peer_uid: int) -> MaintenanceGrant:
+        """Authorize maintenance for the externally authenticated peer.
+
+        Args:
+            peer_uid: Peer identity obtained by the application, never request-body input.
+
+        Returns:
+            The peer's exact root and maintenance-operation grant.
+        """
+        ...
+
+    def require_restart(self, peer_uid: int) -> None:
+        """Require the deployment's distinct restart authority.
+
+        Args:
+            peer_uid: Externally authenticated invoking peer.
+        """
+        ...
+
+
+class ControllerDeployment(Protocol):
+    """Validated deployment observations and fixed application process control."""
+
+    def observe(self) -> DeploymentObservation:
+        """Observe the actual storage namespace and immutable deployment configuration.
+
+        Returns:
+            Complete validated identity; untrustworthy or incomplete observations raise.
+        """
+        ...
+
+    def writers(self) -> tuple[str, ...]:
+        """Inventory every writer after validating process and mount isolation.
+
+        Returns:
+            Exact process identities; unmanageable or ambiguous inventories raise.
+        """
+        ...
+
+    def terminate(self, writer: str) -> None:
+        """Terminate one observed application writer.
+
+        Args:
+            writer: Exact process identity returned by the validated inventory.
+        """
+        ...
+
+    def start(self) -> str:
+        """Start only the fixed administrator-provisioned application.
+
+        Returns:
+            The actual newly started process identity.
+        """
+        ...
+
+
+class ControllerStateStore(Protocol):
+    """Load and durably replace the controller's single authority state."""
+
+    def load(self) -> ControllerState | None:
+        """Read persisted state without accepting unsafe ownership or corrupt bytes.
+
+        Returns:
+            Validated durable state, or None only when it has never been stored.
+        """
+        ...
+
+    def persist(self, state: ControllerState) -> None:
+        """Durably replace state before acknowledging an epoch transition.
+
+        Args:
+            state: Complete new immutable state.
+        """
+        ...
+
+
+class EvidenceStorage(Protocol):
+    """Read exact stored evidence while holding exclusive maintenance ownership."""
+
+    def read_control(self, revision_path: str, name: str) -> bytes:
+        """Read one control document without following links.
+
+        Args:
+            revision_path: Relative control directory.
+            name: Single control-document name.
+
+        Returns:
+            Exact stored bytes.
+        """
+        ...
+
+    def claim(self) -> AbstractContextManager[None]:
+        """Acquire exclusive local process ownership, refusing an already-owned root.
+
+        Returns:
+            A claim held through all settled I/O; only process death permits abandoned recovery.
+        """
+        ...
 
 
 @runtime_checkable
-class LegacyStorage(Protocol):
+class LegacyStorage(EvidenceStorage, Protocol):
     """Complete revision observation and immutable protocol evidence storage."""
 
     def generation_paths(self) -> Iterator[str]:
@@ -47,18 +156,6 @@ class LegacyStorage(Protocol):
         """
         ...
 
-    def read_control(self, revision_path: str, name: str) -> bytes:
-        """Read one control document without following links.
-
-        Args:
-            revision_path: Relative revision directory.
-            name: Single control-document name.
-
-        Returns:
-            Exact stored bytes.
-        """
-        ...
-
     def inspect_revision(
         self, revision_path: str, expected: Mapping[str, tuple[int, str]] | None
     ) -> tuple[str, ...]:
@@ -79,14 +176,6 @@ class LegacyStorage(Protocol):
         Args:
             relative_path: Protocol-relative destination.
             payload: Complete canonical evidence bytes.
-        """
-        ...
-
-    def claim(self) -> AbstractContextManager[None]:
-        """Acquire exclusive local process ownership, refusing an already-owned root.
-
-        Returns:
-            A claim held through all settled I/O; only process death permits abandoned recovery.
         """
         ...
 

@@ -10,15 +10,17 @@ from uuid import UUID
 
 import pytest
 
-from huron.core.catalog_documents import GenerationDocuments
+from huron.core.catalog._impl.documents import GenerationDocuments
 from huron.core.integrity.verification import RevisionVerifier
-from huron.pkg.catalog.documents import CommitRecord, MetadataDocument, manifest_bytes
-from huron.pkg.catalog.manifest import ManifestEntry, canonical_bytes, validate_manifest
-from huron.pkg.catalog.models import EntityRef, RevisionRecord
-from huron.pkg.catalog.paths import dataset_dir, organization_dir, project_dir, revision_dir
-from huron.pkg.catalog.records import Dataset, Organization, Project
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rawstore.maintenance import MaintenanceStore
+from huron.core.raw.documents import CommitRecord, MetadataDocument, manifest_bytes
+from huron.core.raw.manifest import ManifestEntry, validate_manifest
+from huron.core.foundation.canonical import canonical_bytes
+from huron.core.catalog.types import EntityRef, Dataset, Organization, Project
+from huron.core.raw.types import RevisionRecord
+from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
+from huron.core.raw.paths import revision_dir
+from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore.maintenance import MaintenanceStore
 
 pytestmark = pytest.mark.unit
 

@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from huron.pkg.rbac import ScopeType
+from huron.core.security.rules import ScopeType
 
 PRINCIPAL_PATTERN = r"^(user|group|sa):.+$"
 

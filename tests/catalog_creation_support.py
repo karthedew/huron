@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from huron.core.access import AccessPolicy
-from huron.core.catalog_creation import CatalogCreation
-from huron.pkg.auth import Principal
-from huron.pkg.rbac import RoleBindingAuthorizer, ScopeType
+from huron.core.security import AccessPolicy
+from huron.core.catalog import CatalogCreation
+from huron.core.security.principal import Principal
+from huron.core.security.rules import RoleBindingAuthorizer, ScopeType
 
 if TYPE_CHECKING:
-    from huron.core._catalog import HierarchyRepository
+    from tests.repository_fixture import RepositoryFixture
 
 
 async def creation_for(
-    repository: HierarchyRepository,
+    repository: RepositoryFixture,
     *,
     classifications: tuple[str, ...] = ("open",),
     visible: bool = True,

@@ -2,7 +2,7 @@
 
 ``MetadataSubmission`` is the client's half of a revision's ``metadata.json``
 document; the server-sourced half (identity, provenance, the instant) is
-composed onto it by :mod:`huron.pkg.catalog.documents`, never accepted from
+composed onto it by :mod:`huron.core.raw.documents`, never accepted from
 the wire. ``RevisionView`` is what a committed revision publishes over HTTP.
 """
 
@@ -13,7 +13,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from huron.pkg.catalog.metadata import MetadataSubmission
+from huron.core.raw.metadata import MetadataSubmission
 
 __all__ = ["MetadataSubmission", "RevisionView"]
 

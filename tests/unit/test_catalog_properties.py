@@ -2,22 +2,22 @@
 
 Generated inputs, rather than a handful of hand-picked examples, exercise nine
 facts the rest of the system relies on without re-checking: that
-:func:`~huron.pkg.catalog.paths.parse_revision_dir` inverts
-:func:`~huron.pkg.catalog.paths.revision_dir` exactly; that
-:func:`~huron.pkg.catalog.manifest.validate_manifest` catches every path
+:func:`~huron.core.raw.paths.parse_revision_dir` inverts
+:func:`~huron.core.raw.paths.revision_dir` exactly; that
+:func:`~huron.core.raw.manifest.validate_manifest` catches every path
 collision Unicode normalization and case folding can create, and separately
 refuses every path whose NFC form differs from itself; that
-:func:`~huron.pkg.catalog.manifest.canonical_bytes` does not depend on key
+:func:`~huron.core.foundation.canonical.canonical_bytes` does not depend on key
 order and enforces the JCS-safe integer bound; that
-:func:`~huron.pkg.catalog.ids.uuid7` produces well-formed identifiers whose
+:func:`~huron.core.foundation.identifiers.uuid7` produces well-formed identifiers whose
 embedded timestamps never regress across calls; that every operation on
-:class:`~huron.pkg.catalog.ingest.IngestSession`, including the per-file
-:meth:`~huron.pkg.catalog.ingest.IngestSession.require` guard, only ever
-lands on an edge of :data:`~huron.pkg.catalog.ingest.TRANSITIONS` and never
+:class:`~huron.core.raw.ingest.IngestSession`, including the per-file
+:meth:`~huron.core.raw.ingest.IngestSession.require` guard, only ever
+lands on an edge of :data:`~huron.core.raw.ingest.TRANSITIONS` and never
 succeeds from a terminal state; that an
-:class:`~huron.pkg.catalog.ingest.IngestFile`'s recorded parts never exceed
+:class:`~huron.core.raw.ingest.IngestFile`'s recorded parts never exceed
 its plan and it completes only once every part has arrived; and that
-:func:`~huron.pkg.catalog.ingest.compute_upload_plan` emits one entry per
+:func:`~huron.core.raw.ingest.compute_upload_plan` emits one entry per
 manifest file that links only files identical to the parent's, with part
 counts that cover every file's bytes exactly once.
 """
@@ -34,13 +34,13 @@ import pytest
 from hypothesis import assume, example, given, settings
 from hypothesis import strategies as st
 
-from huron.pkg.catalog.errors import (
+from huron.core.raw.errors import (
     IllegalIngestTransition,
     IngestSessionExpired,
     PathCollision,
 )
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.catalog.ingest import (
+from huron.core.foundation.identifiers import uuid7
+from huron.core.raw.ingest import (
     LEASE_TTL,
     TERMINAL_STATES,
     TRANSITIONS,
@@ -50,17 +50,15 @@ from huron.pkg.catalog.ingest import (
     UploadAction,
     compute_upload_plan,
 )
-from huron.pkg.catalog.manifest import (
-    MAX_SAFE_INT,
+from huron.core.raw.manifest import (
     Manifest,
     ManifestEntry,
-    canonical_bytes,
     validate_manifest,
 )
-from huron.pkg.catalog.models import EntityRef
-from huron.pkg.catalog.paths import (
-    DATASET_SLUG_MAX,
-    ORG_PROJECT_SLUG_MAX,
+from huron.core.foundation.canonical import MAX_SAFE_INT, canonical_bytes
+from huron.core.catalog.types import EntityRef
+from huron.core.foundation.names import DATASET_SLUG_MAX, ORG_PROJECT_SLUG_MAX
+from huron.core.raw.paths import (
     RevisionPath,
     parse_revision_dir,
     revision_dir,

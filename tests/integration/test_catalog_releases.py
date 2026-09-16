@@ -10,16 +10,16 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
-from huron.core.access import AccessPolicy
-from huron.core.idempotency import request_sha256
-from huron.core.releases import Releases
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.errors import IdempotencyKeyReused, TagExists
-from huron.pkg.catalog.paths import release_tag_file
-from huron.pkg.catalog.persistence import IdempotencyClaim
-from huron.pkg.metastore import InMemoryRbacStore, PostgresHierarchyStore
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import Classification, RoleBindingAuthorizer, ScopeType, Visibility
+from huron.core.security import AccessPolicy
+from huron.core.foundation.retry import request_sha256, IdempotencyClaim
+from huron.core.raw import Releases
+from huron.core.security.principal import Principal
+from huron.core.foundation.errors import IdempotencyKeyReused
+from huron.core.raw.errors import TagExists
+from huron.core.raw.paths import release_tag_file
+from huron.core.metastore import InMemoryRbacStore, PostgresHierarchyStore
+from huron.core.rawstore import PosixRawStore
+from huron.core.security.rules import Classification, RoleBindingAuthorizer, ScopeType, Visibility
 from tests.hierarchy_contract import _dataset, _organization, _project, committed_revision
 
 pytestmark = pytest.mark.integration

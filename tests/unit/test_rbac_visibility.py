@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from huron.pkg.rbac import (
+from huron.core.security.rules import (
     Binding,
     Classification,
     DatasetVisibility,
@@ -309,23 +309,6 @@ def test_a_deny_binding_at_the_organization_removes_it_from_organization_ids() -
     result = authorizer.visibility(principal, [allow_binding, deny_binding], [], [])
 
     assert result.organization_ids == frozenset()
-
-
-def test_the_decide_method_delegates_to_the_module_level_decide_function() -> None:
-    """``RoleBindingAuthorizer.decide`` answers exactly what the module-level ``decide`` would."""
-    principal = Principal(subject="alice")
-    binding = Binding(
-        principal="user:alice",
-        capabilities=frozenset({"dataset.discover"}),
-        scope_type=ScopeType.SYSTEM,
-        scope_id=None,
-    )
-    authorizer = RoleBindingAuthorizer()
-
-    assert authorizer.decide([binding], principal, "dataset.discover", Scope.system()) is (
-        decide([binding], principal, "dataset.discover", Scope.system())
-    )
-    assert authorizer.decide([], principal, "dataset.discover", Scope.system()) is Decision.DENY
 
 
 def test_visible_project_ids_skips_a_classification_outside_the_vocabulary() -> None:

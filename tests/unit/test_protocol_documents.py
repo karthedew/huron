@@ -15,8 +15,8 @@ from huron.core.integrity.models import (
     ProtocolInventory,
     ProtocolTransition,
 )
-from huron.pkg.catalog.models import EntityRef
-from huron.pkg.catalog.paths import revision_dir
+from huron.core.catalog.types import EntityRef
+from huron.core.raw.paths import revision_dir
 from huron.schema import load_schema, validate
 
 pytestmark = pytest.mark.unit

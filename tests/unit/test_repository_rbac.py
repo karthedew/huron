@@ -1,7 +1,8 @@
 """Direct unit tests for the RBAC storage seam and its per-request binding cache.
 
-Covers ``InMemoryRbacStore``, ``HierarchyRepository``'s delegation to it, the
-API-key touch bookkeeping, and the per-request binding cache in
+Covers ``InMemoryRbacStore``, the governance workflows (``Bindings``,
+``Policies``, ``ServiceAccounts``) built on top of it, ``require_scope_exists``,
+the API-key touch bookkeeping, and the per-request binding cache in
 ``authorization.check``/``bindings_for_principal``.
 
 PostgresRbacStore and PostgresApiKeyStore are exercised only by
@@ -18,25 +19,29 @@ from uuid import uuid4
 import pytest
 
 from huron.applications.api.authorization import bindings_for_principal, check
-from huron.core._catalog import HierarchyRepository
-from huron.core.idempotency import request_sha256
-from huron.pkg.auth import ApiKeyRecord, MemoryApiKeyStore
-from huron.pkg.auth import Principal as AuthPrincipal
-from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.catalog.failures import AttachmentExists, BindingExists, ServiceAccountExists
-from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import (
+from huron.core.security import AccessPolicy, Bindings, Policies, ServiceAccounts
+from huron.core.foundation.retry import request_sha256, IdempotencyClaim
+from huron.core.security.scopes import require_scope_exists
+from huron.core.security.apikeys import ApiKeyRecord
+from huron.core.metastore import MemoryApiKeyStore, InMemoryHierarchyStore, InMemoryRbacStore
+from huron.core.security.principal import Principal as AuthPrincipal
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.security.errors import AttachmentExists, BindingExists, ServiceAccountExists
+from huron.core.rawstore import PosixRawStore
+from huron.core.security.rules import (
     Binding,
+    Classification,
     Decision,
     Effect,
     Principal,
+    RoleBindingAuthorizer,
     Scope,
     ScopeType,
     decide,
 )
-from huron.pkg.rbac.roles import PrincipalKindNotAllowed, ScopeNotBindable
+from huron.core.security.roles import PrincipalKindNotAllowed, ScopeNotBindable
 from tests.catalog_creation_support import creation_for
+from tests.repository_fixture import RepositoryFixture
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,12 +49,26 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _repository(tmp_path: Path) -> HierarchyRepository:
-    """Build a ``HierarchyRepository`` at ``tmp_path`` with only "open" classification allowed."""
-    return HierarchyRepository(
+def _repository(tmp_path: Path) -> RepositoryFixture:
+    """Build a storage bundle at ``tmp_path`` with only "open" classification allowed."""
+    return RepositoryFixture(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        rbac_store=InMemoryRbacStore(),
+        InMemoryRbacStore(),
+    )
+
+
+async def _root(repository: RepositoryFixture) -> AccessPolicy:
+    """An ``AccessPolicy`` for ``root``, freshly granted ``platform_owner`` at SYSTEM scope."""
+    await repository.rbac.grant_role(
+        principal="user:root",
+        role_code="platform_owner",
+        scope_type=ScopeType.SYSTEM,
+        scope_id=None,
+        created_by="bootstrap",
+    )
+    return AccessPolicy(
+        AuthPrincipal("root"), repository.hierarchy, repository.rbac, RoleBindingAuthorizer()
     )
 
 
@@ -266,26 +285,20 @@ async def test_bindings_at_returns_system_scope_bindings_sorted_by_principal_the
     assert await store.bindings_at(ScopeType.PROJECT, uuid4()) == []
 
 
-# -- HierarchyRepository delegation -------------------------------------------
+# -- require_scope_exists ------------------------------------------------------
 
 
-async def test_hierarchy_repository_checks_scope_existence_before_delegating(
+async def test_require_scope_exists_raises_for_a_project_id_that_does_not_exist(
     tmp_path: Path,
 ) -> None:
-    """``grant_role`` raises ``ResourceNotFound`` for a scope id that does not exist."""
+    """``require_scope_exists`` raises ``ResourceNotFound`` for a scope id that does not exist."""
     repository = _repository(tmp_path)
     with pytest.raises(ResourceNotFound):
-        await repository.grant_role(
-            principal="user:bob",
-            role_code="reader",
-            scope_type=ScopeType.PROJECT,
-            scope_id=uuid4(),
-            created_by="alice",
-        )
+        await require_scope_exists(repository.hierarchy, ScopeType.PROJECT, uuid4())
 
 
-async def test_hierarchy_repository_rejects_a_scope_id_at_system_scope(tmp_path: Path) -> None:
-    """Granting at SYSTEM scope with a non-None ``scope_id`` raises ``ValueError``.
+async def test_require_scope_exists_rejects_a_scope_id_at_system_scope(tmp_path: Path) -> None:
+    """A non-None ``scope_id`` at SYSTEM scope raises ``ValueError``.
 
     No route can produce this - the SYSTEM binding routes always pass
     ``scope_id=None`` - so an inconsistent pair is a bug, not a client
@@ -294,54 +307,48 @@ async def test_hierarchy_repository_rejects_a_scope_id_at_system_scope(tmp_path:
     """
     repository = _repository(tmp_path)
     with pytest.raises(ValueError, match="SYSTEM scope takes no scope_id"):
-        await repository.grant_role(
-            principal="user:bob",
-            role_code="platform_owner",
-            scope_type=ScopeType.SYSTEM,
-            scope_id=uuid4(),
-            created_by="alice",
-        )
+        await require_scope_exists(repository.hierarchy, ScopeType.SYSTEM, uuid4())
 
 
-async def test_hierarchy_repository_rejects_a_missing_scope_id_below_system(
+async def test_require_scope_exists_rejects_a_missing_scope_id_below_system(
     tmp_path: Path,
 ) -> None:
-    """Granting below SYSTEM scope with ``scope_id=None`` raises ``ValueError``."""
+    """A ``None`` ``scope_id`` below SYSTEM scope raises ``ValueError``."""
     repository = _repository(tmp_path)
     with pytest.raises(ValueError, match="PROJECT scope requires a scope_id"):
-        await repository.grant_role(
-            principal="user:bob",
-            role_code="reader",
-            scope_type=ScopeType.PROJECT,
-            scope_id=None,
-            created_by="alice",
-        )
+        await require_scope_exists(repository.hierarchy, ScopeType.PROJECT, None)
 
 
-async def test_hierarchy_repository_derives_service_account_subject_from_org_slug(
+# -- ServiceAccounts, Bindings and Policies: the authorized governance workflows --
+
+
+async def test_service_accounts_derives_subject_from_org_slug_and_round_trips(
     tmp_path: Path,
 ) -> None:
     """A service account's subject is derived as ``{org slug}/{name}`` and round-trips."""
     repository = _repository(tmp_path)
+    access = await _root(repository)
     organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
-    account = await repository.create_service_account(
-        organization.id, name="canonicalizer", created_by="alice"
+    service_accounts = ServiceAccounts(access, repository.hierarchy, repository.rbac)
+
+    account = await service_accounts.create_service_account(
+        organization.id, name="canonicalizer"
     )
+
     assert account.subject == "astro/canonicalizer"
-    fetched = await repository.get_service_account(account.principal_id)
+    fetched = await service_accounts.get_service_account(account.principal_id)
     assert fetched == account
 
 
-async def test_hierarchy_repository_checks_dataset_scope_existence_before_delegating(
-    tmp_path: Path,
-) -> None:
+async def test_bindings_grant_get_and_revoke_at_a_real_dataset_scope(tmp_path: Path) -> None:
     """Granting, fetching and revoking a role at a real dataset's scope succeeds end to end."""
     repository = _repository(tmp_path)
+    access = await _root(repository)
     organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
@@ -375,18 +382,18 @@ async def test_hierarchy_repository_checks_dataset_scope_existence_before_delega
             key="ds-1",
         ),
     )
+    bindings = Bindings(access, repository.hierarchy, repository.rbac)
 
-    record = await repository.grant_role(
+    record = await bindings.grant_role(
         principal="user:bob",
         role_code="reader",
         scope_type=ScopeType.DATASET,
         scope_id=dataset.id,
-        created_by="alice",
     )
-    assert await repository.get_role_binding(record.id) == record
-    assert await repository.revoke_role(record.id) == record
+    assert await bindings.get_role_binding(record.id) == record
+    assert await bindings.revoke_role(record.id) == record
     with pytest.raises(ResourceNotFound):
-        await repository.get_role_binding(record.id)
+        await bindings.get_role_binding(record.id)
 
 
 async def test_bindings_at_raises_for_an_unknown_scope(tmp_path: Path) -> None:
@@ -397,37 +404,110 @@ async def test_bindings_at_raises_for_an_unknown_scope(tmp_path: Path) -> None:
     hierarchy read does.
     """
     repository = _repository(tmp_path)
+    access = await _root(repository)
+    bindings = Bindings(access, repository.hierarchy, repository.rbac)
     with pytest.raises(ResourceNotFound):
-        await repository.bindings_at(ScopeType.PROJECT, uuid4())
+        await bindings.bindings_at(ScopeType.PROJECT, uuid4())
 
 
 async def test_list_service_accounts_raises_for_an_unknown_organization(tmp_path: Path) -> None:
     """``list_service_accounts`` raises ``ResourceNotFound`` for an unknown organization id."""
     repository = _repository(tmp_path)
+    access = await _root(repository)
+    service_accounts = ServiceAccounts(access, repository.hierarchy, repository.rbac)
     with pytest.raises(ResourceNotFound):
-        await repository.list_service_accounts(uuid4())
+        await service_accounts.list_service_accounts(uuid4())
 
 
-async def test_hierarchy_repository_list_service_accounts_and_policies_delegate(
+async def test_service_accounts_and_policies_list_through_the_authorized_workflow(
     tmp_path: Path,
 ) -> None:
-    """``list_service_accounts`` and ``list_policies`` delegate correctly to the rbac store."""
+    """``ServiceAccounts.list_service_accounts`` and ``Policies.list_policies`` both work."""
     repository = _repository(tmp_path)
+    access = await _root(repository)
     organization = await (await creation_for(repository)).create_organization(
         slug="astro",
         title="Astro",
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="org-2"),
     )
-    await repository.create_service_account(organization.id, name="loader", created_by="alice")
-    accounts = await repository.list_service_accounts(organization.id)
+    service_accounts = ServiceAccounts(access, repository.hierarchy, repository.rbac)
+    policies = Policies(access, repository.hierarchy, repository.rbac)
+
+    await service_accounts.create_service_account(organization.id, name="loader")
+    accounts = await service_accounts.list_service_accounts(organization.id)
     assert [item.name for item in accounts] == ["loader"]
 
-    await repository.create_policy(
-        policy_type="retention", name="raw-90d", spec={"days": 90}, created_by="alice"
+    await policies.create_policy(
+        policy_type="retention", name="raw-90d", spec={"days": 90}
     )
-    policies = await repository.list_policies()
-    assert [item.name for item in policies] == ["raw-90d"]
+    stored_policies = await policies.list_policies()
+    assert [item.name for item in stored_policies] == ["raw-90d"]
+
+
+async def test_policies_are_creatable_and_listable_by_any_authenticated_actor(
+    tmp_path: Path,
+) -> None:
+    """Defining or listing a policy needs no capability: creating one grants nothing."""
+    repository = _repository(tmp_path)
+    outsider = AccessPolicy(
+        AuthPrincipal("outsider"), repository.hierarchy, repository.rbac, RoleBindingAuthorizer()
+    )
+    policies = Policies(outsider, repository.hierarchy, repository.rbac)
+
+    created = await policies.create_policy(
+        policy_type="retention", name="raw-90d", spec={"days": 90}
+    )
+
+    assert created.created_by == "outsider"
+    assert [item.id for item in await policies.list_policies()] == [created.id]
+
+
+async def test_policies_attach_requires_the_scope_specific_permission(tmp_path: Path) -> None:
+    """Attaching a policy at a scope needs that scope's own ``policy_attach`` capability."""
+    from huron.core.security.errors import Forbidden
+
+    repository = _repository(tmp_path)
+    access = await _root(repository)
+    organization = await (await creation_for(repository)).create_organization(
+        slug="astro",
+        title="Astro",
+        description="",
+        claim=_claim("organization", "astro", "Astro", "", key="attach-1"),
+    )
+    bindings = Bindings(access, repository.hierarchy, repository.rbac)
+    await bindings.grant_role(
+        principal="user:outsider",
+        role_code="reader",
+        scope_type=ScopeType.ORGANIZATION,
+        scope_id=organization.id,
+    )
+    outsider = AccessPolicy(
+        AuthPrincipal("outsider"),
+        repository.hierarchy,
+        repository.rbac,
+        RoleBindingAuthorizer((Classification("open", 0, True),)),
+    )
+    policies = Policies(outsider, repository.hierarchy, repository.rbac)
+    policy = await policies.create_policy(
+        policy_type="retention", name="raw-90d", spec={"days": 90}
+    )
+
+    with pytest.raises(Forbidden):
+        await policies.attach_policy(
+            policy.id,
+            scope_type=ScopeType.ORGANIZATION,
+            scope_id=organization.id,
+        )
+
+    authorized_policies = Policies(access, repository.hierarchy, repository.rbac)
+    attachment = await authorized_policies.attach_policy(
+        policy.id,
+        scope_type=ScopeType.ORGANIZATION,
+        scope_id=organization.id,
+    )
+    assert attachment.policy_id == policy.id
+    assert attachment.attached_by == "root"
 
 
 # -- API key touch bookkeeping -------------------------------------------------
@@ -453,21 +533,28 @@ async def test_memory_api_key_store_records_touch_calls() -> None:
     assert store.touched == ["abc123"]
 
 
-async def test_touch_api_key_failure_does_not_break_authentication() -> None:
+async def test_touch_api_key_failure_does_not_break_authentication(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """The touch is best-effort: a store that raises must not surface to the caller."""
-    from huron.applications.api.authorization.credentials import _touch_api_key
+    from huron.core.security import CredentialAuthentication
+    from huron.core.security.apikeys import create_api_key
+    from huron.core.metastore import MemoryApiKeyStore, MemorySessionStore, SystemClock
 
-    class _ExplodingStore:
+    class _ExplodingStore(MemoryApiKeyStore):
         """An API-key store whose ``touch_last_used`` always raises."""
-
-        async def get(self, key_id: str) -> ApiKeyRecord | None:
-            raise AssertionError("not used by _touch_api_key")
 
         async def touch_last_used(self, key_id: str) -> None:
             raise RuntimeError("database is unreachable")
 
-    # Must not raise.
-    await _touch_api_key(_ExplodingStore(), "hk_abc123_supersecret")
+    record, token = create_api_key("alice", name="laptop")
+    store = _ExplodingStore()
+    await store.add(record)
+    resolved = await CredentialAuthentication(
+        store, MemorySessionStore(), clock=SystemClock(), oidc=None, development=None
+    ).resolve(bearer_token=token)
+    assert resolved.actor.subject == "alice"
+    assert "failed to record API key last-used timestamp" in caplog.text
 
 
 # -- Per-request binding cache -------------------------------------------------
@@ -539,8 +626,8 @@ async def test_bindings_for_principal_synthesizes_grants_for_a_live_service_acco
         description="",
         claim=_claim("organization", "astro", "Astro", "", key="k1"),
     )
-    account = await repository.create_service_account(
-        organization.id, name="feed", created_by="alice"
+    account = await repository.rbac.create_service_account(
+        organization.id, name="feed", subject=f"{organization.slug}/feed", created_by="alice"
     )
     actor = Principal(subject=account.subject, kind="service_account")
     cache: dict[frozenset[str], tuple[Binding, ...]] = {}

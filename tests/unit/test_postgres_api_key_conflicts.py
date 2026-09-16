@@ -16,9 +16,9 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
-from huron.pkg.auth import ApiKeyRecord
-from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.metastore import PostgresApiKeyStore
+from huron.core.security.apikeys import ApiKeyRecord
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.metastore import PostgresApiKeyStore
 
 pytestmark = pytest.mark.unit
 

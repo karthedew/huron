@@ -9,12 +9,12 @@ from pathlib import Path, PurePosixPath
 import pytest
 from jsonschema import ValidationError
 
-from huron.core.catalog_documents import GenerationDocuments
+from huron.core.catalog._impl.documents import GenerationDocuments
 from huron.core.integrity.generations import GenerationVerifier
-from huron.pkg.catalog.manifest import canonical_bytes
-from huron.pkg.catalog.paths import organization_dir
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rawstore.maintenance import MaintenanceStore
+from huron.core.foundation.canonical import canonical_bytes
+from huron.core.catalog.paths import organization_dir
+from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore.maintenance import MaintenanceStore
 from tests.unit.test_legacy_verification import legacy as legacy
 from tests.unit.test_legacy_verification import legacy_records
 

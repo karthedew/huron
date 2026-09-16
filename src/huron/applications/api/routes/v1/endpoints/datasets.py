@@ -21,8 +21,8 @@ from huron.applications.api.authorization import (
     require_dataset,
     require_project,
 )
-from huron.applications.api.dependencies import Catalog as Repository
 from huron.applications.api.dependencies import Creation, ReleaseWorkflow
+from huron.applications.api.dependencies import Datasets as Repository
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import (
     Page,
@@ -45,11 +45,10 @@ from huron.applications.api.routes.v1.schema.datasets import (
     PatchDataset,
     ReleaseView,
 )
-from huron.core.catalog_collections import DescriptionChange
-from huron.core.idempotency import request_sha256
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.records import Dataset, Release
-from huron.pkg.metastore import IdempotencyClaim
+from huron.core.catalog.types import Dataset, DescriptionChange
+from huron.core.foundation.retry import IdempotencyClaim, request_sha256
+from huron.core.raw.types import Release
+from huron.core.security.principal import Principal
 
 project_datasets = APIRouter(prefix="/projects/{project_id}/datasets", tags=["datasets"])
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -95,7 +94,7 @@ async def create_dataset(
         project_id: The project the dataset belongs to.
         body: The slug, title, description, profile and entry layer to store.
         idempotency_key: The caller's ``Idempotency-Key`` header.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized dataset reads, descriptions and layer views.
         visibility: The caller's discovery rights, used to resolve
             ``project_id``.
         actor: The caller, whose subject scopes the idempotency claim.
@@ -154,7 +153,7 @@ async def list_datasets(
     \f
     Args:
         project_id: The project whose datasets to list.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized dataset reads, descriptions and layer views.
         visibility: The caller's discovery rights.
         limit: The most datasets to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
@@ -162,7 +161,7 @@ async def list_datasets(
     Returns:
         One page of datasets and the cursor to the next, if any.
     """
-    window = await repository.datasets.browse(project_id, limit=limit, after=slug_cursor_key(after))
+    window = await repository.browse(project_id, limit=limit, after=slug_cursor_key(after))
     return page(window, DatasetView, key=_key)
 
 
@@ -176,14 +175,14 @@ async def get_dataset(
     \f
     Args:
         dataset_id: The dataset to fetch.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized dataset reads, descriptions and layer views.
         visibility: The caller's discovery rights.
 
     Returns:
         The dataset as the API renders it, including the ``version`` that
         ``If-Match`` carries back on a PATCH.
     """
-    dataset = await repository.datasets.get(dataset_id)
+    dataset = await repository.get(dataset_id)
     return DatasetView.model_validate(dataset)
 
 
@@ -217,7 +216,7 @@ async def patch_dataset(
         dataset_id: The dataset to update.
         body: The fields to change; a field left out or null keeps its value.
         if_match: The caller's ``If-Match`` header.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized dataset reads, descriptions and layer views.
         visibility: The caller's discovery rights.
         _actor: The caller, held only as proof the capability check passed.
 
@@ -225,7 +224,7 @@ async def patch_dataset(
         The updated dataset as the API renders it.
     """
     return DatasetView.model_validate(
-        await repository.datasets.describe(
+        await repository.describe(
             dataset_id,
             DescriptionChange(
                 expected_version=expected_version(if_match),
@@ -379,7 +378,7 @@ async def list_layers(
     Args:
         dataset_id: The dataset whose layers to describe.
         actor: The authenticated caller whose permissions annotate each layer.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized dataset reads, descriptions and layer views.
         cache: The per-request role-binding cache.
         visibility: The caller's discovery rights, used to resolve
             ``dataset_id``.

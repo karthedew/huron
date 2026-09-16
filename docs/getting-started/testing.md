@@ -5,9 +5,9 @@ reason or reassuring for no reason.
 
 | Marker | Question | Needs | Speed |
 |---|---|---|---|
-| `unit` | Is the logic correct? | nothing external | milliseconds |
+| `unit` | Are rules and workflows correct? | injected doubles and temporary local filesystems | milliseconds to seconds |
 | `contract` | Does an adapter honour its Protocol? | Docker (testcontainers) | seconds |
-| `integration` | Do the pieces work together? | the Compose stack | seconds to minutes |
+| `integration` | Do the pieces work together? | PostgreSQL testcontainers; isolated Linux/Podman for controlled cutover | seconds to minutes |
 | `acceptance` | Does a phase gate hold end to end? | ≥ 25 GiB free disk | minutes |
 
 `pyproject.toml` sets `addopts = "-m unit --strict-markers"`, so:
@@ -24,17 +24,20 @@ new markers in `pyproject.toml`. `asyncio_mode = "auto"`, so `async def` tests n
 
 ## Unit
 
-Where most of the effort belongs. `pkg/` has no I/O, so its tests need no fixtures — that is the
-payoff of the [import boundaries](conventions.md#import-boundaries).
+Domain rules have deterministic tests; complete Core operations use injected ports.
+The [import boundaries](conventions.md#import-boundaries) separate those operations
+from concrete infrastructure. Some unit tests deliberately use temporary real POSIX
+storage or drive the composed API, so this marker does not promise zero local I/O.
 
 High-value targets: the RBAC role matrix invariants (service accounts alone have silver and gold
 write authority; administrative roles hold no `data.write` at all),
 the layer promotion graph, path construction **and** the `parse(construct(x)) == x` round trip,
 JCS canonicalisation stability, and the amendment fold.
 
-The HTTP surface is unit-testable too, through `TestClient` against an in-memory repository —
-`tests/unit/test_api_rbac.py` walks a full delegation chain from bootstrap platform owner down to
-a service account writing Silver, with no services running.
+The HTTP surface is unit-testable through `TestClient` against injected in-memory
+stores and temporary POSIX storage. Direct tests such as
+`tests/unit/test_security_authentication.py` and `tests/unit/test_integrity_controller.py`
+exercise complete public workflows independently of HTTP or Unix-socket transport.
 
 !!! warning "Enter `TestClient` as a context manager"
 
@@ -50,13 +53,14 @@ real PostgreSQL through `testcontainers`, runs the Alembic migrations, and drive
 stores through actual reads and writes.
 
 The most valuable assertion there is the drift check: the roles and capabilities seeded by the
-migration must reconstruct exactly `huron.pkg.rbac.roles.ROLES`. The Python model and the SQL seed
+migration must reconstruct exactly `huron.core.security.roles.ROLES`. The Python model and the SQL seed
 are written by hand in two files and nothing else keeps them in sync.
 
 !!! warning "Contract tests need a Docker daemon"
 
     Without one, `testcontainers` fails immediately. This is the one suite that cannot run in a
-    sandbox with no container runtime. When that happens, the honest report is "not run", not a
+    sandbox with no container runtime. Integration also needs real services. When unavailable,
+    the honest report is "not run", not a
     skip marker — and the SQL still needs verifying against a real PostgreSQL some other way
     before it is trusted.
 
@@ -64,6 +68,22 @@ are written by hand in two files and nothing else keeps them in sync.
 
     `testcontainers`' reaper container (Ryuk) does not start reliably against a Podman socket. On
     a Podman host, run the suite as `TESTCONTAINERS_RYUK_DISABLED=true uv run pytest -m contract`.
+
+## Integration
+
+`tests/integration/` exercises catalog creation/descriptions/releases and Raw upload
+across real PostgreSQL and POSIX storage, including application restarts. Its
+controlled-cutover test additionally provisions a private Podman engine on Linux and
+requires root or noninteractive sudo, working container networking, and the pinned
+historical Git object identified by the test. Run it on an isolated provisioned runner;
+a working Docker endpoint alone does not satisfy that test's Podman prerequisite.
+
+```bash
+uv run pytest -m integration
+```
+
+Run every test. A missing historical Git object, unavailable authority, a deselected
+cutover case or no collected tests is not evidence of an integration pass.
 
 ## Acceptance
 

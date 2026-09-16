@@ -14,8 +14,6 @@ downloading a revision's raw bytes, that routes declare). Routes import
 from here, never from the modules.
 """
 
-from huron.core.scopes import dataset_scope, organization_scope, project_scope
-
 from .cookies import CookieSpec, login_flow_cookie, session_cookie
 from .credentials import CurrentPrincipal, CurrentSession, current_principal
 from .decisions import (
@@ -57,11 +55,8 @@ __all__ = [
     "current_principal",
     "current_visibility",
     "dataset_raw_writer",
-    "dataset_scope",
     "login_flow_cookie",
-    "organization_scope",
     "project_intake",
-    "project_scope",
     "require_dataset",
     "require_organization",
     "require_project",

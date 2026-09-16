@@ -84,6 +84,22 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 identity-provider groups at stable scopes; roles expand to capabilities; layers add their own
 restrictions on top.</p>
 
+<p class="note"><strong>Explore the current implementation:</strong>
+<a href="rbac-uml.html">RBAC UML class atlas</a> — searchable, zoomable diagrams of the role
+vocabulary, scopes, bindings, the authorizer decision procedure, <code>AccessPolicy</code>,
+governance administration and persistence, with enforced capabilities distinguished from
+vocabulary. Identity resolution is in the <a href="auth-uml.html">authentication atlas</a>.</p>
+
+<p><strong>Current source ownership:</strong> <a href="../src/huron/core/security/__init__.py"><code>core.security</code></a>
+colocates roles, discovery rules, <code>AccessPolicy</code>, bindings, policies, service-account
+and authentication workflows. Its <a href="../src/huron/core/security/facts.py"><code>CatalogFacts</code></a>
+port asks only for authoritative classification, ancestry, existence and organization naming;
+<a href="../src/huron/core/metastore/security_facts.py">Metastore projections</a> reuse the
+visibility-filtered readers. Security does not import Catalog. Stored governance provenance
+comes from the bound actor; public workflows accept no caller attribution argument.
+The <a href="core-map.html">Core map</a> records the current package graph; the
+<a href="roadmap.html#domain-owned-core-migration">roadmap</a> records migration verification.</p>
+
 <h2 id="principles">1. Principles</h2>
 
 <ul>
@@ -108,7 +124,7 @@ smell; bind <code>group:mcnp-analysts</code> once.</li>
 <h2 id="roles">2. Roles</h2>
 
 <p>Huron has <strong>five human roles — and no others</strong>: the complete vocabulary,
-matching <code>src/huron/pkg/rbac/roles.py</code>, the migration seed, and the contract test that
+matching <a href="../src/huron/core/security/roles.py"><code>core.security.roles</code></a>, the migration seed, and the contract test that
 diffs the two. There is deliberately no "no role" entry anywhere in the taxonomy or the UI: a
 principal without a binding is simply unbound — it holds nothing, sees nothing (the 404-not-403
 rule), and appears in no role picker. Every picker lists exactly the five roles and nothing

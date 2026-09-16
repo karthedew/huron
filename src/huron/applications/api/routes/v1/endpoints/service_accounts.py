@@ -18,8 +18,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from huron.applications.api.authorization import require_organization
-from huron.applications.api.dependencies import Catalog as Repository
 from huron.applications.api.dependencies import Identity
+from huron.applications.api.dependencies import ServiceAccountAdministration as Repository
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import Page, PageCursor, PageLimit, paginate
 from huron.applications.api.routes.v1.schema.api_keys import CreateApiKey
@@ -28,8 +28,8 @@ from huron.applications.api.routes.v1.schema.service_accounts import (
     IssuedServiceAccountKey,
     ServiceAccountView,
 )
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.records import ServiceAccount
+from huron.core.security.principal import Principal
+from huron.core.security.types import ServiceAccount
 
 _manage = require_organization("service_account.manage")
 router = APIRouter(
@@ -68,16 +68,14 @@ async def create_service_account(
     Args:
         organization_id: The organization that will own the account.
         body: The account's name.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized service-account administration.
         actor: The administrator creating the account, recorded as its
             creator.
 
     Returns:
         The account as the API renders it.
     """
-    record = await repository.create_service_account(
-        organization_id, name=body.name, created_by=actor.subject
-    )
+    record = await repository.create_service_account(organization_id, name=body.name)
     return ServiceAccountView.model_validate(record)
 
 
@@ -100,7 +98,7 @@ async def list_service_accounts(
     \f
     Args:
         organization_id: The organization whose accounts to list.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized service-account administration.
         limit: The most accounts to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
 

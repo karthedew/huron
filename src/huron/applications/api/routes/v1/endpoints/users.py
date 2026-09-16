@@ -28,7 +28,7 @@ from huron.applications.api.routes.v1.schema.users import (
     SetPassword,
     UserView,
 )
-from huron.pkg.auth import Principal
+from huron.core.security.principal import Principal
 
 _manage_users = require_system("user.manage")
 _Actor = Annotated[Principal, Depends(_manage_users)]

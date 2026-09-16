@@ -1,6 +1,6 @@
 """Crash-safety tests for the publication primitives in ``pkg.rawstore.commit``.
 
-Each of :func:`fsync_dir`, :func:`fsync_tree` and :func:`assert_same_filesystem`
+Each of :func:`fsync_dir`, :func:`flush_tree` and :func:`assert_same_filesystem`
 gets its own direct contract test; :func:`commit_envelope` gets the bulk of the
 module, because it is the durability boundary between an in-flight upload and a
 published revision. The tests inject failures with ``crash_on`` and read back
@@ -21,13 +21,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.rawstore.commit import (
+from huron.core.rawstore.commit import (
     CrossDeviceCommitError,
     assert_same_filesystem,
     commit_envelope,
     fsync_dir,
-    fsync_tree,
 )
+from huron.core.rawstore.materialize import directory, flush_tree
 from tests.unit.support import crash_on, fsync_log
 
 if TYPE_CHECKING:
@@ -108,10 +108,10 @@ def test_fsync_dir_flushes_a_directory_descriptor_and_refuses_a_file(
         fsync_dir(file_path)
 
 
-def test_fsync_tree_flushes_files_then_directories_deepest_first_then_the_root(
+def test_flush_tree_makes_every_child_durable_before_its_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """fsync_tree fsyncs every file, then every directory deepest-first, then the root."""
+    """Descriptor traversal flushes every file and directory before the directory naming it."""
     log = fsync_log(monkeypatch)
     root = tmp_path / "tree"
     (root / "a" / "b").mkdir(parents=True)
@@ -122,14 +122,19 @@ def test_fsync_tree_flushes_files_then_directories_deepest_first_then_the_root(
     deep_file = root / "a" / "b" / "file.txt"
     deep_file.write_text("z")
 
-    fsync_tree(root)
+    with directory(root) as descriptor:
+        flush_tree(descriptor)
 
-    assert set(log[:3]) == {top_file, middle_file, deep_file}
-    assert log[3:] == [root / "a" / "b", root / "a", root]
+    expected = {top_file, middle_file, deep_file, root / "a" / "b", root / "a", root}
+    assert set(log) == expected
+    assert len(log) == len(expected)
+    assert log[-1] == root
+    for path in expected - {root}:
+        assert log.index(path) < log.index(path.parent)
 
 
-def test_fsync_tree_opens_a_sealed_tree(tmp_path: Path) -> None:
-    """fsync_tree succeeds over a tree whose files and directories are already read-only."""
+def test_flush_tree_opens_a_sealed_tree(tmp_path: Path) -> None:
+    """Descriptor traversal flushes files and directories even after they are sealed read-only."""
     root = tmp_path / "sealed"
     (root / "child").mkdir(parents=True)
     file_path = root / "child" / "file.txt"
@@ -138,7 +143,8 @@ def test_fsync_tree_opens_a_sealed_tree(tmp_path: Path) -> None:
     (root / "child").chmod(0o555)
     root.chmod(0o555)
 
-    fsync_tree(root)
+    with directory(root) as descriptor:
+        flush_tree(descriptor)
 
 
 def test_assert_same_filesystem_creates_both_roots_and_accepts_one_device(tmp_path: Path) -> None:

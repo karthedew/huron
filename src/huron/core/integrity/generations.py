@@ -7,9 +7,9 @@ import json
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from huron.pkg.catalog.manifest import canonical_bytes
-from huron.pkg.catalog.paths import dataset_dir, organization_dir, project_dir
-from huron.pkg.catalog.records import Dataset, Organization, Project, jsonable
+from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
+from huron.core.catalog.types import Dataset, Organization, Project
+from huron.core.foundation.canonical import canonical_bytes, jsonable
 from huron.schema import validate
 
 from .models import GenerationObservation

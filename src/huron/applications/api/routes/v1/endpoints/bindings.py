@@ -26,14 +26,14 @@ from huron.applications.api.authorization import (
     require_project,
     require_system,
 )
-from huron.applications.api.dependencies import Catalog as Repository
+from huron.applications.api.dependencies import RoleBindings as Repository
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import Page, PageCursor, PageLimit, paginate
 from huron.applications.api.routes.v1.schema.bindings import CreateRoleBinding, RoleBindingView
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.catalog.records import RoleBindingRecord
-from huron.pkg.rbac import ScopeType
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.security.principal import Principal
+from huron.core.security.rules import ScopeType
+from huron.core.security.types import RoleBindingRecord
 
 _manage_system_bindings = require_system("rbac.binding_manage")
 _manage_organization_bindings = require_organization("rbac.binding_manage")
@@ -80,7 +80,7 @@ async def _binding_page(
     """Sort and serialize the binding roster of one authorized collection.
 
     Args:
-        repository: The caller's authorized catalog operations.
+        repository: The caller's authorized binding administration.
         scope_type: The collection's scope level.
         scope_id: Its identifier, absent for SYSTEM scope.
         limit: The maximum number of bindings to return.
@@ -104,7 +104,7 @@ async def _grant_binding(
 
     Args:
         body: The grantee, role and optional lifetime.
-        repository: The caller's authorized catalog operations.
+        repository: The caller's authorized binding administration.
         actor: The authenticated administrator recorded as the creator.
         scope_type: The collection's scope level.
         scope_id: Its identifier, absent for SYSTEM scope.
@@ -118,7 +118,6 @@ async def _grant_binding(
             role_code=body.role,
             scope_type=scope_type,
             scope_id=scope_id,
-            created_by=actor.subject,
             expires_at=_expires(body),
         )
     )
@@ -134,7 +133,7 @@ async def _revoke_binding(
     not confirm that the binding exists or remove it from another collection.
 
     Args:
-        repository: The caller's authorized catalog operations.
+        repository: The caller's authorized binding administration.
         binding_id: The requested binding identifier.
         scope_type: The collection's scope level.
         scope_id: Its identifier, absent for SYSTEM scope.
@@ -160,7 +159,7 @@ async def list_system_bindings(
     with 400.
     \f
     Args:
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         limit: The most bindings to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
 
@@ -189,7 +188,7 @@ async def create_system_binding(
     \f
     Args:
         body: The principal, the role code and the optional lifetime in days.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         actor: The administrator making the grant, recorded as its creator.
 
     Returns:
@@ -225,7 +224,7 @@ async def create_organization_binding(
     Args:
         organization_id: The organization the role is granted on.
         body: The principal, the role code and the optional lifetime in days.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         actor: The administrator making the grant, recorded as its creator.
 
     Returns:
@@ -260,7 +259,7 @@ async def create_project_binding(
     Args:
         project_id: The project the role is granted on.
         body: The principal, the role code and the optional lifetime in days.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         actor: The administrator making the grant, recorded as its creator.
 
     Returns:
@@ -295,7 +294,7 @@ async def create_dataset_binding(
     Args:
         dataset_id: The dataset the role is granted on.
         body: The principal, the role code and the optional lifetime in days.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         actor: The administrator making the grant, recorded as its creator.
 
     Returns:
@@ -324,7 +323,7 @@ async def list_organization_bindings(
     \f
     Args:
         organization_id: The organization whose bindings to list.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         limit: The most bindings to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
 
@@ -355,7 +354,7 @@ async def list_project_bindings(
     \f
     Args:
         project_id: The project whose bindings to list.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         limit: The most bindings to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
 
@@ -386,7 +385,7 @@ async def list_dataset_bindings(
     \f
     Args:
         dataset_id: The dataset whose bindings to list.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         limit: The most bindings to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
 
@@ -408,7 +407,7 @@ async def revoke_system_binding(repository: Repository, binding_id: UUID) -> Non
     204 with no body.
     \f
     Args:
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         binding_id: The binding to revoke.
     """
     await _revoke_binding(repository, binding_id, ScopeType.SYSTEM, None)
@@ -428,7 +427,7 @@ async def revoke_organization_binding(
     unknown organization is also 404. Success is 204 with no body.
     \f
     Args:
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         organization_id: The organization the binding was granted on.
         binding_id: The binding to revoke.
     """
@@ -449,7 +448,7 @@ async def revoke_project_binding(
     project is also 404. Success is 204 with no body.
     \f
     Args:
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         project_id: The project the binding was granted on.
         binding_id: The binding to revoke.
     """
@@ -470,7 +469,7 @@ async def revoke_dataset_binding(
     dataset is also 404. Success is 204 with no body.
     \f
     Args:
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized binding administration.
         dataset_id: The dataset the binding was granted on.
         binding_id: The binding to revoke.
     """

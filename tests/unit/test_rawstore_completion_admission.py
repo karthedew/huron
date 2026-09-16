@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rawstore import store as store_module
-from huron.pkg.rawstore.completion import CompletionAdmission
-from huron.pkg.rawstore.materialize import directory
+from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import store as store_module
+from huron.core.rawstore.completion import CompletionAdmission
+from huron.core.rawstore.materialize import directory
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

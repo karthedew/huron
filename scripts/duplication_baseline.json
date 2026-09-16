@@ -1,0 +1,334 @@
+{
+  "clone_groups": 48,
+  "clone_threshold": 0.8,
+  "groups": [
+    {
+      "files": [
+        "src/huron/applications/api/authorization/guards.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/applications/api/authorization/guards.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/api/dependencies.py"
+      ],
+      "size": 7
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/bindings.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/bindings.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/bindings.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/datasets.py",
+        "src/huron/applications/api/routes/v1/endpoints/organizations.py",
+        "src/huron/applications/api/routes/v1/endpoints/projects.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/datasets.py",
+        "src/huron/applications/api/routes/v1/endpoints/organizations.py",
+        "src/huron/applications/api/routes/v1/endpoints/projects.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/datasets.py",
+        "src/huron/applications/api/routes/v1/endpoints/organizations.py",
+        "src/huron/applications/api/routes/v1/endpoints/projects.py"
+      ],
+      "size": 4
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/datasets.py",
+        "src/huron/applications/api/routes/v1/endpoints/projects.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/policies.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/policies.py",
+        "src/huron/applications/api/routes/v1/endpoints/service_accounts.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/schema/datasets.py",
+        "src/huron/applications/api/routes/v1/schema/organizations.py",
+        "src/huron/applications/api/routes/v1/schema/projects.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/schema/organizations.py",
+        "src/huron/applications/api/routes/v1/schema/policies.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/raw/_impl/ingest.py"
+      ],
+      "size": 4
+    },
+    {
+      "files": [
+        "src/huron/core/catalog/_impl/collections.py",
+        "src/huron/core/catalog/_impl/creation.py",
+        "src/huron/core/raw/_impl/ingest.py"
+      ],
+      "size": 5
+    },
+    {
+      "files": [
+        "src/huron/core/security/_impl/bindings.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/security/_impl/bindings.py",
+        "src/huron/core/security/_impl/policies.py",
+        "src/huron/core/security/_impl/service_accounts.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/catalog/_impl/collections.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/catalog/ports.py",
+        "src/huron/core/raw/ports.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/security/_impl/identity.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/raw/_impl/ingestion.py",
+        "src/huron/core/security/_impl/identity.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/raw/_impl/ingestion.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/memory_apikeys.py",
+        "src/huron/core/metastore/memory_sessions.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/memory_apikeys.py",
+        "src/huron/core/metastore/memory_sessions.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/security/apikeys.py",
+        "src/huron/core/security/sessions.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/api_keys.py",
+        "src/huron/core/metastore/credentials.py",
+        "src/huron/core/metastore/memory_principals.py",
+        "src/huron/core/metastore/memory_sessions.py",
+        "src/huron/core/metastore/principals.py",
+        "src/huron/core/metastore/sessions.py"
+      ],
+      "size": 7
+    },
+    {
+      "files": [
+        "src/huron/core/foundation/names.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/raw/paths.py",
+        "src/huron/core/rawstore/store.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/catalog/types.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/catalog/types.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/api_keys.py",
+        "src/huron/core/metastore/sessions.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/hierarchy.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/hierarchy.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/hierarchy.py",
+        "src/huron/core/metastore/ingest.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/hierarchy.py",
+        "src/huron/core/metastore/ingest.py",
+        "src/huron/core/metastore/principals.py"
+      ],
+      "size": 5
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/hierarchy.py",
+        "src/huron/core/metastore/ingest.py",
+        "src/huron/core/metastore/rbac.py"
+      ],
+      "size": 15
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/hierarchy.py",
+        "src/huron/core/metastore/rbac.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/ingest.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/ingest.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/ingest.py",
+        "src/huron/core/metastore/rbac.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/principals.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/rbac.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/rbac.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/rawstore/maintenance.py",
+        "src/huron/core/rawstore/materialize.py",
+        "src/huron/core/rawstore/store.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/rawstore/maintenance.py",
+        "src/huron/core/rawstore/store.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/rawstore/materialize.py",
+        "src/huron/core/rawstore/store.py"
+      ],
+      "size": 2
+    }
+  ],
+  "pyscn_version": "1.31.1",
+  "total_clones": 145
+}

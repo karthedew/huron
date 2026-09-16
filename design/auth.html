@@ -84,6 +84,21 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 resolution order, and the server-side session that backs the web UI. Authorization — what a
 <code>Principal</code> may then do — is <a href="rbac.html">RBAC</a>; this page stops at identity.</p>
 
+<p class="note"><strong>Explore the current implementation:</strong>
+<a href="auth-uml.html">Authentication UML class atlas</a> — searchable, zoomable diagrams of
+the principal, resolvers, sessions, API keys, OIDC flow, identity service and API wiring, with
+implemented behavior distinguished from the gaps listed below.</p>
+
+<p><strong>Current source ownership:</strong> authentication and RBAC are views of
+<a href="../src/huron/core/security/__init__.py"><code>core.security</code></a>.
+<code>PasswordAuthentication.login</code> and <code>OidcAuthentication.begin/finish</code>
+own verification, provisioning and persisted session issuance; <code>terminate_session</code>,
+<code>self_access_summary</code> and trusted <code>bootstrap_platform_owner</code> own their
+reusable operations. The API retains extraction, cookies/CSRF, redirects and serialization;
+<a href="../src/huron/core/metastore/__init__.py">Metastore</a> owns PostgreSQL and memory
+credential adapters. Migration verification is recorded in the
+<a href="roadmap.html#domain-owned-core-migration">roadmap</a>.</p>
+
 <h2 id="credentials">1. Four credentials, one principal</h2>
 
 <table>
@@ -101,18 +116,36 @@ integrations</td></tr>
 <code>ENV=development</code>, and <code>ApiSettings</code> refuses the combination at startup</td></tr>
 </table>
 
-<p>Resolution is one ordered chain, in <code>authorization.current_principal</code>: an
-<code>Authorization</code> header is checked first — <code>hk_</code> resolves as an API key,
-anything else as an OIDC bearer token — and only when there is <em>no</em> such header does a
-session cookie get a look, with dev headers as the last-resort fallback. Bearer credentials keep
-absolute priority so a programmatic caller that happens to be carrying a cookie jar is never
-silently downgraded to a session principal.</p>
+<p>The API's <a href="../src/huron/applications/api/authorization/credentials.py#L25"><code>authorization.current_principal</code></a>
+owns raw header parsing: <code>authorization.removeprefix("Bearer ").strip()</code> for a
+nonempty header, otherwise <code>None</code>. It passes the extracted <code>bearer_token</code>
+to Security's <a href="../src/huron/core/security/_impl/credential_authentication.py#L53"><code>CredentialAuthentication.resolve</code></a>.
+There, <code>None</code> means absent; any present token takes precedence — <code>hk_</code>
+resolves as an API key, anything else as an OIDC bearer token. A missing or actually empty raw
+header permits session-cookie fallback; whitespace or <code>Bearer </code> headers parse to
+a present empty token and are refused without fallback. Development headers remain the
+explicitly wired last resort. A programmatic caller carrying a cookie jar is never silently
+downgraded to a session principal.</p>
 
-<p>All four converge on one dataclass, <code>auth.Principal</code>
+<p><a href="../src/huron/core/security/apikeys.py#L141"><code>ApiKeyResolver</code></a> and
+<a href="../src/huron/core/security/sessions.py#L248"><code>SessionResolver</code></a> accept an
+optional Foundation <code>Clock</code>, sampled after awaited lookup and matching-secret
+verification. An explicit <code>now</code> argument overrides it; without either, they use UTC
+wall time. Key revocation is checked before the sample, session revocation after it; both
+precede expiry. Session expiry, touch throttling and idle extension use the same post-lookup
+instant. The credential workflow passes the clock, not a timestamp captured before lookup.</p>
+
+<p><a href="../src/huron/applications/api/runtime.py#L173">OIDC runtime wiring</a> passes
+<code>login_flow_cookie(settings).max_age</code> as the validator's <code>flow_max_age</code>.
+The signed-flow check and issued cookie therefore share one lifetime (currently 600 seconds);
+Security receives a plain duration while the application owns cookie policy.</p>
+
+<p>All four converge on one dataclass, <code>security.Principal</code>
 (<code>subject</code>, <code>groups</code>, <code>scopes</code>, <code>project_id</code>,
 <code>authentication_method</code>, <code>kind</code>). Every <code>require_*</code> guard and
-<code>rbac.decide()</code> sees only this — authorization logic never learns, and never needs to
-learn, which of the four credentials produced it.</p>
+the public Security decision helpers use its narrower <code>RbacPrincipal</code> projection
+(subject, groups and kind); <code>security.rules.decide()</code> evaluates bindings.
+The existing API-key scope/project narrowing gap remains documented in the atlas.</p>
 
 <h2 id="sessions">2. Sessions</h2>
 
@@ -234,19 +267,12 @@ manages, so it lives there rather than being carved out with login.</p>
 
 <p><code>/auth/login</code>, <code>/auth/oidc/start</code>, <code>/auth/oidc/callback</code>, and
 <code>/auth/providers</code> (which the login page reads to know what to render, before any
-credential exists) are the only unauthenticated routes this document intends, besides
-<code>/healthz</code> and <code>/readyz</code>. <strong>The running service does not match that
-enumeration today.</strong> Two <code>/api/v1</code> routes answer with no credential at all:
-<code>GET /api/v1/roles</code> returns 200 with the full role catalog, and
-<code>GET /api/v1/search</code> returns 503 — neither declares a guard (receipts:
-<code>API_DESIGN.md</code> § "Roadmap Drift" → "Drift 1"). Closing the versioned surface is designed
-in that document's § "Design 4 — Router composition and the authenticated surface", which puts the
-credential requirement on the <code>/api/v1</code> router itself, and is sequenced as
-<code>API_IMPLEMENTATION_PLAN.md</code> § "Task M5.1 — Rebuild the router tree and close the
-versioned surface". Because it is a visible contract break on both routes, it is gated on decisions
-<strong>D-3</strong> and <strong>D-4</strong>, neither of which has been recorded. Until they are
-answered, read the list above as the intended unauthenticated set, not as the live one — see the
-<a href="roadmap.html#api-sweep">API tier clean sweep</a> row on the roadmap.</p>
+credential exists) are unauthenticated, alongside <code>/healthz</code> and <code>/readyz</code>.
+The current <a href="../src/huron/applications/api/routes/v1/__init__.py#L30">versioned router</a>
+declares <code>Depends(current_principal)</code> once for every <code>/api/v1</code> route,
+including roles and search. After authentication, roles lists the vocabulary and the
+unimplemented search projection answers 503. Earlier unguarded-route receipts are historical;
+they do not describe the current composition.</p>
 
 <h2 id="dev-topology">6. Local development: one issuer, one URL</h2>
 

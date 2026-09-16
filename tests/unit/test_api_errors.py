@@ -8,18 +8,18 @@ from __future__ import annotations
 
 import pytest
 
-from huron.pkg.catalog.errors import DomainError
-from huron.pkg.catalog.failures import (
+from huron.core.foundation.errors import DomainError
+from huron.core.security.errors import (
     AttachmentExists,
     BindingExists,
-    DependencyUnavailable,
     Forbidden,
     OidcNotConfigured,
     PrincipalKindMismatch,
     ServiceAccountExists,
-    SlugExists,
     UsernameTaken,
 )
+from huron.applications.api.errors import DependencyUnavailable
+from huron.core.catalog.errors import SlugExists
 
 pytestmark = pytest.mark.unit
 

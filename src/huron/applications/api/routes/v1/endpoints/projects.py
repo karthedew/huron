@@ -18,8 +18,8 @@ from huron.applications.api.authorization import (
     require_organization,
     require_project,
 )
-from huron.applications.api.dependencies import Catalog as Repository
 from huron.applications.api.dependencies import Creation
+from huron.applications.api.dependencies import Projects as Repository
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import (
     Page,
@@ -38,11 +38,9 @@ from huron.applications.api.routes.v1.schema.projects import (
     PatchProject,
     ProjectView,
 )
-from huron.core.catalog_collections import DescriptionChange
-from huron.core.idempotency import request_sha256
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.records import Project
-from huron.pkg.metastore import IdempotencyClaim
+from huron.core.catalog.types import DescriptionChange, Project
+from huron.core.foundation.retry import IdempotencyClaim, request_sha256
+from huron.core.security.principal import Principal
 
 organization_projects = APIRouter(
     prefix="/organizations/{organization_id}/projects", tags=["projects"]
@@ -85,7 +83,7 @@ async def create_project(
         organization_id: The organization the project belongs to.
         body: The slug, title, description and data classification to store.
         idempotency_key: The caller's ``Idempotency-Key`` header.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized project reads and descriptions.
         visibility: The caller's discovery rights, used to resolve
             ``organization_id``.
         actor: The caller, whose subject scopes the idempotency claim.
@@ -140,7 +138,7 @@ async def list_projects(
     \f
     Args:
         organization_id: The organization whose projects to list.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized project reads and descriptions.
         visibility: The caller's discovery rights.
         limit: The most projects to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
@@ -148,9 +146,7 @@ async def list_projects(
     Returns:
         One page of projects and the cursor to the next, if any.
     """
-    window = await repository.projects.browse(
-        organization_id, limit=limit, after=slug_cursor_key(after)
-    )
+    window = await repository.browse(organization_id, limit=limit, after=slug_cursor_key(after))
     return page(window, ProjectView, key=_key)
 
 
@@ -164,14 +160,14 @@ async def get_project(
     \f
     Args:
         project_id: The project to fetch.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized project reads and descriptions.
         visibility: The caller's discovery rights.
 
     Returns:
         The project as the API renders it, including the ``version`` that
         ``If-Match`` carries back on a PATCH.
     """
-    project = await repository.projects.get(project_id)
+    project = await repository.get(project_id)
     return ProjectView.model_validate(project)
 
 
@@ -205,7 +201,7 @@ async def patch_project(
         project_id: The project to update.
         body: The fields to change; a field left out or null keeps its value.
         if_match: The caller's ``If-Match`` header.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized project reads and descriptions.
         visibility: The caller's discovery rights.
         _actor: The caller, held only as proof the capability check passed.
 
@@ -213,7 +209,7 @@ async def patch_project(
         The updated project as the API renders it.
     """
     return ProjectView.model_validate(
-        await repository.projects.describe(
+        await repository.describe(
             project_id,
             DescriptionChange(
                 expected_version=expected_version(if_match),

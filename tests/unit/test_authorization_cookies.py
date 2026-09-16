@@ -13,7 +13,7 @@ from starlette.responses import Response
 
 from huron.applications.api.authorization import login_flow_cookie, session_cookie
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
-from huron.pkg.auth import ABSOLUTE_TTL
+from huron.core.security.sessions import ABSOLUTE_TTL
 
 pytestmark = pytest.mark.unit
 

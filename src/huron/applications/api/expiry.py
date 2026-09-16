@@ -15,7 +15,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
-    from huron.core._ingest import IngestService
+    from huron.core.raw import RawRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class ExpirySweep:
     cancels and awaits the task, so no pass outlives the pool it runs on.
     """
 
-    def __init__(self, ingest: IngestService, *, interval_seconds: float, limit: int) -> None:
+    def __init__(self, ingest: RawRuntime, *, interval_seconds: float, limit: int) -> None:
         """Bind the sweep to the facade it drives and the cadence it runs at.
 
         Args:

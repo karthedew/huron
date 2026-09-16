@@ -2,7 +2,7 @@
 
 ```text
 huron/
-├── design/                  THE authoritative design record (15 cross-linked HTML documents)
+├── design/                  authoritative architecture record and source-linked atlases
 ├── IMPLEMENTATION_PLAN.md   duplication refactoring sequence and verification gates
 ├── AUTH_IMPLEMENTATION_PLAN.md  historical authentication implementation plan
 ├── RBAC_IMPLEMENTATION_PLAN.md
@@ -16,34 +16,39 @@ huron/
 
 ## Backend boundaries
 
-Dependencies point inward: **applications → core → pkg → schema**.
+Dependencies point inward: **applications → core → schema**. Core's domain and adapter
+subpackages follow the explicit acyclic graph in root `AGENTS.md` and
+`design/architecture.html#domain-owned-core`.
 
 ```text
 src/huron/
   applications/api/   FastAPI routes, credentials/cookies, settings and lifecycle wiring
-  core/               authorized catalog, identity, Raw ingestion and revision reads
-  pkg/catalog/        entities, state transitions, manifests and document validation
-  pkg/auth/           credentials and identity primitives
-  pkg/rbac/           role and scope evaluation
-  pkg/rawstore/       POSIX staging, hashing, independent copies, rename and sealing
-  pkg/metastore/      PostgreSQL and in-memory persistence adapters
+  applications/lakectl/  operator transport, deployment observations and process control
+  core/foundation/    canonical JSON, identities/names, common errors, retry and clock contracts
+  core/security/      authentication, identity, authorization and their complete workflows
+  core/catalog/       hierarchy, dataset/layer configuration, descriptions and discovery
+  core/raw/           manifests, ingestion, revision publication/reads, releases and expiry
+  core/integrity/     verification, cutover, controller epochs and admission policy
+  core/metastore/     PostgreSQL and in-memory persistence adapters
+  core/rawstore/      POSIX staging, hashing, independent copies, rename and sealing
   schema/             canonical JSON schemas, loaders and shared primitive contracts
 ```
 
-Core's public services bind an authenticated actor and enforce current permissions.
-Private core modules implement persistence and ingestion mechanics for those services;
-they are not alternate entry points for callers. The API manages HTTP concerns and
-constructs adapters. Domain objects own invariants and meaningful transitions; core
-composes domain and infrastructure capabilities through consumer-owned protocols.
+Domain objects, rules, workflows and consumer-owned ports live together. Public scientific
+operations enforce current permissions; credential workflows establish identity and
+maintenance operations use explicit deployment authority. Applications call published
+operations and construction interfaces; private `_impl` modules hold internal mechanics.
 
-Domain packages and rawstore remain independent siblings. Metastore may import domain
-types to persist them; domains cannot import metastore. Core never imports concrete
-storage adapters, database drivers, FastAPI or Ray. Import-linter checks these rules.
+Metastore implements domain persistence/fact interfaces. Rawstore satisfies storage
+interfaces structurally and imports only shared Schema contracts. Domains never import
+concrete adapters, database drivers, FastAPI or Ray. Import-linter checks the allowed
+direct edges, sibling cycles, private surfaces, application independence and framework
+exclusions, including imports used only for typing.
 
 Raw revisions contain exactly the submitted files, with no inherited files or shared
 hardlinks. Metadata uses a shared Pydantic input contract and authoritative backend
 validation. The Python SDK, Ray/Zarr workflows, and other planned deployables gain
-packages when implemented; this restructure does not scaffold them.
+packages when implemented. Unused future-facing placeholder protocols are retired.
 
 See [conventions](conventions.md#import-boundaries), root `AGENTS.md`, and
 `design/architecture.html` for package rules and workflow responsibilities.

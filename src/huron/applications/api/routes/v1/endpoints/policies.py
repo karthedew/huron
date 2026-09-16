@@ -20,7 +20,7 @@ from huron.applications.api.authorization import (
     require_organization,
     require_project,
 )
-from huron.applications.api.dependencies import Catalog as Repository
+from huron.applications.api.dependencies import PolicyAdministration as Repository
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import Page, PageCursor, PageLimit, paginate
 from huron.applications.api.routes.v1.schema.policies import (
@@ -29,9 +29,9 @@ from huron.applications.api.routes.v1.schema.policies import (
     PolicyAttachmentView,
     PolicyView,
 )
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.records import Policy
-from huron.pkg.rbac import ScopeType
+from huron.core.security.principal import Principal
+from huron.core.security.rules import ScopeType
+from huron.core.security.types import Policy
 
 router = APIRouter(prefix="/policies", tags=["policies"])
 organization_attachments = APIRouter(
@@ -62,7 +62,7 @@ async def create_policy(
     \f
     Args:
         body: The policy type, a display name and the spec to store.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized policy administration.
         actor: The caller, recorded as the policy's creator.
 
     Returns:
@@ -72,7 +72,6 @@ async def create_policy(
         policy_type=body.policy_type,
         name=body.name,
         spec=body.spec,
-        created_by=actor.subject,
     )
     return PolicyView.model_validate(record)
 
@@ -88,7 +87,7 @@ async def list_policies(
     that is not a valid continuation is refused with 400.
     \f
     Args:
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized policy administration.
         limit: The most policies to return in this page.
         after: The ``next_cursor`` of the previous page, or None for the first.
 
@@ -122,7 +121,7 @@ async def attach_to_organization(
     Args:
         organization_id: The organization the policy is attached to.
         body: The id of the policy to attach.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized policy administration.
         actor: The caller, recorded as the attachment's author.
 
     Returns:
@@ -133,7 +132,6 @@ async def attach_to_organization(
         body.policy_id,
         scope_type=ScopeType.ORGANIZATION,
         scope_id=organization_id,
-        attached_by=actor.subject,
     )
     return PolicyAttachmentView.model_validate(attachment)
 
@@ -161,7 +159,7 @@ async def attach_to_project(
     Args:
         project_id: The project the policy is attached to.
         body: The id of the policy to attach.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized policy administration.
         actor: The caller, recorded as the attachment's author.
 
     Returns:
@@ -172,7 +170,6 @@ async def attach_to_project(
         body.policy_id,
         scope_type=ScopeType.PROJECT,
         scope_id=project_id,
-        attached_by=actor.subject,
     )
     return PolicyAttachmentView.model_validate(attachment)
 
@@ -200,7 +197,7 @@ async def attach_to_dataset(
     Args:
         dataset_id: The dataset the policy is attached to.
         body: The id of the policy to attach.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized policy administration.
         actor: The caller, recorded as the attachment's author.
 
     Returns:
@@ -211,6 +208,5 @@ async def attach_to_dataset(
         body.policy_id,
         scope_type=ScopeType.DATASET,
         scope_id=dataset_id,
-        attached_by=actor.subject,
     )
     return PolicyAttachmentView.model_validate(attachment)

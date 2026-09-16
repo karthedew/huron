@@ -1,5 +1,6 @@
 """Operator wiring uses authenticated storage and closes dedicated database resources."""
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
 from uuid import UUID
@@ -7,8 +8,8 @@ from uuid import UUID
 import pytest
 
 from huron.applications.lakectl import wiring
-from huron.applications.lakectl.settings import ControlledRoot, MaintenanceSettings
-from huron.core.integrity.models import FenceEvidence, MaintenanceGrant, ProtocolTransition
+from huron.applications.lakectl.settings import MaintenanceSettings
+from huron.core.integrity.models import ControlledRoot, FenceEvidence, MaintenanceGrant, ProtocolTransition
 from tests.unit.test_controller_settings import root_metadata as root_metadata
 
 pytestmark = pytest.mark.unit
@@ -21,6 +22,7 @@ class EmptyDatabaseBoundary:
 
     def __init__(self) -> None:
         self.closed = False
+        self._depth = 0
         self.identity: str | None = IDENTITY
         self.failure: BaseException | None = None
 
@@ -33,6 +35,9 @@ class EmptyDatabaseBoundary:
         return self
 
     async def __aenter__(self) -> "EmptyDatabaseBoundary":
+        if self._depth == 0:
+            self.closed = False
+        self._depth += 1
         return self
 
     async def __aexit__(
@@ -41,7 +46,8 @@ class EmptyDatabaseBoundary:
         value: BaseException | None,
         trace: TracebackType | None,
     ) -> None:
-        self.closed = True
+        self._depth -= 1
+        self.closed = self._depth == 0
 
     async def fetchval(self, query: str, *arguments: object) -> object:
         """Answer the identity, schema and safety probes, or raise the injected fault."""
@@ -123,7 +129,9 @@ async def test_wiring_runs_actual_core_and_adapters_with_dedicated_pool_lifetime
     settings = MaintenanceSettings(
         controller_socket=tmp_path / "controller.sock", database_url="secret"
     )
-    receipt = await wiring.prepare(settings, UUID(int=3))
+    async with wiring.deployment(settings) as service:
+        receipt = await service.prepare(UUID(int=3))
+        assert not database.closed
     assert receipt.root_id == UUID(int=1)
     assert len(receipt.code_digest) == 64
     assert receipt.instant.utcoffset().total_seconds() == 0
@@ -146,12 +154,17 @@ async def test_wiring_validates_a_stored_record_through_the_same_boundaries(
     settings = MaintenanceSettings(
         controller_socket=tmp_path / "controller.sock", database_url="secret"
     )
-    receipt = await wiring.prepare(settings, UUID(int=3))
+    async with wiring.deployment(settings) as service:
+        receipt = await service.prepare(UUID(int=3))
     database.closed = False
-    assert await wiring.validate(settings, 1) == receipt
+    async with wiring.deployment(settings) as service:
+        assert await service.validate_sequence(1) == receipt
+        assert not database.closed
     assert database.closed
     with pytest.raises(FileNotFoundError):
-        await wiring.validate(settings, 2)
+        async with wiring.deployment(settings) as service:
+            await service.validate_sequence(2)
+    assert database.closed
     assert not (tmp_path / "protocol/000002.json").exists()
 
 
@@ -166,11 +179,37 @@ async def test_wiring_refuses_unsupported_namespace_and_controller_inode_mismatc
     )
     monkeypatch.setattr(wiring, "sys", SimpleNamespace(platform="darwin"))
     with pytest.raises(ValueError, match="actual local Linux"):
-        await wiring.prepare(settings, UUID(int=3))
+        async with wiring.deployment(settings) as service:
+            await service.prepare(UUID(int=3))
     monkeypatch.setattr(wiring, "sys", SimpleNamespace(platform="linux"))
     controller = ControllerBoundary(tmp_path)
     controller.wrong_inode = True
     monkeypatch.setattr(wiring, "ControllerClient", lambda socket: controller)
     with pytest.raises(ValueError, match="differs from authenticated"):
-        await wiring.prepare(settings, UUID(int=3))
+        async with wiring.deployment(settings) as service:
+            await service.prepare(UUID(int=3))
     assert not (tmp_path / "protocol").exists()
+
+
+@pytest.mark.parametrize("failure", [OSError("operation failed"), asyncio.CancelledError()])
+async def test_deployment_closes_dedicated_pool_on_failure_or_cancellation(
+    tmp_path: Path,
+    root_metadata: None,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException,
+) -> None:
+    """The shared application context owns resource cleanup even when its caller cannot return."""
+    monkeypatch.setattr(wiring, "sys", SimpleNamespace(platform="linux"))
+    controller = ControllerBoundary(tmp_path)
+    database = EmptyDatabaseBoundary()
+    monkeypatch.setattr(wiring, "ControllerClient", lambda socket: controller)
+    monkeypatch.setattr(wiring.asyncpg, "create_pool", lambda url: database)
+    settings = MaintenanceSettings(
+        controller_socket=tmp_path / "controller.sock", database_url="secret"
+    )
+    with pytest.raises(type(failure)) as caught:
+        async with wiring.deployment(settings):
+            assert not database.closed
+            raise failure
+    assert caught.value is failure
+    assert database.closed

@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.catalog.ports import Clock, RawStore
-from huron.pkg.metastore import SystemClock
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.foundation.clock import Clock
+from huron.core.raw.ports import RawStore
+from huron.core.metastore import SystemClock
+from huron.core.rawstore import PosixRawStore
 
 if TYPE_CHECKING:
     from pathlib import Path

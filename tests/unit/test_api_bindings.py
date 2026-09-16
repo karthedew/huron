@@ -1,8 +1,8 @@
 """Role-binding routes not already covered by the delegation scenario in ``test_api_rbac.py``.
 
-Drives the FastAPI app through a TestClient over an in-memory
-``HierarchyRepository`` with dev-header auth and ``root`` bootstrapped as
-platform owner. Proves minting a SYSTEM-scope binding directly, listing
+Drives the FastAPI app through a TestClient over an in-memory RBAC store
+with dev-header auth and ``root`` bootstrapped as platform owner. Proves
+minting a SYSTEM-scope binding directly, listing
 bindings at all four scope roots, scope inheritance into the dataset
 collection, and revoking a binding at each of the four scopes it can
 live at.
@@ -20,16 +20,16 @@ from fastapi.testclient import TestClient
 
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.pkg.metastore import InMemoryRbacStore
-from huron.pkg.rbac import ScopeType
+from huron.core.metastore import InMemoryRbacStore
+from huron.core.security.rules import ScopeType
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from huron.core._catalog import HierarchyRepository
-    from huron.pkg.catalog.records import RoleBindingRecord
+    from huron.core.security.ports import RbacStore
+    from huron.core.security.types import RoleBindingRecord
 
 pytestmark = pytest.mark.unit
 
@@ -55,9 +55,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 @pytest.fixture
-def repository(client: TestClient) -> HierarchyRepository:
-    """The repository the running app's lifespan built, reachable for direct seeding."""
-    return client.app.state.runtime.repository
+def repository(client: TestClient) -> RbacStore:
+    """The RBAC store the running app's lifespan built, reachable for direct seeding."""
+    return client.app.state.runtime.rbac
 
 
 def _headers(subject: str) -> dict[str, str]:
@@ -456,7 +456,7 @@ def test_a_cursor_walk_visits_every_binding_at_the_root_exactly_once(
 
 @pytest.mark.parametrize("scope", ["system", "organization", "project", "dataset"])
 async def test_a_lapsed_grant_still_appears_in_the_listing(
-    client: TestClient, repository: HierarchyRepository, scope: str
+    client: TestClient, repository: RbacStore, scope: str
 ) -> None:
     """The binding collections are a roster of grants, not of grants still in force.
 

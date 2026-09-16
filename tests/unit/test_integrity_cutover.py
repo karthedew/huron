@@ -11,12 +11,12 @@ from uuid import UUID
 
 import pytest
 
-from huron.core.integrity.cutover import CutoverService
+from huron.core.integrity import CutoverService
 from huron.core.integrity.models import FenceEvidence, MaintenanceGrant, ProtocolInventory, ProtocolTransition
-from huron.pkg.catalog.documents import CommitRecord
-from huron.pkg.catalog.manifest import canonical_bytes
-from huron.pkg.catalog.models import RevisionRecord
-from huron.pkg.rawstore.maintenance import MaintenanceStore
+from huron.core.raw.documents import CommitRecord
+from huron.core.foundation.canonical import canonical_bytes
+from huron.core.raw.types import RevisionRecord
+from huron.core.rawstore.maintenance import MaintenanceStore
 from tests.unit.test_lakectl_wiring import IDENTITY
 from tests.unit.test_legacy_verification import legacy as legacy
 from tests.unit.test_legacy_verification import legacy_records, overwrite
@@ -614,3 +614,61 @@ async def test_concurrent_observations_cannot_replace_a_lost_fence_with_recovere
         )
     assert boundary.abandoned == [2]
     assert not (tmp_path / "protocol/000001.json").exists()
+
+
+async def test_stored_sequence_validation_loads_canonical_evidence_and_checks_live_authority(
+    tmp_path: Path,
+) -> None:
+    """Callers need only a sequence to admit exact stored evidence, never a scan or manual decoding."""
+    boundary = DeploymentBoundary()
+    cutover = service(tmp_path, boundary)
+    record = await cutover.prepare(UUID(int=2))
+    assert await cutover.validate_sequence(1) == record
+    with pytest.raises(FileNotFoundError):
+        await cutover.validate_sequence(2)
+    boundary.valid = False
+    with pytest.raises(ValueError, match="external fence lost"):
+        await cutover.validate_sequence(1)
+    boundary.valid = True
+    with pytest.raises(ValueError, match="generation changed"):
+        await cutover.validate_sequence(1)
+    assert (tmp_path / "protocol/000001.json").read_bytes() == record.canonical
+
+
+@pytest.mark.parametrize("change", ["root", "operation", "actor"])
+async def test_stored_sequence_validation_requires_root_operation_and_record_authority(
+    tmp_path: Path, change: str
+) -> None:
+    """Direct stored-sequence operations independently refuse foreign grants and record actors."""
+    boundary = DeploymentBoundary()
+    cutover = service(tmp_path, boundary)
+    await cutover.prepare(UUID(int=2))
+    changes = {
+        "root": {"root_id": UUID(int=99)},
+        "operation": {"operations": frozenset()},
+        "actor": {"operator": "other"},
+    }
+    boundary.grant = boundary.grant.model_copy(update=changes[change])
+    with pytest.raises(PermissionError):
+        await cutover.validate_sequence(1)
+    if change != "actor":
+        with pytest.raises(PermissionError):
+            await cutover.validate_sequence(2)
+    assert boundary.evidence.generation == 2
+
+
+async def test_stored_sequence_validation_refuses_noncanonical_bytes_without_rewriting_history(
+    tmp_path: Path,
+) -> None:
+    """The complete sequence operation keeps the original canonical-decoding guarantee."""
+    boundary = DeploymentBoundary()
+    cutover = service(tmp_path, boundary)
+    record = await cutover.prepare(UUID(int=2))
+    path = tmp_path / "protocol/000001.json"
+    path.chmod(0o600)
+    malformed = record.canonical + b"\n"
+    path.write_bytes(malformed)
+    with pytest.raises(ValueError, match="not canonical"):
+        await cutover.validate_sequence(1)
+    assert boundary.evidence.generation == 2
+    assert path.read_bytes() == malformed

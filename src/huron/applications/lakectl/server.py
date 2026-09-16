@@ -16,10 +16,12 @@ from uuid import UUID
 
 from huron.core.integrity.models import FenceEvidence, ProtocolTransition
 
-from .controller import ManagedComposeController, _private_directory
+from .controller import _private_directory, managed_controller
 from .engine import require_local_administrator
 
 if TYPE_CHECKING:
+    from huron.core.integrity import ControllerAdmission
+
     from .settings import ControllerSettings
 
 
@@ -32,7 +34,7 @@ class ControllerServer(socketserver.UnixStreamServer):
         Args:
             settings: Administrator-owned local deployment settings.
         """
-        self.controller = ManagedComposeController(settings)
+        self.controller = managed_controller(settings)
         super().__init__(str(settings.socket_path), ControllerHandler)
 
 
@@ -71,7 +73,7 @@ def _peer_uid(connection: socket.socket) -> int:
     return int(uid)
 
 
-def _dispatch(controller: ManagedComposeController, uid: int, request: dict[str, object]) -> object:
+def _dispatch(controller: ControllerAdmission, uid: int, request: dict[str, object]) -> object:
     operation = request.get("operation")
     _require_request_fields(request)
     if operation == "authenticate":

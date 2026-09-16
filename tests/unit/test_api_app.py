@@ -27,8 +27,8 @@ from httpx import Response
 import huron.applications.api.app as app_module
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
-from huron.pkg.auth import AuthError
-from huron.pkg.metastore import (
+from huron.core.security.authentication_errors import AuthError
+from huron.core.metastore import (
     PostgresApiKeyStore,
     PostgresCredentialStore,
     PostgresPrincipalStore,
@@ -194,14 +194,14 @@ def test_lifespan_closes_an_already_open_pool_when_oidc_discovery_fails(
     assert closed == 1
 
 
-def test_lifespan_closes_the_pool_when_repository_construction_fails(
+def test_lifespan_closes_the_pool_when_raw_store_initialization_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A repository construction failure after the pool opens still closes that pool.
+    """A raw-store initialization failure after the pool opens still closes that pool.
 
-    ``HierarchyRepository.__init__`` initializes the raw store's directory
-    layout, which fails when ``data_root`` already exists as a regular
-    file rather than a directory; the pool opened just before it must not
+    Application startup initializes the raw store's directory layout,
+    which fails when ``data_root`` already exists as a regular file
+    rather than a directory; the pool opened just before it must not
     leak on every restart of a crash loop.
     """
     closed = 0
@@ -259,7 +259,7 @@ def test_lifespan_leaves_the_oidc_resolver_unset_when_no_provider_is_configured(
     )
     app = create_app(settings=settings, stores=memory_stores())
     with TestClient(app) as client:
-        assert app.state.runtime.repository is not None
+        assert app.state.runtime.raw_store is not None
         assert app.state.runtime.oidc_resolver is None
         assert client.get("/healthz").status_code == 200
 
@@ -291,7 +291,7 @@ def test_create_app_without_injected_stores_opens_one_pool_and_wires_every_postg
     with TestClient(app) as client:
         runtime = client.app.state.runtime
         assert calls == [("postgresql://example/huron",)]
-        assert isinstance(runtime.repository.rbac, PostgresRbacStore)
+        assert isinstance(runtime.rbac, PostgresRbacStore)
         assert isinstance(runtime.api_keys, PostgresApiKeyStore)
         assert isinstance(runtime.credentials, PostgresCredentialStore)
         assert isinstance(runtime.sessions, PostgresSessionStore)
@@ -342,7 +342,7 @@ def test_injected_stores_are_the_ones_the_runtime_exposes(tmp_path: Path) -> Non
     stores = memory_stores()
     with TestClient(create_app(settings=settings, stores=stores)) as client:
         runtime = client.app.state.runtime
-        assert runtime.repository.rbac is stores.rbac
+        assert runtime.rbac is stores.rbac
         assert runtime.api_keys is stores.api_keys
         assert runtime.credentials is stores.credentials
         assert runtime.sessions is stores.sessions
@@ -356,6 +356,28 @@ def test_injected_stores_are_the_ones_the_runtime_exposes(tmp_path: Path) -> Non
             for value in settings.classification_vocabulary
         ]
         assert actual == expected
+
+
+async def test_credential_authentication_uses_the_wired_key_store(tmp_path: Path) -> None:
+    """Credential resolution verifies and touches keys in the injected store."""
+    from huron.applications.api.runtime import credential_authentication
+    from huron.core.security.apikeys import create_api_key
+
+    settings = ApiSettings(
+        env="development",
+        auth_mode="dev-headers",
+        data_root=str(tmp_path / "data"),
+        database_url="postgresql://unused",
+        classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
+    )
+    stores = memory_stores()
+    record, token = create_api_key("alice", name="laptop")
+    await stores.api_keys.add(record)
+    with TestClient(create_app(settings=settings, stores=stores)) as client:
+        runtime = client.app.state.runtime
+        resolved = await credential_authentication(runtime).resolve(bearer_token=token)
+        assert resolved.actor.subject == "alice"
+        assert stores.api_keys.touched == [record.key_id]
 
 
 def test_a_request_before_the_lifespan_starts_answers_500_and_never_resolves_a_principal(
@@ -531,7 +553,7 @@ def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_raw_store(
     )
     app = create_app(settings=settings, stores=memory_stores())
     with TestClient(app) as client:
-        app.state.runtime.repository.raw_store.root = _HangingRoot()
+        app.state.runtime.raw_store.root = _HangingRoot()
         started = time.monotonic()
         response = client.get("/readyz")
         elapsed = time.monotonic() - started

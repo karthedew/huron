@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from asyncer import asyncify
 
-from huron.pkg.catalog.paths import parse_revision_dir
+from huron.core.raw.paths import parse_revision_dir
 
 from .generations import GenerationVerifier
 from .models import FenceEvidence, MaintenanceGrant, ProtocolInventory, ProtocolTransition
@@ -88,6 +88,7 @@ class CutoverService:
         ends its own epoch, so nothing under ``protocol/`` is reused or admitted from
         an earlier attempt. A root owned by another coordinator, an authority refusal
         and a lost reply propagate unchanged from the claim, the authority and the scan.
+        Missing root/operation authority raises ``PermissionError`` before claiming storage.
 
         Args:
             run_id: Audit and database-idempotence identity of this cutover attempt.
@@ -96,12 +97,9 @@ class CutoverService:
             Durable record admitted by the live authority, leaving application writers excluded.
 
         Raises:
-            PermissionError: If external authority lacks this root's cutover grant.
             ValueError: If the controller evidence names another actor or root.
         """
-        grant = await self._authority.authenticate()
-        if grant.root_id != self._root_id or "cutover" not in grant.operations:
-            raise PermissionError("operator is not authorized for this root's cutover")
+        grant = (await self._authority.authenticate()).require_cutover(self._root_id)
         with self._storage.claim():
             evidence = await self._writers.establish(grant, run_id)
             async with self._abandoning(evidence):
@@ -114,18 +112,37 @@ class CutoverService:
     async def validate(self, transition: ProtocolTransition) -> None:
         """Admit a record only through the live authority's complete validation.
 
+        A caller or record for another root/operator is refused with ``PermissionError``.
+
         Args:
             transition: Record to admit, exactly as stored under ``protocol/{sequence:06d}.json``.
-
-        Raises:
-            PermissionError: If the caller or record belongs to another maintenance root.
         """
         grant = await self._authority.authenticate()
+        await self._admit(grant, transition)
+
+    async def _admit(self, grant: MaintenanceGrant, transition: ProtocolTransition) -> None:
         if grant.root_id != self._root_id or transition.root_id != grant.root_id:
             raise PermissionError("record belongs to another maintenance root")
-        if "cutover" not in grant.operations or transition.actor != grant.operator:
+        if not grant.permits_cutover(self._root_id) or transition.actor != grant.operator:
             raise PermissionError("operator is not authorized for this record")
         await self._writers.validate(transition)
+
+    async def validate_sequence(self, sequence: int) -> ProtocolTransition:
+        """Load and admit one stored record through the live authority without rescanning.
+
+        Missing root/operation authority raises ``PermissionError`` before reading storage.
+
+        Args:
+            sequence: Stored record number under this root's ``protocol/`` directory.
+
+        Returns:
+            The exact canonical record admitted by the live controller.
+        """
+        grant = (await self._authority.authenticate()).require_cutover(self._root_id)
+        stored = self._storage.read_control("protocol", f"{sequence:06d}.json")
+        transition = ProtocolTransition.decode(stored)
+        await self._admit(grant, transition)
+        return transition
 
     @asynccontextmanager
     async def _abandoning(self, evidence: FenceEvidence) -> AsyncIterator[None]:

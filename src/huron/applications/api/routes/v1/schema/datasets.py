@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from huron.pkg.catalog.layers import Layer
+from huron.core.catalog.layers import Layer
 
 
 class CreateDataset(BaseModel):

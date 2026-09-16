@@ -1,5 +1,12 @@
 # Architecture toward a native duplication score of 90
 
+> **2026-09-15 resolution:** the native-90 target described here is marked
+> implementation target unresolved by measurement design and is no longer
+> gated. See [IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md#d7--resolve-the-residual-inventory-and-prove-completion)'s
+> D7 resolution for the measured ceiling and the regression guard
+> (`scripts/check_duplication.py` against `scripts/duplication_baseline.json`
+> at clone-threshold 0.80) that replaced it.
+
 Status: **proposal**, 2026-09-10. Source baseline: `6082088`.
 This document proposes a refactoring program; it does not mark it implemented,
 certify a score of 90, or change M1a's delivery status.

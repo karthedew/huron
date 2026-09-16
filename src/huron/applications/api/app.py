@@ -1,8 +1,8 @@
 """FastAPI composition root for the Huron control plane.
 
-This module only wires: settings, the repository, the optional OIDC verifier,
-exception mapping, and the versioned routers. Authorization policy lives in
-``pkg/rbac`` (the pure engine plus the role model), request guards in
+This module only wires: settings, the raw store and its adapters, the optional
+OIDC verifier, exception mapping, and the versioned routers. Authorization policy lives in
+``core/security`` (the pure engine, role model and reusable workflows), request guards in
 ``huron.applications.api.authorization``, and route handlers under ``routes/v1``.
 """
 
@@ -18,12 +18,7 @@ from asyncer import asyncify
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
-from huron.core._catalog import HierarchyRepository
-from huron.core._ingest import IngestService
-from huron.core._revision_reader import RevisionService
-from huron.pkg.auth import JwksVerifier, OidcClient, OidcResolver
-from huron.pkg.catalog.failures import DependencyUnavailable
-from huron.pkg.metastore import (
+from huron.core.metastore import (
     PostgresApiKeyStore,
     PostgresCredentialStore,
     PostgresHierarchyStore,
@@ -32,9 +27,13 @@ from huron.pkg.metastore import (
     PostgresSessionStore,
     SystemClock,
 )
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import Classification, RoleBindingAuthorizer, ScopeType
+from huron.core.raw import RawRuntime
+from huron.core.rawstore import PosixRawStore
+from huron.core.security import bootstrap_platform_owner
+from huron.core.security.oidc import JwksVerifier, OidcClient, OidcResolver
+from huron.core.security.rules import Classification, RoleBindingAuthorizer
 
+from .errors import DependencyUnavailable
 from .expiry import ExpirySweep
 from .problems import Problem, install_error_handlers, problem_response
 from .routes import auth as auth_routes
@@ -45,7 +44,8 @@ from .settings import ApiSettings
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
-    from huron.pkg.catalog.ports import Clock
+    from huron.core.foundation.clock import Clock
+    from huron.core.raw.ports import RawStore
 
 
 def _postgres_stores(pool: asyncpg.Pool, clock: Clock) -> ApiStores:
@@ -77,7 +77,7 @@ def _build_runtime(
     pool: asyncpg.Pool | None,
     oidc: tuple[OidcResolver | None, OidcClient | None],
 ) -> ApiRuntime:
-    """Compose the repository, the facades and the authorizer into one published runtime.
+    """Compose the raw store, the facades and the authorizer into one published runtime.
 
     Args:
         settings: The validated configuration; read for ``data_root`` and
@@ -100,15 +100,15 @@ def _build_runtime(
         max_concurrent_completions=settings.completion_max_concurrent,
         completion_reserve_bytes=settings.completion_reserve_bytes,
     )
-    repository = HierarchyRepository(raw_store, wired.hierarchy, rbac_store=wired.rbac)
+    raw_store.initialize()
     oidc_resolver, oidc_client = oidc
+    raw = RawRuntime(raw_store, wired.hierarchy, clock=clock)
     return ApiRuntime(
         settings=settings,
-        repository=repository,
+        raw_store=raw_store,
         hierarchy=wired.hierarchy,
         rbac=wired.rbac,
-        ingest=IngestService(raw_store, wired.hierarchy, clock=clock),
-        revisions=RevisionService(raw_store, wired.hierarchy),
+        raw=raw,
         authorizer=RoleBindingAuthorizer(
             classifications=tuple(
                 Classification(value.code, value.order, value.discoverable)
@@ -122,6 +122,7 @@ def _build_runtime(
         oidc_resolver=oidc_resolver,
         oidc_client=oidc_client,
         database_pool=pool,
+        clock=clock,
     )
 
 
@@ -221,8 +222,8 @@ def create_app(
     """Build the application, deferring every connection to its lifespan.
 
     Nothing is connected when this returns. The lifespan builds one
-    :class:`ApiRuntime` - the repository, the authorizer, the RBAC and
-    authentication stores, the optional OIDC resolver and client, the
+    :class:`ApiRuntime` - the initialized raw store, the authorizer, the RBAC
+    and authentication stores, the optional OIDC resolver and client, the
     optional database pool - and publishes it on ``app.state.runtime`` as
     the application's only piece of mutable state; every injected route
     reads it through ``huron.applications.api.runtime``. An application whose
@@ -254,9 +255,9 @@ def create_app(
 
         The RBAC and authentication stores come from the injected set, else
         the lifespan opens a fresh pool from ``settings.database_url`` and
-        wires every store to Postgres; the hierarchy repository and the
-        authorizer are always built fresh here, over the raw store and the
-        classification vocabulary the settings declare. The bearer-JWT
+        wires every store to Postgres; the raw store is initialized and the
+        authorizer is built fresh here, over the classification vocabulary
+        the settings declare. The bearer-JWT
         resolver follows the same injected-first rule as the stores.
         Opening the pool, discovering the OIDC provider, running the
         bootstrap grant, running the ingest expiry sweep and suspending at
@@ -291,9 +292,9 @@ def create_app(
             oidc_resolver, oidc_client, http = await _configure_oidc(settings, oidc_verify)
             runtime = _build_runtime(settings, wired, clock, pool, (oidc_resolver, oidc_client))
             app.state.runtime = runtime
-            await _bootstrap(runtime.repository, settings)
+            await bootstrap_platform_owner(runtime.rbac, settings.bootstrap_platform_owner)
             async with ExpirySweep(
-                runtime.ingest,
+                runtime.raw,
                 interval_seconds=settings.ingest_sweep_interval_seconds,
                 limit=settings.ingest_sweep_limit,
             ):
@@ -370,13 +371,13 @@ async def _dependency_checks(runtime: ApiRuntime) -> list[tuple[str, str | None]
         where ``failure`` is ``None`` for a dependency that answered and
         the reason it did not otherwise.
     """
-    checks = [("raw_store", await _raw_store_probe(runtime.repository))]
+    checks = [("raw_store", await _raw_store_probe(runtime.raw_store))]
     if runtime.database_pool is not None:
         checks.append(("database", await _database_failure(runtime.database_pool)))
     return checks
 
 
-async def _raw_store_probe(repository: HierarchyRepository) -> str | None:
+async def _raw_store_probe(raw_store: RawStore) -> str | None:
     """Stat the raw root on a worker thread, within the readiness timeout.
 
     A mount that never answers ``stat`` must not hang the probe forever, so
@@ -390,8 +391,8 @@ async def _raw_store_probe(repository: HierarchyRepository) -> str | None:
     so blocked threads accumulate for as long as the hang persists.
 
     Args:
-        repository: The wired repository, whose raw store names the root
-            directory the data plane writes under.
+        raw_store: The wired store, whose root names the directory the
+            data plane writes under.
 
     Returns:
         ``None`` while the root exists, ``"root is unavailable"`` while it
@@ -400,12 +401,12 @@ async def _raw_store_probe(repository: HierarchyRepository) -> str | None:
     """
     try:
         async with asyncio.timeout(READINESS_TIMEOUT_SECONDS):
-            return await asyncify(_raw_store_failure)(repository)
+            return await asyncify(_raw_store_failure)(raw_store)
     except TimeoutError:
         return f"did not answer within {READINESS_TIMEOUT_SECONDS}s"
 
 
-def _raw_store_failure(repository: HierarchyRepository) -> str | None:
+def _raw_store_failure(raw_store: RawStore) -> str | None:
     """Stat the raw root; a hung mount must never stall the event loop.
 
     Deliberately synchronous: the ``stat`` behind ``exists()`` can block on
@@ -413,14 +414,14 @@ def _raw_store_failure(repository: HierarchyRepository) -> str | None:
     than from a coroutine.
 
     Args:
-        repository: The wired repository, whose raw store names the root
-            directory the data plane writes under.
+        raw_store: The wired store, whose root names the directory the
+            data plane writes under.
 
     Returns:
         ``None`` while the root exists, otherwise the reason the probe
         reports for it.
     """
-    return None if repository.raw_store.root.exists() else "root is unavailable"
+    return None if raw_store.root.exists() else "root is unavailable"
 
 
 async def _database_failure(pool: asyncpg.Pool) -> str | None:
@@ -450,36 +451,3 @@ async def _database_failure(pool: asyncpg.Pool) -> str | None:
 #: A readiness probe that waits longer than the orchestrator's own probe
 #: timeout reports nothing; two seconds is well inside the usual five.
 READINESS_TIMEOUT_SECONDS = 2.0
-
-
-async def _bootstrap(repository: HierarchyRepository, settings: ApiSettings) -> None:
-    """Give the configured bootstrap subject platform ownership, once.
-
-    Without one SYSTEM-scope ``platform_owner`` binding nothing can create
-    organizations or grant further roles; every other permission then flows
-    through the API's own guarded binding routes. The grant is idempotent
-    across restarts: an existing binding for the same subject is left
-    alone, so a persistent store never accumulates duplicates.
-
-    Args:
-        repository: Where SYSTEM-scope bindings are read and the grant is
-            stored.
-        settings: Read for ``bootstrap_platform_owner``; an unset subject
-            makes this a no-op.
-    """
-    subject = settings.bootstrap_platform_owner
-    if not subject:
-        return
-    principal = f"user:{subject}"
-    existing = await repository.bindings_at(ScopeType.SYSTEM, None)
-    already = any(
-        item.principal == principal and item.role_code == "platform_owner" for item in existing
-    )
-    if not already:
-        await repository.grant_role(
-            principal=principal,
-            role_code="platform_owner",
-            scope_type=ScopeType.SYSTEM,
-            scope_id=None,
-            created_by="bootstrap",
-        )

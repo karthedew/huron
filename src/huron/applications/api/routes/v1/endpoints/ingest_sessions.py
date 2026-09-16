@@ -25,7 +25,7 @@ from huron.applications.api.authorization import (
     session_owner,
     upload_owner,
 )
-from huron.applications.api.dependencies import Catalog as Repository
+from huron.applications.api.dependencies import Datasets as Repository
 from huron.applications.api.dependencies import RawIngestion as Ingest
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.preconditions import (
@@ -42,12 +42,13 @@ from huron.applications.api.routes.v1.schema.ingest_sessions import (
     ManifestFile,
 )
 from huron.applications.api.routes.v1.schema.revisions import RevisionView
-from huron.core.idempotency import request_sha256, session_claim
+from huron.core.catalog.types import Dataset
+from huron.core.foundation.canonical import content_identity
+from huron.core.foundation.retry import IdempotencyClaim, request_sha256
 from huron.core.raw import RawIngestionService
-from huron.pkg.auth import Principal
-from huron.pkg.catalog import ManifestEntry, content_identity
-from huron.pkg.catalog.records import Dataset
-from huron.pkg.metastore import IdempotencyClaim
+from huron.core.raw.manifest import ManifestEntry
+from huron.core.raw.retry import session_claim
+from huron.core.security.principal import Principal
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -150,7 +151,7 @@ async def create_dataset_ingest_session(
         dataset_id: The dataset the revision will belong to.
         body: The files the revision will hold.
         idempotency_key: The caller's ``Idempotency-Key`` header.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized dataset reads.
         ingest: The wired ingest service.
         visibility: The caller's discovery rights, used to resolve
             ``dataset_id``.
@@ -160,7 +161,7 @@ async def create_dataset_ingest_session(
     Returns:
         The new session's view, in state UPLOADING.
     """
-    dataset = await repository.datasets.get(dataset_id)
+    dataset = await repository.get(dataset_id)
     return await _open_session(
         ingest,
         dataset,
@@ -209,7 +210,7 @@ async def create_project_ingest_session(
         project_id: The project the dataset is created under.
         body: The dataset to create and the files its first revision holds.
         idempotency_key: The caller's ``Idempotency-Key`` header.
-        repository: The wired hierarchy repository.
+        repository: The caller's authorized dataset reads.
         ingest: The wired ingest service.
         visibility: The caller's discovery rights, used to resolve
             ``project_id``.

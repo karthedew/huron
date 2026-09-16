@@ -21,9 +21,9 @@ from uuid import UUID, uuid4
 import httpx
 from pydantic import BaseModel, Field
 
-from huron.pkg.catalog import ManifestEntry, validate_manifest
-from huron.pkg.catalog.errors import DomainError
-from huron.pkg.catalog.metadata import MetadataSubmission
+from huron.core.raw.manifest import ManifestEntry, validate_manifest
+from huron.core.foundation.errors import DomainError
+from huron.core.raw.metadata import MetadataSubmission
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

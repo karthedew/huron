@@ -19,17 +19,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.catalog.errors import (
+from huron.core.raw.errors import (
     DatasetLocked,
-    IdempotencyKeyReused,
     IngestSessionExpired,
-    PreconditionFailed,
-    ResourceNotFound,
     TagExists,
 )
-from huron.pkg.catalog.failures import SlugExists
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.catalog.ingest import (
+from huron.core.foundation.errors import IdempotencyKeyReused, PreconditionFailed, ResourceNotFound
+from huron.core.catalog.errors import SlugExists
+from huron.core.foundation.identifiers import uuid7
+from huron.core.raw.ingest import (
     LEASE_TTL,
     FileState,
     IngestFile,
@@ -37,20 +35,20 @@ from huron.pkg.catalog.ingest import (
     UploadAction,
     compute_upload_plan,
 )
-from huron.pkg.catalog.layers import Layer
-from huron.pkg.catalog.lifecycle import DatasetLifecycle
-from huron.pkg.catalog.manifest import Manifest, ManifestEntry
-from huron.pkg.catalog.models import OutboxEvent, RevisionRecord, RevisionRef
-from huron.pkg.catalog.persistence import IdempotencyClaim, PlatformRoot, Replay
-from huron.pkg.catalog.records import AuditEvent, Dataset, Organization, Project, Release
-from huron.pkg.rbac import Visibility
+from huron.core.catalog.layers import Layer
+from huron.core.catalog.lifecycle import DatasetLifecycle
+from huron.core.raw.manifest import Manifest, ManifestEntry
+from huron.core.raw.types import OutboxEvent, RevisionRecord, RevisionRef, AuditEvent, Release
+from huron.core.foundation.retry import IdempotencyClaim, Replay
+from huron.core.catalog.types import PlatformRoot, Dataset, Organization, Project
+from huron.core.security.rules import Visibility
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
     from uuid import UUID
 
-    from huron.core.ports import HierarchyStore
-    from huron.pkg.catalog.ingest import IngestSession
+    from huron.applications.api.capabilities import HierarchyStore
+    from huron.core.raw.ingest import IngestSession
     from tests.unit.support import FakeClock
 
 

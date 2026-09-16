@@ -16,10 +16,10 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
-from huron.pkg.auth import CredentialRecord
-from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.catalog.failures import PrincipalKindMismatch
-from huron.pkg.metastore import PostgresCredentialStore
+from huron.core.security.password import CredentialRecord
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.security.errors import PrincipalKindMismatch
+from huron.core.metastore import PostgresCredentialStore
 
 pytestmark = pytest.mark.unit
 

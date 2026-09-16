@@ -12,9 +12,9 @@ from uuid import uuid4
 
 import pytest
 
-from huron.pkg.auth.oidc import OidcUser
-from huron.pkg.auth.principals import (
-    MemoryPrincipalStore,
+from huron.core.security.oidc import OidcUser
+from huron.core.metastore import MemoryPrincipalStore
+from huron.core.security.principals import (
     PrincipalRecord,
     PrincipalSubjectExists,
 )

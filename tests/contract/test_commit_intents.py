@@ -15,24 +15,26 @@ from alembic import command
 from sqlalchemy.exc import DBAPIError
 from testcontainers.postgres import PostgresContainer
 
-from huron.core._ingest import IngestService
-from huron.pkg.catalog.documents import (
+from huron.core.raw._impl.ingest import IngestService
+from huron.core.raw.documents import (
     CommitIntent,
     CommitRecord,
     MetadataDocument,
     decode_manifest,
 )
-from huron.pkg.catalog.errors import (
-    ContractMismatch,
-    IngestSessionExpired,
+from huron.core.catalog.errors import ContractMismatch
+from huron.core.raw.errors import IngestSessionExpired
+from huron.core.foundation.errors import (
     PreconditionFailed,
     ResourceNotFound,
 )
-from huron.pkg.catalog.ingest import IngestState
-from huron.pkg.catalog.manifest import ManifestEntry, canonical_bytes
-from huron.pkg.catalog.persistence import IdempotencyClaim
-from huron.pkg.metastore import PostgresHierarchyStore, Visibility
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.raw.ingest import IngestState
+from huron.core.raw.manifest import ManifestEntry
+from huron.core.foundation.canonical import canonical_bytes
+from huron.core.foundation.retry import IdempotencyClaim
+from huron.core.metastore import PostgresHierarchyStore
+from huron.core.security.rules import Visibility
+from huron.core.rawstore import PosixRawStore
 from tests.contract.test_hierarchy_store import (
     MIGRATIONS_DIR,
     _config,
@@ -45,7 +47,7 @@ from tests.unit.support import FakeClock
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from huron.pkg.catalog.ingest import IngestSession
+    from huron.core.raw.ingest import IngestSession
 
 pytestmark = pytest.mark.contract
 

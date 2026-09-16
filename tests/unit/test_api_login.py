@@ -1,7 +1,7 @@
 """``POST /auth/login`` and ``POST /auth/logout``, driven through a TestClient.
 
 Drives the FastAPI app through a TestClient over an in-memory
-``HierarchyRepository`` with dev-header auth, seeding principals and
+store set with dev-header auth, seeding principals and
 credentials directly in the store rather than through the admin
 provisioning routes. Proves the cookie a successful login sets, the CSRF
 rule that gated write governs, the generic refusal a wrong credential
@@ -24,19 +24,20 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from huron.applications.api.app import create_app
-from huron.applications.api.routes.auth.endpoints.login import _password_hash_limiter
+from huron.core.security._impl.password_authentication import _password_hash_limiter
 from huron.applications.api.routes.auth.schema.login import LoginResult, SignOut
 from huron.applications.api.routes.auth.schema.session import ProviderInfo, ScopeRoles, SessionInfo
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
-from huron.pkg.auth import (
+from huron.core.security.password import (
     CredentialRecord,
-    MemoryCredentialStore,
-    PrincipalRecord,
     make_credential,
     needs_rehash,
     verify_password,
 )
-from huron.pkg.rbac.roles import ROLES
+from huron.core.metastore import MemoryCredentialStore
+from huron.core.security.principals import PrincipalRecord
+from huron.core.security.roles import ROLES
+from huron.core.security.apikeys import create_api_key
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -174,6 +175,54 @@ def test_password_login_sets_a_cookie_and_the_session_resolves_on_the_next_reque
     assert info["csrf_token"] == body["csrf_token"]
     assert info["expires_at"] is not None
     assert info["effective_roles"] == []
+
+
+@pytest.mark.parametrize("authorization", [" ", "Bearer ", "Basic invalid", "hk_bad"])
+def test_nonempty_authorization_never_falls_back_to_a_valid_cookie(
+    client: TestClient,
+    stores: ApiStores,
+    authorization: str,
+) -> None:
+    """A nonempty raw header wins even if the legacy parser yields an empty token."""
+    _seed_user(stores, subject="alice", password=PASSWORD)
+    login = client.post("/auth/login", json={"username": "alice", "password": PASSWORD})
+    assert login.status_code == 200
+    assert client.get("/auth/session").status_code == 200
+    response = client.get("/auth/session", headers={"Authorization": authorization})
+    assert response.status_code == 401
+
+
+def test_empty_authorization_header_is_absent_and_allows_session_authentication(
+    client: TestClient,
+    stores: ApiStores,
+) -> None:
+    """An actually empty header retains the baseline cookie fallback."""
+    _seed_user(stores, subject="alice", password=PASSWORD)
+    login = client.post("/auth/login", json={"username": "alice", "password": PASSWORD})
+    assert login.status_code == 200
+    response = client.get("/auth/session", headers={"Authorization": ""})
+    assert response.status_code == 200
+    assert response.json()["authentication_method"] == "session"
+
+
+@pytest.mark.parametrize("prefix", ["Bearer ", "", "  "])
+def test_bearer_and_legacy_naked_keys_keep_priority_over_session_cookie(
+    client: TestClient,
+    stores: ApiStores,
+    prefix: str,
+) -> None:
+    """The transport's unchanged removeprefix/strip parser accepts prefixed and naked keys."""
+    _seed_user(stores, subject="alice", password=PASSWORD)
+    login = client.post("/auth/login", json={"username": "alice", "password": PASSWORD})
+    assert login.status_code == 200
+    key, token = create_api_key("bob", name="laptop")
+    stores.api_keys.records[key.key_id] = key
+    response = client.get("/auth/session", headers={"Authorization": f"{prefix}{token}  "})
+    assert response.status_code == 200
+    assert response.json()["subject"] == "bob"
+    assert response.json()["authentication_method"] == "api-key"
+    assert response.json()["csrf_token"] is None
+    assert stores.api_keys.touched == [key.key_id]
 
 
 def test_password_login_rejects_the_wrong_password_with_a_generic_message(
@@ -361,7 +410,9 @@ def test_logout_over_bearer_needs_no_csrf_header(tmp_path: Path, stores: ApiStor
         token = issued.json()["secret"]
 
         response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+        still_valid = client.get("/auth/session", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
+    assert still_valid.status_code == 200
 
 
 # -- /auth/providers: unauthenticated, reflects settings ---------------------

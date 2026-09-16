@@ -8,10 +8,10 @@ from uuid import UUID
 import asyncpg
 import pytest
 
-from huron.pkg.catalog.models import RevisionRecord
-from huron.pkg.catalog.paths import parse_revision_dir
-from huron.pkg.metastore.legacy import PostgresLegacyMaintenance
-from huron.pkg.metastore.maintenance import PostgresRoleExclusion
+from huron.core.raw.types import RevisionRecord
+from huron.core.raw.paths import parse_revision_dir
+from huron.core.metastore.legacy import PostgresLegacyMaintenance
+from huron.core.metastore.maintenance import PostgresRoleExclusion
 from tests.unit.test_lakectl_wiring import IDENTITY, EmptyDatabaseBoundary
 from tests.unit.test_legacy_verification import legacy as legacy
 from tests.unit.test_legacy_verification import legacy_records

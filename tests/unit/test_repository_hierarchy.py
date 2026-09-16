@@ -1,4 +1,4 @@
-"""Direct unit tests for ``HierarchyRepository``'s write paths, over the in-memory hierarchy store.
+"""Direct unit tests for ``RepositoryFixture``'s write paths, over the in-memory hierarchy store.
 
 Idempotent replay (including a request that changes only a field the old
 fingerprint used to ignore), slug and classification refusals, optimistic-
@@ -13,34 +13,37 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.core._catalog import HierarchyRepository
-from huron.core.access import AccessPolicy
-from huron.core.catalog import CatalogService
-from huron.core.catalog_collections import DescriptionChange
-from huron.core.idempotency import request_sha256
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.errors import (
-    ClassificationUnknown,
+from huron.core.security import AccessPolicy
+from huron.core.catalog import (
+    DatasetCollection,
+    OrganizationCollection,
+    ProjectCollection,
+)
+from huron.core.catalog.types import DescriptionChange, PlatformRoot
+from huron.core.foundation.retry import request_sha256, IdempotencyClaim
+from huron.core.security.principal import Principal
+from huron.core.catalog.errors import ClassificationUnknown, SlugImmutable, SlugExists
+from huron.core.raw.errors import TagExists
+from huron.core.foundation.errors import (
     IdempotencyKeyReused,
     PreconditionFailed,
     ResourceNotFound,
-    SlugImmutable,
-    TagExists,
 )
-from huron.pkg.catalog.failures import SlugExists
-from huron.pkg.catalog.paths import dataset_dir, organization_dir, project_dir, release_tag_file
-from huron.pkg.catalog.persistence import PlatformRoot
-from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import RoleBindingAuthorizer, ScopeType, Visibility
+from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
+from huron.core.raw.paths import release_tag_file
+from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
+from huron.core.rawstore import PosixRawStore
+from huron.core.security.rules import RoleBindingAuthorizer, ScopeType, Visibility
 from tests.catalog_creation_support import creation_for
 from tests.catalog_release_support import releases_for
 from tests.hierarchy_contract import committed_revision
+from tests.repository_fixture import RepositoryFixture
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -48,15 +51,15 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-async def _repository(tmp_path: Path) -> HierarchyRepository:
-    """Build a ``HierarchyRepository`` at ``tmp_path`` over a fresh in-memory hierarchy store."""
-    repository = HierarchyRepository(
+async def _repository(tmp_path: Path) -> RepositoryFixture:
+    """Build a storage bundle at ``tmp_path`` over a fresh in-memory hierarchy store."""
+    repository = RepositoryFixture(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        rbac_store=InMemoryRbacStore(),
+        InMemoryRbacStore(),
     )
 
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:tester",
         role_code="platform_owner",
         scope_type=ScopeType.SYSTEM,
@@ -66,11 +69,24 @@ async def _repository(tmp_path: Path) -> HierarchyRepository:
     return repository
 
 
-def _descriptions(repository: HierarchyRepository, visibility: Visibility) -> CatalogService:
+@dataclass(frozen=True, slots=True)
+class _Collections:
+    """The three typed collections one actor-bound test needs together."""
+
+    organizations: OrganizationCollection
+    projects: ProjectCollection
+    datasets: DatasetCollection
+
+
+def _descriptions(repository: RepositoryFixture, visibility: Visibility) -> _Collections:
     """Bind actual authorized collections to an owner or an undiscovering actor."""
     actor = Principal("tester" if visibility.unrestricted else "outsider")
     access = AccessPolicy(actor, repository.hierarchy, repository.rbac, RoleBindingAuthorizer())
-    return CatalogService(repository, access, repository.hierarchy)
+    return _Collections(
+        OrganizationCollection(access, repository.hierarchy, repository.raw_store),
+        ProjectCollection(access, repository.hierarchy, repository.raw_store),
+        DatasetCollection(access, repository.hierarchy, repository.raw_store),
+    )
 
 
 def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
@@ -80,7 +96,7 @@ def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
     )
 
 
-async def _hierarchy(repository: HierarchyRepository) -> tuple[UUID, UUID, UUID]:
+async def _hierarchy(repository: RepositoryFixture) -> tuple[UUID, UUID, UUID]:
     """Create one organization/project/dataset and return their ids."""
     organization = await (await creation_for(repository)).create_organization(
         slug="astro",
@@ -118,7 +134,7 @@ async def _hierarchy(repository: HierarchyRepository) -> tuple[UUID, UUID, UUID]
     return organization.id, project.id, dataset.id
 
 
-def _data_root(repository: HierarchyRepository) -> PurePosixPath:
+def _data_root(repository: RepositoryFixture) -> PurePosixPath:
     """Return the raw store's root in the form the layout functions take."""
     return PurePosixPath(repository.raw_store.root)
 
@@ -675,7 +691,7 @@ async def test_undiscoverable_patch_targets_hide_slug_and_version_errors(tmp_pat
 
 
 async def _commit_revision(
-    repository: HierarchyRepository, dataset_id: UUID, *, number: int = 1
+    repository: RepositoryFixture, dataset_id: UUID, *, number: int = 1
 ) -> None:
     """Commit one revision directly through the hierarchy store's writer."""
     revision = committed_revision(dataset_id, number, manifest_sha256="a" * 64)

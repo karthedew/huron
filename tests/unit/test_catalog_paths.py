@@ -15,26 +15,20 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from huron.pkg.catalog.errors import PathRuleViolation
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.catalog.layers import Layer
-from huron.pkg.catalog.models import EntityRef
-from huron.pkg.catalog.paths import (
-    ORG_PROJECT_SLUG_MAX,
+from huron.core.foundation.errors import PathRuleViolation
+from huron.core.foundation.identifiers import uuid7
+from huron.core.catalog.layers import Layer
+from huron.core.catalog.types import EntityRef
+from huron.core.foundation.names import ORG_PROJECT_SLUG_MAX, validate_org_slug, validate_slug
+from huron.core.catalog.paths import (
     dataset_dir,
     dataset_layer_dir,
     generation_file,
     organization_dir,
-    parse_revision_dir,
     product_dir,
     project_dir,
-    release_tag_file,
-    revision_dir,
-    staging_dir,
-    staging_paths,
-    validate_org_slug,
-    validate_slug,
 )
+from huron.core.raw.paths import parse_revision_dir, release_tag_file, revision_dir, staging_dir, staging_paths
 
 pytestmark = pytest.mark.unit
 

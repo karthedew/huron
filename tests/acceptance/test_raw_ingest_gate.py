@@ -12,7 +12,7 @@ import uvicorn
 
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.pkg.catalog import PART_BYTES
+from huron.core.raw.ingest import PART_BYTES
 from tests.acceptance_support import require_upload_capacity
 from tests.ingest_client import IngestClient, declared_file, sparse_file, zeros_sha256
 from tests.unit.support import memory_stores

@@ -37,7 +37,7 @@ def grant_role(
 
     Args:
         principal: The ``kind:subject`` string the binding is for.
-        role_code: A role from :mod:`huron.pkg.rbac.roles`.
+        role_code: A role from :mod:`huron.core.security.roles`.
         scope_type: Where the role applies.
         scope_id: The organization, project or dataset id, or None for
             SYSTEM scope.

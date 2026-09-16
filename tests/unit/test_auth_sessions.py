@@ -12,12 +12,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from huron.pkg.auth.errors import AuthError
-from huron.pkg.auth.sessions import (
+from huron.core.security.authentication_errors import AuthError
+from huron.core.metastore import MemorySessionStore
+from huron.core.security.sessions import (
     ABSOLUTE_TTL,
     IDLE_TTL,
     TOUCH_INTERVAL,
-    MemorySessionStore,
     SessionExpired,
     SessionResolver,
     SessionRevoked,

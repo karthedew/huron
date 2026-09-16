@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from fastapi import Request, Response
 
-from huron.pkg.auth import ABSOLUTE_TTL
+from huron.core.security.sessions import ABSOLUTE_TTL
 
 from ..settings import ApiSettings
 

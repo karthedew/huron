@@ -2,7 +2,7 @@
 
 Bearer credentials keep absolute priority: a programmatic caller carrying a
 cookie jar is never silently downgraded to a session principal. Only once
-there is no ``Authorization`` header at all does the session cookie get a
+there is no nonempty ``Authorization`` header does the session cookie get a
 look, and only after that does the development-only header fallback apply.
 CSRF is enforced in the cookie branch and only there.
 """
@@ -10,28 +10,16 @@ CSRF is enforced in the cookie branch and only there.
 from __future__ import annotations
 
 import hmac
-import logging
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import Depends, Request
 
-from huron.pkg.auth import (
-    ApiKeyResolver,
-    AuthError,
-    DevHeaderResolver,
-    Principal,
-    SessionRecord,
-    SessionResolver,
-    parse_api_key,
-)
+from huron.core.security.authentication_errors import AuthError
+from huron.core.security.principal import Principal
+from huron.core.security.sessions import SessionRecord
 
-from ..runtime import Runtime
+from ..runtime import Runtime, credential_authentication
 from .cookies import session_cookie
-
-if TYPE_CHECKING:
-    from huron.core.ports import ApiKeyWriter
-
-logger = logging.getLogger(__name__)
 
 
 async def current_principal(request: Request, runtime: Runtime) -> Principal:
@@ -39,8 +27,8 @@ async def current_principal(request: Request, runtime: Runtime) -> Principal:
 
     Bearer credentials keep absolute priority: a programmatic caller that
     happens to carry a cookie jar must never be silently downgraded to a
-    session principal. Only once there is no ``Authorization`` header at
-    all does a session cookie get a look, and only after that does the
+    session principal. Only once there is no nonempty ``Authorization`` header
+    does a session cookie get a look, and only after that does the
     development-only header fallback apply. Within the bearer branch an
     ``hk_`` token is an API key and anything else is an OIDC JWT, which is
     refused outright when no verifier is configured rather than guessed
@@ -58,32 +46,21 @@ async def current_principal(request: Request, runtime: Runtime) -> Principal:
         The authenticated principal, with ``authentication_method`` saying
         which branch produced it.
 
-    Raises:
-        AuthError: If a JWT is presented but no OIDC verifier is
-            configured, or if no credential of any kind is present outside
-            ``dev-headers`` mode.
     """
     authorization = request.headers.get("authorization")
-    if authorization:
-        token = authorization.removeprefix("Bearer ").strip()
-        if token.startswith("hk_"):
-            store = runtime.api_keys
-            principal = await ApiKeyResolver(store).resolve(token)
-            await _touch_api_key(store, token)
-            return principal
-        if runtime.oidc_resolver is None:
-            raise AuthError("bearer JWTs are not accepted: no OIDC verifier configured")
-        return await runtime.oidc_resolver.resolve(token)
-    session_token = session_cookie(runtime.settings).read(request)
-    if session_token:
-        resolver = SessionResolver(runtime.sessions)
-        principal, session = await resolver.resolve(session_token)
-        _enforce_csrf(request, session)
-        request.state.session = session
-        return principal
-    if runtime.settings.auth_mode != "dev-headers":
-        raise AuthError("a bearer credential is required")
-    return DevHeaderResolver("development").resolve_headers(request.headers)
+    bearer_token = authorization.removeprefix("Bearer ").strip() if authorization else None
+    resolved = await credential_authentication(runtime).resolve(
+        bearer_token=bearer_token,
+        session_token=session_cookie(runtime.settings).read(request),
+        development_headers={
+            "x-huron-subject": request.headers.get("x-huron-subject", ""),
+            "x-huron-groups": request.headers.get("x-huron-groups", ""),
+        },
+    )
+    if resolved.session is not None:
+        _enforce_csrf(request, resolved.session)
+        request.state.session = resolved.session
+    return resolved.actor
 
 
 CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
@@ -110,26 +87,6 @@ async def current_session(request: Request, _actor: CurrentPrincipal) -> Session
 
 
 CurrentSession = Annotated[SessionRecord | None, Depends(current_session)]
-
-
-async def _touch_api_key(store: ApiKeyWriter, credential: str) -> None:
-    """Record that an API key was just used, without ever failing the request.
-
-    Best-effort last-used bookkeeping; a write failure here must never
-    turn a valid credential into a failed request. Any exception is logged
-    with its traceback and swallowed, so the caller sees the same outcome
-    whether or not the timestamp landed.
-
-    Args:
-        store: The key store whose ``touch_last_used`` records the moment.
-        credential: The full ``hk_`` token, already accepted by the
-            resolver; only its key id is used.
-    """
-    try:
-        key_id, _secret = parse_api_key(credential)
-        await store.touch_last_used(key_id)
-    except Exception:
-        logger.warning("failed to record API key last-used timestamp", exc_info=True)
 
 
 def _enforce_csrf(request: Request, session: SessionRecord) -> None:

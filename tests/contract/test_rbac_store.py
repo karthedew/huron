@@ -1,4 +1,4 @@
-"""Proves the Postgres RBAC schema and huron.pkg.rbac.roles.ROLES cannot drift.
+"""Proves the Postgres RBAC schema and huron.core.security.roles.ROLES cannot drift.
 
 Requires Docker (testcontainers spins up a real PostgreSQL). Not runnable in
 every environment - see the module-level skip note in CI docs. Checked
@@ -56,15 +56,15 @@ from pydantic import BaseModel, ConfigDict
 from testcontainers.postgres import PostgresContainer
 
 from huron.applications.api.routes.v1.pagination import paginate
-from huron.core.ports import ApiKeyWriter, RbacStore
-from huron.pkg.auth import ApiKeyRecord
-from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.catalog.failures import UsernameTaken
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.catalog.records import Policy, RoleBindingRecord, ServiceAccount
-from huron.pkg.metastore import InMemoryRbacStore, PostgresApiKeyStore, PostgresRbacStore
-from huron.pkg.rbac import ScopeType
-from huron.pkg.rbac.roles import (
+from huron.core.security.ports import ApiKeyWriter, RbacStore
+from huron.core.security.apikeys import ApiKeyRecord
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.security.errors import UsernameTaken
+from huron.core.foundation.identifiers import uuid7
+from huron.core.security.types import Policy, RoleBindingRecord, ServiceAccount
+from huron.core.metastore import InMemoryRbacStore, PostgresApiKeyStore, PostgresRbacStore
+from huron.core.security.rules import ScopeType
+from huron.core.security.roles import (
     CAPABILITIES,
     LAYER_SCOPED_CAPABILITIES,
     ROLES,

@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from huron.pkg.rawstore.maintenance import MaintenanceStore
+from huron.core.rawstore.maintenance import MaintenanceStore
 
 pytestmark = pytest.mark.contract
 
 OWNER = """
 import sys
 from pathlib import Path
-from huron.pkg.rawstore.maintenance import MaintenanceStore
+from huron.core.rawstore.maintenance import MaintenanceStore
 root = Path(sys.argv[1])
 store = MaintenanceStore(root, root.stat().st_uid)
 with store.claim():
@@ -26,7 +26,7 @@ with store.claim():
 CONTENDER = """
 import sys
 from pathlib import Path
-from huron.pkg.rawstore.maintenance import MaintenanceStore
+from huron.core.rawstore.maintenance import MaintenanceStore
 root = Path(sys.argv[1])
 try:
     with MaintenanceStore(root, root.stat().st_uid).claim():

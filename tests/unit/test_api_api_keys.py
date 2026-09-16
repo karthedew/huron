@@ -1,7 +1,7 @@
 """``POST /api/v1/auth/api-keys``'s response shape and its structural show-once guarantee.
 
 Drives the FastAPI app through a TestClient with an in-memory
-``HierarchyRepository`` and dev-header auth, ``root`` bootstrapped as
+an in-memory store set and dev-header auth, ``root`` bootstrapped as
 platform owner. Proves the shape of a freshly minted key's response body
 and the structural guarantee that ``IssuedApiKey`` can only ever be built
 from the minting call's own return value - the idempotency-key
@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from huron.applications.api.app import create_app
 from huron.applications.api.routes.v1.schema.api_keys import IssuedApiKey
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.pkg.auth.apikeys import ApiKeyRecord
+from huron.core.security.apikeys import ApiKeyRecord
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:

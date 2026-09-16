@@ -19,8 +19,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from huron.pkg.rawstore import PosixRawStore, materialize
-from huron.pkg.rawstore.materialize import candidate, directory, install, observe, rename_exclusive
+from huron.core.rawstore import PosixRawStore, materialize
+from huron.core.rawstore.materialize import candidate, directory, install, observe, rename_exclusive
 from tests.unit.support import crash_on, fsync_log
 
 if TYPE_CHECKING:

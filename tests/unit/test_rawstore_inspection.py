@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.rawstore import PosixRawStore
 
 if TYPE_CHECKING:
     from pathlib import Path

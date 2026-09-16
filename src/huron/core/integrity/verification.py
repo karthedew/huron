@@ -6,15 +6,15 @@ import hashlib
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from huron.pkg.catalog.documents import CommitRecord, MetadataDocument, decode_manifest
-from huron.pkg.catalog.errors import DomainError
-from huron.pkg.catalog.paths import parse_revision_dir
+from huron.core.foundation.errors import DomainError
+from huron.core.raw.documents import CommitRecord, MetadataDocument, decode_manifest
+from huron.core.raw.paths import parse_revision_dir
 
 from .models import DocumentObservation, LegacyRevision
 
 if TYPE_CHECKING:
-    from huron.pkg.catalog.models import RevisionRecord
-    from huron.pkg.catalog.paths import RevisionPath
+    from huron.core.raw.paths import RevisionPath
+    from huron.core.raw.types import RevisionRecord
 
     from .ports import LegacyStorage
 

@@ -12,8 +12,9 @@ from uuid import uuid4
 
 import pytest
 
-import huron.pkg.metastore as stores_package
-from huron.pkg.catalog.persistence import IdempotencyClaim, LedgerEntry, Replay, Window
+from huron.core.foundation.retry import IdempotencyClaim, Replay
+from huron.core.raw.types import LedgerEntry
+from huron.core.catalog.types import Window
 from tests.unit.support import ingest_file
 
 pytestmark = pytest.mark.unit
@@ -42,16 +43,3 @@ def test_ledger_entry_pairs_a_file_with_the_session_it_belongs_to() -> None:
     entry = LedgerEntry(ingest_id=session_id, file=file)
     assert entry.ingest_id == session_id
     assert entry.file is file
-
-
-def test_stores_package_exports_the_hierarchy_port_and_its_values() -> None:
-    """The package's public surface names every hierarchy-port symbol a consumer imports."""
-    assert {
-        "AuditEvent",
-        "IdempotencyClaim",
-        "LedgerEntry",
-        "Replay",
-        "SystemClock",
-        "Visibility",
-        "Window",
-    } <= set(stores_package.__all__)

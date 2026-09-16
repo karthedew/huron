@@ -274,9 +274,9 @@ def scenario(root: pathlib.Path) -> None:
 
     import asyncpg
 
-    from huron.applications.lakectl.controller import ManagedComposeController
+    from huron.applications.lakectl.controller import managed_controller
     from huron.applications.lakectl.settings import ControllerSettings
-    from huron.pkg.metastore.maintenance import PostgresRoleExclusion
+    from huron.core.metastore.maintenance import PostgresRoleExclusion
 
     engine = [
         "podman",
@@ -287,7 +287,7 @@ def scenario(root: pathlib.Path) -> None:
         "--network-config-dir",
         str(root / "networks"),
     ]
-    controller = ManagedComposeController(ControllerSettings.load(root / "settings.json"))
+    controller = managed_controller(ControllerSettings.load(root / "settings.json"))
     writer = controller.restart(0)
     volume = controller.describe(0).path
     ready = "import urllib.request; assert urllib.request.urlopen('http://localhost:8080/readyz').status==200"
@@ -445,7 +445,8 @@ def _socket_cutover(root: pathlib.Path, engine: list[str], database_address: str
 
     from huron.applications.lakectl.exclusion import ControllerClient
     from huron.applications.lakectl.settings import ControllerSettings, MaintenanceSettings
-    from huron.applications.lakectl.wiring import prepare
+    from huron.applications.lakectl.wiring import deployment
+    from huron.core.integrity.models import ProtocolTransition
 
     socket_directory = pathlib.Path(tempfile.mkdtemp(prefix="huron-controller-test-", dir="/run"))
     socket_directory.chmod(0o755)
@@ -495,7 +496,11 @@ def _socket_cutover(root: pathlib.Path, engine: list[str], database_address: str
                     f"postgresql://cutover:maintenance-password@{database_address}/huron"
                 ),
             )
-            record = asyncio.run(prepare(maintenance, uuid.uuid4()))
+            async def prepare() -> ProtocolTransition:
+                async with deployment(maintenance) as service:
+                    return await service.prepare(uuid.uuid4())
+
+            record = asyncio.run(prepare())
             asyncio.run(client.check(record.fence))
             asyncio.run(client.validate(record))
             asyncio.run(client.validate(record))
@@ -518,7 +523,7 @@ def _socket_cutover(root: pathlib.Path, engine: list[str], database_address: str
             else:
                 raise AssertionError("restored SQL observations revived an ended epoch")
             assert _generation_on_disk(settings) == record.fence.generation + 1
-            record = asyncio.run(prepare(maintenance, uuid.uuid4()))
+            record = asyncio.run(prepare())
             assert record.sequence == 2
             asyncio.run(client.validate(record))
             print("LIVE_SQL_CONSUMER_REVOCATION_AND_FRESH_VERIFICATION_PROVED", flush=True)
@@ -567,7 +572,7 @@ def _await_controller(path: pathlib.Path, process: subprocess.Popen) -> None:
 
 def _generation_on_disk(settings: ControllerSettings) -> int:
     """Read the durable epoch exactly as a restarted controller would."""
-    from huron.applications.lakectl.settings import ControllerState
+    from huron.core.integrity.models import ControllerState
 
     return ControllerState.model_validate_json(settings.state_path.read_bytes()).generation
 

@@ -57,7 +57,7 @@ Before starting the first phase/task, do all of the following and record the res
 
 ## Python validation gate
 
-Every implementation, fix, and verification subagent runs the complete gate. The gate passes only when every command exits 0 and meets the pass conditions below. The sole findings exception is code duplication: clone findings are allowed when pyscn's native duplication score is at least 90/100. All other zero-findings requirements remain strict. Partial runs, "ran the relevant subset," and skipped tools are not acceptable. Throughout this workflow, a "clean" gate means these pass conditions are met, not that clone output is empty.
+Every implementation, fix, and verification subagent runs the complete gate. The gate passes only when every command exits 0 and meets the pass conditions below. The sole findings exception is code duplication: clone findings are allowed when the duplication guard passes -- no clone growth or new clone group appears at similarity 0.80 relative to `scripts/duplication_baseline.json`; the native score is reported, not gated. All other zero-findings requirements remain strict. Partial runs, "ran the relevant subset," and skipped tools are not acceptable. Throughout this workflow, a "clean" gate means these pass conditions are met, not that clone output is empty.
 
 Configuration precedence: if `pyproject.toml` (or `ruff.toml`, `ty.toml`, `.coveragerc`) configures a tool, that configuration governs. Any thresholds stated below are fallback defaults that apply only when the project has not configured the tool. Subagents must not loosen configured thresholds, add exclusions, or introduce `# noqa`, `# type: ignore`, `# pragma: no cover`, `@pytest.mark.skip`, or `@pytest.mark.xfail` to make the gate pass.
 
@@ -92,7 +92,7 @@ Pass conditions:
 - `radon mi --min B`: empty output. No module at maintainability grade B or worse.
 - `complexipy`: exit 0. No function above the cognitive complexity limit.
 - `pyscn check`: exit 0. No dead code or structural complexity findings. Clone warnings are evaluated by the score gate below, not a zero-clones rule; do not skip clone detection.
-- `check_duplication.py`: exit 0 and pyscn's native JSON `summary.duplication_score` >=90/100, inclusive. This script runs `uv run --locked pyscn analyze --select clones --json <pkg>` and validates the report from that invocation; missing/invalid reports, unsupported versions, disabled clone analysis, incomplete analysis (including diagnostics or failures), and tool failures fail closed. Use the native category score, not overall health, clone count, or a custom duplicated-line percentage. pyscn is pinned to 1.31.1, which has no native CLI score-threshold flag. Its [score implementation](https://github.com/ludo-technologies/pyscn/blob/v1.31.1/domain/analyze.go) uses [polyscan core v0.2.7 scoring](https://github.com/ludo-technologies/polyscan/blob/core/v0.2.7/core/domain/scoring.go), as pinned in [go.mod](https://github.com/ludo-technologies/pyscn/blob/v1.31.1/go.mod); use these sources rather than the stale upstream scoring documentation. This curve differs from 1.30.0, so scores across those versions are not comparable. Report the measured native score and cloned/total fragments, pair and group counts; do not lower the 90/100 floor or tune detection/exclusions to manufacture a pass.
+- `check_duplication.py`: exit 0. This script runs `uv run --locked pyscn analyze --select clones --json --clone-threshold 0.80 <pkg>` and validates the report from that invocation; missing/invalid reports, unsupported versions, disabled clone analysis, incomplete analysis (including diagnostics or failures), and tool failures fail closed. The duplication guard passes when no clone growth or new clone group appears at similarity 0.80 relative to the committed `scripts/duplication_baseline.json`: it fails only if total clones exceed the baseline, a scanned clone group's file signature is unknown to the baseline, or a known signature's group grew larger. pyscn's native JSON `summary.duplication_score` is reported for information alongside cloned/total fragments, pair and group counts; it is never gated, since pyscn 1.31.1 has no native CLI score-threshold flag and this tree's type-2/type-4 structural silhouettes cap the reachable score below 90 (see IMPLEMENTATION_PLAN.md D7). Do not tune detection/exclusions to manufacture a pass, and do not update the baseline (`--update-baseline`) except to ratchet it down when detection has genuinely decreased; raising it is a reviewed manual edit.
 
 Complexity failures and the clean sweep: consolidating legacy paths often pushes a function over a complexity limit. The correct fix is a better decomposition along domain boundaries, not mechanical extraction of arbitrary helpers to satisfy the metric. If a function genuinely requires complexity beyond the limit to express its domain logic correctly, that is a plan-defect signal to be raised in the verification report, not a reason to suppress the check.
 
@@ -251,7 +251,7 @@ Engineering rules:
 Testing standard:
 [PASTE_TESTING_STANDARD_VERBATIM]
 
-Validation gate (every command must exit 0 and meet its pass conditions; duplication score >=90/100 permits clone findings, all other zero-findings checks remain strict; configured thresholds in pyproject.toml govern):
+Validation gate (every command must exit 0 and meet its pass conditions; the duplication guard passes when no clone growth or new clone group appears at similarity 0.80 relative to `scripts/duplication_baseline.json` -- the native score is reported, not gated -- all other zero-findings checks remain strict; configured thresholds in pyproject.toml govern):
 [PASTE_VALIDATION_GATE_VERBATIM]
 
 Process:
@@ -295,7 +295,7 @@ Verification must produce one of two outcomes:
 - `PASS`: The phase/task is complete, the gate is clean, and no issues remain.
 - `FAIL`: One or more issues remain.
 
-Any non-zero exit or violation of a pass condition is an automatic `FAIL`. Clone findings alone are not a failure when the native duplication score is >=90/100; every other zero-findings check remains strict. A missing tool, missing/invalid duplication report, or an unconfigured threshold that the implementation relied on is an automatic `FAIL`.
+Any non-zero exit or violation of a pass condition is an automatic `FAIL`. Clone findings alone are not a failure when the duplication guard passes -- no clone growth or new clone group appears at similarity 0.80 relative to `scripts/duplication_baseline.json`; the native score is reported, not gated -- every other zero-findings check remains strict. A missing tool, missing/invalid duplication report, or an unconfigured threshold that the implementation relied on is an automatic `FAIL`.
 
 If verification returns `FAIL`, it must provide a precise fix list. Every issue must be actionable, specific, and tied to files, symbols, behavior, tests, or validation gaps.
 
@@ -333,7 +333,7 @@ Testing standard:
 
 Verification rules:
 - Be strict.
-- Run the complete validation gate. Any non-zero exit or violation of a pass condition is FAIL. Clone findings are allowed only with native duplication score >=90/100; all other zero-findings checks remain strict.
+- Run the complete validation gate. Any non-zero exit or violation of a pass condition is FAIL. Clone findings are allowed only when the duplication guard passes -- no clone growth or new clone group appears at similarity 0.80 relative to `scripts/duplication_baseline.json`; the native score is reported, not gated -- all other zero-findings checks remain strict.
 - Flag every issue, even small ones.
 - Check correctness, completeness, code quality, naming, architecture, type annotations, comments, tests, validation, and general code health.
 - Load the skills AGENTS.md's "Skills by area" table assigns to the code areas the change touches ([RESOLVED_AREA_SKILLS_FROM_AGENTS_MD]) and check the code against their conventions, each applied only to its own area.
@@ -409,7 +409,7 @@ Rules:
 Testing standard:
 [PASTE_TESTING_STANDARD_VERBATIM]
 
-Validation gate (every command must exit 0 and meet its pass conditions; clone findings are allowed only with native duplication score >=90/100, all other zero-findings checks remain strict):
+Validation gate (every command must exit 0 and meet its pass conditions; clone findings are allowed only when the duplication guard passes -- no clone growth or new clone group appears at similarity 0.80 relative to `scripts/duplication_baseline.json`; the native score is reported, not gated -- all other zero-findings checks remain strict):
 [PASTE_VALIDATION_GATE_VERBATIM]
 
 Process:

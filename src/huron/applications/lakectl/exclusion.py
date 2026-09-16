@@ -9,9 +9,12 @@ from typing import TYPE_CHECKING
 
 from asyncer import asyncify
 
-from huron.core.integrity.models import FenceEvidence, MaintenanceGrant, ProtocolTransition
-
-from .settings import ControlledRoot
+from huron.core.integrity.models import (
+    ControlledRoot,
+    FenceEvidence,
+    MaintenanceGrant,
+    ProtocolTransition,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path

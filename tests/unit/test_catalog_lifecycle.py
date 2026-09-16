@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.core._catalog import HierarchyRepository
-from huron.core.idempotency import request_sha256
-from huron.pkg.catalog.lifecycle import DatasetLifecycle
-from huron.pkg.metastore import IdempotencyClaim, InMemoryHierarchyStore, InMemoryRbacStore
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.foundation.retry import request_sha256, IdempotencyClaim
+from huron.core.catalog.lifecycle import DatasetLifecycle
+from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
+from huron.core.rawstore import PosixRawStore
 from tests.catalog_creation_support import creation_for
+from tests.repository_fixture import RepositoryFixture
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,10 +39,10 @@ def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
 
 async def test_created_dataset_is_active(tmp_path: Path) -> None:
     """A freshly created dataset's lifecycle state is ACTIVE, both as enum member and as string."""
-    repository = HierarchyRepository(
+    repository = RepositoryFixture(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        rbac_store=InMemoryRbacStore(),
+        InMemoryRbacStore(),
     )
     organization = await (
         await creation_for(repository, classifications=("internal",), visible=True)

@@ -6,21 +6,16 @@ principal yet when it needs to know what to render.
 
 from __future__ import annotations
 
-from collections import defaultdict
-from uuid import UUID
-
 from fastapi import APIRouter
 
 from huron.applications.api.authorization import (
-    BindingCache,
     CurrentPrincipal,
     CurrentSession,
-    as_rbac_principal,
-    bindings_for_principal,
 )
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.auth.schema.session import ProviderInfo, ScopeRoles, SessionInfo
 from huron.applications.api.runtime import Bindings, Settings
+from huron.core.security import self_access_summary
 
 router = APIRouter()
 
@@ -30,7 +25,6 @@ async def session_info(
     actor: CurrentPrincipal,
     session: CurrentSession,
     repository: Bindings,
-    cache: BindingCache,
 ) -> SessionInfo:
     """Describe the caller: who they are, how they authenticated, what they may do.
 
@@ -47,32 +41,25 @@ async def session_info(
         session: The session behind the credential, or ``None`` for a
             bearer caller.
         repository: The wired repository; supplies the role bindings.
-        cache: The per-request binding cache shared with the guards.
 
     Returns:
         The caller's identity, groups, per-scope capabilities and, for a
         cookie session, its CSRF token and absolute expiry.
     """
-    bindings = await bindings_for_principal(cache, repository, as_rbac_principal(actor))
-    capabilities_by_scope: dict[tuple[str, UUID | None], set[str]] = defaultdict(set)
-    for binding in bindings:
-        capabilities_by_scope[(binding.scope_type.value, binding.scope_id)].update(
-            binding.capabilities
-        )
+    summary = await self_access_summary(actor, session, repository)
     return SessionInfo(
         subject=actor.subject,
         kind=actor.kind,
         groups=sorted(actor.groups),
         authentication_method=actor.authentication_method,
         effective_roles=[
-            ScopeRoles(scope_type=scope_type, scope_id=scope_id, roles=sorted(capabilities))
-            for (scope_type, scope_id), capabilities in sorted(
-                capabilities_by_scope.items(),
-                key=lambda entry: (entry[0][0], str(entry[0][1] or "")),
+            ScopeRoles(
+                scope_type=scope.scope_type, scope_id=scope.scope_id, roles=list(scope.capabilities)
             )
+            for scope in summary.scopes
         ],
-        csrf_token=session.csrf_token if session is not None else None,
-        expires_at=session.absolute_expires_at if session is not None else None,
+        csrf_token=summary.csrf_token,
+        expires_at=summary.expires_at,
     )
 
 

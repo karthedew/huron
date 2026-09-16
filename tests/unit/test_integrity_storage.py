@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from huron.core.integrity.ports import LegacyStorage
-from huron.pkg.rawstore.maintenance import MaintenanceStore
+from huron.core.rawstore.maintenance import MaintenanceStore
 
 pytestmark = pytest.mark.unit
 

@@ -18,8 +18,8 @@ from fastapi.testclient import TestClient
 from huron.applications.api.app import create_app
 from huron.applications.api.routes.v1.schema.policies import MAX_POLICY_SPEC_BYTES
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.pkg.catalog.manifest import MAX_SAFE_INT, canonical_bytes
-from huron.pkg.metastore import InMemoryRbacStore
+from huron.core.foundation.canonical import MAX_SAFE_INT, canonical_bytes
+from huron.core.metastore import InMemoryRbacStore
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from huron.core._catalog import HierarchyRepository
-    from huron.pkg.catalog.records import Policy
+    from huron.core.security.ports import RbacStore
+    from huron.core.security.types import Policy
 
 pytestmark = pytest.mark.unit
 
@@ -60,9 +60,9 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 
 @pytest.fixture
-def repository(client: TestClient) -> HierarchyRepository:
-    """The repository the running app's lifespan built, reachable for direct seeding."""
-    return client.app.state.runtime.repository
+def repository(client: TestClient) -> RbacStore:
+    """The RBAC store the running app's lifespan built, reachable for direct seeding."""
+    return client.app.state.runtime.rbac
 
 
 def _headers(subject: str) -> dict[str, str]:
@@ -213,7 +213,7 @@ def test_a_spec_one_byte_over_the_ceiling_is_rejected(client: TestClient) -> Non
 
 
 async def test_a_spec_that_reached_storage_over_the_ceiling_is_still_read_back_whole(
-    repository: HierarchyRepository, client: TestClient
+    repository: RbacStore, client: TestClient
 ) -> None:
     """The ceiling binds ``CreatePolicy`` alone.
 

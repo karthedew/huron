@@ -8,9 +8,10 @@ rules belong here so the two files do not maintain competing copies.
 
 - `design/` is the architecture record; `design/roadmap.html` tracks implementation
   status. Read the relevant documents and inspect the code before planning work.
-- The architecture below is implemented: `core/` owns reusable workflows and
-  `applications/api/` exposes them over FastAPI. Future compute, client and
-  transformation capabilities remain planned.
+- Core domain subpackages own their values, rules and reusable workflows;
+  applications expose their public interfaces. Future compute, client and
+  transformation capabilities remain planned. Migration evidence is recorded in
+  `docs/plans/domain-owned-core.md`.
 - These agreed boundaries and ingestion rules supersede conflicting older design
   descriptions. Reconcile affected design pages, imports, tooling, tests, and
   entry points when implementing the relevant migration. Do not silently change
@@ -22,50 +23,43 @@ rules belong here so the two files do not maintain competing copies.
 
 ```text
 src/huron/
-  pkg/             Domain objects and technical capabilities
-  core/            Authorized Huron workflows
+  core/
+    foundation/    Shared errors, canonical JSON, IDs, names, retry and clock contracts
+    security/      Authentication, identity, authorization and their workflows
+    catalog/       Hierarchy, dataset configuration, layer rules and discovery
+    raw/           Ingestion, revision publication/reads, releases and expiry
+    integrity/     Verification, cutover and controller-admission workflows
+    metastore/     PostgreSQL and in-memory adapters
+    rawstore/      POSIX storage and maintenance adapters
   applications/    Runnable entry points, transport, configuration, and wiring
   schema/          Shared document contracts and validation
 ```
 
-### `pkg/`: capabilities and domain rules
+### Domain-owned workflows and adapters
 
-- Own focused domain concepts or infrastructure capabilities, exposed through
-  cohesive public interfaces. Domain objects own their invariants and meaningful
-  operations; infrastructure objects hide their implementation details.
-- Examples: `catalog` owns dataset/revision concepts, manifests and transitions;
-  `rbac` evaluates roles, bindings and scopes; `auth` verifies credentials;
-  `rawstore` implements file storage; metastore implements database persistence; future array storage and compute
-  packages implement Zarr/snapshot and execution capabilities.
-- A raw-store object can seal files; it does not decide whether a scientist may
-  publish them into a project. Cross-capability workflows belong in `core/`.
-- Domain packages must not depend on FastAPI, Ray, database drivers or storage SDKs.
-  Infrastructure packages may use libraries needed for their capability. Auth may
-  perform credential-related I/O, without depending on the web application.
-- Preserve independence among domain packages and rawstore. Infrastructure adapters
-  such as `metastore` may import domain types; domain packages must never import
-  those adapters. Express required capabilities through
-  consumer-owned protocols and injected collaborators. Do not bypass this rule
-  with dynamic imports or weaken import contracts to get checks passing.
-
-### `core/`: complete Huron operations
-
-- Own services such as dataset management, Raw ingestion, transformation execution,
-  snapshot publication and lineage queries. Group operations by responsibility;
-  do not create one all-purpose core or repository class.
-- Coordinate authorization, domain rules, persistence, compute, idempotency,
-  transaction boundaries, failure recovery and lineage publication.
-- Accept authenticated actors, IDs, commands and value objects. Return domain
-  results/receipts and raise transport-independent errors.
-- Every public operation must enforce its required authorization, including
-  discovery and input access. A FastAPI guard must not be its sole protection.
-- Inject storage, compute, clocks and other external capabilities through interfaces.
-  An interface belongs with its consumer: a core-only persistence protocol belongs
-  in core, not automatically in catalog. Adapters may conform structurally without
-  importing that protocol; verify conformance at the wiring boundary.
-- Never import HTTP request/response types, deployment settings, or concrete database,
-  filesystem, Ray or object-store adapters. Core decides the workflow; adapters
-  perform the I/O.
+- Colocate domain objects, invariants, authorized operations and consumer-owned
+  interfaces with the domain responsible for them. Keep focused operations rather
+  than an all-purpose Core or repository class.
+- Public scientific operations accept authenticated actors, IDs, commands and
+  values; return domain results/receipts; and enforce authorization, discovery and
+  input access themselves. Early HTTP guards do not replace these checks.
+- Security establishes identity through credential workflows. Bootstrap, expiry and
+  operator maintenance use explicit trusted deployment authority. Security consumes
+  its own narrow catalog-fact projections; full hierarchy entities belong to Catalog.
+- Raw owns storage-first publication and its single-connection transaction recording
+  revision, session outcome, audit, outbox and retry receipt. Integrity owns epoch
+  and admission policy; applications provide operator/process observations and I/O.
+- Inject storage, persistence, clocks and external capabilities through interfaces
+  owned by their consumers. One adapter may structurally satisfy several interfaces;
+  verify conformance at application wiring. Domains decide the workflow and adapters
+  perform I/O, locking and atomic persistence.
+- Domain packages exclude HTTP request/response types, deployment settings, concrete
+  adapters, web frameworks, database drivers, storage SDKs and compute runtimes.
+  Security may use credential-related HTTP/cryptographic libraries. Concrete
+  Metastore and Rawstore implementations may use their required infrastructure libraries.
+- Foundation contains genuinely shared primitives, not domain workflows or future
+  capabilities. Retire unused scaffolding and redundant implementation while preserving
+  useful pure rules, supported contracts and unique behavioral evidence.
 
 ### `applications/`: expose and run core
 
@@ -74,19 +68,34 @@ src/huron/
   process startup/shutdown and resource lifetimes.
 - Own transport details: HTTP parsing and serialization, credential extraction,
   cookies/CSRF, queue consumption, command arguments and terminal output.
-- Resolve credentials through auth capabilities and pass the resulting actor to
-  core. Translate core results/errors into transport-specific responses.
+- Resolve credentials through Security and pass the resulting actor to domain
+  operations. Translate domain results/errors into transport-specific responses.
 - Do not implement reusable business workflows here. Applications must not import
-  sibling applications; share behavior through core or packages.
+  sibling applications; share behavior through Core's public interfaces.
 
 ### Dependency rules and OOP
 
-- Target direction: `applications → core → pkg → schema`. Applications may also
-  import packages directly to construct concrete adapters. Lower layers never
-  import higher layers; schema imports no Huron layer above it.
-- Update import-linter contracts during the migration to enforce these boundaries,
-  package/application independence, and framework exclusions. Keep current contracts
-  passing until deliberately replaced with the corresponding target contracts.
+- Direction: `applications → core → schema`. Within Core, the permitted direct
+  Huron dependencies are:
+
+  | Owner | May import |
+  | --- | --- |
+  | `foundation` | No Huron packages |
+  | `security` | `foundation` |
+  | `catalog` | `security`, `foundation` |
+  | `raw` | `catalog`, `security`, `foundation`, `schema` |
+  | `integrity` | `catalog`, `raw`, `foundation`, `schema` |
+  | `metastore` | `catalog`, `raw`, `security`, `foundation` |
+  | `rawstore` | `schema` |
+
+- Cross-package callers use published interfaces: root operations and supported
+  value/error/port/codec modules. `_impl` subtrees are private. Applications import
+  concrete adapters for composition/lifecycle, not for re-exported domain values.
+- Import-linter enforces declared edges, sibling acyclicity including type-only
+  imports, exhaustive Core ownership, application independence, private surfaces and
+  framework exclusions. Domain-to-adapter dependencies are forbidden even indirectly.
+  Keep `core.__init__` minimal and Schema independent. These are package-level rules,
+  not a requirement that every private implementation module form a DAG.
 - Favor object-oriented design through encapsulation and composition: meaningful
   methods, controlled state changes, small interfaces and injected collaborators.
   Immutable domain objects are encouraged where useful. Keep pure calculations as
@@ -141,18 +150,18 @@ available copy, report material discrepancies, and follow explicit user scope.
 
 | Area or task | Skills to use |
 | --- | --- |
-| Writing, designing, refactoring or reviewing code in `pkg/` or `core/` | Project-local `oop-design` |
+| Writing, designing, refactoring or reviewing code in `core/` | Project-local `oop-design` |
 | Architecture, boundary changes, structural review | `codebase-design`; inspect whether its methodology is implemented before relying on it |
 | Sharpening a plan or design by interview, updating `CONTEXT.md` and ADRs | `grill-with-docs`, which calls `grilling` and `domain-modeling` |
 | Checking plans and roadmap claims against implementation | No separate skill; `/design-plan` Phase 0 and Phase 5 specify the method inline |
 | API-service code: endpoints, dependencies, request Pydantic models, streaming, HTTP errors and wiring | `fastapi` exclusively for `applications/api` |
 | PostgreSQL adapters, schema, migrations, indexes, constraints and transaction design | `postgresql-table-design` |
-| Non-HTTP application entry points | Capability-specific guidance for the entry point; apply `oop-design` to any accompanying `pkg/` or `core/` changes |
+| Non-HTTP application entry points | Capability-specific guidance for the entry point; apply `oop-design` to accompanying `core/` changes |
 | Svelte components/modules in `web/` | Both project-local `svelte-code-writer` and `svelte-core-bestpractices`; see frontend requirements below |
 | Tailwind, tokens, responsive styles and theming in `web/` | Project-local `tailwind-design-system`; see frontend requirements below |
 | JSON document contracts in `schema/` | Relevant domain/validation guidance; PostgreSQL skill only if database design is actually involved |
 
-Use `.claude/skills/oop-design/SKILL.md` for `pkg/` and `core/` code. Do not load
+Use `.claude/skills/oop-design/SKILL.md` for `core/` code. Do not load
 the retired encapsulation skill, even if an older agent-facing copy remains.
 FastAPI-service code uses only the `fastapi` skill; do not impose the OOP skill on
 routers, dependencies or API wiring. For a task spanning boundaries, apply skills
@@ -200,7 +209,7 @@ that a command name runs all test categories.
 - Infrastructure packages: contract tests against real adapters; use temporary
   filesystems and PostgreSQL testcontainers where applicable. In-memory doubles do
   not prove database locking, filesystem durability or storage isolation.
-- Core: test complete operations with injected ports, covering permission denials,
+- Domain workflows: test complete operations with injected ports, covering permission denials,
   wrong-target access, idempotent retries, incomplete transfers, concurrency conflicts,
   recovery, and exact lineage. Add real-service tests for guarantees fakes cannot prove.
 - Applications: test transport/authentication mapping, wiring and lifecycle; use the
@@ -228,7 +237,8 @@ make docs
 - Plain `pytest` and `make test` select unit tests by default. The CI integration job
   currently tolerates no collected tests; that is not evidence of integration coverage.
 - `make lint` runs Ruff lint/format, pydoclint, mypy strict, ty, import-linter, the
-  schema-map check, radon, complexipy and pyscn. Inspect findings as well as exit codes,
+  schema-map check, radon, complexipy, pyscn and the duplication regression guard.
+  Inspect findings as well as exit codes,
   especially radon's reported complexity/maintainability grades.
 - Static lint targets `src/`. Tests remain separate behavioral verification; the
   migration schema-map check remains required. Source thresholds and import contracts

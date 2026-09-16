@@ -16,15 +16,17 @@ import asyncpg
 import pytest
 from testcontainers.postgres import PostgresContainer
 
-from huron.core._ingest import IngestService, SessionLedger
-from huron.pkg.catalog import ingest as ingest_module
-from huron.pkg.catalog.documents import CommitRecord
-from huron.pkg.catalog.errors import IdempotencyKeyReused
-from huron.pkg.catalog.ingest import FileState, IngestState
-from huron.pkg.catalog.manifest import ManifestEntry
-from huron.pkg.catalog.persistence import IdempotencyClaim
-from huron.pkg.metastore import PostgresHierarchyStore, Visibility
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.raw._impl.ingest import IngestService
+from huron.core.raw.types import SessionLedger
+from huron.core.raw import ingest as ingest_module
+from huron.core.raw.documents import CommitRecord
+from huron.core.foundation.errors import IdempotencyKeyReused
+from huron.core.raw.ingest import FileState, IngestState
+from huron.core.raw.manifest import ManifestEntry
+from huron.core.foundation.retry import IdempotencyClaim
+from huron.core.metastore import PostgresHierarchyStore
+from huron.core.security.rules import Visibility
+from huron.core.rawstore import PosixRawStore
 from tests.contract.test_hierarchy_store import _migrate
 from tests.hierarchy_contract import seed_hierarchy
 from tests.unit.support import FakeClock

@@ -26,46 +26,45 @@ from huron.applications.api.authorization.guards import (
     session_overseer,
     session_owner,
 )
-from huron.core._catalog import HierarchyRepository
-from huron.core._ingest import IngestService
-from huron.core.idempotency import request_sha256
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.catalog.failures import Forbidden
-from huron.pkg.catalog.layers import LayerWriteForbidden
-from huron.pkg.catalog.manifest import ManifestEntry
-from huron.pkg.metastore import (
-    IdempotencyClaim,
+from huron.core.raw._impl.ingest import IngestService
+from huron.core.foundation.retry import request_sha256, IdempotencyClaim
+from huron.core.security.principal import Principal
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.security.errors import Forbidden
+from huron.core.catalog.layers import LayerWriteForbidden
+from huron.core.raw.manifest import ManifestEntry
+from huron.core.metastore import (
     InMemoryHierarchyStore,
     InMemoryRbacStore,
     SystemClock,
 )
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import ScopeType, Visibility
+from huron.core.rawstore import PosixRawStore
+from huron.core.security.rules import ScopeType, Visibility
 from tests.catalog_creation_support import creation_for
+from tests.repository_fixture import RepositoryFixture
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from huron.pkg.catalog.records import Dataset, Organization, Project
+    from huron.core.catalog.types import Dataset, Organization, Project
 
 pytestmark = pytest.mark.unit
 
 
-def _repository(tmp_path: Path) -> HierarchyRepository:
-    """A real, filesystem-backed HierarchyRepository for the guard tests."""
-    return HierarchyRepository(
+def _repository(tmp_path: Path) -> RepositoryFixture:
+    """A real, filesystem-backed storage bundle for the guard tests."""
+    return RepositoryFixture(
         PosixRawStore(str(tmp_path / "raw")),
         InMemoryHierarchyStore(),
-        rbac_store=InMemoryRbacStore(),
+        InMemoryRbacStore(),
     )
 
 
-def _stack(tmp_path: Path) -> tuple[HierarchyRepository, IngestService]:
+def _stack(tmp_path: Path) -> tuple[RepositoryFixture, IngestService]:
     """A repository and an ingest service sharing one raw store and hierarchy store."""
     hierarchy = InMemoryHierarchyStore()
     raw_store = PosixRawStore(str(tmp_path / "raw"))
-    repository = HierarchyRepository(raw_store, hierarchy, rbac_store=InMemoryRbacStore())
+    repository = RepositoryFixture(raw_store, hierarchy, InMemoryRbacStore())
     return repository, IngestService(raw_store, hierarchy, clock=SystemClock())
 
 
@@ -76,7 +75,7 @@ def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
     )
 
 
-async def _organization(repository: HierarchyRepository) -> Organization:
+async def _organization(repository: RepositoryFixture) -> Organization:
     """An organization named ``astro``, created fresh in the given repository."""
     return await (await creation_for(repository)).create_organization(
         slug="astro",
@@ -86,7 +85,7 @@ async def _organization(repository: HierarchyRepository) -> Organization:
     )
 
 
-async def _project(repository: HierarchyRepository, organization_id: UUID) -> Project:
+async def _project(repository: RepositoryFixture, organization_id: UUID) -> Project:
     """A project named ``sims``, created under the given organization."""
     return await (await creation_for(repository)).create_project(
         organization_id,
@@ -98,7 +97,7 @@ async def _project(repository: HierarchyRepository, organization_id: UUID) -> Pr
     )
 
 
-async def _dataset(repository: HierarchyRepository, project_id: UUID) -> Dataset:
+async def _dataset(repository: RepositoryFixture, project_id: UUID) -> Dataset:
     """A dataset named ``run-0001``, created under the given project."""
     return await (await creation_for(repository)).create_dataset(
         project_id,
@@ -129,7 +128,7 @@ async def test_require_system_returns_the_principal_when_a_binding_grants_the_ca
 ) -> None:
     """``require_system`` returns the principal when a SYSTEM-scope binding grants it."""
     repository = _repository(tmp_path)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="platform_owner",
         scope_type=ScopeType.SYSTEM,
@@ -162,7 +161,7 @@ async def test_require_organization_returns_the_principal_when_scoped_to_that_or
     """``require_organization`` returns the principal when bound at that exact organization."""
     repository = _repository(tmp_path)
     organization = await _organization(repository)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="organization_admin",
         scope_type=ScopeType.ORGANIZATION,
@@ -217,7 +216,7 @@ async def test_require_organization_raises_not_found_for_an_organization_the_cal
     """
     repository = _repository(tmp_path)
     organization = await _organization(repository)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="organization_admin",
         scope_type=ScopeType.ORGANIZATION,
@@ -247,7 +246,7 @@ async def test_require_project_returns_the_principal_when_scoped_to_that_project
     repository = _repository(tmp_path)
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="developer",
         scope_type=ScopeType.PROJECT,
@@ -284,7 +283,7 @@ async def test_require_project_refuses_a_binding_scoped_to_a_different_project(
         data_classification="open",
         claim=_claim("project", str(organization.id), "other", "Other", "", "open", key="proj-2"),
     )
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="developer",
         scope_type=ScopeType.PROJECT,
@@ -327,7 +326,7 @@ async def test_require_project_raises_not_found_for_a_project_the_caller_cannot_
     repository = _repository(tmp_path)
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="developer",
         scope_type=ScopeType.PROJECT,
@@ -358,7 +357,7 @@ async def test_require_dataset_returns_the_principal_when_scoped_to_that_dataset
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
     dataset = await _dataset(repository, project.id)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="developer",
         scope_type=ScopeType.DATASET,
@@ -415,7 +414,7 @@ async def test_require_dataset_raises_not_found_for_a_dataset_the_caller_cannot_
         description="",
         claim=_claim("organization", "biolab", "Biolab", "", key="org-2"),
     )
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="organization_admin",
         scope_type=ScopeType.ORGANIZATION,
@@ -446,7 +445,7 @@ async def test_dataset_raw_writer_returns_the_principal_when_both_stages_pass(
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
     dataset = await _dataset(repository, project.id)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="developer",
         scope_type=ScopeType.DATASET,
@@ -544,7 +543,7 @@ async def test_project_intake_returns_the_principal_when_every_stage_passes(tmp_
     repository = _repository(tmp_path)
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="developer",
         scope_type=ScopeType.PROJECT,
@@ -648,7 +647,7 @@ async def test_session_overseer_lets_the_owner_and_a_project_admin_read(tmp_path
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
     dataset = await _dataset(repository, project.id)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:carl",
         role_code="project_admin",
         scope_type=ScopeType.PROJECT,
@@ -686,7 +685,7 @@ async def test_session_overseer_refuses_a_non_owner_without_project_update(tmp_p
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
     dataset = await _dataset(repository, project.id)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:carl",
         role_code="developer",
         scope_type=ScopeType.PROJECT,
@@ -729,7 +728,7 @@ async def test_session_owner_refuses_a_project_admin_who_is_not_the_owner(tmp_pa
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
     dataset = await _dataset(repository, project.id)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:carl",
         role_code="project_admin",
         scope_type=ScopeType.PROJECT,
@@ -756,7 +755,7 @@ async def test_session_owner_returns_the_drive_for_the_owner(tmp_path: Path) -> 
     organization = await _organization(repository)
     project = await _project(repository, organization.id)
     dataset = await _dataset(repository, project.id)
-    await repository.grant_role(
+    await repository.rbac.grant_role(
         principal="user:alice",
         role_code="developer",
         scope_type=ScopeType.PROJECT,

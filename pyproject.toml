@@ -99,15 +99,18 @@ convention = "google"
 # app.py defines the two health probes the same way.
 "src/huron/applications/api/app.py" = ["D301"]
 # Stable public error names intentionally mirror their API codes.
-"src/huron/pkg/auth/errors.py" = ["N818"]
-"src/huron/pkg/auth/password.py" = ["N818"]
-"src/huron/pkg/auth/principals.py" = ["N818"]
-"src/huron/pkg/auth/sessions.py" = ["N818"]
-"src/huron/pkg/catalog/errors.py" = ["N818"]
-"src/huron/pkg/catalog/layers.py" = ["N818"]
+"src/huron/core/security/authentication_errors.py" = ["N818"]
+"src/huron/core/security/password.py" = ["N818"]
+"src/huron/core/security/principals.py" = ["N818"]
+"src/huron/core/security/sessions.py" = ["N818"]
+"src/huron/core/foundation/errors.py" = ["N818"]
+"src/huron/core/catalog/errors.py" = ["N818"]
+"src/huron/core/raw/errors.py" = ["N818"]
+"src/huron/core/catalog/layers.py" = ["N818"]
 # The role/rbac error names intentionally mirror their stable API codes.
-"src/huron/pkg/rbac/roles.py" = ["N818"]
-"src/huron/pkg/catalog/failures.py" = ["N818"]
+"src/huron/core/security/roles.py" = ["N818"]
+"src/huron/core/security/errors.py" = ["N818"]
+"src/huron/applications/api/errors.py" = ["N818"]
 # FastAPI resolves annotations at runtime; type-checking-only imports break
 # dependency injection in these modules.
 "src/huron/applications/api/**" = ["TC001", "TC002", "TC003"]
@@ -161,19 +164,84 @@ addopts = "-m unit --strict-markers"
 [tool.importlinter]
 root_package = "huron"
 include_external_packages = true
+exclude_type_checking_imports = false
 
 # Dependencies point inward; application composition roots also import adapters.
 [[tool.importlinter.contracts]]
-name = "applications depend on core then packages then schema"
+name = "applications depend on domain-owned core then schema"
 type = "layers"
-layers = ["huron.applications", "huron.core", "huron.pkg", "huron.schema"]
+layers = ["huron.applications", "huron.core", "huron.schema"]
 
-# Domain packages and POSIX storage remain independent; metastore consumes domain types.
+# Classification is exhaustive; direct edges below define the domain-owned DAG.
 [[tool.importlinter.contracts]]
-name = "Packages are independent of one another"
-type = "independence"
-modules = [
-    "huron.pkg.auth", "huron.pkg.catalog", "huron.pkg.rawstore", "huron.pkg.rbac",
+name = "every core sibling has an explicit owner"
+type = "layers"
+containers = ["huron.core"]
+layers = ["foundation:security:catalog:raw:integrity:metastore:rawstore"]
+exhaustive = true
+
+[[tool.importlinter.contracts]]
+name = "core owners form an acyclic graph including type-only imports"
+type = "acyclic_siblings"
+ancestors = ["huron.core"]
+depth = 0
+
+[[tool.importlinter.contracts]]
+name = "foundation has no Huron dependencies"
+type = "forbidden"
+source_modules = ["huron.core.foundation"]
+forbidden_modules = [
+    "huron.core.security", "huron.core.catalog", "huron.core.raw", "huron.core.integrity",
+    "huron.core.metastore", "huron.core.rawstore", "huron.schema", "huron.applications",
+]
+
+[[tool.importlinter.contracts]]
+name = "security uses foundation only"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["huron.core.security"]
+forbidden_modules = [
+    "huron.core.catalog", "huron.core.raw", "huron.core.integrity", "huron.core.metastore",
+    "huron.core.rawstore", "huron.schema",
+]
+
+[[tool.importlinter.contracts]]
+name = "catalog uses security and foundation only"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["huron.core.catalog"]
+forbidden_modules = [
+    "huron.core.raw", "huron.core.integrity", "huron.core.metastore", "huron.core.rawstore", "huron.schema",
+]
+
+[[tool.importlinter.contracts]]
+name = "raw uses catalog security foundation and schema only"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["huron.core.raw"]
+forbidden_modules = ["huron.core.integrity", "huron.core.metastore", "huron.core.rawstore"]
+
+[[tool.importlinter.contracts]]
+name = "integrity uses catalog raw foundation and schema only"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["huron.core.integrity"]
+forbidden_modules = ["huron.core.security", "huron.core.metastore", "huron.core.rawstore"]
+
+[[tool.importlinter.contracts]]
+name = "metastore uses catalog raw security and foundation only"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["huron.core.metastore"]
+forbidden_modules = ["huron.core.integrity", "huron.core.rawstore", "huron.schema"]
+
+[[tool.importlinter.contracts]]
+name = "rawstore uses schema only"
+type = "forbidden"
+source_modules = ["huron.core.rawstore"]
+forbidden_modules = [
+    "huron.core.foundation", "huron.core.security", "huron.core.catalog", "huron.core.raw",
+    "huron.core.integrity", "huron.core.metastore",
 ]
 
 # Entry points share core workflows, never import one another.
@@ -185,14 +253,14 @@ modules = [
     "huron.applications.lakectl",
 ]
 
-# The two decision-making packages hold rules, not I/O. Web frameworks, storage
-# SDKs and database drivers reach them only as an injected Protocol. Data-modeling
-# and validation libraries are deliberately absent from this list: huron.schema is
-# definitionally built on them, and catalog validates against it.
+# Domain code uses injected capabilities; Security alone performs credential HTTP.
 [[tool.importlinter.contracts]]
-name = "catalog and rbac are framework-free"
+name = "domains exclude frameworks and infrastructure libraries even indirectly"
 type = "forbidden"
-source_modules = ["huron.pkg.catalog", "huron.pkg.rbac"]
+source_modules = [
+    "huron.core.foundation", "huron.core.security", "huron.core.catalog", "huron.core.raw",
+    "huron.core.integrity",
+]
 forbidden_modules = [
     "fastapi",
     "uvicorn",
@@ -206,22 +274,21 @@ forbidden_modules = [
     "lancedb",
     "icechunk",
     "zarr",
-    "httpx",
     "structlog",
     "prometheus_client",
+    "ray",
 ]
 
-# AuthN sits in the same "no web framework, no DB driver" tier as catalog and
-# rbac, but it is deliberately not folded into the contract above: it makes
-# real outbound HTTP calls to an IdP's token/JWKS endpoints and hashes
-# credentials, so httpx, pyjwt, and argon2-cffi are allowed here on purpose.
+# Security performs credential HTTP. Its consumers use that public capability;
+# only Security imports the HTTP client itself.
 [[tool.importlinter.contracts]]
-name = "auth is web-framework-free"
+name = "only security performs credential HTTP directly"
 type = "forbidden"
-source_modules = ["huron.pkg.auth"]
-forbidden_modules = [
-    "fastapi", "starlette", "uvicorn", "sqlalchemy", "asyncpg", "alembic",
+allow_indirect_imports = true
+source_modules = [
+    "huron.core.foundation", "huron.core.catalog", "huron.core.raw", "huron.core.integrity",
 ]
+forbidden_modules = ["httpx"]
 
 # The authorization package is entered through its public surface. Its five
 # submodules are one unit with one contract; a route that reaches past
@@ -236,20 +303,37 @@ forbidden_modules = ["huron.applications.api.authorization.*"]
 
 # Concrete persistence adapters depend on domain types, never the reverse.
 [[tool.importlinter.contracts]]
-name = "domain packages do not depend on persistence adapters"
+name = "domains never depend on adapters even indirectly"
 type = "forbidden"
-source_modules = ["huron.pkg.catalog", "huron.pkg.rbac", "huron.pkg.auth", "huron.pkg.rawstore"]
-forbidden_modules = ["huron.pkg.metastore"]
+source_modules = [
+    "huron.core.foundation", "huron.core.security", "huron.core.catalog", "huron.core.raw",
+    "huron.core.integrity",
+]
+forbidden_modules = ["huron.core.metastore", "huron.core.rawstore"]
 
 [[tool.importlinter.contracts]]
-name = "core uses ports rather than concrete infrastructure"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["huron.core"]
-forbidden_modules = [
-    "huron.pkg.metastore", "huron.pkg.rawstore", "fastapi", "starlette",
-    "uvicorn", "asyncpg", "sqlalchemy", "ray", "boto3", "aiobotocore",
-]
+name = "catalog implementations are private to their owner"
+type = "protected"
+protected_modules = ["huron.core.catalog._impl"]
+allowed_importers = ["huron.core.catalog"]
+
+[[tool.importlinter.contracts]]
+name = "security implementations are private to their owner"
+type = "protected"
+protected_modules = ["huron.core.security._impl"]
+allowed_importers = ["huron.core.security"]
+
+[[tool.importlinter.contracts]]
+name = "raw implementations are private to their owner"
+type = "protected"
+protected_modules = ["huron.core.raw._impl"]
+allowed_importers = ["huron.core.raw"]
+
+[[tool.importlinter.contracts]]
+name = "integrity implementations are private to their owner"
+type = "protected"
+protected_modules = ["huron.core.integrity._impl"]
+allowed_importers = ["huron.core.integrity"]
 
 [tool.ty.src]
 include = ["src"]
@@ -258,12 +342,5 @@ include = ["src"]
 # Ratchet floor: the measured value at the last raise, rounded down. Never
 # lower it; raise it as coverage climbs. New or touched files are covered in
 # full.
-fail_under = 95.93
+fail_under = 96.01
 precision = 2
-
-[[tool.importlinter.contracts]]
-name = "API endpoints cannot call internal workflow implementations"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["huron.applications.api.routes.**"]
-forbidden_modules = ["huron.core._catalog", "huron.core._ingest", "huron.core._revision_reader"]

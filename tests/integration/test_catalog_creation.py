@@ -14,18 +14,17 @@ import asyncpg
 import pytest
 from asyncer import asyncify
 
-from huron.core.access import AccessPolicy
-from huron.core.catalog_creation import CatalogCreation
-from huron.core.catalog_documents import GenerationDocuments
-from huron.core.idempotency import request_sha256
-from huron.pkg.auth import Principal
-from huron.pkg.catalog.errors import IdempotencyKeyReused
-from huron.pkg.catalog.paths import organization_dir, project_dir
-from huron.pkg.catalog.persistence import IdempotencyClaim
-from huron.pkg.catalog.records import Dataset
-from huron.pkg.metastore import InMemoryRbacStore, PostgresHierarchyStore
-from huron.pkg.rawstore import PosixRawStore
-from huron.pkg.rbac import Classification, RoleBindingAuthorizer, ScopeType, Visibility
+from huron.core.security import AccessPolicy
+from huron.core.catalog import CatalogCreation
+from huron.core.catalog._impl.documents import GenerationDocuments
+from huron.core.foundation.retry import request_sha256, IdempotencyClaim
+from huron.core.security.principal import Principal
+from huron.core.foundation.errors import IdempotencyKeyReused
+from huron.core.catalog.paths import organization_dir, project_dir
+from huron.core.catalog.types import Dataset
+from huron.core.metastore import InMemoryRbacStore, PostgresHierarchyStore
+from huron.core.rawstore import PosixRawStore
+from huron.core.security.rules import Classification, RoleBindingAuthorizer, ScopeType, Visibility
 from tests.hierarchy_contract import _organization, _project
 
 pytestmark = pytest.mark.integration

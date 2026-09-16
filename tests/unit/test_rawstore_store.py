@@ -21,9 +21,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.pkg.rawstore import PartLengthMismatchError, PosixRawStore
-from huron.pkg.rawstore.commit import CrossDeviceCommitError
-from huron.pkg.rawstore.store import _safe_relative
+from huron.core.rawstore import PartLengthMismatchError, PosixRawStore
+from huron.core.rawstore.commit import CrossDeviceCommitError
+from huron.core.rawstore.store import _safe_relative
 from tests.unit.support import crash_on, fsync_log
 
 if TYPE_CHECKING:

@@ -7,8 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from huron.pkg.catalog.manifest import canonical_bytes
-from huron.pkg.rbac import ScopeType
+from huron.core.foundation.canonical import canonical_bytes
+from huron.core.security.rules import ScopeType
 
 MAX_POLICY_SPEC_BYTES = 1_048_576
 

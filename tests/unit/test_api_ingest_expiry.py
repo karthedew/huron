@@ -14,13 +14,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.core._ingest import SWEEP_ACTOR, ExpiryReport, IngestService
-from huron.pkg.catalog import FileState, IngestFile, IngestSession, IngestState, UploadAction
-from huron.pkg.catalog.errors import DatasetLocked
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.catalog.ingest import LEASE_TTL
-from huron.pkg.metastore.hierarchy import InMemoryHierarchyStore
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.raw._impl.ingest import SWEEP_ACTOR, IngestService
+from huron.core.raw.types import ExpiryReport
+from huron.core.raw.ingest import FileState, IngestFile, IngestSession, IngestState, UploadAction
+from huron.core.raw.errors import DatasetLocked
+from huron.core.foundation.identifiers import uuid7
+from huron.core.raw.ingest import LEASE_TTL
+from huron.core.metastore.hierarchy import InMemoryHierarchyStore
+from huron.core.rawstore import PosixRawStore
 from tests.hierarchy_contract import seed_hierarchy
 from tests.unit.support import FakeClock
 
@@ -28,8 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from uuid import UUID
 
-    from huron.core.ports import HierarchyWriter
-    from huron.pkg.catalog.ports import Clock
+    from huron.core.raw.ports import HierarchyWriter
+    from huron.core.foundation.clock import Clock
 
 pytestmark = pytest.mark.unit
 

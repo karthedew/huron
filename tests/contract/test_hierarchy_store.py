@@ -31,20 +31,21 @@ from alembic import command
 from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
-from huron.core.ports import HierarchyStore, HierarchyWriter
-from huron.pkg.catalog.errors import DatasetLocked, ResourceNotFound
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.catalog.ingest import LEASE_TTL
-from huron.pkg.catalog.layers import Layer
-from huron.pkg.catalog.lifecycle import DatasetLifecycle
-from huron.pkg.catalog.persistence import PlatformRoot
-from huron.pkg.catalog.records import Dataset, Organization, Project, Release
-from huron.pkg.metastore import (
-    IdempotencyClaim,
+from huron.applications.api.capabilities import HierarchyStore
+from huron.applications.api.capabilities import Mutation as HierarchyWriter
+from huron.core.raw.errors import DatasetLocked
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.foundation.identifiers import uuid7
+from huron.core.raw.ingest import LEASE_TTL
+from huron.core.catalog.layers import Layer
+from huron.core.catalog.lifecycle import DatasetLifecycle
+from huron.core.catalog.types import PlatformRoot, Dataset, Organization, Project
+from huron.core.raw.types import Release
+from huron.core.foundation.retry import IdempotencyClaim, Replay
+from huron.core.security.rules import Visibility
+from huron.core.metastore import (
     InMemoryHierarchyStore,
     PostgresHierarchyStore,
-    Replay,
-    Visibility,
 )
 from tests.hierarchy_contract import (
     VisibleIds,
@@ -68,13 +69,14 @@ from tests.hierarchy_contract import (
     seed_hierarchy,
 )
 from tests.unit.support import FakeClock
+from tests.security_fact_contract import security_fact_projection_contract
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from uuid import UUID
 
-    from huron.pkg.catalog.ingest import IngestSession
-    from huron.pkg.catalog.models import RevisionRecord
+    from huron.core.raw.ingest import IngestSession
+    from huron.core.raw.types import RevisionRecord
 
 pytestmark = pytest.mark.contract
 
@@ -198,6 +200,7 @@ async def _reset_hierarchy_tables(pool: asyncpg.Pool) -> None:
 
 
 _SCENARIOS = (
+    security_fact_projection_contract,
     scenario_1_write_invisible_until_commit,
     scenario_2_uniqueness,
     scenario_3_optimistic_concurrency,

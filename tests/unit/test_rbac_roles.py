@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from huron.pkg.rbac import Decision, Principal, Scope, ScopeType, decide
-from huron.pkg.rbac.roles import (
+from huron.core.security.rules import Decision, Principal, Scope, ScopeType, decide
+from huron.core.security.roles import (
     CAPABILITIES,
     ROLES,
     SERVICE_ACCOUNT_CAPABILITIES,

@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.core import access as decisions
+from huron.core.security._impl import access as decisions
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import ModuleType
 
-    from huron.pkg.rbac import Binding, Decision, Principal, Scope
+    from huron.core.security.rules import Binding, Decision, Principal, Scope
 
 pytestmark = pytest.mark.unit
 

@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import asyncpg
@@ -14,7 +15,10 @@ import httpx
 from .exclusion import ControllerClient
 from .server import serve
 from .settings import ControllerSettings, MaintenanceSettings
-from .wiring import prepare, validate
+from .wiring import deployment
+
+if TYPE_CHECKING:
+    from huron.core.integrity.models import ProtocolTransition
 
 
 def main() -> None:
@@ -49,18 +53,23 @@ def main() -> None:
             serve(ControllerSettings.load(arguments.config))
         elif arguments.command == "restart":
             print(asyncio.run(ControllerClient(arguments.socket).restart()))
-        elif arguments.prepare:
-            settings = MaintenanceSettings.load(arguments.config)
-            print(asyncio.run(prepare(settings, arguments.run_id)).canonical.decode())
         else:
             settings = MaintenanceSettings.load(arguments.config)
-            print(asyncio.run(validate(settings, arguments.sequence)).canonical.decode())
+            target = arguments.run_id if arguments.prepare else arguments.sequence
+            print(asyncio.run(_protocol(settings, target)).canonical.decode())
     except (ValueError, OSError, ExceptionGroup, asyncpg.PostgresError, httpx.HTTPError):
         print(
             "lakectl refused the operation; application activation was not performed",
             file=sys.stderr,
         )
         raise SystemExit(1) from None
+
+
+async def _protocol(settings: MaintenanceSettings, target: UUID | int) -> ProtocolTransition:
+    async with deployment(settings) as service:
+        if isinstance(target, UUID):
+            return await service.prepare(target)
+        return await service.validate_sequence(target)
 
 
 def _sequence(text: str) -> int:

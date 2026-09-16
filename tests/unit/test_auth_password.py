@@ -1,4 +1,4 @@
-"""Argon2id password hashing, proved against huron.pkg.auth.password's own hasher and dummy hash.
+"""Argon2id password hashing, proved against Security's own hasher and dummy hash.
 
 Round-trip verification, the minimum-length policy, and the
 constant-shape dummy-hash path used for unknown principals are all
@@ -13,7 +13,8 @@ from uuid import uuid4
 
 import pytest
 
-from huron.pkg.auth import password
+from huron.core.security import password
+from huron.core.metastore import MemoryCredentialStore
 
 pytestmark = pytest.mark.unit
 
@@ -108,7 +109,7 @@ def test_make_credential_stamps_the_given_time_and_author() -> None:
 
 async def test_memory_credential_store_round_trips_by_principal_id() -> None:
     """``MemoryCredentialStore`` returns None before upsert and the stored record after."""
-    store = password.MemoryCredentialStore()
+    store = MemoryCredentialStore()
     principal_id = uuid4()
     record = password.make_credential(principal_id, "correct horse battery", updated_by="admin")
 

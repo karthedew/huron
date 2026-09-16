@@ -20,13 +20,13 @@ from fastapi.testclient import TestClient
 
 import huron.applications.api as api_package
 import huron.applications.api.app as app_module
-import huron.core.identity as identity_module
+import huron.core.security._impl.identity as identity_module
 from huron.applications.api.app import create_app
-from huron.applications.api.routes.auth.endpoints import login
+import huron.core.security._impl.password_authentication as login
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.pkg.auth import make_credential as real_make_credential
-from huron.pkg.auth import verify_password as real_verify_password
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.security.password import make_credential as real_make_credential
+from huron.core.security.password import verify_password as real_verify_password
+from huron.core.rawstore import PosixRawStore
 from tests.ingest_client import IngestClient, manifest_file
 from tests.unit.support import memory_stores
 
@@ -37,8 +37,8 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from huron.core._catalog import HierarchyRepository
-    from huron.pkg.auth import CredentialRecord
+    from huron.core.security.password import CredentialRecord
+    from huron.core.raw.ports import RawStore
 
 pytestmark = pytest.mark.unit
 
@@ -242,9 +242,9 @@ def test_readyz_s_raw_store_stat_executes_off_the_event_loop_thread(tmp_path: Pa
     ran_on_the_event_loop: list[bool] = []
     real_raw_store_failure = app_module._raw_store_failure
 
-    def _tracking_raw_store_failure(repository: HierarchyRepository) -> str | None:
+    def _tracking_raw_store_failure(raw_store: RawStore) -> str | None:
         ran_on_the_event_loop.append(_event_loop_is_running())
-        return real_raw_store_failure(repository)
+        return real_raw_store_failure(raw_store)
 
     with (
         patch.object(app_module, "_raw_store_failure", _tracking_raw_store_failure),

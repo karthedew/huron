@@ -88,6 +88,12 @@ see the <a href="roadmap.html#p2-verified">recorded acceptance evidence</a>. Thi
 specifies later recovery, retention and governance capabilities; their status is tracked separately
 in the roadmap. The scientist SDK and Ray/Zarr workflows remain planned.</p>
 
+<p class="note"><strong>Explore the current implementation:</strong>
+<a href="rawstore-uml.html">Rawstore UML class atlas</a> — searchable, zoomable diagrams of the
+POSIX <code>RawStore</code> adapter, staging and completion, commit publication, control
+documents, inspection and maintenance, with implemented behavior distinguished from the
+recovery and retention capabilities this page still specifies.</p>
+
 <h2 id="why-nfs">1. Why NFS for raw</h2>
 
 <p>Raw's job is to be the evidence tier: byte-exact, immutable, navigable by a human with
@@ -193,9 +199,11 @@ dataset's <code>raw/</code> prefix are on the same filesystem, which is what mak
 <code>rename(2)</code> atomic. Where classification demands physical separation, a security domain
 becomes <em>its own root</em> (<code>/data-restricted/</code>) with its own staging directory;
 nothing ever links or renames across roots.</li>
-<li><code>pkg/catalog/paths.py</code> is the single source of path construction <em>and
-parsing</em>; the reconciler and sweeper recover
-<code>(org, project, dataset, revision_number, revision_id)</code> from any prefix.</li>
+<li><a href="../src/huron/core/raw/paths.py"><code>core.raw.paths</code></a> owns staging,
+revision and release path construction and parsing; <a href="../src/huron/core/catalog/paths.py"><code>core.catalog.paths</code></a>
+owns hierarchy, generation and cross-layer layout, and <a href="../src/huron/core/foundation/names.py"><code>core.foundation.names</code></a>
+owns lexical validation. Revision parsing recovers authoritative path identity for Integrity;
+general reconciler and sweeper workflows remain planned.</li>
 </ul>
 
 <h2 id="contracts">3. Core contracts</h2>
@@ -249,14 +257,18 @@ audited tombstone), not repointed.</p>
 <code>data_classification</code>, which requires a separate permission and emits its own audit
 event). IDs, numbers, creators, timestamps, and the manifest digest can never be amended.
 Effective metadata = base folded with amendments in sequence; the fold is implemented once, in
-<code>pkg/catalog</code>. Contributors who want different metadata commit a new revision.</p>
+<a href="../src/huron/core/raw/amendments.py"><code>core.raw.amendments</code></a>.
+These pure validation/fold rules exist; amendment publication remains planned.
+Contributors who want different metadata commit a new revision.</p>
 
 <h3>Limits and concurrency</h3>
 <p>Defaults: 10 GiB/file, 10,000 files/revision, 1 TiB/revision (oversized single artifacts are
 pointed at the Zarr/Icechunk path in the error detail). <code>Idempotency-Key</code> is required on
 every mutating POST and replayed requests return the stored result; <code>If-Match</code> ETags
-guard every descriptive-document mutation; no database transaction is ever held across file I/O or
-hashing.</p>
+guard every descriptive-document mutation. Raw part transfer, hashing and envelope publication
+run outside the short database transactions. Catalog generation writes and Raw release-tag writes
+are ordered filesystem operations inside their database transaction; a database rollback cannot
+undo an already-durable file. See the <a href="core-map.html#catalog">current transaction map</a>.</p>
 
 <h2 id="ingest">4. Ingest session and locking</h2>
 
@@ -362,8 +374,12 @@ deploy-time error, not a runtime surprise.</li>
 <h2 id="flows">6. Control flows</h2>
 
 <p>The five flows below are the Raw layer's write and read paths as the code executes them today
-(<code>core/_ingest.py</code>, <code>core/catalog_creation.py</code>, <code>core/_catalog.py</code>,
-<code>core/_revision_reader.py</code>). Each step is tagged with the system it touches:
+(<a href="../src/huron/core/raw/_impl/ingest.py">Raw ingestion</a>,
+<a href="../src/huron/core/catalog/_impl/creation.py">Catalog creation</a>,
+<a href="../src/huron/core/raw/_impl/releases.py">Raw releases</a>,
+<a href="../src/huron/core/raw/_impl/reader.py">Raw revision reads</a>; public construction is through
+<a href="../src/huron/core/raw/runtime.py"><code>RawRuntime</code></a> and each domain root).
+Each step is tagged with the system it touches:
 <code>[PG]</code> PostgreSQL, <code>[NFS]</code> the raw filesystem, <code>[core]</code> the
 actor-bound authorization that runs before any store is reached. A <code>[PG] ONE TRANSACTION</code>
 block is one <code>async with hierarchy.transaction()</code>; nothing outside such a block holds a

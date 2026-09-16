@@ -21,20 +21,20 @@ tables:
    store, proving a repeat login for the same ``idp_subject`` updates in
    place rather than creating a second row, and that a first-ever login
    whose subject collides with an existing password user's username is
-   refused as :class:`~huron.pkg.auth.PrincipalSubjectExists` rather than
+   refused as :class:`~huron.core.security.principals.PrincipalSubjectExists` rather than
    auto-linked;
 4. ``create_user``, ``disable``, and ``get_by_id`` - the admin-provisioning
    surface - are proven against the real ``principals.subject`` UNIQUE
    constraint: a subject already claimed by a password user, an OIDC login,
    or a service account must all be refused as
-   :class:`~huron.pkg.auth.PrincipalSubjectExists`, the same way regardless
+   :class:`~huron.core.security.principals.PrincipalSubjectExists`, the same way regardless
    of what kind of principal is already holding the name;
 5. ``local_credentials_kind_guard`` raises the same message whether
    ``principal_id`` names no principal at all or an existing service
    account, and ``PostgresCredentialStore.upsert`` must tell the two apart:
-   an unknown id stays :class:`~huron.pkg.catalog.errors.ResourceNotFound`,
+   an unknown id stays :class:`~huron.core.foundation.errors.ResourceNotFound`,
    a real service account becomes
-   :class:`~huron.pkg.catalog.failures.PrincipalKindMismatch`.
+   :class:`~huron.core.security.errors.PrincipalKindMismatch`.
 
 Requires Docker (testcontainers spins up a real PostgreSQL). Checked against
 a database migrated with the project's own Alembic revisions.
@@ -54,15 +54,15 @@ from alembic import command
 from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
-from huron.pkg.auth import ApiKeyRecord
-from huron.pkg.auth.oidc import OidcUser
-from huron.pkg.auth.password import CredentialRecord
-from huron.pkg.auth.principals import PrincipalSubjectExists
-from huron.pkg.auth.sessions import SessionRecord
-from huron.pkg.catalog.errors import ResourceNotFound
-from huron.pkg.catalog.failures import PrincipalKindMismatch
-from huron.pkg.catalog.ids import uuid7
-from huron.pkg.metastore import (
+from huron.core.security.apikeys import ApiKeyRecord
+from huron.core.security.oidc import OidcUser
+from huron.core.security.password import CredentialRecord
+from huron.core.security.principals import PrincipalSubjectExists
+from huron.core.security.sessions import SessionRecord
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.security.errors import PrincipalKindMismatch
+from huron.core.foundation.identifiers import uuid7
+from huron.core.metastore import (
     PostgresApiKeyStore,
     PostgresCredentialStore,
     PostgresPrincipalStore,

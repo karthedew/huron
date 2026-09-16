@@ -1,0 +1,120 @@
+"""The ``local_credentials`` table behind ``pkg.auth.CredentialStore``.
+
+The Postgres implementation of the port ``huron.core.security.password``
+declares; ``MemoryCredentialStore`` lives there beside it. The table holds
+at most one argon2id hash per principal, and the
+``local_credentials_kind_guard`` trigger keeps that principal a user, so a
+password can never be attached to a service account by any writer.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import asyncpg
+
+from huron.core.foundation.errors import ResourceNotFound
+from huron.core.security.errors import PrincipalKindMismatch
+
+from .rows import credential_record
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from huron.core.security.password import CredentialRecord
+
+
+class PostgresCredentialStore:
+    """The ``local_credentials`` table behind ``pkg.auth.CredentialStore``.
+
+    One row per principal, keyed by ``principal_id``, holding the hash the
+    ``password`` module produced - the store never sees a bare password.
+    Shares one ``asyncpg`` pool with the other Postgres stores.
+    """
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        """Bind the store to a connection pool.
+
+        Args:
+            pool: The pool every statement acquires from; the store never
+                closes it, its owner does.
+        """
+        self._pool = pool
+
+    async def get(self, principal_id: UUID) -> CredentialRecord | None:
+        """Return the principal's password credential, if one is set.
+
+        Args:
+            principal_id: The user principal to look up.
+
+        Returns:
+            The stored hash and its provenance, or None when the principal
+            has no password - which ``verify_password`` treats exactly like
+            a wrong one.
+        """
+        row = await self._pool.fetchrow(
+            """
+            SELECT principal_id, password_hash, updated_at, updated_by
+            FROM local_credentials WHERE principal_id = $1
+            """,
+            principal_id,
+        )
+        if row is None:
+            return None
+        return credential_record(row)
+
+    async def upsert(self, record: CredentialRecord) -> None:
+        """Set or replace the principal's password in one statement.
+
+        ``INSERT ... ON CONFLICT (principal_id) DO UPDATE`` makes first
+        password and reset the same operation: the hash, ``updated_at`` and
+        ``updated_by`` are replaced together, and nothing else about the
+        row survives a replacement.
+
+        ``local_credentials_kind_guard`` fires BEFORE INSERT OR UPDATE and
+        looks the principal up itself, so an unknown ``principal_id`` is
+        reported by that trigger's RAISE, not a foreign-key violation - the
+        FK constraint never gets a chance to run. The trigger raises the
+        same generic message for a principal that exists but is a service
+        account, so on failure this store repeats the trigger's own lookup
+        to tell the two cases apart. The user routes already check the
+        principal's kind before calling ``upsert``, so through the API a
+        service-account id is refused there first, earlier and with a
+        cheaper query; this fallback lookup only matters for a caller that
+        skips that check.
+
+        Args:
+            record: The credential to store, its hash already computed by
+                ``make_credential``.
+
+        Raises:
+            ResourceNotFound: If the guard trigger refused the row because
+                ``record.principal_id`` names no principal at all.
+            PrincipalKindMismatch: If ``record.principal_id`` names a real
+                principal that is not a user.
+        """
+        try:
+            await self._pool.execute(
+                """
+                INSERT INTO local_credentials (principal_id, password_hash, updated_at, updated_by)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (principal_id) DO UPDATE
+                    SET password_hash = EXCLUDED.password_hash,
+                        updated_at = EXCLUDED.updated_at,
+                        updated_by = EXCLUDED.updated_by
+                """,
+                record.principal_id,
+                record.password_hash,
+                record.updated_at,
+                record.updated_by,
+            )
+        except asyncpg.exceptions.RaiseError as exc:
+            # local_credentials_kind_guard raises the same message whether
+            # principal_id names no principal at all or a service account,
+            # so the two cases are told apart here rather than in SQL.
+            kind = await self._pool.fetchval(
+                "SELECT kind FROM principals WHERE id = $1", record.principal_id
+            )
+            if kind is None:
+                raise ResourceNotFound(f"principal does not exist: {record.principal_id}") from exc
+            raise PrincipalKindMismatch(f"principal is not a user: {record.principal_id}") from exc

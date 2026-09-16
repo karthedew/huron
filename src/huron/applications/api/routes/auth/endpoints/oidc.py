@@ -4,72 +4,22 @@
 sends it back to ``/callback`` with a code to exchange for a session.
 Pending-login state (state, nonce, PKCE verifier) rides in an HMAC-signed
 ``huron_login`` cookie between the two routes rather than server-side
-storage - see :class:`~huron.pkg.auth.LoginFlow`. The cookie is signed with
+storage - see :class:`~huron.core.security.oidc.LoginFlow`. The cookie is signed with
 the deployment's ``login_flow_secret``, and the callback lands the browser
 on the web application at ``web_app_url``.
 """
 
 from __future__ import annotations
 
-import hmac
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
 from huron.applications.api.authorization import login_flow_cookie, session_cookie
 from huron.applications.api.problems import problem_response
-from huron.applications.api.runtime import Principals, Runtime, Sessions, Settings
+from huron.applications.api.runtime import OidcAuth, Settings
 from huron.applications.api.settings import ApiSettings
-from huron.pkg.auth import (
-    AuthError,
-    LoginFlow,
-    OidcClient,
-    PrincipalSubjectExists,
-    code_challenge_s256,
-    create_session,
-)
-from huron.pkg.catalog.failures import OidcNotConfigured, UsernameTaken
 
 router = APIRouter(prefix="/oidc")
-
-
-async def _configured_oidc_client(runtime: Runtime) -> OidcClient:
-    """Return the identity-provider client the composition root wired, or refuse.
-
-    Both OIDC routes depend on this, so a deployment with no identity
-    provider answers them with the ``OIDC_NOT_CONFIGURED`` 404 rather than
-    reaching a handler that has no client to call.
-
-    Args:
-        runtime: The wiring the application lifespan published.
-
-    Returns:
-        The client for the configured identity provider.
-
-    Raises:
-        OidcNotConfigured: If the deployment has no identity provider.
-    """
-    if runtime.oidc_client is None:
-        raise OidcNotConfigured("no identity provider is configured")
-    return runtime.oidc_client
-
-
-_Client = Annotated[OidcClient, Depends(_configured_oidc_client)]
-
-
-def _flow_secret(settings: ApiSettings) -> bytes:
-    """Return the key that signs and verifies the pending-login cookie.
-
-    Args:
-        settings: The API settings; ``login_flow_secret`` is required outside
-            development, so a signed flow cannot be forged by anyone who
-            has not read the deployment's configuration.
-
-    Returns:
-        The secret as HMAC key bytes.
-    """
-    return settings.login_flow_secret.encode()
 
 
 def _safe_return_path(return_to: str) -> str:
@@ -111,7 +61,9 @@ def _app_url(settings: ApiSettings, return_to: str) -> str:
     response_class=RedirectResponse,
     responses={404: problem_response("no identity provider is configured")},
 )
-async def oidc_start(client: _Client, settings: Settings, return_to: str = "/") -> RedirectResponse:
+async def oidc_start(
+    authentication: OidcAuth, settings: Settings, return_to: str = "/"
+) -> RedirectResponse:
     """Begin a browser login with the configured identity provider.
 
     Needs no credential. Answers 302 to the provider's authorization
@@ -123,7 +75,7 @@ async def oidc_start(client: _Client, settings: Settings, return_to: str = "/") 
     identity provider.
     \f
     Args:
-        client: The client for the configured identity provider.
+        authentication: The reusable OIDC login operation.
         settings: The wired API settings; supplies the flow-signing secret
             and the cookie attributes.
         return_to: The caller's requested landing path, sanitized by
@@ -132,14 +84,9 @@ async def oidc_start(client: _Client, settings: Settings, return_to: str = "/") 
     Returns:
         The redirect to the provider, carrying the login-flow cookie.
     """
-    flow = LoginFlow.new(return_to=_safe_return_path(return_to))
-    url = client.authorization_url(
-        state=flow.state,
-        nonce=flow.nonce,
-        code_challenge=code_challenge_s256(flow.code_verifier),
-    )
-    response = RedirectResponse(url, status_code=302)
-    login_flow_cookie(settings).issue(response, flow.encode(_flow_secret(settings)))
+    started = authentication.begin(return_to=_safe_return_path(return_to))
+    response = RedirectResponse(started.authorization_url, status_code=302)
+    login_flow_cookie(settings).issue(response, started.flow_token)
     return response
 
 
@@ -160,10 +107,8 @@ async def oidc_callback(
     request: Request,
     code: str,
     state: str,
-    client: _Client,
+    authentication: OidcAuth,
     settings: Settings,
-    principals: Principals,
-    sessions: Sessions,
 ) -> RedirectResponse:
     """Finish a browser login: exchange the provider's code for a session.
 
@@ -190,45 +135,20 @@ async def oidc_callback(
         request: The incoming request; the login-flow cookie is read from it.
         code: The authorization code the provider issued.
         state: The provider's echo of the ``state`` the flow was started with.
-        client: The client for the configured identity provider.
+        authentication: The reusable OIDC login operation.
         settings: The wired API settings; supplies the flow-signing secret,
             the cookie attributes and the web application URL.
-        principals: The wired principal store.
-        sessions: The wired session store.
 
     Returns:
         The redirect into the web application, carrying the session cookie
         and clearing the login-flow cookie.
 
-    Raises:
-        AuthError: If ``state`` does not match the pending login the cookie
-            describes, or if the resolved principal is disabled.
-        UsernameTaken: If this is a first-ever login for the provider's
-            subject and some local account already holds it as its
-            username.
     """
     flow = login_flow_cookie(settings)
-    login_flow = LoginFlow.decode(
-        flow.read(request) or "",
-        _flow_secret(settings),
-        max_age=flow.max_age,
+    result = await authentication.finish(
+        flow_token=flow.read(request) or "", code=code, state=state
     )
-    if not hmac.compare_digest(state, login_flow.state):
-        raise AuthError("OIDC state mismatch")
-    user = await client.exchange_code(
-        code=code, code_verifier=login_flow.code_verifier, nonce=login_flow.nonce
-    )
-    try:
-        principal_row = await principals.upsert_oidc_user(user)
-    except PrincipalSubjectExists as exc:
-        raise UsernameTaken(str(exc)) from exc
-    if principal_row.disabled_at is not None:
-        raise AuthError(f"principal is disabled: {principal_row.subject}")
-    record, token = create_session(
-        principal_row.subject, groups=user.groups, authentication_method="oidc"
-    )
-    await sessions.add(record)
-    response = RedirectResponse(_app_url(settings, login_flow.return_to), status_code=302)
-    session_cookie(settings).issue(response, token)
+    response = RedirectResponse(_app_url(settings, result.return_to), status_code=302)
+    session_cookie(settings).issue(response, result.login.token)
     flow.revoke(response)
     return response

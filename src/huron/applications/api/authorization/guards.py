@@ -16,21 +16,23 @@ from uuid import UUID
 
 from fastapi import Path
 
-from huron.core._ingest import SessionLedger
-from huron.core.catalog_ports import BindingFacts
-from huron.core.scopes import dataset_scope, project_scope, resource_scope
-from huron.pkg.auth import Principal
-from huron.pkg.catalog import IngestFile, RevisionRecord
-from huron.pkg.catalog.failures import Forbidden
-from huron.pkg.catalog.layers import (
+from huron.core.catalog.layers import (
     Layer,
     LayerAction,
     ensure_layer_writable,
     required_capability,
 )
-from huron.pkg.rbac import Scope, ScopeType
+from huron.core.raw.ingest import IngestFile
+from huron.core.raw.types import RevisionRecord, SessionLedger
+from huron.core.security.errors import Forbidden
+from huron.core.security.facts import BindingFacts
+from huron.core.security.principal import Principal
+from huron.core.security.rules import Scope, ScopeType
+from huron.core.security.scopes import resource_scope
 
-from ..runtime import Bindings, Hierarchy, Ingest, Revisions
+from ..dependencies import RawIngestion as Ingest
+from ..dependencies import Revisions
+from ..runtime import Bindings, Hierarchy
 from .credentials import CurrentPrincipal
 from .decisions import BindingCache, BindingCacheMap, CurrentVisibility, check
 
@@ -252,7 +254,7 @@ async def dataset_raw_writer(
     Returns:
         The caller, as proof the checks passed.
     """
-    scope = await dataset_scope(hierarchy, dataset_id, visibility)
+    scope = await resource_scope(hierarchy, ScopeType.DATASET, dataset_id, visibility)
     await _raw_write(cache, repository, principal, scope)
     return principal
 
@@ -285,7 +287,7 @@ async def project_intake(
     Returns:
         The caller, as proof the checks passed.
     """
-    scope = await project_scope(hierarchy, project_id, visibility)
+    scope = await resource_scope(hierarchy, ScopeType.PROJECT, project_id, visibility)
     await _raw_write(cache, repository, principal, scope)
     await check(cache, repository, principal, "dataset.create", scope)
     return principal
@@ -318,7 +320,7 @@ async def session_overseer(
         the caller is the session's owner.
     """
     ledger = await ingest.ledger(session_id)
-    scope = await dataset_scope(hierarchy, ledger.dataset_id, visibility)
+    scope = await resource_scope(hierarchy, ScopeType.DATASET, ledger.dataset_id, visibility)
     owner = ledger.created_by == principal.subject
     if not owner:
         await check(cache, repository, principal, "project.update", scope)
@@ -364,7 +366,7 @@ async def session_owner(
     )
     if not drive.owner:
         raise Forbidden(f"{principal.subject} does not own ingest session {session_id}")
-    scope = await dataset_scope(hierarchy, drive.ledger.dataset_id, visibility)
+    scope = await resource_scope(hierarchy, ScopeType.DATASET, drive.ledger.dataset_id, visibility)
     await _raw_write(cache, repository, principal, scope)
     return drive
 
@@ -419,7 +421,7 @@ async def upload_owner(
             belongs to.
     """
     ledger, file = await ingest.entry(file_id)
-    scope = await dataset_scope(hierarchy, ledger.dataset_id, visibility)
+    scope = await resource_scope(hierarchy, ScopeType.DATASET, ledger.dataset_id, visibility)
     if ledger.created_by != principal.subject:
         raise Forbidden(f"{principal.subject} does not own ingest session {ledger.id}")
     await _raw_write(cache, repository, principal, scope)
@@ -470,8 +472,8 @@ async def revision_raw_reader(
         Proof of the caller's standing to read the revision, paired with
         the resolved record.
     """
-    record = await revisions.revision(revision_id, visibility)
-    scope = await dataset_scope(hierarchy, record.dataset_id, visibility)
+    record = await revisions.revision(revision_id)
+    scope = await resource_scope(hierarchy, ScopeType.DATASET, record.dataset_id, visibility)
     capability, layer = required_capability(LayerAction.READ, Layer.RAW)
     await check(cache, repository, principal, capability, scope, layer=layer)
     return RevisionRead(principal, record)

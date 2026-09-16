@@ -11,10 +11,10 @@ from uuid import UUID
 
 import pytest
 
-from huron.core._ingest import IngestService
-from huron.pkg.catalog import ingest as ingest_module
-from huron.pkg.catalog.ingest import FileState, IngestState
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.raw._impl.ingest import IngestService
+from huron.core.raw import ingest as ingest_module
+from huron.core.raw.ingest import FileState, IngestState
+from huron.core.rawstore import PosixRawStore
 from tests.ingest_client import IngestClient, dev_headers, manifest_file
 from tests.unit.support import FakeClock, crash_on
 

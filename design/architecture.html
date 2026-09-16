@@ -82,22 +82,82 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 <h1>System Architecture</h1>
 <p class="sub">Stores, services, and the flow from HPC run to published product.</p>
 
+<p class="note"><strong>Explore the current implementation:</strong> source-linked UML class
+atlases for the <a href="catalog-uml.html">catalog</a>, <a href="metastore-uml.html">metastore</a>,
+<a href="rawstore-uml.html">rawstore</a>, <a href="auth-uml.html">authentication</a> and
+<a href="rbac-uml.html">RBAC</a> packages — searchable, zoomable diagrams with implemented
+behavior distinguished from planned capabilities.</p>
+
 <section id="code-boundaries">
 <h2>Implemented backend boundaries</h2>
-<p><code>src/huron/applications/api</code> owns FastAPI transport, credentials, configuration,
-lifecycle and composition. <code>src/huron/core</code> owns reusable authorized catalog, identity,
-Raw ingestion and revision-read workflows. <code>src/huron/pkg</code> owns domain objects and
-technical adapters, including <code>metastore</code> for PostgreSQL and in-memory persistence.</p>
-<p>Core services bind an authenticated actor, resolve authoritative ancestry and current permissions,
-and coordinate domain behavior, transactions, storage and publication. HTTP guards provide early
-rejections; core checks remain authoritative for non-HTTP callers. Domain objects own immutable
-state and transitions; composition and consumer-owned protocols connect capabilities. Infrastructure
-adapters may depend on domain types, while domain packages never import their adapters or core.</p>
-<p>Dependency direction: <code>applications → core → pkg → schema</code>. Applications may import
-concrete adapters for wiring. A remote Python client calls the API and shares document contracts;
-it does not run privileged server workflows locally. Bronze/Ray, Silver and Gold workflow services
-remain planned; their input identities and output lineage must be published atomically with catalog
-output records when implemented.</p>
+<p><code>src/huron/core</code> contains domain subpackages that own their values, rules,
+consumer interfaces and complete workflows. <code>applications/api</code> owns FastAPI
+transport, credential extraction, configuration and composition; <code>applications/lakectl</code>
+owns operator transport and deployment/process I/O. Metastore and Rawstore are concrete
+adapter subpackages under Core.</p>
+<p>Public scientific operations bind an authenticated actor and enforce authoritative ancestry,
+discovery and current permissions. HTTP guards provide early rejection through public domain
+inspections. Security owns credential workflows and session issuance; Integrity owns controller
+epoch and admission policy. Bootstrap and maintenance use explicit deployment authority.</p>
+<p>Dependency direction: <code>applications → core → schema</code>, with the explicit Core
+graph below. Applications construct adapters and own resource lifetimes; domains consume
+injected capabilities. The remote Python client calls the API. Bronze/Ray, Silver and Gold
+execution/publication services remain planned, with exact input identity and transactional
+lineage requirements when implemented.</p>
+</section>
+
+<section id="domain-owned-core">
+<h2>Domain-owned Core workflows</h2>
+<p>The implementation follows the ownership decision accepted on 2026-09-15;
+<a href="roadmap.html#domain-owned-core-migration">migration status</a> records verification.
+The rationale is recorded in
+<a href="../docs/adr/0002-domain-owned-core-workflows.md">ADR-0002</a>; the
+<a href="../docs/plans/domain-owned-core.md">migration plan</a> contains the resolved source
+ownership, removal scope and verification evidence.</p>
+<p>Domain subpackages colocate their objects, invariants, authorized workflows and
+consumer-owned interfaces. Applications call published operations and construct published
+adapters; they retain transport, configuration and resource lifetimes. Early HTTP guards
+use public inspections, and complete domain operations remain authoritative.</p>
+<table>
+<tr><th>Core subpackage</th><th>Responsibility</th><th>Permitted direct Huron dependencies</th></tr>
+<tr><td><code>foundation</code></td><td>Shared errors, canonical JSON, identifiers, safe names,
+retry primitives and clock contracts.</td><td>None.</td></tr>
+<tr><td><code>security</code></td><td>Authentication, identity administration, authorization,
+bindings, policies and accounts; narrow consumer-owned catalog-fact interfaces.</td>
+<td><code>core.foundation</code></td></tr>
+<tr><td><code>catalog</code></td><td>Organization, project and dataset identity, descriptions,
+discovery, layer configuration/rules, cross-layer paths and generation documents.</td>
+<td><code>core.security</code>, <code>core.foundation</code></td></tr>
+<tr><td><code>raw</code></td><td>Submission, verified payloads, commit evidence, revision
+publication and reads, release tags and ingest expiry.</td><td><code>core.catalog</code>,
+<code>core.security</code>, <code>core.foundation</code>, <code>schema</code></td></tr>
+<tr><td><code>integrity</code></td><td>Cross-domain verification, cutover and protocol admission,
+using injected operator authority and deployment capabilities.</td><td><code>core.catalog</code>,
+<code>core.raw</code>, <code>core.foundation</code>, <code>schema</code></td></tr>
+<tr><td><code>metastore</code></td><td>PostgreSQL and in-memory persistence adapters, including
+security-fact projections and maintenance persistence.</td><td><code>core.catalog</code>,
+<code>core.raw</code>, <code>core.security</code>, <code>core.foundation</code></td></tr>
+<tr><td><code>rawstore</code></td><td>POSIX transfer, verified materialization, publication,
+inspection and maintenance adapters.</td><td><code>schema</code></td></tr>
+</table>
+<p><code>schema</code> remains a sibling of <code>core</code> and imports no higher Huron
+package. Each declared edge permits published interfaces only. Type-only imports count;
+undeclared direct edges, cycles between Core subpackages and unclassified new subpackages
+fail the gate. Domain packages cannot reach adapters indirectly. The enclosing
+<code>core.__init__</code> stays minimal. The rule concerns subpackage dependencies, rather
+than imposing a cycle-free graph on every private implementation module.</p>
+<p>Security decides authority from its own fact projections supplied by metastore, so it
+does not import Catalog entities. Domains own cohesive persistence and storage interfaces;
+one adapter may satisfy several. Raw retains orchestration of storage-first publication
+and the single-connection transaction recording revision, session outcome, audit, outbox
+and retry receipt. Operator process I/O remains an injected application capability.</p>
+<p>The coordinated import cutover preserves HTTP/OpenAPI, entry points, stored formats,
+authorization, retry and transaction behavior. Catalog owns the cohesive layer vocabulary,
+entry/promotion and principal-kind eligibility rules; Security evaluates capability/layer
+codes, and workflows compose those checks. Unused future-facing interfaces are retired,
+and the migration removes dead or redundant source implementation against an explicit
+usefulness criterion. Useful pure rules and the reserved error-code vocabulary are retained;
+planned capabilities remain in the design record.</p>
 </section>
 
 <h2 id="stores">1. Four stores, four jobs</h2>
@@ -180,7 +240,7 @@ API-proxied chunk reads — same client code, degraded transport — so no capab
 <tr><th>Service</th><th>Kind</th><th>Replicas</th><th>Responsibility</th><th>Writes to</th></tr>
 <tr><td class="k">API</td><td>FastAPI/uvicorn</td><td>≥2, stateless</td>
 <td>All control-plane routes; streams raw uploads with in-flight SHA-256; issues access grants;
-enforces RBAC on every request; reaps lapsed ingest leases. P3 will materialize verified independent payload at file completion before rename publication.</td><td>NFS staging, PostgreSQL</td></tr>
+enforces RBAC on every request; reaps lapsed ingest leases. Materializes verified independent payload at file completion before rename publication.</td><td>NFS staging, PostgreSQL</td></tr>
 
 <tr><td class="k">Layer intake service</td><td>Job runner</td><td>1–N</td>
 <td>Executes <a href="layer-bronze.html#manual-intake">manual bronze/silver intake</a>: opens

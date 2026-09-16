@@ -21,8 +21,8 @@ from uuid import UUID
 from fastapi import Query
 from pydantic import BaseModel
 
-from huron.pkg.catalog.errors import InvalidCursor
-from huron.pkg.metastore import Window
+from huron.applications.api.errors import InvalidCursor
+from huron.core.catalog.types import Window
 
 #: Bumped when the meaning of an encoded key changes, so a cursor minted by an
 #: older deployment is refused rather than silently misread.

@@ -8,8 +8,6 @@ answers in a shape other than ``application/problem+json``.
 
 from __future__ import annotations
 
-import ast
-import inspect
 import logging
 from http import HTTPStatus
 from typing import TYPE_CHECKING
@@ -21,10 +19,15 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 
-from huron.pkg.auth import AuthError
-from huron.pkg.catalog import manifest as catalog_manifest
-from huron.pkg.catalog.errors import DomainError
-from huron.pkg.rbac.roles import RoleError
+from huron.core.catalog.errors import ERROR_CODES as CATALOG_ERROR_CODES
+from huron.core.foundation.errors import ERROR_CODES as FOUNDATION_ERROR_CODES
+from huron.core.foundation.errors import DomainError
+from huron.core.raw.errors import ERROR_CODES as RAW_ERROR_CODES
+from huron.core.security.authentication_errors import AuthError
+from huron.core.security.errors import ERROR_CODES as SECURITY_ERROR_CODES
+from huron.core.security.roles import RoleError
+
+from .errors import ERROR_CODES as TRANSPORT_ERROR_CODES
 
 if TYPE_CHECKING:
     from fastapi import FastAPI, Request
@@ -242,74 +245,12 @@ def install_error_handlers(app: FastAPI) -> None:
         return problem(500, INTERNAL_CODE, "the request could not be completed")
 
 
-def _descendant_codes(base: type[Exception]) -> frozenset[str]:
-    """Collect every stable code ``base`` or one of its subclasses declares.
-
-    Walks ``__subclasses__()`` transitively instead of reading a list, so a
-    subclass defined anywhere is included without anyone remembering to say
-    so. A class that declares no ``code`` of its own - an abstract dispatch
-    base like ``DomainError`` or ``RoleError`` - contributes nothing, which
-    is what makes its abstractness visible to a test rather than only to a
-    reader.
-
-    Args:
-        base: The root of the exception hierarchy to walk; only classes
-            already imported somewhere are reachable, which is why the
-            caller imports the modules that define them.
-
-    Returns:
-        The set of ``code`` strings declared directly on ``base`` or on any
-        transitive subclass; inherited codes are not repeated.
-    """
-    codes: set[str] = set()
-    stack = [base]
-    while stack:
-        cls = stack.pop()
-        code = cls.__dict__.get("code")
-        if isinstance(code, str):
-            codes.add(code)
-        stack.extend(cls.__subclasses__())
-    return frozenset(codes)
-
-
-def _path_rule_violation_codes() -> frozenset[str]:
-    """Collect the codes ``PathRuleViolation`` raises with a call-site-specific name.
-
-    ``PathRuleViolation`` names a more specific code than its own class
-    attribute at a handful of call sites in ``manifest.py``, assigned on
-    the instance rather than declared on the class, so
-    ``_descendant_codes`` can't see them. Reading them out of the source
-    that raises them - instead of maintaining a second, hand-kept list -
-    means a call site added there without a matching row in
-    ``design/api.html`` still shows up as an undocumented code rather than
-    disappearing the way the six it replaces once did.
-
-    Returns:
-        The string literal passed as the first of two arguments at every
-        ``PathRuleViolation(...)`` call in the manifest module's source.
-    """
-    tree = ast.parse(inspect.getsource(catalog_manifest))
-    codes: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-            continue
-        if node.func.id != "PathRuleViolation" or len(node.args) != 2:
-            continue
-        code_argument = node.args[0]
-        if isinstance(code_argument, ast.Constant) and isinstance(code_argument.value, str):
-            codes.add(code_argument.value)
-    return frozenset(codes)
-
-
 def wire_error_codes() -> frozenset[str]:
     """Collect every code this service can put on the wire.
 
-    Computed from the code rather than declared, so the set is the one the
-    handlers above actually produce: the framework statuses' names, the
-    validation and internal codes, the per-call-site path-rule codes, and
-    every code declared by a ``DomainError``, ``AuthError`` or ``RoleError``
-    subclass. A test holds it against the error table in ``design/api.html``
-    so a code cannot ship undocumented or stay documented after it is gone.
+    Compose published domain vocabularies with transport-owned failures.
+    Independent tests compare these declarations with raise sites and the
+    documented error contract, including parameterized path and reserved codes.
 
     Returns:
         The stable codes, as a set; the same code declared in two places
@@ -317,9 +258,14 @@ def wire_error_codes() -> frozenset[str]:
     """
     codes = {HTTPStatus(status).name for status in FRAMEWORK_STATUSES}
     codes.update({VALIDATION_CODE, INTERNAL_CODE})
-    codes.update(_path_rule_violation_codes())
-    for base in (DomainError, AuthError, RoleError):
-        codes.update(_descendant_codes(base))
+    for vocabulary in (
+        FOUNDATION_ERROR_CODES,
+        CATALOG_ERROR_CODES,
+        RAW_ERROR_CODES,
+        SECURITY_ERROR_CODES,
+        TRANSPORT_ERROR_CODES,
+    ):
+        codes.update(vocabulary)
     return frozenset(codes)
 
 

@@ -12,17 +12,17 @@ import httpx
 import pytest
 
 from huron.applications.lakectl import controller as controller_module
-from huron.applications.lakectl.controller import ManagedComposeController
+from huron.applications.lakectl.controller import managed_controller
 from huron.applications.lakectl.settings import ControllerSettings
-from huron.core.integrity.cutover import CutoverService
+from huron.core.integrity import ControllerAdmission, CutoverService
 from huron.core.integrity.models import (
     FenceEvidence,
     MaintenanceGrant,
     ProtocolInventory,
     ProtocolTransition,
 )
-from huron.pkg.metastore.maintenance import PostgresRoleExclusion
-from huron.pkg.rawstore.maintenance import MaintenanceStore
+from huron.core.metastore.maintenance import PostgresRoleExclusion
+from huron.core.rawstore.maintenance import MaintenanceStore
 from tests.unit.test_controller_settings import controller_settings as controller_settings
 from tests.unit.test_controller_settings import root_metadata as root_metadata
 from tests.unit.test_integrity_cutover import EmptyCatalog
@@ -40,9 +40,9 @@ async def prepared(
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
     database_boundary: EmptyDatabaseBoundary,
-) -> tuple[ManagedComposeController, ProtocolTransition]:
+) -> tuple[ControllerAdmission, ProtocolTransition]:
     """Write real immutable evidence under a live epoch, substituting only engine and SQL I/O."""
-    controller = ManagedComposeController(controller_settings)
+    controller = managed_controller(controller_settings)
     fence = await controller.establish(1002, UUID(int=3))
     inventory = ProtocolInventory(
         root_id=fence.root_id, run_id=UUID(int=3), fence=fence, revisions=(), generations=()
@@ -59,7 +59,7 @@ async def prepared(
 
 @pytest.mark.parametrize("fault", ["peer", "operator", "run", "absent", "record", "report"])
 async def test_mismatched_receipt_is_refused_without_ending_the_epoch(
-    prepared: tuple[ManagedComposeController, ProtocolTransition],
+    prepared: tuple[ControllerAdmission, ProtocolTransition],
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
     fault: str,
@@ -114,14 +114,14 @@ async def test_mismatched_receipt_is_refused_without_ending_the_epoch(
 
 
 async def test_complete_record_validates_repeatedly_and_a_restarted_controller_refuses_it(
-    prepared: tuple[ManagedComposeController, ProtocolTransition],
+    prepared: tuple[ControllerAdmission, ProtocolTransition],
     controller_settings: ControllerSettings,
 ) -> None:
     """A stored record validates on every repeated call but never survives a controller restart."""
     controller, record = prepared
     await controller.validate(1002, record)
     assert generation_on_disk(controller_settings) == record.fence.generation
-    restarted = ManagedComposeController(controller_settings)
+    restarted = managed_controller(controller_settings)
     assert generation_on_disk(controller_settings) == record.fence.generation + 1
     with pytest.raises(ValueError, match="generation changed"):
         await restarted.validate(1002, record)
@@ -130,7 +130,7 @@ async def test_complete_record_validates_repeatedly_and_a_restarted_controller_r
 
 
 async def test_abandon_ends_only_the_live_epoch(
-    prepared: tuple[ManagedComposeController, ProtocolTransition],
+    prepared: tuple[ControllerAdmission, ProtocolTransition],
     controller_settings: ControllerSettings,
 ) -> None:
     """Abandoning a stale receipt is a no-op; abandoning the live one ends its epoch alone."""
@@ -205,7 +205,7 @@ def observation_fault(
     ],
 )
 async def test_failed_observation_ends_the_epoch_before_the_refusal(
-    prepared: tuple[ManagedComposeController, ProtocolTransition],
+    prepared: tuple[ControllerAdmission, ProtocolTransition],
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
     database_boundary: EmptyDatabaseBoundary,
@@ -231,7 +231,7 @@ async def test_failed_observation_ends_the_epoch_before_the_refusal(
 class LocalControllerTransport:
     """Forward the authenticated peer's port calls to the real controller in-process."""
 
-    def __init__(self, controller: ManagedComposeController) -> None:
+    def __init__(self, controller: ControllerAdmission) -> None:
         self.controller = controller
 
     async def authenticate(self) -> MaintenanceGrant:
@@ -260,9 +260,9 @@ def composed(
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
     database_boundary: EmptyDatabaseBoundary,
-) -> tuple[ManagedComposeController, CutoverService]:
+) -> tuple[ControllerAdmission, CutoverService]:
     """Compose the real coordinator over the real controller with only engine and SQL doubled."""
-    controller = ManagedComposeController(controller_settings)
+    controller = managed_controller(controller_settings)
     transport = LocalControllerTransport(controller)
     service = CutoverService(
         transport,
@@ -280,7 +280,7 @@ def composed(
 
 @pytest.mark.parametrize("fault", ["post_install_fsync", "release_fence_loss"])
 async def test_interrupted_prepare_ends_the_real_controllers_epoch(
-    composed: tuple[ManagedComposeController, CutoverService],
+    composed: tuple[ControllerAdmission, CutoverService],
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
     monkeypatch: pytest.MonkeyPatch,
@@ -328,7 +328,7 @@ async def test_interrupted_prepare_ends_the_real_controllers_epoch(
 
 
 async def test_lost_return_after_release_keeps_the_record_admissible(
-    composed: tuple[ManagedComposeController, CutoverService],
+    composed: tuple[ControllerAdmission, CutoverService],
     controller_settings: ControllerSettings,
     engine_boundary: EngineBoundary,
     monkeypatch: pytest.MonkeyPatch,

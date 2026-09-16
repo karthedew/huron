@@ -1,17 +1,91 @@
 """Canonical cutover evidence with exact legacy membership."""
 
 import hashlib
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from huron.pkg.catalog.manifest import canonical_bytes
-from huron.pkg.catalog.paths import parse_revision_dir
+from huron.core.foundation.canonical import canonical_bytes
+from huron.core.raw.paths import parse_revision_dir
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+@dataclass(frozen=True)
+class DeploymentIdentity:
+    """The stable controller, storage and composition identity bound by an epoch."""
+
+    root_id: UUID
+    controller_id: UUID
+    device: int
+    inode: int
+    composition: str
+
+
+class ControllerState(BaseModel):
+    """Durable restart admission bound to a particular root and controller generation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    root_id: UUID
+    controller_id: UUID
+    device: int
+    inode: int
+    composition: str
+    generation: Annotated[int, Field(ge=0)]
+    run_id: UUID | None = None
+    writers: tuple[str, ...] = ()
+    operator: str | None = None
+    database: str | None = None
+
+    @property
+    def identity(self) -> DeploymentIdentity:
+        """Project the stable identity separately from the mutable epoch and run evidence.
+
+        Returns:
+            Identity preserved across generation advancement and abandonment.
+        """
+        return DeploymentIdentity(
+            self.root_id, self.controller_id, self.device, self.inode, self.composition
+        )
+
+
+class ControlledRoot(BaseModel):
+    """Live storage identity supplied by the authenticated deployment controller."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    root_id: UUID
+    path: Path
+    owner_uid: Annotated[int, Field(ge=1)]
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True)
+class DeploymentObservation:
+    """Validated external storage identity and deployment configuration fingerprint."""
+
+    root: ControlledRoot
+    controller_id: UUID
+    composition: str
+
+    @property
+    def identity(self) -> DeploymentIdentity:
+        """Project the observed stable identity independently of local inspection addressing.
+
+        Returns:
+            The identity compared with durable state, excluding path and owner presentation.
+        """
+        return DeploymentIdentity(
+            self.root.root_id,
+            self.controller_id,
+            self.root.device,
+            self.root.inode,
+            self.composition,
+        )
 
 
 class EvidenceDocument(BaseModel):
@@ -162,6 +236,33 @@ class MaintenanceGrant(EvidenceDocument):
     root_id: UUID
     operator: Annotated[str, Field(min_length=1)]
     operations: frozenset[Literal["cutover"]]
+
+    def permits_cutover(self, root_id: UUID) -> bool:
+        """Evaluate whether this authenticated grant permits cutover on the exact root.
+
+        Args:
+            root_id: Controller-owned root targeted by the operation.
+
+        Returns:
+            Whether both the root scope and required operation are granted.
+        """
+        return self.root_id == root_id and "cutover" in self.operations
+
+    def require_cutover(self, root_id: UUID) -> Self:
+        """Admit this authenticated grant for an operation on its exact root.
+
+        Args:
+            root_id: Controller-owned root targeted by the operation.
+
+        Returns:
+            This grant once its scope and required operation have been checked.
+
+        Raises:
+            PermissionError: If the root or required operation is not granted.
+        """
+        if not self.permits_cutover(root_id):
+            raise PermissionError("operator is not authorized for this root's cutover")
+        return self
 
 
 class GenerationObservation(EvidenceDocument):

@@ -45,6 +45,14 @@ or Gold, only service accounts can.
 Open any of them directly (`design/index.html` in a browser is the front door); they are not part
 of this site's build, so there is exactly one copy.
 
+## Architecture decisions and migration plans
+
+The [domain-owned Core decision](adr/0002-domain-owned-core-workflows.md) explains the
+trade-off behind the target in `design/architecture.html#domain-owned-core`. Its
+[migration plan](plans/domain-owned-core.md) maps current source to the agreed owners
+and specifies the cutover checks. Delivery status remains in
+`design/roadmap.html#domain-owned-core-migration`.
+
 ## Where build status lives
 
 `design/roadmap.html` is both the plan and the dashboard: the backend build phases (**P0–P10**,

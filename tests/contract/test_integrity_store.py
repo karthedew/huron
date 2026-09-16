@@ -11,9 +11,10 @@ import pytest
 from alembic import command
 from testcontainers.postgres import PostgresContainer
 
-from huron.pkg.catalog.models import EntityRef, RevisionRecord
-from huron.pkg.catalog.paths import parse_revision_dir, revision_dir
-from huron.pkg.metastore.legacy import PostgresLegacyMaintenance
+from huron.core.catalog.types import EntityRef
+from huron.core.raw.types import RevisionRecord
+from huron.core.raw.paths import parse_revision_dir, revision_dir
+from huron.core.metastore.legacy import PostgresLegacyMaintenance
 from tests.contract.test_catalog_store import (
     _config,
     _insert_dataset,

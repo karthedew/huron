@@ -24,13 +24,13 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from huron.pkg.catalog.documents import (
+from huron.core.raw.documents import (
     CommitRecord,
     MetadataDocument,
     RevisionIndex,
     decode_manifest,
 )
-from huron.pkg.rawstore import PosixRawStore
+from huron.core.rawstore import PosixRawStore
 from tests.ingest_client import IngestClient, dev_headers, manifest_file
 
 if TYPE_CHECKING:

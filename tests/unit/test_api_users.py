@@ -17,7 +17,8 @@ from fastapi.testclient import TestClient
 
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.pkg.auth import MemoryPrincipalStore, PrincipalRecord
+from huron.core.metastore import MemoryPrincipalStore
+from huron.core.security.principals import PrincipalRecord
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:

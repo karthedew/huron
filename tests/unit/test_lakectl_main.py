@@ -110,7 +110,11 @@ def test_validate_command_prints_the_admitted_record_and_refuses_an_absent_seque
     monkeypatch.setattr(wiring, "sys", SimpleNamespace(platform="linux"))
     monkeypatch.setattr(wiring, "ControllerClient", lambda socket: controller)
     monkeypatch.setattr(wiring.asyncpg, "create_pool", lambda url: database)
-    asyncio.run(wiring.prepare(MaintenanceSettings.load(path), UUID(int=2)))
+    async def prepare() -> None:
+        async with wiring.deployment(MaintenanceSettings.load(path)) as service:
+            await service.prepare(UUID(int=2))
+
+    asyncio.run(prepare())
     database.closed = False
     monkeypatch.setattr(
         sys,
@@ -172,8 +176,7 @@ def test_cutover_usage_errors_exit_two(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Every unsupported cutover argument combination is refused before any composition runs."""
-    monkeypatch.setattr(cli, "prepare", raising(AssertionError("prepare ran")))
-    monkeypatch.setattr(cli, "validate", raising(AssertionError("validate ran")))
+    monkeypatch.setattr(cli, "deployment", raising(AssertionError("deployment opened")))
     monkeypatch.setattr(
         sys,
         "argv",

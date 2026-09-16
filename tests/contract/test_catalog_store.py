@@ -20,7 +20,7 @@ from alembic import command
 from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
-from huron.pkg.catalog.ids import uuid7
+from huron.core.foundation.identifiers import uuid7
 
 if TYPE_CHECKING:
     from uuid import UUID

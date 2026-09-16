@@ -14,8 +14,8 @@ from uuid import uuid4
 
 import pytest
 
-from huron.pkg.catalog.ingest import FileState, IngestState, UploadAction
-from huron.pkg.metastore.rows import (
+from huron.core.raw.ingest import FileState, IngestState, UploadAction
+from huron.core.metastore.rows import (
     affected_row_count,
     api_key_record,
     binding_record,
