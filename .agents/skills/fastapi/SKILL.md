@@ -5,7 +5,7 @@ description: FastAPI best practices and conventions. Use when working with FastA
 
 # FastAPI
 
-Official FastAPI skill to write code with best practices, keeping up to date with new versions and features.
+Locally adapted official FastAPI skill to write code with best practices, keeping up to date with new versions and features. Huron's database/model contract below overrides upstream SQLModel recommendations.
 
 ## Quick Reference
 
@@ -16,7 +16,7 @@ Official FastAPI skill to write code with best practices, keeping up to date wit
 * Response models: prefer return types; use `response_model` when the public response schema differs from the internal return value; see [the response reference](references/responses.md).
 * Pydantic models: do not use ellipsis or `RootModel`; see [the Pydantic reference](references/pydantic.md).
 * Routing: declare router-level prefix, tags, and shared dependencies on the `APIRouter`; see [the path operation reference](references/path-operations.md).
-* Tooling and related libraries: use uv, Ruff, ty, Asyncer, SQLModel, and HTTPX when applicable; see [the other tools reference](references/other-tools.md).
+* Tooling and related libraries: use uv, Ruff, ty, Asyncer, and HTTPX when applicable; follow Huron's database/model split in [the other tools reference](references/other-tools.md#huron-database-and-model-contract).
 
 ## Use the `fastapi` CLI
 
@@ -270,7 +270,8 @@ See [the other tools reference](references/other-tools.md) for details on uv, Ru
 See [the other tools reference](references/other-tools.md) for details on other libraries:
 
 * Asyncer for handling async and await, concurrency, mixing async and blocking code, prefer it over AnyIO or asyncio.
-* SQLModel for working with SQL databases, prefer it over SQLAlchemy.
+* PostgreSQL schema: SQLAlchemy Core `Table`/`MetaData` definitions and Alembic migrations. Runtime queries and transactions: direct asyncpg, not SQLAlchemy sessions or SQLModel ORM.
+* Domain values belong to each domain's `interface/`; Pydantic HTTP transport models belong separately to applications and are explicitly mapped, not shared with database models. Package/schema moves remain planned until implemented and verified; the current `metastore` runtime/import graph remains enforced as described in [AGENTS.md](../../../AGENTS.md).
 * HTTPX for interacting with HTTP (other APIs), prefer it over Requests.
 
 ## Do not use Pydantic RootModels

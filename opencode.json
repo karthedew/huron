@@ -1,23 +1,90 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "default_agent": "markdown-orchestrator",
+  "instructions": ["AGENTS.md"],
+  "skills": { "paths": [".agents/skills"] },
+  "permission": {
+    "skill": {
+      "*": "deny",
+      "oop-design": "allow",
+      "fastapi": "allow",
+      "postgresql-table-design": "allow",
+      "svelte-code-writer": "allow",
+      "svelte-core-bestpractices": "allow",
+      "tailwind-design-system": "allow",
+      "playwright-cli": "allow",
+      "design-plan": "allow",
+      "prototype": "allow",
+      "implementation-plan": "allow",
+      "implement-markdown": "allow",
+      "customize-opencode": "allow"
+    }
+  },
+  "plugin": ["./.agents/plugins/implementation.ts"],
+  "command": {
+    "design-plan": {
+      "description": "Verify design claims and plan a local roadmap with prototype questions.",
+      "agent": "markdown-orchestrator",
+      "template": "{file:./.agents/commands/design-plan.md}"
+    },
+    "prototype": {
+      "description": "Resolve a bounded design question with local throwaway evidence.",
+      "agent": "markdown-orchestrator",
+      "template": "{file:./.agents/commands/prototype.md}"
+    },
+    "implementation-plan": {
+      "description": "Write and independently review self-contained executable phase plans.",
+      "agent": "markdown-orchestrator",
+      "template": "{file:./.agents/commands/implementation-plan.md}"
+    },
+    "implement-markdown": {
+      "description": "Execute a markdown plan with exclusive Astra Max code workers and pollable subagents.",
+      "agent": "markdown-orchestrator",
+      "model": "openai/gpt-6-astra",
+      "variant": "low",
+      "template": "{file:./.agents/commands/implement-markdown.md}"
+    }
+  },
   "agent": {
     "markdown-orchestrator": {
-      "description": "Runs the serial implement-markdown workflow with pollable child sessions.",
+      "description": "Orchestrates delegated discovery, planning, prototypes, implementation and independent review.",
+      "prompt": "{file:./.agents/prompts/orchestrator.md}",
       "mode": "primary",
       "model": "openai/gpt-6-astra",
       "variant": "low",
-      "options": { "reasoningEffort": "low" }
+      "options": { "reasoningEffort": "low" },
+      "permission": { "task": "deny" }
     },
     "markdown-implementer": {
-      "description": "Implements or fixes exactly one assigned markdown-plan slice.",
+      "description": "Writes one assigned plan, prototype, implementation or fix slice; never delegates.",
+      "prompt": "{file:./.agents/prompts/implementer.md}",
       "mode": "subagent",
       "model": "openai/gpt-6-astra",
       "variant": "low",
       "options": { "reasoningEffort": "low" },
       "permission": { "task": "deny", "implementation_start": "deny" }
     },
+    "markdown-implementer-max": {
+      "description": "Implements or fixes one exclusive code slice with Astra Max; never delegates.",
+      "prompt": "{file:./.agents/prompts/implementer.md}",
+      "mode": "subagent",
+      "model": "openai/gpt-6-astra",
+      "variant": "max",
+      "options": { "reasoningEffort": "max" },
+      "permission": { "task": "deny", "implementation_start": "deny" }
+    },
+    "markdown-reviewer-max": {
+      "description": "Independently performs complete qualification with Astra Max; read-only.",
+      "prompt": "{file:./.agents/prompts/reviewer.md}",
+      "mode": "subagent",
+      "model": "openai/gpt-6-astra",
+      "variant": "max",
+      "options": { "reasoningEffort": "max" },
+      "permission": { "edit": "deny", "task": "deny", "implementation_start": "deny" }
+    },
     "markdown-reviewer": {
       "description": "Independently verifies one markdown-plan slice and runs its full gate.",
+      "prompt": "{file:./.agents/prompts/reviewer.md}",
       "mode": "subagent",
       "model": "openai/gpt-6-astra",
       "variant": "low",

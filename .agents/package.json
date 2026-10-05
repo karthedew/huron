@@ -1,0 +1,19 @@
+{
+  "name": "huron-agent-tools",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit --strict --target ES2023 --module NodeNext --moduleResolution NodeNext --skipLibCheck plugins/implementation.ts && node scripts/check-assets.mjs",
+    "test": "tsc --strict --target ES2023 --module NodeNext --moduleResolution NodeNext --skipLibCheck --outDir .test-build plugins/implementation.ts && node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.18.35"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^6.0.0"
+  }
+}

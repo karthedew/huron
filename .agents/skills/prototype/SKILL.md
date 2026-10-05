@@ -1,26 +1,47 @@
 ---
 name: prototype
-description: Build a throwaway prototype to answer a design question. Use when the user wants to sanity-check whether a state model or logic feels right, or explore what a UI should look like.
+description: Run a bounded throwaway experiment to resolve a Huron design question before phase planning. Use for /prototype, state-model experiments and UI exploration.
 ---
 
-# Prototype
+# Prototype a decision, capture evidence
 
-A prototype is **throwaway code that answers a question**. The question decides the shape.
+An explicit preparatory profile may run isolated throwaway probes, never live code.
+Actual-code dispatch and final complete qualification require maximum Astra profile;
+report configured selection separately from observed model/provider acceptance.
 
-## Pick a branch
+Read [orchestration](../../workflows/orchestration.md),
+[verification](../../workflows/verification.md) and the
+[evidence template](../../templates/prototype.md). Main sessions delegate the
+experiment and independent review; assigned workers never delegate.
 
-Identify which question is being answered, using the user's prompt, the surrounding code, or by asking if the user is around:
+Use implementation or fix/activity prototype only for owned ignored throwaway work
+with isolated resources. Live code/config/service mutation is exclusive code, not
+prototype. Declare exact claims from the parent's canonical resource dictionary,
+including shared check-output/services; claims are cooperative coordination, not a
+sandbox. Unrelated non-code may overlap only with nonconflicting claims; subject
+writer → verification/review → fix remains terminally sequenced. No manual resume,
+automatic replay or stale-lock stealing. Reconcile recovery with the parent; quit
+and restart OpenCode after tooling changes and inspect the actual loaded schema.
 
-- **"Does this logic / state model feel right?"** → [LOGIC.md](LOGIC.md). Build a single shareable HTML file (free-play buttons plus tabbed guided walkthroughs) that pushes the state machine through cases that are hard to reason about on paper, and that a non-developer can drive.
-- **"What should this look like?"** → [UI.md](UI.md). Generate several radically different UI variations on a single route, switchable via a URL search param and a floating bottom bar.
-
-The two branches produce very different artifacts, so getting this wrong wastes the whole prototype. If the question is genuinely ambiguous and the user isn't reachable, default to whichever branch better matches the surrounding code (a backend module → logic; a page or component → UI) and state the assumption at the top of the prototype.
-
-## Rules that apply to both
-
-1. **Throwaway from day one, and clearly marked as such.** Locate the prototype code close to where it will actually be used (next to the module or page it's prototyping for) so context is obvious, but name it so a casual reader can see it's a prototype, not production. For throwaway UI routes, obey whatever routing convention the project already uses; don't invent a new top-level structure.
-2. **Trivial to run.** A UI prototype starts from one command in the project's task runner: `pnpm <name>`, `python <path>`, `bun <path>`, etc. A logic demo is a single HTML file the user double-clicks. Either way, no thinking required to start it.
-3. **No persistence by default.** State lives in memory. Persistence is the thing the prototype is _checking_, not something it should depend on. If the question explicitly involves a database, hit a scratch DB or a local file with a clear "PROTOTYPE, wipe me" name.
-4. **Skip the polish.** No tests, no error handling beyond what makes the prototype _runnable_, no abstractions. The point is to learn something fast.
-5. **Surface the state.** After every action (logic) or on every variant switch (UI), print or render the full relevant state so the user can see what changed.
-6. **Capture it when done.** Fold any validated decision into the real code, then capture the prototype itself as a **primary source**: commit it to a throwaway branch, out of main, and leave a context pointer to that branch on the implementation issue. Capture the answer too (the verdict and the question it settled) in the issue or a commit. The main branch keeps only the validated decision.
+1. Read the design and actual relevant code with required area skills. State one
+   bounded uncertainty, hypothesis and observable success/failure criteria.
+2. Choose the smallest useful experiment: state-model walkthrough, API/adapter
+   probe, UI variation or configuration/asset-consistency probe. Use real adapters
+   when the question is about durability, locking or transfer semantics; a fake
+   only proves the model. Record installed versions and exact APIs.
+3. Work under ignored `/roadmap/prototypes/<name>/`, with evidence under `/roadmap/`.
+   Give an exact reproduction command/cwd. Keep inputs and state isolated and mark
+   artifacts non-production. Product source edits or shared service mutation require
+   explicit scope. Never overwrite unknown files or delete someone else's data.
+4. Exercise the counterexample/failure as well as the happy case. For visible UI,
+   use the Svelte/Tailwind skills as applicable and local `playwright-cli` for named
+   browser sessions, viewport/theme/keyboard/failure-state evidence. Verify service
+   ownership before use. No global installs or broad browser/process shutdown.
+5. Write the evidence template: observations, commands, outputs, limitations,
+   decision and concrete interface/code examples. Delegate independent review of
+   whether the evidence answers the question; fix and re-review serially, max three
+   reviews. An experiment that disproves the design is useful evidence, not a PASS
+   on the proposed implementation. Unresolved questions remain blockers.
+6. Pass the conclusions to `/implementation-plan`. Durable accepted decisions go
+   to `design/` only in an owned documentation slice. Prototype results never
+   automatically create branches, commits, issues or production changes.

@@ -63,11 +63,15 @@ def read_items():
     return {"message": result}
 ```
 
-## SQLModel for SQL databases
+## Huron database and model contract
 
-When working with SQL databases, prefer using SQLModel as it is integrated with Pydantic and will allow declaring data validation with the same models.
+This local contract replaces the upstream recommendation to prefer SQLModel and
+share database and validation models:
 
-Prefer it over SQLAlchemy.
+* Define PostgreSQL schema with SQLAlchemy Core `Table`/`MetaData` and manage migrations with Alembic.
+* Execute runtime queries and transactions directly with asyncpg. Do not introduce SQLModel ORM or SQLAlchemy sessions.
+* Domains own domain values in their `interface/`. Applications own separate Pydantic HTTP transport models and explicitly map them to/from domain values; do not reuse database models as HTTP validation models.
+* Package/schema ownership moves are planned until implemented and verified. Preserve the current `metastore` runtime/import graph until a cutover changes code, import contracts, tests and design together; see [AGENTS.md](../../../../AGENTS.md).
 
 ## HTTPX
 
