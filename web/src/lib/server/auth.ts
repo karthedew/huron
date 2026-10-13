@@ -1,43 +1,64 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { env } from '$env/dynamic/private';
+import { randomBytes } from 'node:crypto';
 import type { Cookies } from '@sveltejs/kit';
+import type { HuronUser } from '$api/types';
+import type { AuthenticatedAccount } from './huron-accounts';
+import type { PolarisClient } from './polaris-client';
 
-export const PREVIEW_SESSION_COOKIE = 'huron_preview_session';
-const PREVIEW_SESSION_SECRET = env.HURON_PREVIEW_SESSION_SECRET ?? randomUUID();
+export const HURON_SESSION_COOKIE = 'huron_session';
+const SESSION_DURATION = 8 * 60 * 60 * 1000;
 
-export function hasPreviewSession(cookies: Cookies): boolean {
-	const value = cookies.get(PREVIEW_SESSION_COOKIE);
-	if (!value) return false;
-	const [nonce, signature] = value.split('.');
-	if (!nonce || !signature) return false;
-	const expected = sign(nonce);
-	return (
-		signature.length === expected.length &&
-		timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
-	);
+interface HuronSession {
+	user: HuronUser;
+	client: PolarisClient;
+	clientId: string;
+	authVersion: number;
+	expiresAt: number;
+	notice?: string;
 }
 
-export function createPreviewSession(cookies: Cookies, secure: boolean): void {
-	const nonce = randomUUID();
-	cookies.set(PREVIEW_SESSION_COOKIE, `${nonce}.${sign(nonce)}`, {
+const sessions = new Map<string, HuronSession>();
+
+export function getHuronSession(cookies: Cookies): HuronSession | undefined {
+	const now = Date.now();
+	for (const [id, session] of sessions) if (session.expiresAt <= now) sessions.delete(id);
+	const id = cookies.get(HURON_SESSION_COOKIE);
+	return id ? sessions.get(id) : undefined;
+}
+
+export function createHuronSession(
+	cookies: Cookies,
+	account: AuthenticatedAccount,
+	secure: boolean
+): void {
+	clearHuronSession(cookies);
+	const id = randomBytes(32).toString('base64url');
+	sessions.set(id, { ...account, expiresAt: Date.now() + SESSION_DURATION });
+	cookies.set(HURON_SESSION_COOKIE, id, {
 		httpOnly: true,
-		maxAge: 60 * 60 * 8,
+		maxAge: SESSION_DURATION / 1000,
 		path: '/',
 		sameSite: 'lax',
 		secure
 	});
 }
 
-export function clearPreviewSession(cookies: Cookies): void {
-	cookies.delete(PREVIEW_SESSION_COOKIE, { path: '/' });
+export function clearHuronSession(cookies: Cookies): void {
+	const id = cookies.get(HURON_SESSION_COOKIE);
+	if (id) sessions.delete(id);
+	cookies.delete(HURON_SESSION_COOKIE, { path: '/' });
+	// Retire cookies left by the former preview and manual Polaris login.
+	cookies.delete('huron_preview_session', { path: '/' });
+	cookies.delete('huron_polaris_session', { path: '/' });
 }
 
 export function safeReturnTo(value: string | null | undefined): string {
-	if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\'))
+	if (
+		!value ||
+		!value.startsWith('/') ||
+		value.startsWith('//') ||
+		value.includes('\\') ||
+		/[\x00-\x1f\x7f]/.test(value)
+	)
 		return '/';
 	return value;
-}
-
-function sign(value: string): string {
-	return createHmac('sha256', PREVIEW_SESSION_SECRET).update(value).digest('base64url');
 }

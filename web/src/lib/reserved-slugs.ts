@@ -8,7 +8,7 @@
  * permanently unreachable in the UI.
  *
  * This list is the UI's half of the contract; ``RESERVED_ROOT_SLUGS`` in
- * ``pkg/catalog/paths.py`` is the other half, and refuses these at
+ * ``src/huron/core/foundation/names.py`` is the other half, and refuses these at
  * organization-creation time on the API side. `auth` remains reserved ahead
  * of the callback routes that will claim it; the API already refuses it as an
  * organization slug.
@@ -21,6 +21,7 @@ export const RESERVED_ROOT_SLUGS = [
 	'ingestion',
 	'login',
 	'logout',
+	'polaris',
 	'product',
 	'queue',
 	'settings',

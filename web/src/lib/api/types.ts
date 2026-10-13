@@ -1,13 +1,7 @@
 /**
- * HAND-WRITTEN DOMAIN TYPES — DELETED AT P1.
- *
- * These are a placeholder for the types generated from `openapi/v1.json`
- * (design/frontend.html §1). They are shaped to the design record, not to any
- * running endpoint, because no endpoint exists yet. Do not add convenience fields
- * the API does not promise: a field invented here becomes a field the UI silently
- * depends on and the contract never provides.
- *
- * See ./README.md.
+ * Legacy scientific-view types remain hand-written against the design record.
+ * Live Polaris, organization and Raw bridge contracts are re-exported below.
+ * See ./README.md for each API seam's delivery status.
  */
 
 export type Lifecycle = 'ACTIVE' | 'RETIRED';
@@ -170,3 +164,69 @@ export class NotFound extends Error {
 		this.name = 'NotFound';
 	}
 }
+export type {
+	PolarisProperties,
+	PolarisNamedEntity,
+	PolarisStorageConfig,
+	PolarisCatalog,
+	PolarisPrincipal,
+	PolarisRole,
+	PolarisIcechunkTable,
+	PolarisGrant,
+	PolarisCredentialSummary,
+	PolarisWorkspaceData,
+	PolarisActionResult
+} from './polaris-types';
+export type { HuronUser } from './huron-types';
+export type {
+	HuronOrganization,
+	HuronOrganizationRole,
+	HuronOrganizationSummary,
+	HuronOrganizationMember,
+	HuronOrganizationDirectory
+} from './organization-types';
+export type {
+	IcechunkInspection,
+	IcechunkReference,
+	IcechunkSnapshot,
+	IcechunkArraySchema
+} from './icechunk-types';
+export type { PolarisDatasetTab } from './polaris-dataset-view-types';
+export type { PolarisRawTableIdentifier, PolarisRawTable } from './polaris-raw-types';
+export type { PolarisBrowseBranch, PolarisBrowseData } from './polaris-browse-types';
+export type {
+	HuronCatalogMembershipRole,
+	HuronCatalogMember,
+	HuronCatalogUserSummary
+} from './huron-admin-types';
+export type {
+	PolarisTableFormat,
+	PolarisCatalogTable,
+	PolarisIcebergField,
+	PolarisIcebergFieldType,
+	PolarisIcebergSchema,
+	PolarisIcebergSnapshot,
+	PolarisIcebergRef,
+	PolarisIcebergTable,
+	PolarisDatasetTarget,
+	PolarisDatasetGrant,
+	PolarisDatasetPermissions,
+	PolarisApplicablePolicy,
+	PolarisDatasetPolicies,
+	PolarisDatasetGovernance
+} from './polaris-governance-types';
+export type {
+	RawTarget,
+	RawManifestFile,
+	RawRevisionMetadata,
+	RawIngestFile,
+	RawRegistration,
+	RawIngestSession,
+	RawRevision,
+	RawCommitReceipt,
+	RawRevisionPage,
+	RawRevisionManifest,
+	RawTargetBranch,
+	RawInspection,
+	RawErrorResponse
+} from './raw-ingestion-types';

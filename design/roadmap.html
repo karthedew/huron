@@ -448,8 +448,11 @@ after a subsequent append.</td></tr>
 <td>α (after P4): the Databricks-shaped shell (left rail + catalog explorer), browse, search,
 dataset/revision pages, Grafana-shaped permissions tabs, API-key management, read-only admin. β (after P8): validation evidence, lineage graph, retention panels, admin queues, the
 publication flow.
-Built so far: the SvelteKit shell and design tokens, all pages fixture-backed; the α/β
-surfaces are elaborated milestone-by-milestone in §3.</td>
+Built so far: the SvelteKit shell and design tokens, live Polaris Catalog/Browse, durable Huron
+username/password accounts, organization ownership/membership, manual catalog grants and administration. Raw, Iceberg and Icechunk datasets share the catalog explorer, with registration forms and type/layer filters. Dataset tabs expose real
+array schema, Icechunk references and snapshot history, scoped grants and recorded source provenance.
+The Raw wizard connects actual multipart uploads, immutable revision publication, retryable Polaris registration, revision history and authenticated downloads. Its destination explorer lists the selected organization's accessible catalogs. Derived scientific publication/lineage and generated Huron client integration remain planned;
+see the updated <a href="frontend.html">beta frontend contract</a>.</td>
 <td>The generated TypeScript client compiles in CI against every API change; E2E smoke against the
 compose stack.</td></tr>
 
@@ -462,15 +465,18 @@ tabular products.</td>
 reason; recompute produces 1.0.1 pinned to the successors; the derivation record alone re-executes
 to a bit-identical G021 (invariant K).</td></tr>
 
-<tr><td class="k">P10 — Polaris<br><span class="tag">todo</span></td>
-<td>Polaris deployment, sync worker, namespace/table mapping, grant projection,
-<code>/polaris/credentials</code>, nightly converge.</td>
-<td>A published tabular product is queryable from Spark and DuckDB via Polaris within one sync
-cycle; a WITHDRAWN version disappears; a grant not derivable from Huron bindings is detected and
-alerted; Polaris wiped ⇒ <code>lakectl polaris resync</code> reconverges from the catalog.</td></tr>
+<tr><td class="k">P10 — Polaris<br><span class="tag">partial</span></td>
+<td>The beta now uses Polaris as catalog/access authority: native Icechunk browsing/registration,
+manual user roles, catalog administration, SDK metadata inspection and persistent local stack with three real science catalogs (heliophysics, geoscience and ISS).
+This supersedes the former Iceberg-only mirror/grant projection proposal. Raw generic-table registration and existing Iceberg metadata registration are implemented; file transfer, scientific publication and compute integration remain planned.</td>
+<td>Real local checks cover catalog creation, scoped membership, Icechunk registration/read,
+write denials, revoked access and restart persistence. Browser tests cover human onboarding and catalog
+isolation. NASA import verifies exact committed array values and provenance.</td></tr>
 </table>
 
 <h2 id="integration">3. Integration tiers</h2>
+
+<p class="note"><strong>Beta direction, 2026-10-12:</strong> <a href="polaris.html">Polaris owns the web catalog and grants</a>; Huron wraps it with human login and admin workflows. The T0–T6 scientific integration inventory below remains planned and does not describe the beta UI. Do not interpret local Icechunk registration as completion of scientific publication, lineage or storage-isolated deployment.</p>
 
 <p>The frontend thread: connecting the <a href="frontend.html">frontend</a> to real backend
 functionality, planned as 25 gated milestones in seven priority tiers
@@ -822,8 +828,7 @@ what makes P2's crash-consistency gate fully checkable.</li>
 and the outbox/projection machinery it builds is the same event backbone P6–P9 consume.</li>
 <li><strong>P8 immediately after P7:</strong> the first Silver snapshot with no ergonomic way to
 open it would stall adoption; the grant flow is the product moment.</li>
-<li><strong>P10 last:</strong> Polaris mirrors published tabular Gold — there is nothing to mirror
-before P9, and nothing blocks on it (its failure posture is "degrade external engines only").</li>
+<li><strong>Polaris beta is independent of P9:</strong> native Icechunk catalogs, administration and managed Raw revisions are connected to the web UI. Derived scientific publication and lineage remain future work; catalog browsing depends synchronously on Polaris availability.</li>
 <li><strong>Cross-cutting, never a phase:</strong> FIPS smoke and the OpenAPI-contract check are meant
 to run from P0 onward and neither exists yet <span class="tag">todo</span>; instrumentation
 (unchanged-byte ratio, layer sizes per project, ingest durations,

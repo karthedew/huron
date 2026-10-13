@@ -1,0 +1,200 @@
+.polaris-workspace .panel {
+	min-width: 0;
+	border: 1px solid var(--line);
+	background: var(--card);
+	border-radius: var(--radius);
+	padding: clamp(1rem, 2vw, 1.4rem);
+}
+.polaris-workspace h2 {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	font-size: 1.05rem;
+	font-weight: 650;
+	overflow-wrap: anywhere;
+}
+.polaris-workspace .section-heading {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.65rem;
+	margin-bottom: 1rem;
+}
+.polaris-workspace .section-heading > svg {
+	flex-shrink: 0;
+	margin-top: 0.1rem;
+}
+.polaris-workspace .section-heading p,
+.polaris-workspace .hint {
+	color: var(--muted);
+	font-size: 0.8rem;
+	line-height: 1.6;
+	overflow-wrap: anywhere;
+}
+.polaris-workspace .section-heading p {
+	margin-top: 0.2rem;
+}
+.polaris-workspace label:not(.checkbox) {
+	display: grid;
+	min-width: 0;
+	gap: 0.4rem;
+	font-size: 0.8rem;
+	font-weight: 600;
+	color: var(--muted);
+}
+.polaris-workspace input:not([type='checkbox']):not([type='hidden']),
+.polaris-workspace select,
+.polaris-workspace textarea {
+	display: block;
+	width: 100%;
+	min-width: 0;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--bg);
+	color: var(--fg);
+	padding: 0.6rem 0.75rem;
+	font-size: 0.9rem;
+	font-weight: 400;
+}
+.polaris-workspace textarea {
+	font-family: var(--mono);
+	font-size: 0.8rem;
+	resize: vertical;
+}
+.polaris-workspace .checkbox {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.6rem;
+	color: var(--fg);
+	font-size: 0.8rem;
+	font-weight: 400;
+}
+.polaris-workspace input[type='checkbox'] {
+	accent-color: var(--brand-strong);
+	margin-top: 0.2rem;
+	flex-shrink: 0;
+}
+.polaris-workspace .secondary {
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--card);
+	color: var(--fg);
+	padding: 0.6rem 0.85rem;
+	font-size: 0.85rem;
+	font-weight: 600;
+	cursor: pointer;
+}
+.polaris-workspace .secondary:hover {
+	background: var(--sidebar-hover);
+}
+.polaris-workspace .editor {
+	margin-top: 1rem;
+	padding-top: 1rem;
+	border-top: 1px solid var(--line);
+}
+.polaris-workspace summary {
+	cursor: pointer;
+	font-size: 0.85rem;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+.polaris-workspace .editor[open] > summary {
+	margin-bottom: 1rem;
+}
+.polaris-workspace .resource-link {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.75rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	color: var(--fg);
+	text-decoration: none;
+}
+.polaris-workspace .resource-link:hover,
+.polaris-workspace .resource-link[aria-current='page'] {
+	border-color: var(--brand-strong);
+	background: var(--brand-soft);
+}
+.polaris-workspace .resource-link > svg {
+	flex-shrink: 0;
+	color: var(--brand-strong);
+}
+.polaris-workspace .resource-list {
+	display: grid;
+	gap: 0.5rem;
+	max-height: 19rem;
+	overflow-y: auto;
+	padding: 0.2rem;
+}
+.polaris-workspace .notice {
+	margin-top: 1rem;
+	border: 1px solid var(--note-line);
+	background: var(--note-bg);
+	border-radius: var(--radius-sm);
+	padding: 0.75rem;
+	font-size: 0.8rem;
+	line-height: 1.65;
+}
+.polaris-workspace .membership-row,
+.polaris-workspace .grant-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	padding: 0.75rem;
+}
+.polaris-workspace .property-list {
+	display: grid;
+	gap: 0.7rem;
+	margin-bottom: 1.2rem;
+	font-size: 0.85rem;
+}
+.polaris-workspace .property-list > div {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+	gap: 0.75rem;
+}
+.polaris-workspace .property-list dt {
+	color: var(--muted);
+	overflow-wrap: anywhere;
+}
+.polaris-workspace .property-list dd {
+	font-family: var(--mono);
+	font-size: 0.8rem;
+	overflow-wrap: anywhere;
+}
+.polaris-workspace pre {
+	max-width: 100%;
+}
+.polaris-workspace pre code {
+	font-size: inherit;
+}
+.section-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.8rem 0.65rem;
+	color: var(--muted);
+	font-size: 0.9rem;
+	font-weight: 600;
+	text-decoration: none;
+	border-bottom: 2px solid transparent;
+}
+.section-tab.active {
+	color: var(--brand-strong);
+	border-bottom-color: var(--brand-strong);
+}
+@media (max-width: 480px) {
+	.polaris-workspace .property-list > div {
+		grid-template-columns: 1fr;
+		gap: 0.2rem;
+	}
+	.section-tab {
+		font-size: 0.8rem;
+		gap: 0.3rem;
+	}
+}

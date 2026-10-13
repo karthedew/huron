@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Database, Layers3, ShieldCheck } from '@lucide/svelte';
 	import type { Snippet } from 'svelte';
 
@@ -23,7 +24,10 @@
 			class="pointer-events-none absolute -bottom-32 -left-24 size-96 rounded-full bg-[#167a70]/30 blur-3xl"
 		></div>
 
-		<a href="/login" class="relative flex w-fit items-center gap-3 text-white no-underline">
+		<a
+			href={resolve('/login')}
+			class="relative flex w-fit items-center gap-3 text-white no-underline"
+		>
 			<span
 				class="grid size-10 place-items-center rounded-lg bg-brand text-base font-black text-[#062d29]"
 				>H</span
@@ -40,38 +44,39 @@
 			<h2
 				class="mt-4 border-0 p-0 text-4xl font-semibold leading-[1.1] tracking-[-0.04em] xl:text-5xl"
 			>
-				Scientific data, from intake to insight.
+				Scientific data, organized with Polaris.
 			</h2>
 			<p class="mt-5 max-w-md text-base leading-7 text-white/65">
-				Search the catalog, ingest trusted datasets, and manage lakehouse access from one workspace.
+				Browse Icechunk repositories and manage access to your scientific catalogs from one
+				workspace.
 			</p>
 
 			<ul class="mt-9 grid gap-4 text-sm text-white/80">
 				<li class="flex items-center gap-3">
 					<span class="grid size-8 place-items-center rounded-md bg-white/10 text-brand"
 						><Database size={16} /></span
-					>Discover governed datasets across every layer
+					>Browse live Icechunk repositories
 				</li>
 				<li class="flex items-center gap-3">
 					<span class="grid size-8 place-items-center rounded-md bg-white/10 text-brand"
 						><Layers3 size={16} /></span
-					>Move data deliberately from raw through gold
+					>Explore NASA data and raw ingest examples
 				</li>
 				<li class="flex items-center gap-3">
 					<span class="grid size-8 place-items-center rounded-md bg-white/10 text-brand"
 						><ShieldCheck size={16} /></span
-					>Keep organization access visible and controlled
+					>Control access to each Polaris catalog
 				</li>
 			</ul>
 		</div>
 
-		<p class="relative text-xs text-white/45">Huron preview workspace</p>
+		<p class="relative text-xs text-white/45">Huron beta workspace</p>
 	</aside>
 
 	<main class="flex min-h-dvh items-center justify-center px-5 py-10 sm:px-8">
 		<div class="w-full max-w-[440px]">
 			<a
-				href="/login"
+				href={resolve('/login')}
 				class="mb-10 flex w-fit items-center gap-2.5 text-app-fg no-underline lg:hidden"
 			>
 				<span

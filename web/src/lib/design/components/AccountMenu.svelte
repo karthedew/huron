@@ -1,14 +1,15 @@
 <script lang="ts">
-	import { ChevronRight, KeyRound, LogOut, Settings, X } from '@lucide/svelte';
-	import type { WhoAmI } from '$api/types';
+	import { ChevronRight, LogOut, Settings, X } from '@lucide/svelte';
+	import type { HuronUser } from '$api/types';
+	import { resolve } from '$app/paths';
 
 	interface Props {
-		user: WhoAmI;
+		user: HuronUser;
 	}
 
 	let { user }: Props = $props();
-	let menu: HTMLDetailsElement;
-	let logoutDialog: HTMLDialogElement;
+	let menu = $state<HTMLDetailsElement>();
+	let logoutDialog = $state<HTMLDialogElement>();
 	const initials = $derived(
 		user.displayName
 			.split(/\s+/)
@@ -19,8 +20,8 @@
 	);
 
 	function openLogout() {
-		menu.removeAttribute('open');
-		logoutDialog.showModal();
+		menu?.removeAttribute('open');
+		logoutDialog?.showModal();
 	}
 </script>
 
@@ -43,24 +44,18 @@
 				>
 				<div class="min-w-0">
 					<p class="truncate text-sm font-semibold">{user.displayName}</p>
-					<p class="truncate text-xs text-app-muted">{user.subject}</p>
+					<p class="truncate text-xs text-app-muted">{user.username}</p>
 				</div>
 			</div>
 		</div>
 		<div class="p-1.5">
 			<a
-				href="/account"
-				onclick={() => menu.removeAttribute('open')}
+				href={resolve('/account')}
+				onclick={() => menu?.removeAttribute('open')}
 				class="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm text-app-muted hover:bg-app-sidebar-hover hover:text-app-fg"
 				><Settings size={16} /><span class="flex-1">User settings</span><ChevronRight
 					size={14}
 				/></a
-			>
-			<a
-				href="/account?tab=api-keys"
-				onclick={() => menu.removeAttribute('open')}
-				class="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm text-app-muted hover:bg-app-sidebar-hover hover:text-app-fg"
-				><KeyRound size={16} /><span class="flex-1">API keys</span><ChevronRight size={14} /></a
 			>
 			<div class="my-1 border-t border-app-line"></div>
 			<button
@@ -81,7 +76,7 @@
 	<div class="border-b border-app-line p-5">
 		<div class="flex items-center justify-between">
 			<h2 class="m-0 border-0 p-0 text-lg font-semibold">Log out of Huron?</h2>
-			<button type="button" onclick={() => logoutDialog.close()} aria-label="Close logout dialog"
+			<button type="button" onclick={() => logoutDialog?.close()} aria-label="Close logout dialog"
 				><X size={18} class="text-app-muted" /></button
 			>
 		</div>
@@ -90,10 +85,10 @@
 			the workspace.
 		</p>
 	</div>
-	<form method="POST" action="/logout" class="flex justify-end gap-2 p-4">
+	<form method="POST" action={resolve('/logout')} class="flex justify-end gap-2 p-4">
 		<button
 			type="button"
-			onclick={() => logoutDialog.close()}
+			onclick={() => logoutDialog?.close()}
 			class="h-9 rounded-md border border-app-line px-3 text-sm font-semibold text-app-muted"
 			>Cancel</button
 		><button

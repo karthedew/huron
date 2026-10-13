@@ -552,6 +552,14 @@ def _socket_cutover(root: pathlib.Path, engine: list[str], database_address: str
             else:
                 raise AssertionError("an unreachable controller supplied exclusion proof")
             print("CONTROLLER_FOREIGN_GENERATION_UNREACHABLE_REFUSED", flush=True)
+    except Exception:
+        controller_log = root / "controller.log"
+        if controller_log.exists():
+            diagnostic = controller_log.read_text()
+            for secret in ("fixture-password", "replacement-password", "maintenance-password"):
+                diagnostic = diagnostic.replace(secret, "<REDACTED>")
+            print("CONTROLLER_LOG\n" + diagnostic, flush=True)
+        raise
     finally:
         if process is not None and process.poll() is None:
             process.terminate()

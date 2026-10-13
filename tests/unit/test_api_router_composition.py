@@ -160,7 +160,7 @@ def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decid
     assert calls == ["rbac.binding_manage", "rbac.binding_manage"]
 
 
-def test_the_openapi_document_carries_fifteen_resource_grained_tags(tmp_path: Path) -> None:
+def test_the_openapi_document_carries_sixteen_resource_grained_tags(tmp_path: Path) -> None:
     """The OpenAPI document tags one per resource rather than one per module.
 
     ``role-bindings`` and ``service-accounts`` are distinct groups, the
@@ -175,7 +175,7 @@ def test_the_openapi_document_carries_fifteen_resource_grained_tags(tmp_path: Pa
     for methods in schema["paths"].values():
         for operation in methods.values():
             tags.update(operation.get("tags", []))
-    assert len(tags) == 15
+    assert len(tags) == 16
     assert "auth" not in tags
     assert tags == {
         "organizations",
@@ -193,6 +193,7 @@ def test_the_openapi_document_carries_fifteen_resource_grained_tags(tmp_path: Pa
         "users",
         "search",
         "authentication",
+        "raw-web",
     }
 
 

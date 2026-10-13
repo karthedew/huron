@@ -1,24 +1,42 @@
-# The seam
+# Data access seam
 
-**Everything in this directory is scaffolding with a scheduled demolition date.**
+The beta Catalog/Browse/Admin routes use live Polaris server operations. Types
+for Polaris metadata and Huron accounts live here and are re-exported by
+`types.ts`. Server-only clients authenticate each upstream operation as the
+signed-in user’s individual Polaris principal; credentials/tokens are never
+serialized to the browser. Bootstrap authority is confined to account provisioning,
+realm administration and filtered catalog discovery. Polaris owns catalog grants. Huron owns organization membership and catalog ownership, and server routes intersect both scopes before accessing data.
 
-`design/frontend.html` §1 specifies that the API client is _generated_ from `openapi/v1.json`,
-so that a contract change breaks the TypeScript build. That spec does not exist yet — the API
-lands in **P1** (`design/roadmap.html` §2), which is where `openapi/v1.json` is first published.
+Dataset inspection is a server-only adapter: it checks the current user's Polaris
+read authority, confines FILE storage to configured mounts, and calls a fixed
+Icechunk/Zarr metadata reader. Typed projections carry actual schema, references,
+history and recorded import provenance. They do not imply scientific publication
+or invented downstream lineage. Native Iceberg metadata uses its own Polaris
+endpoint; storage credentials and OAuth configuration are never included.
 
-Until then this directory is the only place in the app where a domain type is written by hand.
-Pages import from `$api/client` and never construct a shape of their own. When P1 ships:
+Components consume typed page/action data. Scientific synthetic examples continue
+to import through `$api/client`; only `client.ts` may import `fixtures.ts`.
+The Raw ingest wizard uses typed browser functions in `$api/client` to call the
+authenticated `/ingestion/api` bridge. It transfers actual file parts, verifies
+checksums and publishes immutable revisions through the existing Huron Raw core.
+The server checks current organization membership and native Polaris RBAC grants
+on each operation, then sends a short-lived request-bound delegation to the Raw
+API. Browser DTOs never contain delegation credentials. A committed revision is
+registered in Polaris with a stable Huron dataset ID; pending registration is
+retryable without publishing a second revision. Managed Raw detail reads the
+revision list and manifests through the same authorization boundary. External
+generic-table registrations retain metadata-only behavior; unknown storage formats
+remain Generic.
+Legacy scientific fixture routes are not available in beta navigation and redirect
+to live Browse.
 
-1. Generate the client from `openapi/v1.json` into `src/lib/api/generated/`.
-2. Delete `types.ts` and `fixtures.ts`.
-3. Repoint `client.ts` at the generated client, keeping its function signatures.
+A generated client from `openapi/v1.json` remains planned for integration with the
+Huron scientific backend. Replace hand-written scientific declarations and fixture
+implementations at this seam when those frontend workflows are connected. Do not
+infer scientific publication/lineage guarantees from Polaris repository registration.
 
-If step 3 requires touching anything _outside_ this directory, the seam leaked and that is a
-bug worth fixing rather than working around.
-
-## Rules while the seam exists
-
-- No component or route may define a domain type. Import it from `$api/types`.
-- No component or route may import `fixtures.ts` directly — only `client.ts` may.
-- Fixture data is obviously synthetic. It is not a demo dataset and must never be
-  mistaken for one; it exists to prove layout and states render.
+- Domain types belong here, not in routes/components.
+- No component/route imports fixtures directly or fabricates domain records.
+- All real server operations preserve upstream authorization and concealed-resource
+  404 semantics; synthetic actions never imply persistence.
+- Stable browse URLs preserve exact namespace boundaries and keyset tokens.

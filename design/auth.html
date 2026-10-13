@@ -84,6 +84,8 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 resolution order, and the server-side session that backs the web UI. Authorization — what a
 <code>Principal</code> may then do — is <a href="rbac.html">RBAC</a>; this page stops at identity.</p>
 
+<p class="note"><strong>Web beta identity:</strong> the SvelteKit Polaris wrapper currently owns durable local username/password accounts and opaque process-local sessions, separate from the scientific API identity workflows described here. Individual human accounts map to individual Polaris principals; Polaris authorizes catalog operations; Huron additionally requires membership in the catalog’s owning organization. Default administrator provisioning, encrypted client secrets and manual catalog onboarding are specified in <a href="polaris.html#authz">the beta integration contract</a>. OIDC adoption by this web wrapper remains planned.</p>
+
 <p class="note"><strong>Explore the current implementation:</strong>
 <a href="auth-uml.html">Authentication UML class atlas</a> — searchable, zoomable diagrams of
 the principal, resolvers, sessions, API keys, OIDC flow, identity service and API wiring, with

@@ -88,6 +88,16 @@ see the <a href="roadmap.html#p2-verified">recorded acceptance evidence</a>. Thi
 specifies later recovery, retention and governance capabilities; their status is tracked separately
 in the roadmap. The scientist SDK and Ray/Zarr workflows remain planned.</p>
 
+<p class="note"><strong>Polaris web integration:</strong> the four-step web ingest wizard
+uses the existing Raw upload, verification and commit workflow through a request-bound
+delegation bridge; see <a href="polaris.html#raw-publication">managed Raw uploads</a>.
+The bridge maps each upstream endpoint/realm/catalog to an internal storage organization,
+namespace to an internal project, and named dataset to a stable Raw dataset ID. These
+opaque internal storage identities are separate from the Huron workspace organizations
+that group catalogs in the UI. Moving a catalog between workspace organizations therefore
+does not move its revision files. Polaris registration follows Raw commit and has a
+durable, retryable acknowledgement; it does not change Raw's publication transaction.</p>
+
 <p class="note"><strong>Explore the current implementation:</strong>
 <a href="rawstore-uml.html">Rawstore UML class atlas</a> — searchable, zoomable diagrams of the
 POSIX <code>RawStore</code> adapter, staging and completion, commit publication, control

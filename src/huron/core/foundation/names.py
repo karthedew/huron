@@ -19,6 +19,7 @@ RESERVED_ROOT_SLUGS = frozenset(
         "account",
         "queue",
         "product",
+        "polaris",
         "snapshot",
         "search",
         "api",

@@ -27,7 +27,7 @@ from huron.core.security.principals import PrincipalStore
 from huron.core.security.rules import RoleBindingAuthorizer
 from huron.core.security.sessions import SessionStore
 
-from .capabilities import HierarchyStore, Storage
+from .capabilities import HierarchyStore, RawWebPersistence, Storage
 from .settings import ApiSettings
 
 
@@ -55,6 +55,7 @@ class ApiStores:
     credentials: CredentialStore
     sessions: SessionStore
     principals: PrincipalStore
+    raw_web: RawWebPersistence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +86,7 @@ class ApiRuntime:
     oidc_client: OidcClient | None
     database_pool: asyncpg.Pool | None
     clock: Clock
+    raw_web: RawWebPersistence | None = None
 
 
 async def api_runtime(request: Request) -> ApiRuntime:

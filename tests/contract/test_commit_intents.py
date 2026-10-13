@@ -15,6 +15,14 @@ from alembic import command
 from sqlalchemy.exc import DBAPIError
 from testcontainers.postgres import PostgresContainer
 
+from huron.core.catalog.errors import ContractMismatch
+from huron.core.foundation.canonical import canonical_bytes
+from huron.core.foundation.errors import (
+    PreconditionFailed,
+    ResourceNotFound,
+)
+from huron.core.foundation.retry import IdempotencyClaim
+from huron.core.metastore import PostgresHierarchyStore
 from huron.core.raw._impl.ingest import IngestService
 from huron.core.raw.documents import (
     CommitIntent,
@@ -22,19 +30,11 @@ from huron.core.raw.documents import (
     MetadataDocument,
     decode_manifest,
 )
-from huron.core.catalog.errors import ContractMismatch
 from huron.core.raw.errors import IngestSessionExpired
-from huron.core.foundation.errors import (
-    PreconditionFailed,
-    ResourceNotFound,
-)
 from huron.core.raw.ingest import IngestState
 from huron.core.raw.manifest import ManifestEntry
-from huron.core.foundation.canonical import canonical_bytes
-from huron.core.foundation.retry import IdempotencyClaim
-from huron.core.metastore import PostgresHierarchyStore
-from huron.core.security.rules import Visibility
 from huron.core.rawstore import PosixRawStore
+from huron.core.security.rules import Visibility
 from tests.contract.test_hierarchy_store import (
     MIGRATIONS_DIR,
     _config,
@@ -256,7 +256,10 @@ async def _assert_legacy_refusal(dsn: str, url: str) -> None:
             "UPDATE ingest_sessions SET state = 'FAILED' WHERE id = $1", session.lease.ingest_id
         )
         await asyncio.to_thread(command.upgrade, _config(url), "head")
-        assert await pool.fetchval("SELECT version_num FROM alembic_version") == "0011_verified_raw"
+        assert (
+            await pool.fetchval("SELECT version_num FROM alembic_version")
+            == "0012_raw_web_catalogs"
+        )
         assert await pool.fetchval("SELECT count(*) FROM ingest_sessions") == 1
     finally:
         await pool.close()

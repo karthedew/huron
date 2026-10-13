@@ -1,10 +1,32 @@
-import { browser } from '$app/environment';
-import { writable } from 'svelte/store';
+import type { PolarisBrowseBranch, PolarisCatalog } from '$api/types';
 
-const storedOrganization = browser ? localStorage.getItem('huron-organization') : null;
+/** Catalog context comes from the authenticated server response and the URL. */
+export function selectCatalog(catalogs: PolarisCatalog[], requested: string | null): string {
+	return catalogs.find((catalog) => catalog.name === requested)?.name ?? catalogs[0]?.name ?? '';
+}
 
-export const selectedOrganization = writable(storedOrganization ?? 'example-org');
+export function browseHref(
+	catalog: string,
+	namespace: string[] = [],
+	table = ''
+): '/browse' | `/browse?${string}` {
+	const query = new URLSearchParams();
+	if (catalog) query.set('catalog', catalog);
+	if (namespace.length) query.set('namespace', JSON.stringify(namespace));
+	if (table) query.set('table', table);
+	return query.size ? `/browse?${query}` : '/browse';
+}
 
-if (browser) {
-	selectedOrganization.subscribe((slug) => localStorage.setItem('huron-organization', slug));
+/** Keep the authorized selected path visible even when an ancestor cannot be listed. */
+export function branchFolders(branch: PolarisBrowseBranch, selected: string[]): string[][] {
+	const folders = [...branch.folders];
+	if (
+		selected.length > branch.namespace.length &&
+		branch.namespace.every((level, index) => selected[index] === level)
+	) {
+		const selectedChild = selected.slice(0, branch.namespace.length + 1);
+		if (!folders.some((folder) => JSON.stringify(folder) === JSON.stringify(selectedChild)))
+			folders.push(selectedChild);
+	}
+	return folders;
 }

@@ -80,120 +80,65 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 </nav>
 <main>
 <h1>Apache Polaris Integration</h1>
-<p class="sub">Targeted, honest, one-way: Polaris catalogs Iceberg-format Gold products for
-external engines and vends the credentials to read them. Nothing else.</p>
+<p class="sub">Huron beta wraps Polaris catalogs and its native Icechunk extension. Polaris owns catalog metadata and access grants; Huron owns human login and administration workflows.</p>
 
-<h2 id="fit">1. Fit analysis</h2>
+<h2 id="icechunk-workspace">Live catalog and Icechunk workspace</h2>
+<p>The catalog home at <code>/</code> lists authorized Polaris catalogs. Each Huron organization owns one or more Polaris catalogs. Organizations provide membership and administration; catalogs group programs or data domains with shared storage and governance. Dataset type is independent: Raw generic tables, Iceberg tables and Icechunk repositories can share a namespace. Bronze, silver and gold describe processing stages, not formats. No separate program entity is introduced in this beta. <code>/browse?catalog=…</code> shows only the selected catalog within its owning organization, with a filesystem-style namespace folder tree and repository leaves, preserving nested namespace boundaries and pagination tokens in stable, server-rendered URLs. <code>/polaris</code> redirects existing bookmarks to these main views.</p>
+<p>Repository operations use Polaris's native list/register/load/unregister and read/read-write credential endpoints. Registration does not initialize Icechunk, and unregistering leaves storage intact. Icechunk initialization and commit/snapshot/branch/tag operations remain SDK responsibilities; those APIs are not supplied by Polaris.</p>
+<p>Browse uses a compact full-height Explorer beside a dataset pane. The pane opens Overview, Schema, History, Permissions, Policies and Lineage through stable URL selections. Schema describes actual Zarr groups and arrays: dimensions, shape, data type, chunks and attributes. History reads actual Icechunk snapshots and references; branch selection changes the inspected snapshot. Repository operations are available in an explicit disclosure. Catalog settings remain in application navigation rather than the dataset body.</p>
 
-<p>Apache Polaris is an open-source <strong>Iceberg REST catalog</strong>: namespaces, Iceberg
-table metadata, its own RBAC (catalog/namespace/table grants to principals and principal roles),
-and <strong>credential vending</strong> — an engine asks Polaris for a table and receives scoped,
-short-lived object-storage credentials for exactly that table's data location.</p>
+<h2 id="raw-publication">Managed Raw uploads</h2>
+<p>The browser uses a same-origin SvelteKit bridge. Each operation rechecks the active Huron account, organization ownership/membership, and current principal-role/catalog-role grants from native Polaris RBAC. Metadata visibility and the Huron admin label alone grant no file access. Data read/write and new-table creation are evaluated separately, with exact namespace-component ancestry. Other Polaris authorization modes fail closed.</p>
+<p>The bridge signs a server-only, short-lived delegation bound to actor, upstream endpoint/realm/catalog/namespace/name, operation, request bytes and concurrency/idempotency headers. A dedicated Python router validates this delegation and maps the upstream target to a durable internal hierarchy. Request-scoped authority invokes the existing Raw workflow; it does not persist broad scientist grants or accept development identity headers. All session, file and revision IDs are checked against their mapped target.</p>
+<p>Raw publication remains storage-first and uses the existing atomic database recording of revision, outcome, audit, outbox and retry receipt. Each revision owns exactly its submitted files. A stable Polaris registration follows commit under the actor's own upstream identity. These services have no shared transaction: a committed revision may have pending registration; retry registers the same dataset and acknowledges the same revision. Registration never drops/recreates a table or updates an unguarded latest-revision pointer. Browse history and file downloads require current Raw read authority.</p>
+<p>The local launcher runs the Raw service at <code>127.0.0.1:8080</code>, with separate PostgreSQL 16 <code>huron_raw</code> storage at port 5440 in the persistent <code>huron-raw-local-data</code> Docker volume, and <code>.local/huron/raw</code> files. Configure the server-only <code>HURON_RAW_API_URL</code>, a shared <code>HURON_RAW_BRIDGE_SECRET</code> and <code>HURON_RAW_POLARIS_AUTHORIZATION=rbac</code> when deploying. The persistent key is separate from browser credentials. Huron workspace organizations can regroup catalogs without changing their stored Raw identity.</p>
 
-<table>
-<tr><th>Huron asset</th><th>Polaris fit</th><th>Verdict</th></tr>
-<tr><td>Tabular Gold products (Iceberg)</td>
-<td>Native. Spark/Trino/DuckDB/PyIceberg connect to Polaris and query directly.</td>
-<td class="k">Register (the integration)</td></tr>
-<tr><td>Bronze/Silver/array-Gold (Zarr + Icechunk)</td>
-<td>Not an Iceberg format. A generic-table entry would be a name external engines cannot read,
-duplicating Huron's catalog with none of its semantics (snapshots, validation, lineage).</td>
-<td class="k">Stay out</td></tr>
-<tr><td>Raw envelopes (NFS)</td>
-<td>Polaris has no concept of POSIX file trees, and raw access must stay API-mediated for RBAC
-anyway.</td>
-<td class="k">Stay out</td></tr>
-<tr><td>Catalog of record / search / lineage</td>
-<td>Would make Polaris a second authority that drifts from PostgreSQL + LanceDB — exactly the
-two-systems-answer-one-question pattern Huron bans.</td>
-<td class="k">Stay out</td></tr>
-</table>
+<h2 id="organizations">Organization ownership and membership</h2>
+<p>Huron persists organization identity, catalog ownership and membership in a private, endpoint/realm-bound sidecar beside the account store (override with <code>HURON_ORGANIZATION_STORE</code>). Catalog names are unique within a Polaris realm and have exactly one Huron owner. Organization membership and the current user's own Polaris visibility are intersected for every browse/settings request and catalog mutation. Organization admin manages membership and descriptions but confers no Polaris catalog privilege.</p>
+<p>On the first migration, the three existing science catalogs join <strong>NASA Science</strong>. Other existing catalogs join <strong>Huron workspace</strong>. Only people with pre-existing Polaris assignments gain ordinary membership; existing catalog admins are not promoted to organization admins. No data or Polaris grants change. New upstream catalogs remain unassigned and visible only to the global administrator until assigned. Catalog reassignment does not transfer memberships or grants. Removing an organization member requires revoking that person's Polaris roles in the organization's catalogs first.</p>
+<p>Default Huron admin creates organizations and catalogs. Initial catalog onboarding also enrolls the person in the owning organization, while the actual Reader/Writer/Admin grant remains in Polaris. These are separate durable operations: failures report partial setup and can be retried. Organizational grouping is a Huron workspace control; direct Polaris clients are governed by Polaris roles. It does not add an independent upstream tenant boundary.</p>
+<h2 id="dataset-types">Mixed dataset types</h2>
+<p>The explorer lists native Icechunk tables, native Iceberg tables and generic-table registrations. Only generic format <code>raw</code>, <code>huron.raw</code> or an explicit <code>huron.dataset-type=raw</code> marker is labeled Raw; other generic formats retain their actual identity. Generic APIs expose registration metadata. Managed entries additionally carry <code>huron.raw.service=huron-raw-v1</code> and a stable <code>huron.raw.dataset-id</code>; their detail page reads Huron revision history, manifests and authorized file bytes. External entries remain metadata-only. Raw registration does not upload files or publish a revision. Iceberg registration accepts an existing metadata-file URI through the native catalog register endpoint with overwrite disabled.</p>
+<p>Layer filters derive from <code>huron.layer</code> and explicit bronze/silver/gold namespace segments. Conflicts are visible, and new Raw registration validates agreement. Existing namespaces and sample data are not relocated. Version-specific transformation lineage, previews and publication remain planned.</p>
+<h2 id="architecture">Authority and application boundaries</h2>
+<pre>Browser → Huron SvelteKit server → Polaris management / Icechunk APIs
+           │ username/password       │ catalogs, namespaces, repositories
+           │ durable accounts        │ principal roles, catalog roles, grants
+           │ private OAuth secrets   │ storage credential authorization
+           └ opaque session cookie   └ persistent PostgreSQL metadata
 
-<p class="note"><span class="k">Revisit trigger, recorded now.</span> If the ecosystem shifts —
-Polaris generic tables gain real multi-engine read semantics, or Icechunk grows an Iceberg-REST-ish
-catalog protocol that Polaris federates — the "stay out" rows get re-evaluated. Until an external
-engine can actually <em>read</em> the entry, cataloging it in Polaris is decoration with a drift
-cost.</p>
+           └ authorized read → fixed Icechunk metadata inspector
+                               └ mounted repository storage
 
-<h2 id="architecture">2. Integration architecture</h2>
+Icechunk SDK → configured repository storage (scientific array objects)</pre>
+<p>This beta decision supersedes the earlier Iceberg-only mirror and Huron-to-Polaris authorization projection proposal on this page. Polaris is the authority for the web catalog and its grants. Huron does not duplicate Polaris catalog-grant assignments; its separate organization-membership ledger controls workspace grouping and administration. The existing Huron scientific core retains its own Raw publication contracts; the Raw bridge connects immutable revisions to stable Polaris generic-table registrations. Scientific transformation validation, classification-policy mapping, lineage and compute integration are not claimed by repository registration.</p>
+<p>Frontend server modules own HTTP transport, deployment settings and human authentication. Components receive typed page/action data through the API seam. Upstream client credentials, OAuth tokens and vended storage secrets never enter browser storage or serialized page data. Explicit creation/rotation of an external service principal displays its new secret once; Huron-managed account credentials are not exposed or rotated through that interface.</p>
+<p>The read inspector checks the user's Polaris data-read authority before opening storage. A fixed Python helper uses Icechunk and Zarr to read metadata only, with bounded execution and response size. FILE locations must resolve inside configured repository mounts. Inspection does not download array chunks or write snapshots. An unavailable runtime, uninitialized repository or unsupported storage provider produces an explicit inspection state while registered catalog metadata remains usable.</p>
+<p>Permissions project applicable catalog, ancestor namespace and exact table grants. Ordinary users see only their own role assignments; authorized access managers can inspect relevant assignees. Icechunk has no native Polaris policy attachment target in this checkout, which the Policies tab states explicitly. Source lineage shows committed source/import metadata; it does not assert a scientific publication or downstream derivation graph. Native Iceberg metadata, where present, comes from its own table endpoints and remains distinct from Icechunk.</p>
 
-<pre>
-Huron catalog (authoritative)                       Polaris (mirror, Iceberg only)
-────────────────────────────                        ─────────────────────────────
-product_versions row:                               catalog:   huron
-  status = PUBLISHED,  shape = tabular    ─sync─▶   namespace: {org_slug}.{project_slug}
-  iceberg_ref = s3://…/iceberg/…                    table:     {product_slug}__v{major}
-                                                    grants:    derived from Huron RBAC
-       ▲                                                     │ credential vending
-       │ one-way; Huron never reads state back               ▼
-   Svelte / Python client / API                      Spark · Trino · DuckDB · PyIceberg
-</pre>
+<h2 id="authz">Human identity and catalog membership</h2>
+<p>A durable local account store provides username/password authentication using salted scrypt hashes. Per-user Polaris credentials are encrypted with an independently persisted private AES-GCM key. An opaque HttpOnly, SameSite cookie identifies a process-local session. Sessions expire, terminate on restart, and are invalidated by password changes or account disabling. The default <code>admin</code> user uses deployment bootstrap credentials and manages catalogs and Huron accounts.</p>
+<p>Self-registration defaults off. Administrators manually create a Huron user, which provisions its individual Polaris principal and principal role without catalog access. Catalog settings assign Reader, Writer or Catalog administrator in Polaris. Membership reads inspect Polaris assignments, not local account attributes. Fixed Huron roles carry an ownership marker; role/grant drift is reconciled when membership is configured. Their preset privileges and managed identities cannot be modified through advanced raw controls.</p>
+<table><tr><th>Membership</th><th>Polaris authority</th></tr>
+<tr><td>Reader</td><td>Catalog/namespace/table discovery, metadata and dataset read access</td></tr>
+<tr><td>Writer</td><td>Reader authority plus namespace/repository creation, metadata updates and data writes</td></tr>
+<tr><td>Catalog administrator</td><td>Catalog content, metadata and access management; Huron realm administration remains restricted to the default administrator</td></tr></table>
+<p>Ordinary users cannot call Polaris's realm-wide catalog directory. Huron uses bootstrap authority only to discover candidate catalog names and role assignments, then fetches catalog metadata using the user's own client. Only that authorized metadata is returned. Every namespace, repository and mutation is performed with the authenticated user's Polaris principal. Undiscoverable resources render as 404. Membership changes preserve an active catalog administrator and default administrator access.</p>
 
-<ul>
-<li><strong>Sync worker</strong> (single replica) consumes outbox events for tabular publications:
-creates the namespace if absent, registers/updates the table pointing at the Iceberg metadata
-location under the product's Gold prefix, applies grants, records
-<code>polaris_synced_at</code>. Idempotent; a nightly sweep re-converges drift (Huron wins).</li>
-<li><strong>Version mapping:</strong> the table tracks the latest published version per major
-(<code>__v1</code>, <code>__v2</code>…); minor/patch updates append Iceberg snapshots to the same
-table, so engine users get history via Iceberg time travel while breaking changes are separate
-tables. <code>WITHDRAWN</code> versions are rolled back; <code>RETIRED</code> products are
-dropped from Polaris (the authoritative Icechunk data remains in Huron).</li>
-<li><strong>Deployment:</strong> Polaris runs beside Huron in the namespace, backed by its own
-PostgreSQL database, exposed only to engine networks; bootstrap and principal management are
-Terraform/lakectl-driven, not hand-edited.</li>
-</ul>
+<h2 id="configuration">Endpoint and beta deployment</h2>
+<p>Server configuration (<code>web/.env</code> in development) sets <code>POLARIS_URL</code>, <code>POLARIS_REALM</code>, bootstrap credentials and <code>HURON_ACCOUNT_STORE</code>; see <code>web/.env.example</code>. Client-selected URLs are unsupported. Each endpoint/realm requires its own account store, and mismatches fail closed. Persist the account document, organization sidecar, private encryption key, Polaris database and repository storage. Production uses the adapter-node build with a configured public origin and HTTPS.</p>
+<p>The local launcher uses <code>.local/polaris/</code> for PostgreSQL, private bootstrap credentials, package snapshots and repository storage. Huron initializes <code>.local/huron/initial-admin.json</code> with the generated default password. Changing the admin password removes that seed file. The launcher respects server environment and <code>web/.env</code> endpoint configuration.</p>
+<p><code>HURON_ICECHUNK_PYTHON</code> selects the inspector runtime; <code>HURON_ICECHUNK_READ_ROOTS</code> names approved FILE repository mounts. Both settings are server-only. The local stack mounts the existing example and NASA repository roots. Deployments must provide the fixed inspector helper and its SDK environment alongside the Node application.</p>
 
-<h2 id="authz">3. Authorization mapping</h2>
+<h2 id="samples">Reproducible NASA examples</h2>
+<p><code>scripts/polaris-dev.sh samples</code> imports bounded real scientific datasets into three disjoint FILE-backed catalogs: <code>geoscience</code>, <code>heliophysics</code> and <code>international_space_station</code>. Geoscience sources are public Zarr; ACE magnetic-field and ISS TSIS-1 irradiance CSV measurements are converted into Zarr arrays. Source coordinates, units, quality fields, packed-value scale/offset, object checksums and exact selection are preserved in committed Icechunk metadata. Import retries verify and reuse the existing snapshot; they do not overwrite it.</p>
+<p>Sources: <a href="https://podaac.jpl.nasa.gov/dataset/MUR-JPL-L4-GLOB-v4.1">NASA JPL MUR</a>, distributed as public Zarr by <a href="https://registry.opendata.aws/mur/">AWS Open Data</a>; <a href="https://power.larc.nasa.gov/docs/tutorials/service-data-request/aws/">NASA POWER public Zarr</a>. Heliophysics uses <a href="https://cdaweb.gsfc.nasa.gov/">NASA CDAWeb ACE data</a>; ISS uses <a href="https://lasp.colorado.edu/lisird/data/tsis_tsi_24hr">TSIS-1 measurements</a> from the station. Original mission downloads are retained under <code>.local/polaris/source-files/</code>. The Raw ingest page uploads selected files through the Huron Raw API and registers the resulting dataset in the selected organization's Polaris catalog. The external example Raw registrations remain unchanged; ingest their source files into a new managed dataset to publish Huron revisions.</p>
 
-<p>Huron RBAC remains the source of truth; Polaris grants are a projection of it, maintained by the
-sync worker:</p>
+<h2 id="vending">Storage access</h2>
+<p>Polaris authorizes Icechunk credential requests at the repository root. The browser sees prefix, availability and expiration summaries only. FILE storage returns no vended credentials; direct SDK access is controlled by OS permissions and supports a single local writer. Deployments requiring enforced storage isolation or concurrent writers must configure a supported object store and Polaris's storage/STS settings.</p>
 
-<table>
-<tr><th>Huron</th><th>Polaris projection</th></tr>
-<tr><td>Project role <code>reader</code> and above (may read published Gold)</td>
-<td>Principal role <code>huron-{project_slug}-readers</code> with <code>TABLE_READ_DATA</code> on
-the project's namespace</td></tr>
-<tr><td>Classification gate on a product</td>
-<td>Products above a project-configured classification ceiling are <strong>not synced at all</strong> —
-engine-side enforcement is coarser than Huron's, so sensitive tables simply never appear there</td></tr>
-<tr><td>Human/engine identity</td>
-<td>Users obtain Polaris engine credentials through Huron
-(<code>POST /polaris/credentials</code>), which checks Huron RBAC and returns short-lived Polaris
-principal credentials mapped to the right principal roles — one front door, one audit trail</td></tr>
-<tr><td>Huron service identities</td>
-<td>A single sync principal with catalog-admin on the <code>huron</code> catalog; no human holds
-Polaris admin</td></tr>
-</table>
-
-<p class="warn"><span class="k">The rule that keeps this safe:</span> access granted via Polaris
-must never exceed access the same principal has in Huron. The sync worker enforces it
-constructively (grants are only ever derived from Huron bindings), and the nightly converge job
-alerts on any grant it did not derive.</p>
-
-<h2 id="vending">4. Credential vending — division of labor</h2>
-
-<table>
-<tr><th>Path</th><th>Vendor</th><th>Scope</th></tr>
-<tr><td>External engine → tabular Gold (Iceberg)</td><td>Polaris</td>
-<td>Per-table storage credentials, engine-native flow</td></tr>
-<tr><td>Python client / Aether → any Icechunk layer</td><td>Huron API (see
-<a href="api.html#grants">API — access grants</a>)</td>
-<td>Per-repo-prefix STS credentials, read-only, short TTL</td></tr>
-</table>
-
-<p>Two vending doors, deliberately: they serve different protocols and clients, both derive from
-the same RBAC, and neither hands out anything broader than one repo/table prefix. Consolidating on
-Polaris for Icechunk grants would put a non-Iceberg concept inside an Iceberg catalog; consolidating
-on Huron for engines would mean re-implementing the Iceberg REST spec. Skip both consolidations.</p>
-
-<h2 id="failure">5. Failure posture</h2>
-
-<p>Polaris down ⇒ external engine access to tabular Gold degrades; nothing else in Huron notices —
-no Huron read path, publication path, or search path touches Polaris synchronously. Sync events
-queue in the outbox and converge on recovery. Polaris state is fully reconstructable from the Huron
-catalog (<code>lakectl polaris resync</code>).</p>
-
+<h2 id="failure">Failure and recovery</h2>
+<p>Polaris unavailability is shown as an upstream failure rather than substituted fixture data. Catalog and user provisioning span several Polaris requests; interrupted operations may have persisted earlier steps. Catalog creation retries accept only the identical configuration and complete managed administrator setup. User provisioning cleans up newly created principals/roles on failure. Account changes use locking and atomic file replacement. Local data and grants survive launcher restarts; sessions do not.</p>
 </main>
 </body>
 </html>

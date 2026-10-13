@@ -1,9 +1,8 @@
 /**
  * THE SEAM. The whole app codes against this module and nothing else.
  *
- * Today every function reads from `fixtures.ts`. At P1 the bodies are replaced with
- * calls into the client generated from `openapi/v1.json` and the signatures stay put.
- * If replacing a body forces a change in a route or component, the seam leaked.
+ * Legacy scientific views read from `fixtures.ts`. Raw ingestion uses the authenticated
+ * same-origin API below. Live Raw data never falls back to fixtures.
  * See ./README.md.
  */
 
@@ -150,3 +149,17 @@ export async function listProjectPermissions(
 }
 
 export { NotFound };
+
+export {
+	RawApiError,
+	browseRawTargets,
+	beginRawUpload,
+	getRawUpload,
+	uploadRawPart,
+	completeRawFile,
+	operateRawUpload,
+	commitRawUpload,
+	registerRawUpload,
+	listRawRevisions,
+	rawFileDownloadUrl
+} from './raw-ingestion-client';

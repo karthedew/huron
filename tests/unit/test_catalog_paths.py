@@ -250,7 +250,7 @@ def test_staging_dir_sits_at_the_data_root() -> None:
     assert staging_dir(ROOT, ingest_id) == ROOT / ".staging" / ingest_id.hex
 
 
-@pytest.mark.parametrize("slug", ["auth", "login", "logout", "signup", "settings", "ingestion"])
+@pytest.mark.parametrize("slug", ["auth", "login", "logout", "signup", "settings", "ingestion", "polaris"])
 def test_validate_org_slug_reserves_root_routes(slug: str) -> None:
     """An organization slugged like an application route would be unreachable."""
     with pytest.raises(PathRuleViolation):

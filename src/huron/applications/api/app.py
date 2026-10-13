@@ -27,6 +27,7 @@ from huron.core.metastore import (
     PostgresSessionStore,
     SystemClock,
 )
+from huron.core.metastore.raw_web import PostgresRawWebStore
 from huron.core.raw import RawRuntime
 from huron.core.rawstore import PosixRawStore
 from huron.core.security import bootstrap_platform_owner
@@ -123,6 +124,7 @@ def _build_runtime(
         oidc_client=oidc_client,
         database_pool=pool,
         clock=clock,
+        raw_web=wired.raw_web or (PostgresRawWebStore(pool) if pool is not None else None),
     )
 
 
@@ -351,6 +353,9 @@ def create_app(
 
     app.include_router(auth_routes.router)
     app.include_router(v1.router)
+    from .routes.raw_web import router as raw_web_router
+
+    app.include_router(raw_web_router)
     return app
 
 

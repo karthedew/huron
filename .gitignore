@@ -35,3 +35,6 @@ _to_delete/
 
 # /teach learning workspace (personal, not part of the product)
 learning/
+
+# Persistent local Polaris catalog, Icechunk repositories, credentials and logs.
+/.local/

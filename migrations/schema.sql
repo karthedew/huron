@@ -7,7 +7,7 @@
 -- to carry what a schema dump cannot - the trigger annotations, the vocabularies,
 -- and the invariant each rule serves. Do not replace it with pg_dump output.
 --
--- Reflects: 0011_verified_raw
+-- Reflects: 0012_raw_web_catalogs
 --
 -- Every revision that changes the schema updates this file in the same commit
 -- and moves the Reflects line to the new head. scripts/check_schema_map.py
@@ -507,4 +507,18 @@ CREATE TABLE reconciliation_findings (
     path text, subject_id uuid, detail jsonb NOT NULL,
     -- [db] reconciliation_findings_detail_is_an_object CHECK: object shape
     found_at timestamptz NOT NULL, resolved_at timestamptz
+);
+
+-- Immutable Polaris target mappings and post-commit catalog acknowledgements.
+CREATE TABLE raw_external_datasets (
+    target_key text PRIMARY KEY, -- SHA-256 of canonical external target, hex CHECK
+    endpoint text NOT NULL, realm text NOT NULL, catalog text NOT NULL,
+    namespace text[] NOT NULL, name text NOT NULL,
+    dataset_id uuid NOT NULL UNIQUE REFERENCES datasets(id) ON DELETE RESTRICT
+    -- [db] bounds on endpoint/realm/catalog/namespace/name; immutable UPDATE/DELETE trigger
+);
+CREATE TABLE raw_catalog_publications (
+    revision_id uuid PRIMARY KEY REFERENCES dataset_revisions(id) ON DELETE RESTRICT,
+    registered_at timestamptz NOT NULL DEFAULT now()
+    -- [db] immutable UPDATE/DELETE trigger; absence after commit means pending registration
 );

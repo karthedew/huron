@@ -80,89 +80,34 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 </nav>
 <main>
 <h1>Svelte Frontend</h1>
-<p class="sub">SvelteKit application: the browse, search, governance, and publication surface,
-shaped like a workspace rather than an admin console. Everything it shows comes through the REST
-API with the user's own OIDC session — the UI holds no privileged credentials and can render
-nothing the API would not serve that user.</p>
+<p class="sub">The Huron beta frontend organizes Polaris catalogs within Huron organizations. Catalog and Browse use live upstream metadata; Huron provides human login, manual onboarding and administration.</p>
 
 <h2 id="stack">1. Stack and principles</h2>
 
+<p class="note"><strong>Current delivery:</strong> organizations own one or more Polaris catalogs, with Huron membership and administration above catalog-level Polaris grants. Catalogs group scientific programs or data domains; Raw, Iceberg and Icechunk are dataset types and can share namespaces. The main catalog and browse routes, username/password login, catalog settings and global administration use real persisted state. The Raw ingest wizard uploads actual files, commits immutable Huron revisions and registers managed datasets in Polaris. Legacy scientific fixture routes redirect to Browse. This beta contract supersedes the earlier fixture page inventory and OIDC-only frontend proposal; derived scientific publication and compute capabilities remain planned. See <a href="polaris.html">the authority and integration contract</a>.</p>
 <ul>
-<li><strong>SvelteKit + TypeScript</strong>, API client generated from <code>openapi/v1.json</code>
-(compile break on contract drift).</li>
-<li><strong>OIDC</strong> against the site IdP; session cookie; no tokens in
-<code>localStorage</code>. The UI never uses API keys; it <em>manages</em> them.</li>
-<li><strong>Server-side rendering</strong> for browse/search pages (shareable deep links like
-<code>/nuclear-engineering/modeling-simulation/run-0042@v1.0</code> — slug paths are stable
-because slugs are immutable, and <code>@tag</code> resolves to one revision forever).</li>
-<li><strong>Honest staleness:</strong> every search view shows the projection watermark
-("index 12 s behind"); every stale product wears its badge with the reason; candidate vs published
-is always visually distinct.</li>
-<li><strong>404-not-403</strong> rendering mirrors the API: resources the user cannot discover
-simply do not exist in the UI.</li>
-<li><strong>Workspace shape, deliberately Databricks-like.</strong> A persistent left rail
-(Search · Catalog · Jobs · Admin) beside a three-pane catalog explorer — organization → project →
-dataset in a navigable tree, detail on the right — because that layout is what scientists arriving
-from Databricks already know how to drive. Layer badges take the place of table/view icons.</li>
-<li><strong>Permissions edited like Grafana's.</strong> Each org, project and dataset has a
-Permissions tab: one row per binding (principal → role), an "Add permission" row that resolves
-users, groups and service principals, and an explicit indicator of what is <em>inherited</em> from
-the level above versus set here. Roles are the fixed vocabulary in
-<a href="rbac.html">RBAC</a> — the UI never invents a permission the API cannot express.</li>
-<li><strong>Notebooks are out of scope for v1.</strong> A "Workspace" area is reserved in the rail
-for <a href="https://marimo.io">marimo</a> notebooks and deliberately not built yet: nothing in the
-API, the grant model, or the page inventory assumes it, and nothing blocks on it.</li>
+<li><strong>SvelteKit + strict TypeScript:</strong> typed Polaris/Huron account contracts live in the API seam; server-only clients perform upstream requests.</li>
+<li><strong>Identity:</strong> salted password hashes, encrypted individual Polaris secrets, opaque HttpOnly sessions. Tokens never enter localStorage. Accounts persist, sessions end on server restart.</li>
+<li><strong>Direct URLs and SSR:</strong> <code>/browse?catalog=…&amp;namespace=…&amp;table=…</code> preserves exact nested namespace identifiers and pagination.</li>
+<li><strong>Authorization:</strong> Huron organization membership and Polaris catalog grants are both required for discovery. Polaris decides dataset permissions. Huron global admin controls account provisioning and catalog creation. Catalog admins manage their own catalog. Undiscoverable resources render 404.</li>
+<li><strong>Accessibility:</strong> semantic forms, visible keyboard focus, light/dark themes, mobile and compact workspace layouts are acceptance criteria.</li>
+<li><strong>Honest state:</strong> real mutations report Polaris outcomes; credential checks conceal secrets. Raw upload reports separate transfer, verification, commit and Polaris registration outcomes; pending registration remains retryable. Unbuilt jobs, derived publication, quota and API-key controls are absent from the beta navigation.</li>
 </ul>
-
-<h2 id="pages">2. Page inventory</h2>
-
-<table>
-<tr><th>Area</th><th>Pages and what they show</th></tr>
-<tr><td class="k">Home / Search</td>
-<td>Global search across all four layers (datasets, revisions, snapshots, products) with facets:
-layer, org, project, tags, classification, profile, quality state. Result cards show layer badges
-(<code>raw · bronze · silver · gold</code>) and staleness. Structural browse fallback is a separate
-"browse" tree — never a degraded search.</td></tr>
-<tr><td class="k">Organization</td>
-<td>Projects list (visibility-filtered), members and delegated roles (org_admin), science-profile
-registry (org admin): published versions, immutability notice, install-to-project.</td></tr>
-<tr><td class="k">Project dashboard</td>
-<td>Datasets with lifecycle chips (ACTIVE/RETIRED); storage quota burn-down (NFS raw vs
-object-storage layers); retention policy panel with the expiry consequence text; members/roles
-(project admin); pending admin actions (publication approvals) as a work queue; the effective
-policy panel showing what is inherited from the organization versus set here.</td></tr>
-<tr><td class="k">Dataset</td>
-<td>Revision history with per-revision materialization state
-(<code>raw ✓ · bronze ✓ · silver S118 · —</code>); release tags shown as pinned labels against the
-revisions they point at; canonical contract (variables, dims, units) with
-version history; a "open in Python" snippet with the pinned latest snapshot; validation history
-sparkline; retention/holds panel.</td></tr>
-<tr><td class="k">Revision</td>
-<td>Revisions with reasons ("rev 2: original meshtal truncated"); manifest viewer (paths, sizes,
-checksums, per-file retention category and expiry date); extracted parameters; effective metadata
-with amendment history; per-file download (capability-gated); expiry/purge markers rendered
-plainly.</td></tr>
-<tr><td class="k">Snapshot</td>
-<td>Provenance block, validation evidence (structured pass/fail with details), lineage
-mini-graph, open-in-Python snippet pinned to this snapshot.</td></tr>
-<tr><td class="k">Product</td>
-<td>Versions with status; the full derivation record (inputs, transform digest, parameters);
-interactive lineage graph (upstream/downstream, redacted nodes rendered as locked); validation
-evidence; publish/withdraw actions for publishers; staleness banner with recompute action.</td></tr>
-<tr><td class="k">Publication queue</td>
-<td>For project admins: candidates awaiting review, evidence side-by-side with the contract,
-one-click publish with audit note.</td></tr>
-<tr><td class="k">Account</td>
-<td>API keys: create (scopes, project restriction, expiry) with the show-once secret flow, list
-with last-used, revoke. Effective roles per scope ("why can I see this?" — <code>GET /auth/session</code>).</td></tr>
-<tr><td class="k">Admin</td>
-<td>Role bindings editor (scoped to the admin's own authority); classification vocabulary
-(read-only view of deployment config); reconciliation reports with dry-run plans and DEGRADED
-findings; purge request/approve (two-person flow made visible); audit stream with filters;
-retention holds; job queue health (bronze/silver/gold backlogs, projection lag).</td></tr>
+<h2 id="pages">2. Beta page inventory</h2>
+<table><tr><th>Route</th><th>Behavior</th></tr>
+<tr><td><code>/login</code>, <code>/signup</code>, <code>/logout</code></td><td>Real username/password sessions. Manual onboarding by default; optional self-registration grants no catalog access.</td></tr>
+<tr><td><code>/</code></td><td>Selected-organization catalog cards and search of already-disclosed catalog metadata. Organization and catalog selectors are distinct; catalog URLs resolve their owning organization.</td></tr>
+<tr><td><code>/browse</code></td><td>Compact selected-catalog filesystem Explorer with nested namespace folders, mixed dataset types and lazy navigation. Dataset-name, type and processing-layer filters apply to the current loaded folder page. The dataset pane has Overview, Schema, History, Permissions, Policies and Lineage, with real Icechunk branch/snapshot inspection and scoped Polaris grants. Managed Raw datasets show immutable revision history, manifests and authenticated file downloads; external Raw registrations expose metadata only; Iceberg tables show native schema and snapshot metadata. Operations register existing Raw storage, Iceberg metadata files or Icechunk repositories. Dataset layers come from huron.layer or explicit bronze/silver/gold namespaces; conflicting metadata is shown and new Raw registration rejects it.</td></tr>
+<tr><td><code>/settings/organization</code></td><td>Organization name, description and membership. Organization admins cannot grant themselves access to catalogs merely through this role. Removing membership requires revoking existing Polaris catalog roles first.</td></tr>
+<tr><td><code>/settings/catalog</code></td><td>Individual Polaris catalog configuration, user memberships and advanced catalog role/grant management.</td></tr>
+<tr><td><code>/admin</code></td><td>Default Huron administrator creates organizations, assigns catalogs to organizations, creates catalogs, creates/disables people, resets passwords and manages Polaris service principals/roles.</td></tr>
+<tr><td><code>/account</code></td><td>Authenticated identity and verified self-service password change.</td></tr>
+<tr><td><code>/ingestion</code></td><td>In-page Destination, Source, Metadata and Review wizard. The filesystem explorer lists all accessible catalogs in the selected organization and their namespace folders. Select local files or a directory, create a managed Raw dataset or choose an existing one, and publish through the real Huron multipart workflow. Back navigation preserves the draft; retry retains the upload identity and exact files. Completion requires both a committed immutable revision and a verified Polaris generic-table registration. External Raw registrations cannot silently adopt managed upload identities.</td></tr>
+<tr><td><code>/polaris</code>, <code>/settings/project</code></td><td>Compatibility redirects to live browse/catalog settings.</td></tr>
 </table>
 
-<h2 id="flows">3. Flows worth specifying</h2>
+<h2 id="flows">3. Planned scientific flows</h2>
+<p class="note">The scientific workflow sketches below describe future integration, not beta frontend delivery.</p>
 
 <p>The end-to-end scientist journey — dataset creation, entry-layer choice, raw upload, manual
 bronze intake, publication, release, open — is specified step-by-step, web UI and Python client

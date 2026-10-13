@@ -21,12 +21,12 @@ from fastapi.testclient import TestClient
 import huron.applications.api as api_package
 import huron.applications.api.app as app_module
 import huron.core.security._impl.identity as identity_module
-from huron.applications.api.app import create_app
 import huron.core.security._impl.password_authentication as login
+from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
+from huron.core.rawstore import PosixRawStore
 from huron.core.security.password import make_credential as real_make_credential
 from huron.core.security.password import verify_password as real_verify_password
-from huron.core.rawstore import PosixRawStore
 from tests.ingest_client import IngestClient, manifest_file
 from tests.unit.support import memory_stores
 
@@ -37,8 +37,8 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from huron.core.security.password import CredentialRecord
     from huron.core.raw.ports import RawStore
+    from huron.core.security.password import CredentialRecord
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +47,7 @@ pytestmark = pytest.mark.unit
 #: mapped to whether the handler is a coroutine function. The four
 #: documentation routes (``/docs``, ``/docs/oauth2-redirect``,
 #: ``/openapi.json``, ``/redoc``) are framework-provided and excluded - the
-#: table covers the 63 this service defines.
+#: table covers every explicitly reviewed service operation.
 EXPECTED_COROUTINE_FUNCTION = {
     "healthz": True,
     "readyz": True,
@@ -112,6 +112,17 @@ EXPECTED_COROUTINE_FUNCTION = {
     "create_user": True,
     "set_password": True,
     "disable_user": True,
+    "create_upload": True,
+    "upload": True,
+    "receive_upload_part": True,
+    "complete_file": True,
+    "commit_upload": True,
+    "acknowledge_registration": True,
+    "advance_upload": True,
+    "list_revisions": True,
+    "manifest": True,
+    "payload": True,
+    "revision": True,
 }
 
 DOCUMENTATION_ENDPOINTS = frozenset(
@@ -157,7 +168,7 @@ def _operations(app: FastAPI) -> Iterator[Callable[..., object]]:
 def test_the_route_table_has_exactly_the_operations_this_service_defines(
     tmp_path: Path,
 ) -> None:
-    """Registered operations minus the four documentation routes equal exactly the 60 expected."""
+    """Registered service operations equal the explicitly reviewed inventory."""
     names = {op.__name__ for op in _operations(_built_app(tmp_path))}
     assert names - DOCUMENTATION_ENDPOINTS == set(EXPECTED_COROUTINE_FUNCTION)
 

@@ -9,10 +9,9 @@ session's current ``etag`` as its ``ETag`` header, the value a later
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 from uuid import UUID
 
-from asyncer import syncify
 from fastapi import APIRouter, Depends, Header, Request, Response
 
 from huron.applications.api.authorization import (
@@ -42,6 +41,7 @@ from huron.applications.api.routes.v1.schema.ingest_sessions import (
     ManifestFile,
 )
 from huron.applications.api.routes.v1.schema.revisions import RevisionView
+from huron.applications.api.streams import body_chunks
 from huron.core.catalog.types import Dataset
 from huron.core.foundation.canonical import content_identity
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
@@ -50,9 +50,6 @@ from huron.core.raw.manifest import ManifestEntry
 from huron.core.raw.retry import session_claim
 from huron.core.raw.types import SessionLedger
 from huron.core.security.principal import Principal
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 dataset_ingest_sessions = APIRouter(
     prefix="/datasets/{dataset_id}/ingest-sessions", tags=["ingest-sessions"]
@@ -329,42 +326,6 @@ _UPLOAD_ERRORS = problem_response(
 )
 
 
-def _body_chunks(request: Request) -> Iterator[bytes]:
-    """Pull the request body one chunk at a time, safe to iterate from a worker thread.
-
-    Bridges FastAPI's async body stream to the synchronous ``Iterable[bytes]``
-    the raw store's ``write_part`` consumes on its own worker thread: each
-    call blocks on ``syncify``, hopping back to the event loop to pull the
-    next chunk, so a part is never buffered beyond the one chunk in flight.
-    Empty chunks are skipped; the stream ends when the body is exhausted,
-    and a client disconnect propagates as ``ClientDisconnect``.
-
-    Args:
-        request: The request whose body is streamed.
-
-    Yields:
-        Each non-empty chunk of the request body, in order.
-    """
-    body = request.stream().__aiter__()
-
-    async def _next_chunk() -> bytes:
-        """Await the body's next chunk, so ``syncify`` sees a plain coroutine function.
-
-        Returns:
-            The next chunk from the request body.
-        """
-        return await body.__anext__()
-
-    pull = syncify(_next_chunk)
-    while True:
-        try:
-            chunk = pull()
-        except StopAsyncIteration:
-            return
-        if chunk:
-            yield chunk
-
-
 @transfer.put(
     "/uploads/{file_id}/parts/{part}",
     responses={
@@ -400,7 +361,7 @@ async def upload_part(
     Returns:
         The file's view once the part is recorded.
     """
-    chunks = _body_chunks(request)
+    chunks = body_chunks(request)
     file = await ingest.receive_part(
         target.ledger.id, target.file.file_id, part, chunks, content_length=content_length
     )

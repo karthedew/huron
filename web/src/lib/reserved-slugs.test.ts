@@ -27,6 +27,7 @@ describe('reserved root slugs', () => {
 
 	it('identifies reserved slugs', () => {
 		expect(isReservedRootSlug('admin')).toBe(true);
+		expect(isReservedRootSlug('polaris')).toBe(true);
 		expect(isReservedRootSlug('example-org')).toBe(false);
 	});
 });
