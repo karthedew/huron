@@ -1,13 +1,14 @@
 import type { HuronUser } from './huron-types';
 import type { PolarisCatalog } from './polaris-types';
 
-/** Huron ownership and membership grouping above Polaris catalogs. */
+/** A Huron membership root bound to one native Polaris realm. */
 export interface HuronOrganization {
 	id: string;
 	slug: string;
 	name: string;
 	description: string;
 	createdAt: string;
+	realm: string;
 }
 
 export type HuronOrganizationRole = 'member' | 'admin';

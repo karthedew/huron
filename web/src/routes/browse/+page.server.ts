@@ -3,7 +3,7 @@ import type { PageServerLoad } from './$types';
 import { loadPolarisBrowse } from '$lib/server/polaris-browse';
 import { PolarisApiError } from '$lib/server/polaris-client';
 import { getAuthenticatedPolaris } from '$lib/server/huron-auth';
-import { consumePolarisNotice, polarisSettings } from '$lib/server/polaris-session';
+import { consumePolarisNotice } from '$lib/server/polaris-session';
 import { createPolarisActions } from '$lib/server/polaris-route-actions';
 import { inspectIcechunk } from '$lib/server/icechunk-inspector';
 import { loadDatasetGovernance } from '$lib/server/polaris-dataset-governance';
@@ -11,9 +11,9 @@ import { loadRawInspection } from '$lib/server/raw-inspection';
 
 export const load: PageServerLoad = async (event) => {
 	const client = getAuthenticatedPolaris(event);
-	const { catalogs } = await event.parent();
+	const { catalogs, selectedOrganization } = await event.parent();
 	try {
-		const data = await loadPolarisBrowse(client, catalogs, event.url, polarisSettings());
+		const data = await loadPolarisBrowse(client, catalogs, event.url, client.connection);
 		data.notice = consumePolarisNotice(event.cookies);
 		const user = event.locals.user;
 		if (user && data.loadedRawTable) {
@@ -25,6 +25,7 @@ export const load: PageServerLoad = async (event) => {
 				client,
 				user,
 				{
+					organization: selectedOrganization,
 					catalog: data.selected.catalog,
 					namespace: data.selected.namespace,
 					name: data.selected.table

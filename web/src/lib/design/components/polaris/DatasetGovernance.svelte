@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import type { PolarisDatasetGovernance } from '$api/types';
 	let {
 		governance,
@@ -82,8 +83,9 @@
 	</div>
 	{#if governance.permissions.capabilities.manageAccess}<a
 			class="mt-5 inline-block text-xs font-medium"
-			href={resolve(`/settings/catalog?catalog=${encodeURIComponent(catalog)}&tab=access`)}
-			>Manage catalog grants →</a
+			href={resolve(
+				`/settings/catalog?catalog=${encodeURIComponent(catalog)}&organization=${encodeURIComponent(page.data.selectedOrganization ?? '')}&tab=access`
+			)}>Manage catalog grants →</a
 		>{/if}
 {:else}
 	<h2 class="governance-heading">Policies</h2>

@@ -5,7 +5,7 @@ for Polaris metadata and Huron accounts live here and are re-exported by
 `types.ts`. Server-only clients authenticate each upstream operation as the
 signed-in user’s individual Polaris principal; credentials/tokens are never
 serialized to the browser. Bootstrap authority is confined to account provisioning,
-realm administration and filtered catalog discovery. Polaris owns catalog grants. Huron owns organization membership and catalog ownership, and server routes intersect both scopes before accessing data.
+realm administration and filtered catalog discovery. Polaris owns catalog grants. Huron owns organization membership and immutable realm bindings, and server routes intersect membership with native grants before accessing data.
 
 Dataset inspection is a server-only adapter: it checks the current user's Polaris
 read authority, confines FILE storage to configured mounts, and calls a fixed
@@ -40,3 +40,10 @@ infer scientific publication/lineage guarantees from Polaris repository registra
 - All real server operations preserve upstream authorization and concealed-resource
   404 semantics; synthetic actions never imply persistence.
 - Stable browse URLs preserve exact namespace boundaries and keyset tokens.
+
+Organization roots map one-to-one to configured Polaris realms. The server selects an
+accessible organization before constructing the realm-specific client; public organization
+DTOs carry the realm name, never connection credentials. Catalog names are unique only
+inside a realm. Generated Browse URLs and every Raw request include the organization,
+and a frozen Raw target retains it through retries. Account login is global; credentials,
+grant discovery, catalog membership and Raw backend identities remain realm-scoped.

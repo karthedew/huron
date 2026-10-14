@@ -194,7 +194,7 @@ test('a confirmed preflight rejection preserves files and metadata for editing',
 	});
 	await metadata(page);
 	await page.route(
-		'**/ingestion/api/uploads',
+		'**/ingestion/api/uploads?*',
 		(route) =>
 			route.fulfill({
 				status: 409,

@@ -8,9 +8,11 @@
 	import PolarisForm from './PolarisForm.svelte';
 	let {
 		data,
+		organization,
 		href
 	}: {
 		data: PolarisBrowseData;
+		organization: string;
 		href: (changes: Record<string, string | null>) => '/browse' | `/browse?${string}`;
 	} = $props();
 	let query = $state('');
@@ -108,7 +110,7 @@
 					>
 						<td class="px-4 py-2"
 							><a
-								href={resolve(browseHref(data.selected.catalog, namespace))}
+								href={resolve(browseHref(data.selected.catalog, namespace, '', organization))}
 								class="inline-flex min-w-0 items-start gap-2 text-app-fg"
 								><Folder size={15} class="mt-0.5 shrink-0 text-app-muted" /><span class="break-all"
 									>{namespace.at(-1)}</span

@@ -15,23 +15,25 @@ import { accountStore, getBootstrapPolarisClient } from './huron-accounts';
 import { visibleCatalogs } from './polaris-catalogs';
 import { PolarisApiError, type PolarisClient } from './polaris-client';
 import { PolarisInputError } from './polaris-forms';
-import { polarisSettings } from './polaris-settings';
+import { polarisRealms, polarisSettings } from './polaris-settings';
 
 interface StoredOrganization extends HuronOrganization {
 	members: { userId: string; role: HuronOrganizationRole }[];
-	catalogNames: string[];
+	polarisUrl: string;
 }
 interface OrganizationDocument {
-	version: 1;
+	version: 2;
 	upstream: { url: string; realm: string };
 	organizations: StoredOrganization[];
 }
 interface OrganizationStoreOptions {
 	path: string;
 	connection: { url: string; realm: string };
+	connections: () => { url: string; realm: string }[];
 	users: () => Promise<HuronUser[]>;
-	catalogs: () => Promise<PolarisCatalog[]>;
-	assignments: (user: HuronUser, catalog: string) => Promise<PolarisRole[]>;
+	catalogs: (realm: string) => Promise<PolarisCatalog[]>;
+	assignments: (user: HuronUser, catalog: string, realm: string) => Promise<PolarisRole[]>;
+	ensureIdentity: (userId: string, realm: string) => Promise<HuronUser>;
 }
 const nasaCatalogs = new Set(['heliophysics', 'geoscience', 'international_space_station']);
 function hasCode(error: unknown, code: string): boolean {
@@ -51,9 +53,12 @@ function role(value: unknown): HuronOrganizationRole {
 	if (value !== 'member' && value !== 'admin') throw new Error('Invalid Huron organization role.');
 	return value;
 }
-function decodeOrganization(value: unknown): StoredOrganization {
+function decodeOrganization(
+	value: unknown,
+	legacy?: { url: string; realm: string }
+): StoredOrganization {
 	const item = record(value);
-	if (!Array.isArray(item.members) || !Array.isArray(item.catalogNames))
+	if (!Array.isArray(item.members) || (legacy && !Array.isArray(item.catalogNames)))
 		throw new Error('Invalid Huron organization store.');
 	const members = item.members.map((entry: unknown) => {
 		const member = record(entry);
@@ -68,7 +73,8 @@ function decodeOrganization(value: unknown): StoredOrganization {
 		description: text(item.description, true),
 		createdAt: text(item.createdAt),
 		members,
-		catalogNames: item.catalogNames.map((entry: unknown) => text(entry))
+		realm: legacy?.realm ?? text(item.realm),
+		polarisUrl: legacy?.url ?? text(item.polarisUrl)
 	};
 }
 function publicOrganization(value: StoredOrganization): HuronOrganization {
@@ -77,7 +83,8 @@ function publicOrganization(value: StoredOrganization): HuronOrganization {
 		slug: value.slug,
 		name: value.name,
 		description: value.description,
-		createdAt: value.createdAt
+		createdAt: value.createdAt,
+		realm: value.realm
 	};
 }
 function organizationInput(input: { name: string; description: string }) {
@@ -114,7 +121,7 @@ function requireOrganization(
 	return organization;
 }
 
-/** Durable Huron ownership and membership; Polaris remains authoritative for catalog grants. */
+/** Durable membership roots; each organization's catalogs belong to its native Polaris realm. */
 export class HuronOrganizationStore {
 	constructor(private readonly options: OrganizationStoreOptions) {}
 
@@ -177,11 +184,18 @@ export class HuronOrganizationStore {
 		}
 	}
 
-	private async readDocument(): Promise<OrganizationDocument> {
+	private configuredRealm(realm: string): { url: string; realm: string } {
+		const connection = this.options.connections().find((entry) => entry.realm === realm);
+		if (!connection)
+			throw new PolarisInputError('Choose a configured Polaris realm for this deployment.');
+		return connection;
+	}
+
+	private async readDocument(migrate = false): Promise<OrganizationDocument> {
 		const decoded: unknown = JSON.parse(await readFile(this.options.path, 'utf8'));
 		const value = record(decoded);
 		const upstream = record(value.upstream);
-		if (value.version !== 1 || !Array.isArray(value.organizations))
+		if ((value.version !== 1 && value.version !== 2) || !Array.isArray(value.organizations))
 			throw new Error('Invalid Huron organization store.');
 		if (
 			upstream.url !== this.options.connection.url ||
@@ -190,15 +204,31 @@ export class HuronOrganizationStore {
 			throw new Error(
 				'Huron organization storage belongs to another Polaris endpoint or realm. Configure a separate organization store for this connection.'
 			);
-		const organizations = value.organizations.map(decodeOrganization);
-		const catalogs = organizations.flatMap((entry) => entry.catalogNames);
+		if (value.version === 1 && value.organizations.length > 1)
+			throw new Error(
+				'Legacy organizations share one Polaris realm. Migrate each organization and its catalogs to a separate configured realm before upgrading; the organization store has not been changed.'
+			);
+		const organizations = value.organizations.map((entry: unknown) =>
+			decodeOrganization(entry, value.version === 1 ? this.options.connection : undefined)
+		);
 		if (
 			new Set(organizations.map((entry) => entry.id)).size !== organizations.length ||
 			new Set(organizations.map((entry) => entry.slug)).size !== organizations.length ||
-			new Set(catalogs).size !== catalogs.length
+			new Set(organizations.map((entry) => entry.realm)).size !== organizations.length
 		)
-			throw new Error('Duplicate ownership in Huron organization storage.');
-		return { version: 1, upstream: this.options.connection, organizations };
+			throw new Error('Duplicate organization or Polaris realm in Huron organization storage.');
+		for (const organization of organizations)
+			if (this.configuredRealm(organization.realm).url !== organization.polarisUrl)
+				throw new Error(
+					'A Huron organization belongs to another Polaris endpoint. Restore its configured realm connection before continuing.'
+				);
+		const document: OrganizationDocument = {
+			version: 2,
+			upstream: this.options.connection,
+			organizations
+		};
+		if (migrate && value.version === 1) await this.writeDocument(document);
+		return document;
 	}
 
 	private async writeDocument(document: OrganizationDocument): Promise<void> {
@@ -224,66 +254,60 @@ export class HuronOrganizationStore {
 	async initialize(): Promise<void> {
 		await this.locked(async () => {
 			try {
-				await this.readDocument();
-				return;
+				const document = await this.readDocument(true);
+				if (document.organizations.length) return;
 			} catch (error) {
 				if (!hasCode(error, 'ENOENT')) throw error;
 			}
-			const [users, catalogs] = await Promise.all([this.options.users(), this.options.catalogs()]);
-			const organizations: StoredOrganization[] = [];
-			for (const seed of [
-				{
-					slug: 'nasa-science',
-					name: 'NASA Science',
-					include: (name: string) => nasaCatalogs.has(name)
-				},
-				{
-					slug: 'workspace',
-					name: 'Huron workspace',
-					include: (name: string) => !nasaCatalogs.has(name)
+			const { realm } = this.options.connection;
+			this.configuredRealm(realm);
+			const [users, catalogs] = await Promise.all([
+				this.options.users(),
+				this.options.catalogs(realm)
+			]);
+			const members: StoredOrganization['members'] = [];
+			for (const user of users) {
+				if (user.isAdmin) {
+					members.push({ userId: user.id, role: 'admin' });
+					continue;
 				}
-			]) {
-				const catalogNames = catalogs.map((catalog) => catalog.name).filter(seed.include);
-				if (!catalogNames.length) continue;
-				const members: StoredOrganization['members'] = [];
-				for (const user of users) {
-					if (user.isAdmin) {
-						members.push({ userId: user.id, role: 'admin' });
-						continue;
-					}
-					const assigned = (
-						await Promise.all(
-							catalogNames.map((catalog) => this.options.assignments(user, catalog))
-						)
-					).flat();
-					if (assigned.length)
-						members.push({
-							userId: user.id,
-							role: 'member'
-						});
-				}
-				organizations.push({
-					id: randomUUID(),
-					slug: seed.slug,
-					name: seed.name,
-					description: '',
-					createdAt: new Date().toISOString(),
-					catalogNames,
-					members
-				});
+				const assigned = await Promise.all(
+					catalogs.map((catalog) => this.options.assignments(user, catalog.name, realm))
+				);
+				if (assigned.some((entries) => entries.length))
+					members.push({ userId: user.id, role: 'member' });
 			}
-			await this.writeDocument({ version: 1, upstream: this.options.connection, organizations });
+			const isNasa =
+				catalogs.length > 0 && catalogs.every((catalog) => nasaCatalogs.has(catalog.name));
+			await this.writeDocument({
+				version: 2,
+				upstream: this.options.connection,
+				organizations: [
+					{
+						id: randomUUID(),
+						slug: isNasa ? 'nasa-science' : 'workspace',
+						name: isNasa ? 'NASA Science' : 'Huron workspace',
+						description: '',
+						createdAt: new Date().toISOString(),
+						realm,
+						polarisUrl: this.options.connection.url,
+						members
+					}
+				]
+			});
 		});
 	}
 
 	/** Membership alone never discloses catalog names not granted by Polaris. */
 	async list(
 		actor: HuronUser,
-		authorizedCatalogs: PolarisCatalog[]
+		authorizedCatalogs: PolarisCatalog[] = [],
+		realm?: string
 	): Promise<HuronOrganizationSummary[]> {
 		requireActive(actor);
 		await this.initialize();
-		const available = new Set(authorizedCatalogs.map((catalog) => catalog.name));
+		if (authorizedCatalogs.length && !realm)
+			throw new PolarisInputError('Catalog discovery requires an explicit Polaris realm.');
 		return (await this.readDocument()).organizations.flatMap((organization) => {
 			const role = organizationRole(actor, organization);
 			return role
@@ -291,11 +315,20 @@ export class HuronOrganizationStore {
 						{
 							...publicOrganization(organization),
 							role,
-							catalogNames: organization.catalogNames.filter((name) => available.has(name))
+							catalogNames:
+								organization.realm === realm
+									? authorizedCatalogs.map((catalog) => catalog.name)
+									: []
 						}
 					]
 				: [];
 		});
+	}
+
+	async get(actor: HuronUser, slug: string): Promise<HuronOrganizationSummary> {
+		const organization = (await this.list(actor)).find((entry) => entry.slug === slug);
+		if (!organization) throw new PolarisApiError(404);
+		return organization;
 	}
 
 	async members(actor: HuronUser, slug: string): Promise<HuronOrganizationMember[]> {
@@ -309,12 +342,14 @@ export class HuronOrganizationStore {
 	}
 
 	/** Candidate people for catalog administration stay within the owning organization. */
-	async catalogUsers(actor: HuronUser, catalog: string): Promise<HuronUser[]> {
+	async catalogUsers(actor: HuronUser, catalog: string, realm: string): Promise<HuronUser[]> {
 		await this.initialize();
 		const document = await this.readDocument();
-		const target = document.organizations.find((entry) => entry.catalogNames.includes(catalog));
+		const target = document.organizations.find((entry) => entry.realm === realm);
 		if (!target) throw new PolarisApiError(404);
 		const organization = requireOrganization(actor, document, target.slug);
+		if (!(await this.options.catalogs(realm)).some((entry) => entry.name === catalog))
+			throw new PolarisApiError(404);
 		const users = await this.options.users();
 		return actor.isAdmin
 			? users
@@ -323,7 +358,7 @@ export class HuronOrganizationStore {
 
 	async create(
 		actor: HuronUser,
-		input: { slug: string; name: string; description: string }
+		input: { slug: string; name: string; description: string; realm: string }
 	): Promise<HuronOrganization> {
 		requireActive(actor);
 		if (!actor.isAdmin)
@@ -337,18 +372,25 @@ export class HuronOrganizationStore {
 				'Use an organization identifier of 3–64 lowercase letters, numbers or hyphens, beginning with a letter and ending with a letter or number.'
 			);
 		const values = organizationInput(input);
+		const realm = input.realm.trim();
+		const connection = this.configuredRealm(realm);
 		await this.initialize();
 		return this.locked(async () => {
 			const document = await this.readDocument();
 			if (document.organizations.some((entry) => entry.slug === slug))
 				throw new PolarisApiError(409, 'That organization identifier is already in use.');
+			if (document.organizations.some((entry) => entry.realm === realm))
+				throw new PolarisApiError(409, 'That Polaris realm already belongs to an organization.');
+			await this.options.catalogs(realm);
+			await this.options.ensureIdentity(actor.id, realm);
 			const organization: StoredOrganization = {
 				id: randomUUID(),
 				slug,
 				...values,
 				createdAt: new Date().toISOString(),
 				members: [{ userId: actor.id, role: 'admin' }],
-				catalogNames: []
+				realm,
+				polarisUrl: connection.url
 			};
 			document.organizations.push(organization);
 			await this.writeDocument(document);
@@ -405,8 +447,11 @@ export class HuronOrganizationStore {
 			)
 				throw new PolarisInputError('Keep at least one active organization administrator.');
 			if (selectedRole === 'none' && previous) {
+				const catalogs = await this.options.catalogs(organization.realm);
 				const assignments = await Promise.all(
-					organization.catalogNames.map((catalog) => this.options.assignments(user, catalog))
+					catalogs.map((catalog) =>
+						this.options.assignments(user, catalog.name, organization.realm)
+					)
 				);
 				if (assignments.some((entries) => entries.length))
 					throw new PolarisInputError(
@@ -414,49 +459,10 @@ export class HuronOrganizationStore {
 					);
 			}
 			organization.members = organization.members.filter((member) => member.userId !== user.id);
-			if (selectedRole !== 'none')
+			if (selectedRole !== 'none') {
+				await this.options.ensureIdentity(user.id, organization.realm);
 				organization.members.push({ userId: user.id, role: selectedRole });
-			await this.writeDocument(document);
-		});
-	}
-
-	/** Transfers catalog ownership without changing any Polaris role or grant. */
-	async assignCatalog(actor: HuronUser, slug: string, catalog: string): Promise<void> {
-		await this.setCatalogOwner(actor, slug, catalog, 'transfer');
-	}
-
-	/** Completes creation without adopting a catalog that another organization already owns. */
-	async claimCatalog(actor: HuronUser, slug: string, catalog: string): Promise<void> {
-		await this.setCatalogOwner(actor, slug, catalog, 'claim');
-	}
-
-	private async setCatalogOwner(
-		actor: HuronUser,
-		slug: string,
-		catalog: string,
-		operation: 'claim' | 'transfer'
-	): Promise<void> {
-		requireActive(actor);
-		if (!actor.isAdmin)
-			throw new PolarisApiError(
-				403,
-				'Huron administrator access is required to assign catalogs to organizations.'
-			);
-		await this.initialize();
-		await this.locked(async () => {
-			const document = await this.readDocument();
-			const organization = requireOrganization(actor, document, slug, true);
-			const owner = document.organizations.find((entry) => entry.catalogNames.includes(catalog));
-			if (operation === 'claim' && owner && owner.id !== organization.id)
-				throw new PolarisApiError(
-					409,
-					'This catalog already belongs to another organization. Use Assign catalog to move an existing catalog.'
-				);
-			if (!(await this.options.catalogs()).some((entry) => entry.name === catalog))
-				throw new PolarisApiError(404);
-			for (const entry of document.organizations)
-				entry.catalogNames = entry.catalogNames.filter((name) => name !== catalog);
-			organization.catalogNames.push(catalog);
+			}
 			await this.writeDocument(document);
 		});
 	}
@@ -465,21 +471,25 @@ export class HuronOrganizationStore {
 	async ensureMembershipForCatalog(
 		actor: HuronUser,
 		userId: string,
-		catalog: string
+		catalog: string,
+		realm: string
 	): Promise<void> {
 		await this.initialize();
 		await this.locked(async () => {
 			const document = await this.readDocument();
-			const target = document.organizations.find((entry) => entry.catalogNames.includes(catalog));
+			const target = document.organizations.find((entry) => entry.realm === realm);
 			if (!target)
 				throw new PolarisInputError(
-					'Assign this catalog to an organization before adding catalog members.'
+					'Connect this Polaris realm to an organization before adding catalog members.'
 				);
 			const organization = requireOrganization(actor, document, target.slug);
+			if (!(await this.options.catalogs(realm)).some((entry) => entry.name === catalog))
+				throw new PolarisApiError(404);
 			const user = (await this.options.users()).find((entry) => entry.id === userId);
 			if (!user || user.disabled) throw new PolarisInputError('Choose an active Huron account.');
 			if (!organization.members.some((entry) => entry.userId === userId)) {
 				requireOrganization(actor, document, target.slug, true);
+				await this.options.ensureIdentity(userId, realm);
 				organization.members.push({ userId, role: user.isAdmin ? 'admin' : 'member' });
 				await this.writeDocument(document);
 			}
@@ -496,12 +506,14 @@ export function organizationStore(): HuronOrganizationStore {
 	return (store ??= new HuronOrganizationStore({
 		path: resolve(env.HURON_ORGANIZATION_STORE || `${accounts}.organizations.json`),
 		connection: polarisSettings(),
+		connections: () => polarisRealms(),
 		users: () => accountStore().listUsers(),
-		catalogs: async () => (await getBootstrapPolarisClient()).catalogs(),
-		assignments: async (user, catalog) => {
+		catalogs: async (realm) => (await getBootstrapPolarisClient(realm)).catalogs(),
+		ensureIdentity: (userId, realm) => accountStore().ensureRealmIdentity(userId, realm),
+		assignments: async (user, catalog, realm) => {
 			try {
 				return await (
-					await getBootstrapPolarisClient()
+					await getBootstrapPolarisClient(realm)
 				).assignments(user.polarisPrincipalRole, catalog);
 			} catch (error) {
 				if (error instanceof PolarisApiError && error.status === 404) return [];
@@ -515,12 +527,18 @@ export async function organizationDirectory(
 	user: HuronUser,
 	client: PolarisClient
 ): Promise<HuronOrganizationDirectory> {
+	const organizations = await organizationStore().list(user);
+	const realm = client.connection.realm;
+	const member = organizations.find((entry) => entry.realm === realm);
+	if (!member) return { organizations, catalogs: [] };
 	const catalogs = await visibleCatalogs(user, client);
-	const organizations = await organizationStore().list(user, catalogs);
-	const allowed = new Set(organizations.flatMap((entry) => entry.catalogNames));
 	return {
-		organizations,
-		catalogs: user.isAdmin ? catalogs : catalogs.filter((entry) => allowed.has(entry.name))
+		organizations: organizations.map((entry) =>
+			entry.realm === realm
+				? { ...entry, catalogNames: catalogs.map((catalog) => catalog.name) }
+				: entry
+		),
+		catalogs
 	};
 }
 
@@ -531,8 +549,8 @@ export async function requireOrganizationCatalog(
 	catalog: string
 ): Promise<HuronOrganizationSummary> {
 	const directory = await organizationDirectory(user, client);
-	const organization = directory.organizations.find((entry) =>
-		entry.catalogNames.includes(catalog)
+	const organization = directory.organizations.find(
+		(entry) => entry.realm === client.connection.realm && entry.catalogNames.includes(catalog)
 	);
 	if (!organization) throw new PolarisApiError(404);
 	return organization;

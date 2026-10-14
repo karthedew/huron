@@ -6,7 +6,12 @@ import { managedRawDatasetId, registerCommittedRawDataset } from './raw-registra
 import { object, PolarisClient, properties } from './polaris-client';
 
 vi.mock('./raw-authorization', () => ({ requireRawPermissions: vi.fn() }));
-const target = { catalog: 'science', namespace: ['earth'], name: 'observations' };
+const target = {
+	organization: 'org',
+	catalog: 'science',
+	namespace: ['earth'],
+	name: 'observations'
+};
 const datasetId = '11111111-1111-4111-8111-111111111111';
 const otherId = '22222222-2222-4222-8222-222222222222';
 const user: HuronUser = {

@@ -3,11 +3,10 @@ import type { HuronUser, PolarisGrant, RawTarget } from '$api/types';
 import { accountStore, getBootstrapPolarisClient } from './huron-accounts';
 import { requireOrganizationCatalog } from './huron-organizations';
 import { genericTablePath, PolarisApiError, type PolarisClient } from './polaris-client';
-import { polarisSettings } from './polaris-settings';
 
 export type { RawTarget } from '$api/types';
 
-export interface RawBoundTarget extends RawTarget {
+export interface RawBoundTarget extends Omit<RawTarget, 'organization'> {
 	endpoint: string;
 	realm: string;
 }
@@ -59,7 +58,7 @@ interface AuthoritySources {
 	mode: () => string | undefined;
 	users: () => Promise<HuronUser[]>;
 	organization: typeof requireOrganizationCatalog;
-	directory: () => Promise<PolarisClient>;
+	directory: (realm: string) => Promise<PolarisClient>;
 }
 
 const sources: AuthoritySources = {
@@ -85,7 +84,8 @@ export async function requireRawPermissions(
 		current.polarisPrincipalRole !== user.polarisPrincipalRole
 	)
 		throw new PolarisApiError(401, 'Sign in to Huron to continue.');
-	await authority.organization(current, client, target.catalog);
+	const organization = await authority.organization(current, client, target.catalog);
+	if (organization.slug !== target.organization) throw new PolarisApiError(404);
 	try {
 		await client.request(
 			genericTablePath(target.catalog, target.namespace, target.name),
@@ -103,7 +103,7 @@ export async function requireRawPermissions(
 			503,
 			'Raw data access requires the configured Polaris RBAC authorizer.'
 		);
-	const directory = await authority.directory();
+	const directory = await authority.directory(client.connection.realm);
 	const memberships = await directory.memberships(current.polarisPrincipal);
 	if (!memberships.some((entry) => entry.name === current.polarisPrincipalRole))
 		throw new PolarisApiError(403, 'Your managed Polaris principal membership is unavailable.');
@@ -118,9 +118,17 @@ export async function requireRawPermissions(
 	return permissions;
 }
 
-export function boundRawTarget(target: RawTarget): RawBoundTarget {
-	const settings = polarisSettings();
-	return { endpoint: settings.url, realm: settings.realm, ...target };
+export function boundRawTarget(
+	target: RawTarget,
+	connection: { url: string; realm: string }
+): RawBoundTarget {
+	return {
+		endpoint: connection.url,
+		realm: connection.realm,
+		catalog: target.catalog,
+		namespace: target.namespace,
+		name: target.name
+	};
 }
 
 export function parseRawTarget(value: unknown): RawTarget {
@@ -142,6 +150,7 @@ export function parseRawTarget(value: unknown): RawTarget {
 	if (!Array.isArray(record.namespace) || !record.namespace.length || record.namespace.length > 20)
 		throw new PolarisApiError(400, 'Choose an existing namespace.');
 	return {
+		organization: component(record.organization),
 		catalog: component(record.catalog),
 		namespace: record.namespace.map(component),
 		name: component(record.name)

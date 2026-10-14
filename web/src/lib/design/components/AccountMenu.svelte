@@ -5,9 +5,10 @@
 
 	interface Props {
 		user: HuronUser;
+		organization: string;
 	}
 
-	let { user }: Props = $props();
+	let { user, organization }: Props = $props();
 	let menu = $state<HTMLDetailsElement>();
 	let logoutDialog = $state<HTMLDialogElement>();
 	const initials = $derived(
@@ -50,7 +51,9 @@
 		</div>
 		<div class="p-1.5">
 			<a
-				href={resolve('/account')}
+				href={resolve(
+					organization ? `/account?organization=${encodeURIComponent(organization)}` : '/account'
+				)}
 				onclick={() => menu?.removeAttribute('open')}
 				class="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm text-app-muted hover:bg-app-sidebar-hover hover:text-app-fg"
 				><Settings size={16} /><span class="flex-1">User settings</span><ChevronRight

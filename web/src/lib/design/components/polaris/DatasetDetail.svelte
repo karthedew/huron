@@ -124,7 +124,11 @@
 				action={resolve('/browse')}
 				class="dataset-branch ml-auto flex shrink-0 items-center gap-2"
 			>
-				<input type="hidden" name="catalog" value={data.selected.catalog} /><input
+				<input type="hidden" name="organization" value={page.data.selectedOrganization} /><input
+					type="hidden"
+					name="catalog"
+					value={data.selected.catalog}
+				/><input
 					type="hidden"
 					name="namespace"
 					value={JSON.stringify(data.selected.namespace)}
@@ -134,7 +138,7 @@
 					value={active}
 				/>
 				{#if iceberg}<input type="hidden" name="format" value="iceberg" />{/if}
-				{#each ['organization', 'namespacePageToken', 'pageToken', 'icebergPageToken', 'rawPageToken', 'policiesPageToken'] as key (key)}{@const value =
+				{#each ['namespacePageToken', 'pageToken', 'icebergPageToken', 'rawPageToken', 'policiesPageToken'] as key (key)}{@const value =
 						page.url.searchParams.get(key)}{#if value}<input
 							type="hidden"
 							name={key}

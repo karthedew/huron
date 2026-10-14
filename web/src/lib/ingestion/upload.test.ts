@@ -55,7 +55,7 @@ function setup() {
 		key: 'same-identity',
 		beginUncertain: false,
 		expectedDatasetId: null,
-		target: { catalog: 'domain', namespace: ['raw'], name: 'example' },
+		target: { organization: 'org', catalog: 'domain', namespace: ['raw'], name: 'example' },
 		metadata: { title: 'Example', creators: ['Scientist'] },
 		sources: [{ id: 'a', path: 'payload/a.txt', file: new File(['data'], 'a.txt') }],
 		manifest: null,

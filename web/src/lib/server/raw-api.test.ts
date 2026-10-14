@@ -37,7 +37,7 @@ const client = new PolarisClient({
 	clientId: 'alice',
 	clientSecret: 'secret'
 });
-const target = { catalog: 'science', namespace: ['earth'], name: 'upload' };
+const target = { organization: 'org', catalog: 'science', namespace: ['earth'], name: 'upload' };
 const uploadId = '11111111-1111-4111-8111-111111111111';
 const datasetId = '22222222-2222-4222-8222-222222222222';
 const revisionId = '33333333-3333-4333-8333-333333333333';
@@ -58,8 +58,9 @@ const receipt = {
 function event(path: string, method = 'GET', body?: string, origin = 'http://huron.test') {
 	const url = new URL(`http://huron.test/ingestion/api${path}`);
 	url.searchParams.set('target', JSON.stringify(target));
+	url.searchParams.set('organization', target.organization);
 	return {
-		locals: { user, polaris: client },
+		locals: { organization: null, user, polaris: client },
 		url,
 		request: new Request(url, {
 			method,
@@ -125,7 +126,13 @@ describe('Raw browser API authorization and publication', () => {
 		expect(rawBridgeRequest).toHaveBeenCalledWith(
 			expect.objectContaining({
 				path: `/api/raw-web/uploads/${uploadId}/commit`,
-				target: expect.objectContaining(target),
+				target: expect.objectContaining({
+					catalog: target.catalog,
+					namespace: target.namespace,
+					name: target.name,
+					endpoint: 'http://polaris.test',
+					realm: 'POLARIS'
+				}),
 				headers: { 'idempotency-key': 'same-upload', 'if-match': '"4"' }
 			})
 		);
@@ -267,4 +274,15 @@ describe('Raw browser API authorization and publication', () => {
 		expect(mismatch.status).toBe(409);
 		expect(await mismatch.json()).not.toHaveProperty('uploadNotStarted');
 	});
+});
+
+it('rejects a frozen upload target that disagrees with the request organization before dispatch', async () => {
+	const request = event(
+		'/uploads',
+		'POST',
+		JSON.stringify({ target: { ...target, organization: 'different' }, expectedDatasetId: null })
+	);
+	const response = await handleRawApi(request);
+	expect(response.status).toBe(404);
+	expect(rawBridgeRequest).not.toHaveBeenCalled();
 });

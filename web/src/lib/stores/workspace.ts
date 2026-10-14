@@ -8,12 +8,14 @@ export function selectCatalog(catalogs: PolarisCatalog[], requested: string | nu
 export function browseHref(
 	catalog: string,
 	namespace: string[] = [],
-	table = ''
+	table = '',
+	organization = ''
 ): '/browse' | `/browse?${string}` {
 	const query = new URLSearchParams();
 	if (catalog) query.set('catalog', catalog);
 	if (namespace.length) query.set('namespace', JSON.stringify(namespace));
 	if (table) query.set('table', table);
+	if (organization) query.set('organization', organization);
 	return query.size ? `/browse?${query}` : '/browse';
 }
 

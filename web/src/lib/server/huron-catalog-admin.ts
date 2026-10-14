@@ -160,18 +160,19 @@ export async function setCatalogMembership(
 	userId: string,
 	selectedRole: HuronCatalogMembershipRole | 'none'
 ): Promise<void> {
-	const previous = membershipUpdates.get(catalog) ?? Promise.resolve();
+	const key = JSON.stringify([client.connection.url, client.connection.realm, catalog]);
+	const previous = membershipUpdates.get(key) ?? Promise.resolve();
 	let release = () => {};
 	const pending = new Promise<void>((resolve) => {
 		release = resolve;
 	});
-	membershipUpdates.set(catalog, pending);
+	membershipUpdates.set(key, pending);
 	await previous;
 	try {
 		await updateCatalogMembership(client, users, catalog, userId, selectedRole);
 	} finally {
 		release();
-		if (membershipUpdates.get(catalog) === pending) membershipUpdates.delete(catalog);
+		if (membershipUpdates.get(key) === pending) membershipUpdates.delete(key);
 	}
 }
 

@@ -251,6 +251,21 @@ describe('Polaris browse server projection', () => {
 		expect(fetcher.mock.calls).toHaveLength(12);
 	});
 
+	it('lists an organization root without implicitly selecting or loading its first catalog', async () => {
+		const { client, fetcher } = clientWith(() => Response.json({}));
+		const data = await loadPolarisBrowse(
+			client,
+			catalogs,
+			new URL('http://localhost/browse?organization=research'),
+			settings
+		);
+		expect(data.catalogs).toEqual(catalogs);
+		expect(data.catalog).toBeNull();
+		expect(data.selected.catalog).toBe('');
+		expect(data.branches).toEqual([]);
+		expect(fetcher).not.toHaveBeenCalled();
+	});
+
 	it('returns an empty workspace for an account without catalog membership', async () => {
 		const { client, fetcher } = clientWith(() => Response.json({}));
 		const data = await loadPolarisBrowse(client, [], new URL('http://localhost/browse'), settings);

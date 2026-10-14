@@ -142,7 +142,7 @@ export function parseRawBranch(value: unknown): RawTargetBranch {
 }
 
 export function rawApiPath(path: string, target: RawTarget): `/ingestion/api/${string}` {
-	return `/ingestion/api/${path}?${new URLSearchParams({ target: JSON.stringify(target) })}`;
+	return `/ingestion/api/${path}?${new URLSearchParams({ organization: target.organization, target: JSON.stringify(target) })}`;
 }
 async function request(path: string, init: RequestInit = {}): Promise<unknown> {
 	const response = await fetch(path, {
@@ -178,9 +178,14 @@ export async function browseRawTargets(
 	catalog: string,
 	namespace: string[],
 	namespacePageToken: string | null = null,
-	datasetPageToken: string | null = null
+	datasetPageToken: string | null = null,
+	organization = ''
 ): Promise<RawTargetBranch> {
-	const query = new URLSearchParams({ catalog, namespace: JSON.stringify(namespace) });
+	const query = new URLSearchParams({
+		organization,
+		catalog,
+		namespace: JSON.stringify(namespace)
+	});
 	if (namespacePageToken) query.set('namespacePageToken', namespacePageToken);
 	if (datasetPageToken) query.set('datasetPageToken', datasetPageToken);
 	return parseRawBranch(await request(`/ingestion/api/targets?${query}`));
@@ -193,17 +198,20 @@ export async function beginRawUpload(
 	expectedDatasetId: string | null
 ): Promise<RawIngestSession> {
 	return parseRawSession(
-		await request('/ingestion/api/uploads', {
-			method: 'POST',
-			headers: { 'Idempotency-Key': key },
-			body: JSON.stringify({
-				target,
-				expectedDatasetId,
-				title: metadata.title,
-				description: metadata.description ?? '',
-				files
-			})
-		})
+		await request(
+			`/ingestion/api/uploads?${new URLSearchParams({ organization: target.organization })}`,
+			{
+				method: 'POST',
+				headers: { 'Idempotency-Key': key },
+				body: JSON.stringify({
+					target,
+					expectedDatasetId,
+					title: metadata.title,
+					description: metadata.description ?? '',
+					files
+				})
+			}
+		)
 	);
 }
 export async function getRawUpload(target: RawTarget, id: string): Promise<RawIngestSession> {

@@ -27,7 +27,7 @@ export async function loadPolarisBrowse(
 	settings: { url: string; realm: string }
 ): Promise<PolarisBrowseData> {
 	const fields = new FormData();
-	const catalogName = url.searchParams.get('catalog') || catalogs[0]?.name || '';
+	const catalogName = url.searchParams.get('catalog') || '';
 	const selectedNamespace = url.searchParams.get('namespace');
 	const tableName = url.searchParams.get('table') || '';
 	const format = url.searchParams.get('format') ?? 'icechunk';
@@ -44,6 +44,8 @@ export async function loadPolarisBrowse(
 		principalRole: '',
 		catalogRole: ''
 	};
+	if ((selected.table || selected.namespace.length) && !selected.catalog)
+		throw new PolarisApiError(404);
 	if (selected.table && !selected.namespace.length) throw new PolarisApiError(404);
 	const catalog = catalogs.find((entry) => entry.name === selected.catalog) ?? null;
 	if (selected.catalog && !catalog) throw new PolarisApiError(404);

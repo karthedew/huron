@@ -8,6 +8,21 @@ import { defineConfig } from '@playwright/test';
 const accountDirectory = mkdtempSync(join(tmpdir(), 'huron-e2e-'));
 const storageRoot = join(accountDirectory, 'storage');
 const rawBridgeSecret = 'isolated-browser-raw-bridge-secret-32-bytes';
+const realmConnections = [
+	'E2E_EMPTY',
+	'E2E_ALPHA',
+	'E2E_BETA',
+	'E2E_ORGADMIN',
+	'E2E_TOOLBAR',
+	'E2E_RETRY',
+	'E2E_RAW_ALPHA',
+	'E2E_RAW_BETA'
+].map((realm) => ({
+	realm,
+	url: 'http://127.0.0.1:8189',
+	clientId: `${realm}-admin`,
+	clientSecret: `${realm}-secret`
+}));
 const webDirectory = dirname(fileURLToPath(import.meta.url));
 const inspectorPython = resolve(
 	webDirectory,
@@ -70,7 +85,8 @@ export default defineConfig({
 				POLARIS_BOOTSTRAP_CLIENT_ID: 'browser-admin',
 				POLARIS_BOOTSTRAP_CLIENT_SECRET: 'browser-secret',
 				POLARIS_URL: 'http://127.0.0.1:8189',
-				POLARIS_REALM: 'POLARIS'
+				POLARIS_REALM: 'POLARIS',
+				POLARIS_CONNECTIONS_JSON: JSON.stringify(realmConnections)
 			},
 			reuseExistingServer: false
 		}

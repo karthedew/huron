@@ -43,7 +43,7 @@ export async function loadRawInspection(
 			const permissions = await requireRawPermissions(client, user, target, 'read');
 			const response = await rawBridgeRequest({
 				user,
-				target: boundRawTarget(target),
+				target: boundRawTarget(target, client.connection),
 				permissions,
 				method: 'GET',
 				path,

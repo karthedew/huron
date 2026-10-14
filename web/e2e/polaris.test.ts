@@ -35,7 +35,7 @@ test('administrator creates a Polaris catalog in an organization and sees it aft
 	await openPage(page, '/');
 	await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
 	await page.getByRole('heading', { name, exact: true }).getByRole('link').click();
-	await expect(page).toHaveURL(`/browse?catalog=${name}`);
+	await expect(page).toHaveURL(`/browse?catalog=${name}&organization=workspace`);
 	await expect(page.getByRole('navigation', { name: 'Namespace path' })).toContainText(name);
 });
 
@@ -206,12 +206,13 @@ test('nested namespace deep links preserve each level and keyboard navigation op
 	await expect(page.getByRole('heading', { name: 'temperature', exact: true })).toBeVisible();
 });
 
-test('Browse keeps only the selected catalog and folders expand or collapse around repository leaves', async ({
+test('Browse lists organization catalogs and folders expand or collapse around repository leaves', async ({
 	page
 }) => {
 	await signIn(page, 'admin', 'browser-admin-password', '/browse?catalog=huron-local');
-	await expect(page.locator('main')).not.toContainText('ocean-data');
 	const explorer = page.getByRole('navigation', { name: 'Namespace explorer' });
+	await expect(explorer.getByRole('link', { name: 'huron-local', exact: true })).toBeVisible();
+	await expect(explorer.getByRole('link', { name: 'ocean-data', exact: true })).toBeVisible();
 	await expect(explorer.getByRole('link', { name: 'science', exact: true })).toBeVisible();
 	await expect(explorer.getByRole('link', { name: 'temperature', exact: true })).toHaveCount(0);
 	await explorer.getByRole('button', { name: 'Expand science', exact: true }).click();
@@ -233,13 +234,64 @@ test('Browse keeps only the selected catalog and folders expand or collapse arou
 	await expect(
 		explorer.getByRole('button', { name: 'Collapse science', exact: true })
 	).toBeVisible();
-	await openPage(page, '/browse?catalog=ocean-data');
-	await expect(page.locator('main')).not.toContainText('huron-local');
+	await explorer.getByRole('button', { name: 'Collapse catalog huron-local', exact: true }).click();
+	await expect(explorer.getByRole('link', { name: 'science', exact: true })).toHaveCount(0);
+	await explorer.getByRole('button', { name: 'Expand catalog huron-local', exact: true }).click();
+	await expect(explorer.getByRole('link', { name: 'temperature', exact: true })).toBeVisible();
+	await openPage(page, `${repositoryUrl}&table=temperature&branch=analysis&tab=history`);
+	await explorer.getByRole('link', { name: 'ocean-data', exact: true }).click();
+	await expect(page).toHaveURL('/browse?catalog=ocean-data&organization=workspace');
+	await expect(explorer.getByRole('link', { name: 'huron-local', exact: true })).toBeVisible();
+	await expect(explorer.getByRole('button', { name: 'Expand science', exact: true })).toBeVisible();
+	await expect(explorer.getByRole('link', { name: 'temperature', exact: true })).toHaveCount(0);
+	await explorer.getByRole('button', { name: 'Expand science', exact: true }).click();
+	const repository = explorer.getByRole('link', { name: 'temperature', exact: true });
+	await expect(repository).toHaveAttribute('href', /catalog=ocean-data/);
+	await repository.click();
+	await expect(page.getByRole('navigation', { name: 'Namespace path' })).toContainText(
+		'ocean-data'
+	);
+});
+
+test('Browse starts with catalog rows and supports keyboard navigation back to the organization root', async ({
+	page
+}) => {
+	await signIn(page, 'admin', 'browser-admin-password', '/browse?organization=workspace');
+	const explorer = page.getByRole('navigation', { name: 'Namespace explorer' });
+	const catalogs = page.getByRole('list', { name: 'Organization catalogs', exact: true });
+	await expect(catalogs.getByRole('link', { name: 'huron-local', exact: true })).toBeVisible();
+	await expect(catalogs.getByRole('link', { name: 'ocean-data', exact: true })).toBeVisible();
+	await expect(explorer.getByRole('link', { name: 'science', exact: true })).toHaveCount(0);
+	await expect(explorer.getByText('Huron workspace', { exact: true })).toHaveCount(0);
+	await expect(explorer.getByRole('link', { name: 'huron-local', exact: true })).toBeVisible();
+	await expect(explorer.getByRole('link', { name: 'ocean-data', exact: true })).toBeVisible();
 	await expect(
 		page
-			.getByRole('navigation', { name: 'Namespace explorer' })
-			.getByRole('button', { name: 'Expand science', exact: true })
-	).toBeVisible();
+			.getByRole('navigation', { name: 'Namespace path' })
+			.getByRole('link', { name: 'Huron workspace', exact: true })
+	).toHaveAttribute('aria-current', 'page');
+	const catalog = explorer.getByRole('link', { name: 'huron-local', exact: true });
+	await catalog.focus();
+	await expect(catalog).toBeFocused();
+	await page.keyboard.press('Enter');
+	await expect(page).toHaveURL('/browse?catalog=huron-local&organization=workspace');
+	await expect(explorer.getByRole('link', { name: 'science', exact: true })).toBeVisible();
+	await explorer
+		.getByRole('button', { name: 'Collapse catalog huron-local', exact: true })
+		.press('Enter');
+	await expect(explorer.getByRole('link', { name: 'science', exact: true })).toHaveCount(0);
+	await explorer
+		.getByRole('button', { name: 'Expand catalog huron-local', exact: true })
+		.press('Enter');
+	await expect(explorer.getByRole('link', { name: 'science', exact: true })).toBeVisible();
+	await openPage(page, `${repositoryUrl}&table=temperature&branch=analysis&tab=history`);
+	await page
+		.getByRole('navigation', { name: 'Namespace path' })
+		.getByRole('link', { name: 'Huron workspace', exact: true })
+		.click();
+	await expect(page).toHaveURL('/browse?organization=workspace');
+	await expect(catalogs.getByRole('link', { name: 'huron-local', exact: true })).toBeVisible();
+	await expect(page.getByRole('navigation', { name: 'Dataset details' })).toHaveCount(0);
 });
 
 test('FILE repositories provide Python code using authorized metadata without Huron principal credentials', async ({

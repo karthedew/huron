@@ -11,15 +11,23 @@
 		FolderOpen,
 		Table2
 	} from '@lucide/svelte';
-	import type { PolarisBrowseBranch, PolarisBrowseData } from '$api/types';
+	import type {
+		HuronOrganizationSummary,
+		PolarisBrowseBranch,
+		PolarisBrowseData
+	} from '$api/types';
 	import { datasetTypeLabel } from '$api/catalog-datasets';
 	import { branchFolders, browseHref } from '$lib/stores/workspace';
 
-	let { data }: { data: PolarisBrowseData } = $props();
+	let {
+		data,
+		organization
+	}: { data: PolarisBrowseData; organization: HuronOrganizationSummary | null } = $props();
 	let rememberedBranches = $state.raw<PolarisBrowseBranch[]>([]);
 	let openedFolders = $state<string[]>([]);
 	let collapsedFolders = $state<string[]>([]);
-	let rootExpanded = $state(true);
+	let catalogExpanded = $state(true);
+
 	let previousNamespace: string | undefined;
 	const selectedKey = $derived(JSON.stringify(data.selected.namespace));
 	const branches = $derived.by(() => {
@@ -60,7 +68,7 @@
 		}
 		revealFolder(namespace);
 		if (!branches.has(key))
-			await goto(resolve(browseHref(data.selected.catalog, namespace)), {
+			await goto(resolve(browseHref(data.selected.catalog, namespace, '', organization?.slug)), {
 				noScroll: true,
 				keepFocus: true
 			});
@@ -86,6 +94,7 @@
 			query.delete('policiesPageToken');
 		}
 		query.set('catalog', data.selected.catalog);
+		if (organization) query.set('organization', organization.slug);
 		query.set('namespace', JSON.stringify(namespace));
 		query.set('table', table);
 		if (format !== 'icechunk') query.set('format', format);
@@ -99,6 +108,7 @@
 		token: string | null
 	): '/browse' | `/browse?${string}` {
 		const query = new URLSearchParams({ catalog: data.selected.catalog });
+		if (organization) query.set('organization', organization.slug);
 		if (branch.namespace.length) query.set('namespace', JSON.stringify(branch.namespace));
 		if (branch.namespacePageToken) query.set('namespacePageToken', branch.namespacePageToken);
 		if (branch.repositoryPageToken) query.set('pageToken', branch.repositoryPageToken);
@@ -139,7 +149,7 @@
 								/>{/if}</button
 						>
 						<a
-							href={resolve(browseHref(data.selected.catalog, folder))}
+							href={resolve(browseHref(data.selected.catalog, folder, '', organization?.slug))}
 							onclick={() => revealFolder(folder)}
 							aria-current={selectedKey === key && !data.selected.table ? 'page' : undefined}
 							class="flex min-w-0 flex-1 items-start gap-1.5 py-1 text-inherit"
@@ -248,25 +258,53 @@
 	<div class="flex h-10 shrink-0 items-center border-b border-app-line px-3">
 		<h2 id="explorer-heading" class="explorer-heading">Explorer</h2>
 	</div>
-	<div class="flex min-w-0 items-center gap-1 px-2 py-1">
-		<button
-			type="button"
-			onclick={() => (rootExpanded = !rootExpanded)}
-			aria-label={`${rootExpanded ? 'Collapse' : 'Expand'} ${data.selected.catalog}`}
-			aria-expanded={rootExpanded}
-			class="grid size-6 shrink-0 place-items-center rounded text-app-muted"
-			>{#if rootExpanded}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}</button
-		>
-		<a
-			href={resolve(browseHref(data.selected.catalog))}
-			class="flex min-w-0 flex-1 items-start gap-1.5 py-1 text-xs font-semibold text-app-fg"
-			><Database size={14} class="mt-0.5 shrink-0 text-app-muted" /><span class="min-w-0 break-all"
-				>{data.selected.catalog}</span
-			></a
-		>
-	</div>
 	<nav class="min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="Namespace explorer">
-		{#if rootExpanded}{@render branchContents([], 0)}{/if}
+		<ul class="m-0 grid list-none gap-0 p-0">
+			{#each data.catalogs as catalog (catalog.name)}
+				{@const selected = catalog.name === data.selected.catalog}
+				{@const isExpanded = selected && catalogExpanded}
+				<li class="min-w-0">
+					<div
+						class={[
+							'flex min-w-0 items-start gap-1 rounded py-0.5 pl-1 pr-2 text-xs',
+							selected && !data.selected.namespace.length
+								? 'bg-brand-soft font-semibold text-brand-strong'
+								: 'text-app-fg hover:bg-app-sidebar-hover'
+						]}
+					>
+						<button
+							type="button"
+							onclick={() =>
+								selected
+									? (catalogExpanded = !catalogExpanded)
+									: goto(resolve(browseHref(catalog.name, [], '', organization?.slug)), {
+											noScroll: true,
+											keepFocus: true
+										})}
+							aria-label={`${isExpanded ? 'Collapse' : 'Expand'} catalog ${catalog.name}`}
+							aria-expanded={isExpanded}
+							class="grid size-6 shrink-0 place-items-center rounded text-app-muted hover:text-app-fg"
+							>{#if isExpanded}<ChevronDown size={14} />{:else}<ChevronRight
+									size={14}
+								/>{/if}</button
+						>
+						<a
+							href={resolve(browseHref(catalog.name, [], '', organization?.slug))}
+							onclick={() => (catalogExpanded = true)}
+							aria-current={selected && !data.selected.namespace.length ? 'page' : undefined}
+							class="flex min-w-0 flex-1 items-start gap-1.5 py-1 text-inherit"
+							><Database size={14} class="mt-0.5 shrink-0 text-brand-strong" /><span
+								class="min-w-0 break-all">{catalog.name}</span
+							></a
+						>
+					</div>
+					{#if isExpanded}{@render branchContents([], 1)}{/if}
+				</li>
+			{/each}
+		</ul>
+		{#if !data.catalogs.length}<p class="px-3 py-2 text-xs text-app-muted">
+				No accessible catalogs
+			</p>{/if}
 	</nav>
 </section>
 

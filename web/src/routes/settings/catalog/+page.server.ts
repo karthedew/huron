@@ -12,11 +12,7 @@ import {
 import { PolarisApiError } from '$lib/server/polaris-client';
 import { required, field } from '$lib/server/polaris-forms';
 import { createPolarisActions, polarisActionFailure } from '$lib/server/polaris-route-actions';
-import {
-	consumePolarisNotice,
-	polarisSettings,
-	queuePolarisNotice
-} from '$lib/server/polaris-session';
+import { consumePolarisNotice, queuePolarisNotice } from '$lib/server/polaris-session';
 import { loadPolarisWorkspace } from '$lib/server/polaris-workspace';
 import { organizationStore, requireOrganizationCatalog } from '$lib/server/huron-organizations';
 
@@ -39,7 +35,7 @@ export const load: PageServerLoad = async (event) => {
 		selectedCatalog ? client : null,
 		null,
 		url,
-		polarisSettings()
+		client.connection
 	);
 	data.catalogs = layout.catalogs;
 	if (data.selected.catalog && !data.catalog) error(404, 'Not found');
@@ -51,7 +47,11 @@ export const load: PageServerLoad = async (event) => {
 			members = await catalogMembers(
 				client,
 				data.catalog.name,
-				await organizationStore().catalogUsers(event.locals.user, data.catalog.name)
+				await organizationStore().catalogUsers(
+					event.locals.user,
+					data.catalog.name,
+					client.connection.realm
+				)
 			);
 		} catch (failure) {
 			membershipError =
@@ -95,7 +95,10 @@ export const actions = {
 		} catch (error) {
 			return polarisActionFailure('deleteCatalog', error);
 		}
-		redirect(303, '/admin');
+		redirect(
+			303,
+			`/admin?${new URLSearchParams({ organization: event.locals.organization?.slug ?? '' })}`
+		);
 	},
 	setMembership: async (event) => {
 		const client = getAuthenticatedPolaris(event);
@@ -108,7 +111,8 @@ export const actions = {
 				await organizationStore().ensureMembershipForCatalog(
 					event.locals.user,
 					required(form, 'userId'),
-					required(form, 'catalog')
+					required(form, 'catalog'),
+					client.connection.realm
 				);
 			await setCatalogMembership(
 				client,

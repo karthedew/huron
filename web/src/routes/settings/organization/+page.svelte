@@ -34,6 +34,7 @@
 		<div class="grid gap-5 xl:grid-cols-2">
 			<section class="panel self-start">
 				<h2>Organization details</h2>
+				<p class="hint mb-4">Polaris realm: {data.organization.realm}</p>
 				{#if data.canManage}<PolarisForm action="updateOrganization" submit="Save organization"
 						><input type="hidden" name="organization" value={data.organization.slug} /><label
 							>Organization name<input name="name" value={data.organization.name} required /></label
@@ -66,12 +67,14 @@
 						>
 							<a
 								class="min-w-0 break-all text-sm font-semibold"
-								href={resolve(`/browse?catalog=${encodeURIComponent(catalog.name)}`)}
-								>{catalog.name}</a
+								href={resolve(
+									`/browse?catalog=${encodeURIComponent(catalog.name)}&organization=${encodeURIComponent(data.organization.slug)}`
+								)}>{catalog.name}</a
 							><a
 								class="text-xs"
-								href={resolve(`/settings/catalog?catalog=${encodeURIComponent(catalog.name)}`)}
-								>Catalog settings</a
+								href={resolve(
+									`/settings/catalog?catalog=${encodeURIComponent(catalog.name)}&organization=${encodeURIComponent(data.organization.slug)}`
+								)}>Catalog settings</a
 							>
 						</div>{:else}<p class="hint">No accessible catalogs in this organization.</p>{/each}
 				</div>
@@ -79,7 +82,7 @@
 						class="mt-4 inline-block text-sm"
 						href={resolve(
 							`/admin?tab=catalogs&organization=${encodeURIComponent(data.organization.slug)}`
-						)}>Create or assign catalogs</a
+						)}>Create catalogs</a
 					>{/if}
 			</section>
 			{#if data.canManage}<section class="panel xl:col-span-2">

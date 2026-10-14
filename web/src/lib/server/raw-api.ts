@@ -99,7 +99,7 @@ async function forward(
 	onDispatch?.();
 	return rawBridgeRequest({
 		user: context.user,
-		target: boundRawTarget(context.target),
+		target: boundRawTarget(context.target, context.client.connection),
 		permissions,
 		method,
 		path: `/api/raw-web${path}`,
@@ -189,6 +189,7 @@ export async function handleRawApi(
 			if (!Array.isArray(namespace) || namespace.some((part) => typeof part !== 'string'))
 				throw new PolarisApiError(400, 'Invalid namespace.');
 			const selection = parseRawTarget({
+				organization: event.url.searchParams.get('organization'),
 				catalog: event.url.searchParams.get('catalog'),
 				namespace: namespace.length ? namespace : ['root'],
 				name: 'selection'
@@ -228,6 +229,8 @@ export async function handleRawApi(
 			delete input.expectedDatasetId;
 			bytes = Buffer.from(JSON.stringify(input));
 		} else target = parseRawTarget(parseJson(event.url.searchParams.get('target') ?? 'null'));
+		if (target.organization !== event.url.searchParams.get('organization'))
+			throw new PolarisApiError(404);
 		const context = { user, client, target };
 		await requireRawPermissions(
 			client,

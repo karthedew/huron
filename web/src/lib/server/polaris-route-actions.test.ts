@@ -63,7 +63,7 @@ function event(values: Record<string, string>, user = admin) {
 	return {
 		fetcher,
 		value: {
-			locals: { user, polaris: client },
+			locals: { organization: null, user, polaris: client },
 			cookies,
 			url: new URL('http://localhost/admin'),
 			setHeaders: vi.fn<(headers: Record<string, string>) => void>(),

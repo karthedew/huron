@@ -1,5 +1,6 @@
 /** Browser-safe contracts for the authenticated Raw bridge. */
 export interface RawTarget {
+	organization: string;
 	catalog: string;
 	namespace: string[];
 	name: string;

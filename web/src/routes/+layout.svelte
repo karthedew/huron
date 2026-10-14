@@ -18,7 +18,6 @@
 	import AccountMenu from '$design/components/AccountMenu.svelte';
 	import ThemeToggle from '$design/components/ThemeToggle.svelte';
 	import WorkspaceSwitcher from '$design/components/WorkspaceSwitcher.svelte';
-	import { browseHref } from '$lib/stores/workspace';
 	import type { LayoutData } from './$types';
 	import { onMount } from 'svelte';
 
@@ -29,21 +28,25 @@
 	const isBrowsePage = $derived(page.url.pathname === '/browse');
 	const primary = $derived([
 		{
-			href: `/?organization=${encodeURIComponent(data.selectedOrganization)}`,
+			href: data.selectedOrganization
+				? (`/?organization=${encodeURIComponent(data.selectedOrganization)}` as const)
+				: '/',
 			path: '/',
 			label: 'Catalogs',
 			icon: Boxes
 		},
 		{
-			href: data.selectedCatalog
-				? browseHref(data.selectedCatalog)
-				: (`/browse?organization=${encodeURIComponent(data.selectedOrganization)}` as const),
+			href: data.selectedOrganization
+				? (`/browse?organization=${encodeURIComponent(data.selectedOrganization)}` as const)
+				: '/browse',
 			path: '/browse',
 			label: 'Browse',
 			icon: BookOpen
 		},
 		{
-			href: `/ingestion?organization=${encodeURIComponent(data.selectedOrganization)}`,
+			href: data.selectedOrganization
+				? (`/ingestion?organization=${encodeURIComponent(data.selectedOrganization)}` as const)
+				: '/ingestion',
 			path: '/ingestion',
 			label: 'Ingestion',
 			icon: UploadCloud
@@ -51,19 +54,32 @@
 	] as const);
 	const manage = $derived([
 		{
-			href: `/settings/organization?organization=${encodeURIComponent(data.selectedOrganization)}` as const,
+			href: data.selectedOrganization
+				? (`/settings/organization?organization=${encodeURIComponent(data.selectedOrganization)}` as const)
+				: ('/settings/organization' as const),
 			path: '/settings/organization',
 			label: 'Organization settings',
 			icon: Settings
 		},
 		{
-			href: `/settings/catalog${data.selectedCatalog ? `?catalog=${encodeURIComponent(data.selectedCatalog)}` : `?organization=${encodeURIComponent(data.selectedOrganization)}`}` as const,
+			href: data.selectedOrganization
+				? (`/settings/catalog?organization=${encodeURIComponent(data.selectedOrganization)}${data.selectedCatalog ? `&catalog=${encodeURIComponent(data.selectedCatalog)}` : ''}` as const)
+				: ('/settings/catalog' as const),
 			path: '/settings/catalog',
 			label: 'Catalog settings',
 			icon: Settings
 		},
 		...(data.user?.isAdmin
-			? [{ href: '/admin' as const, path: '/admin', label: 'Administration', icon: ShieldCheck }]
+			? [
+					{
+						href: data.selectedOrganization
+							? (`/admin?organization=${encodeURIComponent(data.selectedOrganization)}` as const)
+							: ('/admin' as const),
+						path: '/admin',
+						label: 'Administration',
+						icon: ShieldCheck
+					}
+				]
 			: [])
 	]);
 	const isHere = (path: string) =>
@@ -190,7 +206,11 @@
 			<div class="min-h-0 flex-1 overflow-y-auto">{@render navigation(false)}</div>
 			<div class="border-t border-app-line p-2.5">
 				<a
-					href={resolve('/account')}
+					href={resolve(
+						data.selectedOrganization
+							? `/account?organization=${encodeURIComponent(data.selectedOrganization)}`
+							: '/account'
+					)}
 					aria-label="Account settings"
 					title="Account settings"
 					class={[
@@ -244,11 +264,11 @@
 				class="mr-auto hidden min-w-0 max-w-xl flex-1 md:block"
 			>
 				<label class="relative block"
-					><span class="visually-hidden">Search catalog</span><input
-						type="hidden"
-						name="organization"
-						value={data.selectedOrganization}
-					/><Search
+					><span class="visually-hidden">Search catalog</span>{#if data.selectedOrganization}<input
+							type="hidden"
+							name="organization"
+							value={data.selectedOrganization}
+						/>{/if}<Search
 						size={16}
 						class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-app-muted"
 					/><input
@@ -262,13 +282,14 @@
 			<div class="ml-auto flex shrink-0 items-center gap-2">
 				<WorkspaceSwitcher
 					organizations={data.organizations}
-					catalogs={data.catalogs}
 					selectedOrganization={data.selectedOrganization}
-					selectedCatalog={data.selectedCatalog}
 					isAdmin={data.user?.isAdmin ?? false}
 				/>
 				<ThemeToggle />
-				{#if data.user}<AccountMenu user={data.user} />{/if}
+				{#if data.user}<AccountMenu
+						user={data.user}
+						organization={data.selectedOrganization}
+					/>{/if}
 			</div>
 		</header>
 		<main

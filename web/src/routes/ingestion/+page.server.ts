@@ -7,6 +7,9 @@ import type { RawTargetBranch } from '$api/types';
 import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ locals, parent, url }) => {
 	const workspace = await parent();
+	const requestedCatalog = url.searchParams.get('catalog');
+	if (requestedCatalog && !workspace.catalogs.some((catalog) => catalog.name === requestedCatalog))
+		httpError(404, 'Not found');
 	let namespace: string[] = [];
 	const query = url.searchParams.get('namespace');
 	if (query) {
@@ -34,6 +37,7 @@ export const load: PageServerLoad = async ({ locals, parent, url }) => {
 			});
 			if (initialDataset) {
 				initialDatasetId = await managedRawDatasetId(locals.polaris, {
+					organization: workspace.selectedOrganization,
 					catalog: workspace.selectedCatalog,
 					namespace,
 					name: initialDataset

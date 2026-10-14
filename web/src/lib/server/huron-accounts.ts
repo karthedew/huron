@@ -12,7 +12,13 @@ import { setTimeout } from 'node:timers/promises';
 import { env } from '$env/dynamic/private';
 import type { HuronUser } from '$api/types';
 import { management, object, PolarisClient, type PolarisConnection } from './polaris-client';
-import { polarisSettings } from './polaris-settings';
+import {
+	polarisConfiguredConnection,
+	polarisRealms,
+	polarisRealmSettings,
+	polarisSettings,
+	type PolarisRealm
+} from './polaris-settings';
 
 interface PasswordHash {
 	salt: string;
@@ -25,14 +31,18 @@ interface EncryptedCredentials {
 	value: string;
 }
 
+interface StoredIdentity extends PolarisRealm {
+	credentials: EncryptedCredentials | null;
+}
+
 interface StoredAccount extends HuronUser {
 	password: PasswordHash;
-	credentials: EncryptedCredentials | null;
+	identities: StoredIdentity[];
 	authVersion: number;
 }
 
 interface AccountDocument {
-	version: 1;
+	version: 2;
 	upstream: { url: string; realm: string };
 	accounts: StoredAccount[];
 }
@@ -47,7 +57,8 @@ export interface AuthenticatedAccount {
 interface AccountStoreOptions {
 	path: string;
 	connection: { url: string; realm: string };
-	bootstrap: () => Promise<PolarisConnection>;
+	bootstrap: (realm?: string) => Promise<PolarisConnection>;
+	realms?: () => PolarisRealm[];
 	fetcher?: typeof fetch;
 	initialPassword?: string;
 }
@@ -111,10 +122,28 @@ function flag(value: unknown): boolean {
 	return value;
 }
 
-function decodeAccount(value: unknown): StoredAccount {
+function decodeCredentials(value: unknown): EncryptedCredentials | null {
+	if (value === null) return null;
+	const encrypted = object(value);
+	return { iv: text(encrypted.iv), tag: text(encrypted.tag), value: text(encrypted.value) };
+}
+
+function decodeAccount(value: unknown, legacy?: PolarisRealm): StoredAccount {
 	const item = object(value);
 	const password = object(item.password);
-	const encrypted = item.credentials === null ? null : object(item.credentials);
+	if (!legacy && !Array.isArray(item.identities)) throw new Error('Invalid Huron account store.');
+	const identities = legacy
+		? [{ ...legacy, credentials: decodeCredentials(item.credentials) }]
+		: (Array.isArray(item.identities) ? item.identities : []).map((value: unknown) => {
+				const identity = object(value);
+				return {
+					url: text(identity.url),
+					realm: text(identity.realm),
+					credentials: decodeCredentials(identity.credentials)
+				};
+			});
+	if (new Set(identities.map((entry) => entry.realm)).size !== identities.length)
+		throw new Error('Duplicate Polaris realm identity in Huron account store.');
 	if (!Number.isSafeInteger(item.authVersion) || Number(item.authVersion) < 1)
 		throw new Error('Invalid Huron account store.');
 	return {
@@ -128,9 +157,7 @@ function decodeAccount(value: unknown): StoredAccount {
 		createdAt: text(item.createdAt),
 		authVersion: Number(item.authVersion),
 		password: { salt: text(password.salt), hash: text(password.hash) },
-		credentials: encrypted
-			? { iv: text(encrypted.iv), tag: text(encrypted.tag), value: text(encrypted.value) }
-			: null
+		identities
 	};
 }
 
@@ -232,6 +259,21 @@ export class HuronAccountStore {
 
 	private async initializeUnlocked(): Promise<void> {
 		try {
+			const decoded: unknown = JSON.parse(await readFile(this.options.path, 'utf8'));
+			const value = object(decoded);
+			if (value.version === 1) {
+				const document = this.decodeDocument(value, true);
+				for (const account of document.accounts) {
+					for (const identity of account.identities) {
+						if (identity.credentials)
+							identity.credentials = await this.encrypt(
+								await this.decrypt(identity.credentials, account.id),
+								this.identityKey(account.id, identity)
+							);
+					}
+				}
+				await this.writeDocument(document);
+			}
 			await this.readDocument();
 			return;
 		} catch (error) {
@@ -257,7 +299,7 @@ export class HuronAccountStore {
 			polarisPrincipalRole: 'service_admin',
 			createdAt: new Date().toISOString(),
 			password: await hashPassword(password),
-			credentials: null,
+			identities: [{ ...this.options.connection, credentials: null }],
 			authVersion: 1
 		};
 		await this.key(true);
@@ -266,7 +308,7 @@ export class HuronAccountStore {
 			JSON.stringify({ username: account.username, password }, null, 2) + '\n'
 		);
 		await this.writeDocument({
-			version: 1,
+			version: 2,
 			upstream: this.options.connection,
 			accounts: [account]
 		});
@@ -274,9 +316,12 @@ export class HuronAccountStore {
 
 	private async readDocument(): Promise<AccountDocument> {
 		const decoded: unknown = JSON.parse(await readFile(this.options.path, 'utf8'));
-		const value = object(decoded);
+		return this.decodeDocument(object(decoded));
+	}
+
+	private decodeDocument(value: Record<string, unknown>, legacy = false): AccountDocument {
 		const upstream = object(value.upstream);
-		if (value.version !== 1 || !Array.isArray(value.accounts))
+		if (value.version !== (legacy ? 1 : 2) || !Array.isArray(value.accounts))
 			throw new Error('Invalid Huron account store.');
 		if (
 			upstream.url !== this.options.connection.url ||
@@ -285,7 +330,9 @@ export class HuronAccountStore {
 			throw new Error(
 				'HURON_ACCOUNT_STORE belongs to another Polaris endpoint or realm. Configure a separate account store for this connection.'
 			);
-		const accounts = value.accounts.map(decodeAccount);
+		const accounts = value.accounts.map((entry: unknown) =>
+			decodeAccount(entry, legacy ? this.options.connection : undefined)
+		);
 		if (
 			accounts.filter(
 				(account) => account.isAdmin && account.username === 'admin' && !account.disabled
@@ -294,7 +341,7 @@ export class HuronAccountStore {
 			new Set(accounts.map((account) => account.id)).size !== accounts.length
 		)
 			throw new Error('Invalid Huron account store.');
-		return { version: 1, upstream: this.options.connection, accounts };
+		return { version: 2, upstream: this.options.connection, accounts };
 	}
 
 	private async writeDocument(document: AccountDocument): Promise<void> {
@@ -331,16 +378,33 @@ export class HuronAccountStore {
 		};
 	}
 
-	private async connection(account: StoredAccount): Promise<PolarisConnection> {
-		if (account.isAdmin) return this.options.bootstrap();
-		if (!account.credentials) throw new Error('Missing Polaris credentials for Huron account.');
-		const encrypted = account.credentials;
+	private identityKey(id: string, connection: PolarisRealm): string {
+		return JSON.stringify([id, connection.url, connection.realm]);
+	}
+
+	private realm(realm = this.options.connection.realm): PolarisRealm {
+		const configured = (this.options.realms?.() ?? [this.options.connection]).find(
+			(entry) => entry.realm === realm
+		);
+		if (!configured) throw new HuronAccountError('This Polaris realm is not configured.');
+		return configured;
+	}
+
+	private async bootstrap(realm: string): Promise<PolarisConnection> {
+		const settings = this.realm(realm);
+		const connection = await this.options.bootstrap(realm);
+		if (connection.url !== settings.url || connection.realm !== settings.realm)
+			throw new Error('Bootstrap credentials do not match the selected Polaris realm.');
+		return connection;
+	}
+
+	private async decrypt(encrypted: EncryptedCredentials, key: string) {
 		const decipher = createDecipheriv(
 			'aes-256-gcm',
 			await this.key(),
 			Buffer.from(encrypted.iv, 'base64url')
 		);
-		decipher.setAAD(Buffer.from(account.id));
+		decipher.setAAD(Buffer.from(key));
 		decipher.setAuthTag(Buffer.from(encrypted.tag, 'base64url'));
 		const decoded: unknown = JSON.parse(
 			Buffer.concat([
@@ -350,10 +414,35 @@ export class HuronAccountStore {
 		);
 		const credentials = object(decoded);
 		return {
-			...this.options.connection,
 			clientId: text(credentials.clientId),
 			clientSecret: text(credentials.clientSecret)
 		};
+	}
+
+	private async connection(
+		account: StoredAccount,
+		realm = this.options.connection.realm
+	): Promise<PolarisConnection> {
+		const settings = this.realm(realm);
+		if (account.isAdmin) return this.bootstrap(realm);
+		const identity = account.identities.find(
+			(entry) => entry.realm === settings.realm && entry.url === settings.url
+		);
+		if (!identity?.credentials)
+			throw new HuronAccountError('This account has no identity in the selected Polaris realm.');
+		return {
+			...settings,
+			...(await this.decrypt(identity.credentials, this.identityKey(account.id, identity)))
+		};
+	}
+
+	/** Uses only this person's identity in the explicitly selected organization realm. */
+	async polarisClient(id: string, realm: string): Promise<PolarisClient> {
+		await this.initialize();
+		const account = (await this.readDocument()).accounts.find((entry) => entry.id === id);
+		if (!account || account.disabled)
+			throw new HuronAccountError('An active Huron account is required.');
+		return new PolarisClient(await this.connection(account, realm), this.options.fetcher);
 	}
 
 	async listUsers(): Promise<HuronUser[]> {
@@ -362,6 +451,7 @@ export class HuronAccountStore {
 	}
 
 	async sessionUser(id: string, authVersion: number): Promise<HuronUser | null> {
+		await this.initialize();
 		const account = (await this.readDocument()).accounts.find((account) => account.id === id);
 		return account && !account.disabled && account.authVersion === authVersion
 			? publicUser(account)
@@ -380,13 +470,105 @@ export class HuronAccountStore {
 		if (!account || !accepted || account.disabled || password.length > 256) return null;
 		const connection = await this.connection(account);
 		const client = new PolarisClient(connection, this.options.fetcher);
-		await client.authenticate();
 		return {
 			user: publicUser(account),
 			client,
 			clientId: connection.clientId,
 			authVersion: account.authVersion
 		};
+	}
+
+	private async provisionIdentity<T>(
+		account: StoredAccount,
+		realm: string,
+		persist: (identity: StoredIdentity) => Promise<T>
+	): Promise<T> {
+		const settings = this.realm(realm);
+		const client = new PolarisClient(await this.bootstrap(realm), this.options.fetcher);
+		const principal = account.polarisPrincipal;
+		const principalRole = account.polarisPrincipalRole;
+		let createdPrincipal = false;
+		let createdRole = false;
+		try {
+			const value = object(
+				await client.request(management('principals'), 'POST', {
+					principal: { name: principal, properties: { 'huron.username': account.username } },
+					credentialRotationRequired: false
+				})
+			);
+			createdPrincipal = true;
+			const credentials = object(value.credentials);
+			await client.request(management('principal-roles'), 'POST', {
+				principalRole: {
+					name: principalRole,
+					properties: { 'huron.username': account.username },
+					federated: false
+				}
+			});
+			createdRole = true;
+			await client.request(management('principals', principal, 'principal-roles'), 'PUT', {
+				principalRole: { name: principalRole }
+			});
+			return await persist({
+				...settings,
+				credentials: await this.encrypt(
+					{ clientId: text(credentials.clientId), clientSecret: text(credentials.clientSecret) },
+					this.identityKey(account.id, settings)
+				)
+			});
+		} catch (error) {
+			const recorded = await this.readDocument()
+				.then((current) =>
+					current.accounts.some(
+						(entry) =>
+							entry.id === account.id &&
+							entry.identities.some(
+								(identity) => identity.realm === settings.realm && identity.url === settings.url
+							)
+					)
+				)
+				.catch(() => true);
+			if (recorded)
+				throw new HuronAccountError(
+					'Account provisioning could not be confirmed. Refresh Users before retrying. Polaris identities were retained to preserve any account that was already saved.'
+				);
+			if (createdPrincipal)
+				await client.request(management('principals', principal), 'DELETE').catch(() => undefined);
+			if (createdRole)
+				await client
+					.request(management('principal-roles', principalRole), 'DELETE')
+					.catch(() => undefined);
+			throw error;
+		}
+	}
+
+	/** Provision the person's own realm identity before organization/catalog onboarding. */
+	async ensureRealmIdentity(id: string, realm: string): Promise<HuronUser> {
+		return this.locked(async () => {
+			await this.initializeUnlocked();
+			const settings = this.realm(realm);
+			const document = await this.readDocument();
+			const account = document.accounts.find((entry) => entry.id === id);
+			if (!account || account.disabled)
+				throw new HuronAccountError('Choose an active Huron account.');
+			if (account.isAdmin) {
+				await this.bootstrap(realm);
+				return publicUser(account);
+			}
+			const existing = account.identities.find((entry) => entry.realm === realm);
+			if (existing) {
+				if (existing.url !== settings.url || !existing.credentials)
+					throw new HuronAccountError(
+						'The stored Polaris realm identity does not match its connection.'
+					);
+				return publicUser(account);
+			}
+			return this.provisionIdentity(account, realm, async (identity) => {
+				account.identities.push(identity);
+				await this.writeDocument(document);
+				return publicUser(account);
+			});
+		});
 	}
 
 	async createUser(raw: {
@@ -404,68 +586,25 @@ export class HuronAccountStore {
 			)
 				throw new HuronAccountError('That username is reserved or already in use.');
 			const id = randomUUID();
-			const principal = `huron-user-${id}`;
-			const principalRole = `huron-member-${id}`;
-			const client = new PolarisClient(await this.options.bootstrap(), this.options.fetcher);
-			let createdPrincipal = false;
-			let createdRole = false;
-			try {
-				const value = object(
-					await client.request(management('principals'), 'POST', {
-						principal: { name: principal, properties: { 'huron.username': input.username } },
-						credentialRotationRequired: false
-					})
-				);
-				createdPrincipal = true;
-				const credentials = object(value.credentials);
-				await client.request(management('principal-roles'), 'POST', {
-					principalRole: {
-						name: principalRole,
-						properties: { 'huron.username': input.username },
-						federated: false
-					}
-				});
-				createdRole = true;
-				await client.request(management('principals', principal, 'principal-roles'), 'PUT', {
-					principalRole: { name: principalRole }
-				});
-				const account: StoredAccount = {
-					id,
-					username: input.username,
-					displayName: input.displayName,
-					isAdmin: false,
-					disabled: false,
-					polarisPrincipal: principal,
-					polarisPrincipalRole: principalRole,
-					createdAt: new Date().toISOString(),
-					authVersion: 1,
-					password: await hashPassword(input.password),
-					credentials: await this.encrypt(
-						{ clientId: text(credentials.clientId), clientSecret: text(credentials.clientSecret) },
-						id
-					)
-				};
+			const account: StoredAccount = {
+				id,
+				username: input.username,
+				displayName: input.displayName,
+				isAdmin: false,
+				disabled: false,
+				polarisPrincipal: `huron-user-${id}`,
+				polarisPrincipalRole: `huron-member-${id}`,
+				createdAt: new Date().toISOString(),
+				authVersion: 1,
+				password: await hashPassword(input.password),
+				identities: []
+			};
+			return this.provisionIdentity(account, this.options.connection.realm, async (identity) => {
+				account.identities.push(identity);
 				document.accounts.push(account);
 				await this.writeDocument(document);
 				return publicUser(account);
-			} catch (error) {
-				const recorded = await this.readDocument()
-					.then((current) => current.accounts.some((account) => account.id === id))
-					.catch(() => true);
-				if (recorded)
-					throw new HuronAccountError(
-						'Account creation could not be confirmed. Refresh Users before retrying. Polaris identities were retained to preserve any account that was already saved.'
-					);
-				if (createdPrincipal)
-					await client
-						.request(management('principals', principal), 'DELETE')
-						.catch(() => undefined);
-				if (createdRole)
-					await client
-						.request(management('principal-roles', principalRole), 'DELETE')
-						.catch(() => undefined);
-				throw error;
-			}
+			});
 		});
 	}
 
@@ -516,8 +655,10 @@ function repositoryLocalFile(relative: string): string {
 	return resolve(process.cwd(), basename(process.cwd()) === 'web' ? '..' : '.', relative);
 }
 
-async function bootstrapConnection(): Promise<PolarisConnection> {
-	const settings = polarisSettings();
+async function bootstrapConnection(realm = polarisSettings().realm): Promise<PolarisConnection> {
+	const settings = polarisRealmSettings(realm);
+	const configured = polarisConfiguredConnection(realm);
+	if (configured) return configured;
 	const clientId = env.POLARIS_BOOTSTRAP_CLIENT_ID;
 	const clientSecret = env.POLARIS_BOOTSTRAP_CLIENT_SECRET;
 	if (clientId || clientSecret) {
@@ -549,6 +690,7 @@ export function accountStore(): HuronAccountStore {
 	return (store ??= new HuronAccountStore({
 		path: resolve(env.HURON_ACCOUNT_STORE || repositoryLocalFile('.local/huron/accounts.json')),
 		connection: polarisSettings(),
+		realms: polarisRealms,
 		bootstrap: bootstrapConnection,
 		initialPassword: env.HURON_ADMIN_PASSWORD
 	}));
@@ -559,6 +701,6 @@ export function registrationAllowed(): boolean {
 }
 
 /** Trusted administration and discovery directory; never use this for user data operations. */
-export async function getBootstrapPolarisClient(): Promise<PolarisClient> {
-	return new PolarisClient(await bootstrapConnection());
+export async function getBootstrapPolarisClient(realm?: string): Promise<PolarisClient> {
+	return new PolarisClient(await bootstrapConnection(realm));
 }

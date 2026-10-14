@@ -9,7 +9,7 @@ export async function visibleCatalogs(
 	client: PolarisClient
 ): Promise<PolarisCatalog[]> {
 	if (user.isAdmin) return client.catalogs();
-	const directory = await getBootstrapPolarisClient();
+	const directory = await getBootstrapPolarisClient(client.connection.realm);
 	const catalogs = await directory.catalogs();
 	const visible = await Promise.all(
 		catalogs.map(async (catalog): Promise<PolarisCatalog | null> => {

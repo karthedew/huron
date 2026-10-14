@@ -12,20 +12,15 @@ import {
 } from '$lib/server/huron-catalog-admin';
 import { field, required } from '$lib/server/polaris-forms';
 import { createPolarisActions, polarisActionFailure } from '$lib/server/polaris-route-actions';
-import {
-	polarisSettings,
-	consumePolarisNotice,
-	queuePolarisNotice
-} from '$lib/server/polaris-session';
+import { consumePolarisNotice, queuePolarisNotice } from '$lib/server/polaris-session';
 import { loadPolarisWorkspace } from '$lib/server/polaris-workspace';
 import { organizationDirectory, organizationStore } from '$lib/server/huron-organizations';
-import { PolarisInputError } from '$lib/server/polaris-forms';
-import { PolarisApiError } from '$lib/server/polaris-client';
+import { polarisRealms } from '$lib/server/polaris-settings';
 
 export const load: PageServerLoad = async (event) => {
 	const admin = requireHuronAdmin(event);
 	const client = getAuthenticatedPolaris(event);
-	const data = await loadPolarisWorkspace(client, null, event.url, polarisSettings());
+	const data = await loadPolarisWorkspace(client, null, event.url, client.connection);
 	data.notice = consumePolarisNotice(event.cookies);
 	const users = await accountStore().listUsers();
 	const catalogUsers: HuronCatalogUserSummary[] = users.map((user) => ({
@@ -47,9 +42,13 @@ export const load: PageServerLoad = async (event) => {
 			}
 		})
 	);
+	const organizations = (await organizationDirectory(admin, client)).organizations;
 	return {
 		...data,
-		organizations: (await organizationDirectory(admin, client)).organizations,
+		availableRealms: polarisRealms().filter(
+			(connection) => !organizations.some((organization) => organization.realm === connection.realm)
+		),
+		organizations,
 		users: catalogUsers,
 		activeTab: event.url.searchParams.get('tab') ?? 'catalogs'
 	};
@@ -76,6 +75,7 @@ export const actions = {
 			const form = await event.request.formData();
 			const organization = await organizationStore().create(admin, {
 				slug: required(form, 'slug'),
+				realm: required(form, 'realm'),
 				name: required(form, 'name'),
 				description: field(form, 'description')
 			});
@@ -88,56 +88,15 @@ export const actions = {
 			return polarisActionFailure('createOrganization', error);
 		}
 	},
-	assignCatalogOrganization: async (event) => {
-		const admin = requireHuronAdmin(event);
-		event.setHeaders({ 'Cache-Control': 'private, no-store' });
-		try {
-			const form = await event.request.formData();
-			await organizationStore().assignCatalog(
-				admin,
-				required(form, 'organization'),
-				required(form, 'catalog')
-			);
-			return {
-				action: 'assignCatalogOrganization',
-				success: true,
-				message: 'Catalog organization saved. Polaris grants are unchanged.'
-			};
-		} catch (error) {
-			return polarisActionFailure('assignCatalogOrganization', error);
-		}
-	},
 	createCatalog: async (event) => {
 		const admin = requireHuronAdmin(event);
 		event.setHeaders({ 'Cache-Control': 'private, no-store' });
 		try {
 			const form = await event.request.formData();
-			const organization = required(form, 'organization');
-			const client = getAuthenticatedPolaris(event);
-			const directory = await organizationDirectory(admin, client);
-			if (!directory.organizations.some((entry) => entry.slug === organization))
-				throw new PolarisInputError('Choose an existing organization.');
-			const owner = directory.organizations.find((entry) =>
-				entry.catalogNames.includes(required(form, 'name'))
-			);
-			if (owner && owner.slug !== organization)
-				throw new PolarisApiError(
-					409,
-					'This catalog already belongs to another organization. Use Assign catalog to move an existing catalog.'
-				);
+			const organization = await organizationStore().get(admin, required(form, 'organization'));
+			await accountStore().ensureRealmIdentity(admin.id, organization.realm);
+			const client = await accountStore().polarisClient(admin.id, organization.realm);
 			const result = await createHuronCatalog(client, admin, form);
-			try {
-				await organizationStore().claimCatalog(admin, organization, required(form, 'name'));
-			} catch (failure) {
-				if (failure instanceof PolarisApiError && failure.status === 409)
-					return polarisActionFailure('createCatalog', failure);
-				return fail(503, {
-					action: 'createCatalog',
-					success: false,
-					message:
-						'The catalog exists in Polaris, but organization assignment did not finish. Use Assign catalog below to complete setup.'
-				});
-			}
 			return result;
 		} catch (error) {
 			return polarisActionFailure('createCatalog', error);
@@ -156,7 +115,10 @@ export const actions = {
 		} catch (error) {
 			return polarisActionFailure('deleteCatalog', error);
 		}
-		redirect(303, '/admin');
+		redirect(
+			303,
+			`/admin?${new URLSearchParams({ organization: event.locals.organization?.slug ?? '' })}`
+		);
 	},
 	createUser: async (event) => {
 		const admin = requireHuronAdmin(event);
@@ -172,7 +134,12 @@ export const actions = {
 			created = true;
 			const catalog = field(form, 'catalog');
 			if (catalog) {
-				await organizationStore().ensureMembershipForCatalog(admin, user.id, catalog);
+				await organizationStore().ensureMembershipForCatalog(
+					admin,
+					user.id,
+					catalog,
+					getAuthenticatedPolaris(event).connection.realm
+				);
 				await setCatalogMembership(
 					getAuthenticatedPolaris(event),
 					await accountStore().listUsers(),

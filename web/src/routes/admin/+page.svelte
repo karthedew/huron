@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
+	import { browseHref } from '$lib/stores/workspace';
 	import { ShieldCheck, Users, Database, Settings, Building2 } from '@lucide/svelte';
 	import AccessPanel from '$design/components/polaris/AccessPanel.svelte';
 	import CatalogSettingsPanel from '$design/components/polaris/CatalogSettingsPanel.svelte';
@@ -19,6 +20,7 @@
 	);
 	function href(changes: Record<string, string | null>): '/admin' | `/admin?${string}` {
 		const query = new URLSearchParams(page.url.searchParams);
+		if (data.selectedOrganization) query.set('organization', data.selectedOrganization);
 		for (const key of [...query.keys()]) if (key.startsWith('/')) query.delete(key);
 		for (const [key, value] of Object.entries(changes))
 			value === null ? query.delete(key) : query.set(key, value);
@@ -97,8 +99,8 @@
 			<section class="panel self-start">
 				<h2>Organizations</h2>
 				<p class="hint mb-4">
-					Organizations own catalogs and manage people. Catalog roles in Polaris determine dataset
-					access.
+					Each organization links to a Polaris realm. Its catalogs and access controls stay within
+					that root.
 				</p>
 				<div class="grid gap-3">
 					{#each data.organizations as organization (organization.id)}<article
@@ -112,13 +114,13 @@
 								>
 							</h3>
 							<p class="hint mt-1">
-								{organization.slug} · {organization.catalogNames.length} catalogs
+								{organization.slug} · realm {organization.realm}
 							</p>
 							{#if organization.description}<p class="mt-3 break-words text-sm text-app-muted">
 									{organization.description}
 								</p>{/if}<a
 								class="mt-3 inline-block text-sm"
-								href={resolve(`/?organization=${encodeURIComponent(organization.slug)}`)}
+								href={resolve(`/browse?organization=${encodeURIComponent(organization.slug)}`)}
 								>View catalogs</a
 							>
 						</article>{:else}<p class="hint">
@@ -128,7 +130,10 @@
 			</section>
 			<section class="panel self-start">
 				<h2>Create organization</h2>
-				<PolarisForm action="createOrganization" submit="Create organization"
+				<PolarisForm
+					action="createOrganization"
+					submit="Create organization"
+					disabled={!data.availableRealms.length}
 					><label
 						>Organization name<input name="name" required placeholder="Research division" /></label
 					><label
@@ -138,33 +143,22 @@
 							pattern="[a-z0-9][a-z0-9-]*"
 							placeholder="research-division"
 						/></label
+					><label
+						>Polaris realm<select name="realm" required
+							><option value="">Choose a configured realm</option
+							>{#each data.availableRealms as endpoint (endpoint.realm)}<option
+									value={endpoint.realm}>{endpoint.realm} · {endpoint.url}</option
+								>{/each}</select
+						></label
 					><label>Description<textarea name="description" rows="3"></textarea></label>
 					<p class="hint">
-						Use a stable identifier. After creation, add people and assign catalogs in
-						Administration.
-					</p></PolarisForm
-				>
-			</section>
-			<section class="panel xl:col-span-2">
-				<h2>Assign catalog</h2>
-				<p class="hint mb-4">
-					Place an existing Polaris catalog in an organization. Moving a catalog changes which
-					organization members can see it in Huron; existing Polaris grants remain unchanged.
-				</p>
-				<PolarisForm action="assignCatalogOrganization" submit="Assign catalog"
-					><label
-						>Catalog to assign<select name="catalog" required
-							>{#each data.catalogs as catalog (catalog.name)}<option value={catalog.name}
-									>{catalog.name}</option
-								>{/each}</select
-						></label
-					><label
-						>Owning organization<select name="organization" required
-							>{#each data.organizations as organization (organization.id)}<option
-									value={organization.slug}>{organization.name}</option
-								>{/each}</select
-						></label
-					></PolarisForm
+						Use a stable identifier and a configured Polaris realm. Catalogs created in this
+						organization belong to that realm.
+					</p>
+					{#if !data.availableRealms.length}<p class="hint">
+							All configured realms already have an organization. Configure another Polaris realm to
+							add a new root.
+						</p>{/if}</PolarisForm
 				>
 			</section>
 		</div>
@@ -185,16 +179,16 @@
 									<strong class="break-all text-sm">{catalog.name}</strong>
 									<p class="hint">{catalog.storageConfigInfo.storageType} · {catalog.type}</p>
 									<p class="hint">
-										{data.organizations.find((organization) =>
-											organization.catalogNames.includes(catalog.name)
-										)?.name ?? 'Unassigned organization'}
+										{data.organization?.name ?? 'Organization'}
 									</p>
 								</div>
 								<div class="flex flex-wrap gap-3 text-sm">
-									<a href={resolve(`/browse?catalog=${encodeURIComponent(catalog.name)}`)}>Browse</a
+									<a href={resolve(browseHref(catalog.name, [], '', data.selectedOrganization))}
+										>Browse</a
 									><a
-										href={resolve(`/settings/catalog?catalog=${encodeURIComponent(catalog.name)}`)}
-										>Users & settings</a
+										href={resolve(
+											`/settings/catalog?catalog=${encodeURIComponent(catalog.name)}&organization=${encodeURIComponent(data.selectedOrganization)}`
+										)}>Users & settings</a
 									><a href={resolve(href({ catalog: catalog.name }))}>Configure</a>
 								</div>
 							</div>{:else}<p class="hint">
@@ -283,7 +277,7 @@
 								{#each user.catalogMemberships as membership (membership.catalog)}<a
 										class="rounded border border-app-line px-2 py-1 text-xs"
 										href={resolve(
-											`/settings/catalog?catalog=${encodeURIComponent(membership.catalog)}`
+											`/settings/catalog?catalog=${encodeURIComponent(membership.catalog)}&organization=${encodeURIComponent(data.selectedOrganization)}`
 										)}>{membership.catalog} · {membership.roles.join(', ')}</a
 									>{:else}<span class="hint">No managed catalog memberships</span>{/each}
 							</div>
@@ -364,7 +358,11 @@
 		<section class="panel mb-5">
 			<h2>Catalog scope</h2>
 			<form method="GET" action={resolve('/admin')} class="mt-3 flex flex-wrap items-end gap-3">
-				<input type="hidden" name="tab" value="access" /><label class="min-w-0 flex-1"
+				<input type="hidden" name="tab" value="access" /><input
+					type="hidden"
+					name="organization"
+					value={data.selectedOrganization}
+				/><label class="min-w-0 flex-1"
 					>Catalog<select name="catalog" value={data.selected.catalog}
 						>{#each data.catalogs as catalog (catalog.name)}<option value={catalog.name}
 								>{catalog.name}</option

@@ -24,6 +24,7 @@
 	let pending = $state(false);
 	const target = $derived.by(() => {
 		const query = new URLSearchParams(page.url.searchParams);
+		if (page.data.selectedOrganization) query.set('organization', page.data.selectedOrganization);
 		for (const key of [...query.keys()]) if (key.startsWith('/')) query.delete(key);
 		query.set(`/${action}`, '');
 		return `${page.url.pathname}?${query}`;

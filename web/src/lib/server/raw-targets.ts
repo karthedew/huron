@@ -14,7 +14,7 @@ export async function loadRawTargetBranch(
 		datasetPageToken?: string;
 	}
 ): Promise<RawTargetBranch> {
-	await requireOrganizationCatalog(user, client, selection.catalog);
+	const organization = await requireOrganizationCatalog(user, client, selection.catalog);
 	if (selection.namespace.length)
 		await client.namespaceProperties(selection.catalog, selection.namespace);
 	const folders = await client.namespaces(
@@ -32,6 +32,7 @@ export async function loadRawTargetBranch(
 				let datasetId: string | null = null;
 				try {
 					datasetId = await managedRawDatasetId(client, {
+						organization: organization.slug,
 						catalog: selection.catalog,
 						namespace: selection.namespace,
 						name: table.name

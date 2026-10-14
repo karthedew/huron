@@ -44,7 +44,9 @@
 			<ul class="grid gap-2">
 				{#each data.catalogs as catalog (catalog.name)}<li>
 						<a
-							href={resolve(`/browse?catalog=${encodeURIComponent(catalog.name)}`)}
+							href={resolve(
+								`/browse?catalog=${encodeURIComponent(catalog.name)}&organization=${encodeURIComponent(data.selectedOrganization)}`
+							)}
 							class="resource-link">{catalog.name}</a
 						>
 					</li>{:else}<li class="hint">

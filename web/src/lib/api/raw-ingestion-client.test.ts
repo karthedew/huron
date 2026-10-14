@@ -18,7 +18,7 @@ describe('Raw preflight failure responses', () => {
 		);
 		await expect(
 			beginRawUpload(
-				{ catalog: 'science', namespace: ['raw'], name: 'new' },
+				{ organization: 'org', catalog: 'science', namespace: ['raw'], name: 'new' },
 				{ title: 'Title', creators: ['Scientist'] },
 				[],
 				'key',
@@ -37,7 +37,7 @@ describe('Raw preflight failure responses', () => {
 			);
 			await expect(
 				beginRawUpload(
-					{ catalog: 'science', namespace: ['raw'], name: 'new' },
+					{ organization: 'org', catalog: 'science', namespace: ['raw'], name: 'new' },
 					{ title: 'Title', creators: ['Scientist'] },
 					[],
 					'key',
@@ -55,7 +55,7 @@ describe('Raw preflight failure responses', () => {
 		);
 		await expect(
 			beginRawUpload(
-				{ catalog: 'science', namespace: ['raw'], name: 'new' },
+				{ organization: 'org', catalog: 'science', namespace: ['raw'], name: 'new' },
 				{ title: 'Title', creators: ['Scientist'] },
 				[],
 				'key',

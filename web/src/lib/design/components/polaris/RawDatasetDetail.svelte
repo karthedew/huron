@@ -9,10 +9,12 @@
 
 	let {
 		data,
+		organization,
 		table,
 		href
 	}: {
 		data: PolarisBrowseData;
+		organization: string;
 		table: PolarisRawTable;
 		href: (changes: Record<string, string | null>) => '/browse' | `/browse?${string}`;
 	} = $props();
@@ -31,12 +33,14 @@
 	const description = $derived(table.doc || table.properties.description || '');
 	const managed = $derived(data.rawInspection?.state === 'managed' ? data.rawInspection : null);
 	const target = $derived({
+		organization,
 		catalog: data.selected.catalog,
 		namespace: data.selected.namespace,
 		name: table.name
 	});
 	const ingestQuery = $derived(
 		new URLSearchParams({
+			organization,
 			catalog: target.catalog,
 			namespace: JSON.stringify(target.namespace),
 			table: target.name

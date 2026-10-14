@@ -144,7 +144,8 @@ export async function loadDatasetPermissions(
 	client: PolarisClient,
 	user: HuronUser,
 	target: PolarisDatasetTarget,
-	directoryFactory: () => Promise<PolarisClient> = getBootstrapPolarisClient
+	directoryFactory: () => Promise<PolarisClient> = () =>
+		getBootstrapPolarisClient(client.connection.realm)
 ): Promise<PolarisDatasetPermissions> {
 	await readDataset(client, target);
 	let permissions: PolarisDatasetPermissions;
@@ -271,7 +272,8 @@ export async function loadDatasetGovernance(
 	client: PolarisClient,
 	user: HuronUser,
 	target: PolarisDatasetTarget,
-	directoryFactory: () => Promise<PolarisClient> = getBootstrapPolarisClient,
+	directoryFactory: () => Promise<PolarisClient> = () =>
+		getBootstrapPolarisClient(client.connection.realm),
 	policyPageToken = ''
 ): Promise<PolarisDatasetGovernance> {
 	const permissions = await loadDatasetPermissions(client, user, target, directoryFactory);

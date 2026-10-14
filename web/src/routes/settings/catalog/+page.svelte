@@ -15,6 +15,8 @@
 		changes: Record<string, string | null>
 	): '/settings/catalog' | `/settings/catalog?${string}` {
 		const query = new URLSearchParams(page.url.searchParams);
+		if (data.selectedOrganization) query.set('organization', data.selectedOrganization);
+		if (data.selected.catalog) query.set('catalog', data.selected.catalog);
 		for (const key of [...query.keys()]) if (key.startsWith('/')) query.delete(key);
 		for (const [key, value] of Object.entries(changes))
 			value === null ? query.delete(key) : query.set(key, value);
@@ -36,7 +38,11 @@
 			</p>
 		</div>
 		<form method="GET" action={resolve('/settings/catalog')} class="flex flex-wrap items-end gap-2">
-			<input type="hidden" name="tab" value={active} /><label
+			<input type="hidden" name="tab" value={active} />{#if data.selectedOrganization}<input
+					type="hidden"
+					name="organization"
+					value={data.selectedOrganization}
+				/>{/if}<label
 				>Catalog<select name="catalog" value={data.selected.catalog}
 					>{#each data.catalogs as catalog (catalog.name)}<option value={catalog.name}
 							>{catalog.name}</option
@@ -87,14 +93,21 @@
 			<p class="hint mt-2">
 				A Huron administrator can create a Polaris catalog and grant your user access.
 			</p>
-			{#if data.isAdmin}<a class="mt-4 inline-block" href={resolve('/admin')}>Open Administration</a
+			{#if data.isAdmin}<a
+					class="mt-4 inline-block"
+					href={resolve(`/admin?organization=${encodeURIComponent(data.selectedOrganization)}`)}
+					>Open Administration</a
 				>{/if}
 		</section>{/if}
 	<div class="mt-5 flex flex-wrap gap-4 text-sm">
 		{#if data.catalog}<a
-				href={resolve(`/browse?catalog=${encodeURIComponent(data.selected.catalog)}`)}
-				>Browse this catalog</a
-			>{/if}{#if data.isAdmin}<a href={resolve('/admin?tab=users')}>Create or manage Huron logins</a
+				href={resolve(
+					`/browse?catalog=${encodeURIComponent(data.selected.catalog)}&organization=${encodeURIComponent(data.selectedOrganization)}`
+				)}>Browse this catalog</a
+			>{/if}{#if data.isAdmin}<a
+				href={resolve(
+					`/admin?tab=users&organization=${encodeURIComponent(data.selectedOrganization)}`
+				)}>Create or manage Huron logins</a
 			>{/if}
 	</div>
 </div>

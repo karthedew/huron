@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { HuronUser, PolarisGrant } from '$api/types';
 import { PolarisApiError, PolarisClient } from './polaris-client';
-import { parseRawTarget, rawGrantPermissions, requireRawPermissions } from './raw-authorization';
+import {
+	boundRawTarget,
+	parseRawTarget,
+	rawGrantPermissions,
+	requireRawPermissions
+} from './raw-authorization';
 
 const user: HuronUser = {
 	id: 'alice',
@@ -13,7 +18,12 @@ const user: HuronUser = {
 	polarisPrincipalRole: 'alice-role',
 	createdAt: '2026-10-13'
 };
-const target = { catalog: 'science', namespace: ['earth', 'daily'], name: 'rain' };
+const target = {
+	organization: 'org',
+	catalog: 'science',
+	namespace: ['earth', 'daily'],
+	name: 'rain'
+};
 
 function fixture(initialGrants: PolarisGrant[]) {
 	let grants = initialGrants;
@@ -43,6 +53,7 @@ function fixture(initialGrants: PolarisGrant[]) {
 		organization: vi.fn(async () => ({
 			id: 'org',
 			slug: 'org',
+			realm: 'POLARIS',
 			name: 'Organization',
 			description: '',
 			createdAt: '',
@@ -208,5 +219,28 @@ describe('Raw data authority', () => {
 		await expect(
 			requireRawPermissions(setup.client, user, target, 'read', setup.authority)
 		).rejects.toMatchObject({ status: 403 });
+	});
+});
+
+describe('Raw realm binding', () => {
+	it('conceals a target from a different organization before reading role assignments', async () => {
+		const { client, authority, calls } = fixture([
+			{ type: 'catalog', privilege: 'CATALOG_MANAGE_CONTENT' }
+		]);
+		await expect(
+			requireRawPermissions(client, user, { ...target, organization: 'other' }, 'write', authority)
+		).rejects.toMatchObject({ status: 404 });
+		expect(calls).toEqual([]);
+	});
+	it('binds the backend identity to the selected client connection without adding UI organization metadata', () => {
+		expect(
+			boundRawTarget(target, { url: 'https://another-polaris.test', realm: 'SECOND' })
+		).toEqual({
+			endpoint: 'https://another-polaris.test',
+			realm: 'SECOND',
+			catalog: target.catalog,
+			namespace: target.namespace,
+			name: target.name
+		});
 	});
 });

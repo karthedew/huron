@@ -39,9 +39,11 @@
 	role="search"
 	class="mb-6 flex gap-2 rounded-lg border border-app-line bg-app-card p-2"
 >
-	<input type="hidden" name="organization" value={data.selectedOrganization} /><label
-		class="relative min-w-0 flex-1"
-	>
+	{#if data.selectedOrganization}<input
+			type="hidden"
+			name="organization"
+			value={data.selectedOrganization}
+		/>{/if}<label class="relative min-w-0 flex-1">
 		<span class="visually-hidden">Search query</span>
 		<Search
 			size={17}
@@ -92,7 +94,7 @@
 					<div class="min-w-0 flex-1">
 						<h3 class="m-0 break-all text-base font-semibold">
 							<a
-								href={resolve(browseHref(catalog.name))}
+								href={resolve(browseHref(catalog.name, [], '', data.selectedOrganization))}
 								class="text-app-fg hover:text-brand-strong">{catalog.name}</a
 							>
 						</h3>
@@ -111,12 +113,14 @@
 					</p>{/if}
 				<div class="mt-5 flex flex-wrap items-center gap-4 border-t border-app-line pt-4">
 					<a
-						href={resolve(browseHref(catalog.name))}
+						href={resolve(browseHref(catalog.name, [], '', data.selectedOrganization))}
 						class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-strong"
 						>Browse datasets <ArrowRight size={15} /></a
 					>
 					<a
-						href={resolve(`/settings/catalog?catalog=${encodeURIComponent(catalog.name)}`)}
+						href={resolve(
+							`/settings/catalog?catalog=${encodeURIComponent(catalog.name)}&organization=${encodeURIComponent(data.selectedOrganization)}`
+						)}
 						class="ml-auto inline-flex items-center gap-1.5 text-xs text-app-muted hover:text-app-fg"
 						><Settings size={14} /> Catalog settings</a
 					>

@@ -5,11 +5,13 @@
 	import type { PolarisCatalog, RawTargetBranch } from '$api/types';
 	let {
 		catalogs,
+		organization,
 		initialBranch,
 		onloading,
 		onchange
 	}: {
 		catalogs: PolarisCatalog[];
+		organization: string;
 		initialBranch: RawTargetBranch | null;
 		onloading: (loading: boolean) => void;
 		onchange: (branch: RawTargetBranch, name: string) => void;
@@ -30,7 +32,8 @@
 				catalog,
 				namespace,
 				more ? branch?.nextNamespacePageToken : null,
-				more ? branch?.nextDatasetPageToken : null
+				more ? branch?.nextDatasetPageToken : null,
+				organization
 			);
 			if (request !== requestId) return;
 			branch =

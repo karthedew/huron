@@ -210,9 +210,14 @@ export class PolarisClient {
 	private pendingToken: Promise<Token> | null = null;
 
 	constructor(
-		private readonly connection: PolarisConnection,
+		private readonly credentials: PolarisConnection,
 		private readonly fetcher: typeof fetch = fetch
 	) {}
+
+	/** Connection identity for server routing; privileged credentials remain private. */
+	get connection(): Readonly<Pick<PolarisConnection, 'url' | 'realm'>> {
+		return { url: this.credentials.url, realm: this.credentials.realm };
+	}
 
 	async authenticate(): Promise<void> {
 		await this.accessToken();
@@ -233,8 +238,8 @@ export class PolarisClient {
 	private async exchangeToken(): Promise<Token> {
 		const body = new URLSearchParams({
 			grant_type: 'client_credentials',
-			client_id: this.connection.clientId,
-			client_secret: this.connection.clientSecret,
+			client_id: this.credentials.clientId,
+			client_secret: this.credentials.clientSecret,
 			scope: 'PRINCIPAL_ROLE:ALL'
 		});
 		const response = await this.send('/api/catalog/v1/oauth/tokens', {

@@ -115,9 +115,14 @@ describe('Huron authenticated sessions', () => {
 
 	it('requires authentication for user operations and administrator authority for account management', () => {
 		const url = new URL('http://localhost/admin');
-		expect(() => getAuthenticatedPolaris({ locals: { user: null, polaris: null }, url })).toThrow();
+		expect(() =>
+			getAuthenticatedPolaris({ locals: { organization: null, user: null, polaris: null }, url })
+		).toThrow();
 		const scientist = account('alice');
-		const event = { locals: { user: scientist.user, polaris: scientist.client }, url };
+		const event = {
+			locals: { organization: null, user: scientist.user, polaris: scientist.client },
+			url
+		};
 		expect(getAuthenticatedPolaris(event)).toBe(scientist.client);
 		expect(() => requireAdmin(event)).toThrow();
 		expect(() =>

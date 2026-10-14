@@ -166,7 +166,12 @@
 				key: crypto.randomUUID(),
 				beginUncertain: false,
 				expectedDatasetId,
-				target: { catalog, namespace: [...namespace], name },
+				target: {
+					organization: data.organization?.slug ?? '',
+					catalog,
+					namespace: [...namespace],
+					name
+				},
 				metadata: {
 					title: title.trim(),
 					creators: creators
@@ -308,6 +313,7 @@
 						>
 					</p>
 					<IngestDestinationPicker
+						organization={data.organization?.slug ?? ''}
 						catalogs={data.catalogs}
 						initialBranch={currentBranch}
 						onloading={(loading) => (destinationBusy = loading)}

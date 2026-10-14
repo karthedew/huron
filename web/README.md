@@ -2,7 +2,7 @@
 
 SvelteKit frontend for the Polaris checkout’s native Icechunk extension. The main
 Catalog and Browse views use live Polaris catalogs, namespaces and repositories.
-Organizations own multiple Polaris catalogs. Catalogs group programs or data domains; Raw, Iceberg and Icechunk are dataset types that can share a namespace. Huron supplies persistent local
+Each organization binds one distinct Polaris realm and owns all catalogs under that realm’s root. Catalogs group programs or data domains; Raw, Iceberg and Icechunk are dataset types that can share a namespace. Huron supplies persistent local
 username/password accounts and manual catalog onboarding; Polaris owns grants.
 See [design](../design/polaris.html) and the [API seam](src/lib/api/README.md).
 
@@ -80,7 +80,7 @@ Iceberg snapshot. That external Raw registration does not publish a Huron Raw
 revision; use the ingest wizard with a new dataset name to upload its source files
 as managed, immutable revisions.
 
-Browse stays inside one catalog of the selected organization. The header has separate organization and catalog selectors. Its filesystem-style Explorer
+The header selects only the organization. Browse opens its realm root and lists accessible catalogs at the top of Explorer with database icons. The filesystem-style Explorer
 shows nested namespace folders and repository leaves; expanding a folder loads
 that branch with the user’s own Polaris authority. The organization switcher lists Huron memberships; each catalog list intersects those memberships with the current user’s Polaris grants. The default administrator manages all organizations and catalogs.
 The compact explorer sits alongside dataset tabs: Overview, Schema, History,
@@ -101,9 +101,35 @@ checkout and restarts. Requirements: Java 21, native PostgreSQL tools, `uv`, Nod
 
 Copy `.env.example` to `.env` in `web/`, then configure the server-only Polaris
 origin/realm and a private bootstrap credentials file (or environment credentials).
-The local launcher respects these settings. Keep a separate `HURON_ACCOUNT_STORE`
-for each endpoint/realm; mismatches fail closed. The bootstrap identity needs
+The local launcher respects these settings. Use one persistent `HURON_ACCOUNT_STORE` for this Huron deployment. Accounts share one login and retain encrypted credentials separately for each configured endpoint/realm; organization bindings are immutable and endpoint mismatches fail closed. The bootstrap identity needs
 Polaris realm administration and must be the realm root/service_admin identity.
+
+The main toolbar selects only organizations. Browse opens an organization root and
+lists its catalogs at the top level, followed by namespace folders and datasets. Generated
+URLs include `organization` so bookmarks and concurrent tabs keep their realm.
+
+To add an organization, provision its realm with the Polaris admin tool using the
+same database configuration as the server (`bootstrap --realm=RESEARCH`), and include
+it in the server’s `polaris.realm-context.realms` allowlist. Save that realm’s root
+credentials in the private `POLARIS_CONNECTIONS_JSON` environment setting:
+
+```dotenv
+POLARIS_CONNECTIONS_JSON='[{"realm":"RESEARCH","url":"http://127.0.0.1:8181","clientId":"research-root","clientSecret":"replace-with-private-secret"}]'
+```
+
+Restart Huron, then choose the unused realm in Admin → Organizations. Huron verifies
+the connection before saving the organization. Polaris’s management API does not
+provision realms; the admin form binds a provisioned root. Catalogs are created in
+the chosen organization’s realm and are not reassigned across organizations.
+Adding a person to an organization provisions their separate Polaris identity,
+without catalog grants; assign Reader, Writer or Catalog administrator afterward.
+
+The existing single NASA Science organization migrates to the existing `POLARIS`
+realm without moving data or changing grants or Raw identities. A legacy store with
+multiple Huron organizations sharing one realm requires an explicit operator migration;
+Huron refuses to guess or merge those organizations. Back up the private account and
+organization files before upgrading. Native realm isolation does not replace storage
+permissions; configure separate allowed locations and storage credentials as needed.
 
 ```sh
 npm install
