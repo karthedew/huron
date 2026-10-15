@@ -1,5 +1,7 @@
 # P3 — Integrity services: implementation plan
 
+**Superseded 2026-10-15:** the owner retired the legacy cutover, controller and writer-exclusion machinery; this document is kept as history and `design/roadmap.html` owns current status.
+
 Status: **implementation partial; M1c activation/startup and M2–M7 remain open.**
 Verified completion and local controller/cutover workflows have
 [recorded verification](docs/history.md), including the domain-owned Core migration.

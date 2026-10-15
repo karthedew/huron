@@ -28,9 +28,8 @@ src/huron/
     security/      Authentication, identity, authorization and their workflows
     catalog/       Hierarchy, dataset configuration, layer rules and discovery
     raw/           Ingestion, revision publication/reads, releases and expiry
-    integrity/     Verification, cutover and controller-admission workflows
     metastore/     PostgreSQL and in-memory adapters
-    rawstore/      POSIX storage and maintenance adapters
+    rawstore/      POSIX storage adapters
   applications/    Runnable entry points, transport, configuration, and wiring
   schema/          Shared document contracts and validation
 ```
@@ -47,8 +46,7 @@ src/huron/
   operator maintenance use explicit trusted deployment authority. Security consumes
   its own narrow catalog-fact projections; full hierarchy entities belong to Catalog.
 - Raw owns storage-first publication and its single-connection transaction recording
-  revision, session outcome, audit, outbox and retry receipt. Integrity owns epoch
-  and admission policy; applications provide operator/process observations and I/O.
+  revision, session outcome, audit, outbox and retry receipt.
 - Inject storage, persistence, clocks and external capabilities through interfaces
   owned by their consumers. One adapter may structurally satisfy several interfaces;
   verify conformance at application wiring. Domains decide the workflow and adapters
@@ -84,7 +82,6 @@ src/huron/
   | `security` | `foundation` |
   | `catalog` | `security`, `foundation` |
   | `raw` | `catalog`, `security`, `foundation`, `schema` |
-  | `integrity` | `catalog`, `raw`, `foundation`, `schema` |
   | `metastore` | `catalog`, `raw`, `security`, `foundation` |
   | `rawstore` | `schema` |
 
@@ -92,10 +89,10 @@ src/huron/
   value/error/port/codec modules. `_impl` subtrees are private. Applications import
   concrete adapters for composition/lifecycle, not for re-exported domain values.
 - Import-linter enforces declared edges, sibling acyclicity including type-only
-  imports, exhaustive Core ownership, application independence, private surfaces and
-  framework exclusions. Domain-to-adapter dependencies are forbidden even indirectly.
-  Keep `core.__init__` minimal and Schema independent. These are package-level rules,
-  not a requirement that every private implementation module form a DAG.
+  imports, exhaustive Core ownership, private surfaces and framework exclusions.
+  Domain-to-adapter dependencies are forbidden even indirectly. Keep `core.__init__`
+  minimal and Schema independent. These are package-level rules, not a requirement
+  that every private implementation module form a DAG.
 - Favor object-oriented design through encapsulation and composition: meaningful
   methods, controlled state changes, small interfaces and injected collaborators.
   Immutable domain objects are encouraged where useful. Keep pure calculations as

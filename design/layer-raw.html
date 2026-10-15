@@ -147,7 +147,6 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
 
 <pre>
 /data/
-  protocol/                                     P3: immutable cutover records and digest-bound inventory reports
   .staging/                                      sweeper's only territory; never scanned by readers
     {ingest_id hex}/                             one session; only BeginIngest creates this root
       upload/                                   P3: request-writable input files, never published
@@ -179,7 +178,7 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
         bronze/  silver/  gold/                  Icechunk repos on the object store, same spine (§2 of each)
 </pre>
 
-<p class="note"><strong>Layout status.</strong> The upload/completion/envelope split is implemented and independently verified (M1a). Preparatory protocol report/record storage, exclusive maintenance ownership and legacy verification follow the controller-generation epoch of <a href="../docs/adr/0001-controller-generation-is-the-verification-epoch.md">ADR-0001</a>: every <code>prepare</code> appends a report/record pair under <code>protocol/</code>, and a record is admitted only while its fence names the controller's live generation. Immutable files alone never establish admission. Delivery status is <a href="roadmap.html">the roadmap's</a>. Protocol initialization, activation/startup enforcement, recovery and trash cleanup remain planned. Historically, P2 wrote directly into the session envelope; that release did not provide the new separation. See <a href="#p3-integrity">P3 integrity contracts</a>.</p>
+<p class="note"><strong>Layout status.</strong> The upload/completion/envelope split is implemented and independently verified (M1a). The legacy cutover's <code>protocol/</code> report/record storage, exclusive maintenance ownership and legacy verification were retired with the controller-generation epoch of <a href="../docs/adr/0001-controller-generation-is-the-verification-epoch.md">ADR-0001</a> (superseded) on 2026-10-15; no Huron code reads or writes <code>protocol/</code>. Delivery status is <a href="roadmap.html">the roadmap's</a>. Recovery and trash cleanup remain planned. Historically, P2 wrote directly into the session envelope; that release did not provide the new separation. See <a href="#p3-integrity">P3 integrity contracts</a>.</p>
 
 <p class="note"><span class="k">One spine, four layers.</span> The
 <code>organization/…/project/…/dataset/…</code> hierarchy is identical for every layer, and the
@@ -210,10 +209,9 @@ dataset's <code>raw/</code> prefix are on the same filesystem, which is what mak
 becomes <em>its own root</em> (<code>/data-restricted/</code>) with its own staging directory;
 nothing ever links or renames across roots.</li>
 <li><a href="../src/huron/core/raw/paths.py"><code>core.raw.paths</code></a> owns staging,
-revision and release path construction and parsing; <a href="../src/huron/core/catalog/paths.py"><code>core.catalog.paths</code></a>
+revision and release path construction; <a href="../src/huron/core/catalog/paths.py"><code>core.catalog.paths</code></a>
 owns hierarchy, generation and cross-layer layout, and <a href="../src/huron/core/foundation/names.py"><code>core.foundation.names</code></a>
-owns lexical validation. Revision parsing recovers authoritative path identity for Integrity;
-general reconciler and sweeper workflows remain planned.</li>
+owns lexical validation. Reconciler and sweeper workflows remain planned.</li>
 </ul>
 
 <h2 id="contracts">3. Core contracts</h2>
@@ -318,8 +316,9 @@ staging write may recreate a missing session root. Installation uses native excl
 (<code>renameat2(RENAME_NOREPLACE)</code> on Linux and
 <code>renameatx_np(RENAME_EXCL)</code> on Darwin), refusing unsupported filesystems.
 PostgreSQL stores the frozen canonical command and documents as immutable <code>bytea</code>,
-with generated SHA-256 digests, actor and commit instant. Cutover, writer exclusion and startup
-gates remain prerequisites: this implementation is not independently deployable.</p>
+with generated SHA-256 digests, actor and commit instant. Its former deployment prerequisites —
+cutover, writer exclusion and startup gates — were retired on 2026-10-15 rather than delivered;
+this receipt does not certify deployment.</p>
 
 <p>Verified completion defaults to one copy per API process with a 1 GiB free-space reserve.
 <code>HURON_COMPLETION_MAX_CONCURRENT</code> and <code>HURON_COMPLETION_RESERVE_BYTES</code>
@@ -351,7 +350,7 @@ CommitIngest(ingest_id, manifest_sha256, If-Match, Idempotency-Key)
 <tr><th>Crash boundary</th><th>State and P3 resolution</th></tr>
 <tr><td>Completion before installation / before COMPLETE row</td><td>Private candidate is invisible; installed-before-row retry verifies and records the existing file. No row attests an absent installation.</td></tr>
 <tr><td>Commit before final rename</td><td>Session retains its claim. Recovery fences RECOVERING and relocates staging. Valid marker evidence is copied and verified into fresh inodes before publication; no marker means fail only after safe relocation. Invalid or ambiguous evidence remains locked.</td></tr>
-<tr><td>Final rename before catalog transaction</td><td>Validate full identity/document evidence and import once. V2 is the new protocol; v1 requires verified cutover-inventory membership. Unknown v1 is operator-only.</td></tr>
+<tr><td>Final rename before catalog transaction</td><td>Validate full identity/document evidence and import once. V2 is the current protocol. The cutover inventory that would have admitted v1 was retired, so a v1 envelope is operator-only.</td></tr>
 <tr><td>Catalog transaction before index</td><td>Revision remains committed and readable; regenerate the derived index.</td></tr>
 </table>
 
@@ -363,7 +362,7 @@ published before the rename is durable.</p>
 <p class="note"><span class="k">Why keep a marker when rename is atomic?</span> Because the
 envelope is complete by construction (invariant C), the <code>COMMITTED</code> file is not needed
 for visibility. It exists as the reconciler's catalog-reconstruction record — digests, counts,
-committer, timestamp in one small JCS document: <code>urn:huron:committed:1</code> for legacy data and <code>urn:huron:committed:2</code> for implemented verified materialization (under validation; deployment still requires M1b/M1c) — as the
+committer, timestamp in one small JCS document: <code>urn:huron:committed:1</code> for legacy data and <code>urn:huron:committed:2</code> for implemented verified materialization (under validation) — as the
 object site replication tools can key on, and as defense in depth if a partial copy ever lands
 under <code>revisions/</code> by operator error.</p>
 
@@ -732,8 +731,9 @@ governance workflows. Storage-only recovery never resumes deletion without resto
 
 <h2 id="sweeper">10. Sweeper and reconciler</h2>
 
-<p><strong>Sweeper and reconciler workflows remain planned.</strong> Full design and implementation slices are recorded in
-<a href="../P3_DESIGN.md">P3_DESIGN.md</a> and <a href="../P3_IMPLEMENTATION_PLAN.md">P3_IMPLEMENTATION_PLAN.md</a>.</p>
+<p><strong>Sweeper and reconciler workflows remain planned.</strong> The superseded
+<a href="../P3_DESIGN.md">P3_DESIGN.md</a> and <a href="../P3_IMPLEMENTATION_PLAN.md">P3_IMPLEMENTATION_PLAN.md</a>
+record their earlier design and implementation slices.</p>
 <ul>
 <li><strong>Sweeper</strong> every 15 minutes: terminal session trees after a 15-minute grace,
 or unknown trees older than 24 hours, only with an authoritative session ledger. COMMITTING and
@@ -762,20 +762,15 @@ reported DEGRADED revisions need not. RBAC, credentials, audit, holds, idempoten
 outbox require backups. Search and derived-layer reconstruction remain later phases.</li>
 </ul>
 
-<h3 id="p3-integrity">Protocol cutover and recovery evidence</h3>
-<p>The first deployable P3 slice combines verified file completion with an offline cutover.
-Deployment evidence proves every writer terminated; an unreachable node must be fenced from storage.
-Disabled old database roles and unavailable replacement credentials prevent old releases restarting
-with access. SQL polls supplement enforced exclusion; they cannot prove no filesystem writer exists.
-The command refuses unverifiable fences. New runtimes check protocol and schema head; that new check
-cannot retrofit old binaries.</p>
-<p>Under exclusion, fully verify legacy finals, resolve unfinished sessions and write a canonical
-inventory under <code>protocol/</code>. A numbered record binds its report digest. Inventory entries
-name exact revision/dataset/number/path and document digests with VERIFIED or DEGRADED outcomes.
-Timestamps do not establish membership. Migration 0011 refuses nonterminal legacy sessions; v2
-publication starts only after cutover validation. Empty roots require explicit protocol initialization.
-V1 markers remain unchanged; unknown v1 envelopes are operator findings. A later valid purge can
-explain an absent inventoried manifest through its retained digest and marker evidence.</p>
+<h3 id="p3-integrity">Retired protocol cutover and recovery evidence</h3>
+<p><strong>Retired 2026-10-15 (owner decision).</strong> The one-time offline protocol cutover is
+no longer planned. Its controller-generation epoch, writer and database-role exclusion, legacy
+verification, <code>protocol/</code> inventory reports and transition records were deleted together
+with the <code>lakectl</code> operator CLI, and its protocol initialization and API startup gating
+will not be built; the <a href="../docs/history.md#legacy-cutover-retirement">implementation
+history</a> records what was removed. Migration 0011 still refuses nonterminal legacy sessions. V1
+markers remain unchanged and decodable; with no cutover inventory to admit them, v1 envelopes are
+operator findings.</p>
 <p>Governance records use the same single-writer trust root, with no signatures. JCS is canonical
 encoding, not tamper proof. Mirror digests support database comparisons. Incomplete amendment history
 cannot broaden classification/access; a valid prefix is restricted diagnostic evidence, not current

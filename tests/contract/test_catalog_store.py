@@ -1872,7 +1872,7 @@ def test_verified_raw_migration_guards_are_atomic(state: str) -> None:
 
 
 async def _assert_verified_raw_migration(config: Config, dsn: str, state: str) -> None:
-    """Verify cutover refusal, unchanged evidence, terminal-session upgrade and rollback refusal."""
+    """Verify upgrade refusal, unchanged evidence, terminal-session upgrade and rollback refusal."""
     from sqlalchemy.exc import DBAPIError
 
     pool = await asyncpg.create_pool(dsn)

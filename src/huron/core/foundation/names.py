@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol
-from uuid import UUID
+from typing import TYPE_CHECKING, Protocol
 
 from .errors import PathRuleViolation
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,79}$")
 TAG = re.compile(r"^[a-z0-9][a-z0-9._-]{1,62}$")
@@ -86,25 +88,3 @@ def validate_tag(tag: str) -> None:
     """
     if not TAG.fullmatch(tag):
         raise PathRuleViolation(f"invalid release tag: {tag!r}")
-
-
-def split_component(component: str, max_len: int) -> tuple[str, UUID]:
-    """Decode an unambiguous slug and lower-case hexadecimal UUID component.
-
-    Args:
-        component: Encoded slug--identity directory component.
-        max_len: Maximum slug length.
-
-    Returns:
-        The slug and UUID.
-
-    Raises:
-        PathRuleViolation: If the separator or UUID encoding is invalid.
-    """
-    slug, separator, hex_id = component.rpartition("--")
-    if not separator:
-        raise PathRuleViolation(f"unparseable component: {component!r}")
-    validate_slug(slug, max_len)
-    if len(hex_id) != 32 or hex_id.lower() != hex_id or not re.fullmatch(r"[0-9a-f]{32}", hex_id):
-        raise PathRuleViolation(f"invalid path UUID: {hex_id!r}")
-    return slug, UUID(hex=hex_id)

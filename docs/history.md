@@ -10,6 +10,35 @@ the domain-owned Core migration. Historical claims describe their recorded tree,
 not the current implementation. Every tracked document remains recoverable with
 `git show 7846d67:<path>`.
 
+## Legacy cutover retirement
+
+On 2026-10-15 the owner retired the one-time v1→v2 cutover machinery and the API-key
+Books uploader. Raw keeps verified completion, frozen commit documents and
+`committed-v1.json` decoding. Every removed file remains recoverable with
+`git show 8b6f270:<path>`.
+
+| Removed | Contents |
+| --- | --- |
+| Integrity domain | `core/integrity/`: cutover preparation and validation, controller admission and its generation epoch, legacy revision and generation verification, evidence models and ports. |
+| Operator CLI | `applications/lakectl/` and its `lakectl` console script: controller socket server, container-engine observations, settings and wiring. |
+| Adapters | `core/metastore/legacy.py`, `core/metastore/maintenance.py` and `core/rawstore/maintenance.py`, plus revision-directory parsing in `core/raw/paths.py`. |
+| Contracts | `protocol-inventory-v1.json` and `protocol-transition-v1.json`. |
+| Deployment | `deploy/controlled/` (systemd units, role SQL, example configuration) and the controlled-cutover operator page. |
+| Tests | Unit and contract tests of the integrity domain, controller, `lakectl`, maintenance adapters, writer exclusion and protocol documents; the controlled-cutover integration test and its Podman deployment helper. |
+| Books uploader | `scripts/main.py` and its test; scripted uploads return with the SDK and API keys. |
+
+Import-linter keeps 16 contracts: the Integrity edges, Integrity's private-surface
+contract and the application-independence contract are gone. The rule that applications
+never import each other stays in `AGENTS.md`; its contract returns with a second
+application. [ADR-0001](adr/0001-controller-generation-is-the-verification-epoch.md) is
+superseded, and the P3 design and implementation plan at the repository root are kept
+only as history.
+
+Database objects that only the retired code used remain until a later migration drops
+them: the `reconciliation_findings` table, the `DEGRADED` value of
+`dataset_revisions.state`, audit rows of kind `integrity.cutover`, and the manually
+created roles `huron_app_legacy`, `huron_app_verified` and `huron_cutover`.
+
 ## Domain-owned Core
 
 [Migration commit](https://github.com/karthedew/huron/commit/7846d67a4c404a00830a6bb7d9255978ee5cfe32)
@@ -61,9 +90,10 @@ the remaining P3 activation, recovery and cleanup work.
 | Earlier findings and prototypes | [Findings plan](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/FINDINGS_IMPLEMENTATION_PLAN.md), [retired control-plane plan](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/CONTROL_PLANE_PLAN.md) |
 | Duplication redesign | [Original plan and status ledger](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/IMPLEMENTATION_PLAN.md), [superseded architecture proposal](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/design/duplication-architecture.md) |
 
-The active P3 design/implementation plan and duplication backlog remain at the
-repository root. Their outstanding work is not made complete by archiving earlier
-reports. Current operator instructions are in [Controlled cutover](operations/controlled-cutover.md).
+The superseded P3 design/implementation plan and the duplication backlog remain at
+the repository root. Archiving earlier reports does not complete the backlog's
+outstanding work. The controlled-cutover operator instructions were retired with the
+machinery they described; see [Legacy cutover retirement](#legacy-cutover-retirement).
 
 ## Report housekeeping
 

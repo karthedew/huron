@@ -7,7 +7,7 @@ reason or reassuring for no reason.
 |---|---|---|---|
 | `unit` | Are rules and workflows correct? | injected doubles and temporary local filesystems | milliseconds to seconds |
 | `contract` | Does an adapter honour its Protocol? | Docker (testcontainers) | seconds |
-| `integration` | Do the pieces work together? | PostgreSQL testcontainers; isolated Linux/Podman for controlled cutover | seconds to minutes |
+| `integration` | Do the pieces work together? | Docker (PostgreSQL testcontainers) and temporary POSIX storage | seconds to minutes |
 | `acceptance` | Does a phase gate hold end to end? | ≥ 25 GiB free disk | minutes |
 
 `pyproject.toml` sets `addopts = "-m unit --strict-markers"`, so:
@@ -31,13 +31,12 @@ storage or drive the composed API, so this marker does not promise zero local I/
 
 High-value targets: the RBAC role matrix invariants (service accounts alone have silver and gold
 write authority; administrative roles hold no `data.write` at all),
-the layer promotion graph, path construction **and** the `parse(construct(x)) == x` round trip,
-JCS canonicalisation stability, and the amendment fold.
+the layer promotion graph, path construction, JCS canonicalisation stability and the amendment fold.
 
 The HTTP surface is unit-testable through `TestClient` against injected in-memory
 stores and temporary POSIX storage. Direct tests such as
-`tests/unit/test_security_authentication.py` and `tests/unit/test_integrity_controller.py`
-exercise complete public workflows independently of HTTP or Unix-socket transport.
+`tests/unit/test_security_authentication.py` and `tests/unit/test_core_workflows.py`
+exercise complete public workflows independently of HTTP transport.
 
 !!! warning "Enter `TestClient` as a context manager"
 
@@ -72,18 +71,14 @@ are written by hand in two files and nothing else keeps them in sync.
 ## Integration
 
 `tests/integration/` exercises catalog creation/descriptions/releases and Raw upload
-across real PostgreSQL and POSIX storage, including application restarts. Its
-controlled-cutover test additionally provisions a private Podman engine on Linux and
-requires root or noninteractive sudo, working container networking, and the pinned
-historical Git object identified by the test. Run it on an isolated provisioned runner;
-a working Docker endpoint alone does not satisfy that test's Podman prerequisite.
+across real PostgreSQL and POSIX storage, including application restarts. Like the
+contract suite, it needs a Docker daemon.
 
 ```bash
 uv run pytest -m integration
 ```
 
-Run every test. A missing historical Git object, unavailable authority, a deselected
-cutover case or no collected tests is not evidence of an integration pass.
+Run every test. A deselected case or no collected tests is not evidence of an integration pass.
 
 ## Acceptance
 

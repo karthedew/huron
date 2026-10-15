@@ -1,12 +1,10 @@
 """Property tests pinning the invariants the pure catalog core is built on.
 
-Generated inputs, rather than a handful of hand-picked examples, exercise nine
+Generated inputs, rather than a handful of hand-picked examples, exercise the
 facts the rest of the system relies on without re-checking: that
-:func:`~huron.core.raw.paths.parse_revision_dir` inverts
-:func:`~huron.core.raw.paths.revision_dir` exactly; that
-:func:`~huron.core.raw.manifest.validate_manifest` catches every path
-collision Unicode normalization and case folding can create, and separately
-refuses every path whose NFC form differs from itself; that
+:func:`~huron.core.raw.manifest.validate_manifest` refuses every path
+collision Unicode normalization and case folding can create, and accepts
+paths that stay distinct; that
 :func:`~huron.core.foundation.canonical.canonical_bytes` does not depend on key
 order and enforces the JCS-safe integer bound; that
 :func:`~huron.core.foundation.identifiers.uuid7` produces well-formed identifiers whose
@@ -17,9 +15,8 @@ lands on an edge of :data:`~huron.core.raw.ingest.TRANSITIONS` and never
 succeeds from a terminal state; that an
 :class:`~huron.core.raw.ingest.IngestFile`'s recorded parts never exceed
 its plan and it completes only once every part has arrived; and that
-:func:`~huron.core.raw.ingest.compute_upload_plan` emits one entry per
-manifest file that links only files identical to the parent's, with part
-counts that cover every file's bytes exactly once.
+:func:`~huron.core.raw.ingest.compute_upload_plan` uploads every manifest
+file in at least one part.
 """
 
 from __future__ import annotations
@@ -27,8 +24,6 @@ from __future__ import annotations
 import itertools
 import string
 from datetime import datetime, timedelta
-from pathlib import PurePosixPath
-from typing import TYPE_CHECKING
 
 import pytest
 from hypothesis import assume, example, given, settings
@@ -56,90 +51,12 @@ from huron.core.raw.manifest import (
     validate_manifest,
 )
 from huron.core.foundation.canonical import MAX_SAFE_INT, canonical_bytes
-from huron.core.catalog.types import EntityRef
-from huron.core.foundation.names import DATASET_SLUG_MAX, ORG_PROJECT_SLUG_MAX
-from huron.core.raw.paths import (
-    RevisionPath,
-    parse_revision_dir,
-    revision_dir,
-)
 
 from .support import INGEST_OPERATION_TARGETS, ingest_file, ingest_session, run_ingest_operation
-
-if TYPE_CHECKING:
-    from uuid import UUID
 
 pytestmark = pytest.mark.unit
 
 _property = settings(deadline=None, max_examples=200)
-
-_ROOT = PurePosixPath("/data")
-
-_ALNUM = string.ascii_lowercase + string.digits
-_ALNUM_OR_HYPHEN = _ALNUM + "-"
-
-
-@st.composite
-def _slugs(draw: st.DrawFn, min_size: int, max_size: int) -> str:
-    """Build a slug of the shape the catalog's ``SLUG`` pattern accepts.
-
-    Args:
-        draw: The Hypothesis draw function.
-        min_size: The shortest slug to build.
-        max_size: The longest slug to build.
-
-    Returns:
-        A slug starting with a letter or digit, otherwise letters, digits and
-        single hyphens, never containing ``--``.
-    """
-    length = draw(st.integers(min_value=min_size, max_value=max_size))
-    characters = [draw(st.sampled_from(_ALNUM))]
-    for _ in range(length - 1):
-        previous = characters[-1]
-        choices = _ALNUM if previous == "-" else _ALNUM_OR_HYPHEN
-        characters.append(draw(st.sampled_from(choices)))
-    return "".join(characters)
-
-
-@given(
-    org_slug=_slugs(2, ORG_PROJECT_SLUG_MAX),
-    org_id=st.builds(uuid7),
-    project_slug=_slugs(2, ORG_PROJECT_SLUG_MAX),
-    project_id=st.builds(uuid7),
-    dataset_slug=_slugs(2, DATASET_SLUG_MAX),
-    dataset_id=st.builds(uuid7),
-    revision_number=st.integers(min_value=1, max_value=999_999),
-    revision_id=st.builds(uuid7),
-)
-@_property
-def test_parse_revision_dir_recovers_exactly_what_revision_dir_encoded(
-    org_slug: str,
-    org_id: UUID,
-    project_slug: str,
-    project_id: UUID,
-    dataset_slug: str,
-    dataset_id: UUID,
-    revision_number: int,
-    revision_id: UUID,
-) -> None:
-    """Parsing a built revision directory returns the slugs, ids and numbers that built it."""
-    organization = EntityRef(org_id, org_slug)
-    project = EntityRef(project_id, project_slug)
-    dataset = EntityRef(dataset_id, dataset_slug)
-
-    path = revision_dir(_ROOT, organization, project, dataset, revision_number, revision_id)
-
-    assert parse_revision_dir(_ROOT, path) == RevisionPath(
-        org_slug,
-        org_id,
-        project_slug,
-        project_id,
-        dataset_slug,
-        dataset_id,
-        revision_number,
-        revision_id,
-    )
-
 
 # Precomposed accented letters (é, É) are already stable under NFC, unlike a
 # base letter followed by a combining accent, so paths built from this

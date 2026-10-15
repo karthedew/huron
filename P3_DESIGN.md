@@ -1,5 +1,7 @@
 # P3 — Integrity services: final design
 
+**Superseded 2026-10-15:** the owner retired the legacy cutover, controller and writer-exclusion machinery; this document is kept as history and `design/roadmap.html` owns current status.
+
 Status: design agreed 2026-09-08; implementation remains partial. Verified completion
 and the local controller/cutover workflows have [recorded verification](docs/history.md),
 including the domain-owned Core migration. M1c activation/startup and later milestones

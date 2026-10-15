@@ -4,8 +4,8 @@
 huron/
 ├── design/                  authoritative architecture record and source-linked atlases
 ├── IMPLEMENTATION_PLAN.md   duplication refactoring sequence and verification gates
-├── P3_DESIGN.md              remaining integrity-service contracts
-├── P3_IMPLEMENTATION_PLAN.md integrity-service execution plan
+├── P3_DESIGN.md              superseded integrity-service design, kept as history
+├── P3_IMPLEMENTATION_PLAN.md superseded integrity-service plan, kept as history
 ├── docs/                    this site — how to work on the repository
 ├── migrations/              Alembic; schema.sql is a read-only summary of the whole metastore
 ├── scripts/                 bucket bootstrap and other operational helpers
@@ -23,12 +23,10 @@ subpackages follow the explicit acyclic graph in root `AGENTS.md` and
 ```text
 src/huron/
   applications/api/   FastAPI routes, credentials/cookies, settings and lifecycle wiring
-  applications/lakectl/  operator transport, deployment observations and process control
   core/foundation/    canonical JSON, identities/names, common errors, retry and clock contracts
   core/security/      authentication, identity, authorization and their complete workflows
   core/catalog/       hierarchy, dataset/layer configuration, descriptions and discovery
   core/raw/           manifests, ingestion, revision publication/reads, releases and expiry
-  core/integrity/     verification, cutover, controller epochs and admission policy
   core/metastore/     PostgreSQL and in-memory persistence adapters
   core/rawstore/      POSIX staging, hashing, independent copies, rename and sealing
   schema/             canonical JSON schemas, loaders and shared primitive contracts
@@ -42,8 +40,8 @@ operations and construction interfaces; private `_impl` modules hold internal me
 Metastore implements domain persistence/fact interfaces. Rawstore satisfies storage
 interfaces structurally and imports only shared Schema contracts. Domains never import
 concrete adapters, database drivers, FastAPI or Ray. Import-linter checks the allowed
-direct edges, sibling cycles, private surfaces, application independence and framework
-exclusions, including imports used only for typing.
+direct edges, sibling cycles, private surfaces and framework exclusions, including imports
+used only for typing.
 
 Raw revisions contain exactly the submitted files, with no inherited files or shared
 hardlinks. Metadata uses a shared Pydantic input contract and authoritative backend

@@ -92,13 +92,12 @@ behavior distinguished from planned capabilities.</p>
 <h2>Implemented backend boundaries</h2>
 <p><code>src/huron/core</code> contains domain subpackages that own their values, rules,
 consumer interfaces and complete workflows. <code>applications/api</code> owns FastAPI
-transport, credential extraction, configuration and composition; <code>applications/lakectl</code>
-owns operator transport and deployment/process I/O. Metastore and Rawstore are concrete
-adapter subpackages under Core.</p>
+transport, credential extraction, configuration and composition. Metastore and Rawstore are
+concrete adapter subpackages under Core.</p>
 <p>Public scientific operations bind an authenticated actor and enforce authoritative ancestry,
 discovery and current permissions. HTTP guards provide early rejection through public domain
-inspections. Security owns credential workflows and session issuance; Integrity owns controller
-epoch and admission policy. Bootstrap and maintenance use explicit deployment authority.</p>
+inspections. Security owns credential workflows and session issuance. Bootstrap and maintenance
+use explicit deployment authority.</p>
 <p>Dependency direction: <code>applications → core → schema</code>, with the explicit Core
 graph below. Applications construct adapters and own resource lifetimes; domains consume
 injected capabilities. The remote Python client calls the API. Bronze/Ray, Silver and Gold
@@ -131,14 +130,11 @@ discovery, layer configuration/rules, cross-layer paths and generation documents
 <tr><td><code>raw</code></td><td>Submission, verified payloads, commit evidence, revision
 publication and reads, release tags and ingest expiry.</td><td><code>core.catalog</code>,
 <code>core.security</code>, <code>core.foundation</code>, <code>schema</code></td></tr>
-<tr><td><code>integrity</code></td><td>Cross-domain verification, cutover and protocol admission,
-using injected operator authority and deployment capabilities.</td><td><code>core.catalog</code>,
-<code>core.raw</code>, <code>core.foundation</code>, <code>schema</code></td></tr>
 <tr><td><code>metastore</code></td><td>PostgreSQL and in-memory persistence adapters, including
-security-fact projections and maintenance persistence.</td><td><code>core.catalog</code>,
+security-fact projections.</td><td><code>core.catalog</code>,
 <code>core.raw</code>, <code>core.security</code>, <code>core.foundation</code></td></tr>
-<tr><td><code>rawstore</code></td><td>POSIX transfer, verified materialization, publication,
-inspection and maintenance adapters.</td><td><code>schema</code></td></tr>
+<tr><td><code>rawstore</code></td><td>POSIX transfer, verified materialization, publication and
+inspection adapters.</td><td><code>schema</code></td></tr>
 </table>
 <p><code>schema</code> remains a sibling of <code>core</code> and imports no higher Huron
 package. Each declared edge permits published interfaces only. Type-only imports count;
@@ -150,7 +146,7 @@ than imposing a cycle-free graph on every private implementation module.</p>
 does not import Catalog entities. Domains own cohesive persistence and storage interfaces;
 one adapter may satisfy several. Raw retains orchestration of storage-first publication
 and the single-connection transaction recording revision, session outcome, audit, outbox
-and retry receipt. Operator process I/O remains an injected application capability.</p>
+and retry receipt.</p>
 <p>The coordinated import cutover preserves HTTP/OpenAPI, entry points, stored formats,
 authorization, retry and transaction behavior. Catalog owns the cohesive layer vocabulary,
 entry/promotion and principal-kind eligibility rules; Security evaluates capability/layer

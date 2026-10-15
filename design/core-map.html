@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="A source-linked map of Huron core: classes, functions, authorization, Raw ingestion, catalog transactions, identity and integrity maintenance.">
+<meta name="description" content="A source-linked map of Huron core: classes, functions, authorization, Raw ingestion, catalog transactions and identity operations.">
 <title>Huron — Core Code Map</title>
 <style>
 :root {
@@ -102,7 +102,6 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
     <li><a href="#raw">Raw ingestion &amp; commit</a></li>
     <li><a href="#reads">Revision reads</a></li>
     <li><a href="#identity">Identity operations</a></li>
-    <li><a href="#integrity">Integrity maintenance</a></li>
     <li><a href="#ports">Interfaces &amp; adapters</a></li>
     <li><a href="#reading">Reading &amp; test guide</a></li>
   </ol>
@@ -112,7 +111,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
   <p class="eyebrow">Implementation atlas · inspected 16 September 2026</p>
   <h1><code>huron/core</code></h1>
   <p class="lead">Where authenticated Huron operations coordinate domain rules, storage, database transactions, and retry behavior.</p>
-  <p>This is a source-linked map of the seven owners in <a href="../src/huron/core/">src/huron/core/</a>: Foundation, Security, Catalog, Raw, Integrity, Metastore and Rawstore. It describes the verified domain-owned migration; delivery status and evidence remain in the <a href="roadmap.html#domain-owned-core-migration">roadmap</a>. Source links are relative to this repository, so keep the HTML in <code>design/</code> when opening it locally.</p>
+  <p>This is a source-linked map of the six owners in <a href="../src/huron/core/">src/huron/core/</a>: Foundation, Security, Catalog, Raw, Metastore and Rawstore. It describes the verified domain-owned migration; delivery status and evidence remain in the <a href="roadmap.html#domain-owned-core-migration">roadmap</a>. Source links are relative to this repository, so keep the HTML in <code>design/</code> when opening it locally.</p>
 </header>
 
 <section id="orientation">
@@ -120,16 +119,15 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p><strong>Domain owners colocate rules and complete workflows. Injected adapters perform I/O.</strong> Raw's private <code>IngestService</code> coordinates commit through its own <code>RawStore</code> and <code>HierarchyStore</code> ports; the POSIX and PostgreSQL adapters live in <code>core.rawstore</code> and <code>core.metastore</code>.</p>
 <div class="cards">
   <article class="card"><h3>Actor-bound operations</h3><p>Catalog creation/collections, Raw ingestion/reads/releases and Security identity/governance use <code>AccessPolicy</code> bound to an authenticated actor. Authentication workflows establish that actor from credentials.</p></article>
-  <article class="card"><h3>Protected implementations</h3><p>Catalog, Raw, Security and Integrity have protected <code>_impl/</code> subtrees. Root exports publish operations; <code>RawRuntime</code> constructs private ingestion/reader mechanics. Source links into these files do not authorize cross-package private imports.</p></article>
+  <article class="card"><h3>Protected implementations</h3><p>Catalog, Raw and Security have protected <code>_impl/</code> subtrees. Root exports publish operations; <code>RawRuntime</code> constructs private ingestion/reader mechanics. Source links into these files do not authorize cross-package private imports.</p></article>
   <article class="card"><h3>Consumer-owned interfaces</h3><p>Each domain owns its ports and values. Foundation owns canonical JSON, identifiers/names, errors, time and retry primitives; Security owns narrow catalog-fact projections. Adapters can satisfy several ports without merging domain responsibilities.</p></article>
-  <article class="card"><h3>Trusted maintenance</h3><p><code>CutoverService</code> and <code>ControllerAdmission</code> use external operator authority and writer/database exclusion. Raw's public <code>expire_lapsed()</code> is explicitly deployment-trusted; it is not a scientist operation.</p></article>
+  <article class="card"><h3>Trusted maintenance</h3><p>Raw's public <code>expire_lapsed()</code> is explicitly deployment-trusted; it is not a scientist operation.</p></article>
 </div>
 <p class="note">The enclosing <a href="../src/huron/core/__init__.py"><code>core.__init__</code></a> is minimal: Foundation imports do not initialize workflows or adapters. Operations are published by each domain root. <a href="../pyproject.toml">Import contracts</a> classify every Core sibling, include type-only edges in cycle checks, protect implementations, and forbid domain-to-adapter dependencies.</p>
 <pre tabindex="0" aria-label="Permitted direct package dependency graph"><code>applications → public domain interfaces + adapters (composition/lifetime)
 security     → foundation
 catalog      → security, foundation
 raw          → catalog, security, foundation, schema
-integrity    → catalog, raw, foundation, schema
 metastore    → catalog, raw, security, foundation
 rawstore     → schema.storage
 foundation   → no Huron imports
@@ -140,7 +138,7 @@ Domains never import adapters, FastAPI, application settings or database drivers
 
 <section id="modules">
 <h2>2. Owned module map</h2>
-<p>The seven owners below publish focused interfaces and colocate their implementation. The symbols column includes internal helpers useful for navigation; the companion atlases expand values, rules and adapters. On narrow screens, tables and call diagrams scroll horizontally within their frames.</p>
+<p>The six owners below publish focused interfaces and colocate their implementation. The symbols column includes internal helpers useful for navigation; the companion atlases expand values, rules and adapters. On narrow screens, tables and call diagrams scroll horizontally within their frames.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Core module inventory">
 <table>
 <caption>Paths below are relative to src/huron/core/.</caption>
@@ -166,14 +164,8 @@ Domains never import adapters, FastAPI, application settings or database drivers
 <tr><td><a href="../src/huron/core/raw/types.py">raw/types.py</a>, <a href="../src/huron/core/raw/ingest.py">ingest.py</a>, <a href="../src/huron/core/raw/manifest.py">manifest.py</a>, <a href="../src/huron/core/raw/documents.py">documents.py</a></td><td>Revision/release/audit/outbox values, <code>SessionLedger</code>, <code>ExpiryReport</code>, <code>PayloadFile</code>, session/file transitions, manifests and commit evidence</td><td>Raw owns both values/invariants and complete publication workflow.</td></tr>
 <tr><td><a href="../src/huron/core/raw/metadata.py">raw/metadata.py</a>, <a href="../src/huron/core/raw/amendments.py">amendments.py</a>, <a href="../src/huron/core/raw/paths.py">paths.py</a>, <a href="../src/huron/core/raw/retry.py">retry.py</a>, <a href="../src/huron/core/raw/errors.py">errors.py</a></td><td><code>MetadataSubmission</code>, amendment validation/fold, revision/staging/tag paths, <code>session_claim</code>, Raw failures</td><td>Submission validation and retry identity; amendment publication remains planned.</td></tr>
 <tr><td><a href="../src/huron/core/raw/ports.py">raw/ports.py</a></td><td><code>HierarchyStore</code>/<code>HierarchyWriter</code>, <code>RevisionStore</code>, <code>ReleaseStore</code>/<code>ReleaseTransaction</code>, <code>RawStore</code></td><td>Separate atomic reservation/freeze/final-record, read and release interfaces; cohesive byte storage.</td></tr>
-<tr><td><a href="../src/huron/core/integrity/__init__.py">integrity public operations</a>, <a href="../src/huron/core/integrity/_impl/controller.py">_impl/controller.py</a></td><td><code>CutoverService</code>, <code>ControllerAdmission</code></td><td>Public cutover and reusable controller epoch/evidence/restart admission.</td></tr>
-<tr><td><a href="../src/huron/core/integrity/cutover.py"><code>integrity/cutover.py</code></a></td><td><code>CutoverService</code>, <code>_Fence</code>, <code>_settled_write()</code></td><td>Prepare and validate legacy cutover evidence under uninterrupted exclusion.</td></tr>
-<tr><td><a href="../src/huron/core/integrity/generations.py"><code>integrity/generations.py</code></a></td><td><code>GenerationVerifier</code></td><td>Check the exact hierarchy-document inventory and acknowledged generations.</td></tr>
-<tr><td><a href="../src/huron/core/integrity/verification.py"><code>integrity/verification.py</code></a></td><td><code>RevisionVerifier</code></td><td>Verify legacy revision documents and payloads against trustworthy identity.</td></tr>
-<tr><td><a href="../src/huron/core/integrity/models.py"><code>integrity/models.py</code></a></td><td><code>EvidenceDocument</code>, <code>DocumentObservation</code>, <code>LegacyRevision</code>, <code>FenceEvidence</code>, <code>MaintenanceGrant</code>, <code>GenerationObservation</code>, <code>ProtocolInventory</code>, <code>ProtocolTransition</code>, <code>ControllerState</code>, <code>ControlledRoot</code>, <code>DeploymentObservation</code></td><td>Canonical evidence, exact membership, deployment identity and durable controller-state contracts.</td></tr>
-<tr><td><a href="../src/huron/core/integrity/ports.py"><code>integrity/ports.py</code></a></td><td><code>LegacyStorage</code>, <code>EvidenceStorage</code>, <code>MaintenanceAuthority</code>, <code>WriterExclusion</code>, <code>DatabaseExclusion</code>, <code>LegacyMaintenance</code>, <code>ControllerAuthority</code>, <code>ControllerDeployment</code>, <code>ControllerStateStore</code></td><td>Injected authority, live observations, exclusion and durable I/O.</td></tr>
-<tr><td><a href="../src/huron/core/metastore/__init__.py">metastore constructors</a>, <a href="../src/huron/core/metastore/security_facts.py">security_facts.py</a>; <a href="metastore-uml.html">full atlas</a></td><td>PostgreSQL and memory hierarchy/governance/credential adapters, <code>SystemClock</code>, maintenance adapters, <code>SecurityFacts</code></td><td>SQL/memory persistence and authoritative fact projections. Domain values come from their owners, not adapter re-exports.</td></tr>
-<tr><td><a href="../src/huron/core/rawstore/__init__.py">rawstore constructors</a>, <a href="../src/huron/core/rawstore/store.py">store.py</a>, <a href="../src/huron/core/rawstore/maintenance.py">maintenance.py</a>; <a href="rawstore-uml.html">full atlas</a></td><td><code>PosixRawStore</code>, <code>MaintenanceStore</code>; completion, inspection, descriptor materialization and publication primitives</td><td>Filesystem I/O and durability; structural conformance, only <code>schema.storage</code> imported from Huron.</td></tr>
+<tr><td><a href="../src/huron/core/metastore/__init__.py">metastore constructors</a>, <a href="../src/huron/core/metastore/security_facts.py">security_facts.py</a>; <a href="metastore-uml.html">full atlas</a></td><td>PostgreSQL and memory hierarchy/governance/credential adapters, <code>SystemClock</code>, <code>SecurityFacts</code></td><td>SQL/memory persistence and authoritative fact projections. Domain values come from their owners, not adapter re-exports.</td></tr>
+<tr><td><a href="../src/huron/core/rawstore/__init__.py">rawstore constructors</a>, <a href="../src/huron/core/rawstore/store.py">store.py</a>; <a href="rawstore-uml.html">full atlas</a></td><td><code>PosixRawStore</code>; completion, inspection, descriptor materialization and publication primitives</td><td>Filesystem I/O and durability; structural conformance, only <code>schema.storage</code> imported from Huron.</td></tr>
 </tbody>
 </table>
 </div>
@@ -181,7 +173,7 @@ Domains never import adapters, FastAPI, application settings or database drivers
 
 <section id="collaborations">
 <h2>3. Class relationships</h2>
-<p>Arrows below mean “uses or delegates to,” not inheritance. Database and filesystem arrows are calls through interfaces; concrete adapters are shown in <a href="#ports">section 10</a>.</p>
+<p>Arrows below mean “uses or delegates to,” not inheritance. Database and filesystem arrows are calls through interfaces; concrete adapters are shown in <a href="#ports">section 9</a>.</p>
 <pre tabindex="0" aria-label="Core class collaboration map"><code>Authenticated actor
 └─ Security.AccessPolicy ──→ CatalogFacts + BindingFacts + RoleBindingAuthorizer
    │
@@ -203,17 +195,8 @@ Domains never import adapters, FastAPI, application settings or database drivers
 
 RawRuntime constructs the private ingest and reader mechanics;
 actor-bound factories and deployment expiry are its public interface.
-Security authentication → credential checks, identity provisioning, persisted sessions
-
-External maintenance authority
-└─ CutoverService
-   ├─ MaintenanceAuthority + WriterExclusion + DatabaseExclusion
-   ├─ LegacyMaintenance + LegacyStorage
-   └─ GenerationVerifier + RevisionVerifier
-└─ ControllerAdmission
-   ├─ ControllerAuthority + ControllerDeployment + ControllerStateStore
-   └─ EvidenceStorage + DatabaseExclusion context factory</code></pre>
-<p><strong>Actual inheritance:</strong> typed catalog collections inherit <code>_Collection</code>; evidence models inherit <code>EvidenceDocument</code>; Raw's <code>HierarchyWriter</code> extends Foundation's <code>RetryTransaction</code>. The main operation classes collaborate through composition.</p>
+Security authentication → credential checks, identity provisioning, persisted sessions</code></pre>
+<p><strong>Actual inheritance:</strong> typed catalog collections inherit <code>_Collection</code>; Raw's <code>HierarchyWriter</code> extends Foundation's <code>RetryTransaction</code>. The main operation classes collaborate through composition.</p>
 </section>
 
 <section id="authorization">
@@ -359,27 +342,8 @@ RevisionReadService.payload_file(record, path)
 <p><code>terminate_session()</code> checks self-session ownership (bearer logout is a no-op); <code>self_access_summary()</code> returns current sorted scope/capability results. <code>bootstrap_platform_owner()</code> is an idempotent, deployment-trusted configured SYSTEM grant. The API retains request extraction, cookies/CSRF, redirects, serialization and process lifetime. See the <a href="auth-uml.html">authentication atlas</a> for the complete collaboration.</p>
 </section>
 
-<section id="integrity">
-<h2>9. Integrity maintenance</h2>
-<p><a href="../src/huron/core/integrity/cutover.py"><code>CutoverService</code></a> prepares legacy storage for a protocol transition. <code>prepare(run_id)</code> returns a <code>ProtocolTransition</code>; <code>validate(transition)</code> asks the live authority to admit it. <code>validate_sequence(sequence)</code> authenticates before locating/reading/decoding stored evidence and then performs actor/root and live admission checks. CLI wiring calls that complete operation.</p>
-<ol>
-  <li><code>MaintenanceAuthority.authenticate()</code> supplies a root-scoped operator grant. <code>WriterExclusion.establish()</code> mints a new controller generation and returns fence evidence naming it, the run, the operator and the database identity; the returned actor/root must match the grant.</li>
-  <li><code>LegacyStorage.claim()</code> holds exclusive local ownership. <code>DatabaseExclusion.exclude()</code> compares the fence's database identity with the live database, then excludes application database roles. <code>_Fence.check()</code> and <code>monitor()</code> continuously verify both forms of exclusion.</li>
-  <li><code>GenerationVerifier.verify()</code> compares the exact control-file inventory, historical generation identities, current document contents, and <code>CURRENT.json</code> pointers against authoritative hierarchy records.</li>
-  <li>Scan the union of filesystem and database revision paths. <code>LegacyMaintenance.lookup()</code> resolves trusted identity. <code>RevisionVerifier.verify()</code> inspects documents and delegates full payload inspection, producing <code>VERIFIED</code> or <code>DEGRADED</code> evidence; ambiguous identity is refused.</li>
-  <li><code>LegacyMaintenance.resolve()</code> persists trusted records and legacy-session resolution. Write the canonical inventory report and numbered transition record through <code>_publish()</code>.</li>
-  <li>Any failure after <code>establish</code> ends the epoch through <code>WriterExclusion.abandon()</code>. After releasing local ownership, <code>WriterExclusion.validate()</code> asks the controller to admit the record; it is admitted only while its fence names the live generation, and a lost reply is resolved by validating again.</li>
-</ol>
-<p><code>_settled_write()</code> waits for a started evidence write to settle even if the coroutine is cancelled. <code>ProtocolInventory.certifies()</code> checks exact verified membership; <code>ProtocolTransition.bind()</code> and <code>validate_inventory()</code> bind the receipt to the report’s digest, identities, counts, and findings.</p>
-<h3>Reusable controller admission</h3>
-<p><a href="../src/huron/core/integrity/_impl/controller.py#L25"><code>ControllerAdmission</code></a>, exported by <a href="../src/huron/core/integrity/__init__.py">Integrity</a>, publishes <code>authenticate</code>, <code>restart</code>, <code>describe</code>, <code>establish</code>, <code>check</code>, <code>abandon</code> and <code>validate</code>. It binds persisted deployment/storage identity to a fresh observation and durably advances the start epoch. Relevant refusal or writer termination follows epoch advancement; failed live observations, including cancellation, invalidate the epoch. Bad receipt arguments do not invalidate another valid epoch; active runs exclude restart. Persistence failure still adopts the advanced epoch in memory.</p>
-<p>The constructor accepts the captured <a href="../src/huron/core/integrity/models.py#L19"><code>DeploymentIdentity</code></a>; both <code>ControllerState.identity</code> and <code>DeploymentObservation.identity</code> project to that frozen value for live comparison. <code>MaintenanceGrant.require_cutover()</code> owns the shared root/operation admission rule. <a href="../src/huron/applications/lakectl/wiring.py"><code>wiring.deployment(settings)</code></a> is the application resource context yielding <code>CutoverService</code>; the CLI dispatches directly to its complete operations inside that context.</p>
-<p><code>ControllerAuthority</code>, <code>ControllerDeployment</code>, <code>ControllerStateStore</code>, <code>EvidenceStorage</code> and a <code>DatabaseExclusion</code> context factory are injected. <a href="../src/huron/applications/lakectl/controller.py">lakectl capabilities</a> retain Podman observation/control, UID authority, durable state I/O and construction; the socket server retains kernel peer authentication, serialization and exclusive state ownership. The full legacy scan runs outside the serialized controller loop. Evidence and controller-state encodings remain unchanged.</p>
-<p class="warning"><strong>Preparation is not activation.</strong> This workflow leaves application writers excluded. The existence of an immutable report or record does not establish admission; only the controller's live generation does. Protocol initialization, activation/startup enforcement, general recovery, and trash cleanup are separate planned capabilities in the <a href="layer-raw.html#p3-integrity">Raw integrity design</a>; the classes here do not establish their delivery.</p>
-</section>
-
 <section id="ports">
-<h2>10. Interfaces and concrete adapters</h2>
+<h2>9. Interfaces and concrete adapters</h2>
 <p>Domain owners decide the workflow; Core's adapter owners implement SQL and filesystem I/O. These links follow a call across consumer-owned interfaces.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Interfaces and adapters">
 <table>
@@ -391,8 +355,6 @@ RevisionReadService.payload_file(record, path)
 <tr><td><a href="../src/huron/core/security/facts.py">security/facts.py</a> + <a href="../src/huron/core/security/ports.py">ports.py</a></td><td><code>CatalogFacts</code>, <code>BindingFacts</code>, <code>RbacStore</code>.</td><td><a href="../src/huron/core/metastore/security_facts.py">SecurityFacts projections</a> and <a href="../src/huron/core/metastore/rbac.py">RBAC adapters</a>.</td></tr>
 <tr><td><a href="../src/huron/core/raw/ports.py">RawStore</a>, <a href="../src/huron/core/catalog/ports.py">GenerationStorage</a>, <a href="../src/huron/core/foundation/clock.py">Clock</a></td><td>Raw publication, narrow Catalog generation writes and shared time.</td><td><a href="../src/huron/core/rawstore/store.py">PosixRawStore</a>; <a href="../src/huron/core/metastore/hierarchy.py">SystemClock</a>. <a href="../src/huron/applications/api/capabilities.py">Application wiring</a> verifies combined structural conformance.</td></tr>
 <tr><td><a href="../src/huron/core/security/ports.py">Security key writes</a> + <a href="../src/huron/core/security/principals.py">principals</a>, <a href="../src/huron/core/security/password.py">credentials</a>, <a href="../src/huron/core/security/sessions.py">sessions</a></td><td>Security-owned credential persistence.</td><td>Metastore <a href="../src/huron/core/metastore/api_keys.py">API keys</a>, <a href="../src/huron/core/metastore/principals.py">principals</a>, <a href="../src/huron/core/metastore/credentials.py">credentials</a>, <a href="../src/huron/core/metastore/sessions.py">sessions</a>; memory counterparts in the same owner.</td></tr>
-<tr><td><a href="../src/huron/core/integrity/ports.py">integrity/ports.py</a></td><td><code>LegacyStorage</code>/<code>EvidenceStorage</code>, <code>LegacyMaintenance</code>, <code>DatabaseExclusion</code>.</td><td><a href="../src/huron/core/rawstore/maintenance.py">MaintenanceStore</a>, <a href="../src/huron/core/metastore/legacy.py">PostgresLegacyMaintenance</a>, <a href="../src/huron/core/metastore/maintenance.py">PostgresRoleExclusion</a>.</td></tr>
-<tr><td><a href="../src/huron/core/integrity/ports.py">integrity/ports.py</a></td><td>Maintenance authority/writer exclusion and controller authority/deployment/state ports.</td><td><a href="../src/huron/applications/lakectl/controller.py">LocalOperatorAuthority, ComposeDeployment, FileControllerState</a>; <a href="../src/huron/applications/lakectl/exclusion.py">controller client transport</a>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -415,24 +377,22 @@ RevisionReadService.payload_file(record, path)
 </section>
 
 <section id="reading">
-<h2>11. Reading and test guide</h2>
+<h2>10. Reading and test guide</h2>
 <div class="cards">
 <article class="card"><h3>“How does an upload become durable?”</h3><p>Read <code>raw/runtime.py</code> → <code>raw/_impl/ingestion.py</code> → <code>raw/_impl/ingest.py</code> → <code>rawstore/store.py</code> and <code>metastore/ingest.py</code>. Start with <code>IngestService.commit()</code>, then trace completion backward.</p></article>
 <article class="card"><h3>“Where is a dataset created or renamed?”</h3><p>Read Catalog's <code>_impl/creation.py</code> and <code>collections.py</code> → <code>types.describe()</code> → <code>_impl/documents.py</code> → Metastore. Titles/descriptions change; storage slugs stay fixed.</p></article>
 <article class="card"><h3>“Why can this actor see this resource?”</h3><p>Read Security's <code>_impl/access.py</code> → <code>scopes.py</code>/<code>facts.py</code> → <code>rules.py</code> and Metastore's visibility-filtered projections. Discovery and byte-read capability are separate decisions.</p></article>
-<article class="card"><h3>“What proves a legacy root was inspected?”</h3><p>Read <code>integrity/cutover.py</code> → verifiers → evidence models → maintenance adapters. Follow both durable evidence and the controller's live generation checks.</p></article>
 </div>
 <h3>Behavioral evidence to inspect</h3>
 <ul>
   <li><a href="../tests/unit/test_core_workflows.py">Core workflow unit tests</a>: reusable operations independently of HTTP.</li>
   <li><a href="../tests/contract/test_catalog_store.py">Catalog-store contract tests</a>; <a href="../tests/integration/test_catalog_creation.py">catalog creation</a> and <a href="../tests/integration/test_catalog_descriptions.py">description integration tests</a>.</li>
   <li><a href="../tests/integration/test_verified_raw_ingest.py">Verified Raw ingestion integration tests</a>; <a href="../tests/contract/test_ingest_process_death.py">process-death contract tests</a>; <a href="../tests/acceptance/test_raw_ingest_gate.py">Raw acceptance gate</a>.</li>
-  <li><a href="../tests/unit/test_integrity_cutover.py">Cutover unit tests</a>, <a href="../tests/unit/test_integrity_generations.py">generation verification tests</a>, and <a href="../tests/integration/test_protocol_cutover.py">protocol cutover integration tests</a>.</li>
 </ul>
 <p>These are source-navigation links, not a claim that the suites were run to produce this document. The <a href="../Makefile">Makefile</a> and <a href="../AGENTS.md">repository instructions</a> define implementation gates.</p>
 </section>
 <footer>
-<p>Scope: observed core implementation, including preparatory integrity work. Search projection, Ray/Zarr execution, derived-snapshot publication, and full automated recovery are not implemented core workflows in this map. Consult <a href="architecture.html">architecture</a>, <a href="layer-raw.html">Raw contracts</a>, and <a href="roadmap.html">delivery status</a> for their design context.</p>
+<p>Scope: observed core implementation. Search projection, Ray/Zarr execution, derived-snapshot publication, and full automated recovery are not implemented core workflows in this map. Consult <a href="architecture.html">architecture</a>, <a href="layer-raw.html">Raw contracts</a>, and <a href="roadmap.html">delivery status</a> for their design context.</p>
 <p><a href="#main">Back to the top</a></p>
 </footer>
 </main>

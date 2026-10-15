@@ -1,8 +1,11 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # Controller generation is the verification epoch
+
+The controller epoch was retired with the legacy cutover machinery on 2026-10-15; the
+decision below remains as history.
 
 M1b's independent verification failed three times because certification authority was
 split: the cutover service scans and writes the report and record, and the controller

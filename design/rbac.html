@@ -449,8 +449,9 @@ Roles stack — a person can hold <code>developer</code> on one project and
 without a new <code>data.write</code> grant. Core enforces these permissions for online report and
 maintenance operations. Scheduled and offline commands use an independently authenticated deployment/operator
 identity scoped to the raw root and permitted operations; a CLI actor string is not authentication.
-Lost RBAC cannot authorize its own reconstruction. Cutover/rebuild additionally require enforced writer
-exclusion. Existing removal intents do not replace current authorization, holds or pins, and unknown
+Lost RBAC cannot authorize its own reconstruction. Rebuild additionally requires enforced writer
+exclusion; the offline protocol cutover and its writer-exclusion controller were retired on
+2026-10-15. Existing removal intents do not replace current authorization, holds or pins, and unknown
 restored governance keeps destructive continuation disabled. Ordinary scientist service accounts gain no
 broad maintenance privilege.</p>
 </main>

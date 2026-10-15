@@ -13,7 +13,8 @@ import pytest
 pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).parents[2]
-OWNERS = ("foundation", "security", "catalog", "raw", "integrity", "metastore", "rawstore")
+OWNERS = ("foundation", "security", "catalog", "raw", "metastore", "rawstore")
+PRIVATE_OWNERS = ("security", "catalog", "raw")
 
 
 def test_foundation_import_does_not_initialize_domains_or_adapters() -> None:
@@ -25,7 +26,7 @@ def test_foundation_import_does_not_initialize_domains_or_adapters() -> None:
             """
 import sys
 from huron.core.foundation import canonical, clock, errors, identifiers, names, retry
-for owner in ('security', 'catalog', 'raw', 'integrity', 'metastore', 'rawstore'):
+for owner in ('security', 'catalog', 'raw', 'metastore', 'rawstore'):
     assert 'huron.core.' + owner not in sys.modules, owner
 assert 'huron.applications.api' not in sys.modules
 """,
@@ -46,19 +47,18 @@ def _sandbox(tmp_path: Path) -> Path:
     packages.extend(
         [
             "huron.applications.api",
-            "huron.applications.lakectl",
             "huron.applications.api.authorization",
             "huron.applications.api.routes",
         ]
     )
-    packages.extend(f"huron.core.{owner}._impl" for owner in ("security", "catalog", "raw", "integrity"))
+    packages.extend(f"huron.core.{owner}._impl" for owner in PRIVATE_OWNERS)
     for name in packages:
         directory = tmp_path / name.replace(".", "/")
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "__init__.py").write_text("")
     for owner in OWNERS:
         (tmp_path / f"huron/core/{owner}/public.py").write_text("")
-    for owner in ("security", "catalog", "raw", "integrity"):
+    for owner in PRIVATE_OWNERS:
         (tmp_path / f"huron/core/{owner}/_impl/operations.py").write_text("value = object()\n")
         (tmp_path / f"huron/core/{owner}/__init__.py").write_text(
             "from ._impl.operations import value\n"
@@ -94,7 +94,6 @@ def test_declared_edges_and_owner_root_reexports_are_allowed(tmp_path: Path) -> 
         "security": ("core.foundation",),
         "catalog": ("core.security", "core.foundation"),
         "raw": ("core.catalog", "core.security", "core.foundation", "schema"),
-        "integrity": ("core.catalog", "core.raw", "core.foundation", "schema"),
         "metastore": ("core.catalog", "core.raw", "core.security", "core.foundation"),
         "rawstore": ("schema",),
     }
@@ -144,10 +143,6 @@ def test_declared_edges_and_owner_root_reexports_are_allowed(tmp_path: Path) -> 
         (
             {"huron/core/catalog/public.py": "import huron.core.security._impl.operations\n"},
             "security implementations are private to their owner",
-        ),
-        (
-            {"huron/applications/lakectl/__init__.py": "import huron.core.integrity._impl.operations\n"},
-            "integrity implementations are private to their owner",
         ),
         ({"huron/core/unclassified.py": "value = 1\n"}, "every core sibling has an explicit owner"),
     ],

@@ -8,8 +8,6 @@ repositories on Ceph RGW), and role-based access control scoped to the storage l
   cross-linked documents covering the model, the layers, RBAC, and every decision with its
   rejected alternative. Where code and design disagree, the design wins.
 - **Duplication refactoring plan:** [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
-- **Remaining integrity work:** [`P3_DESIGN.md`](P3_DESIGN.md) and
-  [`P3_IMPLEMENTATION_PLAN.md`](P3_IMPLEMENTATION_PLAN.md).
 - **Implementation history:** [`docs/history.md`](docs/history.md) — concise receipts
   and links to archived plans, audits and reports.
 - **Developer documentation:** [`docs/`](docs/) — environment, conventions, testing, repository

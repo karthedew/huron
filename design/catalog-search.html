@@ -502,21 +502,24 @@ carry <code>projection_lag_seconds</code> + <code>projection_watermark</code>.</
 recovery ownership, governance document/digest mirrors, revision integrity/lifecycle observations and
 resumable run receipts. Findings separate INFO/WARNING/ERROR severity from repair/resolution outcome;
 acknowledgement never clears damage. Purge removes mirrored expiry per-file details. Latest revision
-means highest published number across all states. See <a href="../P3_DESIGN.md">P3 design</a> for
-constraints and <a href="layer-raw.html#p3-integrity">cutover requirements</a>.</p>
+means highest published number across all states. The superseded <a href="../P3_DESIGN.md">P3 design</a>
+records the earlier constraints; the <a href="layer-raw.html#p3-integrity">protocol cutover</a> it
+required was retired on 2026-10-15.</p>
 
 <ul>
-<li><code>lakectl projection rebuild</code> — walks NFS (datasets, revisions, release tags, effective metadata)
+<li>Projection rebuild (a planned operator command; the <code>lakectl</code> CLI that was to host it
+was retired on 2026-10-15) — walks NFS (datasets, revisions, release tags, effective metadata)
 and PostgreSQL (snapshot/product registry), writes fresh tables under a new prefix, verifies row
 counts, flips the pointer. Routine, not exceptional.</li>
-<li><code>lakectl rebuild --from-storage</code> — P3 reconstructs Raw structural inventory offline:
-protocol/cutover evidence, generation hierarchy, revisions/governance observations, amendments and releases.
+<li>Storage rebuild (a planned operator command) — P3 reconstructs Raw structural inventory offline:
+generation hierarchy, revisions/governance observations, amendments and releases.
 A fresh target is claimed by a run identity; that same run may resume. Missing parents and identity conflicts
 block activation; reported payload corruption remains DEGRADED and need not block healthy inventory.
 Access policy must be restored and unambiguous before activation; governance readiness separately gates
-removal. No placeholder parents, synthetic approvals or deletion during rebuild. V1 membership is exact
-cutover inventory/digests, not timestamps. Derived-layer registry, lineage and projection rebuilds follow
-in their owning phases. RBAC, credentials, audit, holds, original outbox and idempotency require backups.</li>
+removal. No placeholder parents, synthetic approvals or deletion during rebuild. With the cutover
+inventory retired, v1 envelopes are operator findings, never admitted by timestamp. Derived-layer
+registry, lineage and projection rebuilds follow in their owning phases. RBAC, credentials, audit,
+holds, original outbox and idempotency require backups.</li>
 <li>The reconciler (see <a href="layer-raw.html#sweeper">Raw §10</a>) also cross-checks the layer
 registry: every PUBLISHED snapshot row must resolve to a live Icechunk ref, and every repo main
 branch must be recorded — disagreement is <code>DEGRADED</code> + alert, never silent repair.</li>

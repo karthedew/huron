@@ -136,9 +136,8 @@ durability changes and `make docs` for site documentation. Inspect radon finding
 not only its exit status. Preserve unique behavioral evidence when retiring tests
 that only asserted old wrappers or namespaces.
 
-PostgreSQL tests require disposable real adapters. Controlled-cutover integration
-requires an isolated Linux/Podman-capable runner and the pinned historical Git
-object; zero collected or deselected tests are not a pass. Raw acceptance requires
-at least 25 GiB free on its actual test-data filesystem, with extra capacity for
-concurrent cases. See [Testing](docs/getting-started/testing.md) for current commands
-and infrastructure; historical machine-specific paths are not configuration.
+PostgreSQL tests require disposable real adapters; zero collected or deselected
+integration tests are not a pass. Raw acceptance requires at least 25 GiB free on its
+actual test-data filesystem, with extra capacity for concurrent cases. See
+[Testing](docs/getting-started/testing.md) for current commands and infrastructure;
+historical machine-specific paths are not configuration.

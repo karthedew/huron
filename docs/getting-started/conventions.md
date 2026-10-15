@@ -96,8 +96,7 @@ permanently stable, which is what makes citations durable.
 
 `core/catalog/paths.py` owns hierarchy/generation and cross-layer layout;
 `core/raw/paths.py` owns staging, revision and release layout. Use these published
-constructors/parsers rather than concatenating paths in callers. The round-trip
-property `parse_revision_dir(revision_dir(...))` preserves revision identity.
+constructors rather than concatenating paths in callers.
 
 ## Comments
 

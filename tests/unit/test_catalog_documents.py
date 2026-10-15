@@ -280,7 +280,7 @@ def test_commit_record_decode_refuses_an_extra_member_a_missing_member_and_prett
 
 @pytest.mark.parametrize("protocol", [1, 2])
 def test_commit_marker_decoding_preserves_its_explicit_protocol(protocol: int) -> None:
-    """Legacy inspection retains v1 identity while newly composed markers default to v2."""
+    """Decoding keeps a marker's explicit v1 or v2 protocol; newly composed markers use v2."""
     marker = CommitRecord.of(_record())
     assert marker.protocol == 2
     versioned = replace(marker, protocol=protocol)
