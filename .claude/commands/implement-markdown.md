@@ -59,7 +59,7 @@ Before starting the first phase/task, do all of the following and record the res
 
 Every implementation, fix, and verification subagent runs the complete gate. The gate passes only when every command exits 0 and meets the pass conditions below. The sole findings exception is code duplication: clone findings are allowed when the duplication guard passes -- no clone growth or new clone group appears at similarity 0.80 relative to `scripts/duplication_baseline.json`; the native score is reported, not gated. All other zero-findings requirements remain strict. Partial runs, "ran the relevant subset," and skipped tools are not acceptable. Throughout this workflow, a "clean" gate means these pass conditions are met, not that clone output is empty.
 
-Configuration precedence: if `pyproject.toml` (or `ruff.toml`, `ty.toml`, `.coveragerc`) configures a tool, that configuration governs. Any thresholds stated below are fallback defaults that apply only when the project has not configured the tool. Subagents must not loosen configured thresholds, add exclusions, or introduce `# noqa`, `# type: ignore`, `# pragma: no cover`, `@pytest.mark.skip`, or `@pytest.mark.xfail` to make the gate pass.
+Configuration precedence: if `pyproject.toml` (or `ruff.toml`, `ty.toml`, `.coveragerc`) configures a tool, that configuration governs. Any thresholds stated below are fallback defaults that apply only when the project has not configured the tool. Subagents must not loosen configured thresholds, add exclusions, or introduce `# noqa`, `# type: ignore`, `# pragma: no cover`, `@pytest.mark.skip`, or `@pytest.mark.xfail` to make the gate pass; the coverage floor moves only by the re-baseline the `pytest` pass condition below defines.
 
 Run from the repository root, with `<pkg>` replaced by the resolved coverage package
 path. Static lint targets `src/`; tests and migration schema-map validation remain
@@ -87,7 +87,7 @@ Pass conditions:
 - `ty check`: zero errors.
 - `mypy`: zero errors, under the project's configured strictness. No new suppressions.
 - `lint-imports`: every import contract kept.
-- `pytest`: all tests pass, no tests skipped or xfailed that were not already skipped or xfailed at baseline, total coverage at or above the configured `fail_under` floor — that floor is a ratchet: never lower it, and raise it when coverage climbs — and every file touched in this phase/task at 100% line coverage unless the verification subagent explicitly judges a specific uncovered line to be unreachable defensive code.
+- `pytest`: all tests pass, no tests skipped or xfailed that were not already skipped or xfailed at baseline, total coverage at or above the configured `fail_under` floor, and every file touched in this phase/task at 100% line coverage unless the verification subagent explicitly judges a specific uncovered line to be unreachable defensive code. The floor is a ratchet measured on the unit run: raise it when coverage climbs. It moves down only by a re-baseline, which resets `fail_under` to the newly measured total rounded down to two decimals and is allowed only when the verification subagent confirms, from covered and total statement counts before and after the task, that the whole drop comes from deleted statements that were covered, new PostgreSQL adapter statements that `uv run pytest -m "unit or contract" --cov=<pkg>` covers in full, or both — and that every new or modified file is at 100%. The task records the before and after counts in the plan.
 - `radon cc --min C`: empty output. No function, method, or class at cyclomatic grade C or worse.
 - `radon mi --min B`: empty output. No module at maintainability grade B or worse.
 - `complexipy`: exit 0. No function above the cognitive complexity limit.
@@ -341,7 +341,7 @@ Verification rules:
 - Confirm every file touched in this phase/task is fully covered, or state precisely which uncovered lines you judge unreachable and why.
 - Confirm obsolete code was removed where the clean-sweep change makes it unnecessary.
 - Confirm there is no backwards compatibility preservation unless explicitly required by the markdown.
-- Confirm no `# noqa`, `# type: ignore`, `# pragma: no cover`, skip or xfail markers, or tool configuration changes were introduced to satisfy the gate.
+- Confirm no `# noqa`, `# type: ignore`, `# pragma: no cover`, skip or xfail markers, or tool configuration changes were introduced to satisfy the gate. A `fail_under` reset is the one allowed configuration change: check it against the `pytest` pass condition's re-baseline rule using the recorded before and after statement counts.
 - Confirm no code comments, docstrings, test names, user-facing strings, or internal comments reference the markdown, implementation plan, phase numbers, checklist mechanics, or this orchestration process.
 - Confirm comments are senior-level and explain enduring code intent only.
 - Confirm no TODOs, debug logs, print statements, commented-out code, temporary names, partial migrations, or speculative abstractions remain.
