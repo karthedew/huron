@@ -1,11 +1,9 @@
-"""``PosixRawStore.write_generation``'s replace-not-refuse behavior, and its neighbors' contracts.
+"""``PosixRawStore.write_generation``'s replace-not-refuse behavior.
 
 A generation file is replaced when one already exists at that number,
 because acknowledged immutability comes from the hierarchy store advancing
 a version only through a committed update, never from the filesystem
-refusing to overwrite. ``write_tag_once`` keeps the opposite behavior - a
-tag is a citation that must never be repointed - so this module also pins
-that its ``O_EXCL`` refusal survived the change untouched.
+refusing to overwrite.
 """
 
 from __future__ import annotations
@@ -73,16 +71,3 @@ def test_write_generation_rejects_a_generation_number_outside_the_valid_range(
         store.write_generation(entity_dir, 0, b"payload")
 
     assert not (entity_dir / "generations").exists()
-
-
-def test_write_tag_once_still_refuses_a_second_write_to_the_same_tag(tmp_path: Path) -> None:
-    """A second ``write_tag_once`` for the same tag file still raises ``FileExistsError``."""
-    store = PosixRawStore(tmp_path)
-    tag_file = tmp_path / "organization" / "astro" / "releases" / "v1.json"
-
-    store.write_tag_once(tag_file, b"first")
-
-    with pytest.raises(FileExistsError):
-        store.write_tag_once(tag_file, b"second")
-
-    assert tag_file.read_bytes() == b"first"

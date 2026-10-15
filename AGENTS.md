@@ -27,7 +27,7 @@ src/huron/
     foundation/    Shared errors, canonical JSON, IDs, names, retry and clock contracts
     security/      Authentication, identity, authorization and their workflows
     catalog/       Hierarchy, dataset configuration, layer rules and discovery
-    raw/           Ingestion, revision publication/reads, releases and expiry
+    raw/           Ingestion, revision publication/reads and expiry
     metastore/     PostgreSQL and in-memory adapters
     rawstore/      POSIX storage adapters
   applications/    Runnable entry points, transport, configuration, and wiring

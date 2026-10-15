@@ -56,7 +56,7 @@ def _repository(tmp_path: Path) -> RepositoryFixture:
     )
 
 
-def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
+def _claim(operation: str, *parts: str, key: str) -> IdempotencyClaim:
     """Build an idempotency claim staked by ``tester`` over one operation's digest parts."""
     return IdempotencyClaim(
         principal="tester", key=key, request_sha256=request_sha256(operation, *parts)

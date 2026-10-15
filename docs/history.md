@@ -10,6 +10,28 @@ the domain-owned Core migration. Historical claims describe their recorded tree,
 not the current implementation. Every tracked document remains recoverable with
 `git show 7846d67:<path>`.
 
+## Release tag retirement
+
+On 2026-10-15 the owner retired Raw release tags: a dataset keeps only its full, numbered
+revisions. Every removed file remains recoverable with `git show 248f7bf:<path>`.
+
+| Removed | Contents |
+| --- | --- |
+| Workflow | `core/raw/_impl/releases.py`: authorized tag creation, resolution and browsing. |
+| Values and ports | `Release`, `RevisionRef`, `ReleaseStore`, `ReleaseTransaction`, `RawStore.write_tag_once`, `release_tag_file`, tag-name validation and the `TAG_EXISTS`/`TAG_WITHDRAWN` errors. |
+| Adapters | Release reads and writes in both hierarchy stores, their row mappers, and the POSIX write-once tag file. |
+| API | The three `/api/v1/datasets/{dataset_id}/releases` routes, their models and the tag cursor. |
+| Authorization | The `release.create` capability, granted to developers, project admins and platform owners. |
+| Tests | The release integration test and its helper, and the release cases of the shared hierarchy, repository, API and role tests. |
+
+Migration `0013_retire_releases` drops the `releases` table with its indexes and trigger, the
+`releases_immutable()` function and the `release.create` capability with its grants; it cannot
+be downgraded. Tag documents already written under a dataset's `releases/` directory stay on
+disk, where nothing reads them. Idempotency receipts of past tag requests stay in
+`idempotency_records`; until one expires, it refuses reuse of its key for any other request, as
+every receipt does. The `dataset_revisions_id_dataset_id_unique` constraint, which only release
+citations referenced, also remains.
+
 ## Legacy cutover retirement
 
 On 2026-10-15 the owner retired the one-time v1→v2 cutover machinery and the API-key

@@ -22,7 +22,6 @@ import pytest
 from huron.core.raw.errors import (
     DatasetLocked,
     IngestSessionExpired,
-    TagExists,
 )
 from huron.core.foundation.errors import IdempotencyKeyReused, PreconditionFailed, ResourceNotFound
 from huron.core.catalog.errors import SlugExists
@@ -38,7 +37,7 @@ from huron.core.raw.ingest import (
 from huron.core.catalog.layers import Layer
 from huron.core.catalog.lifecycle import DatasetLifecycle
 from huron.core.raw.manifest import Manifest, ManifestEntry
-from huron.core.raw.types import OutboxEvent, RevisionRecord, RevisionRef, AuditEvent, Release
+from huron.core.raw.types import OutboxEvent, RevisionRecord, AuditEvent
 from huron.core.foundation.retry import IdempotencyClaim, Replay
 from huron.core.catalog.types import PlatformRoot, Dataset, Organization, Project
 from huron.core.security.rules import Visibility
@@ -113,20 +112,6 @@ def _dataset(*, project_id: UUID, slug: str) -> Dataset:
         lifecycle_state=DatasetLifecycle.ACTIVE.value,
         generation=1,
         version=1,
-        created_at=datetime.now(UTC),
-    )
-
-
-def _release(*, dataset_id: UUID, tag: str, revision_id: UUID, revision_number: int) -> Release:
-    """Build a ``Release`` citing one revision, ready to insert."""
-    return Release(
-        id=uuid7(),
-        dataset_id=dataset_id,
-        tag=tag,
-        revision_id=revision_id,
-        revision_number=revision_number,
-        title=None,
-        created_by="user:test",
         created_at=datetime.now(UTC),
     )
 
@@ -227,7 +212,7 @@ async def scenario_1_write_invisible_until_commit(store: HierarchyStore) -> None
 
 
 async def scenario_2_uniqueness(store: HierarchyStore) -> None:
-    """A duplicate slug or tag under the same parent is refused; a different parent is not."""
+    """A duplicate slug under the same parent is refused; a different parent is not."""
     organization_a = _organization(slug="org-a")
     organization_b = _organization(slug="org-b")
     async with store.transaction() as writer:
@@ -263,30 +248,6 @@ async def scenario_2_uniqueness(store: HierarchyStore) -> None:
         async with store.transaction() as writer:
             await writer.insert_dataset(
                 _dataset(project_id=project_a.id, slug="run-0001"), data_classification="open"
-            )
-
-    revision = committed_revision(dataset_a.id, 1, manifest_sha256="a" * 64)
-    async with store.transaction() as writer:
-        await writer.insert_revision(revision)
-    async with store.transaction() as writer:
-        await writer.insert_release(
-            _release(
-                dataset_id=dataset_a.id,
-                tag="v1",
-                revision_id=revision.id,
-                revision_number=revision.number,
-            )
-        )
-
-    with pytest.raises(TagExists):
-        async with store.transaction() as writer:
-            await writer.insert_release(
-                _release(
-                    dataset_id=dataset_a.id,
-                    tag="v1",
-                    revision_id=revision.id,
-                    revision_number=revision.number,
-                )
             )
 
 
@@ -450,45 +411,34 @@ async def scenario_4_idempotency(store: HierarchyStore) -> None:
 
 
 async def scenario_5_revisions(store: HierarchyStore) -> None:
-    """revision_ref resolves a committed revision and insert_release enforces that it exists."""
-    hierarchy = await seed_hierarchy(store)
+    """A revision resolves by its id, and a dataset's latest is its highest-numbered commit.
+
+    Neither a dataset that has never committed nor an id that names no
+    dataset has a latest revision, and an id that names no revision is not
+    found.
+    """
+    hierarchy = await seed_hierarchy(store, {"astro": {"sims": ("run-0001", "run-0002")}})
     dataset_id = hierarchy.datasets["run-0001"]
+    assert await store.latest_committed_revision(dataset_id) is None
 
-    with pytest.raises(ResourceNotFound):
-        await store.revision_ref(dataset_id, 1)
-
-    revision = committed_revision(dataset_id, 1, manifest_sha256="b" * 64)
+    first = committed_revision(dataset_id, 1, manifest_sha256="a" * 64)
+    second = committed_revision(dataset_id, 2, manifest_sha256="b" * 64)
     async with store.transaction() as writer:
-        await writer.insert_revision(revision)
-    assert await store.revision_ref(dataset_id, 1) == RevisionRef(
-        id=revision.id,
-        dataset_id=revision.dataset_id,
-        number=revision.number,
-        manifest_sha256=revision.manifest_sha256,
-    )
-
-    with pytest.raises(ResourceNotFound):
-        async with store.transaction() as writer:
-            await writer.insert_release(
-                _release(dataset_id=dataset_id, tag="v1", revision_id=uuid7(), revision_number=99)
-            )
-
+        await writer.insert_revision(first)
     async with store.transaction() as writer:
-        await writer.insert_release(
-            _release(
-                dataset_id=dataset_id,
-                tag="v1",
-                revision_id=revision.id,
-                revision_number=revision.number,
-            )
-        )
-    release = await store.release(dataset_id, "v1", Visibility.ALL)
-    assert release.revision_id == revision.id
-    assert release.revision_number == revision.number
+        await writer.insert_revision(second)
+
+    assert await store.revision(first.id) == first
+    assert await store.revision(second.id) == second
+    assert await store.latest_committed_revision(dataset_id) == second
+    assert await store.latest_committed_revision(hierarchy.datasets["run-0002"]) is None
+    assert await store.latest_committed_revision(uuid7()) is None
+    with pytest.raises(ResourceNotFound):
+        await store.revision(uuid7())
 
 
 async def scenario_6_ordering(store: HierarchyStore) -> None:
-    """Organizations, projects, datasets and releases sort by (slug, id) or tag, not insertion.
+    """Organizations, projects and datasets sort by (slug, id), not insertion order.
 
     Six slugs - three hyphenated, three not - sort one way under Python's
     own ``str`` comparison and a different way under the deployment's
@@ -516,23 +466,6 @@ async def scenario_6_ordering(store: HierarchyStore) -> None:
         hierarchy.projects["a-1"], Visibility.ALL, limit=200, after=None
     )
     assert [item.slug for item in datasets.items] == expected
-
-    dataset_id = hierarchy.datasets["a-1"]
-    revision = committed_revision(dataset_id, 1, manifest_sha256="d" * 64)
-    async with store.transaction() as writer:
-        await writer.insert_revision(revision)
-    async with store.transaction() as writer:
-        for tag in slugs:
-            await writer.insert_release(
-                _release(
-                    dataset_id=dataset_id,
-                    tag=tag,
-                    revision_id=revision.id,
-                    revision_number=revision.number,
-                )
-            )
-    releases = await store.releases(dataset_id, Visibility.ALL, limit=200, after=None)
-    assert [item.tag for item in releases.items] == expected
 
 
 async def scenario_7_windows(store: HierarchyStore) -> None:
@@ -599,13 +532,11 @@ class VisibleIds:
         organizations: Visible organization ids.
         projects: Visible project ids.
         datasets: Visible dataset ids.
-        releases: Visible release ids.
     """
 
     organizations: frozenset[UUID]
     projects: frozenset[UUID]
     datasets: frozenset[UUID]
-    releases: frozenset[UUID]
 
 
 async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
@@ -653,15 +584,6 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     b1ds_id = hierarchy.datasets["b1-ds"]
     c1ds_id = hierarchy.datasets["c1-ds"]
 
-    revision = committed_revision(a1ds_id, 1, manifest_sha256="e" * 64)
-    async with store.transaction() as writer:
-        await writer.insert_revision(revision)
-    release = _release(
-        dataset_id=a1ds_id, tag="v1", revision_id=revision.id, revision_number=revision.number
-    )
-    async with store.transaction() as writer:
-        await writer.insert_release(release)
-
     async def visible_ids(visibility: Visibility) -> VisibleIds:
         """Compute the ids ``visibility`` admits at every level of the fixture."""
         organizations = await store.organizations.browse(
@@ -674,11 +596,6 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
         datasets_a2 = await store.datasets.browse(a2_id, visibility, limit=200, after=None)
         datasets_b1 = await store.datasets.browse(b1_id, visibility, limit=200, after=None)
         datasets_c1 = await store.datasets.browse(c1_id, visibility, limit=200, after=None)
-        try:
-            await store.release(a1ds_id, "v1", visibility)
-            releases = frozenset({release.id})
-        except ResourceNotFound:
-            releases = frozenset()
         return VisibleIds(
             organizations=frozenset(item.id for item in organizations.items),
             projects=frozenset(
@@ -693,7 +610,6 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
                     *datasets_c1.items,
                 )
             ),
-            releases=releases,
         )
 
     async def assert_invisible(
@@ -715,7 +631,6 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     assert results["all"].datasets == frozenset(
         {a1ds_id, a2ds_id, a2dt_id, a2du_id, b1ds_id, c1ds_id}
     )
-    assert results["all"].releases == frozenset({release.id})
     assert (await store.organizations.get(org_a_id, all_visibility)).id == org_a_id
     assert (await store.organizations.get(org_b_id, all_visibility)).id == org_b_id
     assert (await store.organizations.get(org_c_id, all_visibility)).id == org_c_id
@@ -727,18 +642,15 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     assert (await store.datasets.get(a2ds_id, all_visibility)).id == a2ds_id
     assert (await store.datasets.get(b1ds_id, all_visibility)).id == b1ds_id
     assert (await store.datasets.get(c1ds_id, all_visibility)).id == c1ds_id
-    assert (await store.release(a1ds_id, "v1", all_visibility)).id == release.id
 
     project_scoped = Visibility(project_ids=frozenset({a1_id}))
     results["project_ids"] = await visible_ids(project_scoped)
     assert results["project_ids"].organizations == frozenset({org_a_id})
     assert results["project_ids"].projects == frozenset({a1_id})
     assert results["project_ids"].datasets == frozenset({a1ds_id})
-    assert results["project_ids"].releases == frozenset({release.id})
     assert (await store.organizations.get(org_a_id, project_scoped)).id == org_a_id
     assert (await store.projects.get(a1_id, project_scoped)).id == a1_id
     assert (await store.datasets.get(a1ds_id, project_scoped)).id == a1ds_id
-    assert (await store.release(a1ds_id, "v1", project_scoped)).id == release.id
     await assert_invisible(store.organizations.get, (org_b_id, org_c_id), project_scoped)
     await assert_invisible(store.projects.get, (a2_id, b1_id, c1_id), project_scoped)
     await assert_invisible(store.datasets.get, (a2ds_id, b1ds_id, c1ds_id), project_scoped)
@@ -748,7 +660,6 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     assert results["dataset_ids"].organizations == frozenset({org_a_id, org_c_id})
     assert results["dataset_ids"].projects == frozenset({a2_id, c1_id})
     assert results["dataset_ids"].datasets == frozenset({a2ds_id, a2du_id, c1ds_id})
-    assert results["dataset_ids"].releases == frozenset()
     assert (await store.organizations.get(org_a_id, dataset_scoped)).id == org_a_id
     assert (await store.organizations.get(org_c_id, dataset_scoped)).id == org_c_id
     assert (await store.projects.get(a2_id, dataset_scoped)).id == a2_id
@@ -759,8 +670,6 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     await assert_invisible(store.projects.get, (a1_id, b1_id), dataset_scoped)
     await assert_invisible(store.datasets.get, (a1ds_id, a2dt_id, b1ds_id), dataset_scoped)
     await assert_invisible(store.organizations.get, (org_b_id,), dataset_scoped)
-    with pytest.raises(ResourceNotFound):
-        await store.release(a1ds_id, "v1", dataset_scoped)
 
     narrow_projects = await store.projects.browse(org_a_id, dataset_scoped, limit=1, after=None)
     assert [item.id for item in narrow_projects.items] == [a2_id]
@@ -797,27 +706,21 @@ async def scenario_8_visibility(store: HierarchyStore) -> dict[str, VisibleIds]:
     assert results["organization_ids"].organizations == frozenset({org_a_id})
     assert results["organization_ids"].projects == frozenset()
     assert results["organization_ids"].datasets == frozenset()
-    assert results["organization_ids"].releases == frozenset()
     assert (await store.organizations.get(org_a_id, organization_scoped)).id == org_a_id
     await assert_invisible(store.organizations.get, (org_b_id, org_c_id), organization_scoped)
     await assert_invisible(store.projects.get, (a1_id, a2_id, b1_id, c1_id), organization_scoped)
     await assert_invisible(
         store.datasets.get, (a1ds_id, a2ds_id, b1ds_id, c1ds_id), organization_scoped
     )
-    with pytest.raises(ResourceNotFound):
-        await store.release(a1ds_id, "v1", organization_scoped)
 
     empty = Visibility()
     results["empty"] = await visible_ids(empty)
     assert results["empty"].organizations == frozenset()
     assert results["empty"].projects == frozenset()
     assert results["empty"].datasets == frozenset()
-    assert results["empty"].releases == frozenset()
     await assert_invisible(store.organizations.get, (org_a_id, org_b_id, org_c_id), empty)
     await assert_invisible(store.projects.get, (a1_id, a2_id, b1_id, c1_id), empty)
     await assert_invisible(store.datasets.get, (a1ds_id, a2ds_id, b1ds_id, c1ds_id), empty)
-    with pytest.raises(ResourceNotFound):
-        await store.release(a1ds_id, "v1", empty)
 
     return results
 
@@ -1239,12 +1142,6 @@ async def scenario_14_the_commit_transaction_is_atomic_and_replays(
 
     assert await store.revision(revision.id) == revision
     assert await store.latest_committed_revision(dataset_id) == revision
-    assert await store.revision_ref(dataset_id, revision.number) == RevisionRef(
-        id=revision.id,
-        dataset_id=dataset_id,
-        number=revision.number,
-        manifest_sha256=revision.manifest_sha256,
-    )
 
     duplicate = committed_revision(dataset_id, revision.number + 1, manifest_sha256="a" * 64)
     async with store.transaction() as writer:

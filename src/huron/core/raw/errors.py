@@ -1,4 +1,4 @@
-"""Stable ingestion, manifest, revision and release failures."""
+"""Stable ingestion, manifest and revision failures."""
 
 from huron.core.foundation.errors import DomainError
 
@@ -19,18 +19,6 @@ class ManifestMismatch(DomainError):
     """Uploaded bytes disagree with their declared size or digest."""
 
     code, status_code = "MANIFEST_MISMATCH", 400
-
-
-class TagExists(DomainError):
-    """The immutable release tag already resolves."""
-
-    code, status_code = "TAG_EXISTS", 409
-
-
-class TagWithdrawn(DomainError):
-    """The release tag was withdrawn."""
-
-    code, status_code = "TAG_WITHDRAWN", 410
 
 
 class PathCollision(DomainError):
@@ -90,8 +78,6 @@ ERROR_CODES = PATH_ERROR_CODES | frozenset(
         "DATASET_LOCKED",
         "INGEST_SESSION_EXPIRED",
         "MANIFEST_MISMATCH",
-        "TAG_EXISTS",
-        "TAG_WITHDRAWN",
         "PATH_COLLISION",
         "EMPTY_REVISION",
         "FILE_TOO_LARGE",

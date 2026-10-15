@@ -1,8 +1,9 @@
 """PostgreSQL catalog constraints and guarded migration contracts.
 
 Checks authoritative ancestry, lifecycle vocabulary, reservations, audit indexes,
-and independent Raw uploads against a disposable PostgreSQL database. Downgrade
-round trips preserve seeded records while restoring the preceding schema.
+independent Raw uploads and the retirement of release tags against a disposable
+PostgreSQL database. Downgrade round trips preserve seeded records while restoring
+the preceding schema.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
 from huron.core.foundation.identifiers import uuid7
+from huron.core.security.roles import CAPABILITIES, ROLES
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -57,8 +59,6 @@ async def _assert_against(dsn: str) -> None:
     """Runs every catalog schema constraint, trigger, and vocabulary assertion against one pool."""
     pool = await asyncpg.create_pool(dsn)
     try:
-        await _assert_a_release_cannot_cite_another_datasets_revision(pool)
-        await _assert_a_release_can_cite_its_own_datasets_revision(pool)
         await _assert_organizations_lifecycle_state_vocabulary(pool)
         await _assert_projects_lifecycle_state_vocabulary(pool)
         await _assert_datasets_lifecycle_state_vocabulary(pool)
@@ -229,55 +229,6 @@ async def _insert_snapshot(
         json.dumps({"kind": "external"}),
     )
     return snapshot_id
-
-
-# -- releases_revision_dataset_fk ---------------------------------------------
-
-
-async def _assert_a_release_cannot_cite_another_datasets_revision(pool: asyncpg.Pool) -> None:
-    """``releases_revision_dataset_fk`` refuses a release naming another dataset's revision."""
-    organization_id = await _insert_organization(pool, slug="astro-catalog")
-    project_id = await _insert_project(pool, organization_id=organization_id, slug="survey")
-    citing_dataset_id = await _insert_dataset(pool, project_id=project_id, slug="citing")
-    foreign_dataset_id = await _insert_dataset(pool, project_id=project_id, slug="foreign")
-    foreign_revision_id = await _insert_dataset_revision(
-        pool, dataset_id=foreign_dataset_id, revision_number=1
-    )
-
-    with pytest.raises(asyncpg.exceptions.ForeignKeyViolationError):
-        await pool.execute(
-            """
-            INSERT INTO releases (id, dataset_id, tag, revision_id, created_by, created_at)
-            VALUES ($1, $2, 'v1', $3, 'constraint-test', now())
-            """,
-            uuid7(),
-            citing_dataset_id,
-            foreign_revision_id,
-        )
-
-
-async def _assert_a_release_can_cite_its_own_datasets_revision(pool: asyncpg.Pool) -> None:
-    """A release citing its own dataset's revision is accepted and stores that revision_id."""
-    organization_id = await _insert_organization(pool, slug="astro-catalog-own")
-    project_id = await _insert_project(pool, organization_id=organization_id, slug="survey-own")
-    dataset_id = await _insert_dataset(pool, project_id=project_id, slug="own")
-    revision_id = await _insert_dataset_revision(pool, dataset_id=dataset_id, revision_number=1)
-    release_id = uuid7()
-
-    await pool.execute(
-        """
-        INSERT INTO releases (id, dataset_id, tag, revision_id, created_by, created_at)
-        VALUES ($1, $2, 'v1', $3, 'constraint-test', now())
-        """,
-        release_id,
-        dataset_id,
-        revision_id,
-    )
-
-    stored_revision_id = await pool.fetchval(
-        "SELECT revision_id FROM releases WHERE id = $1", release_id
-    )
-    assert stored_revision_id == revision_id
 
 
 # -- closed state and lifecycle vocabularies -----------------------------------
@@ -1058,8 +1009,8 @@ async def _assert_trigger_rejects_a_committed_session_naming_no_revision(
 async def _assert_trigger_rejects_a_cross_dataset_revision(pool: asyncpg.Pool) -> None:
     """The commit guard trigger refuses a COMMITTED session whose revision is another dataset's.
 
-    A real revision, but of another dataset - the same cross-parent bug
-    ``releases_revision_dataset_fk`` closes on ``releases``, one table over.
+    A real revision, but of another dataset: the session must not claim a
+    revision outside its own dataset's tree.
     """
     organization_id = await _insert_organization(pool, slug="guard-cross-dataset")
     project_id = await _insert_project(pool, organization_id=organization_id, slug="guard")
@@ -2023,3 +1974,110 @@ async def _assert_failed_downgrade_preserves_revisions(dsn: str, first: UUID, se
         )
     finally:
         await pool.close()
+
+
+#: Every relation, constraint, trigger and function release tags owned at
+#: ``0012_raw_web_catalogs``: the table with its key, uniqueness and citation
+#: indexes, its checks and foreign keys, and the immutability trigger with
+#: the function it runs.
+_RELEASE_OBJECTS = frozenset(
+    {
+        "releases",
+        "releases_pkey",
+        "releases_dataset_id_tag_key",
+        "releases_revision",
+        "releases_tag_check",
+        "releases_check",
+        "releases_dataset_id_fkey",
+        "releases_revision_dataset_fk",
+        "releases_immutable_before_update",
+        "releases_immutable",
+    }
+)
+
+#: The capability codes of the release-tag family, as a ``LIKE`` pattern.
+_RELEASE_CAPABILITIES = "release.%"
+
+
+def test_retiring_release_tags_drops_their_objects_and_capability_and_refuses_a_downgrade() -> None:
+    """Upgrading to head drops release tags and their capability but keeps every revision."""
+    with PostgresContainer("postgres:16") as postgres:
+        config = _config(postgres.get_connection_url(driver="asyncpg"))
+        command.upgrade(config, "0012_raw_web_catalogs")
+        asyncio.run(_assert_release_retirement(config, postgres.get_connection_url(driver=None)))
+
+
+async def _assert_release_retirement(config: Config, dsn: str) -> None:
+    """Seed a tagged revision, upgrade to head, then check what was dropped and what remains.
+
+    The capability vocabulary left at head is exactly the one the role model
+    declares, and the developer role no longer describes tagging. Downgrading
+    is refused and leaves the upgraded schema in place.
+    """
+    pool = await asyncpg.create_pool(dsn)
+    try:
+        organization = await _insert_organization(pool, slug="tagged-catalog")
+        project = await _insert_project(pool, organization_id=organization, slug="tagged")
+        dataset = await _insert_dataset(pool, project_id=project, slug="tagged")
+        revision = await _insert_dataset_revision(pool, dataset_id=dataset, revision_number=1)
+        await pool.execute(
+            """
+            INSERT INTO releases (id, dataset_id, tag, revision_id, created_by, created_at)
+            VALUES ($1, $2, 'v1', $3, 'migration-test', now())
+            """,
+            uuid7(),
+            dataset,
+            revision,
+        )
+        assert await _release_objects(pool) == _RELEASE_OBJECTS
+        assert await _release_capability_rows(pool) == (1, 3)
+
+        await asyncio.to_thread(command.upgrade, config, "head")
+
+        assert await _release_objects(pool) == frozenset()
+        assert await _release_capability_rows(pool) == (0, 0)
+        codes = {row["code"] for row in await pool.fetch("SELECT code FROM capabilities")}
+        assert codes == CAPABILITIES
+        developer = await pool.fetchval("SELECT description FROM roles WHERE code = 'developer'")
+        assert developer == ROLES["developer"].description
+        kept = await pool.fetchval(
+            "SELECT revision_number FROM dataset_revisions WHERE id = $1", revision
+        )
+        assert kept == 1
+
+        head = await pool.fetchval("SELECT version_num FROM alembic_version")
+        with pytest.raises(RuntimeError, match="retired release tags cannot be restored online"):
+            await asyncio.to_thread(command.downgrade, config, "0012_raw_web_catalogs")
+        assert await pool.fetchval("SELECT version_num FROM alembic_version") == head
+        assert await _release_objects(pool) == frozenset()
+    finally:
+        await pool.close()
+
+
+async def _release_objects(pool: asyncpg.Pool) -> frozenset[str]:
+    """Name every public relation, constraint, trigger and function named for release tags."""
+    rows = await pool.fetch(
+        """
+        SELECT relname AS name FROM pg_class
+        WHERE relnamespace = 'public'::regnamespace AND relname LIKE 'releases%'
+        UNION SELECT conname FROM pg_constraint
+        WHERE connamespace = 'public'::regnamespace AND conname LIKE 'releases%'
+        UNION SELECT tgname FROM pg_trigger
+        WHERE NOT tgisinternal AND tgname LIKE 'releases%'
+        UNION SELECT proname FROM pg_proc
+        WHERE pronamespace = 'public'::regnamespace AND proname LIKE 'releases%'
+        """
+    )
+    return frozenset(row["name"] for row in rows)
+
+
+async def _release_capability_rows(pool: asyncpg.Pool) -> tuple[int, int]:
+    """Count the release capabilities and the role grants that name them."""
+    capabilities = await pool.fetchval(
+        "SELECT count(*) FROM capabilities WHERE code LIKE $1", _RELEASE_CAPABILITIES
+    )
+    grants = await pool.fetchval(
+        "SELECT count(*) FROM role_capabilities WHERE capability_code LIKE $1",
+        _RELEASE_CAPABILITIES,
+    )
+    return capabilities, grants

@@ -99,8 +99,7 @@ amendments, purge) stay in <a href="frontend.html#flows">Frontend §3</a>.</p>
 2. ingest              path A: raw upload        (originals in hand)
                        path B: bronze intake     (arrays in hand — raw optional)
 3. validate &amp; publish  service-side; evidence either way; failure publishes nothing
-4. tag a release       the citable name
-5. open &amp; analyze      lazy Xarray over a scoped grant; pin the snapshot id
+4. open &amp; analyze      lazy Xarray over a scoped grant; pin the snapshot id
 </pre>
 
 <h2 id="access">2. Step 0 — access</h2>
@@ -230,23 +229,7 @@ them on the job and dataset pages; the client raises them as a typed error and
 <code>huron jobs show &lt;id&gt;</code> reprints them. Nothing broken is ever published, so
 "published" needs no asterisk.</p>
 
-<h2 id="release">7. Step 4 — tag a release</h2>
-
-<table>
-<tr><th></th><th>Web UI</th><th>Python client</th></tr>
-<tr><td class="k">Tag</td>
-<td>Revision history → <em>Create release</em> on the chosen revision: tag (<code>v1.0</code>),
-title, purpose. The UI shows the tag as a pinned label against that revision forever.</td>
-<td><code>huron release create --dataset … --revision 1 --tag v1.0</code>;
-<code>client.releases.tag(…)</code>. Deliberate and separate — never a side effect of
-ingest.</td></tr>
-</table>
-
-<p>Tags are immutable (invariant <span class="inv">M</span>): <code>dataset@v1.0</code> resolves
-to the same bytes forever, which is what makes it citable in a paper. The control flow, and why a
-tag can only ever name a committed revision, is <a href="layer-raw.html#flow-release">Raw §6.3</a>.</p>
-
-<h2 id="analyze">8. Step 5 — open, analyze, cite</h2>
+<h2 id="analyze">7. Step 4 — open, analyze, cite</h2>
 
 <table>
 <tr><th></th><th>Web UI</th><th>Python client</th></tr>
@@ -260,10 +243,11 @@ Chunk reads go straight to object storage.</td></tr>
 <tr><td class="k">Cite</td>
 <td colspan="2">Reproducibility is ambient: <code>ds.attrs["huron"]</code> carries the snapshot
 id; <code>huron.open_snapshot("B183")</code> reproduces the exact view forever. Papers cite the
-snapshot id or the release tag, never "latest".</td></tr>
+snapshot id or the Raw revision number, never "latest"; release tags were retired on
+2026-10-15.</td></tr>
 </table>
 
-<h2 id="surfaces">9. What this demands of each surface</h2>
+<h2 id="surfaces">8. What this demands of each surface</h2>
 
 <ul>
 <li><strong>Web UI:</strong> schema-driven envelope forms (JSON Schema → form, from the effective

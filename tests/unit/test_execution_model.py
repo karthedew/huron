@@ -1,9 +1,9 @@
 """The event-loop/threadpool boundary: which operations block, and where the loop must never stall.
 
-Pins which of the 63 operations run on the event loop directly (they only
-``await``) versus which wrap a blocking call in ``asyncify``: every
-hierarchy, ingest and revision operation now awaits its store, so all 63
-are coroutine functions, and the tripwire this module keeps is that the
+Pins which of the service's operations run on the event loop directly (they
+only ``await``) versus which wrap a blocking call in ``asyncify``: every
+hierarchy, ingest and revision operation now awaits its store, so all of
+them are coroutine functions, and the tripwire this module keeps is that the
 raw store's filesystem calls stay off the loop thread.
 """
 
@@ -73,9 +73,6 @@ EXPECTED_COROUTINE_FUNCTION = {
     "get_revision": True,
     "get_revision_manifest": True,
     "get_revision_file": True,
-    "create_release": True,
-    "list_releases": True,
-    "resolve_release": True,
     "list_layers": True,
     "create_dataset_ingest_session": True,
     "create_project_ingest_session": True,

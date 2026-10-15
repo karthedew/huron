@@ -165,29 +165,6 @@ def slug_cursor_key(cursor: str | None) -> tuple[str, UUID] | None:
         raise InvalidCursor(f"cursor id is not a valid UUID: {raw_id!r}") from exc
 
 
-def tag_cursor_key(cursor: str | None) -> tuple[str] | None:
-    """Decode a client's cursor into the one-part ``(tag,)`` key a tag-ordered window resumes after.
-
-    Args:
-        cursor: The ``after`` value a client sent, or ``None`` to start
-            from the beginning of the collection.
-
-    Returns:
-        The tag the window resumes after, as a one-tuple, or ``None``
-        when ``cursor`` is ``None``.
-
-    Raises:
-        InvalidCursor: If the decoded cursor does not have exactly one
-            part.
-    """
-    parts = after_key(cursor)
-    if parts is None:
-        return None
-    if len(parts) != 1:
-        raise InvalidCursor(f"cursor names {len(parts)} parts, expected a single tag")
-    return (parts[0],)
-
-
 def paginate[RecordT, ViewT: BaseModel](
     records: Sequence[RecordT],
     view: type[ViewT],

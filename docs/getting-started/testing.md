@@ -70,7 +70,7 @@ are written by hand in two files and nothing else keeps them in sync.
 
 ## Integration
 
-`tests/integration/` exercises catalog creation/descriptions/releases and Raw upload
+`tests/integration/` exercises catalog creation/descriptions and Raw upload
 across real PostgreSQL and POSIX storage, including application restarts. Like the
 contract suite, it needs a Docker daemon.
 

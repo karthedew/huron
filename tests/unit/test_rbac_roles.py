@@ -112,7 +112,6 @@ def test_service_account_authority_is_org_scoped_silver_gold_crud() -> None:
         assert decide(bindings, feed, "data.write", scope, layer=layer) is Decision.DENY, layer
         assert decide(bindings, feed, "data.read", scope, layer=layer) is Decision.DENY, layer
     assert decide(bindings, feed, "rbac.binding_manage", scope) is Decision.DENY
-    assert decide(bindings, feed, "release.create", scope) is Decision.DENY
     foreign_scope = Scope(
         ScopeType.DATASET,
         dataset_id,

@@ -1,4 +1,4 @@
-"""Raw revision, release and staging layout constructors."""
+"""Raw revision and staging layout constructors."""
 
 from __future__ import annotations
 
@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from huron.core.catalog.paths import dataset_dir
 from huron.core.foundation.errors import PathRuleViolation
-from huron.core.foundation.names import Slugged, validate_tag
 
 if TYPE_CHECKING:
     from pathlib import PurePosixPath
     from uuid import UUID
+
+    from huron.core.foundation.names import Slugged
 
 
 class StagingPaths(NamedTuple):
@@ -54,25 +55,6 @@ def revision_dir(
         / "revision"
         / f"{number:06d}--{revision_id.hex}"
     )
-
-
-def release_tag_file(
-    root: PurePosixPath, organization: Slugged, project: Slugged, dataset: Slugged, tag: str
-) -> PurePosixPath:
-    """Build a dataset-level release tag path beside Raw, outside sealed revisions.
-
-    Args:
-        root: Data root.
-        organization: Owning organization.
-        project: Owning project.
-        dataset: Owning dataset.
-        tag: Immutable tag name.
-
-    Returns:
-        The release JSON path.
-    """
-    validate_tag(tag)
-    return dataset_dir(root, organization, project, dataset) / "releases" / f"{tag}.json"
 
 
 def staging_dir(root: PurePosixPath, ingest_id: UUID) -> PurePosixPath:

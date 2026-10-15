@@ -7,7 +7,7 @@
 -- to carry what a schema dump cannot - the trigger annotations, the vocabularies,
 -- and the invariant each rule serves. Do not replace it with pg_dump output.
 --
--- Reflects: 0012_raw_web_catalogs
+-- Reflects: 0013_retire_releases
 --
 -- Every revision that changes the schema updates this file in the same commit
 -- and moves the Reflects line to the new head. scripts/check_schema_map.py
@@ -26,7 +26,7 @@
 -- metadata mirrors, no text search (invariant A: LanceDB owns matching;
 -- sidecars authoritative).
 -- ============================================================================
--- 1. Hierarchy: Organization -> Project -> Dataset -> revisions + release tags
+-- 1. Hierarchy: Organization -> Project -> Dataset -> revisions
 -- ============================================================================
 
 CREATE TABLE organizations (
@@ -87,7 +87,7 @@ CREATE TABLE dataset_revisions (
     -- [app] service.api.stores.ingest begin_ingest: linear and gap-free -
     -- max(revision_number) + 1 over every row, taken under
     -- SELECT ... FOR UPDATE on the datasets row; immutable (invariant E) -
-    -- no constraint or trigger holds that; contrast releases_immutable below.
+    -- no constraint or trigger holds that.
     id uuid PRIMARY KEY,
     dataset_id uuid NOT NULL REFERENCES datasets,
     revision_number integer NOT NULL,   -- 1..999999; UNIQUE (dataset_id, revision_number)
@@ -97,26 +97,16 @@ CREATE TABLE dataset_revisions (
     file_count integer NOT NULL, total_bytes bigint NOT NULL,
     state text NOT NULL DEFAULT 'COMMITTED',
     committed_by text NOT NULL, committed_at timestamptz NOT NULL
-    -- [db] UNIQUE (id, dataset_id) dataset_revisions_id_dataset_id_unique: the
-    -- composite FK target for releases_revision_dataset_fk below
+    -- [db] UNIQUE (id, dataset_id) dataset_revisions_id_dataset_id_unique:
+    -- redundant with the primary key; no foreign key has cited it since
+    -- release tags were dropped (0013)
     -- [db] dataset_revisions_state_vocabulary CHECK IN ('COMMITTED',
     -- 'EXPIRED_PARTIAL','EXPIRED','PURGED','DEGRADED'): COMMITTED is ingest's
     -- only output; retention, purge and the reconciler write the rest
 );
 
-CREATE TABLE releases (               -- immutable tags on one revision (invariant M)
-    id uuid PRIMARY KEY,
-    dataset_id uuid NOT NULL REFERENCES datasets,
-    tag text NOT NULL,                  UNIQUE (dataset_id, tag),
-    revision_id uuid NOT NULL,
-    title text, created_by text NOT NULL, created_at timestamptz NOT NULL,
-    withdrawn_at timestamptz, withdrawn_reason text
-    -- [db] trigger releases_immutable: every column except withdrawal is frozen;
-    -- a wrong tag is withdrawn (tombstone), never repointed.
-    -- [db] FOREIGN KEY (revision_id, dataset_id) REFERENCES dataset_revisions (id, dataset_id)
-    -- releases_revision_dataset_fk: a release cites a revision of its own dataset only
-);
--- [db] index releases_revision (revision_id, dataset_id)
+-- releases (release tags) and its releases_immutable() trigger function
+-- dropped (0013): a dataset keeps only its full, numbered revisions
 
 CREATE TABLE revision_amendments (    -- project-admin metadata amendments, append-only
     id uuid PRIMARY KEY,
@@ -245,7 +235,8 @@ CREATE TABLE roles (                   -- seeded from huron.pkg.rbac.roles.ROLES
 );
 
 CREATE TABLE capabilities (
-    code text PRIMARY KEY,               -- e.g. organization.update, data.write
+    code text PRIMARY KEY,               -- e.g. organization.update, data.write;
+                                         -- release.create removed (0013)
     description text NOT NULL DEFAULT ''
 );
 

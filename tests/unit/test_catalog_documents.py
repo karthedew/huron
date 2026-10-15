@@ -118,6 +118,22 @@ def test_manifest_bytes_are_canonical_and_hash_to_the_manifest_identity() -> Non
     assert "é".encode() in rendered
 
 
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        pytest.param(_entry(size=-1), "negative file size", id="negative-size"),
+        pytest.param(_entry(sha256="A" * 64), "invalid SHA-256", id="upper-case-digest"),
+        pytest.param(_entry(sha256="a" * 63), "invalid SHA-256", id="short-digest"),
+    ],
+)
+def test_validate_manifest_refuses_a_negative_size_or_a_malformed_digest(
+    entry: ManifestEntry, message: str
+) -> None:
+    """An entry with a negative size, or a digest not 64 lower-case hex digits, is refused."""
+    with pytest.raises(ValueError, match=message):
+        validate_manifest([entry])
+
+
 def test_decode_manifest_round_trips_nfc_zero_byte_and_deep_paths_with_the_same_identity() -> None:
     """decode_manifest rebuilds a manifest with the same entries and identity it was given."""
     manifest = _manifest(

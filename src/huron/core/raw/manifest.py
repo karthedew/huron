@@ -4,9 +4,9 @@ A manifest is the client's declaration of a raw revision: every file's
 payload-relative path, size and SHA-256. This module checks that
 declaration against the path rules and the configured size limits, and
 defines *content identity* - the SHA-256 of a document's RFC 8785 (JCS)
-canonical serialization - which is how a manifest, a generation document
-or a release record gets a hash that every implementation computes the
-same way, whatever key order or whitespace it was written with.
+canonical serialization - which is how a manifest or a generation
+document gets a hash that every implementation computes the same way,
+whatever key order or whitespace it was written with.
 """
 
 from __future__ import annotations

@@ -139,11 +139,10 @@ intrinsic (<a href="#service-accounts">below</a>).</p>
 <td><code>dataset.discover</code></td>
 <td>read, every layer</td></tr>
 <tr><td><code>developer</code></td><td>org · project · dataset</td>
-<td>discover; <code>dataset.create</code>, <code>dataset.update</code>,
-<code>release.create</code></td>
+<td>discover; <code>dataset.create</code>, <code>dataset.update</code></td>
 <td>read, every layer; <strong>write raw + bronze</strong> — the scientist/engineer role:
 create datasets, commit raw revisions, run <a href="layer-bronze.html#manual-intake">manual
-bronze intake</a>, tag releases</td></tr>
+bronze intake</a></td></tr>
 <tr><td><code>project_admin</code></td><td>org · project</td>
 <td>everything a developer has on datasets, plus <code>project.update</code>,
 <code>project.policy_attach</code>, <code>dataset.policy_attach</code>,
@@ -197,7 +196,7 @@ only</strong></td></tr>
 <p>No raw, no bronze, in either direction: raw and bronze are the human contribution surface
 (developers), and the most sensitive material lives in raw. "Delete" in CRUD means the snapshot
 lifecycle — replacing working branches, region replacement, superseding — never destroying
-history: purge stays the two-person human flow, and release tags stay immutable.</p>
+history: purge stays the two-person human flow.</p>
 
 <p><strong>The load-bearing invariant is the principal kind:</strong> silver/gold
 <code>data.write</code> is held by service-account principals exclusively, and now by
@@ -277,7 +276,6 @@ export-controlled geometry).</p>
 <table>
 <tr><th>Action</th><th>Allowed</th></tr>
 <tr><td>Upload revision / correction</td><td>developer</td></tr>
-<tr><td>Create / withdraw a release tag</td><td>developer, project_admin</td></tr>
 <tr><td>Read raw <em>metadata</em></td><td>reader and above</td></tr>
 <tr><td>Read raw <em>payload</em></td><td>reader today; intended: an explicit stricter grant (§2 note)</td></tr>
 <tr><td>Amend metadata post-commit</td><td>project_admin (append-only, allow-listed fields)</td></tr>
@@ -324,12 +322,12 @@ organization.create      organization.update      organization.delete
 organization.policy_attach
 project.create           project.update           project.policy_attach
 dataset.create           dataset.update           dataset.policy_attach
-dataset.discover         release.create
+dataset.discover
 rbac.binding_manage      service_account.manage   user.manage
 data.read {layer…}       data.write {layer…}      # the two layer-scoped capabilities
 </pre>
 
-<p>Seventeen capabilities total; <code>data.read</code>/<code>data.write</code> carry the layer
+<p>Sixteen capabilities total; <code>data.read</code>/<code>data.write</code> carry the layer
 dimension as <code>Binding.layers</code> and everything else is control-plane. Retention, purge,
 amendment and audit acts are guarded by the admin capabilities on their scope today; splitting
 them into finer capabilities is a future refinement, not a v1 need.</p>
@@ -432,7 +430,7 @@ organization_admin    → creates projects; org policies (schemas, retention def
 project_admin         → membership and bindings; project policies (enrichment schemas,
                         retention, quota); amendments; Gold publication approval
 developer             → creates datasets (ACTIVE immediately); commits raw revisions;
-                        manual bronze intake; tags releases; submits candidate products
+                        manual bronze intake; submits candidate products
 reader                → discovers and reads what its scope allows
 service accounts (roleless, org-scoped)       → the only silver/gold writers; dataset CRUD
 platform service identities (internal)        → bronze builds/intake, retention, projection

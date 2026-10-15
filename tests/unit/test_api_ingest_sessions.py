@@ -1339,13 +1339,6 @@ def test_commit_publishes_the_revision_and_its_events(
     outbox_kinds = [e.kind for e in stores.hierarchy._outbox]
     assert outbox_kinds.count("revision.committed") == 1
 
-    release = client.post(
-        f"/api/v1/datasets/{dataset_id}/releases",
-        json={"tag": "v1", "revision_number": 1},
-        headers=dev_headers("bob"),
-    )
-    assert release.status_code == 201, release.text
-
 
 def test_commit_requires_the_current_etag_and_the_declared_digest(
     client: TestClient, stores: ApiStores

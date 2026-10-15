@@ -15,77 +15,11 @@ if TYPE_CHECKING:
     from pathlib import Path, PurePosixPath
     from uuid import UUID
 
-    from huron.core.catalog.types import Dataset, Window
-    from huron.core.security.rules import Visibility
+    from huron.core.catalog.types import Dataset
 
     from .documents import CommitIntent
     from .ingest import IngestFile, IngestSession
-    from .types import AuditEvent, LedgerEntry, OutboxEvent, Release, RevisionRecord, RevisionRef
-
-
-class ReleaseTransaction(RetryTransaction, Protocol):
-    """An immutable tag insert and receipt sharing one transaction."""
-
-    async def insert_release(self, item: Release) -> None:
-        """Insert a release with dataset/tag uniqueness and registered target validation.
-
-        Args:
-            item: Complete release record.
-        """
-        ...
-
-
-class ReleaseStore(CatalogReaders, Protocol):
-    """Release lookup and tag publication with committed hierarchy ancestry."""
-
-    def transaction(self) -> AbstractAsyncContextManager[ReleaseTransaction]:
-        """Open one atomic tag and retry transaction.
-
-        Returns:
-            The writer, committing only on clean exit.
-        """
-        ...
-
-    async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
-        """Resolve a tag after checking its dataset's discoverability.
-
-        Args:
-            dataset_id: Owning dataset.
-            tag: Immutable tag name.
-            visibility: Dataset discovery projection.
-
-        Returns:
-            The stored release.
-        """
-        ...
-
-    async def revision_ref(self, dataset_id: UUID, revision_number: int) -> RevisionRef:
-        """Resolve a registered release target without imposing a state or read predicate.
-
-        Args:
-            dataset_id: Authorized target dataset.
-            revision_number: Registered revision number.
-
-        Returns:
-            The target identity and manifest digest.
-        """
-        ...
-
-    async def releases(
-        self, dataset_id: UUID, visibility: Visibility, *, limit: int, after: tuple[str] | None
-    ) -> Window[Release]:
-        """Page tags in byte order after checking dataset discovery.
-
-        Args:
-            dataset_id: Owning dataset.
-            visibility: Discovery projection.
-            limit: Maximum returned records.
-            after: Exclusive tag cursor or None.
-
-        Returns:
-            The visible tag window.
-        """
-        ...
+    from .types import AuditEvent, LedgerEntry, OutboxEvent, RevisionRecord
 
 
 class HierarchyWriter(RetryTransaction, Protocol):
@@ -234,7 +168,7 @@ class RevisionStore(Protocol):
 
 
 class HierarchyStore(RevisionStore, CatalogReaders, Protocol):
-    """Raw upload persistence; no Catalog creation, description or release writes."""
+    """Raw upload persistence; no Catalog creation or description writes."""
 
     def transaction(self) -> AbstractAsyncContextManager[HierarchyWriter]:
         """Open one atomic Raw mutation transaction.
@@ -451,14 +385,5 @@ class RawStore(Protocol):
         Args:
             staging: Completed envelope with COMMITTED marker.
             final: Revision destination; retries require validated frozen evidence.
-        """
-        ...
-
-    def write_tag_once(self, tag_file: PurePosixPath, payload: bytes) -> None:
-        """Exclusively create a durable tag without replacing existing content.
-
-        Args:
-            tag_file: Dataset-level tag path.
-            payload: Complete canonical tag bytes.
         """
         ...

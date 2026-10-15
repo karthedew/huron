@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     from uuid import UUID
 
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,79}$")
-TAG = re.compile(r"^[a-z0-9][a-z0-9._-]{1,62}$")
 ORG_PROJECT_SLUG_MAX = 62
 DATASET_SLUG_MAX = 80
 RESERVED_ROOT_SLUGS = frozenset(
@@ -75,16 +74,3 @@ def validate_org_slug(slug: str) -> None:
     validate_slug(slug, ORG_PROJECT_SLUG_MAX)
     if slug in RESERVED_ROOT_SLUGS:
         raise PathRuleViolation(f"reserved organization slug: {slug!r}")
-
-
-def validate_tag(tag: str) -> None:
-    """Check a release tag's lexical filename rules.
-
-    Args:
-        tag: Candidate tag.
-
-    Raises:
-        PathRuleViolation: If the tag violates the lexical rules.
-    """
-    if not TAG.fullmatch(tag):
-        raise PathRuleViolation(f"invalid release tag: {tag!r}")

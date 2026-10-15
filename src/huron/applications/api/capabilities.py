@@ -13,7 +13,7 @@ from huron.core.catalog.ports import (
     GenerationStorage,
 )
 from huron.core.raw.ports import HierarchyStore as RawPersistence
-from huron.core.raw.ports import HierarchyWriter, RawStore, ReleaseStore, ReleaseTransaction
+from huron.core.raw.ports import HierarchyWriter, RawStore
 from huron.core.raw.web_ports import RawPublicationStore
 from huron.core.security.facts import CatalogFacts
 
@@ -21,15 +21,11 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
 
-class Mutation(
-    CreationTransaction, DescriptionTransaction, HierarchyWriter, ReleaseTransaction, Protocol
-):
+class Mutation(CreationTransaction, DescriptionTransaction, HierarchyWriter, Protocol):
     """The capabilities one shared adapter transaction structurally supplies."""
 
 
-class HierarchyStore(
-    CreationStore, DescriptionStore, RawPersistence, ReleaseStore, CatalogFacts, Protocol
-):
+class HierarchyStore(CreationStore, DescriptionStore, RawPersistence, CatalogFacts, Protocol):
     """A single adapter supplies independent consumer-owned views over one connection."""
 
     def transaction(self) -> AbstractAsyncContextManager[Mutation]:

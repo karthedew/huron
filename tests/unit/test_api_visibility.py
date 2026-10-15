@@ -243,7 +243,6 @@ def test_reads_of_invisible_resources_answer_not_found(client: TestClient) -> No
         f"/api/v1/projects/{fixture.project_b1}",
         f"/api/v1/datasets/{fixture.dataset_b1}",
         f"/api/v1/projects/{fixture.project_a2}",
-        f"/api/v1/datasets/{fixture.datasets_a1[0]}/releases/does-not-exist",
         f"/api/v1/datasets/{fixture.dataset_b1}/layers",
     ]
     for path in paths:
@@ -300,7 +299,6 @@ def test_a_principal_with_no_bindings_sees_nothing(client: TestClient) -> None:
         f"/api/v1/datasets/{fixture.datasets_a1[0]}",
         f"/api/v1/datasets/{fixture.dataset_a2}",
         f"/api/v1/datasets/{fixture.dataset_b1}",
-        f"/api/v1/datasets/{fixture.datasets_a1[0]}/releases",
         f"/api/v1/datasets/{fixture.datasets_a1[0]}/layers",
     ]
     for path in invisible_paths:

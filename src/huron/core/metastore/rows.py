@@ -28,7 +28,7 @@ from huron.core.raw.ingest import (
     IngestState,
     UploadAction,
 )
-from huron.core.raw.types import Release, RevisionRecord, RevisionRef
+from huron.core.raw.types import RevisionRecord
 from huron.core.security.apikeys import ApiKeyRecord
 from huron.core.security.password import CredentialRecord
 from huron.core.security.principals import PrincipalRecord
@@ -282,55 +282,6 @@ def dataset(row: asyncpg.Record) -> Dataset:
         generation=row["generation"],
         version=row["version"],
         created_at=row["created_at"],
-    )
-
-
-def release(row: asyncpg.Record) -> Release:
-    """Decode one ``releases`` row joined to its revision's number.
-
-    ``revision_number`` is not a column of ``releases``; the query this
-    decodes joins to ``dataset_revisions`` on ``revision_id`` to bring it
-    in, since a release names its revision both ways.
-
-    Args:
-        row: A row selecting ``id, dataset_id, tag, revision_id,
-            revision_number, title, created_by, created_at``, the last
-            four columns except ``revision_number`` from ``releases`` and
-            ``revision_number`` from the joined ``dataset_revisions`` row.
-
-    Returns:
-        The release, with ``title`` as stored - including ``None`` when
-        the column is null.
-    """
-    return Release(
-        id=row["id"],
-        dataset_id=row["dataset_id"],
-        tag=row["tag"],
-        revision_id=row["revision_id"],
-        revision_number=row["revision_number"],
-        title=row["title"],
-        created_by=row["created_by"],
-        created_at=row["created_at"],
-    )
-
-
-def revision_ref(row: asyncpg.Record) -> RevisionRef:
-    """Decode one ``dataset_revisions`` row into the catalog's revision identity.
-
-    ``revision_number`` becomes ``RevisionRef.number``.
-
-    Args:
-        row: A row selecting ``id, dataset_id, revision_number,
-            manifest_sha256``.
-
-    Returns:
-        The revision's identity and manifest digest.
-    """
-    return RevisionRef(
-        id=row["id"],
-        dataset_id=row["dataset_id"],
-        number=row["revision_number"],
-        manifest_sha256=row["manifest_sha256"],
     )
 
 

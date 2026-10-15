@@ -265,7 +265,7 @@ def create_app(
         bootstrap grant, running the ingest expiry sweep and suspending at
         ``yield`` all happen inside one block whose ``finally`` closes the
         pool and the HTTP client, so a failure at any point after the pool
-        opens releases it before the error surfaces - including a
+        opens still closes it before the error surfaces - including a
         discovery failure that happens after the pool is already open.
         The sweep's task starts only once the runtime is published and the
         bootstrap grant has run, and is cancelled and awaited before the

@@ -40,8 +40,8 @@ class ApiStores:
     test exactly one object to inject in place of that wiring.
 
     Attributes:
-        hierarchy: Durable storage for the organization/project/dataset/
-            release hierarchy and its idempotency claims.
+        hierarchy: Durable storage for the organization/project/dataset
+            hierarchy and its idempotency claims.
         rbac: Storage for role bindings, service accounts and policies.
         api_keys: Storage for API keys.
         credentials: Storage for password credentials.

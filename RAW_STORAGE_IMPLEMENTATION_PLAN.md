@@ -1,6 +1,6 @@
 # Huron Raw storage redesign — implementation plan
 
-Status: **Milestone 0 in progress (M0.1, M0.2 done).** Branch `raw-storage`, baseline commit `8b6f270`.
+Status: **Milestone 0 done (M0.1–M0.3).** Branch `raw-storage`, baseline commit `8b6f270`.
 Design: `RAW_STORAGE_DESIGN.md` (being finalized; Milestones 1+ are added from it once it is
 reviewed). Milestone 0 holds only work the owner decided independently of the remaining design
 sections, and was approved to start early on 2026-10-15.
@@ -23,7 +23,7 @@ These apply to every task in this plan.
 
 - **Gate.** Every implementation, fix and verification pass runs the complete gate below from the
   repository root. Every command must exit 0. Configured thresholds in `pyproject.toml` govern
-  (`fail_under = 96.01`; never lower it).
+  (`fail_under` is a ratchet; it moves down only under the "Coverage floor re-baseline" rule).
 
   ```text
   uv run ruff check src
@@ -55,11 +55,14 @@ These apply to every task in this plan.
 - **Coverage.** Every file a task modifies (not deletes) reaches 100% line coverage, unless the
   verifier names a specific line as unreachable defensive code. PostgreSQL adapter modules are
   measured with `uv run pytest -m "unit or contract" --cov=src/huron --cov-report=term-missing`.
-- **Coverage floor on deletions (owner decision, 2026-10-15).** When a task deletes code,
-  `fail_under` in `pyproject.toml` may be reset to the newly measured unit total, rounded down to
-  two decimals, provided the drop comes entirely from deleted covered statements (compare covered
-  and total statement counts before and after) and every new or modified file is at 100%. Record
-  the before/after numbers under "Execution notes". The floor rises again as tests are added.
+- **Coverage floor re-baseline (owner decisions, 2026-10-15).** The floor is a ratchet on the unit
+  run. `fail_under` in `pyproject.toml` may be reset to the newly measured unit total, rounded down
+  to two decimals, only when the verifier confirms from covered and total statement counts before
+  and after the task that the whole drop comes from deleted statements that were covered, new
+  PostgreSQL adapter statements that `uv run pytest -m "unit or contract" --cov=src/huron` covers in
+  full, or both — and that every new or modified file is at 100%. Record the before/after counts
+  under "Execution notes". The floor rises again as tests are added. This matches the `pytest` pass
+  condition in `.claude/commands/implement-markdown.md`.
 - **Whole-file deletions.** Implementation agents cannot delete tracked files; the orchestrator
   removes every whole file or directory a task lists (with `git rm`) before the implementation pass.
   An implementer that finds another whole file to delete reports it and stops; it does not delete it.
@@ -150,7 +153,7 @@ These apply to every task in this plan.
   `huron_app_verified` and `huron_cutover`). Kept on purpose for the Raw milestones:
   `committed-v1.json` decoding and `generation-v1.json`.
 - Coverage: deleting about 1,390 fully covered statements lowers the unit total below 96.01; apply
-  the "Coverage floor on deletions" rule and record the numbers.
+  the "Coverage floor re-baseline" rule and record the numbers.
 - Verification: the full gate (all commands exit 0); `make docs`; `rg -n "core\.integrity|lakectl|
   metastore\.legacy|metastore\.maintenance|rawstore\.maintenance" src tests pyproject.toml
   AGENTS.md README.md docs zensical.toml` returns nothing outside `docs/history.md` and ADR 0001;
@@ -199,7 +202,7 @@ These apply to every task in this plan.
   src tests` returns nothing; `rg -n "releases" src` returns nothing outside comments that describe
   history (there should be none).
 - Dependencies: M0.2.
-- Status: pending
+- Status: done (verification passed on attempt 2, 2026-10-15)
 
 ## Execution notes
 
@@ -245,3 +248,69 @@ here as tasks complete.
 - Untracked leftovers: `src/huron/applications/lakectl/` and `src/huron/core/integrity/` still
   hold ignored `__pycache__` bytecode from before the deletion; removing it was refused in this
   session. Nothing tracked remains there and no gate command reads it.
+
+### M0.3
+
+- Coverage floor (ratchet). Unit coverage before: 5,804 of 6,086 statements (95.37%, 1,532
+  tests at `248f7bf`, re-measured). After: 5,623 of 5,880 (95.629%, 1,510 tests). Of the 206
+  removed statements, 183 were covered and 23 were the PostgreSQL release reads and writes in
+  `core/metastore/hierarchy.py`, which only the contract suite exercised; two previously missed
+  refusal lines of `core/raw/manifest.py` are now covered. The total rose, so `fail_under` was
+  raised from 95.36 to 95.62. Every modified source file is at 100% in the unit run except
+  `core/metastore/hierarchy.py`, which is at 99.60% under `-m "unit or contract"`: its one
+  missing line (761) is the pre-existing `RuntimeError` for an idempotency claim that vanishes
+  mid-transaction, which its docstring calls unreachable because nothing deletes an
+  `idempotency_records` row.
+- Test counts against `248f7bf` (1,532 / 31 / 15). Unit 1,510 (−22). Removed 33: 14 release API
+  tests in `test_api_catalog_hierarchy.py` (its combined dataset/release no-ETag test became a
+  dataset-only test), 8 in `test_repository_hierarchy.py`, 3 tag-cursor tests in
+  `test_api_pagination.py`, 3 in `test_hierarchy_store_memory.py` (two release reads, plus the
+  revision-read test now shared by both backends as `scenario_5_revisions`, unknown-dataset check
+  included), 2 tag-path tests in `test_catalog_paths.py`, 2 row mappers in `test_stores_rows.py`
+  and the tag-file test in `test_rawstore_generation.py`. Added 11: 3 `validate_manifest` refusal
+  cases in `test_catalog_documents.py` and 8 request-fingerprint cases in the new
+  `test_foundation_retry.py`. Contract 32 (+1: the release-retirement migration test).
+  Integration 14 (−1: `test_catalog_releases.py`). Import-linter keeps 16 contracts.
+- Duplication: the guard passes without a baseline edit (123 clones / 41 groups against the
+  baseline's 144 / 48).
+- Migration contract: `test_catalog_store.py` seeds a tagged revision at `0012`, upgrades to head
+  and checks that every relation, constraint, trigger and function named for `releases` is gone,
+  no capability or grant matching `release.%` remains, the capability table equals
+  `CAPABILITIES`, the developer role's description matches `ROLES`, the revision survives, and the
+  downgrade raises without moving the version. It matches the retired capability by that `LIKE`
+  pattern, so the verification `rg` stays empty. `test_commit_intents.py` pins the new head. The
+  `0008` round-trip probe `releases_revision_dataset_fk` stays: that test runs at `0010`, where the
+  release DDL of `0008` still exists.
+- Deviations beyond the listed code: `foundation/names.py` loses the tag pattern and
+  `validate_tag`, `foundation/retry.py` the `release` replay kind and `routes/v1/pagination.py`
+  `tag_cursor_key` (each had only release callers). `request_sha256` now takes only string
+  fields: the release route was its only caller to pass `None` (the optional title), so the
+  absent-field marker went with it. Digests of string fields are byte-for-byte unchanged, so
+  stored fingerprints stay valid; the five unit-test `_claim` helpers take string parts, and the
+  new `test_foundation_retry.py` pins the encoding. `core/metastore/hierarchy.py` also loses
+  `_REVISION_MANIFEST_CONSTRAINT`, unused since migration `0010` dropped that constraint.
+  Docstrings in `catalog/retry.py`, `raw/manifest.py`, `api/app.py` (the pool "releases" became
+  "closes") and `api/runtime.py` no longer mention releases. The developer role description
+  changes from "create and tag datasets" to "create and update datasets" in `roles.py` and in
+  the seeded row (migration `0013`). `tests/raw_web_support.py` paged revisions through the
+  deleted `revision_ref`; its `MemoryRawWebStore.revision_ids` now reads the in-memory
+  hierarchy's revisions directly, as other tests do, mirroring the PostgreSQL query, and
+  `raw_web_stores()` builds that `InMemoryHierarchyStore` itself, so the fake's annotation
+  matches what its caller passes.
+- Documentation beyond the listed pages: `catalog-search.html`, `core-map.html`, `frontend.html`,
+  `layer-gold.html` and `python-client.html` drop release tags; `rbac.html` also drops tagging
+  from the developer's duties and the action table and now counts sixteen capabilities;
+  `architecture.html` drops releases from Raw's and PostgreSQL's responsibilities; the roadmap
+  also updates its package map, the P3 rebuild gate and UI milestone 7. `AGENTS.md`,
+  `docs/backend-design.md`, `docs/index.md` and `docs/getting-started/` (`conventions.md`,
+  `repository-layout.md`, `testing.md`) drop releases from Raw's scope; `docs/history.md` records
+  the retirement; `IMPLEMENTATION_PLAN.md`'s fixed contracts drop release cursors and tag
+  ordering. ADR-0002 still lists release tags among Raw's responsibilities; it was left as an
+  accepted decision record. The web's fixture-backed release routes are untouched, as planned.
+- Leftovers: the `dataset_revisions_id_dataset_id_unique` constraint (redundant with the primary
+  key; only the dropped release foreign key cited it), idempotency receipts of kind `release` in
+  `idempotency_records`, and tag documents already written under each dataset's `releases/`
+  directory on the data root. No foreign key cites the constraint any more, and nothing reads the
+  tag documents. The claim path still reads a live `release` receipt, as it reads every receipt,
+  and refuses reuse of its key for another request until it expires 24 hours after its claim; no
+  current request can replay it.

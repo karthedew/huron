@@ -22,8 +22,7 @@ async def claimed_result[RecordT](
         writer: The open transaction's writer.
         claim: The claim this write is staking.
         read: Given the id ``claim`` was originally remembered under,
-            returns the resource it named. A release ignores the id,
-            since its own read is keyed by dataset and tag instead.
+            returns the resource it named.
 
     Returns:
         The resource an earlier, identical request already created, or

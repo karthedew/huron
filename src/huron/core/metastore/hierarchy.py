@@ -29,8 +29,6 @@ from huron.core.foundation.errors import (
     ResourceNotFound,
 )
 from huron.core.foundation.retry import Replay
-from huron.core.raw.errors import TagExists
-from huron.core.raw.types import RevisionRef
 from huron.core.security.rules import ProjectVisibility
 
 from . import rows
@@ -45,13 +43,13 @@ from .queries import _DATASETS, _ORGANIZATIONS, _PROJECTS, _PostgresCollection
 from .security_facts import SecurityFacts
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Iterable
+    from collections.abc import AsyncIterator, Callable
 
     from huron.core.foundation.clock import Clock
     from huron.core.foundation.retry import IdempotencyClaim
     from huron.core.raw.documents import CommitIntent
     from huron.core.raw.ingest import IngestSession
-    from huron.core.raw.types import AuditEvent, LedgerEntry, OutboxEvent, Release, RevisionRecord
+    from huron.core.raw.types import AuditEvent, LedgerEntry, OutboxEvent, RevisionRecord
     from huron.core.security.rules import Visibility
 
 #: How long an idempotency claim stands before it may be taken over by a
@@ -71,25 +69,6 @@ class SystemClock:
         return datetime.now(UTC)
 
 
-def _find_revision(
-    revisions: Iterable[RevisionRecord], dataset_id: UUID, number: int
-) -> RevisionRecord | None:
-    """Return the revision at ``(dataset_id, number)`` among ``revisions``, or None.
-
-    Args:
-        revisions: The revisions to search, live rows and staged ones alike.
-        dataset_id: The dataset the wanted revision belongs to.
-        number: The revision's 1-based position within that dataset.
-
-    Returns:
-        The matching revision, or None if none of ``revisions`` matches.
-    """
-    for revision in revisions:
-        if revision.dataset_id == dataset_id and revision.number == number:
-            return revision
-    return None
-
-
 @dataclass(slots=True)
 class TransactionBuffer:
     """Everything staged by one open transaction, applied atomically or not at all.
@@ -98,7 +77,6 @@ class TransactionBuffer:
         organizations: Organizations to insert or replace, by id.
         projects: Projects to insert or replace, by id.
         datasets: Datasets to insert or replace, by id.
-        releases: Releases to insert, by ``(dataset_id, tag)``.
         revisions: Revisions to insert, by id.
         sessions: Ingest sessions to insert or replace, by id.
         files: Ingest ledger entries to insert or replace, by file id.
@@ -111,7 +89,6 @@ class TransactionBuffer:
     organizations: dict[UUID, Organization] = field(default_factory=dict)
     projects: dict[UUID, Project] = field(default_factory=dict)
     datasets: dict[UUID, Dataset] = field(default_factory=dict)
-    releases: dict[tuple[UUID, str], Release] = field(default_factory=dict)
     revisions: dict[UUID, RevisionRecord] = field(default_factory=dict)
     sessions: dict[UUID, IngestSession] = field(default_factory=dict)
     intents: dict[UUID, CommitIntent] = field(default_factory=dict)
@@ -264,32 +241,6 @@ class _TransactionWriter(InMemoryIngestWriter):
         ):
             raise SlugExists(f"dataset slug already exists: {item.slug!r}")
         self._buffer.datasets[item.id] = item
-
-    async def insert_release(self, item: Release) -> None:
-        """Insert one release row, tagging a dataset revision.
-
-        Args:
-            item: The release to insert, fully formed.
-
-        Raises:
-            TagExists: If another release, live or already staged in this
-                transaction, has ``item.tag`` under ``item.dataset_id``.
-            ResourceNotFound: If ``(item.dataset_id, item.revision_number)``
-                names no registered revision.
-        """
-        key = (item.dataset_id, item.tag)
-        if key in self._store._releases or key in self._buffer.releases:
-            raise TagExists(f"release tag already exists: {item.tag!r}")
-        found = _find_revision(
-            chain(self._store._revisions.values(), self._buffer.revisions.values()),
-            item.dataset_id,
-            item.revision_number,
-        )
-        if found is None:
-            raise ResourceNotFound(
-                f"revision does not exist: dataset={item.dataset_id} number={item.revision_number}"
-            )
-        self._buffer.releases[key] = item
 
     async def insert_revision(self, record: RevisionRecord) -> None:
         """Insert the row a COMMITTING session publishes when its commit lands.
@@ -544,7 +495,6 @@ class InMemoryHierarchyStore(InMemoryIngestReader, SecurityFacts):
         self._organizations: dict[UUID, Organization] = {}
         self._projects: dict[UUID, Project] = {}
         self._datasets: dict[UUID, Dataset] = {}
-        self._releases: dict[tuple[UUID, str], Release] = {}
         self._revisions: dict[UUID, RevisionRecord] = {}
         self._sessions: dict[UUID, IngestSession] = {}
         self._intents: dict[UUID, CommitIntent] = {}
@@ -585,7 +535,6 @@ class InMemoryHierarchyStore(InMemoryIngestReader, SecurityFacts):
             self._organizations.update(buffer.organizations)
             self._projects.update(buffer.projects)
             self._datasets.update(buffer.datasets)
-            self._releases.update(buffer.releases)
             self._revisions.update(buffer.revisions)
             self._sessions.update(buffer.sessions)
             self._intents.update(buffer.intents)
@@ -593,82 +542,6 @@ class InMemoryHierarchyStore(InMemoryIngestReader, SecurityFacts):
             self._audit.extend(buffer.audit)
             self._outbox.extend(buffer.outbox)
             self._idempotency.update(buffer.idempotency)
-
-    async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
-        """Return one release by its dataset and tag, if ``visibility`` admits the dataset.
-
-        Args:
-            dataset_id: The dataset the release belongs to.
-            tag: The release's tag, unique within the dataset.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The stored release.
-
-        Raises:
-            ResourceNotFound: If no release has ``(dataset_id, tag)``, or
-                ``visibility`` does not admit the dataset.
-        """
-        release = self._releases.get((dataset_id, tag))
-        dataset = self._datasets.get(dataset_id)
-        if release is None or dataset is None or not _dataset_visible(dataset, visibility):
-            raise ResourceNotFound(f"release does not exist: dataset={dataset_id} tag={tag!r}")
-        return release
-
-    async def revision_ref(self, dataset_id: UUID, revision_number: int) -> RevisionRef:
-        """Return the identity of one committed revision by its dataset and sequential number.
-
-        Args:
-            dataset_id: The dataset the revision belongs to.
-            revision_number: The revision's 1-based position within the
-                dataset.
-
-        Returns:
-            The revision's identity and manifest digest.
-
-        Raises:
-            ResourceNotFound: If no revision has ``(dataset_id,
-                revision_number)``.
-        """
-        found = _find_revision(self._revisions.values(), dataset_id, revision_number)
-        if found is None:
-            raise ResourceNotFound(
-                f"revision does not exist: dataset={dataset_id} number={revision_number}"
-            )
-        return RevisionRef(
-            id=found.id,
-            dataset_id=found.dataset_id,
-            number=found.number,
-            manifest_sha256=found.manifest_sha256,
-        )
-
-    async def releases(
-        self, dataset_id: UUID, visibility: Visibility, *, limit: int, after: tuple[str] | None
-    ) -> Window[Release]:
-        """Return a window of one dataset's releases ordered by ``tag``.
-
-        ``visibility`` names the dataset a caller is already known to be
-        able to discover - a prior call to :meth:`dataset` is what checks
-        that - and every release of that dataset is itself visible, so
-        this method applies no further filtering of its own.
-
-        Args:
-            dataset_id: The dataset the releases belong to.
-            visibility: The caller's discovery rights, checked against the
-                dataset itself by the caller before this method runs.
-            limit: The maximum number of releases to return.
-            after: The tag of the last release already seen, excluded from
-                the window, or ``None`` to start from the beginning.
-
-        Returns:
-            The next window of the dataset's releases.
-        """
-        del visibility
-        visible = sorted(
-            (release for release in self._releases.values() if release.dataset_id == dataset_id),
-            key=lambda release: (release.tag,),
-        )
-        return _window(visible, key=lambda release: (release.tag,), limit=limit, after=after)
 
     async def project_visibilities(self) -> list[ProjectVisibility]:
         """Return every project's identity, owning organization and classification.
@@ -745,36 +618,12 @@ _PROJECT_SLUG_CONSTRAINT = "projects_organization_id_slug_key"
 #: Postgres's name for ``datasets``' per-project slug UNIQUE constraint.
 _DATASET_SLUG_CONSTRAINT = "datasets_project_id_slug_key"
 
-#: Postgres's name for ``releases``' per-dataset tag UNIQUE constraint.
-_RELEASE_TAG_CONSTRAINT = "releases_dataset_id_tag_key"
-
-#: Postgres's name for the composite foreign key tying a release to a
-#: revision of its own dataset.
-_RELEASE_REVISION_FK_CONSTRAINT = "releases_revision_dataset_fk"
-
-#: Postgres's name for ``dataset_revisions``' per-dataset manifest UNIQUE constraint.
-_REVISION_MANIFEST_CONSTRAINT = "dataset_revisions_dataset_id_manifest_sha256_key"
-
 #: Every column ``revision_record`` decodes, shared by ``revision`` and
 #: ``latest_committed_revision`` so the two SELECTs stay in lockstep.
 _REVISION_COLUMNS = (
     "id, dataset_id, revision_number, manifest_sha256, metadata_sha256, revision_path, "
     "file_count, total_bytes, committed_by, committed_at"
 )
-
-
-def _trim_window[ItemT](items: list[ItemT], *, limit: int) -> Window[ItemT]:
-    """Split a ``limit + 1`` row fetch into a page and a "further row" flag.
-
-    Args:
-        items: Every row fetched, already mapped and in cursor order,
-            numbering at most ``limit + 1``.
-        limit: The page size the caller asked for.
-
-    Returns:
-        The first ``limit`` items, and whether one more followed.
-    """
-    return Window(items=items[:limit], has_more=len(items) > limit)
 
 
 class _PostgresDescriptionWriter[ItemT: (Organization, Project, Dataset)]:
@@ -1048,51 +897,6 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
                 raise
             raise SlugExists(f"dataset slug already exists: {item.slug!r}") from exc
 
-    async def insert_release(self, item: Release) -> None:
-        """Insert one release row, tagging a dataset revision.
-
-        Args:
-            item: The release to insert, fully formed.
-
-        Raises:
-            TagExists: If another release already holds ``item.tag`` under
-                ``item.dataset_id``.
-            ResourceNotFound: If ``item.revision_id`` does not name a
-                revision of ``item.dataset_id`` - unreachable once the
-                caller has resolved the revision through ``revision_ref``
-                first, kept as the backstop the composite foreign key
-                enforces regardless.
-            asyncpg.UniqueViolationError: If some other unique constraint
-                refused the row - not expected against the current schema.
-            asyncpg.ForeignKeyViolationError: If some other foreign key
-                refused the row - not expected against the current schema.
-        """
-        try:
-            await self._connection.execute(
-                """
-                INSERT INTO releases
-                    (id, dataset_id, tag, revision_id, title, created_by, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                """,
-                item.id,
-                item.dataset_id,
-                item.tag,
-                item.revision_id,
-                item.title,
-                item.created_by,
-                item.created_at,
-            )
-        except asyncpg.UniqueViolationError as exc:
-            if getattr(exc, "constraint_name", None) != _RELEASE_TAG_CONSTRAINT:
-                raise
-            raise TagExists(f"release tag already exists: {item.tag!r}") from exc
-        except asyncpg.ForeignKeyViolationError as exc:
-            if getattr(exc, "constraint_name", None) != _RELEASE_REVISION_FK_CONSTRAINT:
-                raise
-            raise ResourceNotFound(
-                f"revision does not exist: dataset={item.dataset_id} revision={item.revision_id}"
-            ) from exc
-
     async def insert_revision(self, record: RevisionRecord) -> None:
         """Insert the row a COMMITTING session publishes when its commit lands.
 
@@ -1199,110 +1003,6 @@ class PostgresHierarchyStore(PostgresIngestReader, SecurityFacts):
         """
         async with self._pool.acquire() as connection, connection.transaction():
             yield _PostgresTransactionWriter(connection, self._clock)
-
-    async def release(self, dataset_id: UUID, tag: str, visibility: Visibility) -> Release:
-        """Return one release by its dataset and tag, if ``visibility`` admits the dataset.
-
-        Args:
-            dataset_id: The dataset the release belongs to.
-            tag: The release's tag, unique within the dataset.
-            visibility: The caller's discovery rights.
-
-        Returns:
-            The stored release.
-
-        Raises:
-            ResourceNotFound: If no release has ``(dataset_id, tag)``, or
-                ``visibility`` does not admit the dataset.
-        """
-        row = await self._pool.fetchrow(
-            """
-            SELECT r.id, r.dataset_id, r.tag, r.revision_id, dr.revision_number, r.title,
-                   r.created_by, r.created_at
-            FROM releases r
-            JOIN dataset_revisions dr ON dr.id = r.revision_id
-            JOIN datasets d ON d.id = r.dataset_id
-            WHERE r.dataset_id = $1 AND r.tag = $2
-              AND ($3::boolean OR d.project_id = ANY($4::uuid[]) OR d.id = ANY($5::uuid[]))
-            LIMIT 1
-            """,
-            dataset_id,
-            tag,
-            visibility.unrestricted,
-            list(visibility.project_ids),
-            list(visibility.dataset_ids),
-        )
-        if row is None:
-            raise ResourceNotFound(f"release does not exist: dataset={dataset_id} tag={tag!r}")
-        return rows.release(row)
-
-    async def revision_ref(self, dataset_id: UUID, revision_number: int) -> RevisionRef:
-        """Return the identity of one committed revision by its dataset and sequential number.
-
-        Args:
-            dataset_id: The dataset the revision belongs to.
-            revision_number: The revision's 1-based position within the
-                dataset.
-
-        Returns:
-            The revision's identity and manifest digest.
-
-        Raises:
-            ResourceNotFound: If no revision has ``(dataset_id,
-                revision_number)``.
-        """
-        row = await self._pool.fetchrow(
-            """
-            SELECT id, dataset_id, revision_number, manifest_sha256 FROM dataset_revisions
-            WHERE dataset_id = $1 AND revision_number = $2
-            """,
-            dataset_id,
-            revision_number,
-        )
-        if row is None:
-            raise ResourceNotFound(
-                f"revision does not exist: dataset={dataset_id} number={revision_number}"
-            )
-        return rows.revision_ref(row)
-
-    async def releases(
-        self, dataset_id: UUID, visibility: Visibility, *, limit: int, after: tuple[str] | None
-    ) -> Window[Release]:
-        """Return a window of one dataset's releases ordered by ``tag``.
-
-        ``visibility`` names the dataset a caller is already known to be
-        able to discover - a prior call to :meth:`dataset` is what checks
-        that - and every release of that dataset is itself visible, so
-        this method applies no further filtering of its own.
-
-        Args:
-            dataset_id: The dataset the releases belong to.
-            visibility: The caller's discovery rights, checked against the
-                dataset itself by the caller before this method runs.
-            limit: The maximum number of releases to return.
-            after: The tag of the last release already seen, excluded
-                from the window, or ``None`` to start from the beginning.
-
-        Returns:
-            The next window of the dataset's releases.
-        """
-        del visibility
-        after_tag = after[0] if after is not None else None
-        fetched = await self._pool.fetch(
-            """
-            SELECT r.id, r.dataset_id, r.tag, r.revision_id, dr.revision_number, r.title,
-                   r.created_by, r.created_at
-            FROM releases r JOIN dataset_revisions dr ON dr.id = r.revision_id
-            WHERE r.dataset_id = $1
-              AND ($2::text IS NULL OR r.tag COLLATE "C" > $2 COLLATE "C")
-            ORDER BY r.tag COLLATE "C"
-            LIMIT $3
-            """,
-            dataset_id,
-            after_tag,
-            limit + 1,
-        )
-        return _trim_window([rows.release(row) for row in fetched], limit=limit)
 
     async def project_visibilities(self) -> list[ProjectVisibility]:
         """Return every project's identity, owning organization and classification.

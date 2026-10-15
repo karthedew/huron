@@ -34,13 +34,13 @@ migration; reassess them before assigning further work.
 - **Discovery:** preserve hidden/missing 404 ordering, dataset-only grants, server
   ancestry and fresh authority per operation. Keep request-local HTTP caches local.
 - **Pagination:** apply visibility before limits; retain C-collation `(slug, UUID)`
-  hierarchy order, release cursors and visible-result `has_more` semantics.
+  hierarchy order and visible-result `has_more` semantics.
 - **Descriptions:** omitted/null fields retain values; empty strings replace them.
   Changed slug fails before stale version; stale no-op fails. Valid no-op writes
   nothing. CAS, ancestry reads, durable generation write and database commit retain
   their ordering and rollback behavior; filesystem work stays off the event loop.
-- **Creation/releases:** preserve validation, exact targets, claim ownership,
-  fingerprints, replay, uniqueness, actor attribution and generation/tag ordering.
+- **Creation:** preserve validation, exact targets, claim ownership, fingerprints,
+  replay, uniqueness, actor attribution and generation ordering.
   Dataset profile strings remain verbatim; this cleanup introduces no registry check.
 - **Persistence:** required/optional/locking reads and writes with `RETURNING`
   retain their different failure/atomicity semantics. Preserve explicit conversion

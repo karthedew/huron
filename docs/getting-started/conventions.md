@@ -95,7 +95,7 @@ platform owner. A slug is baked into the storage path, so an immutable slug is w
 permanently stable, which is what makes citations durable.
 
 `core/catalog/paths.py` owns hierarchy/generation and cross-layer layout;
-`core/raw/paths.py` owns staging, revision and release layout. Use these published
+`core/raw/paths.py` owns staging and revision layout. Use these published
 constructors rather than concatenating paths in callers.
 
 ## Comments

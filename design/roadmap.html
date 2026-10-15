@@ -110,7 +110,7 @@ src/huron/
   core/foundation/    shared errors, canonical JSON, IDs/names, retry and clocks
   core/security/      authentication, identity, authorization and their workflows
   core/catalog/       hierarchy identity, descriptions, layer configuration and discovery
-  core/raw/           ingestion, revision publication/reads, releases and expiry
+  core/raw/           ingestion, revision publication/reads and expiry
   core/rawstore/      POSIX staging, checksums, atomic publication and sealing
   core/metastore/     PostgreSQL and in-memory persistence adapters
   schema/             canonical JSON schemas, shared document validation and primitive contracts
@@ -180,11 +180,14 @@ module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
 <code>Visibility</code> per request from the caller's role bindings, and every hierarchy read,
 window and mutation resolves it through <code>CurrentVisibility</code> before it reaches the
 store; API-key + OIDC resolvers.
-Per-item status for this row's HTTP deliverables: org/project/dataset CRUD and release tags over
-HTTP, with generation
-documents at the documented paths <span class="tag">done</span> — verified route by route against
-the built route table and against <a href="api.html">API</a> §2. The hierarchy is persisted in
-PostgreSQL <span class="tag">done</span>: <code>PostgresHierarchyStore</code>
+Per-item status for this row's HTTP deliverables: org/project/dataset CRUD over HTTP, with
+generation documents at the documented paths <span class="tag">done</span> — verified route by
+route against the built route table and against <a href="api.html">API</a> §2. <strong>Retired
+2026-10-15 (owner decision):</strong> the release tags this row also delivered — their routes,
+store methods, <code>release.create</code> capability and <code>releases</code> table (dropped by
+<code>0013_retire_releases</code>) — were removed; Raw keeps only full, numbered revisions.
+The hierarchy is persisted in PostgreSQL <span class="tag">done</span>:
+<code>PostgresHierarchyStore</code>
 (<code>core/metastore/hierarchy.py</code>) is the only production wiring
 <code>create_app</code> builds, so an organization created over HTTP survives a restart and can own
 a service account or scope an API key in the one deployment shape that exists. Discovery gating
@@ -192,15 +195,13 @@ a service account or scope an API key in the one deployment shape that exists. D
 <code>Visibility</code> before it reaches the store, the predicate is applied in SQL before
 <code>LIMIT</code>, and an id the caller cannot discover answers 404 from every read, guard and
 mutation. Browse with keyset pagination <span class="tag">done</span>: the store itself windows by
-the keyset (<code>slug_cursor_key</code>/<code>tag_cursor_key</code> in
-<code>routes/v1/pagination.py</code> decode the cursor into it), filtered by visibility before the
+the keyset (<code>slug_cursor_key</code> in <code>routes/v1/pagination.py</code> decodes the cursor
+into it), filtered by visibility before the
 window, so a walk at <code>limit=1</code> enumerates every visible row exactly once. The verification
 debts — property tests over the pure core, a
 CI that runs the gate, and this write-back — are closed:
 the <a href="../docs/history.md#archived-plans-and-investigations">archived P1 plan</a>
-(M1–M6, fifteen tasks) is complete; the
-release-tag contract is covered against SQL-seeded revisions, and P2 now also creates a release
-after a real HTTP ingest and commit in <code>tests/unit/test_api_ingest_sessions.py</code>.
+(M1–M6, fifteen tasks) is complete.
 Withdrawn: the audit table was delivered without the pre-created partitions this row once
 claimed — <code>audit_events</code> shipped declared <code>PARTITION BY RANGE (created_at)</code>
 with a single DEFAULT child and nothing that creates bounded ones, so every row lands in the
@@ -212,11 +213,9 @@ one btree on <code>(created_at, id)</code>, the first index <code>created_at</co
 Reasoning, rejected alternative and live-database proof:
 the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/SCHEMA_DESIGN.md">archived schema design</a>, S6.</td>
 <td>Create org → project → dataset via HTTP; generation docs and <code>CURRENT.json</code>
-at the exact documented paths; a release tag resolves to one revision and a second write of the
-same tag is <code>409 TAG_EXISTS</code>; slug-change attempts 409; API-key auth round-trip; a principal
+at the exact documented paths; slug-change attempts 409; API-key auth round-trip; a principal
 scoped to project A gets full-size pages with zero rows from B and no evidence of B in counts or
-cursors; import-linter green. The release-tag clause has both SQL-backed contract coverage and an HTTP ingest-to-release
-exercise in <code>tests/unit/test_api_ingest_sessions.py</code>.</td></tr>
+cursors; import-linter green. The release-tag gate retired with release tags on 2026-10-15.</td></tr>
 
 <tr><td class="k">Schema conformance — <code>0008</code><br><span class="tag">done</span></td>
 <td>One Alembic revision, <code>0008_schema_conformance</code>, bringing the P1 metastore into
@@ -381,7 +380,7 @@ rules, findings, staging-only guarded cleanup and offline Raw catalog rebuild. P
 workflows; P3 recognizes their records and guards continuation of existing intents. No search or array
 registry work is included.</td>
 <td>Stale upload/completion handles cannot change published bytes. Real adapter crash/concurrency tests prove recovery and cleanup.
-Drop/migrate/rebuild yields identical hierarchy, revisions, release tags and amendments, including lawful
+Drop/migrate/rebuild yields identical hierarchy, revisions and amendments, including lawful
 purge/expiry and non-destructive pending removal. Missing parents/conflicting identities block activation;
 known corruption stays DEGRADED without blocking healthy inventory. Real NFS evidence is required for an
 NFS deployment. P3 acceptance needs calculated copy capacity, at least 25 GiB for the 9 GiB flow.</td></tr>
@@ -577,15 +576,14 @@ the UI renders; real "last ingest" and catalog-health metrics.</td>
 resource; killing the projection service yields the degraded state, not a 200-with-nothing;
 the watermark visibly lags and recovers.</td></tr>
 
-<tr><td class="k">7 — Releases, revisions &amp; manifests<br><span class="tag">todo</span></td>
-<td>Built: release-tag create/resolve; the amendment fold and field allow-list; the manifest
-model. Adds: release withdrawal as an audited tombstone (<span class="inv">invariant M</span> —
-a tag is never repointed); revision history with per-layer materialization state; manifests
-paginated or streamed, never one JSON body; effective metadata (base + folded amendments) with
-its amendment history; short-lived authorized raw-file downloads, API-streamed — STS-vended
-credentials remain milestone 23.</td>
-<td>A 100k-entry manifest pages in constant memory; a withdrawn tag resolves to an audited
-tombstone and re-tagging the same name is refused.</td></tr>
+<tr><td class="k">7 — Revisions &amp; manifests<br><span class="tag">todo</span></td>
+<td>Built: the amendment fold and field allow-list; the manifest model. Adds: revision history
+with per-layer materialization state; manifests paginated or streamed, never one JSON body;
+effective metadata (base + folded amendments) with its amendment history; short-lived authorized
+raw-file downloads, API-streamed — STS-vended credentials remain milestone 23. Release tags,
+their creation and withdrawal, were retired on 2026-10-15 (owner decision); the fixture-backed
+release pages leave the web app with the web milestones.</td>
+<td>A 100k-entry manifest pages in constant memory.</td></tr>
 </table>
 
 <h3 id="t2">T2 — Ingestion and jobs</h3>

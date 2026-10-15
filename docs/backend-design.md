@@ -15,7 +15,7 @@ Huron ingests scientific data as immutable **Raw** revisions on an NFS store, bu
 source-faithful **Bronze** and canonical **Silver** representations as Zarr + Icechunk
 repositories on Ceph RGW, and publishes scientist-derived **Gold** products the same way. The
 resource hierarchy is `Organization → Project → Dataset`, with a dataset's revisions forming a
-linear, gap-free history and **releases** acting as immutable citation tags into it. PostgreSQL
+linear, gap-free history of full, numbered versions. PostgreSQL
 holds structural state only (identity, sequencing, RBAC, audit, outbox); LanceDB owns all
 text/tag/semantic search across all four layers; each store answers exactly one kind of question.
 Role-based access control binds identity-provider groups at platform/organization/project/dataset

@@ -90,7 +90,7 @@ implemented behavior distinguished from planned capabilities.</p>
 
 <p><strong>Current source ownership:</strong> <a href="../src/huron/core/catalog/__init__.py">Catalog</a>
 owns hierarchy identity, descriptions, discovery collections and layer vocabulary;
-<a href="../src/huron/core/raw/__init__.py">Raw</a> owns uploads, revisions and releases;
+<a href="../src/huron/core/raw/__init__.py">Raw</a> owns uploads and revisions;
 <a href="../src/huron/core/security/__init__.py">Security</a> owns authority and governance;
 <a href="../src/huron/core/foundation/">Foundation</a> owns shared values and pure primitives.
 Rules and complete workflows are colocated. The atlas attributes the former catalog model
@@ -102,7 +102,7 @@ The <a href="core-map.html">Core map</a> describes the migrated working tree, no
 
 <table>
 <tr><th>Question</th><th>Served by</th></tr>
-<tr><td>List orgs / projects / datasets / revisions / release tags / snapshots / products</td><td>PostgreSQL (read-your-writes)</td></tr>
+<tr><td>List orgs / projects / datasets / revisions / snapshots / products</td><td>PostgreSQL (read-your-writes)</td></tr>
 <tr><td>Resolve any resource by ID or slug path</td><td>PostgreSQL → storage sidecars</td></tr>
 <tr><td>Effective metadata of a revision (base + amendments)</td><td>NFS sidecars</td></tr>
 <tr><td>What snapshots exist for dataset X, layer Y; which is latest published</td><td>PostgreSQL</td></tr>
@@ -162,11 +162,6 @@ dataset_revisions(id PK, dataset_id FK, revision_number,
          manifest_sha256, metadata_sha256, revision_path, file_count, total_bytes,
          committed_by, committed_at, …,
          UNIQUE (dataset_id, revision_number)) -- distinct revisions may repeat content
--- a release is a named immutable pointer at one revision (an Icechunk tag, for raw)
-releases(id PK, dataset_id FK, tag, revision_id FK, title, purpose, campaign,
-         created_by, created_at, withdrawn_at NULL, withdrawn_reason NULL,
-         UNIQUE (dataset_id, tag))   -- [db] rows are never UPDATEd except to withdraw:
-                                     -- trigger releases_immutable freezes every other column
 revision_amendments(id PK, revision_id FK, sequence, changed_keys text[], reclassified bool,
          issued_by, issued_at, UNIQUE (revision_id, sequence))
 
@@ -290,8 +285,8 @@ this section, not a fact about the database. Plain column lists are not rules an
 <td>Every client is refused — API, worker, migration, <code>psql</code> alike. The named object
 exists in <code>migrations/versions/</code>.</td>
 <td>That the rule is <em>sufficient</em> for the invariant it serves. For a trigger, that it fires
-on operations its annotation does not name — <code>releases_immutable</code> is
-<code>BEFORE UPDATE</code> and never sees an INSERT.</td></tr>
+on operations its annotation does not name — <code>ingest_commit_intents_immutable</code> is
+<code>BEFORE UPDATE OR DELETE</code> and never sees an INSERT.</td></tr>
 <tr><td><span class="inv">[app: <em>module</em>]</span></td>
 <td>No database rule. The named module under <code>src/huron/</code> is the only thing that
 maintains the property, and the marker says in one clause why the database does not.</td>
@@ -358,9 +353,8 @@ is representable, and was inserted.</td></tr>
 <td><code>migrations/schema.sql</code> §1;
 <a href="architecture.html#invariants">Architecture §5</a> D</td>
 <td><span class="inv">[spec]</span></td>
-<td>None. <code>releases_immutable</code> is the shape it would take; the schema has exactly four
-trigger guards and none is on this table. An <code>UPDATE</code> rewrote a committed digest and
-revision number.</td></tr>
+<td>None. A <code>BEFORE UPDATE</code> immutability trigger is the shape it would take, and none
+is on this table. An <code>UPDATE</code> rewrote a committed digest and revision number.</td></tr>
 <tr><td>A catalog row is never published before its storage state is durable (invariant G)</td>
 <td><a href="architecture.html#invariants">Architecture §5</a> G;
 <a href="layer-raw.html#commit">Raw §5</a></td>
@@ -381,11 +375,6 @@ created</td>
 <td><span class="inv">[db 0008]</span> <code>ingest_sessions_revision_guard</code></td>
 <td>The pre-0008 audit admitted a committed session with a dangling UUID; a plain foreign key is not representable
 because <code>revision_id</code> is minted hours earlier, in <code>PREPARING</code>.</td></tr>
-<tr><td>A release cites a revision of its own dataset</td>
-<td><a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/schema_audit.md">Archived schema audit</a> F1</td>
-<td><span class="inv">[db 0008]</span> <code>releases_revision_dataset_fk</code></td>
-<td>The pre-0008 audit admitted cross-dataset citations through independent foreign keys;
-the composite foreign key closes that gap.</td></tr>
 <tr><td>Every role is user-only, and no role carries <code>data.write</code> at silver or gold</td>
 <td><a href="rbac.html#roles">RBAC §2</a>, <a href="rbac.html#authn">§6</a></td>
 <td><span class="inv">[app: <a href="../src/huron/core/security/roles.py"><code>core.security.roles</code></a>]</span></td>
@@ -423,7 +412,7 @@ records the schema references it validated against, so re-validation years later
 identical documents.</li>
 <li><strong>Deprecation, not deletion.</strong> <code>DEPRECATED</code> stops new ingests from
 declaring the version; existing documents keep resolving it forever. <code>WITHDRAWN</code> is
-the audited tombstone for a schema published in error, mirroring release-tag withdrawal.</li>
+the audited tombstone for a schema published in error.</li>
 <li><strong>Governance:</strong> organization admins publish organization schemas (and science
 profiles); project admins publish project enrichments; platform schemas ship with releases and
 are registered by migration. All writes go through the admin API and are audited.</li>
@@ -473,10 +462,10 @@ with the <code>embedding</code> column reserved and null.</p>
 <tr><td class="k">datasets</td><td>dataset</td>
 <td>org/project/dataset slugs + ids, title, description (FTS), tags, classification, profile +
 contract version, owner, layer availability flags (has_bronze/has_silver), latest silver snapshot,
-latest revision number, release tags (FTS), extension_text (FTS), created/updated,
+latest revision number, extension_text (FTS), created/updated,
 embedding (null)</td></tr>
 <tr><td class="k">revisions</td><td>raw revision</td>
-<td>ids + slugs up the chain, revision number, release tags pointing at it, title, purpose,
+<td>ids + slugs up the chain, revision number, title, purpose,
 campaign (FTS), extracted-parameter text (e.g. <code>shield_thickness=30 material=concrete-b
 mcnp=6.3.1</code>), quality state, state (COMMITTED/EXPIRED/PURGED), file count, total bytes</td></tr>
 <tr><td class="k">snapshots</td><td>published Bronze/Silver snapshot</td>
@@ -508,11 +497,11 @@ required was retired on 2026-10-15.</p>
 
 <ul>
 <li>Projection rebuild (a planned operator command; the <code>lakectl</code> CLI that was to host it
-was retired on 2026-10-15) — walks NFS (datasets, revisions, release tags, effective metadata)
+was retired on 2026-10-15) — walks NFS (datasets, revisions, effective metadata)
 and PostgreSQL (snapshot/product registry), writes fresh tables under a new prefix, verifies row
 counts, flips the pointer. Routine, not exceptional.</li>
 <li>Storage rebuild (a planned operator command) — P3 reconstructs Raw structural inventory offline:
-generation hierarchy, revisions/governance observations, amendments and releases.
+generation hierarchy, revisions/governance observations and amendments.
 A fresh target is claimed by a run identity; that same run may resume. Missing parents and identity conflicts
 block activation; reported payload corruption remains DEGRADED and need not block healthy inventory.
 Access policy must be restored and unambiguous before activation; governance readiness separately gates

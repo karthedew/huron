@@ -1,4 +1,4 @@
-"""Raw revision, release, ledger and download values shared with adapters.
+"""Raw revision, ledger and download values shared with adapters.
 
 These are the record shapes Raw's ports exchange with the services
 that implement them: enough identity to build a storage path, enough about
@@ -20,24 +20,6 @@ if TYPE_CHECKING:
 
     from .ingest import IngestFile, IngestSession, IngestState
     from .manifest import ManifestEntry
-
-
-@dataclass(frozen=True, slots=True)
-class RevisionRef:
-    """What a release tag resolves to: one revision, named by id and number.
-
-    Attributes:
-        id: The revision's identifier.
-        dataset_id: The dataset the revision belongs to.
-        number: The revision's 1-based position within its dataset.
-        manifest_sha256: The content identity of the revision's manifest,
-            so a resolver can prove it got the revision it asked for.
-    """
-
-    id: UUID
-    dataset_id: UUID
-    number: int
-    manifest_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,20 +77,6 @@ class OutboxEvent:
     kind: str
     subject_id: UUID
     payload: dict[str, object]
-    created_at: datetime
-
-
-@dataclass(slots=True)
-class Release:
-    """An immutable dataset-level tag pinning one registered revision."""
-
-    id: UUID
-    dataset_id: UUID
-    tag: str
-    revision_id: UUID
-    revision_number: int
-    title: str | None
-    created_by: str
     created_at: datetime
 
 

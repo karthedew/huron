@@ -20,7 +20,7 @@ from huron.core.catalog import (
 )
 from huron.core.catalog import CatalogCreation
 from huron.core.raw import RawIngestionService
-from huron.core.raw import Releases, RevisionReadService
+from huron.core.raw import RevisionReadService
 from huron.core.security.principal import Principal
 from huron.core.raw.ingest import FileState
 from huron.core.raw.manifest import ManifestEntry
@@ -142,20 +142,7 @@ async def workspace(
 
 async def test_catalog_does_not_accept_a_foreign_claim(workspace) -> None:
     """Every create rejects a claim naming someone other than the authenticated actor."""
-    (
-        _organizations,
-        projects,
-        _datasets,
-        _bindings,
-        _,
-        access,
-        dataset,
-        repository,
-        _,
-        _,
-        creation,
-    ) = workspace
-    releases = Releases(access, repository.hierarchy, repository.raw_store)
+    _, projects, _, _, _, _, dataset, _, _, _, creation = workspace
     org = await projects.get(dataset.project_id)
     for operation in (
         creation.create_organization(
@@ -177,13 +164,6 @@ async def test_catalog_does_not_accept_a_foreign_claim(workspace) -> None:
             profile_name="mcnp-run",
             profile_version="1.0",
             claim=claim("d", "other"),
-        ),
-        releases.create_release(
-            dataset.id,
-            tag="v1",
-            revision_number=1,
-            title=None,
-            claim=claim("r", "other"),
         ),
     ):
         with pytest.raises(Forbidden, match="idempotency"):

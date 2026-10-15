@@ -2,17 +2,14 @@
 
 Idempotent replay (including a request that changes only a field the old
 fingerprint used to ignore), slug and classification refusals, optimistic-
-concurrency preconditions, the no-op patch, the release tag's two
-independent guards (the store's own uniqueness and the raw store's once-only
-write), the durable-before-visible ordering when the document write fails,
-and the execution-model guarantee that the document write runs off the
-event loop.
+concurrency preconditions, the no-op patch, the durable-before-visible
+ordering when the document write fails, and the execution-model guarantee
+that the document write runs off the event loop.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -29,20 +26,16 @@ from huron.core.catalog.types import DescriptionChange, PlatformRoot
 from huron.core.foundation.retry import request_sha256, IdempotencyClaim
 from huron.core.security.principal import Principal
 from huron.core.catalog.errors import ClassificationUnknown, SlugImmutable, SlugExists
-from huron.core.raw.errors import TagExists
 from huron.core.foundation.errors import (
     IdempotencyKeyReused,
     PreconditionFailed,
     ResourceNotFound,
 )
 from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
-from huron.core.raw.paths import release_tag_file
 from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
 from huron.core.rawstore import PosixRawStore
 from huron.core.security.rules import RoleBindingAuthorizer, ScopeType, Visibility
 from tests.catalog_creation_support import creation_for
-from tests.catalog_release_support import releases_for
-from tests.hierarchy_contract import committed_revision
 from tests.repository_fixture import RepositoryFixture
 
 if TYPE_CHECKING:
@@ -89,7 +82,7 @@ def _descriptions(repository: RepositoryFixture, visibility: Visibility) -> _Col
     )
 
 
-def _claim(operation: str, *parts: str | None, key: str) -> IdempotencyClaim:
+def _claim(operation: str, *parts: str, key: str) -> IdempotencyClaim:
     """Build an idempotency claim staked by ``tester`` over one operation's digest parts."""
     return IdempotencyClaim(
         principal="tester", key=key, request_sha256=request_sha256(operation, *parts)
@@ -685,190 +678,6 @@ async def test_undiscoverable_patch_targets_hide_slug_and_version_errors(tmp_pat
                     expected_version=99, slug="renamed", title="Invisible", description=None
                 ),
             )
-
-
-# -- create_release -------------------------------------------------------
-
-
-async def _commit_revision(
-    repository: RepositoryFixture, dataset_id: UUID, *, number: int = 1
-) -> None:
-    """Commit one revision directly through the hierarchy store's writer."""
-    revision = committed_revision(dataset_id, number, manifest_sha256="a" * 64)
-    async with repository.hierarchy.transaction() as writer:
-        await writer.insert_revision(revision)
-
-
-async def test_create_release_replays_an_identical_request(tmp_path: Path) -> None:
-    """Replaying ``create_release`` with the same idempotency claim returns the identical object."""
-    repository = await _repository(tmp_path)
-    _, _, dataset_id = await _hierarchy(repository)
-    await _commit_revision(repository, dataset_id)
-    claim = _claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1")
-    first = await releases_for(repository).create_release(
-        dataset_id, tag="v1", revision_number=1, title=None, claim=claim
-    )
-    second = await releases_for(repository).create_release(
-        dataset_id, tag="v1", revision_number=1, title=None, claim=claim
-    )
-    assert second == first
-
-
-async def test_create_release_rejects_a_duplicate_tag(tmp_path: Path) -> None:
-    """A second release with an already-used tag raises ``TagExists`` under a new key too."""
-    repository = await _repository(tmp_path)
-    _, _, dataset_id = await _hierarchy(repository)
-    await _commit_revision(repository, dataset_id)
-    await releases_for(repository).create_release(
-        dataset_id,
-        tag="v1",
-        revision_number=1,
-        title=None,
-        claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
-    )
-    with pytest.raises(TagExists):
-        await releases_for(repository).create_release(
-            dataset_id,
-            tag="v1",
-            revision_number=1,
-            title=None,
-            claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k2"),
-        )
-
-
-async def test_create_release_translates_a_raw_store_collision_into_tag_exists(
-    tmp_path: Path,
-) -> None:
-    """A tag already written to disk still raises ``TagExists`` even under a fresh key.
-
-    The store's own uniqueness and the raw store's once-only write are two
-    independent guards against the same race.
-    """
-    repository = await _repository(tmp_path)
-    organization_id, project_id, dataset_id = await _hierarchy(repository)
-    await _commit_revision(repository, dataset_id)
-    organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
-    project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
-    dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
-    tag_path = release_tag_file(_data_root(repository), organization, project, dataset, "v1")
-    Path(str(tag_path)).parent.mkdir(parents=True, exist_ok=True)
-    Path(str(tag_path)).write_bytes(b"{}")
-
-    with pytest.raises(TagExists):
-        await releases_for(repository).create_release(
-            dataset_id,
-            tag="v1",
-            revision_number=1,
-            title=None,
-            claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
-        )
-
-
-async def test_create_release_persists_a_tag_document_with_no_withdrawal_keys(
-    tmp_path: Path,
-) -> None:
-    """A release's tag document on disk has exactly these keys and no fields for withdrawal."""
-    repository = await _repository(tmp_path)
-    organization_id, project_id, dataset_id = await _hierarchy(repository)
-    await _commit_revision(repository, dataset_id)
-    await releases_for(repository).create_release(
-        dataset_id,
-        tag="v1",
-        revision_number=1,
-        title=None,
-        claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
-    )
-    organization = await repository.hierarchy.organizations.get(organization_id, Visibility.ALL)
-    project = await repository.hierarchy.projects.get(project_id, Visibility.ALL)
-    dataset = await repository.hierarchy.datasets.get(dataset_id, Visibility.ALL)
-    tag_path = release_tag_file(_data_root(repository), organization, project, dataset, "v1")
-    document = json.loads(Path(str(tag_path)).read_text())
-
-    assert document.keys() == {
-        "id",
-        "dataset_id",
-        "tag",
-        "revision_id",
-        "revision_number",
-        "title",
-        "created_by",
-        "created_at",
-    }
-
-
-async def test_create_release_replay_with_a_title_of_none_differs_from_the_empty_string(
-    tmp_path: Path,
-) -> None:
-    """A missing title and an explicit empty-string title no longer digest the same way."""
-    repository = await _repository(tmp_path)
-    _, _, dataset_id = await _hierarchy(repository)
-    await _commit_revision(repository, dataset_id)
-    await releases_for(repository).create_release(
-        dataset_id,
-        tag="v1",
-        revision_number=1,
-        title=None,
-        claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
-    )
-    with pytest.raises(IdempotencyKeyReused):
-        await releases_for(repository).create_release(
-            dataset_id,
-            tag="v1",
-            revision_number=1,
-            title="",
-            claim=_claim("release", str(dataset_id), "v1", "1", "", "alice", key="k1"),
-        )
-
-
-async def test_create_release_replay_with_a_different_digest_is_a_reuse(tmp_path: Path) -> None:
-    """Reusing a release-create key whose fingerprint differs elsewhere is a reuse."""
-    repository = await _repository(tmp_path)
-    _, _, dataset_id = await _hierarchy(repository)
-    await _commit_revision(repository, dataset_id)
-    await releases_for(repository).create_release(
-        dataset_id,
-        tag="v1",
-        revision_number=1,
-        title=None,
-        claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
-    )
-    with pytest.raises(IdempotencyKeyReused):
-        await releases_for(repository).create_release(
-            dataset_id,
-            tag="v1",
-            revision_number=1,
-            title=None,
-            claim=_claim("release", str(dataset_id), "v1", "1", None, "bob", key="k1"),
-        )
-
-
-async def test_create_release_under_an_invisible_dataset_is_not_found(tmp_path: Path) -> None:
-    """A dataset the caller cannot discover is 404, before the revision is ever resolved."""
-    repository = await _repository(tmp_path)
-    _, _, dataset_id = await _hierarchy(repository)
-    await _commit_revision(repository, dataset_id)
-    with pytest.raises(ResourceNotFound):
-        await releases_for(repository, visible=False).create_release(
-            dataset_id,
-            tag="v1",
-            revision_number=1,
-            title=None,
-            claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
-        )
-
-
-async def test_create_release_without_a_registered_revision_is_not_found(tmp_path: Path) -> None:
-    """Creating a release naming an unregistered revision raises ``ResourceNotFound``."""
-    repository = await _repository(tmp_path)
-    _, _, dataset_id = await _hierarchy(repository)
-    with pytest.raises(ResourceNotFound):
-        await releases_for(repository).create_release(
-            dataset_id,
-            tag="v1",
-            revision_number=1,
-            title=None,
-            claim=_claim("release", str(dataset_id), "v1", "1", None, "alice", key="k1"),
-        )
 
 
 # -- patch_organization / patch_project ------------------------------------

@@ -19,7 +19,7 @@ import pytest
 
 from huron.core.foundation.errors import IdempotencyKeyReused, ResourceNotFound
 from huron.core.foundation.identifiers import uuid7
-from huron.core.raw.types import OutboxEvent, AuditEvent, Release
+from huron.core.raw.types import OutboxEvent, AuditEvent
 from huron.core.foundation.retry import IdempotencyClaim, Replay
 from huron.core.catalog.types import PlatformRoot, Organization
 from huron.core.metastore.hierarchy import InMemoryHierarchyStore, SystemClock
@@ -59,27 +59,13 @@ _TREE = {
 }
 
 
-def _release(dataset_id: UUID, tag: str, revision_id: UUID, revision_number: int) -> Release:
-    """Build a ``Release`` citing one revision, ready to insert."""
-    return Release(
-        id=uuid7(),
-        dataset_id=dataset_id,
-        tag=tag,
-        revision_id=revision_id,
-        revision_number=revision_number,
-        title=None,
-        created_by="user:test",
-        created_at=datetime.now(UTC),
-    )
-
-
 async def test_a_write_is_invisible_until_commit_and_vanishes_on_rollback() -> None:
     """Pins the transaction-atomicity contract against the in-memory store."""
     store = InMemoryHierarchyStore()
     await scenario_1_write_invisible_until_commit(store)
 
 
-async def test_a_duplicate_slug_or_tag_under_the_same_parent_is_refused() -> None:
+async def test_a_duplicate_slug_under_the_same_parent_is_refused() -> None:
     """Pins the uniqueness contract against the in-memory store."""
     store = InMemoryHierarchyStore()
     await scenario_2_uniqueness(store)
@@ -97,13 +83,13 @@ async def test_idempotency_claims_replay_reject_and_serialize_across_transaction
     await scenario_4_idempotency(store)
 
 
-async def test_revision_ref_resolves_a_committed_revision_and_gates_release_creation() -> None:
+async def test_revisions_resolve_by_id_and_the_latest_is_the_highest_commit() -> None:
     """Pins the revision-resolution contract against the in-memory store."""
     store = InMemoryHierarchyStore()
     await scenario_5_revisions(store)
 
 
-async def test_organizations_projects_datasets_and_releases_sort_by_c_collation_order() -> None:
+async def test_organizations_projects_and_datasets_sort_by_c_collation_order() -> None:
     """Pins the ordering contract against the in-memory store."""
     store = InMemoryHierarchyStore()
     await scenario_6_ordering(store)
@@ -207,27 +193,6 @@ async def test_insert_revision_accepts_repeated_content_with_a_new_identity() ->
     assert await store.revision(duplicate.id) == duplicate
 
 
-async def test_revision_and_latest_committed_revision_read_the_inserted_row() -> None:
-    """revision() and latest_committed_revision() both return what insert_revision wrote."""
-    store = InMemoryHierarchyStore()
-    hierarchy = await seed_hierarchy(store)
-    dataset_id = hierarchy.datasets["run-0001"]
-    first = committed_revision(dataset_id, 1, manifest_sha256="a" * 64)
-    second = committed_revision(dataset_id, 2, manifest_sha256="b" * 64)
-    async with store.transaction() as writer:
-        await writer.insert_revision(first)
-    async with store.transaction() as writer:
-        await writer.insert_revision(second)
-
-    assert await store.revision(first.id) == first
-    assert await store.revision(second.id) == second
-    with pytest.raises(ResourceNotFound):
-        await store.revision(uuid7())
-
-    assert await store.latest_committed_revision(dataset_id) == second
-    assert await store.latest_committed_revision(uuid7()) is None
-
-
 async def test_a_rolled_back_transaction_leaves_no_revision_audit_or_outbox_row() -> None:
     """insert_revision, insert_audit_event and insert_outbox_event all roll back together."""
     store = InMemoryHierarchyStore()
@@ -298,15 +263,6 @@ async def test_dataset_point_read_raises_for_an_unknown_id() -> None:
         await store.datasets.get(uuid7(), Visibility.ALL)
 
 
-async def test_release_point_read_raises_for_an_unknown_tag() -> None:
-    """release() reports a tag that names nothing as not found."""
-    store = InMemoryHierarchyStore()
-    hierarchy = await seed_hierarchy(store)
-    dataset_id = hierarchy.datasets["run-0001"]
-    with pytest.raises(ResourceNotFound):
-        await store.release(dataset_id, "missing", Visibility.ALL)
-
-
 async def test_organizations_window_orders_by_slug_and_admits_only_visible_rows() -> None:
     """organizations() sorts by (slug, id) and only counts what visibility admits."""
     store = InMemoryHierarchyStore()
@@ -372,21 +328,6 @@ async def test_empty_visibility_admits_nothing() -> None:
         await store.projects.get(hierarchy.projects["proj-a1"], empty)
     with pytest.raises(ResourceNotFound):
         await store.datasets.get(hierarchy.datasets["ds-a1x"], empty)
-
-
-async def test_releases_window_orders_by_tag_regardless_of_visibility() -> None:
-    """releases() sorts by tag and lists every release of the named dataset."""
-    store = InMemoryHierarchyStore()
-    hierarchy = await seed_hierarchy(store)
-    dataset_id = hierarchy.datasets["run-0001"]
-    revision = committed_revision(dataset_id, 1, manifest_sha256="a" * 64)
-    async with store.transaction() as writer:
-        await writer.insert_revision(revision)
-    async with store.transaction() as writer:
-        await writer.insert_release(_release(dataset_id, "v2", revision.id, revision.number))
-        await writer.insert_release(_release(dataset_id, "v1", revision.id, revision.number))
-    window = await store.releases(dataset_id, Visibility.ALL, limit=10, after=None)
-    assert [item.tag for item in window.items] == ["v1", "v2"]
 
 
 async def test_a_limit_one_walk_visits_every_dataset_exactly_once() -> None:

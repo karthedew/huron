@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING, Literal, Protocol
 if TYPE_CHECKING:
     from uuid import UUID
 
-_ABSENT_FIELD = "\x01"
-
 
 @dataclass(frozen=True, slots=True)
 class IdempotencyClaim:
@@ -29,7 +27,6 @@ class Replay:
         "organization",
         "project",
         "dataset",
-        "release",
         "ingest_session",
         "ingest_commit",
         "revision",
@@ -37,20 +34,19 @@ class Replay:
     resource_id: UUID
 
 
-def request_sha256(operation: str, *parts: str | None) -> str:
+def request_sha256(operation: str, *parts: str) -> str:
     """Digest an operation and its ordered fields using the persisted fingerprint encoding.
 
-    NUL separates fields; SOH distinguishes an absent field from an empty string.
+    The operation and its fields are joined by NUL and hashed as UTF-8.
 
     Args:
         operation: The operation name.
-        *parts: Ordered string fields, with None for absent values.
+        *parts: Ordered string fields.
 
     Returns:
         The lower-case SHA-256 fingerprint.
     """
-    fields = (operation, *(_ABSENT_FIELD if part is None else part for part in parts))
-    return hashlib.sha256("\x00".join(fields).encode()).hexdigest()
+    return hashlib.sha256("\x00".join((operation, *parts)).encode()).hexdigest()
 
 
 class RetryTransaction(Protocol):

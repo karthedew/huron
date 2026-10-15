@@ -311,7 +311,8 @@ include = ["src"]
 
 [tool.coverage.report]
 # Ratchet floor: the measured unit total, rounded down. Raise it as coverage
-# climbs. Lower it only when deleting covered code lowers the total, never to
+# climbs. Lower it only when the whole drop comes from deleted covered code or
+# from new PostgreSQL adapter code the contract suite covers in full, never to
 # admit uncovered code. New or touched files are covered in full.
-fail_under = 95.36
+fail_under = 95.62
 precision = 2

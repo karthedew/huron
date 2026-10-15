@@ -121,22 +121,16 @@ Huron platform
         └── Dataset              one body of data in that programme: one run, one
                                  acquisition, one contributor's deposit (e.g. run-0042)
             └── Revision         one immutable commit to that dataset (1..N, gap-free)
-
-            Release              a named, immutable tag on one revision (v1.0) — a
-                                 pointer, not a level
 </pre>
 
 <p><strong>Three entity levels and one version axis.</strong> A dataset has a single linear history
-of revisions, exactly as an Icechunk repo has a linear history of snapshots; a release is a named
-pointer into that history, exactly as an Icechunk tag is. The versioning model is therefore
-identical in all four layers, and <code>dataset@v1.0</code> means the same thing whether it resolves
-to raw bytes or a Silver array.</p>
+of revisions, exactly as an Icechunk repo has a linear history of snapshots. Each revision is a
+full, numbered version: a dataset and a revision number name one immutable revision, and Raw has no
+release tags (retired on 2026-10-15).</p>
 
 <p>A new <em>dataset</em> means a new run or acquisition — the scientific inputs are different
 (different thickness, material, seed, geometry). A new <em>revision</em> means correcting or
-extending the same body of data (truncated output, missing file, corrupted packaging). A
-<em>release</em> means "this is the version to cite", and because citations must not move, tags are
-immutable once written.</p>
+extending the same body of data (truncated output, missing file, corrupted packaging).</p>
 
 <p>Raw, Bronze and Silver all attach to the <strong>dataset</strong>, one repo each, so the four
 layers share a single hierarchy and the layer is the leaf of the path. Gold attaches to the
@@ -171,12 +165,11 @@ directory + atomic <code>rename(2)</code>; complete independent uploads; immutab
 POSIX rename publishes a complete envelope atomically — a stronger primitive than any
 marker-object protocol.</td></tr>
 <tr><td>3</td>
-<td><strong>Hierarchy: Organization → Project → Dataset, with linear revisions and releases
-as immutable tags.</strong></td>
+<td><strong>Hierarchy: Organization → Project → Dataset, with linear revisions.</strong></td>
 <td>A separate Release level between dataset and revision</td>
 <td>The old Release level conflated two different ideas — "one instance of a study" and "a version
-worth citing". Making the dataset the instance and the release a tag gives one counter instead of
-two and makes raw versioning identical to Icechunk's, so scientists learn the model once.</td></tr>
+worth citing". Making the dataset the instance and each numbered revision its version gives one
+counter instead of two.</td></tr>
 <tr><td>4</td>
 <td><strong>Bronze, Silver, and Gold are Zarr&nbsp;+&nbsp;Icechunk repositories on S3-compatible object storage.</strong>
 One Bronze repo per dataset; one Silver repo per dataset; one Gold repo per product, stored under
@@ -267,12 +260,12 @@ other datasets were reading; and every dataset under a contract serialized on on
 Comparability is still a property of the declared contract — it now decides which repos may be
 concatenated rather than which runs share bytes.</td></tr>
 <tr><td>14</td>
-<td><strong>Releases are immutable tags, not a hierarchy level.</strong> A dataset has one linear
-revision history; a release names one revision and is never repointed.</td>
-<td>Releases containing revisions (two counters), or no named versions at all</td>
-<td>Citation requires that <code>dataset@v1.0</code> resolve to the same bytes forever. Modelling
-raw versioning as commits-plus-tags makes it identical to Icechunk's, so the versioning story is the
-same in all four layers and scientists learn it once.</td></tr>
+<td><strong>Raw has no release tags (retired on 2026-10-15).</strong> A dataset has one linear
+revision history of full, numbered versions; nothing else names a revision.</td>
+<td>Immutable release tags naming revisions (the earlier decision), or releases containing
+revisions (two counters)</td>
+<td>The owner decided Raw keeps only full, numbered versions, with no tags or releases. A dataset
+and a revision number already name one immutable revision, so citation needs nothing more.</td></tr>
 <tr><td>15</td>
 <td><strong>A dataset declares an entry layer; Gold stays derivation-defined.</strong> Raw, Bronze
 and Silver each accept data that arrives already in that form from outside the lake — a streaming
@@ -284,7 +277,7 @@ linked to a raw revision of the same dataset when one exists, external-provenanc
 and the automatic raw&rarr;bronze builder is deferred, since a per-profile extractor is custom
 code Huron does not require of projects at this stage. Gold accepts no direct entry: every product
 version carries a derivation record (invariant K). "Trusted" and "shippable" are properties
-expressed by contract validation, release tags, classification and read grants — never by
+expressed by contract validation, classification and read grants — never by
 promoting bytes into a higher layer.</td>
 <td>Silver defined as "whatever Bronze canonicalizes into"; Gold redefined as the pool of trusted
 datasets shipped to external consumers</td>
@@ -371,7 +364,7 @@ reproducibility pinning.</p></div>
 <p>Pages, flows, and the admin surfaces; OIDC sessions; generated TypeScript client.</p></div>
 <div class="card"><h3><a href="workflows.html">Scientist Workflows</a></h3>
 <p>The end-to-end journey — create dataset, declare entry layer, ingest raw or bronze, publish,
-tag, open — in web-UI and Python-client form.</p></div>
+open — in web-UI and Python-client form.</p></div>
 <div class="card"><h3><a href="roadmap.html">Roadmap</a></h3>
 <p>The greenfield build: phases, mechanical gates, and sequencing rationale.</p></div>
 </div>
@@ -408,7 +401,6 @@ Gold  shielding-dose-response 1.0.0 = snapshot G021   (validated, published, dis
 <tr><td>Project</td><td>The data pond and primary authorization/quota/retention boundary.</td></tr>
 <tr><td>Dataset</td><td>One body of data within a project — a run, an acquisition, a contributor's deposit (<code>run-0042</code>).</td></tr>
 <tr><td>Revision</td><td>One immutable, checksummed commit to a dataset; corrections append revisions (1..N, gap-free).</td></tr>
-<tr><td>Release</td><td>A named immutable tag on one revision (<code>v1.0</code>) — the citable version. The raw analogue of an Icechunk tag.</td></tr>
 <tr><td>Canonical contract</td><td>The versioned Silver shape a dataset declares; datasets sharing one are the members of one array space.</td></tr>
 <tr><td>Envelope</td><td>A revision's directory: <code>metadata.json</code>, <code>manifest.json</code>, <code>COMMITTED</code>, <code>amendments/</code>, <code>payload/</code>.</td></tr>
 <tr><td>Science profile</td><td>Versioned, installable definition of a data kind (<code>mcnp-run@1.0</code>): expected files, extractor, Bronze mapping, canonical Silver contract, validations.</td></tr>

@@ -101,7 +101,7 @@ to the application; <a href="../src/huron/applications/api/capabilities.py">wiri
 prove the adapters satisfy the narrow consumer ports. Migration verification is recorded in the
 <a href="roadmap.html#domain-owned-core-migration">roadmap</a>.</p>
 
-<p>Simple hierarchy, release, policy and service-account handlers return typed Core results;
+<p>Simple hierarchy, policy and service-account handlers return typed Core results;
 explicit FastAPI <code>response_model</code> declarations validate and filter them into the existing
 named public views. Internal fields such as hierarchy <code>generation</code> stay off the wire.
 Pagination, credential issuance and streaming retain their transport-specific representations.</p>
@@ -128,9 +128,6 @@ Pagination, credential issuance and streaming retain their transport-specific re
 <tr><td>POST/GET</td><td><code>/projects/{id}/datasets</code></td><td><code>Idempotency-Key</code>; profile required; ACTIVE on creation, under inherited policy</td></tr>
 <tr><td>GET/PATCH</td><td><code>/datasets/{id}</code></td><td>slug immutable → <code>409 SLUG_IMMUTABLE</code></td></tr>
 <tr><td>POST</td><td><code>/datasets/{id}:retire</code></td><td>project_admin</td></tr>
-<tr><td>POST/GET</td><td><code>/datasets/{id}/releases</code></td><td>tag a revision: body <code>{tag, revision_number, title}</code>; audited; never implicit at ingest</td></tr>
-<tr><td>GET</td><td><code>/datasets/{id}/releases/{tag}</code></td><td>resolves to exactly one revision, forever</td></tr>
-<tr><td>POST</td><td><code>/datasets/{id}/releases/{tag}:withdraw</code></td><td>project_admin; tombstone with reason. Tags are never repointed</td></tr>
 </table>
 
 <p>Browse endpoints are PostgreSQL-only, filterable by structural columns, cursor-paginated, with
@@ -156,7 +153,7 @@ the authorized update. The common input base is not a separate OpenAPI component
 <tr><td>PUT</td><td><code>/transfer/uploads/{file_id}/parts/{n}</code></td><td>streamed, hashed in flight; resumable; <code>Content-Length</code> must equal the part's planned length; parts are 64 MiB; <code>completed_parts</code> in <code>GET</code> is the resume set</td></tr>
 <tr><td>POST</td><td><code>/transfer/uploads/{file_id}/complete</code></td><td></td></tr>
 <tr><td>POST</td><td><code>/ingest-sessions/{id}/verify</code> / <code>/commit</code> / <code>/abort</code></td><td>verify requires this submission's complete independent files; commit body <code>{manifest_sha256, metadata}</code>, <code>If-Match</code> + <code>Idempotency-Key</code> → 201 Revision</td></tr>
-<tr><td>GET</td><td><code>/datasets/{id}/revisions</code>, <code>/revisions/{id}</code></td><td>revision detail includes effective metadata (base + folded amendments), the tags pointing at it, and materialization states</td></tr>
+<tr><td>GET</td><td><code>/datasets/{id}/revisions</code>, <code>/revisions/{id}</code></td><td>revision detail includes effective metadata (base + folded amendments) and materialization states</td></tr>
 <tr><td>GET</td><td><code>/revisions/{id}/manifest</code></td><td>streamed from NFS</td></tr>
 <tr><td>GET</td><td><code>/revisions/{id}/files/{path}</code></td><td>authorised per request against <code>data.read@raw</code>; the response is the capability, nothing is minted</td></tr>
 <tr><td>POST</td><td><code>/revisions/{id}:amend</code></td><td>project_admin; field allow-list; reclassification separately permissioned</td></tr>
@@ -258,7 +255,6 @@ but no shipped route raises it yet.</p>
 <tr><td>AMENDMENT_FIELD_FORBIDDEN</td><td>400</td><td>live</td><td>an amendment touched a field outside the allow-list</td></tr>
 <tr><td>IDEMPOTENCY_KEY_REUSED</td><td>409</td><td>live</td><td>same idempotency key, different request body</td></tr>
 <tr><td>SLUG_IMMUTABLE</td><td>409</td><td>live</td><td><code>PATCH</code> tried to change a slug</td></tr>
-<tr><td>TAG_EXISTS</td><td>409</td><td>live</td><td>release tag already resolves</td></tr>
 <tr><td>PATH_COLLISION</td><td>409</td><td>live</td><td>two manifest entries claim one path</td></tr>
 <tr><td>ILLEGAL_INGEST_TRANSITION</td><td>409</td><td>live</td><td>ingest session state machine refused the transition</td></tr>
 <tr><td>LAYER_WORKFLOW_VIOLATION</td><td>409</td><td>live</td><td>unknown layer, or a derivation the workflow forbids</td></tr>
@@ -279,7 +275,6 @@ but no shipped route raises it yet.</p>
 <tr><td>VALIDATION_REQUIRED</td><td>409</td><td>reserved</td><td>validation evidence is required before publishing (§4 validation)</td></tr>
 <tr><td>CONTRACT_MISMATCH</td><td>409</td><td>live</td><td>payload violates its registered schema contract (§6 schema registry) — in P2 the registered contract is the packaged <code>metadata-v1.json</code></td></tr>
 <tr><td>RETENTION_HOLD_PRESENT</td><td>409</td><td>reserved</td><td>a retention hold blocks the operation (§6 retention)</td></tr>
-<tr><td>TAG_WITHDRAWN</td><td>410</td><td>reserved</td><td>release tag was withdrawn (§2 <code>POST /datasets/{id}/releases/{tag}:withdraw</code>)</td></tr>
 <tr><td>VALIDATION_FAILED</td><td>422</td><td>reserved</td><td>validation evidence did not pass (§4 validation)</td></tr>
 <tr><td>GRANT_EXPIRED</td><td>401</td><td>reserved</td><td>data-access grant passed its expiry (§5 data-access grants)</td></tr>
 <tr><td>GRANT_SCOPE_EXCEEDED</td><td>403</td><td>reserved</td><td>requested access exceeds the grant's scope (§5 data-access grants)</td></tr>

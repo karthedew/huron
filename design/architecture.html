@@ -128,7 +128,7 @@ bindings, policies and accounts; narrow consumer-owned catalog-fact interfaces.<
 discovery, layer configuration/rules, cross-layer paths and generation documents.</td>
 <td><code>core.security</code>, <code>core.foundation</code></td></tr>
 <tr><td><code>raw</code></td><td>Submission, verified payloads, commit evidence, revision
-publication and reads, release tags and ingest expiry.</td><td><code>core.catalog</code>,
+publication and reads, and ingest expiry.</td><td><code>core.catalog</code>,
 <code>core.security</code>, <code>core.foundation</code>, <code>schema</code></td></tr>
 <tr><td><code>metastore</code></td><td>PostgreSQL and in-memory persistence adapters, including
 security-fact projections.</td><td><code>core.catalog</code>,
@@ -194,7 +194,7 @@ Gold; LanceDB tables (<code>{prefix}-index</code>).</td>
 <td>Raw evidence; the catalog of record for identity.</td></tr>
 <tr><td class="k">PostgreSQL</td>
 <td>Structural state only: identity and uniqueness (orgs → revisions), revision-number sequencing,
-per-dataset ingest locks, release tags, snapshot and product registry, the
+per-dataset ingest locks, snapshot and product registry, the
 <a href="catalog-search.html#schema-registry">schema registry</a> (immutable published schema
 versions, org base + project enrichment), lineage edges, RBAC bindings, API keys,
 jobs, audit, outbox. Plus denormalized <code>title</code> columns for browse.</td>
@@ -325,7 +325,7 @@ holds an invariant — or where none does —
 <tr><td class="inv">C</td><td>At publication a revision contains COMMITTED and verified payload matching its manifest. P3 requires verification with no writable payload handles remaining and no later write opens; stale upload inodes are never published. Lawful later removal is governed by I; observed violations are DEGRADED, not silently repaired.</td></tr>
 <tr><td class="inv">D</td><td>Frozen objects are written exactly once; amendments are appended, never edited.</td></tr>
 <tr><td class="inv">E</td><td>Committed revision numbers within a dataset are contiguous <code>1..N</code>.</td></tr>
-<tr><td class="inv">M</td><td>A release tag is written once and never repointed; a wrong tag is withdrawn, not moved. <code>dataset@tag</code> resolves to the same bytes forever.</td></tr>
+<tr><td class="inv">M</td><td><em>Retired on 2026-10-15.</em> Release tags were removed: a dataset keeps only its full, numbered revisions, which invariants D and E already govern.</td></tr>
 <tr><td class="inv">F</td><td>The client never chooses the final path and never writes <code>COMMITTED</code>.</td></tr>
 <tr><td class="inv">G</td><td>A revision/snapshot/product row is never published in PostgreSQL before its storage state is durable. Storage leads; the catalog follows.</td></tr>
 <tr><td class="inv">H</td><td>No search response contains an ID the caller is not authorized to discover.</td></tr>

@@ -12,6 +12,7 @@ from huron.applications.api.settings import ApiSettings, ClassificationValue
 from huron.core.catalog.external import ExternalDataset, target_key
 from huron.core.catalog.types import PlatformRoot
 from huron.core.foundation.errors import ResourceNotFound
+from huron.core.metastore import InMemoryHierarchyStore
 from huron.core.security.rules import Visibility
 from tests.unit.support import memory_stores
 
@@ -20,7 +21,6 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from huron.applications.api.capabilities import HierarchyStore
     from huron.applications.api.runtime import ApiStores
     from huron.core.catalog.ports import CollectionReader
     from huron.core.catalog.types import Dataset, Organization, Project
@@ -46,7 +46,7 @@ async def _existing_identity[ItemT: (Organization, Project, Dataset), ParentT](
 class MemoryRawWebStore:
     """Keep only mapping and acknowledgement facts; revisions use the real hierarchy."""
 
-    def __init__(self, hierarchy: HierarchyStore) -> None:
+    def __init__(self, hierarchy: InMemoryHierarchyStore) -> None:
         self._hierarchy = hierarchy
         self._targets: dict[str, ExternalDataset] = {}
         self._datasets: dict[UUID, ExternalDataset] = {}
@@ -99,27 +99,23 @@ class MemoryRawWebStore:
     async def revision_ids(
         self, dataset_id: UUID, *, before: int | None, limit: int
     ) -> tuple[UUID, ...]:
-        """Page committed revision IDs through the public hierarchy port."""
-        latest = await self._hierarchy.latest_committed_revision(dataset_id)
-        if latest is None:
-            return ()
-        upper = min(latest.number, before - 1) if before is not None else latest.number
-        result: list[UUID] = []
-        for number in range(upper, 0, -1):
-            try:
-                revision = await self._hierarchy.revision_ref(dataset_id, number)
-            except ResourceNotFound:
-                continue
-            result.append(revision.id)
-            if len(result) == limit:
-                break
-        return tuple(result)
+        """Page the hierarchy's revisions newest first, as the Postgres query reads its table."""
+        newest_first = sorted(
+            (
+                record
+                for record in self._hierarchy._revisions.values()
+                if record.dataset_id == dataset_id and (before is None or record.number < before)
+            ),
+            key=lambda record: record.number,
+            reverse=True,
+        )
+        return tuple(record.id for record in newest_first[:limit])
 
 
 def raw_web_stores() -> ApiStores:
     """Create isolated stores for the real Raw workflow and its external mappings."""
-    stores = memory_stores()
-    return replace(stores, raw_web=MemoryRawWebStore(stores.hierarchy))
+    hierarchy = InMemoryHierarchyStore()
+    return replace(memory_stores(), hierarchy=hierarchy, raw_web=MemoryRawWebStore(hierarchy))
 
 
 def raw_web_app() -> FastAPI:

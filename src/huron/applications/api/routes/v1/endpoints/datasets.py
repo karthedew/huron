@@ -1,10 +1,10 @@
-"""Datasets, release tags, and the layer workflow's read side.
+"""Datasets and the layer workflow's read side.
 
 Creating a dataset hangs under its project and needs ``dataset.create``
-there; everything else is addressed by dataset id. Reading a dataset, its
-releases or its layer workflow needs only a credential and the caller's
-visibility, editing needs ``dataset.update``, and tagging a release needs
-``release.create``. Slugs are chosen once, at creation, and never change.
+there; everything else is addressed by dataset id. Reading a dataset or its
+layer workflow needs only a credential and the caller's visibility, and
+editing needs ``dataset.update``. Slugs are chosen once, at creation, and
+never change.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from huron.applications.api.authorization import (
     require_dataset,
     require_project,
 )
-from huron.applications.api.dependencies import Creation, ReleaseWorkflow
+from huron.applications.api.dependencies import Creation
 from huron.applications.api.dependencies import Datasets as Repository
 from huron.applications.api.problems import problem_response
 from huron.applications.api.routes.v1.pagination import (
@@ -30,7 +30,6 @@ from huron.applications.api.routes.v1.pagination import (
     PageLimit,
     page,
     slug_cursor_key,
-    tag_cursor_key,
 )
 from huron.applications.api.routes.v1.preconditions import (
     IdempotencyHeader,
@@ -39,15 +38,12 @@ from huron.applications.api.routes.v1.preconditions import (
 )
 from huron.applications.api.routes.v1.schema.datasets import (
     CreateDataset,
-    CreateRelease,
     DatasetView,
     LayerView,
     PatchDataset,
-    ReleaseView,
 )
 from huron.core.catalog.types import Dataset
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
-from huron.core.raw.types import Release
 from huron.core.security.principal import Principal
 
 project_datasets = APIRouter(prefix="/projects/{project_id}/datasets", tags=["datasets"])
@@ -56,10 +52,6 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 def _key(item: Dataset) -> tuple[str, str]:
     return (item.slug, str(item.id))
-
-
-def _release_key(item: Release) -> tuple[str]:
-    return (item.tag,)
 
 
 @project_datasets.post(
@@ -227,128 +219,6 @@ async def patch_dataset(
         The updated dataset as the API renders it.
     """
     return await repository.describe(dataset_id, body.to_change(expected_version(if_match)))
-
-
-@router.post(
-    "/{dataset_id}/releases",
-    status_code=201,
-    response_model=ReleaseView,
-    responses={
-        404: problem_response("no such dataset"),
-        409: problem_response("release tag already exists"),
-    },
-)
-async def create_release(
-    dataset_id: UUID,
-    body: CreateRelease,
-    idempotency_key: IdempotencyHeader,
-    repository: ReleaseWorkflow,
-    visibility: CurrentVisibility,
-    actor: Annotated[Principal, Depends(require_dataset("release.create"))],
-) -> Release:
-    """Tag a revision of a dataset as a release.
-
-    Requires ``release.create`` on the dataset. A tag resolves to exactly
-    one revision, forever: a tag the dataset already has is refused with
-    409, and the revision it names must already exist or the request is
-    404, as is a dataset id that is absent or not discoverable by the
-    caller. Replaying the same ``Idempotency-Key`` with the same request
-    returns the original release instead of a 409; reusing the key for a
-    different request is refused with 409.
-    \f
-    Args:
-        dataset_id: The dataset whose revision is being tagged.
-        body: The tag, the revision number it names and an optional title.
-        idempotency_key: The caller's ``Idempotency-Key`` header.
-        repository: The wired release workflow.
-        visibility: The caller's discovery rights, used to resolve
-            ``dataset_id``.
-        actor: The caller, recorded as the release's creator and whose
-            subject scopes the idempotency claim.
-
-    Returns:
-        The release as the API renders it.
-    """
-    claim = IdempotencyClaim(
-        principal=actor.subject,
-        key=idempotency_key,
-        request_sha256=request_sha256(
-            "release",
-            str(dataset_id),
-            body.tag,
-            str(body.revision_number),
-            body.title,
-            actor.subject,
-        ),
-    )
-    return await repository.create_release(
-        dataset_id,
-        tag=body.tag,
-        revision_number=body.revision_number,
-        title=body.title,
-        claim=claim,
-    )
-
-
-@router.get(
-    "/{dataset_id}/releases",
-    responses={
-        404: problem_response("no such dataset"),
-        400: problem_response("cursor is not a valid continuation"),
-    },
-)
-async def list_releases(
-    dataset_id: UUID,
-    repository: ReleaseWorkflow,
-    visibility: CurrentVisibility,
-    limit: PageLimit = 50,
-    after: PageCursor = None,
-) -> Page[ReleaseView]:
-    """List the releases of a dataset the caller may discover.
-
-    Releases are ordered by tag. ``after`` continues from the cursor a
-    previous page returned; a cursor that is not a valid continuation is
-    refused with 400. A dataset id that is absent or not discoverable by
-    the caller is 404, never an empty page.
-    \f
-    Args:
-        dataset_id: The dataset whose releases to list.
-        repository: The wired release workflow.
-        visibility: The caller's discovery rights.
-        limit: The most releases to return in this page.
-        after: The ``next_cursor`` of the previous page, or None for the first.
-
-    Returns:
-        One page of releases and the cursor to the next, if any.
-    """
-    window = await repository.releases(dataset_id, limit=limit, after=tag_cursor_key(after))
-    return page(window, ReleaseView, key=_release_key)
-
-
-@router.get(
-    "/{dataset_id}/releases/{tag}",
-    response_model=ReleaseView,
-    responses={404: problem_response("no such release tag")},
-)
-async def resolve_release(
-    dataset_id: UUID, tag: str, repository: ReleaseWorkflow, visibility: CurrentVisibility
-) -> Release:
-    """Resolve a release tag to the revision it names.
-
-    A tag resolves to the same revision forever. A tag the dataset does not
-    have is 404, and so is a tag on a dataset that is absent or not
-    discoverable by the caller.
-    \f
-    Args:
-        dataset_id: The dataset the tag belongs to.
-        tag: The release tag to resolve.
-        repository: The wired release workflow.
-        visibility: The caller's discovery rights.
-
-    Returns:
-        The release, including the id and number of the revision it names.
-    """
-    return await repository.release(dataset_id, tag)
 
 
 @router.get("/{dataset_id}/layers", responses={404: problem_response("no such dataset")})

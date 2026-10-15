@@ -26,7 +26,7 @@ src/huron/
   core/foundation/    canonical JSON, identities/names, common errors, retry and clock contracts
   core/security/      authentication, identity, authorization and their complete workflows
   core/catalog/       hierarchy, dataset/layer configuration, descriptions and discovery
-  core/raw/           manifests, ingestion, revision publication/reads, releases and expiry
+  core/raw/           manifests, ingestion, revision publication/reads and expiry
   core/metastore/     PostgreSQL and in-memory persistence adapters
   core/rawstore/      POSIX staging, hashing, independent copies, rename and sealing
   schema/             canonical JSON schemas, loaders and shared primitive contracts

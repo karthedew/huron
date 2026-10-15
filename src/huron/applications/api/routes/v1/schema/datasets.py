@@ -46,20 +46,6 @@ class PatchDataset(DescriptionPatch):
     """
 
 
-class CreateRelease(BaseModel):
-    """The body of ``POST /datasets/{dataset_id}/releases``: pin a tag to a revision.
-
-    ``tag`` must be new for the dataset and follow the catalog's tag rules;
-    ``revision_number`` must name a revision the dataset already has. Once
-    created, the tag resolves to that revision forever; it is never
-    repointed.
-    """
-
-    tag: str
-    revision_number: int = Field(ge=1, le=999_999)
-    title: str | None = None
-
-
 class DatasetView(BaseModel):
     """One dataset as the API publishes it.
 
@@ -81,21 +67,6 @@ class DatasetView(BaseModel):
     entry_layer: Layer
     lifecycle_state: str
     version: int
-    created_at: datetime
-
-
-class ReleaseView(BaseModel):
-    """One release tag, resolving to exactly one revision, forever."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    dataset_id: UUID
-    tag: str
-    revision_id: UUID
-    revision_number: int
-    title: str | None
-    created_by: str
     created_at: datetime
 
 

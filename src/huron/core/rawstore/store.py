@@ -435,57 +435,16 @@ class PosixRawStore:
         """
         commit_envelope(Path(staging), Path(final), self.root)
 
-    def _write_once(self, path: PurePosixPath | Path, payload: bytes, *, mode: int = 0o444) -> None:
-        """Create a file that must not already exist, write ``payload``, and make it durable.
-
-        The file is opened with ``O_EXCL``, so a name is written at most
-        once and a second writer fails with the ``FileExistsError`` of that
-        open rather than replacing what is there. The whole payload is
-        written, the file fsynced, and then its directory fsynced so the
-        new name survives a crash; parent directories are created as
-        needed.
-
-        Args:
-            path: The file to create.
-            payload: The complete content.
-            mode: Permission bits for the new file; read-only for everyone
-                by default, because the raw layer's records are written
-                once and never edited.
-        """
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
-        try:
-            write_all(descriptor, payload)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        fsync_dir(target.parent)
-
-    def write_tag_once(self, tag_file: PurePosixPath, payload: bytes) -> None:
-        """Publish one release tag file, refusing to overwrite an existing tag.
-
-        A tag names one revision for good: it goes through
-        :meth:`_write_once` as a read-only file, so retagging fails at the
-        exclusive create instead of silently moving the tag.
-
-        Args:
-            tag_file: The tag's path under the dataset's ``releases``
-                directory.
-            payload: The release document's bytes.
-        """
-        self._write_once(tag_file, payload, mode=0o444)
-
     def write_generation(self, entity_dir: PurePosixPath, generation: int, payload: bytes) -> Path:
         """Record one generation of an entity document and point ``CURRENT.json`` at it.
 
         The document lands at ``{entity_dir}/generations/{NNNNNN}.json``
-        through :meth:`atomic_replace`, not :meth:`_write_once`: immutability
-        of an *acknowledged* generation is guaranteed above this layer, by
-        the hierarchy store advancing an entity's generation only through a
-        committed, version-guarded update, never by refusing to overwrite a
-        file. A generation file already on disk at the number being written
-        can therefore only be a crashed attempt that never reached that
+        through :meth:`atomic_replace`: immutability of an *acknowledged*
+        generation is guaranteed above this layer, by the hierarchy store
+        advancing an entity's generation only through a committed,
+        version-guarded update, never by refusing to overwrite a file. A
+        generation file already on disk at the number being written can
+        therefore only be a crashed attempt that never reached that
         commit - a committed generation N would have made the store hand
         out N+1 next - so replacing it loses nothing a caller was ever told
         succeeded. ``{entity_dir}/CURRENT.json`` is then replaced atomically

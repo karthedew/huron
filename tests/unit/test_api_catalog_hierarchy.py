@@ -1,15 +1,12 @@
-"""The read surface over organizations, projects and datasets, plus two dataset write routes.
+"""The read surface over organizations, projects and datasets, plus the dataset patch route.
 
 Drives the FastAPI app through a TestClient over an in-memory
 ``HierarchyStore`` with dev-header auth and ``root`` bootstrapped as
 platform owner. Covers list and get-by-id for all three hierarchy levels,
-plus the two dataset write routes exercised nowhere else: patching a
-dataset, and creating a release once a revision has been committed
-directly through the hierarchy store's writer (``POST .../releases``
-cannot drive ingest itself - there is no HTTP route that commits a
-revision yet). Also covers, at the HTTP boundary, that reusing an
-``Idempotency-Key`` for a changed request is refused on every creation
-route, and that a patch naming no field is a no-op that writes nothing new.
+plus the dataset write route exercised nowhere else: patching a dataset.
+Also covers, at the HTTP boundary, that reusing an ``Idempotency-Key`` for
+a changed request is refused on every creation route, and that a patch
+naming no field is a no-op that writes nothing new.
 """
 
 from __future__ import annotations
@@ -25,13 +22,10 @@ from fastapi.testclient import TestClient
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
 from huron.core.catalog.paths import dataset_dir
-from tests.hierarchy_contract import committed_revision
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    from huron.applications.api.runtime import ApiStores
 
 pytestmark = pytest.mark.unit
 
@@ -67,13 +61,7 @@ def _headers(subject: str = "root") -> dict[str, str]:
 
 
 @pytest.fixture
-def stores() -> ApiStores:
-    """A fresh in-memory store bundle, held so a test can seed its hierarchy store directly."""
-    return memory_stores()
-
-
-@pytest.fixture
-def client(tmp_path: Path, stores: ApiStores) -> Iterator[TestClient]:
+def client(tmp_path: Path) -> Iterator[TestClient]:
     """A dev-header TestClient over a freshly wired in-memory repository, ``root`` bootstrapped."""
     settings = ApiSettings(
         env="development",
@@ -83,7 +71,7 @@ def client(tmp_path: Path, stores: ApiStores) -> Iterator[TestClient]:
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
         bootstrap_platform_owner="root",
     )
-    with TestClient(create_app(settings=settings, stores=stores)) as client:
+    with TestClient(create_app(settings=settings, stores=memory_stores())) as client:
         yield client
 
 
@@ -124,16 +112,6 @@ def _dataset(client: TestClient, project_id: str, slug: str = "run-0001") -> str
     assert response.status_code == 201, response.text
     assert response.json().keys() == _DATASET_KEYS
     return str(response.json()["id"])
-
-
-async def _commit_revision(
-    stores: ApiStores, dataset_id: str, *, manifest_sha256: str, number: int = 1
-) -> None:
-    """Commit a revision directly through the injected hierarchy store's writer."""
-    async with stores.hierarchy.transaction() as writer:
-        await writer.insert_revision(
-            committed_revision(UUID(dataset_id), number, manifest_sha256=manifest_sha256)
-        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -536,6 +514,21 @@ def test_get_dataset_returns_the_created_dataset(client: TestClient) -> None:
     assert response.json().keys() == _DATASET_KEYS
 
 
+def test_dataset_responses_carry_the_version_in_the_body_and_no_etag_header(
+    client: TestClient,
+) -> None:
+    """A dataset's ``version`` travels in the body for ``If-Match``; no ``ETag`` header is sent."""
+    organization_id = _organization(client)
+    project_id = _project(client, organization_id)
+    dataset_id = _dataset(client, project_id)
+
+    response = client.get(f"/api/v1/datasets/{dataset_id}", headers=_headers())
+
+    assert response.status_code == 200
+    assert "etag" not in response.headers
+    assert response.json()["version"] == 1
+
+
 def test_get_dataset_404s_for_an_unknown_id(client: TestClient) -> None:
     """Getting a dataset by an unknown id 404s."""
     response = client.get(f"/api/v1/datasets/{uuid4()}", headers=_headers())
@@ -663,264 +656,6 @@ def test_patch_authority_precedes_malformed_if_match(
     )
     assert response.status_code == (403 if visible else 404), response.text
     assert response.json()["code"] == ("FORBIDDEN" if visible else "NOT_FOUND")
-
-
-# -- releases -----------------------------------------------------------
-
-
-async def test_create_release_succeeds_once_a_revision_is_committed_directly(
-    client: TestClient, stores: ApiStores
-) -> None:
-    """Creating a release succeeds once its revision is committed directly on the hierarchy store.
-
-    ``insert_revision`` is called on the hierarchy store's writer directly -
-    there is no HTTP route that commits a revision yet - the same seam a
-    future ingest pipeline will drive through the store the lifespan wires.
-    """
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    await _commit_revision(stores, dataset_id, manifest_sha256="a" * 64)
-
-    response = client.post(
-        f"/api/v1/datasets/{dataset_id}/releases",
-        json={"tag": "v1", "revision_number": 1},
-        headers=_headers(),
-    )
-    assert response.status_code == 201
-    body = response.json()
-    assert body["tag"] == "v1"
-    assert body["revision_number"] == 1
-
-
-def test_create_release_404s_without_a_registered_revision(client: TestClient) -> None:
-    """Creating a release without a registered revision 404s."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-
-    response = client.post(
-        f"/api/v1/datasets/{dataset_id}/releases",
-        json={"tag": "v1", "revision_number": 1},
-        headers=_headers(),
-    )
-    assert response.status_code == 404
-
-
-async def test_create_release_replay_returns_the_identical_body_with_no_replay_indicator(
-    client: TestClient, stores: ApiStores
-) -> None:
-    """Replaying a release creation with the same idempotency key returns an identical body."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    await _commit_revision(stores, dataset_id, manifest_sha256="d" * 64)
-    headers = _headers()
-    payload = {"tag": "v1", "revision_number": 1}
-
-    first = client.post(f"/api/v1/datasets/{dataset_id}/releases", json=payload, headers=headers)
-    second = client.post(f"/api/v1/datasets/{dataset_id}/releases", json=payload, headers=headers)
-
-    assert first.status_code == second.status_code == 201
-    assert first.json() == second.json()
-    assert "replayed" not in second.json()
-
-
-async def test_create_release_replay_with_a_changed_title_is_refused(
-    client: TestClient, stores: ApiStores
-) -> None:
-    """Reusing an ``Idempotency-Key`` for ``create_release`` with a different title 409s."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    await _commit_revision(stores, dataset_id, manifest_sha256="9" * 64)
-    headers = _headers()
-    payload = {"tag": "v1", "revision_number": 1, "title": "First"}
-
-    first = client.post(f"/api/v1/datasets/{dataset_id}/releases", json=payload, headers=headers)
-    assert first.status_code == 201
-
-    second = client.post(
-        f"/api/v1/datasets/{dataset_id}/releases",
-        json={**payload, "title": "Second"},
-        headers=headers,
-    )
-    assert second.status_code == 409
-    assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
-
-
-async def test_dataset_and_release_responses_carry_no_etag_header(
-    client: TestClient, stores: ApiStores
-) -> None:
-    """No ``ETag`` header appears on either response, and the dataset's version stays 1."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    await _commit_revision(stores, dataset_id, manifest_sha256="e" * 64)
-
-    release = client.post(
-        f"/api/v1/datasets/{dataset_id}/releases",
-        json={"tag": "v1", "revision_number": 1},
-        headers=_headers(),
-    )
-    assert release.status_code == 201
-    assert "etag" not in release.headers
-
-    dataset_response = client.get(f"/api/v1/datasets/{dataset_id}", headers=_headers())
-    assert "etag" not in dataset_response.headers
-    assert dataset_response.json()["version"] == 1
-
-
-async def test_list_releases_and_resolve_release_return_what_was_created(
-    client: TestClient, stores: ApiStores
-) -> None:
-    """Listing and resolving releases both return the release with its full documented shape."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    await _commit_revision(stores, dataset_id, manifest_sha256="b" * 64)
-    created = client.post(
-        f"/api/v1/datasets/{dataset_id}/releases",
-        json={"tag": "v1", "revision_number": 1},
-        headers=_headers(),
-    )
-    assert created.status_code == 201
-
-    expected_keys = {
-        "id",
-        "dataset_id",
-        "tag",
-        "revision_id",
-        "revision_number",
-        "title",
-        "created_by",
-        "created_at",
-    }
-    assert created.json().keys() == expected_keys
-
-    listed = client.get(f"/api/v1/datasets/{dataset_id}/releases", headers=_headers())
-    assert listed.status_code == 200
-    assert listed.json().keys() == {"items", "next_cursor"}
-    items = listed.json()["items"]
-    assert [item["tag"] for item in items] == ["v1"]
-    assert items[0].keys() == expected_keys
-
-    resolved = client.get(f"/api/v1/datasets/{dataset_id}/releases/v1", headers=_headers())
-    assert resolved.status_code == 200
-    assert resolved.json()["tag"] == "v1"
-    assert resolved.json().keys() == expected_keys
-
-
-async def test_list_releases_orders_by_tag(client: TestClient, stores: ApiStores) -> None:
-    """Listed releases are ordered by tag rather than creation order."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    await _commit_revision(stores, dataset_id, manifest_sha256="c" * 64)
-    for tag in ("v2", "v1"):
-        response = client.post(
-            f"/api/v1/datasets/{dataset_id}/releases",
-            json={"tag": tag, "revision_number": 1},
-            headers=_headers(),
-        )
-        assert response.status_code == 201
-
-    listed = client.get(f"/api/v1/datasets/{dataset_id}/releases", headers=_headers())
-    assert listed.status_code == 200
-    assert [item["tag"] for item in listed.json()["items"]] == ["v1", "v2"]
-
-
-async def test_list_releases_cursor_walk_visits_every_item_exactly_once(
-    client: TestClient, stores: ApiStores
-) -> None:
-    """A cursor walk with ``limit=1`` visits every release exactly once, in tag order."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    await _commit_revision(stores, dataset_id, manifest_sha256="f" * 64)
-    tags = ["zeta", "astro", "mid", "beta"]
-    for tag in tags:
-        response = client.post(
-            f"/api/v1/datasets/{dataset_id}/releases",
-            json={"tag": tag, "revision_number": 1},
-            headers=_headers(),
-        )
-        assert response.status_code == 201
-
-    seen: list[str] = []
-    cursor: str | None = None
-    for _ in range(len(tags) + 1):
-        params = {"limit": 1} | ({"after": cursor} if cursor is not None else {})
-        response = client.get(
-            f"/api/v1/datasets/{dataset_id}/releases", params=params, headers=_headers()
-        )
-        assert response.status_code == 200
-        body = response.json()
-        assert len(body["items"]) == 1
-        seen.append(body["items"][0]["tag"])
-        cursor = body["next_cursor"]
-        if cursor is None:
-            break
-    else:
-        pytest.fail("cursor walk did not terminate within the expected number of pages")
-
-    assert seen == sorted(tags)
-    assert len(seen) == len(set(seen))
-
-
-@pytest.mark.parametrize("limit", [0, 201, -3])
-def test_list_releases_rejects_an_out_of_range_limit(client: TestClient, limit: int) -> None:
-    """Listing releases with an out-of-range limit is rejected with 422."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    response = client.get(
-        f"/api/v1/datasets/{dataset_id}/releases", params={"limit": limit}, headers=_headers()
-    )
-    assert response.status_code == 422
-
-
-def test_list_releases_rejects_a_malformed_cursor(client: TestClient) -> None:
-    """Listing releases with a malformed cursor is rejected with 422."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    response = client.get(
-        f"/api/v1/datasets/{dataset_id}/releases",
-        params={"after": "not-a-cursor"},
-        headers=_headers(),
-    )
-    assert response.status_code == 422
-
-
-def test_list_releases_returns_the_empty_list_when_the_dataset_has_no_releases(
-    client: TestClient,
-) -> None:
-    """A dataset with no releases returns an empty ``items`` list."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-    response = client.get(f"/api/v1/datasets/{dataset_id}/releases", headers=_headers())
-    assert response.status_code == 200
-    assert response.json() == {"items": [], "next_cursor": None}
-
-
-def test_list_releases_404s_for_an_unknown_dataset(client: TestClient) -> None:
-    """Listing releases under an unknown dataset id 404s."""
-    response = client.get(f"/api/v1/datasets/{uuid4()}/releases", headers=_headers())
-    assert response.status_code == 404
-
-
-def test_resolve_release_404s_for_an_unknown_tag(client: TestClient) -> None:
-    """Resolving a release by an unknown tag 404s."""
-    organization_id = _organization(client)
-    project_id = _project(client, organization_id)
-    dataset_id = _dataset(client, project_id)
-
-    response = client.get(
-        f"/api/v1/datasets/{dataset_id}/releases/does-not-exist", headers=_headers()
-    )
-    assert response.status_code == 404
 
 
 # -- layers -----------------------------------------------------------------

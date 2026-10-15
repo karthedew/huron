@@ -12,7 +12,7 @@ site, so there is exactly one copy of it.
 
     | Question | Where |
     |---|---|
-    | What is a dataset? Why are releases tags? | `design/index.html` |
+    | What is a dataset? What is a revision? | `design/index.html` |
     | How are the four storage layers laid out? | `design/layer-raw.html` and its siblings |
     | Who can write Silver? | `design/rbac.html` |
     | What order is this being built in? | `design/roadmap.html`, `IMPLEMENTATION_PLAN.md` |

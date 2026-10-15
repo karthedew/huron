@@ -257,8 +257,7 @@ async def _assert_legacy_refusal(dsn: str, url: str) -> None:
         )
         await asyncio.to_thread(command.upgrade, _config(url), "head")
         assert (
-            await pool.fetchval("SELECT version_num FROM alembic_version")
-            == "0012_raw_web_catalogs"
+            await pool.fetchval("SELECT version_num FROM alembic_version") == "0013_retire_releases"
         )
         assert await pool.fetchval("SELECT count(*) FROM ingest_sessions") == 1
     finally:

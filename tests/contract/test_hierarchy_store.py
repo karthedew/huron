@@ -34,13 +34,11 @@ from testcontainers.postgres import PostgresContainer
 from huron.applications.api.capabilities import HierarchyStore
 from huron.applications.api.capabilities import Mutation as HierarchyWriter
 from huron.core.raw.errors import DatasetLocked
-from huron.core.foundation.errors import ResourceNotFound
 from huron.core.foundation.identifiers import uuid7
 from huron.core.raw.ingest import LEASE_TTL
 from huron.core.catalog.layers import Layer
 from huron.core.catalog.lifecycle import DatasetLifecycle
 from huron.core.catalog.types import PlatformRoot, Dataset, Organization, Project
-from huron.core.raw.types import Release
 from huron.core.foundation.retry import IdempotencyClaim, Replay
 from huron.core.security.rules import Visibility
 from huron.core.metastore import (
@@ -49,7 +47,6 @@ from huron.core.metastore import (
 )
 from tests.hierarchy_contract import (
     VisibleIds,
-    committed_revision,
     scenario_1_write_invisible_until_commit,
     scenario_2_uniqueness,
     scenario_3_optimistic_concurrency,
@@ -76,7 +73,6 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from huron.core.raw.ingest import IngestSession
-    from huron.core.raw.types import RevisionRecord
 
 pytestmark = pytest.mark.contract
 
@@ -89,7 +85,6 @@ _HIERARCHY_TABLES = (
     "outbox_events",
     "ingest_files",
     "ingest_sessions",
-    "releases",
     "dataset_revisions",
     "idempotency_records",
     "datasets",
@@ -266,21 +261,17 @@ async def _assert_every_scenario(dsn: str) -> None:
 
 @dataclasses.dataclass(slots=True)
 class _VisibilityFixture:
-    """One organization/project/dataset/release tree, built once and shared by both backends.
+    """One organization/project/dataset tree, built once and shared by both backends.
 
     Attributes:
         organizations: Every organization, keyed by slug.
         projects: Every project, keyed by slug.
         datasets: Every dataset, keyed by slug.
-        release: The one release in the fixture.
-        revision: The revision the release cites.
     """
 
     organizations: dict[str, Organization]
     projects: dict[str, Project]
     datasets: dict[str, Dataset]
-    release: Release
-    revision: RevisionRecord
 
 
 def _build_visibility_fixture() -> _VisibilityFixture:
@@ -291,7 +282,7 @@ def _build_visibility_fixture() -> _VisibilityFixture:
     call, so two separate calls - one per backend - would never produce ids a caller could compare.
 
     Returns:
-        The fixture's organizations, projects, datasets, release and the revision it cites.
+        The fixture's organizations, projects and datasets.
     """
     organizations = {slug: _organization(slug) for slug in ("org-a", "org-b", "org-c")}
     projects = {
@@ -308,28 +299,11 @@ def _build_visibility_fixture() -> _VisibilityFixture:
         "b1-ds": _dataset(projects["b1"].id, "b1-ds"),
         "c1-ds": _dataset(projects["c1"].id, "c1-ds"),
     }
-    revision = committed_revision(datasets["a1-ds"].id, 1, manifest_sha256="f" * 64)
-    release = Release(
-        id=uuid7(),
-        dataset_id=datasets["a1-ds"].id,
-        tag="v1",
-        revision_id=revision.id,
-        revision_number=revision.number,
-        title=None,
-        created_by="user:test",
-        created_at=datetime.now(UTC),
-    )
-    return _VisibilityFixture(
-        organizations=organizations,
-        projects=projects,
-        datasets=datasets,
-        release=release,
-        revision=revision,
-    )
+    return _VisibilityFixture(organizations=organizations, projects=projects, datasets=datasets)
 
 
 async def _seed_fixture(store: HierarchyStore, fixture: _VisibilityFixture) -> None:
-    """Insert one shared fixture's organizations, projects, datasets and release into a store.
+    """Insert one shared fixture's organizations, projects and datasets into a store.
 
     Args:
         store: The store to seed.
@@ -343,9 +317,6 @@ async def _seed_fixture(store: HierarchyStore, fixture: _VisibilityFixture) -> N
             await writer.insert_project(project)
         for dataset in fixture.datasets.values():
             await writer.insert_dataset(dataset, data_classification="open")
-        await writer.insert_revision(fixture.revision)
-    async with store.transaction() as writer:
-        await writer.insert_release(fixture.release)
 
 
 async def _visible_ids(
@@ -372,16 +343,10 @@ async def _visible_ids(
         await store.datasets.browse(project.id, visibility, limit=200, after=None)
         for project in fixture.projects.values()
     ]
-    try:
-        await store.release(fixture.release.dataset_id, fixture.release.tag, visibility)
-        releases = frozenset({fixture.release.id})
-    except ResourceNotFound:
-        releases = frozenset()
     return VisibleIds(
         organizations=frozenset(item.id for item in organizations_window.items),
         projects=frozenset(item.id for window in projects_windows for item in window.items),
         datasets=frozenset(item.id for window in datasets_windows for item in window.items),
-        releases=releases,
     )
 
 
@@ -390,11 +355,11 @@ def test_both_backends_admit_the_same_ids_under_every_visibility() -> None:
 
     Both backends must apply the same visibility predicate, so the same fixture must yield the
     same ids through either one. The fixture is built exactly once, by
-    ``_build_visibility_fixture``, and the identical ``Organization``/``Project``/``Dataset``/
-    ``Release`` records - the same objects, so the same ids - are inserted into both stores; only
-    then are the two backends' visibility-filtered id sets meaningfully comparable, level by
-    level, for the five ``Visibility`` values ``scenario_8_visibility`` itself exercises against
-    the in-memory store alone.
+    ``_build_visibility_fixture``, and the identical ``Organization``/``Project``/``Dataset``
+    records - the same objects, so the same ids - are inserted into both stores; only then are the
+    two backends' visibility-filtered id sets meaningfully comparable, level by level, for the five
+    ``Visibility`` values ``scenario_8_visibility`` itself exercises against the in-memory store
+    alone.
     """
     with PostgresContainer("postgres:16") as postgres:
         _migrate(postgres.get_connection_url(driver="asyncpg"))
@@ -803,8 +768,8 @@ def test_stores_conform_to_their_ports_structurally_not_by_inheritance() -> None
     assert HierarchyStore not in InMemoryHierarchyStore.__mro__
 
 
-def test_identity_and_parent_constraints_preserve_their_database_errors() -> None:
-    """Duplicate identities and missing release parents retain precise PostgreSQL errors."""
+def test_identity_constraints_preserve_their_database_errors() -> None:
+    """A duplicate primary key, unlike a duplicate slug, keeps its precise PostgreSQL error."""
     with PostgresContainer("postgres:16") as postgres:
         _migrate(postgres.get_connection_url(driver="asyncpg"))
         asyncio.run(_assert_identity_constraints(postgres.get_connection_url(driver=None)))
@@ -818,20 +783,6 @@ async def _assert_identity_constraints(dsn: str) -> None:
         dataset = await store.datasets.get(hierarchy.datasets["run-0001"], Visibility.ALL)
         project = await store.projects.get(dataset.project_id, Visibility.ALL)
         organization = await store.organizations.get(project.organization_id, Visibility.ALL)
-        revision = committed_revision(dataset.id, 1)
-        release = Release(
-            id=uuid7(),
-            dataset_id=dataset.id,
-            tag="original",
-            revision_id=revision.id,
-            revision_number=1,
-            title=None,
-            created_by="user:test",
-            created_at=revision.committed_at,
-        )
-        async with store.transaction() as writer:
-            await writer.insert_revision(revision)
-            await writer.insert_release(release)
         duplicates: tuple[Callable[[HierarchyWriter], Awaitable[None]], ...] = (
             lambda writer: writer.insert_organization(
                 dataclasses.replace(organization, slug="new")
@@ -840,19 +791,11 @@ async def _assert_identity_constraints(dsn: str) -> None:
             lambda writer: writer.insert_dataset(
                 dataclasses.replace(dataset, slug="new"), data_classification="open"
             ),
-            lambda writer: writer.insert_release(dataclasses.replace(release, tag="new")),
         )
         for insert in duplicates:
             with pytest.raises(asyncpg.UniqueViolationError) as raised:
                 async with store.transaction() as writer:
                     await insert(writer)
             assert raised.value.constraint_name.endswith("_pkey")
-        with pytest.raises(asyncpg.ForeignKeyViolationError) as raised_parent:
-            async with store.transaction() as writer:
-                await writer.insert_release(
-                    dataclasses.replace(release, id=uuid7(), dataset_id=uuid7(), tag="missing")
-                )
-        assert raised_parent.value.constraint_name == "releases_dataset_id_fkey"
-        assert (await store.release(release.dataset_id, release.tag, Visibility.ALL)) == release
     finally:
         await pool.close()

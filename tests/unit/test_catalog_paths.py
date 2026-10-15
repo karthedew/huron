@@ -2,9 +2,8 @@
 
 Covers ``revision_dir``'s nesting and revision-number range,
 ``organization_dir``, ``dataset_layer_dir``, single-source vs. fused
-``product_dir`` placement, ``release_tag_file`` and its tag rule,
-``generation_file``'s range and zero-padding, ``staging_dir`` and
-``staging_paths``, ``validate_slug``'s pattern rule and
+``product_dir`` placement, ``generation_file``'s range and zero-padding,
+``staging_dir`` and ``staging_paths``, ``validate_slug``'s pattern rule and
 ``validate_org_slug``'s reserved-route rule.
 """
 
@@ -27,7 +26,7 @@ from huron.core.catalog.paths import (
     product_dir,
     project_dir,
 )
-from huron.core.raw.paths import release_tag_file, revision_dir, staging_dir, staging_paths
+from huron.core.raw.paths import revision_dir, staging_dir, staging_paths
 
 pytestmark = pytest.mark.unit
 
@@ -142,17 +141,6 @@ def test_single_source_and_fused_products_never_collide() -> None:
     assert single_source != fused
 
 
-def test_release_tag_file_is_a_sibling_of_raw_not_nested_inside_it() -> None:
-    """A release tag file sits beside raw under releases/, never nested inside raw."""
-    hierarchy = Hierarchy()
-    tag_path = release_tag_file(
-        ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, "v1.0"
-    )
-    base = dataset_dir(ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset)
-    assert tag_path == base / "releases" / "v1.0.json"
-    assert "raw" not in tag_path.relative_to(base).parts
-
-
 def test_staging_dir_sits_at_the_data_root() -> None:
     """An ingest session's staging directory sits at the data root, under ``.staging``."""
     ingest_id = uuid7()
@@ -183,15 +171,6 @@ def test_validate_slug_rejects_a_slug_that_could_not_serve_as_a_path_component(s
     """A slug breaking the pattern, holding the separator, or over length is refused."""
     with pytest.raises(PathRuleViolation):
         validate_slug(slug, ORG_PROJECT_SLUG_MAX)
-
-
-def test_release_tag_file_rejects_a_tag_that_could_not_be_a_file_name() -> None:
-    """A tag that fails the tag pattern is refused before any release path is built."""
-    hierarchy = Hierarchy()
-    with pytest.raises(PathRuleViolation):
-        release_tag_file(
-            ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, "NOT A TAG"
-        )
 
 
 @pytest.mark.parametrize("number", [0, 1_000_000])

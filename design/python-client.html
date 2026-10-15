@@ -81,7 +81,7 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
 <main>
 <h1>Python Client &amp; Aether</h1>
 <p class="sub">The <code>huron</code> package: the scientist-facing door. Opens any layer as a lazy
-Xarray dataset, uploads revisions, tags releases, publishes products — with an API key required for every call
+Xarray dataset, uploads revisions, publishes products — with an API key required for every call
 and reproducibility pinning built in.</p>
 
 <h2 id="shape">1. Package shape</h2>
@@ -94,7 +94,6 @@ huron/
   ingest.py        revision upload: manifest build, streaming, resume
   layers.py        manual bronze/silver intake: `huron bronze upload` — NetCDF/HDF5/
                    zipped-Zarr in, provenance assertion (raw link | external), job watch
-  releases.py      tag / resolve / withdraw release tags
   products.py      publish, versions, staleness queries
   search.py        search() with typed filters
   cli/             `huron` command (thin wrapper over the same client)
@@ -182,10 +181,6 @@ validation's coverage checks.</p>
 huron upload ./run-0042 \
   --dataset nuclear-engineering/modeling-simulation/run-0042 \
   --infer --confirm
-
-# once that revision is the one to cite:
-huron release create --dataset nuclear-engineering/modeling-simulation/run-0042 \
-  --revision 1 --tag v1.0
 </pre>
 
 <ul>
@@ -200,10 +195,9 @@ interrupted transfers resume via
 <code>completed_parts</code>; heartbeats run while any transfer is in flight.</li>
 <li>Programmatic form: <code>dataset.upload(source=path, metadata={…})</code>
 returns the committed revision; a correction is the same call again — it simply commits revision
-<em>n+1</em>, with <code>reason=</code> recorded in the audit trail. Tagging is separate and
-explicit: <code>client.releases.tag(dataset=…, revision=1, tag="v1.0")</code>.</li>
-<li><strong>Pinning.</strong> <code>open_dataset("…/run-0042@v1.0")</code> and
-<code>open_dataset("…/run-0042@revision-1")</code> both resolve to one immutable revision; bare
+<em>n+1</em>, with <code>reason=</code> recorded in the audit trail.</li>
+<li><strong>Pinning.</strong> <code>open_dataset("…/run-0042@revision-1")</code> resolves to one
+immutable revision; bare
 <code>…/run-0042</code> resolves to the latest committed revision and is therefore <em>not</em>
 reproducible — the client warns when an un-pinned reference is used inside a product derivation.</li>
 </ul>

@@ -75,7 +75,6 @@ CAPABILITIES: frozenset[str] = frozenset(
         "dataset.update",
         "dataset.policy_attach",
         "dataset.discover",
-        "release.create",
         "rbac.binding_manage",
         "service_account.manage",
         "user.manage",
@@ -197,16 +196,14 @@ ROLES: dict[str, RoleDefinition] = {
         RoleDefinition(
             code="developer",
             title="Developer",
-            capabilities=frozenset(
-                {"dataset.discover", "dataset.create", "dataset.update", "release.create"}
-            ),
+            capabilities=frozenset({"dataset.discover", "dataset.create", "dataset.update"}),
             layer_grants=(
                 LayerGrant("data.read"),
                 LayerGrant("data.write", frozenset({"raw", "bronze"})),
             ),
             bindable_scopes=_HUMAN_SCOPES,
             allowed_principal_kinds=frozenset({PRINCIPAL_KIND_USER}),
-            description="Commit to raw and bronze; create and tag datasets.",
+            description="Commit to raw and bronze; create and update datasets.",
         ),
         RoleDefinition(
             code="project_admin",
@@ -219,7 +216,6 @@ ROLES: dict[str, RoleDefinition] = {
                     "dataset.create",
                     "dataset.update",
                     "dataset.policy_attach",
-                    "release.create",
                     "rbac.binding_manage",
                 }
             ),
@@ -265,7 +261,6 @@ ROLES: dict[str, RoleDefinition] = {
                     "dataset.update",
                     "dataset.policy_attach",
                     "dataset.discover",
-                    "release.create",
                     "service_account.manage",
                     "rbac.binding_manage",
                     "user.manage",

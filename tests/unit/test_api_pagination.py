@@ -22,7 +22,6 @@ from huron.applications.api.routes.v1.pagination import (
     page,
     paginate,
     slug_cursor_key,
-    tag_cursor_key,
 )
 from huron.applications.api.errors import InvalidCursor
 from huron.core.catalog.types import Window
@@ -173,19 +172,3 @@ def test_slug_cursor_key_rejects_a_non_uuid_second_part() -> None:
     """A two-part cursor whose second part is not a valid UUID raises InvalidCursor."""
     with pytest.raises(InvalidCursor, match="not a valid UUID"):
         slug_cursor_key(encode_cursor(("astro", "not-a-uuid")))
-
-
-def test_tag_cursor_key_returns_none_for_a_none_cursor() -> None:
-    """A None cursor decodes to None, the start of the collection."""
-    assert tag_cursor_key(None) is None
-
-
-def test_tag_cursor_key_decodes_a_valid_tag() -> None:
-    """A one-part cursor decodes to the tag as a one-tuple."""
-    assert tag_cursor_key(encode_cursor(("v1.0",))) == ("v1.0",)
-
-
-def test_tag_cursor_key_rejects_a_two_part_cursor() -> None:
-    """A cursor naming two parts raises InvalidCursor."""
-    with pytest.raises(InvalidCursor, match="expected a single tag"):
-        tag_cursor_key(encode_cursor(("v1.0", "extra")))

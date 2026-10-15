@@ -27,9 +27,7 @@ from huron.core.metastore.rows import (
     policy,
     principal_record,
     project,
-    release,
     revision_record,
-    revision_ref,
     service_account,
     session_record,
 )
@@ -264,46 +262,6 @@ def test_dataset_maps_every_column_and_ignores_data_classification() -> None:
     assert record.profile_name == "timeseries"
     assert record.entry_layer == "raw"
     assert record.lifecycle_state == "ACTIVE"
-
-
-def test_release_maps_the_joined_revision_number_and_a_null_title() -> None:
-    """``release`` maps the joined ``revision_number`` column, and a null ``title`` to None."""
-    release_id = uuid4()
-    dataset_id = uuid4()
-    revision_id = uuid4()
-    now = datetime.now(UTC)
-    row = {
-        "id": release_id,
-        "dataset_id": dataset_id,
-        "tag": "v1",
-        "revision_id": revision_id,
-        "revision_number": 1,
-        "title": None,
-        "created_by": "user:alice",
-        "created_at": now,
-    }
-    record = release(row)
-    assert record.id == release_id
-    assert record.revision_id == revision_id
-    assert record.revision_number == 1
-    assert record.title is None
-
-
-def test_revision_ref_maps_revision_number_to_number() -> None:
-    """``revision_ref`` renames the ``revision_number`` column to ``RevisionRef.number``."""
-    revision_id = uuid4()
-    dataset_id = uuid4()
-    row = {
-        "id": revision_id,
-        "dataset_id": dataset_id,
-        "revision_number": 3,
-        "manifest_sha256": "a" * 64,
-    }
-    record = revision_ref(row)
-    assert record.id == revision_id
-    assert record.dataset_id == dataset_id
-    assert record.number == 3
-    assert record.manifest_sha256 == "a" * 64
 
 
 def test_revision_record_maps_revision_number_to_number() -> None:
