@@ -44,8 +44,10 @@ Non-goals:
 These apply to every task in this plan.
 
 - **Gate.** Every implementation, fix and verification pass runs the complete gate below from the
-  repository root. Every command must exit 0. Configured thresholds in `pyproject.toml` govern
-  (`fail_under` is a ratchet; it moves down only under the "Coverage floor re-baseline" rule).
+  repository root. Every command must exit 0, and `radon cc` and `radon mi` must also print
+  nothing: radon exits 0 even when it lists findings. Configured thresholds in `pyproject.toml`
+  govern (`fail_under` is a ratchet; it moves down only under the "Coverage floor re-baseline"
+  rule).
 
   ```text
   uv run ruff check src
@@ -70,7 +72,13 @@ These apply to every task in this plan.
   (`tests/raw_web_support.py` until M5.1, then `tests/raw_e2e_support.py`) also runs, from `web/`,
   all five of `npm run check`, `npm test`, `npm run lint`, `npm run build` and `npm run test:e2e`;
   `npx @sveltejs/mcp svelte-autofixer <file> --svelte-version 5` on each changed Svelte file; and
-  the AGENTS.md visual QA for visible changes (§20.1, §22.1).
+  the AGENTS.md visual QA for visible changes (§20.1, §22.1). The Playwright harness builds its
+  stores with `memory_stores()` and starts the API lifespan, so every task that changes what that
+  lifespan builds or asserts also runs `npm run test:e2e` from `web/` (it builds the BFF itself;
+  the other four npm commands run only when `web/` changed): the lifespan or `_build_runtime` in
+  `src/huron/applications/api/app.py`, `src/huron/core/raw/runtime.py`, the conformance asserts in
+  `src/huron/applications/api/capabilities.py`, `ApiStores` or `memory_stores()`. A broken harness
+  start then fails the task that caused it, not the next web task.
 - **Containers.** Contract and integration suites use Docker Desktop through testcontainers.
   Never start or stop the owner's local stack (`scripts/polaris-dev.sh`, the `huron-raw-local`
   container) and never use `make up`/`make stack`.
@@ -120,6 +128,18 @@ These apply to every task in this plan.
   with their routes. The tag-set test's set, count and name follow the routers: 17 tags after M3.9,
   18 after M4.8, 17, 16 and 14 after M5.1, M5.2 and M5.3, 15 after M6.9, 16 after M7.7, and the end
   state of 17 after M8.3 (§19.7).
+- **Composition root (§6.6, §8.6.8).** From M4.7 on, `RawRuntime` takes the adapter bundle
+  `RawPorts` and its keywords as §8.6.8 gives them: `RawRuntime(ports, *, placement, admission,
+  limits, public_api_url, clock)`. The fields and keywords arrive with their slices: M4.7
+  (`datasets`, `schemas`, `work`, `archive`, `sweeper`; `placement`, `public_api_url`, `clock`),
+  M6.7 (`admission`, `limits`), M6.9 (`uploads`, `ledger`, `area`), M7.3 (`trigger`) and M7.13
+  (`versions`); the old engine's `storage` and `persistence` stay as keywords only until M5.3. A
+  task that adds a `RawPorts` field, a `RawRuntime` keyword, a service `RawRuntime` composes or an
+  `ApiStores` member edits, in the same pass, `src/huron/core/raw/runtime.py`,
+  `src/huron/applications/api/runtime.py` and `app.py`, `tests/unit/support.py`
+  (`memory_stores()`), and every test that builds `RawRuntime` or `ApiRuntime` directly:
+  `tests/unit/test_authorization_credentials.py`, and `tests/unit/test_core_workflows.py` until
+  M5.3 removes its old-engine fixture. It also runs `npm run test:e2e` (the "Gate" rule).
 - **Migrations.** At most one Alembic revision per task, in the order `0014` → `0017`, with
   `migrations/schema.sql` and its `Reflects:` stamp in the same commit and contract proofs on
   `postgres:16` (§10.3).
@@ -136,16 +156,30 @@ These apply to every task in this plan.
   web's part-upload path leaves whole in M10.2, before its successor (§21.1 rule 1), so no web
   transition is declared. `raw-storage` merges into `main` only after every task is verified, a
   green 9 GiB run is recorded and the Polaris parity test has passed.
-- **Delivery-order deviations.** The order follows D-81 as amended by D-137..D-139, with five
+- **Deviations.** The order follows D-81 as amended by D-137..D-139, with five delivery-order
   deviations, each recorded under "Execution notes" as it lands: (1) the fixture release pages
   leave in M1.2; (2) the legacy removal runs as seven measured, coverage-safe steps (M5.1–M5.7);
   (3) the browser acceptance runs in M10.10, after the wizard's tus tasks; (4) slice 6 (M12) runs
   after the web tasks; (5) the verifier and the maintenance loop (M7.3) land before the chunk
-  protocol (M7.4).
+  protocol (M7.4). Three more deviations name or add what the design does not, each recorded under
+  "Execution notes" by the task that lands it: (6) the tus modules are the owner's placeholders
+  `routes/v1/endpoints/tus.py` and `routes/v1/schema/tus.py`, whose docstrings ("tus 1.0.0 upload
+  routes for Raw versions", "Request and response models for the Raw tus upload routes") claim
+  them, in place of the design's `raw_tus.py` (D-72, D-97, §11.14, §19.1); every check the design
+  keys on `raw_*` module names names `tus.py` as well (M7.7, M11.4, M14.7); (7)
+  `src/huron/core/metastore/raw_memory.py` (M3.5), the one in-memory Raw state that the in-memory
+  Raw stores share as the PostgreSQL adapters share one database, which §6.4 and §8.7.5 do not
+  list; (8) `SchemaPin(subject_id, number, schema_version_id)` on `UploadSession` (M6.2), which
+  §8.4.2 and D-88's glossary lack, because `UploadSessionView.schema` (§19.4) needs the subject and
+  the number on target-less reads without a second read.
 - **Clean sweep.** No backwards compatibility, shims, TODOs, commented-out code, suppressions
   (`# noqa`, `# type: ignore`, `# pragma: no cover`, skip/xfail) or configuration exclusions.
   Comments, docstrings, test names and messages never mention this plan and cite no plan task,
-  milestone, slice or design decision id (§22.4 step 5).
+  milestone, slice or design decision id (§22.4 step 5). Besides a `fail_under` reset, the one
+  tool-configuration change any task makes is the type information M3.3 declares for its new
+  runtime dependency `google-re2`, exactly as M3.3 spells it (the pattern of the existing
+  `asyncpg.*` override). It is part of that task's specification, not a loosening of the gate;
+  the verifier compares it with M3.3's text and accepts nothing broader.
 - **Skills.** `oop-design` for `src/huron/core`; `fastapi` for `src/huron/applications/api`;
   `postgresql-table-design` for migrations and PostgreSQL adapters; `writing-for-agents` when
   editing `AGENTS.md` or `CLAUDE.md`; `svelte-core-bestpractices` and `svelte-code-writer` for
@@ -414,6 +448,17 @@ the fixture release pages), and move the shared error and paging types into foun
     error-contract walks (keyed on a class's own `code`) never see it; a class without
     `retry_after` answers without the header.
   - `tests/unit/test_domain_import_contracts.py`: the foundation-import test also imports `paging`.
+  - Four of the modules whose imports move are below 100 % at `9882690` (`core/security/dev.py`
+    line 45, `core/security/apikeys.py` lines 124 and 189, `applications/api/raw_web.py` line 83,
+    `applications/api/authorization/guards.py` line 426), so this task adds their missing cases:
+    `tests/unit/test_security_authentication.py` gains
+    `test_dev_header_resolver_refuses_other_environments`,
+    `test_api_key_ttl_outside_one_second_to_400_days_is_refused` and
+    `test_unknown_api_key_is_an_invalid_credential` (the miss still hashes and answers
+    `AuthError`); `tests/unit/test_raw_web.py` gains `test_raw_web_answers_404_while_unconfigured`;
+    `tests/unit/test_authorization_guards.py` gains
+    `test_upload_owner_refuses_another_actors_session`. The last two leave with their modules in
+    M5.1 and M5.3.
   - `design/core-map.html`: the foundation rows name `paging` (`Window`), `Forbidden` and
     `AuthError`; the Catalog types row drops `Window`.
 - Design: §8.2 Package placement ("Three moves keep `core/raw` free of `catalog` and `security`
@@ -427,7 +472,8 @@ the fixture release pages), and move the shared error and paging types into foun
     still binds the name through its own import, so only this check catches a stale import).
   - `test_error_contract.py` passes with each of `FORBIDDEN` and `INVALID_CREDENTIAL` declared by
     exactly one class; `test_problem_headers_carry_retry_after` passes.
-  - Every modified file at 100 %; statements only move, so the floor is unchanged.
+  - Every modified file at 100 % in the unit run, the five cases above included; statements only
+    move, so the floor cannot drop.
 - Dependencies: none.
 - Status: pending
 
@@ -511,7 +557,9 @@ with dataset-root claims.
   `.huron/root.json`, 9.6.6 Packaged schema files); §15.2 The create request; §16.11 PLATFORM seed;
   D-56, D-69, D-109, D-122, D-172.
 - Verification: the plan-wide gate; `test_raw_documents_schema.py` passes with the format checker on
-  (`uuid`, `date-time`); `git diff --stat` shows only the four new documents and the test module.
+  (`uuid`, `date-time`); `git status --porcelain` shows exactly five new `??` entries (the four
+  documents and the test module) beside the owner's untracked files, and no modified tracked file
+  other than this plan (new files never appear in `git diff --stat`).
 - Dependencies: none.
 - Status: pending
 
@@ -520,8 +568,8 @@ with dataset-root claims.
 - Intent: give core the `version.json` value object (the publication marker) and move the manifest
   document helpers into `core/raw/manifest.py`, so `documents.py` can later shed its legacy
   documents without taking the manifest rules with it. `VersionDocument.compose` lands with the
-  freeze, whose inputs (`UploadSession`, `SchemaVersion`, `SchemaSubject`) do not exist yet; the
-  root sentinel lands with `StorageRoot` (M2.4).
+  freeze decision (M7.12), whose inputs (`UploadSession`, `SchemaVersion`, `SchemaSubject`) do not
+  exist yet; the root sentinel lands with `StorageRoot` (M2.4).
 - Delete: none. Rename (orchestrator `git mv` before the pass):
   `tests/unit/test_catalog_documents.py` → `tests/unit/test_raw_documents.py`.
 - Create / Modify:
@@ -540,6 +588,11 @@ with dataset-root claims.
   - Importers of the moved helpers: `core/raw/_impl/ingest.py`, `core/raw/_impl/reader.py`,
     `tests/unit/test_raw_documents.py`, `tests/contract/test_commit_intents.py`,
     `tests/unit/test_api_revisions.py`, `tests/unit/test_api_ingest_sessions.py`.
+  - `core/raw/_impl/ingest.py` misses lines 622–624 and 631–633 at `9882690` (the
+    `PreconditionFailed` retries of file completion), so `tests/unit/test_api_ingest_sessions.py`
+    gains `test_file_completion_retries_after_a_concurrent_parts_update`, parametrized over a
+    matching and a mismatching copy: the first `update_ingest_file` raises `PreconditionFailed`,
+    and `complete_file` re-reads the file and settles it. The case leaves with the engine in M5.3.
   - `tests/unit/test_raw_documents.py`: the existing manifest cases import from `manifest.py`; new
     `test_version_document_golden_bytes` (the §9.6.1 example with concrete digests: exact JCS bytes,
     `decode` round trip, `location`), `test_version_document_decode_refusals` (pretty-printed bytes,
@@ -633,9 +686,11 @@ with dataset-root claims.
   - `tests/unit/test_raw_locations.py`: the parity table of at least 12 cases (every §9.5 worked
     derivation, the fork's `file:/+` and `/+` rewrites and `isChildOf`, raw unencoded and non-ASCII
     segments, an explicit namespace location equal to the default, a base with and without its
-    trailing `/`), one case per reason `derive` decides with its context, and Hypothesis
-    `test_derive_never_leaves_its_root` (an accepted placement's `base_location` starts with
-    exactly one root's `uri` and `relative_to` round-trips).
+    trailing `/`), one case per reason `derive` decides with its context, among them R2's
+    `test_namespace_location_mismatch_refused` (a namespace whose own `location` differs from the
+    default layout answers `namespace_location_mismatch` with `expected` and `actual`), and
+    Hypothesis `test_derive_never_leaves_its_root` (an accepted placement's `base_location` starts
+    with exactly one root's `uri` and `relative_to` round-trips).
   - `tests/integration/test_raw_polaris_parity.py` (new; `pytestmark = pytest.mark.polaris` only):
     against the owner's running local stack it reads `.local/polaris/credentials.json`, takes a
     token as `scripts/polaris_dev.py` `obtain_token` does, creates a namespace (one level
@@ -738,7 +793,10 @@ with dataset-root claims.
       result in both directions and answers `False` for an unknown key.
   - `src/huron/core/rawstore/store.py`: `PosixRawStore.__init__` takes `reserve_bytes` (renamed
     from `completion_reserve_bytes`) for its `CompletionAdmission`; `max_concurrent_completions`
-    stays until the slot leaves (M5.7); `src/huron/applications/api/app.py` passes the new name.
+    stays until the slot leaves (M5.7). Its two callers pass the new name:
+    `src/huron/applications/api/app.py` and the `staged_upload` fixture of
+    `tests/unit/test_rawstore_completion_admission.py` (`reserve_bytes=25`). The
+    `ApiSettings.completion_reserve_bytes` field keeps its name until M5.7 removes it.
   - `src/huron/core/rawstore/__init__.py`: exports `PosixStorageRoots`.
   - `tests/unit/test_rawstore_roots.py` (new; temporary roots, stubbed `st_dev` and
     `os.path.ismount`, candidate bytes from `root_sentinel`): every §9.2 row, including a recorded
@@ -839,10 +897,13 @@ access to PLATFORM schemas, so the first Raw routes run under `raw_grant`.
   - `migrations/schema.sql`: stamp `-- Reflects: 0014_raw_schema_registry`; new section "7. Raw
     storage" with the §10.12 header and the `raw_schema_subjects` and `raw_schema_versions` blocks.
   - `tests/contract/test_raw_schema.py` (new; one container per module, `upgrade head`):
-    - `test_schema_map_names_every_raw_object`: for the eight Raw table names in an explicit list
-      (`relname = ANY($1)`, never `LIKE`), every non-internal trigger, every CHECK and UNIQUE not
-      ending in `_check` or `_key` and every index not ending in `_pkey` or `_key` occurs in
-      `migrations/schema.sql`;
+    - `test_schema_map_names_every_raw_object`: for the eight Raw table names in one explicit list
+      that never changes afterwards (`raw_schema_subjects`, `raw_schema_versions`,
+      `raw_realm_bindings`, `raw_storage_roots`, `raw_datasets`, `raw_upload_sessions`,
+      `raw_upload_files`, `raw_versions`; `relname = ANY($1)`, never `LIKE`, so a table a later
+      revision creates is found once it exists), every non-internal trigger, every CHECK and
+      UNIQUE not ending in `_check` or `_key` and every index not ending in `_pkey` or `_key`
+      occurs in `migrations/schema.sql`;
     - one proof per trigger (SQLSTATE 23514 with `constraint_name` equal to the trigger's name):
       a renamed or deleted subject, `latest_number` + 2, a version number with a gap, a version born
       DEPRECATED, changed bytes, DEPRECATED → ACTIVE, a deleted version, and at `COMMIT` an uncounted
@@ -903,8 +964,9 @@ access to PLATFORM schemas, so the first Raw routes run under `raw_grant`.
     raiser.
   - `tests/unit/test_raw_delegation.py` (new): the six permissions and an unknown one (401); null,
     catalog-level and dataset-level targets; the shape rule both ways (401); `catalog_storage`
-    bounds (0 and 65 locations and 4097-character values refused); unknown claims refused; the
-    lifetime rules.
+    bounds (0 and 65 locations and 4097-character values refused); unknown claims refused;
+    `test_delegation_lifetime_rules` (§12.13: `exp − iat` of 0 and of 61 s, an expired token and
+    an `iat` in the future each answer `401`, with zero leeway; 60 s passes).
   - `tests/unit/test_raw_grants.py` (new): the §12.11 table row by row; scope before permission (a
     foreign target without the permission answers 404, never 403); `dataset_target` on catalog and
     null targets (401); the digest rule (`sha1` under a delegated digest answers 401, any algorithm
@@ -930,8 +992,14 @@ access to PLATFORM schemas, so the first Raw routes run under `raw_grant`.
 - Delete: none.
 - Create / Modify (load `oop-design`; `domain-modeling` for the ADR):
   - `pyproject.toml` and `uv.lock`: `google-re2` in `[project].dependencies` (through `uv add`, so
-    `uv run --locked` keeps passing); if the package ships no type information, one mypy override
-    and one ty setting for the module `re2`, with every use behind two typed functions.
+    `uv run --locked` keeps passing). Every use of `re2` stays behind two typed functions in
+    `schemas.py`. If the installed package ships no `py.typed` marker, `pyproject.toml` gains
+    exactly one `[[tool.mypy.overrides]]` table, `module = "re2"` with
+    `ignore_missing_imports = true` and a comment in the manner of the existing `asyncpg.*`
+    override, and, only if `uv run ty check` then reports `unresolved-import` for `re2`,
+    `allowed-unresolved-imports = ["re2"]` under `[tool.ty.analysis]`. Nothing else in the tool
+    configuration changes; the verifier checks these lines against this bullet (the "Clean sweep"
+    rule) and records which of the two were needed in Execution notes.
   - `src/huron/core/raw/schemas.py` (new): `SchemaDocument(canonical, sha256)`; `parse(document)`
     composes one small function per §16.6 rule (a JSON object of 2..262144 JCS bytes with safe
     integers; the exact `$schema`; top-level `"type": "object"`; the Draft 2020-12 metaschema, with
@@ -1030,6 +1098,8 @@ access to PLATFORM schemas, so the first Raw routes run under `raw_grant`.
     snapshot committed on success and discarded on any exception, and `now()` constant within a
     transaction from an injected `Clock`. If the duplication guard pairs its claim logic with
     `InMemoryHierarchyStore`'s, extract one helper both use rather than accept a new signature.
+    §6.4 and §8.7.5 do not list this module, so it is deviation 7 and its Execution note gives the
+    reason (one shared state, as the PostgreSQL adapters share one database).
   - `src/huron/core/metastore/raw_schemas.py` (new): `InMemorySchemaStore` and its transaction:
     PLATFORM subjects plus the given catalog's, ordered by `(name, id)` in code-point order with a
     keyset after `(name, id)`; `latest_active_number` computed on read; versions newest first
@@ -1083,8 +1153,12 @@ access to PLATFORM schemas, so the first Raw routes run under `raw_grant`.
   - `tests/contract/test_raw_stores_postgres.py` (new; one container per module at head, whose
     migration already holds the PLATFORM seed): every scenario of `tests/raw_store_contract.py`,
     plus two concurrent registrations of identical bytes from two pools (they serialize on the
-    subject row; the second answers the first version), the `NULLS NOT DISTINCT` mapping, and a
-    deferred counter refusal surfacing at `COMMIT`.
+    subject row; the second answers the first version),
+    `test_fifty_concurrent_distinct_registrations_number_gap_free` (§10.6's allowed proof of
+    `raw_schema_versions_contiguous`: 50 registrations of distinct documents on one new subject
+    from two pools give the numbers exactly 1..50 and `latest_number` 50, with no trigger
+    refusal), the `NULLS NOT DISTINCT` mapping, and a deferred counter refusal surfacing at
+    `COMMIT`.
 - Design: §16.9 Store statements; §8.7.5 Adapters; §10.7 Access paths (the registry rows); §22.3
   Contract tests on Docker; §22.4 Coverage (OD-12 O-8); D-77, D-84, D-133, D-154.
 - Verification:
@@ -1502,7 +1576,10 @@ readiness, and the catalog half of the registry.
     properties' bytes, audit, receipt); a failing ensure logged with the row kept; the reads and the
     owner's list; `REGISTERED` (PENDING → ACTIVE with `registered_at` and etag 2; ACTIVE
     unchanged); `CONFLICT` (empty root removed then row discarded; a `versions/` holding an entry
-    answers 409 and keeps the row; ACTIVE answers 409); a foreign target answering 404.
+    answers 409 and keeps the row; ACTIVE answers 409); a foreign target answering 404; §18.2 A16
+    `test_conflict_on_unavailable_root_is_503` (`503 RAW_STORAGE_UNAVAILABLE`, the PENDING row
+    unchanged) and A18 `test_replay_of_a_discarded_create_is_404` (a same-key create retried after
+    a `CONFLICT` discard finds a receipt naming a deleted row and answers `404 NOT_FOUND`).
 - Design: §8.6.1 `DatasetService`; §13.1 Create a dataset and register its Polaris table (guards,
   crash windows); §13.2 Get the dataset for a new version; §15.4 Registration timing and the BFF
   handshake; §8.8 Errors; §8.9 (Idempotency); §14.6 Audit rows; D-6, D-7, D-9, D-18, D-52, D-89,
@@ -1531,16 +1608,23 @@ readiness, and the catalog half of the registry.
       `root_sentinel(...)` candidates, each with a fresh `uuid4()` `root_id` and the clock's
       instant. It calls `PosixStorageRoots.open(...)` on a worker thread. It then calls
       `MaintenanceStore.record_root` for every key in `identities()` that `recorded` lacks;
-    - `_build_runtime` builds `PlacementPolicy` over the configured `StorageRoot(key, uri)` values.
-      `RawRuntime` composes `DatasetService` (M4.6) over the dataset store, the schema store, the
-      roots as `VersionArchive` and `StorageSweeper`, the policy, `public_api_url` and the clock.
-      The Catalog store is published as `catalog_store`;
+    - `_build_runtime` builds `PlacementPolicy` over the configured `StorageRoot(key, uri)` values,
+      fills `RawPorts` from `ApiStores` and the opened roots, and builds `RawRuntime` with the
+      policy, `public_api_url` and the clock. The Catalog store is published as `catalog_store`;
     - readiness: the `raw_store` check becomes `data_root` (`_data_root_probe`/`_data_root_failure`
       over `runtime.catalog_store`). After it come `database` and then one `raw_root:<key>` check
       per key of `referenced_roots()`. A root check probes `runtime.raw_roots.root_available(key)`
       on a worker thread within `READINESS_TIMEOUT_SECONDS`. A referenced key that the settings no
       longer list fails. The root checks run only after the database check passed, or against the
       injected maintenance store when no pool is wired.
+  - `src/huron/core/raw/runtime.py`: new `RawPorts` (§8.6.8) with the fields slices 1–3 provide:
+    `datasets`, `schemas`, `work` (the maintenance store, root methods so far), and `archive` and
+    `sweeper` (the one `PosixStorageRoots`). `RawRuntime(ports, *, placement, public_api_url, clock,
+    storage, persistence)`: the §8.6.8 constructor, with the old engine's `storage` and
+    `persistence` as keywords until M5.3 (the "Composition root" rule). It builds
+    `SchemaRegistry(ports.schemas)` and `DatasetService` (M4.6) over `ports.datasets`,
+    `ports.schemas`, `ports.archive`, `ports.sweeper`, the policy, `public_api_url` and the clock;
+    `core/raw/__init__.py` exports `RawPorts`.
   - `src/huron/core/rawstore/roots.py`: `PosixStorageRoots.confirm_recorded(key, identity)`. The
     wiring passes the identity `record_root` returned. A `root_id` or `uri` that differs from the
     one `open` read marks the key UNAVAILABLE (`sentinel_mismatch`, logged), and later probes
@@ -1556,7 +1640,9 @@ readiness, and the catalog half of the registry.
   - `src/huron/applications/api/dependencies.py` and `src/huron/applications/api/raw_web.py`
     (live until M5.1): `runtime.raw_store` → `runtime.catalog_store`.
   - `tests/unit/support.py`: `memory_stores()` also builds the in-memory dataset and maintenance
-    stores.
+    stores. `tests/unit/test_authorization_credentials.py` and `tests/unit/test_core_workflows.py`:
+    their direct `ApiRuntime(...)` and `RawRuntime(...)` constructions follow the new signatures
+    (`catalog_store`, `raw_roots`, `RawPorts`).
   - `scripts/polaris_dev.py` `raw_environment()`: a `setdefault` for `HURON_RAW__STORAGE_ROOTS`
     (`local-storage` and `local-nasa-storage`, §20.8) beside the `HURON_RAW__PUBLIC_API_URL` that
     M2.6 set. The web process keeps receiving only its three `HURON_RAW_*` variables.
@@ -1634,7 +1720,8 @@ readiness, and the catalog half of the registry.
   - Tests:
     - new `tests/unit/test_raw_datasets_api.py` (TestClient, `tests/raw_client.py`, in-memory
       stores, two temporary roots);
-    - `tests/unit/test_api_router_composition.py`: the tag set gains `raw-datasets`; the Raw
+    - `tests/unit/test_api_router_composition.py`: the tag set gains `raw-datasets` and the test
+      becomes `test_the_openapi_document_carries_eighteen_resource_grained_tags`; the Raw
       no-redeclaration twin covers `raw_datasets`; `test_raw_routes_declare_no_body_parameter`
       now covers routes 1 and 6;
     - `tests/unit/test_execution_model.py`: the six handlers in `EXPECTED_COROUTINE_FUNCTION`;
@@ -1659,6 +1746,11 @@ readiness, and the catalog half of the registry.
   - `test_registered_report_activates_and_repeats_unchanged` (`etag` + 1, `ETag` header);
   - `test_conflict_report_discards_then_404`;
   - `test_conflict_with_content_in_versions_is_409`;
+  - the route twins of M4.6's A16 and A18 cases:
+    `test_conflict_report_on_an_unavailable_root_is_503` (route 6, `503 RAW_STORAGE_UNAVAILABLE`
+    with `Retry-After: 60`, the dataset still PENDING) and
+    `test_create_replay_after_a_discard_is_404` (route 1 with the discarded create's
+    `Idempotency-Key`);
   - a report without `create` answers `403`.
 
   Also: `test_hierarchy_keeps_named_patch_and_response_schemas` still passes; `rg -n "class
@@ -1699,7 +1791,8 @@ readiness, and the catalog half of the registry.
       `SchemaStore.subjects`.
   - `src/huron/core/foundation/retry.py`: `Replay.kind` gains `schema_subject` and
     `schema_version`, fingerprinted by `raw_claim` (§8.9).
-  - `src/huron/core/raw/runtime.py`: the registry is built with the dataset store.
+  - `src/huron/core/raw/runtime.py`: the registry is built with `ports.datasets` (the `RawPorts`
+    field M4.7 composes) and the clock.
   - Tests:
     - `tests/raw_store_contract.py`: `test_subject_creation_pins_an_unbound_realm` (the first
       `bind_realm` inserts the binding, and a second endpoint gets the pinned one back), run in
@@ -1723,7 +1816,7 @@ readiness, and the catalog half of the registry.
   - `test_deprecate_is_idempotent`;
   - `test_catalog_subject_hidden_from_other_catalogs` (`404`);
   - the audit rows of §14.6.
-- Dependencies: M4.5.
+- Dependencies: M4.5, M4.7.
 - Status: pending
 
 ### M4.10 Registry write routes
@@ -1823,7 +1916,8 @@ follow the measured coverage-safe order (deviation 2).
       M3.2 cases lack: signature, issuer and audience, the subject rule, method, path-and-query
       and bound-header binding, `verify_body`;
     - `tests/unit/test_api_settings.py` gains `test_bridge_secret_shorter_than_32_bytes_is_refused`;
-    - `tests/unit/test_api_router_composition.py` drops the `raw-web` tag;
+    - `tests/unit/test_api_router_composition.py` drops the `raw-web` tag, and the tag-set test
+      becomes `test_the_openapi_document_carries_seventeen_resource_grained_tags`;
     - `tests/unit/test_execution_model.py` drops the eleven raw-web handlers (`create_upload` …
       `revision`).
 - Design: §21.1 rules 1–2; §21.2 rows 2b, 11 (code) and 13 (delegation); §22.6 (harness); §12.3;
@@ -1877,7 +1971,8 @@ follow the measured coverage-safe order (deviation 2).
     - `tests/unit/test_execution_model.py`: `get_revision`, `get_revision_manifest`,
       `get_revision_file` and `test_the_file_download_s_stat_executes_off_the_event_loop_thread`
       go;
-    - `tests/unit/test_api_router_composition.py`: the `revisions` tag goes;
+    - `tests/unit/test_api_router_composition.py`: the `revisions` tag goes, and the tag-set test
+      becomes `test_the_openapi_document_carries_sixteen_resource_grained_tags`;
     - `tests/unit/test_api_ingest_crash_matrix.py`: the download assertion goes, keeping the
       commit assertions. `tests/integration/test_verified_raw_ingest.py`: the download step goes,
       keeping the commit. Both called a deleted route, and both leave whole in M5.3.
@@ -1947,14 +2042,21 @@ follow the measured coverage-safe order (deviation 2).
       (`dataset_raw_writer`, `project_intake`, `session_overseer` and `session_owner`), `_stack`,
       `_opened_session` and the `IngestService` import go;
     - `tests/unit/test_core_workflows.py`: `test_raw_checks_owner_target_metadata_and_revocation_before_commit`
-      and the fixture's old-engine parts go;
+      and the fixture's old-engine parts go, with its `RawRuntime(...)` construction and the
+      `from huron.core.raw.ingest import FileState` import that only the deleted test used (tests
+      are not linted, so a stale import would surface only when M5.5 deletes the module);
+      `tests/unit/test_authorization_credentials.py` builds `RawRuntime` without the old-engine
+      keywords;
     - `tests/unit/test_api_rbac.py`: the three ingest-session requests of
       `test_rbac_delegation_and_layer_writes` go (bob's `201`, alice's `403` and the service
       account's `LAYER_WRITE_FORBIDDEN`). Its service-account, layer-listing and dataset-creation
       assertions stay;
-    - `tests/unit/test_api_router_composition.py`: the `ingest-sessions` and `transfer` tags go;
+    - `tests/unit/test_api_router_composition.py`: the `ingest-sessions` and `transfer` tags go,
+      and the tag-set test becomes
+      `test_the_openapi_document_carries_fourteen_resource_grained_tags`;
     - `tests/unit/test_execution_model.py`: the nine ingest and transfer handlers, the upload and
-      commit off-loop tests and the `IngestClient` import go;
+      commit off-loop tests and the `IngestClient` import go (their successors: the L2 write case
+      in M7.8, the L3 verified-copy case in M7.3 and the commit publication case in M7.15);
     - `tests/unit/test_api_app.py`: `test_the_lifespan_sweeps_lapsed_sessions_before_serving_the_first_request`
       goes;
     - `tests/unit/test_raw_documents.py`: direct `validate_manifest_path` and `validate_manifest`
@@ -1971,14 +2073,16 @@ follow the measured coverage-safe order (deviation 2).
     M10.10 rewrites the section.
 - Design: §19.2; §21.2 rows 2a, 5 (Python), 6 and 16 (code), 9, 10, 13 and 14 (tests); §7.3;
   §22.4; §22.5; §19.6; D-137, D-141, D-142, D-152, D-153.
-- Verification: the plan-wide gate and `make docs`.
+- Verification: the plan-wide gate, `make docs` and `npm run test:e2e` (the lifespan changes;
+  the "Gate" rule).
   - Apply the OD-11 floor reset. The verifier confirms from the per-file reports that every
     modified file is at 100 % and that no unmodified file gained a missed line: in particular
     `core/raw/manifest.py`, `core/raw/ingest.py` and `core/metastore/ingest.py`.
   - The deleted clone-group files go through §22.5's review. Record the totals and each accepted
     signature.
-  - `rg -n "IngestSessionView|RevisionView|dataset_raw_writer|session_overseer|revision_raw_reader|RawIngestion|ExpirySweep|expire_lapsed|body_chunks|session_claim|SessionLedger|IngestClient" src tests`
-    prints nothing.
+  - `rg -n "IngestSessionView|RevisionView|dataset_raw_writer|session_overseer|revision_raw_reader|RawIngestion|ExpirySweep|expire_lapsed|body_chunks|session_claim|SessionLedger|IngestClient" src tests --glob '!tests/contract/test_catalog_store.py'`
+    prints nothing (the kept history suite's `_insert_ingest_session_claiming` would match
+    `session_claim`).
   - `git status` shows exactly the fifteen deletions.
   - `uv run pytest -m acceptance` collects nothing until M10.10. Record this in Execution notes;
     it is not a per-task gate.
@@ -2020,7 +2124,7 @@ follow the measured coverage-safe order (deviation 2).
     - `tests/hierarchy_contract.py`: scenarios 10–16 go, with their helpers (`_manifest`,
       `planned_files`, `_complete_file`, `_walk_to_committing`, and the scenario-14 additions of
       M5.3) and the `huron.core.raw.ingest`, `DatasetLocked` and `IngestSessionExpired` imports.
-      Their evidence returns in M7.13 (`tests/contract/test_raw_numbering.py`);
+      Their evidence returns in M7.14 (`tests/contract/test_raw_numbering.py`);
     - `tests/unit/test_hierarchy_store_memory.py`: the seven scenario wrappers and the three
       ingest point-read tests go;
     - `tests/contract/test_hierarchy_store.py`: `_INGEST_SCENARIOS`, its epoch and loop, section
@@ -2028,17 +2132,24 @@ follow the measured coverage-safe order (deviation 2).
       (`test_begin_ingest_binds_expires_at_created_at_and_updated_at_to_one_instant`) and the
       `DatasetLocked`, `LEASE_TTL` and `IngestSession` imports go. The ingest tables leave
       `_HIERARCHY_TABLES` once no scenario writes them;
-    - `tests/unit/test_stores_rows.py`: the `ingest_session` and `ingest_file` mapper tests go;
+    - `tests/unit/test_stores_rows.py`: the `ingest_session` and `ingest_file` mapper tests go,
+      with the `from huron.core.raw.ingest import FileState, IngestState, UploadAction` import that
+      only they used;
     - `tests/unit/test_stores_ports.py`: `test_ledger_entry_pairs_a_file_with_the_session_it_belongs_to`
-      goes.
+      goes;
+    - `tests/unit/test_raw_documents.py`: `test_freezing_an_unknown_session_does_not_create_a_publication`
+      goes, with the imports only it used (`InMemoryHierarchyStore`, `PreconditionFailed`): it
+      drives the in-memory `freeze_commit` this task removes, and the `CommitIntent` it freezes
+      leaves in M5.5.
 - Design: §21.2 rows 10 (the adapters, the `DATASET_LOCKED` code and the mappers) and 17 (the
   ingest halves of the composition ports); §21.1 rule 6; §22.4; §22.5; §22.7; D-137, D-141, D-142.
 - Verification: the plan-wide gate.
   - Apply the OD-11 floor reset. `core/metastore/hierarchy.py` is a D-84 adapter module and is
     measured under `-m "unit or contract"`; its missed statements must not grow.
   - The deleted clone-group file `core/metastore/ingest.py` goes through §22.5's review.
-  - `rg -n "begin_ingest|freeze_commit|lock_ingest_session|LedgerEntry|DatasetLocked|DATASET_LOCKED|ingest_sessions|ingest_files" src tests --glob '!tests/contract/test_catalog_store.py'`
-    prints nothing.
+  - `rg -n "begin_ingest|freeze_commit|lock_ingest_session|LedgerEntry|DatasetLocked|DATASET_LOCKED|ingest_sessions|ingest_files" src tests --glob '!tests/contract/test_catalog_store.py' --glob '!src/huron/core/raw/ingest.py'`
+    prints nothing (the session domain's docstring still names `begin_ingest`; that module leaves
+    whole in M5.5).
   - `git status` shows the one deletion.
 - Dependencies: M5.3.
 - Status: pending
@@ -2090,8 +2201,11 @@ follow the measured coverage-safe order (deviation 2).
   - Row 9's check `rg -n "RECOVERING|ingest_recoveries|ingest_commit_intents|INGEST_RECOVERY" src`
     and row 10's check `rg -n "PREPARING|UPLOADING|VERIFYING|ExpirySweep|expire_lapsed|DATASET_LOCKED" src`
     print nothing.
-  - `rg -n "PART_BYTES|IngestSession|IngestState|IllegalIngestTransition|IngestSessionExpired|CommitIntent" src tests`
+  - `rg -n "PART_BYTES|IngestSession|IngestState|IngestLease|FileState|UploadAction|IllegalIngestTransition|IngestSessionExpired|CommitIntent" src tests`
     prints nothing. M6.2 brings `CommitIntent` back as the commit Command.
+  - `rg -n "huron\.core\.raw\.ingest\b|from \.{1,2}ingest import" src tests` prints nothing, so no
+    surviving module imports the deleted one (tests are not linted; M5.3 and M5.4 removed the
+    imports of `tests/unit/test_core_workflows.py` and `tests/unit/test_stores_rows.py`).
   - `test_error_contract.py` passes with `MANIFEST_MISMATCH` raised only from `manifest.py`.
 - Dependencies: M5.4.
 - Status: pending
@@ -2154,9 +2268,12 @@ follow the measured coverage-safe order (deviation 2).
       `test_an_unfinished_commit_claim_cannot_expire_before_its_revision_receipt`,
       `test_insert_revision_accepts_repeated_content_with_a_new_identity` and
       `test_a_rolled_back_transaction_leaves_no_revision_audit_or_outbox_row` go;
-    - `tests/contract/test_hierarchy_store.py`: scenario 5 leaves `_SCENARIOS`, and the
-      structural-conformance test checks the remaining Catalog ports;
+    - `tests/contract/test_hierarchy_store.py`: scenario 5 leaves `_SCENARIOS`, the
+      structural-conformance test checks the remaining Catalog ports, and `dataset_revisions`
+      leaves `_HIERARCHY_TABLES` (no scenario writes it any more, and the `TRUNCATE` of that list
+      would fail once `0017` drops the table);
     - `tests/unit/test_stores_rows.py`: the `revision_record` case goes;
+    - `tests/unit/test_stores_ports.py`: the module docstring stops naming `HierarchyWriter`;
     - any case of `tests/unit/test_foundation_retry.py` that names a removed replay kind goes
       (confirm with `rg`).
 - Design: §21.2 rows 12 (documents, paths, mappers), 13 (Raw's `catalog` and `security`
@@ -2170,8 +2287,9 @@ follow the measured coverage-safe order (deviation 2).
     prints nothing.
   - Row 13's check `rg -n "AccessPolicy|RoleBindingAuthorizer|huron\.core\.(security|catalog)" src/huron/core/raw`
     prints nothing.
-  - `rg -n "RevisionRecord|OutboxEvent|insert_outbox_event|latest_committed_revision|ingest_commit|HierarchyWriter" src tests`
-    prints nothing.
+  - `rg -n "RevisionRecord|OutboxEvent|insert_outbox_event|latest_committed_revision|ingest_commit|HierarchyWriter" src tests --glob '!tests/contract/test_catalog_store.py'`
+    prints nothing (the kept history suite's `_insert_outbox_event` and `ingest_commit_intents`
+    would match).
   - `test_error_contract.py` passes with `CONTRACT_MISMATCH` reserved.
   - `git status` shows exactly the eight deletions.
 - Dependencies: M5.5.
@@ -2182,9 +2300,18 @@ follow the measured coverage-safe order (deviation 2).
 - Intent: close the legacy transition on the storage side. Remove the part-protocol and
   envelope methods of `PosixRawStore`, the `RawStore` port, the completion slot and the four
   settings the old engine read. Catalog's store keeps only what Catalog uses, and its
-  `initialize()` stops creating `.staging/`. Measured at HEAD with every earlier legacy suite
-  gone: deleting these cases uncovers only lines this task deletes. After this task no legacy Raw
-  symbol remains in `src`, and slice 4 may re-create the names (D-137).
+  `initialize()` stops creating `.staging/`. Two kept suites reach the kept primitives only
+  through the deleted wrappers: measured at `9882690` with only the cases that survive
+  unchanged (the rawstore commit and generation suites and the eleven `tmp_path` cases of the
+  materialize suite), `inspection.py` falls to 28.12 % and `materialize.py` to 92.91 % (lines
+  35–40, 134, 164 and 167). This task therefore re-points the inspection cases and rewrites the
+  primitive cases of the materialize suite, so both modules stay at 100 %. The primitives
+  `candidate`, `install` and `file_chunks` keep no `src` caller until M7.1 (`materialize`) and
+  M7.9 (`install_documents`) reuse them; they are kept §9.8.6 primitives with direct tests, not
+  legacy symbols. After this task no legacy Raw symbol remains in `src`, and slice 4 may
+  re-create the names (D-137). This is the largest test rewrite of Milestone 5; the deletions and
+  the rewrite stay one task, because re-pointing the suites first would leave the wrappers
+  uncovered before they are deleted.
 - Delete: none.
 - Create / Modify:
   - `src/huron/core/rawstore/store.py`:
@@ -2217,6 +2344,28 @@ follow the measured coverage-safe order (deviation 2).
     - `tests/unit/test_rawstore_completion_admission.py`: the slot and store-level cases go
       (positive concurrency, the copy count, the copy-failure release, and the store cases built
       on `finish_file`); the reservation cases stay;
+    - `tests/unit/test_rawstore_inspection.py`: every case calls
+      `huron.core.rawstore.inspection.verify_envelope(envelope, files, documents, sealed=…,
+      anchor=<root>)` instead of `PosixRawStore(root).verify_envelope(...)`, passing the anchor the
+      wrapper passed, with its assertions unchanged (M7.9 rewrites the suite to `FileEvidence`);
+    - `tests/unit/test_rawstore_materialize.py`: the `storage` fixture (`PosixRawStore(tmp_path,
+      max_concurrent_completions=2)` with `create_staging`) and `_finish` go, and with them the 21
+      cases built on them or on a deleted method (43 call sites); the eleven `tmp_path` cases stay
+      unchanged. A case whose subject is a kept primitive is rewritten against that primitive on
+      `tmp_path`, without `PosixRawStore`: `candidate` and `install` (a closed, sealed,
+      independent inode installed with no writable descriptor at the rename; a failed `fsync` or
+      `fchmod` installing nothing; a zero-progress write removing the candidate; an installed file
+      surviving a failed directory flush, then a retry; an existing different file never
+      replaced), `observe` (a linked, special, foreign-owned or writable inode refused),
+      `directory(..., anchor=)` and `descendant` (a `..` component refused; symlinks never
+      followed), `write_all(..., offset=)` (a short `pwrite` continues at the advanced offset) and
+      `commit.commit_envelope(staging, final, root)` called directly (a link in the final
+      hierarchy refused). A case whose subject is the part-session protocol that leaves here
+      (staging creation, two completions racing on one upload, relocated sessions and late
+      operations, upload-id names, mismatch retention, process death between completion steps) is
+      deleted without a rewrite; its successors are M6.6's staging and chunk cases, M7.1's
+      `materialize` cases and the crash suites of M7.9, M7.14 and M7.15. The implementer names
+      each deleted case and its successor in the report;
     - `tests/unit/test_catalog_ports.py`: the `RawStore` conformance case gives way to
       `PosixStorageRoots` conformance with `VersionArchive` and `StorageSweeper`. `UploadArea`
       joins in M6.6;
@@ -2225,15 +2374,18 @@ follow the measured coverage-safe order (deviation 2).
 - Design: §21.2 rows 5 (`write_part`, `_stream_part`, `PartLengthMismatchError`), 12 (the
   `COMMITTED` and `INDEX.json` wrappers of `store.py`), 14 (settings, `slot()`) and 17
   (`RawStore`); §9.8.6 (module map); §17.3 (cleanup of the old gate); §22.7; D-94, D-137.
-- Verification: the plan-wide gate.
+- Verification: the plan-wide gate and `npm run test:e2e` (`app.py` changes; the "Gate" rule).
   - Apply the OD-11 floor reset.
+  - `core/rawstore/materialize.py`, `inspection.py` and `commit.py` stay at 100 % in the unit run;
+    the verifier checks lines 35–40, 134, 164 and 167 of `materialize.py` by name.
   - `rawstore/store.py` keeps its name and clone group; any changed signature goes through
     §22.5's review.
   - Row 14's check `rg -n "completion_max_concurrent|completion_reserve_bytes|ingest_sweep|\.slot\(" src tests`
     prints nothing.
   - Row 5's `src` and `tests` operands
-    (`rg -n -i "part_bytes|completed_parts|PART_BYTES|write_part" src tests`) print nothing. The
-    `web/src` operand waits for M10.2.
+    (`rg -n -i "part_bytes|completed_parts|PART_BYTES|write_part" src tests --glob '!tests/contract/test_catalog_store.py'`)
+    print nothing; the kept history suite's `ingest_files.completed_parts` assertions are
+    migration history (§21.3). The `web/src` operand waits for M10.2.
   - `rg -n "RawStore\b|create_staging|finish_file|PartLengthMismatchError" src tests` prints
     nothing.
 - Dependencies: M5.6.
@@ -2266,8 +2418,8 @@ session store and offset ledger, the upload area on each root, the admission lim
     as its own statement after the row lock and sets `RawDataset.committing` (D-167).
   - Tests:
     - `tests/contract/test_raw_schema.py`:
-      - the explicit table list gains the three tables, and
-        `test_schema_map_names_every_raw_object` checks all 66 objects;
+      - `test_schema_map_names_every_raw_object`, whose explicit list has named all eight Raw
+        tables since M3.1, now finds the three new ones and checks all 66 objects;
       - one proof per §10.6 trigger row for the nine new triggers, each asserting
         `CheckViolationError.constraint_name`, the deferred ones refusing at `COMMIT`;
       - the unique cases `raw_upload_sessions_one_committing` and `raw_versions_number`;
@@ -2297,7 +2449,9 @@ session store and offset ledger, the upload area on each root, the admission lim
   and that error's §7 row (§19.6 Landing):
   - `UploadSession.abort()` with M6.8;
   - `FileProgress.require_open()` and `require_chunk()` with M7.4;
-  - `UploadSession.commit_stage()`, `freeze()`, `lapsed()` and `pending()` with M7.12;
+  - `UploadSession.commit_stage()`, `freeze()`, `lapsed()` and `pending()` with M7.12, which
+    lands them with `freeze`'s §7 rows one task before their caller, the driver of M7.13, so
+    each of the two commit tasks fits one implementation pass;
   - `Version.require_available()` and `delete()` with M8.2 and M8.8.
 
   `Verification` lands with `MaterializedFile` in M7.1. `FileEvidence` lands here, because
@@ -2313,7 +2467,9 @@ session store and offset ledger, the upload area on each root, the admission lim
       VERIFIED);
     - the session values `FrozenCommit` and `SchemaPin(subject_id, number, schema_version_id)`.
       The adapters fill `SchemaPin` by joining the pinned schema version, because
-      `UploadSessionView.schema` (§19.4) needs the subject and the number on target-less reads;
+      `UploadSessionView.schema` (§19.4) needs the subject and the number on target-less reads.
+      §8.4.2 has no such value, so `SchemaPin` is deviation 8 and its Execution note gives this
+      reason;
     - `UploadSession` (the §8.4.2 fields plus `schema: SchemaPin`) and `CommitStage`;
     - the commands and queries `NewUploadSession`, `SessionRequest` and `SessionQuery`;
     - `CommitIntent` with `of(session, dataset, schema, *, token)` and `version()`. `of`
@@ -2551,14 +2707,18 @@ session store and offset ledger, the upload area on each root, the admission lim
     (507, 60), each raised literally by its check, with their `ERROR_CODES` entries.
   - `src/huron/applications/api/app.py`: `_raw_limits(settings.raw)` builds `RawLimits`. The
     lifespan builds one `UploadAdmission(streams=process_streams, verifiers=process_verifiers)`
-    and passes both to `RawRuntime`, which exposes `admission` (§8.6.8, D-112).
+    and passes both to `RawRuntime` (§8.6.8, D-112).
+  - `src/huron/core/raw/runtime.py`: `RawRuntime` gains the `admission` and `limits` keywords and
+    exposes `admission`; `tests/unit/test_authorization_credentials.py` passes both (the
+    "Composition root" rule).
   - `design/api.html` §7: the four rows with their `Retry-After` values.
   - Tests:
     - new `tests/unit/test_upload_admission.py` (§17.10 unit list);
     - `tests/unit/test_api_app.py`: the lifespan sizes admission from the settings.
 - Design: §8.3.3; §17.1–§17.3; §17.6; §17.10 (unit); §8.9 (lifetimes); D-60, D-61, D-112,
   D-155, D-158.
-- Verification: the plan-wide gate. Acceptance (named cases in `test_upload_admission.py`):
+- Verification: the plan-wide gate and `npm run test:e2e` (the lifespan changes; the "Gate"
+  rule). Acceptance (named cases in `test_upload_admission.py`):
   - `test_stream_fails_fast_at_capacity` (`503`, `Retry-After: 2`);
   - `test_stream_releases_on_exception_and_cancellation`;
   - `test_write_threads_never_block_while_stream_tokens_are_held`;
@@ -2669,8 +2829,12 @@ session store and offset ledger, the upload area on each root, the admission lim
     - `abort_upload_session`: an empty body, `200`, and `200` again when already ABORTED;
     - `get_raw_limits`.
   - `src/huron/applications/api/routes/v1/__init__.py`: the three includes.
-  - `src/huron/applications/api/app.py`: `PostgresUploadStore` on the pool, and `RawRuntime`
-    composes `UploadService`.
+  - `src/huron/applications/api/app.py`: `PostgresUploadStore` on the pool, placed in `RawPorts`.
+  - `src/huron/core/raw/runtime.py`: `RawPorts` gains `uploads` and `ledger` (the one upload store,
+    which fills both ports) and `area` (the `PosixStorageRoots`); `RawRuntime` composes
+    `UploadService(ports.uploads, ports.datasets, ports.schemas, ports.area, limits=…, clock=…)`
+    and exposes it as `uploads`; `tests/unit/test_authorization_credentials.py` fills the new
+    fields (the "Composition root" rule).
   - `src/huron/applications/api/capabilities.py`: conformance of the PostgreSQL and in-memory
     upload stores to `UploadStore` and `OffsetLedger` (with their transactions), and of
     `PosixStorageRoots` to `UploadArea`, asserted in the lifespan.
@@ -2680,7 +2844,8 @@ session store and offset ledger, the upload area on each root, the admission lim
   - `design/api.html` §3: rows for routes 10–13 and 15.
   - Tests:
     - new `tests/unit/test_raw_upload_sessions_api.py`;
-    - `tests/unit/test_api_router_composition.py`: the tag set gains `raw-uploads`, the Raw
+    - `tests/unit/test_api_router_composition.py`: the tag set gains `raw-uploads` and the test
+      becomes `test_the_openapi_document_carries_fifteen_resource_grained_tags`, the Raw
       no-redeclaration twin covers the module, and `test_raw_routes_declare_no_body_parameter`
       covers route 10;
     - `tests/unit/test_execution_model.py`: the five handlers;
@@ -2688,7 +2853,8 @@ session store and offset ledger, the upload area on each root, the admission lim
 - Design: §19.3 routes 10–13 and 15; §19.4 (`raw_upload_sessions.py`); §19.5 (pagination and
   idempotency); §7.5; §12.2 (16 MiB); §6.6 step 8; D-42, D-127, D-128.
 - Verification: the plan-wide gate; the contract suite (the PostgreSQL store wired through the
-  lifespan). Acceptance, in `test_raw_upload_sessions_api.py`:
+  lifespan); `npm run test:e2e` (the lifespan, its conformance asserts, `ApiStores` and
+  `memory_stores()` change; the "Gate" rule). Acceptance, in `test_raw_upload_sessions_api.py`:
   - `test_start_answers_201_with_upload_urls_and_chunk_bytes` (`expires_at ≤ deadline_at`,
     zero-byte files VERIFIED);
   - `test_start_replay_answers_201_with_the_current_view`;
@@ -2815,13 +2981,17 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
 - Intent: the asynchronous verifier and the per-replica maintenance loop that drives it.
   `MaintenanceLoop` is built before `RawRuntime` as its `VerificationTrigger` and started after
   the conformance asserts, so the chunk protocol (M7.4) wakes a real trigger (deviation 5).
-  `RawMaintenance` runs only `VerifyFiles` for now; the other duties join in M7.15 and M12.
+  `RawMaintenance` runs only `VerifyFiles` for now; the other duties join in M7.16 and M12.
 - Delete: none.
 - Create / Modify:
   - New `src/huron/core/raw/_impl/verifier.py`: `FileVerifier(uploads, ledger, work, area,
     admission, *, limits)`.
-    - `run(batch)` claims `VERIFY_FILE` items up to `min(batch, floor(verify_threads.available_tokens))`
-      and copies them concurrently, one task per file.
+    - `run(batch, *, roots)` claims `VERIFY_FILE` items with `work.claim(VERIFY_FILE, roots=roots,
+      batch=…, lease=limits.verify_lease)`, up to
+      `min(batch, floor(verify_threads.available_tokens))`, and copies them concurrently, one
+      task per file. §8.6.4's `run(batch)` names no roots, while `claim` requires them (§8.7.3)
+      and §18.3 claims nothing on an UNAVAILABLE root, so the available roots arrive from
+      `VerifyFiles`.
     - `_verify_one` follows §8.6.4 steps 1–5: `materialize` on `verify_threads` with a 60 s
       heartbeat beside it. A mismatch first confirms the claim by heartbeat, then calls
       `discard_input(input=…)`, then settles RECEIVING (`DIGEST_MISMATCH`).
@@ -2831,7 +3001,16 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
       release the claim. A match settles VERIFIED and discards only when `settle_file` returned `True`.
   - New `src/huron/core/raw/maintenance.py` (§8.6.7, §18.3): `MaintenanceDuty`,
     `RawMaintenance(duties, *, batch)` with `run_pass` (each duty isolated in its own `try`) and
-    `verify_now`, the `VerifyFiles` duty, and `RENAME_LEASE_SECONDS = 120`.
+    `verify_now`, `RENAME_LEASE_SECONDS = 120`, and:
+    - the root-availability helper every storage duty shares (§18.3 "Root availability", §9.8.6
+      "Availability"): `READINESS_TIMEOUT_SECONDS = 2.0` (core cannot import the API's constant of
+      that name and value) and `available_roots(sweeper, keys) -> tuple[str, ...]`, which probes
+      every configured key concurrently, each with `asyncify(sweeper.root_available,
+      abandon_on_cancel=True)(key)` under `anyio.fail_after(READINESS_TIMEOUT_SECONDS)`, counts a
+      timeout as UNAVAILABLE, and answers the AVAILABLE keys in configuration order;
+    - `VerifyFiles(verifier, sweeper, keys)`, whose run calls `available_roots` first and passes
+      the answer to `FileVerifier.run(batch, roots=…)`, so `verify_now` probes too. `FinishCommits`
+      (M7.16) and every M12 storage duty obtain their roots the same way.
   - `src/huron/core/raw/types.py`: `DutyReport(name, claimed, done, failed)`.
   - `src/huron/core/raw/ports.py`: `VerificationTrigger` (§8.7.4).
   - New `src/huron/applications/api/maintenance.py`: `MaintenanceLoop(*, interval_seconds)`.
@@ -2840,23 +3019,38 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     interval after the last pass ended (`run_pass`). A wake during a run is served after it, and
     leaving cancels the task and awaits it.
   - `src/huron/applications/api/app.py`: the lifespan builds the loop first with the configured
-    cadence (default 30 s). `RawRuntime` takes it as `trigger` and composes `FileVerifier` and
-    `RawMaintenance` (batch `maintenance_batch`). `async with loop.running(runtime.raw.maintenance)`
-    wraps the `yield` after the conformance asserts, inside the block that closes the pool
-    (§6.6 steps 6–9).
+    cadence (default 30 s) and places it in `RawPorts.trigger`. `async with
+    loop.running(runtime.raw.maintenance)` wraps the `yield` after the conformance asserts, inside
+    the block that closes the pool (§6.6 steps 6–9).
+  - `src/huron/core/raw/runtime.py`: `RawPorts` gains `trigger`; `RawRuntime` builds one
+    `FileVerifier(ports.uploads, ports.ledger, ports.work, ports.area, admission, limits=limits)`
+    and `RawMaintenance((VerifyFiles(verifier, ports.sweeper, keys),), batch=…)` (batch
+    `maintenance_batch`), the configured `keys` being those of `placement.roots`, and exposes
+    `maintenance`; `tests/unit/test_authorization_credentials.py` fills `trigger` (the
+    "Composition root" rule).
   - Tests:
     - new `tests/unit/test_raw_verifier.py`;
-    - new `tests/unit/test_raw_maintenance.py` (`run_pass` order and isolation, `verify_now`;
-      M12 extends it);
+    - new `tests/unit/test_raw_maintenance.py` (`run_pass` order and isolation, `verify_now`,
+      `available_roots` and the duty-level root cases below; M12 extends it);
     - new `tests/unit/test_api_maintenance.py` (the loop);
+    - `tests/unit/test_execution_model.py`: the L3 case of §22.7 (the successor of the off-loop
+      tests M5.3 deleted);
     - new `tests/unit/test_raw_capacity_settings.py` (the successor of the deleted
       `test_api_completion_capacity.py`): through the lifespan, `PROCESS_VERIFIERS` sizes L3,
       `PROCESS_STREAMS` sizes L1, L2 and L10, and `STORAGE_RESERVE_BYTES` reaches every root's
       `CompletionAdmission` and `RawLimits`.
-- Design: §8.6.4; §8.6.7; §18.3; §18.4 duty 2; §6.6 steps 6–9; §13.5; §22.7; D-22, D-63, D-96,
-  D-114, D-171.
-- Verification: the plan-wide gate and `uv run pytest -m integration` (lifespan wiring).
-  Acceptance:
+- Design: §8.6.4; §8.6.7; §8.6.8; §8.7.3 (`claim` takes the roots); §18.3 (including "Root
+  availability" and the pass-order table); §18.4 duty 2; §18.5 (the root-availability row);
+  §9.8.6 ("Availability"); §6.6 steps 6–9; §13.5; §22.7; D-22, D-63, D-94, D-96, D-114, D-171.
+- Verification: the plan-wide gate, `uv run pytest -m integration` (lifespan wiring) and
+  `npm run test:e2e` (the lifespan now runs the loop; the "Gate" rule). Acceptance:
+  - in `test_raw_maintenance.py`: `test_verify_files_skips_an_unavailable_root` (a RECEIVED file
+    whose dataset lies on an UNAVAILABLE root is not claimed, while one on an AVAILABLE root is)
+    and `test_root_probe_timeout_counts_as_unavailable` (a `root_available` that blocks past the
+    bound: that key is left out and the run returns within about the bound);
+  - in `test_execution_model.py`: `test_verified_copy_runs_off_the_loop_inside_verify_threads`
+    (`FileVerifier`'s `materialize` runs on a worker thread holding an `admission.verify_threads`
+    token, never on the event loop);
   - in `test_raw_verifier.py`:
     - `test_matching_copy_verifies_then_discards`;
     - `test_digest_mismatch_discards_input_before_reset`;
@@ -2873,7 +3067,7 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     - `test_wake_during_a_run_is_served_after_it`;
     - `test_exit_cancels_and_awaits_the_running_pass`;
   - in `test_raw_maintenance.py`: `test_a_raising_duty_is_logged_and_the_next_runs`.
-- Dependencies: M6.7, M7.1, M7.2.
+- Dependencies: M6.7, M6.9 (the upload store and the roots in `RawPorts`), M7.1, M7.2.
 - Status: pending
 
 ### M7.4 Chunk claims, finishes and the offset state machine
@@ -2913,8 +3107,9 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     `UploadGone` (410, `context.session_id`, `state`, `reason`), `UploadLengthExceeded` (413,
     `context.size`) and `UploadSuperseded` (409; `finish_chunk` raises it first, and
     `write_chunk` reuses it in M7.5), with their `ERROR_CODES` entries.
-  - `src/huron/applications/api/app.py`: `RawRuntime` passes the upload store's ledger and the
-    loop (as trigger) to `UploadService`.
+  - `src/huron/core/raw/runtime.py`: `RawRuntime` passes `ports.ledger` and `ports.trigger` (the
+    loop, since M7.3) to `UploadService`; `app.py` needs no change, because `RawPorts` already
+    carries both.
   - `design/api.html` §7: the four rows.
   - Tests:
     - `tests/unit/test_raw_services.py` (the chunk half, with a recording trigger stub);
@@ -2925,7 +3120,8 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
       VERIFIED is final, and the offset never exceeds the size.
 - Design: §8.6.2 (chunk methods); §11.5; §11.6 steps 5 and 8; §11.8; §11.9; §17.5; §11.15;
   §14.3; D-28, D-30, D-97, D-99, D-162.
-- Verification: the plan-wide gate. Acceptance, in `test_raw_services.py`:
+- Verification: the plan-wide gate and `npm run test:e2e` (`RawRuntime`'s composition changes;
+  the "Gate" rule). Acceptance, in `test_raw_services.py`:
   - `test_describe_file_is_404_for_another_actor`;
   - `test_describe_file_gone_reasons` (ABORTED with its end reason, EXPIRED for a lapsed OPEN
     session, and `null` for COMMITTING);
@@ -2957,7 +3153,11 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
       outcome, each delegating to a module function `_on_<error>(…)` (cyclomatic complexity ≤ 7):
       - `ChunkLengthMismatchError` → `TusBodyIncomplete`;
       - `ScratchInputMissingError` → `reset_offset`, then `UploadOffsetConflict(upload_offset=0)`;
-      - `StagingMissingError` → the session aborted `STAGING_LOST`, then `UploadGone`;
+      - `StagingMissingError` → `_on_staging_missing` aborts the session through the D-42 abort
+        path in one `UploadStore` transaction (`lock_session`, `UploadSession.abort(reason=
+        STAGING_LOST)`, `save_session(source=OPEN)` when it changed, and the `raw.session.aborted`
+        audit row with the §14.6 payload `{"dataset_id", "end_reason": "STAGING_LOST"}`), then
+        raises `UploadGone`;
       - `StorageRootUnavailableError` → `RawStorageUnavailable`;
       - `OSError` with `ENOSPC` → `InsufficientStorage`; any other `OSError` is re-raised.
     - The private `_supervised_write` enters `admission.writer(claim.tus_upload_id, claim.epoch)`
@@ -2968,21 +3168,25 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
       wrapping it) becomes `UploadSuperseded`, and anything else passes unchanged. Both
       functions have cyclomatic complexity ≤ 3.
   - `src/huron/core/raw/errors.py`: `TusBodyIncomplete` (400) and its `ERROR_CODES` entry.
-  - `src/huron/applications/api/app.py`: `RawRuntime` passes the process `UploadAdmission` to
-    `UploadService`.
+  - `src/huron/core/raw/runtime.py`: `RawRuntime` passes its `admission` (the process
+    `UploadAdmission`, since M6.7) to `UploadService`.
   - `design/api.html` §7: the `TUS_BODY_INCOMPLETE` row.
   - Tests:
     - `tests/unit/test_raw_services.py`;
     - `tests/contract/test_raw_upload_ledger.py`.
-- Design: §8.6.2 (`write_chunk`, supersession); §11.6 step 6; §11.11 (the mapping table);
-  §17.3; §17.10; §8.10 (budget); D-99, D-155, D-162.
-- Verification: the plan-wide gate; the contract suite on Docker. Acceptance:
+- Design: §8.6.2 (`write_chunk`, supersession); §11.6 step 6; §11.11 (the mapping table, "through
+  the D-42 abort path"); §14.6 (audit rows); §17.3; §17.10; §8.10 (budget); D-42, D-99, D-155,
+  D-162.
+- Verification: the plan-wide gate; the contract suite on Docker; `npm run test:e2e`
+  (`RawRuntime`'s composition changes; the "Gate" rule). Acceptance:
   - `test_superseded_write_releases_admission` (unit, in-memory ledger): a pull that never
     yields, then the epoch moves. The answer is `UploadSuperseded`, the L1 and L2 tokens return,
     and the worker thread ends;
   - `test_newer_writer_on_this_process_cancels_the_older_stream`;
   - one case per mapping row: `test_short_stream_is_tus_body_incomplete`,
-    `test_scratch_lost_resets_offset_and_answers_409`, `test_staging_lost_aborts_and_answers_410`,
+    `test_scratch_lost_resets_offset_and_answers_409`, `test_staging_lost_aborts_and_answers_410`
+    (the session ABORTED with `end_reason` `STAGING_LOST`, `ended_at` set, and exactly one
+    `raw.session.aborted` row whose payload is `{"dataset_id": …, "end_reason": "STAGING_LOST"}`),
     `test_unavailable_root_is_503`, `test_enospc_is_507`;
   - contract `test_superseded_stream_releases_admission_promptly`: two services, each with its
     own `UploadAdmission`, over the two pools, with `stream_watch` 0.2 s and N concurrent PATCH
@@ -3085,10 +3289,13 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
       builds it (in-memory stores, a temporary storage root, `tests/raw_client.py` signing), with a
       fake `OffsetLedger` only where a state cannot be reached through the services; every
       §11.11 row these three routes can answer.
-    - `tests/unit/test_api_router_composition.py`: the OpenAPI tag-set test gains `raw-tus`; the Raw
+    - `tests/unit/test_api_router_composition.py`: the OpenAPI tag-set test gains `raw-tus` and
+      becomes `test_the_openapi_document_carries_sixteen_resource_grained_tags`; the Raw
       composition tests (Raw tag and error set, no body parameter, `raw_grant` and never
-      `current_principal`, no redeclared status) cover the three operations, extending any explicit
-      module list they keep.
+      `current_principal`, no redeclared status) cover the three operations. Because the module is
+      `endpoints/tus.py`, not `raw_*.py` (deviation 6), the no-redeclaration twin and the Raw-tag
+      test name `huron.applications.api.routes.v1.endpoints.tus` explicitly in their module lists,
+      and no check selects Raw modules by a `raw_*` pattern alone.
     - `tests/unit/test_execution_model.py`: `discover`, `describe` and `terminate` join
       `EXPECTED_COROUTINE_FUNCTION` as coroutine functions.
 - Design: §11.1; §11.3; §11.4; §11.5; §11.7; §11.11; §11.13 (rows 6–9); §19.3 routes 16, 17
@@ -3124,6 +3331,7 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
       signed bound header answers `401 INVALID_CREDENTIAL`.
   - `GET` and `POST` on `/api/v1/raw/tus/{id}` answer `405` with `Tus-Resumable` (M7.6's
     middleware test now also passes against a real tus route).
+  - The Execution notes record deviation 6 (the module names and the owner's docstrings).
 - Dependencies: M7.4, M7.6.
 - Status: pending
 
@@ -3205,8 +3413,10 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     - `test_scratch_lost_resets_offset`: with the scratch input removed at offset > 0 the PATCH
       answers `409 UPLOAD_OFFSET_CONFLICT` with `upload_offset` 0 and the file shows `SCRATCH_LOST`.
     - `test_staging_lost_aborts_only_with_sentinel`: the staging tree removed and the sentinel
-      present gives `410 UPLOAD_GONE` and a session ABORTED `STAGING_LOST`; the sentinel removed
-      too gives `503 RAW_STORAGE_UNAVAILABLE` (`Retry-After: 60`) and the session stays OPEN.
+      present gives `410 UPLOAD_GONE` and a session ABORTED `STAGING_LOST` with one
+      `raw.session.aborted` audit row (`{"dataset_id", "end_reason": "STAGING_LOST"}`); the
+      sentinel removed too gives `503 RAW_STORAGE_UNAVAILABLE` (`Retry-After: 60`), the session
+      stays OPEN and no audit row is written.
     - `test_enospc_maps_to_507`: a stubbed `statvfs` below the reserve answers
       `507 INSUFFICIENT_STORAGE` (`Retry-After: 60`) with the offset unchanged.
     - `test_body_incomplete_is_400`: a short body, a body idle past `body_idle_seconds` and one
@@ -3387,7 +3597,7 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
 - Intent: the persistence of the freeze and record transactions in both stores, with every
   database refusal mapped: a session enters COMMITTING with its frozen commit and a token lease,
   leaves it only under that token, and the record writes the version row with its counter, read
-  back by the replay. It lands before the driver (M7.12): `CommitDriver`'s record step calls
+  back by the replay. It lands before the driver (M7.13): `CommitDriver`'s record step calls
   `UploadTransaction.insert_version`, which the PostgreSQL transaction must implement before the
   runtime can compose the driver under mypy, and line coverage needs the contract run of those
   statements in the same task.
@@ -3447,12 +3657,67 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
 - Dependencies: M6.3, M6.4.
 - Status: pending
 
-### M7.12 CommitDriver
+### M7.12 Commit decisions and the version document
 
-- Intent: commit end to end in core over the ports M7.11 completed: replay, takeover or freeze;
-  publication on worker threads under a 30 s heartbeat; record or fail fenced by the token; every
-  publication result and storage error turned into findings and problem codes; and the commit
-  request's authorization in `UploadService.commit`.
+- Intent: the pure half of commit, split from the driver so that each task fits one
+  implementation pass: the session's commit decisions, which M6.2 left to the commit, and
+  `VersionDocument.compose`, which M2.3 left to the freeze. `freeze` is the first raiser of
+  `VERIFICATION_PENDING` and `LATEST_VERSION_CHANGED`, so their classes and §7 rows land here
+  (§19.6 "Landing"). The driver that calls these decisions, `UploadService.commit` and the wiring
+  follow in M7.13.
+- Delete: none.
+- Create / Modify (load `oop-design`):
+  - `src/huron/core/raw/documents.py`: `VersionDocument.compose(session, *, number, version_id,
+    schema, subject, committed_at)` per §8.5 and §9.6.1: `dataset_id`, `session_id`,
+    `manifest_sha256`, `file_count` and `total_bytes` from the session and its manifest;
+    `metadata_sha256` of the session's metadata bytes; `schema_ref` built from the pinned
+    `SchemaVersion` and its `SchemaSubject` (`subject_id`, the subject's qualified name, `number`,
+    `schema_version_id` and the SHA-256 of `schema.json`); `committed_by = session.created_by`
+    (commit requires the owner, D-38 step 0).
+  - `src/huron/core/raw/ingest.py`: the `UploadSession` decisions of §8.4.2, each within §8.10's
+    budget (`CommitStage` exists since M6.2):
+    - `lapsed(now)` (OPEN and `expires_at ≤ now`) and `pending()` (the files not VERIFIED);
+    - `commit_stage(now)`, the D-38 step 1 table: COMMITTED gives `REPLAY`; ABORTED and FAILED
+      raise `UploadSessionClosed` (`context.state`, `context.reason`); COMMITTING gives
+      `TAKE_OVER` when `work_expires_at ≤ now` and raises `CommitInProgress` otherwise; OPEN gives
+      `FREEZE`;
+    - `freeze(dataset, *, expected_latest_number, version_id, schema, subject, committed_at) ->
+      FrozenCommit`: §13.6 guards 1 and 3–6 in order (`dataset.require_active()`;
+      `VerificationPending(context={"pending": …})`; `LatestVersionChanged(context=
+      {"latest_number": …})` when a given `expected_latest_number` differs; `CommitInProgress`
+      while `dataset.committing`; `dataset.next_number()`, whose ceiling raises
+      `VersionLimitReached`), then `version_document = VersionDocument.compose(...).canonical()`
+      and `committing_at = committed_at`. Guard 2, expiry, stays with the driver, which aborts the
+      session and commits before raising (§8.6.2).
+  - `src/huron/core/raw/errors.py`: `VerificationPending` (409, `retry_after = 2`,
+    `context.pending`) and `LatestVersionChanged` (409, `context.latest_number`) in `ERROR_CODES`,
+    with their `design/api.html` §7 rows (`Retry-After` 2 and `—`, the §19.6 meanings).
+    `VersionLimitReached`, `CommitInProgress` and `UploadSessionClosed` exist since M4.2 and M6.8.
+  - Tests:
+    - `tests/unit/test_raw_documents.py`: `test_version_document_compose_round_trips` (compose,
+      then `canonical()`, then `decode` gives the composed value; from the §9.6.1 golden inputs the
+      bytes equal the golden), and a CATALOG subject's qualified name in `schema_ref.subject`;
+    - `tests/unit/test_raw_upload_session.py`: `commit_stage` in every state (a live and a lapsed
+      lease), `lapsed` at the `expires_at` boundary, `pending`, `test_freeze_guards_run_in_order`
+      (each refusal with every earlier guard passing) and `test_freeze_returns_the_frozen_commit`
+      (`number = latest_number + 1`, the given `version_id`, `committing_at`, and
+      `version_document` equal to the composed bytes).
+- Design: §8.4.2 (`lapsed`, `pending`, `commit_stage`, `freeze`); §8.5 (`VersionDocument.compose`);
+  §9.6.1; §13.6 (the freeze guards); §19.6 (rows added, "Landing"); §8.10; D-38, D-44, D-69.
+- Verification: the plan-wide gate; `documents.py`, `ingest.py` and `errors.py` at 100 %;
+  `test_error_contract.py` passes with both rows and
+  `test_domain_error_rows_document_their_retry_after` with `VERIFICATION_PENDING` at 2; the
+  named tests pass.
+- Dependencies: M6.2, M6.8.
+- Status: pending
+
+### M7.13 CommitDriver
+
+- Intent: commit end to end in core over the ports M7.11 completed and the decisions M7.12 added:
+  replay, takeover or freeze; publication on worker threads under a 30 s heartbeat; record or
+  fail fenced by the token; every publication result and storage error turned into findings and
+  problem codes; the commit request's authorization in `UploadService.commit`; and the version
+  store in the composition root.
 - Delete: none (`core/raw/_impl/ingest.py` was removed whole by M5.3 and is re-created here).
 - Create / Modify:
   - New `src/huron/core/raw/_impl/ingest.py`: `CommitDriver(uploads, datasets, versions, schemas,
@@ -3489,11 +3754,8 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     - `_report`: §9.8.4's result-to-finding table through `work.report(Finding(...))`, with
       `detail.root` in each and the session id as `subject_id`.
     - `resume(item) -> CommitResult | None`: steps 3–4 from the frozen row (session with files,
-      dataset, pinned schema version), for `FinishCommits` (M7.15); `None` when the run was lost
+      dataset, pinned schema version), for `FinishCommits` (M7.16); `None` when the run was lost
       or the session left COMMITTING.
-  - `src/huron/core/raw/ingest.py`: `UploadSession.commit_stage()`, `freeze()`, `lapsed()` and
-    `pending()`, which M6.2 left to this task, their first caller, with their cases in
-    `tests/unit/test_raw_upload_session.py`.
   - `src/huron/core/raw/types.py`: `CommitResult(session, version)`. The lease is
     `RawLimits.commit_lease` (M6.7).
   - `src/huron/core/raw/_impl/ingestion.py`: `UploadService.commit(grant, session_id, *,
@@ -3501,14 +3763,20 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     `require_target(dataset.locator, endpoint=dataset.endpoint)`, `require_owner(created_by)`,
     `require(WRITE)` (§12.11 order), then `CommitDriver.commit`; the constructor gains
     `commits: CommitDriver`.
-  - `src/huron/core/raw/runtime.py`: `RawPorts.versions`; `RawRuntime` builds one `CommitDriver`,
-    hands it to `UploadService` and keeps it for the duty of M7.15. `applications/api/app.py`
-    (`_build_runtime`) wires `PostgresVersionStore(pool)`; `capabilities.py` asserts its
-    conformance to `VersionStore`.
-  - `src/huron/core/raw/errors.py`: `VerificationPending` (409, `retry_after = 2`,
-    `context.pending`) and `LatestVersionChanged` (409, `context.latest_number`), each with its
-    §7 row (`VersionLimitReached` exists since M4.2); the driver adds literal raise sites where
-    it decides (`CommitInProgress`, `RawStorageUnavailable`, `InsufficientStorage`,
+  - `src/huron/core/raw/runtime.py`: `RawPorts` gains `versions`; `RawRuntime` builds one
+    `CommitDriver`, hands it to `UploadService` and keeps it for the duty of M7.16.
+  - The version store in the composition root (the "Composition root" rule):
+    `src/huron/applications/api/runtime.py`: `ApiStores.raw_versions: VersionStore` beside
+    `raw_schemas`; `app.py`: `_postgres_stores` builds `PostgresVersionStore(pool)` and
+    `_build_runtime` places it in `RawPorts.versions`; `capabilities.py`: the lifespan asserts the
+    PostgreSQL and in-memory version stores' conformance to `VersionStore`;
+    `tests/unit/support.py`: `memory_stores()` builds an `InMemoryVersionStore` over the same
+    shared in-memory Raw state as the upload store, so the app-level in-memory tests (route 14 in
+    M7.15) and the Playwright harness compose `CommitDriver`;
+    `tests/unit/test_authorization_credentials.py` fills `RawPorts.versions`.
+  - Errors: no new class and no change to `src/huron/core/raw/errors.py` (`VerificationPending`
+    and `LatestVersionChanged` landed with `freeze` in M7.12); the driver adds literal raise sites
+    where it decides (`CommitInProgress`, `RawStorageUnavailable`, `InsufficientStorage`,
     `UploadSessionClosed`).
   - Tests: new `tests/unit/test_raw_commit_driver.py` (in-memory stores, `PosixStorageRoots` on a
     temporary root, `tests.unit.support.FakeClock`, faults injected into the archive or with
@@ -3518,7 +3786,9 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
   D-164, D-165, D-166, D-167, D-169, D-174.
 - Verification:
   - The plan-wide gate; every touched file at 100 %; each `CommitDriver` unit within §8.10's
-    budget; slice 4's clone budget for the re-created module (§22.5).
+    budget; slice 4's clone budget for the re-created module (§22.5); `npm run test:e2e` (the
+    lifespan, its conformance asserts, `ApiStores` and `memory_stores()` change; the "Gate"
+    rule).
   - Named tests in `test_raw_commit_driver.py`:
     - `test_freeze_refuses_in_guard_order` (parametrized: a dataset not ACTIVE `409`/`410`; a lapsed
       session aborted `EXPIRED` and committed before `409 UPLOAD_SESSION_CLOSED`; an unverified file
@@ -3546,14 +3816,14 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
       `test_resume_drives_a_lapsed_commit_to_its_record`.
   - In `test_raw_services.py`: `test_commit_rechecks_write` (R10: a grant without `write` answers
     `403` after the target and owner checks; another owner `404`; another target `404`).
-- Dependencies: M7.2, M7.10, M7.11.
+- Dependencies: M7.2, M7.10, M7.11, M7.12.
 - Status: pending
 
-### M7.13 Commit contract, crash and numbering evidence
+### M7.14 Commit contract, crash and numbering evidence
 
 - Intent: prove the commit protocol on PostgreSQL and real storage with the evidence of the deleted
   suites: the frozen intent, replay and lease fencing (`test_commit_intents.py`, which needs the
-  driver of M7.12), process death at every publication step (`test_ingest_process_death.py`), and
+  driver of M7.13), process death at every publication step (`test_ingest_process_death.py`), and
   gap-free numbering (hierarchy scenarios 10–16). Any adapter defect these expose is fixed here
   with its named test (the "Races" rule, R15).
 - Delete: none.
@@ -3568,6 +3838,17 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     - `test_commit_lease_takeover_fences_old_driver`: driver A freezes and stalls before publish;
       the lease is expired by SQL; driver B takes over and records; A's record matches no row, A
       answers `CommitInProgress`, and one version row and one version directory exist.
+    - `test_freeze_and_verifier_reset_serialize` (§18.4 duty 2, D-37): the verifier's transaction
+      on one pool (`lock_session`, then `settle_file` of the session's last RECEIVED file) and
+      `_freeze` on the other contend for the session row lock, in both orders. Verifier first: a
+      reset to RECEIVING makes the freeze answer `409 VERIFICATION_PENDING`, and a VERIFIED
+      settle lets it freeze. Freeze first: the verifier's transaction finds the session no longer
+      OPEN and settles nothing (its reset matches no row). In every order a COMMITTING session
+      holds only VERIFIED files.
+    - `test_max_files_commit_timing` (R6's integration timing): a session of `MAX_FILES` (10,000)
+      zero-byte files, VERIFIED at start, commits; one version row with 10,000 manifest entries is
+      recorded, and the test records the freeze, publication and record durations with
+      `record_property`.
   - New `tests/contract/test_raw_commit_crash.py`: a child process (`sys.executable -c`, as the
     deleted suite ran one) builds the PostgreSQL stores, `PosixStorageRoots` over the test's root
     and a `CommitDriver`, commits a verified session and exits with `os._exit` at one boundary:
@@ -3580,7 +3861,8 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     storage reserve.
   - Adapter or driver fixes in `src/` only for a defect a test above exposes, each with that test.
 - Design: §10.6 (trigger rules and their contract proofs); §13.6 (takeover); §18.2 E (E3–E6,
-  E9, E10, E13); §18.6 rule 7; §22.2; §22.3; §22.7 (ported suites); D-40, D-43, D-45, D-83,
+  E9, E10, E13); §18.4 duty 2 (the freeze and the verifier serialize); §18.6 rule 7; §22.2;
+  §22.3; §22.7 (ported suites); §23.2 R6 (the 10,000-file timing); D-37, D-40, D-43, D-45, D-83,
   D-165, D-167.
 - Verification:
   - The plan-wide gate; every touched `src` file at 100 % (adapters over unit and contract).
@@ -3604,17 +3886,25 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
   - Scenario 13's file-ledger fences already live in `test_raw_upload_ledger.py` (M6.5) and
     scenario 15's expiry evidence returns with `ExpireSessions` (M12.1); the Execution notes map
     every ported test to its source.
+  - `test_freeze_and_verifier_reset_serialize` passes in both orders.
+  - R6's timing: `uv run pytest -m contract -k test_max_files_commit_timing
+    --junitxml=<a path outside the repository>` passes, and the Execution notes record its three
+    durations from the report's `<property>` elements against the BFF's 300 s window. Above
+    300 s the browser first sees a gateway error, then "Another request is finishing this
+    commit", which the design accepts up to the wizard's 600 s commit budget; above 600 s the
+    task reports R6's decision point to the owner (lower `HURON_RAW__MAX_FILES`, or an
+    asynchronous commit), and the test itself asserts no duration.
   - A named race test that fails intermittently is a failure and is never re-run to green
     (the "Races" rule).
-- Dependencies: M7.12.
+- Dependencies: M7.13.
 - Status: pending
 
-### M7.14 Commit route and the API crash matrix
+### M7.15 Commit route and the API crash matrix
 
 - Intent: route 14 answers `200 CommitView` with `Content-Location` on the first call and on every
   replay, with neither `Idempotency-Key` nor `If-Match`, and publication faults met through the
   route converge on one frozen commit (the ported API crash matrix). The `FinishCommits` duty and
-  the two-process takeover follow in M7.15.
+  the two-process takeover follow in M7.16.
 - Delete: none.
 - Create / Modify:
   - New `src/huron/applications/api/routes/v1/schema/raw_versions.py` with `SchemaRef`, `VersionView`
@@ -3638,7 +3928,9 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
       `test_unauthenticated_oversized_body_refused_before_read`.
     - `tests/unit/test_api_router_composition.py`: route 14 joins the documented-body list of
       `test_raw_routes_declare_no_body_parameter`; `tests/unit/test_execution_model.py`:
-      `commit_upload_session`.
+      `commit_upload_session`, and `test_commit_publication_runs_off_the_loop` (through route 14,
+      the commit's `ensure_dataset_root` and `publish` run on worker threads, never on the event
+      loop: §22.7, the successor of the commit off-loop test M5.3 deleted).
     - New `tests/unit/test_raw_commit_crash_matrix.py`, ported from the deleted
       `test_api_ingest_crash_matrix.py`: through route 14 with in-memory stores and a temporary
       root, faults injected with `tests.unit.support.crash_on`.
@@ -3647,6 +3939,7 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
   suites); D-41, D-44, D-147.
 - Verification:
   - The plan-wide gate; every touched file at 100 %.
+  - In `test_execution_model.py`: `test_commit_publication_runs_off_the_loop`.
   - In `test_raw_upload_sessions_api.py`: `test_commit_answers_commit_view_and_location` (`200`,
     the `Content-Location` path, `version.metadata` present, `schema_ref` equal to the frozen
     `version.json`'s), `test_commit_replay_is_identical`,
@@ -3665,10 +3958,10 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     `test_modified_published_document_holds_the_commit` (`HELD`: `503`, `RAW_COMMIT_STALLED`, the
     session COMMITTING) and `test_takeover_fences_a_driver_after_the_final_rename` (one version
     row, one directory, the fenced driver records nothing).
-- Dependencies: M7.8, M7.12.
+- Dependencies: M7.8, M7.13.
 - Status: pending
 
-### M7.15 FinishCommits and the two-process takeover
+### M7.16 FinishCommits and the two-process takeover
 
 - Intent: any replica finishes a commit whose driver died, through the `FinishCommits` duty of the
   maintenance loop, from the frozen bytes and fenced by a rotated token; a takeover that keeps
@@ -3678,8 +3971,9 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
 - Create / Modify:
   - `src/huron/core/raw/maintenance.py`: the `FinishCommits` duty: claims one COMMITTING session
     with a lapsed lease at a time (`work.claim(FINISH_COMMIT, roots=..., batch=1,
-    lease=commit_lease)`), on the available roots obtained as `VerifyFiles` obtains them, at most
-    `batch` claims per pass, and runs `CommitDriver.resume(item)`. A failed takeover logs at ERROR
+    lease=commit_lease)`) on the roots that M7.3's `available_roots(sweeper, keys)` answers at the
+    start of its run (a timed-out probe counts as UNAVAILABLE), at most `batch` claims per pass,
+    and runs `CommitDriver.resume(item)`. A failed takeover logs at ERROR
     and, once the session has been COMMITTING longer than ten commit leases (from
     `FrozenCommit.committing_at`, on the database clock), records `RAW_COMMIT_STALLED` with
     `detail.reason` = the error class through `work.report` (deduplicated); a raising duty stays
@@ -3692,7 +3986,8 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
 - Design: §8.6.7 (`FinishCommits`); §13.6 (takeover); §18.3 (claims of the leased duties); §18.4
   duty 3; §18.6 rule 7; §22.2 (two-process takeover); D-40, D-63, D-106, D-165, D-166.
 - Verification:
-  - The plan-wide gate, including the new integration module; every touched file at 100 %.
+  - The plan-wide gate, including the new integration module; every touched file at 100 %;
+    `npm run test:e2e` (`RawRuntime`'s composition changes; the "Gate" rule).
   - In `test_raw_maintenance.py`:
     `test_finish_commits_claims_only_lapsed_sessions_on_available_roots` (a live lease and an
     UNAVAILABLE root are skipped), `test_finish_commits_records_from_the_frozen_bytes`,
@@ -3706,7 +4001,7 @@ by one exclusive rename, with leases, takeover and the ported crash evidence.
     (`tests/raw_client.py`); a second app on the same database and root, with the lease expired by
     SQL, finishes it through `FinishCommits`; the parent's commit retry answers `200` with that
     version; one version row and one `versions/000001` exist.
-- Dependencies: M7.3, M7.12, M7.14.
+- Dependencies: M7.3, M7.13, M7.15.
 - Status: pending
 
 ## Milestone 8 — Versions, downloads and lifecycle (slice 5)
@@ -3825,7 +4120,7 @@ the dataset and version lifecycle with immediate parking and locator release.
     - `test_unavailable_root_answers_503_and_pages_still_answer`.
     - The shared scenarios `scenario_version_pages_newest_first` and
       `scenario_version_state_filter` on both stores.
-- Dependencies: M7.11, M7.12, M8.1.
+- Dependencies: M7.11, M7.13, M8.1.
 - Status: pending
 
 ### M8.3 Version read routes 20–23
@@ -3850,7 +4145,7 @@ the dataset and version lifecycle with immediate parking and locator release.
     - route 23, `GET /{number}/manifest`: a `Response` of the exact `manifest.json` bytes after the
       digest check, `application/json`, `ETag: "<manifest_sha256>"`, no `Range`; declares `410`,
       `503`.
-  - `routes/v1/schema/raw_versions.py` (created in M7.14): the list-item rendering
+  - `routes/v1/schema/raw_versions.py` (created in M7.15): the list-item rendering
     (`metadata: null`, DELETED versions as tombstones with `deleted_at`, `purge_after` and
     `purged_at`), which route 25 reuses in M8.9.
   - `routes/v1/__init__.py`: `raw_routes.include_router(raw_versions.router)` in §19.1's order.
@@ -3879,7 +4174,7 @@ the dataset and version lifecycle with immediate parking and locator release.
     - `test_versions_of_a_deleted_dataset_are_410`, `test_deleted_version_reads_are_410` and
       `test_storage_unavailable_is_503_with_retry_after`.
     - Another target answers `404`; a grant without `read` answers `403`.
-- Dependencies: M7.14, M8.2.
+- Dependencies: M7.15, M8.2.
 - Status: pending
 
 ### M8.4 Range downloads and the end-to-end flow
@@ -3942,7 +4237,7 @@ the dataset and version lifecycle with immediate parking and locator release.
     `test_storage_only_reader_resolves_version` (§9.7.3 steps 1–6 from the stored create
     request's properties and the root directory alone: the newest valid `versions/<NNNNNN>/`,
     `version.json` identity, the three document digests, and each payload size and SHA-256).
-- Dependencies: M7.14, M8.3.
+- Dependencies: M7.15, M8.3.
 - Status: pending
 
 ### M8.5 Parking in rawstore
@@ -4048,7 +4343,7 @@ the dataset and version lifecycle with immediate parking and locator release.
       `409 COMMIT_IN_PROGRESS`; the commit then records. Also the trigger backstop: an ARCHIVED
       transition written by SQL that skips the service while a session is COMMITTING is refused
       by `raw_datasets_commit_guard`.
-- Dependencies: M7.12, M7.13.
+- Dependencies: M7.13, M7.14.
 - Status: pending
 
 ### M8.7 Dataset delete and locator release
@@ -4085,7 +4380,8 @@ the dataset and version lifecycle with immediate parking and locator release.
     dataset, and, in the same statement through a CTE, on its DELETED versions whose `parked_at`
     is NULL, D-168).
   - `DatasetService` takes the `limits` that M4.6 left to this task, for
-    `RawLimits.deleted_retention` (M6.7).
+    `RawLimits.deleted_retention` (M6.7); `src/huron/core/raw/runtime.py` passes `RawRuntime`'s
+    `limits` to it (the "Composition root" rule).
   - Tests: `tests/unit/test_raw_services.py`; `tests/unit/test_raw_maintenance.py`; shared
     scenarios in `tests/raw_store_contract.py`; the delete half of
     `test_archive_and_delete_refused_while_committing` in `tests/contract/test_raw_commit.py`.
@@ -4447,8 +4743,9 @@ the property-standard classification.
 - Intent: the BFF classifies Raw tables by their property standard (§15.3), so destination
   browsing offers only Huron-managed standard-2 datasets and the explorer resolves them by
   `huron.raw.dataset-id`; and manual "Register a Raw collection" leaves the product (OD-10 O-4).
-  It lands before the registration handshake (M9.6) because `raw-targets.ts` and
-  `raw-inspection.ts` must stop using `managedRawDatasetId` before M9.6 deletes it.
+  It lands before the registration handshake (M9.6) because `raw-targets.ts`, `raw-inspection.ts`
+  and the ingestion page's server load must stop using `managedRawDatasetId` before M9.6 deletes
+  it.
 - Delete (orchestrator, before the pass): `web/src/lib/server/polaris-raw-actions.ts`.
 - Create / Modify:
   - `web/src/lib/server/polaris-raw.ts`: an exported pure classifier (for example
@@ -4465,6 +4762,13 @@ the property-standard classification.
   - `web/src/lib/server/raw-inspection.ts`: the dataset id comes from the classifier; the dataset
     is read through `callRaw` under the table's own target first, and a `404` (another locator's
     id, D-9) renders as unmanaged.
+  - `web/src/routes/ingestion/+page.server.ts` (it imports `managedRawDatasetId` to preselect the
+    `?table=` destination): the page loads that generic table with the user's client, as
+    `raw-inspection.ts` does, and passes it to the classifier. A managed table gives
+    `initialDatasetId`; a missing table still answers SvelteKit's `404`; an unmanaged or
+    unsupported table sets `ingestError` to "This catalog entry is not a Raw dataset managed by
+    this Huron service." The wizard keeps receiving `initialDatasetId: string | null`, and M10.5
+    replaces this load.
   - `web/src/lib/server/polaris-actions.ts`: `registerRawTable` leaves `POLARIS_ACTION_NAMES` and the
     switch; `web/src/routes/browse/+page.server.ts`: it leaves `allowedActions`.
   - `web/src/lib/design/components/polaris/NamespaceContents.svelte`: the "Register a Raw
@@ -4490,6 +4794,8 @@ the property-standard classification.
     grants`.
   - `rg -n "registerRawTable|polaris-raw-actions|Register a Raw collection" web/src web/e2e`
     prints nothing.
+  - `rg -n "managedRawDatasetId" web/src` lists only `web/src/lib/server/raw-registration.ts` and
+    `raw-registration.test.ts`, which M9.6 replaces.
 - Dependencies: M9.3.
 - Status: pending
 
@@ -4617,8 +4923,11 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
     lockfile; no Svelte file changes.
   - Vitest: `uploadOptions sets every field` (no `endpoint`, the chunk-size bounds,
     `storeFingerprintForResuming: false`), `shouldRetry truth table` (every §11.11 status plus
-    status 0 online and offline), `resets the 460 counter on chunk completion`, `sets
-    Upload-Checksum from the exact Blob on PATCH`, `sends the empty-input digest on an empty PATCH`
+    status 0 online and offline), `retries a network error from HEAD` (§12.13: an upload driven
+    by `uploadOptions` over a fake `httpStack` whose PATCH fails with status 0 is retried while
+    online, and the recorded retry starts with a HEAD before the next PATCH), `resets the 460
+    counter on chunk completion`, `sets Upload-Checksum from the exact Blob on PATCH`, `sends the
+    empty-input digest on an empty PATCH`
     (`sha256 47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=`), `leaves HEAD and DELETE untouched`,
     `sends nothing after an abort during hashing`, `hashes through a fake Worker` (request and
     answer ids, dispose), `keeps exactly the four draft members`, `ignores corrupt drafts`,
@@ -4638,12 +4947,22 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
   - `web/src/lib/ingestion/upload.ts`: its whole content is the part driver (`rawUploadApi`,
     `submitRawUpload`, `discardRawUpload`, `canReleaseRejectedDraft`, `confirmedBytes`,
     `UploadDraft`, `UploadProgress`); M10.7 writes the session driver at this path.
-  - `web/src/lib/ingestion/upload.test.ts`.
-  - `web/src/lib/api/raw-ingestion-client.test.ts`: at `9882690` every case drives
-    `beginRawUpload` and the `uploadNotStarted` flag; M10.3 writes its successor. The orchestrator
-    first confirms that no case at the task's base imports a surviving symbol; if one does, the
-    file stays and the implementer deletes the part-upload cases in place.
+  - `web/src/lib/ingestion/upload.test.ts`. Its cases of the surviving `files.ts` and `hash.ts`
+    move first (see below).
+  - `web/src/lib/api/raw-ingestion-client.test.ts`, unconditionally: at `9882690` all three of its
+    cases drive `beginRawUpload` and the `uploadNotStarted` flag. It also imports the surviving
+    `RawApiError`, but only to assert against those cases, so no case survives, and §21.1 rule 2
+    forbids leaving an emptied file (Vitest also fails on a file without tests). M10.3 writes its
+    successor.
 - Create / Modify:
+  - New `web/src/lib/ingestion/files.test.ts` and `web/src/lib/ingestion/hash.test.ts`: the cases
+    of the deleted `upload.test.ts` (read at the base commit with `git show`) whose subjects
+    survive move verbatim: "preserves relative directory paths and accepts equal basenames in
+    different folders" and "normalizes Unicode and rejects casefold and byte-length collisions"
+    (`sourcePath`, `sourceError`) into `files.test.ts`, and "hashes bounded reads with the same
+    SHA-256 as the complete bytes, including empty files" (`hashBlob`, `HASH_CHUNK_BYTES`) into
+    `hash.test.ts`, each file keeping the `// @vitest-environment node` directive. They are the
+    only Vitest cases of those two modules, and M10.6 changes `sourceError`.
   - `web/src/lib/api/raw-ingestion-client.ts`: delete `beginRawUpload`, `getRawUpload`,
     `uploadRawPart`, `completeRawFile`, `operateRawUpload`, `commitRawUpload`,
     `registerRawUpload` and their parsers `parseRawRegistration`, `parseRawFile`,
@@ -4675,9 +4994,12 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
     desktop, light and dark, keyboard only).
   - `rg -n "uploadNotStarted|canReleaseRejectedDraft|submitRawUpload|discardRawUpload|confirmedBytes|UploadDraft|beginRawUpload|getRawUpload|uploadRawPart|completeRawFile|operateRawUpload|commitRawUpload|registerRawUpload|RawIngestFile|RawIngestSession|RawCommitReceipt|RawRevisionMetadata|RawErrorResponse" web/src web/e2e`
     prints nothing.
-  - Row 5's check `rg -n -i "part_bytes|completed_parts|PART_BYTES|write_part|uploadRawPart|MAX_PART_BYTES" src tests web/src`
-    prints nothing.
-  - `git status` shows exactly the listed deletions plus edits to the files named above.
+  - Row 5's check `rg -n -i "part_bytes|completed_parts|PART_BYTES|write_part|uploadRawPart|MAX_PART_BYTES" src tests web/src --glob '!tests/contract/test_catalog_store.py'`
+    prints nothing (the kept history suite's `ingest_files.completed_parts` assertions are
+    migration history, §21.3).
+  - `npm test` runs the moved cases in `files.test.ts` and `hash.test.ts`.
+  - `git status` shows exactly the listed deletions plus the two new test modules and edits to
+    the files named above.
 - Dependencies: M9.3.
 - Status: pending
 
@@ -4866,7 +5188,9 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
   - `RawIngestWizard.svelte`: step 3 hosts `RawMetadataForm`; the wizard keeps the metadata object
     and the pinned `schema_version` number for session start; the Review step lists the subject,
     the schema version and the metadata summary; no label on the page says "revision".
-  - `web/src/lib/ingestion/files.ts`: `sourceError` says "version" (§20.2).
+  - `web/src/lib/ingestion/files.ts`: `sourceError` says "version" (§20.2); its cases in
+    `web/src/lib/ingestion/files.test.ts` (moved there in M10.2) follow the new messages, and one
+    asserts that no message says "revision".
   - New `web/src/lib/ingestion/metadata.test.ts`; `web/e2e/ingestion.test.ts` gains the
     metadata scenarios.
 - Design: §20.4.3; §20.6 (the link target); §16.6; §16.11; §13.2; D-55, D-57, D-151.
@@ -4894,7 +5218,11 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
 - Create / Modify:
   - New `web/src/lib/ingestion/upload.ts` over an injected `UploadApi` (the M10.4 calls it uses)
     and `CreateUpload` (`(file, options) => UploadLike`, tus-js-client's `Upload` in production):
-    - `startSession(run, request)`: hashes each file with `hashFile` ("Calculating checksums k of
+    - `startSession(run, request, limits)`: first, before any hashing, refuses a selection of
+      more than `limits.max_files` files, any file above `limits.max_file_bytes` or a total above
+      `limits.max_version_bytes` (§17.2 L7: the wizard checks the `GET /limits` sizes the page
+      loaded in M10.5), with the `problems.ts` sentence of `TOO_MANY_FILES`, `FILE_TOO_LARGE` or
+      `VERSION_TOO_LARGE`; then hashes each file with `hashFile` ("Calculating checksums k of
       n"); calls `startRawUploadSession` through `requestWithRetry(…, START_BUDGET_MS)` with one
       `Idempotency-Key` held in memory for that request; on `201` writes the draft (`drafts.ts`).
     - `transferFiles(run, session, sources)`: one upload per `RECEIVING` file, built by
@@ -4923,13 +5251,15 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
     `phase`, `files` (per `tus_upload_id`: state, sent bytes, size, last error) and `problem`
     (`RawProblem | null`), `$derived` totals, and the methods the driver calls.
   - New `web/src/lib/ingestion/upload.test.ts`.
-- Design: §20.4.7; §20.4.4–§20.4.6 (consumed); §13.3; §13.4; §17.7; §20.1 (shared state as a
-  class; protocol logic in plain modules); D-44, D-74, D-113.
+- Design: §20.4.7; §20.4.4–§20.4.6 (consumed); §13.3; §13.4; §17.2 (L7); §17.7; §20.1 (shared
+  state as a class; protocol logic in plain modules); D-44, D-74, D-113.
 - Verification:
   - The plan-wide gate; the web gate; the autofixer on `upload-run.svelte.ts`.
   - Vitest `upload.test.ts` with fake `UploadApi` and `CreateUpload`: `start, transfer and commit
     publish the next version` (the draft written after `201` and removed after `200`; at most two
-    uploads at once; zero-byte and already received files get none); `a DIGEST_MISMATCH reset
+    uploads at once; zero-byte and already received files get none); `refuses a selection over
+    the limits before hashing` (one case each for `max_files`, `max_file_bytes` and
+    `max_version_bytes`; no file is hashed and no API call is made); `a DIGEST_MISMATCH reset
     during VERIFICATION_PENDING re-sends that file before the next commit`;
     `LATEST_VERSION_CHANGED asks, then retries with the new number`; `resume maps files by path,
     fingerprint and SHA-256 and refuses a different file`; `a held Web Lock stops a second tab`;
@@ -4954,15 +5284,20 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
     `LATEST_VERSION_CHANGED` confirmation naming `context.latest_number`; closed, gone and
     dataset-state outcomes in words with "Start a new upload"; problem texts from `problems.ts`.
   - `RawIngestWizard.svelte`: the Review step's "Upload and commit" (disabled unless the dataset
-    is ACTIVE with an active schema version) runs `startSession`, `transferFiles` and
-    `commitSession`, with `expected_latest_number` equal to the `latest_number` the Review step
-    showed; a `METADATA_INVALID` start returns to step 3 with its errors; one `UploadRun` per
-    page; the API views stay `$state.raw` and are replaced, never mutated.
-  - `tests/raw_e2e_support.py`: `raw_e2e_app` gains the in-memory upload (with the offset
-    ledger), version and maintenance stores, so its lifespan runs `MaintenanceLoop` and files are
-    verified as in production, and sets `HURON_RAW__CHUNK_BYTES=8388608` (a 20 MiB file takes
-    three PATCHes) beside the two roots `e2e-storage` and `e2e-tmp` and
-    `HURON_RAW__PUBLIC_API_URL=http://127.0.0.1:8099`.
+    is ACTIVE with an active schema version) runs `startSession` (with the page's
+    `RawLimitsView`), `transferFiles` and `commitSession`, with `expected_latest_number` equal to
+    the `latest_number` the Review step showed; a `METADATA_INVALID` start returns to step 3 with
+    its errors; one `UploadRun` per page; the API views stay `$state.raw` and are replaced, never
+    mutated.
+  - `tests/raw_e2e_support.py`: the explicit `RawSettings(...)` that `raw_e2e_app()` passes as
+    `raw=` gains `chunk_bytes=8388608` (a 20 MiB file takes three PATCHes), beside its two roots
+    `e2e-storage` and `e2e-tmp` and `public_api_url="http://127.0.0.1:8099"` (both since M5.1).
+    An environment variable cannot do this: pydantic-settings ignores `HURON_RAW__CHUNK_BYTES`
+    when `raw=` is passed explicitly, and §22.6's `HURON_RAW__CHUNK_BYTES=8388608` names the value,
+    not the mechanism. Nothing else in the harness changes: `memory_stores()` has carried the
+    maintenance store since M4.7, the upload store with its offset ledger since M6.9 and the
+    version store since M7.13, and the lifespan has run `MaintenanceLoop`, which verifies files as
+    in production, since M7.3.
   - `web/.env.example` and `web/scripts/start.mjs`: the `BODY_SIZE_LIMIT` comments say that
     64 MiB is the largest tus chunk the Raw API accepts (`HURON_RAW__MAX_CHUNK_BYTES`), not a part
     size; the value stays.
@@ -4980,7 +5315,8 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
     API answered); `LATEST_VERSION_CHANGED asks before committing as the next number` (another
     session commits first); `conflicting paths and missing metadata are refused` (the
     `METADATA_INVALID` errors listed on step 3); `the transfer panel at mobile, about 816 px and
-    desktop widths in both themes`.
+    desktop widths in both themes`. The first scenario also asserts that the session start
+    answered `chunk_bytes` 8388608, so the harness setting reached the API.
   - `rg -n "64 MiB Raw part|one bounded 64 MiB part" web` prints nothing.
 - Dependencies: M9.4, M10.6, M10.7.
 - Status: pending
@@ -4996,7 +5332,11 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
     sessions from the page load, keyed by session id (started, files, bytes, expires), each with
     "Resume" (`readRawUploadSession`, a request for the same files or directory, then
     `resumeSession`) and "Discard" (`discardSession`); a draft only adds the fingerprint check
-    (§20.4.6), and drafts of sessions absent from the list are pruned.
+    (§20.4.6), and drafts of sessions absent from the list are pruned. The commit after a resume
+    takes `expected_latest_number` from the draft; without a draft (§20.4.6), the wizard reads the
+    dataset view (`readRawDataset`) before `commitSession`, asks the user to confirm "Commit as
+    version N + 1" with N its current `latest_number`, and commits with N; declining leaves the
+    session OPEN for a later resume.
   - `RawIngestWizard.svelte`: "Unfinished uploads" for an ACTIVE dataset with OPEN sessions of
     the actor; `beforeNavigate` and `beforeunload` ask while a transfer runs: "Leaving pauses this
     upload; it can be resumed from this dataset until <expires_at>"; after the start budget a
@@ -5005,8 +5345,9 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
   - `web/e2e/ingestion.test.ts`: the resume scenario. `web/e2e/organizations.test.ts`: the
     cross-realm scenario, the successor of the Raw-upload test M5.1 deleted, with an upload
     helper that drives the new wizard (create, select, upload, commit, download URL).
-- Design: §20.4.7 (resume, leaving the page, step 2's `429` list); §20.4.6; §13.4; §22.6 (the
-  resume scenario; `e2e/organizations.test.ts`); D-74, D-113.
+- Design: §20.4.7 (resume, leaving the page, step 2's `429` list); §20.4.6 (including the
+  draftless commit confirmation); §13.4; §22.6 (the resume scenario; `e2e/organizations.test.ts`);
+  D-44, D-74, D-113.
 - Verification:
   - The plan-wide gate; the web gate; the autofixer on `RawResumeList.svelte` and
     `RawIngestWizard.svelte`; visual QA of the resume list and the cap list.
@@ -5017,6 +5358,10 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
     PATCHes followed, that the localStorage draft held only `session_id`, `dataset_id`,
     `expected_latest_number` and `files`, and that the committed file's SHA-256, downloaded
     through the BFF, equals the source's.
+  - Playwright `a resume without its draft asks to commit as version N + 1`: the same interruption
+    with localStorage cleared before the reload; the resume shows "Commit as version N + 1" for
+    the dataset's current `latest_number` before any commit request, and confirming commits that
+    version.
   - Playwright `Raw uploads with identical catalog paths remain separate across organization
     realms`: a dataset and a version in each of `E2E_RAW_ALPHA` and `E2E_RAW_BETA`, distinct
     `base_location`s from distinct catalog bases, and the download URL of one realm answering
@@ -5073,9 +5418,10 @@ resume, commits, and passes the 2 GiB rehearsal (and the 9 GiB gate where capaci
 - Design: §22.8; §22.1; §24.2; §23.1 R16; §12.14; D-82, D-134, D-138, D-154; OD-12 O-7.
 - Verification:
   - The plan-wide gate; `make docs`; the web gate; `uv run pytest tests/unit/test_acceptance_capacity.py`.
-  - `uv run pytest -m acceptance -k rehearsal` passes on this host, run in the background and
-    polled, and its recorded idle and peak RSS and timings go to the Execution notes with the R16
-    decision.
+  - `uv run pytest -m acceptance -k rehearsal --junitxml=<a path outside the repository>` passes
+    on this host, run in the background and polled. The idle and peak RSS and the timings are read
+    from that report's `<property>` elements, the only output `record_testsuite_property`
+    reaches, and go to the Execution notes with the R16 decision.
   - `uv run pytest -m acceptance` runs with `--basetemp` on an APFS or ext4 volume with ≥ 25 GiB
     free, or in the `Acceptance` workflow once the owner pushes the branch; otherwise the task
     records "not run" with the measured free space. Its absence never fails the task.
@@ -5249,7 +5595,8 @@ the lifecycle and registration actions, and catalog administrators publish metad
 - Verification:
   - The plan-wide gate; the web gate; the autofixer on `NamespaceContents.svelte`; visual QA of
     the table and filters.
-  - Row 6's check `rg -n "Layer\.RAW|entry_layer|ensure_layer_writable" src/huron/core/raw src/huron/applications/api/routes/v1/endpoints/raw_*.py src/huron/applications/api/authorization/guards.py`
+  - Row 6's check, with the tus endpoint module added because it is not named `raw_*.py`
+    (deviation 6): `rg -n "Layer\.RAW|entry_layer|ensure_layer_writable" src/huron/core/raw src/huron/applications/api/routes/v1/endpoints/raw_*.py src/huron/applications/api/routes/v1/endpoints/tus.py src/huron/applications/api/authorization/guards.py`
     prints nothing, and the Vitest case "a Raw table shows no huron.layer" passes.
   - Playwright `dataset-types.test.ts` passes with the rewritten filter and Reader tests.
 - Dependencies: M9.5, M11.3.
@@ -5424,9 +5771,11 @@ first and the byte-moving duties last, each only with its named safety tests on 
     with their files; unreaped terminal rows and live idempotency records stay; a record another
     transaction holds through a conflicting claim is skipped, not deleted); unit
     `tests/unit/test_raw_maintenance.py` (extended; slice 4 created it): the duties' reports and
-    order, and `test_maintenance_fails_closed_without_database` for the
-    duties that exist so far (a store that raises a connection error changes no storage, and
-    `run_pass` logs it and runs the next duty).
+    order, `test_maintenance_fails_closed_without_database` for the duties that exist so far (a
+    store that raises a connection error changes no storage, and `run_pass` logs it and runs the
+    next duty), and `test_commit_after_prune_is_404` (D-116, §18.4 duty 10: once `PruneRows`
+    deleted a reaped COMMITTED session's row, a commit retry on that session id answers
+    `404 NOT_FOUND` through `UploadService.commit`).
 - Design: §18.4 duties 1 and 10; §18.5 (session row retention, T6); §18.6 (rule 6; the
   refinements); §10.9 (prune, the idempotency claim); §8.7.3 (`expire_sessions`, `prune`);
   §8.6.7; §14.6; D-63, D-64, D-116, D-117, D-118.
@@ -5460,11 +5809,13 @@ first and the byte-moving duties last, each only with its named safety tests on 
     that are not DELETED, in id order after the cursor, at most `limit`, each with its AVAILABLE
     numbers and its expected numbers (a version row in any state, plus a COMMITTING session's
     number); one statement in PostgreSQL.
-  - `src/huron/core/raw/maintenance.py`: `ReportOrphans`. Per process it keeps a cursor per
-    AVAILABLE root; a cycle starts with the first pass and then once
-    `ORPHAN_SCAN_INTERVAL_SECONDS` have passed since the previous cycle started (an injected
-    monotonic clock); a pass scans at most `batch` datasets per root. For each dataset it reads
-    the AVAILABLE numbers, then the listing, then the expected numbers again after the listing.
+  - `src/huron/core/raw/maintenance.py`: `ReportOrphans`. Per process it keeps a cursor per root
+    and scans only the roots that M7.3's `available_roots(sweeper, keys)` answers at the start of
+    its run (a timed-out probe counts as UNAVAILABLE); a cycle starts with the first pass and
+    then once `ORPHAN_SCAN_INTERVAL_SECONDS` have passed since the previous cycle started (an
+    injected monotonic clock); a pass scans at most `batch` datasets per root. For each dataset
+    it reads the AVAILABLE numbers, then the listing, then the expected numbers again after the
+    listing.
     Unrecorded = listed − expected, each re-checked for presence, reported
     `RAW_UNRECORDED_VERSION_DIRECTORY` (warning; `path = <storage_path>/versions/<NNNNNN>`,
     `subject_id` = the dataset id). Missing = AVAILABLE − listed, each re-read, reported
@@ -5510,13 +5861,14 @@ first and the byte-moving duties last, each only with its named safety tests on 
   - `src/huron/core/metastore/ingest.py`, both stores: `known_sessions(ids)` returns only ids
     with a row whose `staging_reaped_at` is NULL, so a reaped row's tree counts as garbage
     (changed here if M6.4 counted reaped rows), with a shared scenario.
-  - `src/huron/core/raw/maintenance.py`: `ReapStaging` (claim with `RENAME_LEASE_SECONDS` and
-    the staging grace, `trash_staging`, `complete`; a `StorageRootUnavailableError` completes
-    nothing) and `SweepOrphanStaging` (per AVAILABLE root: `UploadArea.staging_ids(root)`, only
-    32-hex names with an mtime older than the grace on the host clock, oldest first, at most
-    `batch`, minus `known_sessions`, then `trash_staging`); the grace is
-    `RawLimits.staging_grace` (M6.7). `RawMaintenance` places them fourth and fifth;
-    `runtime.py` composes them.
+  - `src/huron/core/raw/maintenance.py`, both duties on the roots that M7.3's
+    `available_roots(sweeper, keys)` answers at the start of their run (a timed-out probe counts
+    as UNAVAILABLE): `ReapStaging` (claim on those roots with `RENAME_LEASE_SECONDS` and the
+    staging grace, `trash_staging`, `complete`; a `StorageRootUnavailableError` completes
+    nothing) and `SweepOrphanStaging` (per such root: `UploadArea.staging_ids(root)`, only 32-hex
+    names with an mtime older than the grace on the host clock, oldest first, at most `batch`,
+    minus `known_sessions`, then `trash_staging`); the grace is `RawLimits.staging_grace` (M6.7).
+    `RawMaintenance` places them fourth and fifth; `runtime.py` composes them.
   - Tests: `tests/unit/test_rawstore_sweep.py` (`trash_staging` moves; an absent tree answers
     `False` only with the sentinel; a missing sentinel raises); `tests/unit/test_raw_maintenance.py`:
     `test_reap_waits_for_terminal_state_and_grace`, `test_orphan_sweep_spares_young_and_recorded_trees`
@@ -5554,8 +5906,10 @@ first and the byte-moving duties last, each only with its named safety tests on 
     (`state = 'DELETED' AND parked_at IS NULL`, by `deleted_at`) and
     `claim(WorkKind.PARK_VERSION, …)` (`raw_versions` joined to its dataset:
     `v.state = 'DELETED' AND v.parked_at IS NULL AND (d.state <> 'DELETED' OR d.parked_at IS NULL)`,
-    by `deleted_at`), both under the rename lease and `roots = ANY($available)`; their fenced
-    `complete` sets `parked_at = now()` and clears the work columns `WHERE parked_at IS NULL`, and a
+    by `deleted_at`), both under the rename lease and `roots = ANY($available)`, the roots
+    that M7.3's `available_roots(sweeper, keys)` answers at the start of `ParkDeleted`'s run;
+    their fenced `complete` sets `parked_at = now()` and clears the work columns
+    `WHERE parked_at IS NULL`, and a
     `PARK_DATASET` completion also stamps the dataset's unparked DELETED versions in the same
     statement (D-168).
   - `src/huron/core/raw/maintenance.py`: `ParkDeleted`. A dataset item runs `park_dataset` on a
@@ -5602,9 +5956,10 @@ first and the byte-moving duties last, each only with its named safety tests on 
     confirms it (sentinel, `root_id`).
   - `src/huron/core/metastore/raw_datasets.py`, both stores: `claim(WorkKind.PURGE_DATASET | PURGE_VERSION, …)`
     (`state = 'DELETED' AND parked_at IS NOT NULL AND purged_at IS NULL AND purge_after < now()`,
-    by `purge_after`, the rename lease) and `complete(item, audit=…)` (`purged_at = now()`, work
-    columns cleared, `WHERE purged_at IS NULL` and the token, with the `raw.dataset.purged` or
-    `raw.version.purged` audit row as `huron-raw-maintenance`).
+    by `purge_after`, the rename lease, on the roots that M7.3's `available_roots(sweeper, keys)`
+    answers at the start of `PurgeDeleted`'s run) and `complete(item, audit=…)`
+    (`purged_at = now()`, work columns cleared, `WHERE purged_at IS NULL` and the token, with the
+    `raw.dataset.purged` or `raw.version.purged` audit row as `huron-raw-maintenance`).
   - `src/huron/core/raw/maintenance.py`: `PurgeDeleted`. An absent parked directory reports
     `RAW_PARKED_DIRECTORY_MISSING` (warning) and completes, except for a version of a DELETED
     dataset, which completes without a finding (G3); `VersionIdentityError` reports
@@ -5652,8 +6007,10 @@ first and the byte-moving duties last, each only with its named safety tests on 
   - `src/huron/core/rawstore/sweep.py`: `empty_trash(root, limit) -> int` runs `remove_tree` on the
     first `limit` entries of `.huron/trash/` in name order; `StorageSweeper.empty_trash` declared
     in `src/huron/core/raw/ports.py` and dispatched by `roots.py`.
-  - `src/huron/core/raw/maintenance.py`: `EmptyTrash` per AVAILABLE root; `RawMaintenance` now
-    holds all ten duties in D-64 order; `runtime.py` composes it.
+  - `src/huron/core/raw/maintenance.py`: `EmptyTrash` per root that M7.3's
+    `available_roots(sweeper, keys)` answers at the start of its run (a timed-out probe counts as
+    UNAVAILABLE); `RawMaintenance` now holds all ten duties in D-64 order; `runtime.py` composes
+    it.
   - Tests: `tests/unit/test_rawstore_materialize.py`: `test_empty_trash_never_follows_links_or_crosses_devices`
     (symlinks to a file and to a directory outside trash leave their targets intact; a directory
     with a different `st_dev`, stubbed, is not entered), sealed `0555`/`0444` trees are removed,
@@ -5789,6 +6146,24 @@ bytes and beta Polaris tables, then the guarded migration that drops the legacy 
     and `reconciliation_findings` annotations; sections renumbered so Raw storage is section 6).
   - Tests that pin the previous head move to `0017_retire_legacy_raw`
     (`rg -n "0016_raw_uploads" tests`).
+  - `tests/contract/test_catalog_store.py`: `test_postgres_catalog_constraints_at_head` migrates to
+    `head` through `_migrate` and then `_assert_against` writes `dataset_revisions`,
+    `purge_records`, `revision_amendments`, `ingest_sessions` and `ingest_files`, all of which
+    this revision drops. It upgrades to `"0016_raw_uploads"` instead and becomes
+    `test_postgres_catalog_constraints_before_the_legacy_raw_retirement`, its docstring saying
+    why, as M3.1 pinned the release-retirement test to `0013`; `_migrate` goes once nothing calls
+    it. The suite then migrates only to fixed revisions. §10.10 says the suite "migrates only to
+    `0010_independent_raw`/`0011_verified_raw`, never to `head`", and §21.3 repeats "`0010`/`0011`";
+    at `9882690` that was false (this test migrated to `head`, and M3.1 adds a pin to `0013`). This
+    pin restores what that sentence was there to guarantee, §10.10's precondition that no test
+    migrating to `head` names a dropped table, and the Execution notes record the correction.
+  - Kept on purpose, not dropped by this revision or by the reset (D-123, D-124, §21.3):
+    `reconciliation_findings`, where Raw writes its findings since M7.2; the `integrity.cutover`
+    rows of `audit_events`, which keeps its rows forever; and the hand-made roles
+    `huron_app_legacy`, `huron_app_verified` and `huron_cutover`, which stay with their
+    administrator. M0.2's Execution note lists them as "dropped by the later legacy-retirement
+    migration"; that clause is wrong, and this task's Execution note records the correction
+    (the `DEGRADED` value of `dataset_revisions.state` does leave, with its table).
   - `design/api.html`: the "Planned P3 error codes" heading and the rest of its table
     (`#planned-p3-error-codes`: `RAW_REMOVAL_PENDING`, `RAW_CONTENT_REMOVED` and
     `REVISION_DEGRADED`; M5.5 removed `INGEST_RECOVERY_IN_PROGRESS`) and the "P3 integrity read
@@ -5806,13 +6181,18 @@ bytes and beta Polaris tables, then the guarded migration that drops the legacy 
   - `tests/contract/test_raw_reset.py::test_reset_from_below_0013` first asserts that
     `upgrade head` from `0012` refuses and leaves `0012` and `releases` in place (D-177).
 - Design: §10.10; §10.12 (the `0017` edits); §10.1; §19.6 (rows removed: the planned P3 table);
-  §21.1 rule 3; §21.2 rows 5, 7, 8, 9, 10 and 11 (SQL) and 17; D-79, D-124, D-177.
+  §21.1 rule 3; §21.2 rows 5, 7, 8, 9, 10 and 11 (SQL) and 17; §21.3 (kept on purpose); D-79,
+  D-123, D-124, D-177.
 - Verification:
   - The plan-wide gate (`uv run python scripts/check_schema_map.py` sees the new head);
     `uv run pytest -m contract` on Docker, including `tests/contract/test_raw_schema.py`
     unchanged over its eight Raw tables.
   - §10.10's precondition `rg -n "\b(dataset_revisions|ingest_sessions|ingest_files|ingest_commit_intents|ingest_recoveries|revision_amendments|purge_records|raw_external_datasets|raw_catalog_publications)\b" src/huron/core/metastore`
     prints nothing.
+  - The same names in `tests`: `rg -n "\b(dataset_revisions|ingest_sessions|ingest_files|ingest_commit_intents|ingest_recoveries|revision_amendments|purge_records|raw_external_datasets|raw_catalog_publications)\b" tests --glob '!tests/contract/test_catalog_store.py' --glob '!tests/contract/test_raw_reset.py' --glob '!tests/contract/test_raw_retire_legacy.py' --glob '!tests/unit/test_raw_reset_script.py'`
+    prints nothing (a straggler it finds is fixed in this task), and
+    `rg -n '"head"' tests/contract/test_catalog_store.py` prints nothing, so every remaining
+    legacy-table use there runs at a pinned revision.
   - Row checks print nothing: `rg -n "RECOVERING|ingest_recoveries|ingest_commit_intents|INGEST_RECOVERY" src`,
     `rg -n "PREPARING|UPLOADING|VERIFYING|ExpirySweep|expire_lapsed|DATASET_LOCKED" src` and
     `rg -n "purge_records|RAW_REMOVAL_PENDING|RAW_CONTENT_REMOVED|REVISION_DEGRADED" src design/api.html`.
@@ -5860,7 +6240,24 @@ Goal: reconcile every statement the change made false, then prove the closing ga
     `-x raw_reset=yes` (§10.10, §10.11); restoring parked bytes by hand within the retention
     period (D-49); inspecting `.huron/quarantine/` and the Raw findings, including separating two
     aliased datasets, a HELD target and a cross-device placement (§18.2 E8, E15–E17; D-66);
-    rewriting a `raw_realm_bindings` row in a reviewed SQL step (D-7).
+    rewriting a `raw_realm_bindings` row in a reviewed SQL step, with §10.5's statement block
+    verbatim (D-7). It also carries every rule the design assigns to "the operator docs":
+    - every catalog's `default-base-location` lies strictly below its storage root, never equal to
+      it (§9.3 "Operator rule: catalogs sit below a root", D-91);
+    - a referenced root keeps its `key` and `uri` while an unpurged dataset names it, and its
+      mount (`path`) may move, because the sentinel travels with the storage (§9.3, D-17, D-91);
+    - other table writers in namespace directories Huron created get a shared group with write
+      access there (§9.4, D-91);
+    - volumes are mounted before the API starts (`require_mount: true` for mounted roots), and
+      re-initializing a recorded root key is an explicit operator step (§9.2, D-172);
+    - catalogs that enable Polaris's non-default location modes
+      (`DEFAULT_LOCATION_OBJECT_STORAGE_PREFIX_ENABLED`, `DEFAULT_UNIQUE_TABLE_LOCATION_ENABLED`)
+      are out of scope (§9.5);
+    - the §23.2 operator thresholds: R3 (after a `RAW_FOREIGN_VERSION_QUARANTINED` finding, write
+      access to Raw dataset roots is restricted to the API's account), R6 (lower
+      `HURON_RAW__MAX_FILES` until a `MAX_FILES` commit fits the wizard's 600 s budget), R7
+      (`HURON_RAW__CHUNK_BYTES` of 8 MiB for links slower than about 0.9 Mbit/s) and R9
+      (`HURON_RAW__CHUNK_DEADLINE_SECONDS` of 300 while the BFF is the only client).
   - `web/README.md`: tus uploads and versions instead of parts and revisions, property standard 2
     instead of `huron-raw-v1`, the storage roots (`file://<repo>/.local/polaris/storage/<catalog>/`
     for catalogs created in the web admin), seeding, and no layers for Raw (rows 6, 11 and 14:
@@ -5869,7 +6266,8 @@ Goal: reconcile every statement the change made false, then prove the closing ga
     `raw-ingestion-client.ts`: views, parsers, `RawApiError`, `requestWithRetry`, the browser
     calls).
 - Design: §7.1; §7.3; §21.2 row 18 (CONTEXT.md, AGENTS.md, README.md, `docs/backend-design.md`,
-  the web docs) and rows 6, 11, 14 (text); §21.4; §20.8; §4 rows 19–22; D-4, D-87, D-148.
+  the web docs) and rows 6, 11, 14 (text); §21.4; §20.8; §4 rows 19–22; §9.2–§9.5 and §10.5 (the
+  operator rules); §23.2 (R3, R6, R7, R9); D-4, D-87, D-91, D-148, D-172.
 - Verification:
   - The plan-wide gate; `make docs` (strict); the web gate.
   - `diff <(awk '/^````markdown$/{f=1;next} /^````$/{f=0} f' RAW_STORAGE_DESIGN.md) CONTEXT.md`
@@ -5934,9 +6332,11 @@ Goal: reconcile every statement the change made false, then prove the closing ga
     scripted uploads return with the SDK and API-key path, OD-8) and :368-382.
   - `design/catalog-search.html`: decision 16 points to `docs/adr/0003-raw-metadata-schema-registry.md`.
   - `design/architecture.html` and `design/core-map.html`: Raw's responsibilities (datasets,
-    upload sessions, tus, versions, the registry, maintenance), its modules (`core/raw`,
-    `core/metastore/raw_*` and `ingest.py`, `core/rawstore/{roots,sweep}.py`), PostgreSQL's Raw
-    tables, and the invariants that changed.
+    upload sessions, tus, versions, the registry, maintenance), its modules (`core/raw`;
+    `core/metastore/raw_datasets.py`, `raw_schemas.py`, `raw_memory.py` (the shared in-memory Raw
+    state, deviation 7) and `ingest.py`; `core/rawstore/{roots,sweep}.py`; the tus modules
+    `routes/v1/{endpoints,schema}/tus.py`, deviation 6), PostgreSQL's Raw tables, and the
+    invariants that changed.
 - Design: §21.2 row 18 (index, roadmap, catalog-search); §16.12; §4 rows 1–8, 15–17, 20–22;
   D-59, D-153.
 - Verification:
@@ -5986,8 +6386,9 @@ Goal: reconcile every statement the change made false, then prove the closing ga
 - Create / Modify:
   - `design/metastore-uml.md`: the snapshot line; the Raw adapters
     (`core/metastore/raw_datasets.py`: the dataset and maintenance stores, in memory and
-    PostgreSQL; `raw_schemas.py`; the re-created `ingest.py`: the upload store with its offset
-    ledger and the version store; the `rows.py` mixins, `bind_realm` included); the hierarchy
+    PostgreSQL; `raw_schemas.py`; `raw_memory.py`, the one state the in-memory Raw stores share
+    (deviation 7); the re-created `ingest.py`: the upload store with its offset ledger and the
+    version store; the `rows.py` mixins, `bind_realm` included); the hierarchy
     adapter without revisions, sessions or outbox writes; section 9 (maintenance and the legacy
     cutover) and section 5 (the ingest-ledger mixins) replaced; the conformance and composition
     sections follow `ApiRuntime` and `RawPorts`.
@@ -6013,9 +6414,10 @@ Goal: reconcile every statement the change made false, then prove the closing ga
   - `design/catalog-uml.md`: the snapshot line; the Raw half re-traced: the aggregates
     (`RawDataset`, `UploadSession` and `UploadFile`, `Version`, `SchemaSubject` and
     `SchemaVersion`), the values (`locations.py`, `grants.py`, `admission.py`, `properties.py`,
-    the documents), the services (`DatasetService`, `UploadService`, `CommitDriver`,
-    `FileVerifier`, `VersionReadService` and `VersionFiles`, `SchemaRegistry`, `RawMaintenance`
-    and its ten duties, `RawRuntime`), the ports and the errors; sections 2, 6, 7 and 8 no longer
+    the documents, and `UploadSession`'s `FrozenCommit` and `SchemaPin`, deviation 8), the
+    services (`DatasetService`, `UploadService`, `CommitDriver`, `FileVerifier`,
+    `VersionReadService` and `VersionFiles`, `SchemaRegistry`, `RawMaintenance` and its ten
+    duties, `RawRuntime` and `RawPorts`), the ports and the errors; sections 2, 6, 7 and 8 no longer
     show revisions, releases, `core/raw/paths.py`, amendments or layer rules for Raw (Catalog's
     layers stay); the composition sections follow `ApiRuntime` and `RawRuntime`.
   - `design/rbac-uml.md`: no Raw guards, no `release.create`, no Raw use of Huron role bindings;
@@ -6048,7 +6450,9 @@ Goal: reconcile every statement the change made false, then prove the closing ga
     because they exercise the retirement itself: rows 1, 2a, 2b, 3, 4, 5, 6 (with its Vitest
     case), 7, 8, 9, 10, 11 (only `scripts/raw_reset.py`), 12, 13, 14 and 15 (with
     `test ! -e 'web/src/routes/[org]/[project]/[dataset]/[release]'`); the commands are run as
-    written in §21.2.
+    written in §21.2, except that row 6's check also names
+    `src/huron/applications/api/routes/v1/endpoints/tus.py` beside `endpoints/raw_*.py`
+    (deviation 6), as in M11.4.
   - The full plan-wide gate; the web gate with `npm run test:e2e`; `make docs`;
     `uv run pytest -m acceptance -k rehearsal`.
   - The Execution notes record the final unit, contract, integration, Vitest and Playwright
@@ -6060,7 +6464,11 @@ Goal: reconcile every statement the change made false, then prove the closing ga
 
 ## Risk register
 
-1. **Legacy engine removal and same-name re-creation (M5.1–M5.7, then M6.2, M6.3, M6.8, M7.12).**
+The entries draw on §23.1's five risks, as §23 requires: R15 (entry 2), R16 (entry 3), R5
+(entry 4), R11 (entry 6, with its legacy-removal case as entry 1) and R4 (entry 7). Entry 5 is an
+addition for the merge gate of OD-12 O-7.
+
+1. **Legacy engine removal and same-name re-creation (M5.1–M5.7, then M6.2, M6.3, M6.8, M7.13).**
    Symptom: collection or import errors in surviving tests; `check_duplication.py` reporting a
    changed signature for the clone groups of `raw/_impl/ingest.py`, `raw/_impl/ingestion.py` or
    `metastore/ingest.py`; newly missed lines in a kept module once a legacy suite is gone (measured
@@ -6071,7 +6479,7 @@ Goal: reconcile every statement the change made false, then prove the closing ga
    implement-markdown. If M5.3 overruns its attempts on size alone, anything it removes that keeps
    its own tests moves into M5.4, inside the declared transition; the v1 ingest surface and the
    engine services never split.
-2. **Commit, ledger and claim races (M6.5, M7.4, M7.5, M7.10–M7.15, M8.6, M8.7, M12; R15).**
+2. **Commit, ledger and claim races (M6.5, M7.4, M7.5, M7.10–M7.16, M8.6, M8.7, M12; R15).**
    Symptom: SQLSTATE 23514 from `raw_versions_contiguous` or a deferred counter trigger surfacing
    as `500`; `RAW_UNRECORDED_VERSION_DIRECTORY`, `RAW_STAGING_DAMAGED` or `RAW_COMMIT_STALLED`
    findings; an intermittent named race test (`test_concurrent_patch_newest_writer_wins`,
@@ -6102,6 +6510,30 @@ Goal: reconcile every statement the change made false, then prove the closing ga
    owner provides a ≥ 25 GiB APFS/ext4 volume or pushes the branch for the workflow (raising
    `timeout-minutes` once the rehearsal's timings are known); `raw-storage` is not merged into
    `main` without a recorded green run.
+6. **A gate fails on arithmetic rather than on a defect (every task; R11).** Symptom: `Coverage
+   failure: total of X is less than fail-under=Y` while every touched file passes the per-file
+   rule; `check_duplication.py` reporting a changed signature of a known clone group after a
+   rename or deletion; radon reporting a C-grade function, complexipy a score above 15, or pyscn a
+   cyclomatic complexity above 10. Fallback decision point:
+   - Coverage: when the verifier's comparison (§22.4 step 2) attributes the whole shortfall to
+     deleted covered statements, to new statements in D-84 adapter modules that the
+     unit-and-contract run covers in full, or to both, the task resets the floor (OD-11,
+     OD-12 O-8) and records the counts; any other shortfall is a missing test, which the task adds.
+   - Duplication: the task first refactors the duplicate away; otherwise the baseline is replaced
+     by a bootstrap after the orchestrator's `git rm` or by a reviewed hand edit, accepted only
+     under §22.5's four checks. When the result would exceed 144 clones, grow a known signature
+     or keep a new one the verifier cannot trace, and refactoring does not fit the task's three
+     attempts, the task escalates under implement-markdown.
+   - Complexity: the task splits the function along its domain boundaries; it never adds a
+     suppression.
+7. **The BFF drops a table it does not own (M9.6; R4).** Symptom: a table created at a Raw
+   dataset's former name disappears seconds after that dataset's delete or "Finish deletion", and
+   its owner reports lost grants. Fallback decision point: `classifyRawTable` decides every drop
+   and the Vitest case `drops only its own table` pins it, leaving a one-round-trip window. If a
+   Polaris release offers a conditional drop (by entity id or ETag), the next web task adopts it in
+   `deleteRawDataset`. The first observed foreign drop goes to the owner, who alone decides
+   whether the drop moves to the user, who would drop the table by hand in Polaris (OD-5), or the
+   window is accepted.
 
 ## Definition of done
 
@@ -6141,6 +6573,129 @@ Goal: reconcile every statement the change made false, then prove the closing ga
   `make docs` strict), ADR 0003, the design pages, the roadmap and the UML atlases describe the
   built behaviour; none describes revisions, parts, releases, layers, raw-web or the shadow
   hierarchy as current Raw behaviour.
+
+## Verification
+
+This section records how the plan answers the plan review of 2026-10-21: coverage findings
+COV-01 to COV-19 and execution findings EX-01 to EX-17, of which COV-01, EX-01, EX-02, EX-03 and
+EX-04 were blocking. Task numbers are the current ones. Splitting the commit driver (EX-14)
+inserted a new M7.12, so the former M7.12–M7.15 are now M7.13–M7.16, and every reference was
+renumbered; a finding's "M7.12" now reads M7.12 or M7.13, and its "M7.13", "M7.14" and "M7.15"
+read M7.14, M7.15 and M7.16. The Execution notes were left unchanged. Where a finding asked for
+an entry there, the task that lands the change now writes it.
+
+Fixed:
+
+- COV-01 (blocking): M7.3 adds `READINESS_TIMEOUT_SECONDS` and `available_roots(sweeper, keys)`
+  to `core/raw/maintenance.py`. Each configured key (from `placement.roots`) is probed with
+  `asyncify(sweeper.root_available, abandon_on_cancel=True)` under `anyio.fail_after`, and a
+  timeout counts as UNAVAILABLE. The answer reaches `work.claim(..., roots=…)` through
+  `VerifyFiles(verifier, sweeper, keys)` and `FileVerifier.run(batch, *, roots)`. Two tests
+  cover it: `test_verify_files_skips_an_unavailable_root` and
+  `test_root_probe_timeout_counts_as_unavailable`. M7.16, M12.2, M12.3, M12.4, M12.5 and M12.6
+  cite the helper.
+- COV-02: a plan-wide "Composition root" rule. M4.7 introduces `RawPorts` and the §8.6.8
+  constructor, keeping the old engine's keywords until M5.3. M6.7, M6.9, M7.3, M7.4, M7.5, M7.13
+  and M8.7 list `core/raw/runtime.py` with the field or keyword each adds.
+- COV-03: M7.13 adds `ApiStores.raw_versions`, `PostgresVersionStore` in `_postgres_stores`,
+  the in-memory version store in `memory_stores()` and the conformance asserts. M10.8's harness
+  bullet now says what changes.
+- COV-04 and EX-12: the plan-wide "Gate" rule runs `npm run test:e2e` in every task that changes
+  the lifespan, `_build_runtime`, `core/raw/runtime.py`, the conformance asserts, `ApiStores` or
+  `memory_stores()`. M5.3, M5.7, M6.7, M6.9, M7.3, M7.4, M7.5, M7.13 and M7.16 also name it.
+- COV-05: M7.14 adds `test_freeze_and_verifier_reset_serialize` in both lock orders. The optional
+  in-memory twin was not added: the in-memory store runs every transaction under one lock, so it
+  would prove nothing beyond the contract case.
+- COV-06 and EX-14: the new M7.12 holds `VersionDocument.compose` (listing
+  `core/raw/documents.py`, with `test_version_document_compose_round_trips`), the session's commit
+  decisions and the two error classes `freeze` raises first. M7.13 keeps the driver,
+  `UploadService.commit` and the wiring. M2.3 and M6.2 point at M7.12.
+- COV-07: M14.1's `docs/operations/raw-storage.md` bullet adds catalogs below a root, immutable
+  keys and URIs with movable mounts, the shared group, mounting before start and re-initializing
+  a recorded key, the out-of-scope Polaris location modes, the §10.5 SQL verbatim, and the R3,
+  R6, R7 and R9 thresholds.
+- COV-08: the risk register names its §23.1 sources and adds entry 6 (R11, with its coverage,
+  duplication and complexity fallbacks) and entry 7 (R4). The 9 GiB entry stays as an addition.
+- COV-09: M3.6 adds `test_fifty_concurrent_distinct_registrations_number_gap_free`.
+- COV-10: M7.14 adds `test_max_files_commit_timing` and records its durations against the BFF's
+  300 s window, with R6's decision point.
+- COV-11: M10.7's `startSession` refuses a selection over the `GET /limits` sizes before
+  hashing, with a Vitest case, and M10.8 passes it the limits.
+- COV-12: on a resume without a draft, M10.9 asks "Commit as version N + 1", with a Playwright
+  case.
+- COV-13: M7.3 adds the L3 case `test_verified_copy_runs_off_the_loop_inside_verify_threads`, and
+  M7.15 adds `test_commit_publication_runs_off_the_loop`. M5.3 names both as successors.
+- COV-14: deviation 6 in the plan-wide "Deviations" rule. M7.7 names the tus module explicitly in
+  the Raw composition tests, and M11.4 and M14.7 add `endpoints/tus.py` to row 6's check.
+- COV-15: `test_delegation_lifetime_rules` (M3.2), `retries a network error from HEAD` (M10.1)
+  and `test_namespace_location_mismatch_refused` (M2.5).
+- COV-16: M4.6 adds `test_conflict_on_unavailable_root_is_503` and
+  `test_replay_of_a_discarded_create_is_404`, and M4.8 adds their route twins. M12.1 adds
+  `test_commit_after_prune_is_404`.
+- COV-17: M7.5's `_on_staging_missing` runs the D-42 abort transaction with its
+  `raw.session.aborted` row, which the named tests of M7.5 and M7.8 assert.
+- COV-18: deviations 7 (`raw_memory.py`) and 8 (`SchemaPin`) are added to the plan-wide rule and
+  noted in M3.5 and M6.2 for their Execution notes. M14.3, M14.5 and M14.6 name both.
+- COV-19: M13.3 states that `reconciliation_findings`, the `integrity.cutover` audit rows and the
+  three hand-made roles are kept (D-123, D-124, §21.3). Its Execution note records the correction
+  of M0.2's note, which stays as written because the Execution notes are a record.
+- EX-01 (blocking): M9.5 moves `web/src/routes/ingestion/+page.server.ts` to the classifier and
+  says what the wizard receives. M9.5's verification lists the remaining `managedRawDatasetId`
+  users, so M9.6's existing check prints nothing once M9.6 deletes the function.
+- EX-02 (blocking): M13.3 pins and renames `test_postgres_catalog_constraints_at_head`, adds the
+  tests-scoped grep and a `"head"` check, and corrects the "0010/0011" claim. M5.6 removes
+  `dataset_revisions` from `_HIERARCHY_TABLES`.
+- EX-03 (blocking): M5.7 lists both suites with direction. The inspection cases are re-pointed
+  with their anchor; each materialize case is rewritten against a kept primitive or deleted with
+  a named successor. The false measurement claim gives way to the measured figures, re-measured
+  here (28.12 % and 92.91 %, lines 35–40, 134, 164 and 167), and a coverage check is added.
+- EX-04 (blocking): the checks in M5.3, M5.6, M5.7 and M10.2 exclude
+  `tests/contract/test_catalog_store.py`, and M5.6 edits the `test_stores_ports.py` docstring.
+- EX-05: M5.4 deletes the `freeze_commit` case from `test_raw_documents.py` and excludes
+  `core/raw/ingest.py` from its grep.
+- EX-06: M5.3 and M5.4 remove the two stale imports. M5.5's grep adds `IngestLease`, `FileState`
+  and `UploadAction`, plus a check that nothing imports the deleted module; that check replaces
+  the suggested `FileResetReason`, a name the legacy module never had.
+- EX-07: the "Composition root" rule and the task bullets above. These include both test modules
+  in M4.7 and M5.3, `ApiStores.raw_versions` in M7.13, `limits` in M8.7, and the
+  `test_rawstore_completion_admission.py` caller in M2.7.
+- EX-08: M1.3 names five cases for the inherited gaps (`dev.py` line 45, `apikeys.py` lines 124
+  and 189, `raw_web.py` line 83, `guards.py` line 426). M2.3 names
+  `test_file_completion_retries_after_a_concurrent_parts_update` for `_impl/ingest.py`. No
+  verifier exception is used: implement-markdown allows only unreachable defensive lines.
+- EX-09: `raw-ingestion-client.test.ts` is an unconditional orchestrator `git rm` in M10.2.
+- EX-10: M10.2 moves the `files.ts` cases into `files.test.ts`, and the `hashBlob` case, likewise
+  found only in `upload.test.ts`, into `hash.test.ts`. M10.6 updates them.
+- EX-11: radon must print nothing (the plan-wide "Gate" rule). M2.2 uses `git status
+  --porcelain`. M10.10 and M7.14's timing run pass `--junitxml`.
+- EX-13: M3.3 names the exact mypy override and the conditional ty setting, and the "Clean sweep"
+  rule makes them the one configuration change the plan specifies. They are not labelled
+  owner-approved, because no owner approval is on record; the plan specifies them as part of the
+  task instead.
+- EX-15: M10.8 sets `chunk_bytes=8388608` in the harness's explicit `RawSettings`, and its first
+  scenario asserts the value. A probe confirmed that the environment variable is ignored when
+  `raw=` is passed.
+- EX-16, second half: M4.9 depends on M4.7, and its runtime bullet names `ports.datasets`.
+- EX-17: (a) M3.1 lists the eight names once, and M6.1 no longer says the list grows. (b) M4.8,
+  M5.1, M5.2, M5.3, M6.9 and M7.7 rename the tag-set test at each count change, as the plan-wide
+  rule already required. (c) M10.8's harness bullet is rewritten.
+
+Rejected or adopted differently:
+
+- EX-16, first half (M1.1 as a dependency of M1.3): wrong. `core/raw/amendments.py` neither
+  imports nor raises `Forbidden`. It raises `AmendmentFieldForbidden` from `.errors`, and
+  `rg "\bForbidden\b"` matches only its docstring ("Forbidden fields"). M1.3 moves nothing that
+  module uses, so the edge is not added.
+- EX-03's suggestion to split M5.7: not adopted. The wrappers and the cases that cover them must
+  leave together. Re-pointing the suites first would leave the wrappers uncovered; deleting first
+  would leave kept primitives uncovered. M5.7's intent records this and the task's size.
+- EX-17(b)'s count-free test name: not adopted. §19.7 names the end state
+  `test_the_openapi_document_carries_seventeen_resource_grained_tags`, so the test is renamed at
+  each count change, the finding's first option.
+
+Every blocking defect (COV-01, EX-01, EX-02, EX-03 and EX-04) is resolved.
+
+VERIFIED
 
 ## Execution notes
 
