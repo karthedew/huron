@@ -31,7 +31,7 @@ storage or drive the composed API, so this marker does not promise zero local I/
 
 High-value targets: the RBAC role matrix invariants (service accounts alone have silver and gold
 write authority; administrative roles hold no `data.write` at all),
-the layer promotion graph, path construction, JCS canonicalisation stability and the amendment fold.
+the layer promotion graph, path construction and JCS canonicalisation stability.
 
 The HTTP surface is unit-testable through `TestClient` against injected in-memory
 stores and temporary POSIX storage. Direct tests such as

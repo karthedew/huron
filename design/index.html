@@ -402,13 +402,12 @@ Gold  shielding-dose-response 1.0.0 = snapshot G021   (validated, published, dis
 <tr><td>Dataset</td><td>One body of data within a project — a run, an acquisition, a contributor's deposit (<code>run-0042</code>).</td></tr>
 <tr><td>Revision</td><td>One immutable, checksummed commit to a dataset; corrections append revisions (1..N, gap-free).</td></tr>
 <tr><td>Canonical contract</td><td>The versioned Silver shape a dataset declares; datasets sharing one are the members of one array space.</td></tr>
-<tr><td>Envelope</td><td>A revision's directory: <code>metadata.json</code>, <code>manifest.json</code>, <code>COMMITTED</code>, <code>amendments/</code>, <code>payload/</code>.</td></tr>
+<tr><td>Envelope</td><td>A revision's directory: <code>metadata.json</code>, <code>manifest.json</code>, <code>COMMITTED</code>, <code>payload/</code>.</td></tr>
 <tr><td>Science profile</td><td>Versioned, installable definition of a data kind (<code>mcnp-run@1.0</code>): expected files, extractor, Bronze mapping, canonical Silver contract, validations.</td></tr>
 <tr><td>Icechunk snapshot</td><td>An immutable, transactionally committed version of a Zarr repository on object storage.</td></tr>
 <tr><td>Product</td><td>A named, versioned Gold deliverable with pinned inputs, transform digest, and validation evidence.</td></tr>
 <tr><td>Access grant</td><td>Short-lived, prefix-scoped object-storage credentials plus a snapshot pointer, issued by the API after authorization.</td></tr>
 <tr><td>Aether</td><td>The compute/analysis framework scientists use; consumes Huron's Xarray-compatible open paths and runs transformations.</td></tr>
-<tr><td>Amendment</td><td>Project-admin-only, append-only metadata correction on a committed revision.</td></tr>
 <tr><td>Projection</td><td>Rebuildable derived state (LanceDB search tables); never authoritative.</td></tr>
 <tr><td>Sealing</td><td>Removing write permission from a committed revision's files (<code>0444</code>/<code>0555</code>).</td></tr>
 </table>

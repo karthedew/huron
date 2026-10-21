@@ -185,7 +185,7 @@ planned capabilities remain in the design record.</p>
 <tr><th>Store</th><th>Authoritative for</th><th>Never holds</th></tr>
 <tr><td class="k">NFS (POSIX)</td>
 <td>Raw revision envelopes: payload bytes, <code>metadata.json</code>, <code>manifest.json</code>,
-<code>COMMITTED</code>, amendments, generation documents, purge/expiry markers. A scientist with
+<code>COMMITTED</code>, generation documents, purge/expiry markers. A scientist with
 <code>ls</code> and <code>jq</code> can navigate it offline.</td>
 <td>Derived arrays; anything a pipeline can regenerate.</td></tr>
 <tr><td class="k">Object store (S3-compatible)</td>
@@ -210,7 +210,7 @@ browse keeps working.</td>
 <p class="note"><span class="k">The query split, restated for four layers.</span>
 Structural questions (list projects, revisions of a dataset, snapshots of a repo, products depending
 on snapshot S117) are PostgreSQL. Matching questions ("absorbed dose", tag filters, similarity) are
-LanceDB. Effective metadata for a revision is read from NFS sidecars (base + folded amendments).
+LanceDB. A revision's metadata is read from its NFS sidecar.
 Array bytes are read from the object store by the client, never through the API. No question is answered from
 two stores.</p>
 
@@ -323,7 +323,7 @@ holds an invariant — or where none does —
 <tr><td class="inv">A</td><td>No capability is served from two stores; there is no search fallback.</td></tr>
 <tr><td class="inv">B</td><td>Nothing under a published <code>revisions/</code> prefix is ever deleted except by the audited retention/purge code paths.</td></tr>
 <tr><td class="inv">C</td><td>At publication a revision contains COMMITTED and verified payload matching its manifest. P3 requires verification with no writable payload handles remaining and no later write opens; stale upload inodes are never published. Lawful later removal is governed by I; observed violations are DEGRADED, not silently repaired.</td></tr>
-<tr><td class="inv">D</td><td>Frozen objects are written exactly once; amendments are appended, never edited.</td></tr>
+<tr><td class="inv">D</td><td>Frozen objects are written exactly once.</td></tr>
 <tr><td class="inv">E</td><td>Committed revision numbers within a dataset are contiguous <code>1..N</code>.</td></tr>
 <tr><td class="inv">M</td><td><em>Retired on 2026-10-15.</em> Release tags were removed: a dataset keeps only its full, numbered revisions, which invariants D and E already govern.</td></tr>
 <tr><td class="inv">F</td><td>The client never chooses the final path and never writes <code>COMMITTED</code>.</td></tr>

@@ -365,7 +365,7 @@ the fixture release pages), and move the shared error and paging types into foun
   - The duplication guard passes; a lower clone total is ratcheted down with
     `--update-baseline` and logged.
 - Dependencies: none.
-- Status: pending
+- Status: done (verification passed on attempt 2, 2026-10-21)
 
 ### M1.2 Retire the fixture release pages
 
@@ -6807,3 +6807,46 @@ here as tasks complete.
   tag documents. The claim path still reads a live `release` receipt, as it reads every receipt,
   and refuses reuse of its key for another request until it expires 24 hours after its claim; no
   current request can replay it.
+
+### M1.1
+
+- Coverage floor (deletion rule). Unit coverage before: 5,623 of 5,880 statements covered
+  (95.63%, 257 missed, 1,510 tests at `338728d`, re-measured; equal to M0.3's result). After:
+  5,590 of 5,847 (95.604%, 257 missed, 1,508 tests). All 33 removed statements were covered: 31
+  in the deleted `core/raw/amendments.py` and 2 in `core/raw/errors.py` (`AmendmentFieldForbidden`).
+  No other file's statement count or missed lines changed. `fail_under` was reset from 95.62 to
+  95.60 (floor(10000 × 5,590 / 5,847) / 100). The one modified source file, `core/raw/errors.py`
+  (21 statements), is at 100%.
+- Test counts against `338728d` (1,510 / 32 / 14). Unit 1,508 (−2: the two tests of the deleted
+  `test_raw_amendments.py`). Contract 32 and integration 14, unchanged. `test_error_contract.py`
+  passes unchanged.
+- Duplication: the deletion changed no clone group. The scan shows 123 clones in 41 groups both at
+  `338728d` and after (fragments 826 → 823). The baseline was ratcheted down with
+  `--update-baseline` from 144 clones / 48 groups to 123 / 41, with no new or grown signature. Six
+  signatures left it (14 clones, 6 groups): the two naming the deleted
+  `core/rawstore/maintenance.py` (with `store.py`, and with `materialize.py` and `store.py`),
+  `catalog/_impl/collections.py`, `foundation/names.py`, `catalog/ports.py` with `raw/ports.py`,
+  and `routes/v1/schema/{datasets,organizations,projects}.py`. Three groups shrank (5 clones):
+  `api/dependencies.py` 7 → 6, `routes/v1/endpoints/{datasets,organizations,projects}.py` 4 → 3
+  and `metastore/{hierarchy,ingest,rbac}.py` 15 → 12. One of the two identical
+  `metastore/{memory_apikeys,memory_sessions}.py` groups (size 2) left (2 clones, 1 group); the
+  signature stays with the other. Together that is −21 clones and −7 groups. The cap stays 144, a
+  headroom of 21 clones.
+- Deviations in the listed pages: the roadmap's P5 tag moves from partial to todo (the fold was its
+  only built part), UI milestone 7 promises each revision's metadata (its immutable
+  `metadata.json`) in place of the effective metadata and its amendment history, UI milestone 21
+  becomes "Validation & retention", and the P3 rebuild gate no longer lists amendments. The
+  roadmap, `layer-raw.html` and the core map word the retirement in the pages' current vocabulary
+  ("a correction is a new revision"). `layer-raw.html` also drops `amendments/0001.json` from the
+  envelope layout and amendments from its purge, rebuild and governance-record paragraphs.
+- Documentation beyond the listed pages: `architecture.html` (the NFS row, the query split and
+  invariant D), `catalog-search.html` (the query table and both rebuild bullets), `index.html`
+  (the Amendment glossary row and `amendments/` in Envelope), `rbac.html` (the project admin's
+  acts, the Raw action table, the capability note and the recommended policy) and `workflows.html`
+  (the governance journeys) no longer describe amendments. Left for their own tasks: the two §3
+  rows of `design/api.html` (M5.2) and the amendment sentence of its "P3 integrity read admission
+  (planned)" section (removed with that section), the `revision_amendments` DDL in
+  `catalog-search.html` (the table still exists), the UML atlases (dated snapshots) and the
+  fixture revision page under `web/src/routes/[org]/[project]/[dataset]/[release]/` (M1.2).
+- Leftover database objects (dropped by the later legacy-retirement migration): the
+  `revision_amendments` table, which nothing writes.

@@ -51,12 +51,6 @@ class RevisionTooLarge(DomainError):
     code, status_code = "REVISION_TOO_LARGE", 413
 
 
-class AmendmentFieldForbidden(DomainError):
-    """An amendment changes a field outside the allow-list."""
-
-    code, status_code = "AMENDMENT_FIELD_FORBIDDEN", 400
-
-
 class IllegalIngestTransition(DomainError):
     """The session or file state refuses the requested operation."""
 
@@ -83,7 +77,6 @@ ERROR_CODES = PATH_ERROR_CODES | frozenset(
         "FILE_TOO_LARGE",
         "TOO_MANY_FILES",
         "REVISION_TOO_LARGE",
-        "AMENDMENT_FIELD_FORBIDDEN",
         "ILLEGAL_INGEST_TRANSITION",
     }
 )

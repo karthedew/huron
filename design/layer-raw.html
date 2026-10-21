@@ -168,7 +168,6 @@ evidence tier, because Bronze onward lives on object storage and carries the rea
               metadata.json                      IMMUTABLE snapshot (JCS)
               manifest.json                      IMMUTABLE inventory (JCS)
               COMMITTED                          commit marker (§5)
-              amendments/0001.json               append-only
               expired/0001.json                  P3 contract: append-only expiry intents (§9)
               PURGED                             write-ahead purge intent (§9)
               payload/
@@ -248,15 +247,11 @@ and a revision number name one immutable revision; no release routes, rows or ta
 exist.</p>
 
 <h3>Amendments</h3>
-<p>Post-commit metadata correction is project-admin-only and append-only: numbered
-<code>amendments/NNNN.json</code> documents, each a whole-key replacement over an allow-list
-(title, description, tags, coverage, source system, extension documents — plus
-<code>data_classification</code>, which requires a separate permission and emits its own audit
-event). IDs, numbers, creators, timestamps, and the manifest digest can never be amended.
-Effective metadata = base folded with amendments in sequence; the fold is implemented once, in
-<a href="../src/huron/core/raw/amendments.py"><code>core.raw.amendments</code></a>.
-These pure validation/fold rules exist; amendment publication remains planned.
-Contributors who want different metadata commit a new revision.</p>
+<p>Amendments were retired on 2026-10-21. A committed revision is immutable, its metadata
+included: contributors who want different metadata commit a new revision. The amendment fold, its
+field allow-list and the <code>AMENDMENT_FIELD_FORBIDDEN</code> error code were removed, and no
+route or Huron code writes amendment documents. The legacy <code>revision_amendments</code> table,
+which nothing writes, remains until the legacy Raw tables are dropped.</p>
 
 <h3>Limits and concurrency</h3>
 <p>Defaults: 10 GiB/file, 10,000 files/revision, 1 TiB/revision (oversized single artifacts are
@@ -685,7 +680,7 @@ deletion.</p>
 reason, a <em>different</em> one approves (enforced by a database CHECK constraint, not
 convention). Execution destroys payload and <code>manifest.json</code> — filenames and per-file
 digests are frequently the sensitive material — plus expiry records and their mirrored per-file database contents. It retains <code>metadata.json</code>,
-amendments, <code>COMMITTED</code>, a <code>PURGED</code> marker, and the audit trail. Idempotent
+<code>COMMITTED</code>, a <code>PURGED</code> marker, and the audit trail. Idempotent
 and resumable. The canonical PURGED intent is durable before the first unlink and binds revision,
 dataset, manifest digest, distinct requester/approver, authorization reference and request/approval/start
 instants. It contains no per-file details. Audit retains operation evidence without copying deleted
@@ -720,7 +715,7 @@ restored governance, holds/pins and shared mutation coordination. P5 owns new in
 Pending purge blocks new payload/manifest reads; pending expiry blocks its selected files.
 Already-authorized streams may finish. DEGRADED blocks every new payload read.</li>
 <li><strong>Rebuild</strong>: offline into a fresh migrated database, resumable only under the same
-run/root identity. Restore hierarchy, revisions and amendments; no invented parents or
+run/root identity. Restore hierarchy and revisions; no invented parents or
 historical authority. Missing parents, identity conflicts and ambiguous access block activation;
 reported DEGRADED revisions need not. RBAC, credentials, audit, holds, idempotency and original
 outbox require backups. Search and derived-layer reconstruction remain later phases.</li>
@@ -736,10 +731,8 @@ history</a> records what was removed. Migration 0011 still refuses nonterminal l
 markers remain unchanged and decodable; with no cutover inventory to admit them, v1 envelopes are
 operator findings.</p>
 <p>Governance records use the same single-writer trust root, with no signatures. JCS is canonical
-encoding, not tamper proof. Mirror digests support database comparisons. Incomplete amendment history
-cannot broaden classification/access; a valid prefix is restricted diagnostic evidence, not current
-metadata. Filesystem-only recovery can recognize pending removals but cannot infer that lost hold
-rows never existed.</p>
+encoding, not tamper proof. Mirror digests support database comparisons. Filesystem-only recovery
+can recognize pending removals but cannot infer that lost hold rows never existed.</p>
 
 <h2 id="upload-modes">11. Upload modes</h2>
 

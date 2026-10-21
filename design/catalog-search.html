@@ -104,7 +104,7 @@ The <a href="core-map.html">Core map</a> describes the migrated working tree, no
 <tr><th>Question</th><th>Served by</th></tr>
 <tr><td>List orgs / projects / datasets / revisions / snapshots / products</td><td>PostgreSQL (read-your-writes)</td></tr>
 <tr><td>Resolve any resource by ID or slug path</td><td>PostgreSQL → storage sidecars</td></tr>
-<tr><td>Effective metadata of a revision (base + amendments)</td><td>NFS sidecars</td></tr>
+<tr><td>Metadata of a revision</td><td>NFS sidecars</td></tr>
 <tr><td>What snapshots exist for dataset X, layer Y; which is latest published</td><td>PostgreSQL</td></tr>
 <tr><td>What does product version P depend on; what depends on snapshot S</td><td>PostgreSQL (lineage edges — structural graph traversal)</td></tr>
 <tr><td>Free-text / tag / faceted search across <em>all four layers</em> — datasets, revisions, snapshots, products</td><td>LanceDB (eventually consistent, lag reported)</td></tr>
@@ -497,11 +497,11 @@ required was retired on 2026-10-15.</p>
 
 <ul>
 <li>Projection rebuild (a planned operator command; the <code>lakectl</code> CLI that was to host it
-was retired on 2026-10-15) — walks NFS (datasets, revisions, effective metadata)
+was retired on 2026-10-15) — walks NFS (datasets, revisions, revision metadata)
 and PostgreSQL (snapshot/product registry), writes fresh tables under a new prefix, verifies row
 counts, flips the pointer. Routine, not exceptional.</li>
 <li>Storage rebuild (a planned operator command) — P3 reconstructs Raw structural inventory offline:
-generation hierarchy, revisions/governance observations and amendments.
+generation hierarchy and revisions/governance observations.
 A fresh target is claimed by a run identity; that same run may resume. Missing parents and identity conflicts
 block activation; reported payload corruption remains DEGRADED and need not block healthy inventory.
 Access policy must be restored and unambiguous before activation; governance readiness separately gates

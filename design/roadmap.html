@@ -380,7 +380,7 @@ rules, findings, staging-only guarded cleanup and offline Raw catalog rebuild. P
 workflows; P3 recognizes their records and guards continuation of existing intents. No search or array
 registry work is included.</td>
 <td>Stale upload/completion handles cannot change published bytes. Real adapter crash/concurrency tests prove recovery and cleanup.
-Drop/migrate/rebuild yields identical hierarchy, revisions and amendments, including lawful
+Drop/migrate/rebuild yields identical hierarchy and revisions, including lawful
 purge/expiry and non-destructive pending removal. Missing parents/conflicting identities block activation;
 known corruption stays DEGRADED without blocking healthy inventory. Real NFS evidence is required for an
 NFS deployment. P3 acceptance needs calculated copy capacity, at least 25 GiB for the 9 GiB flow.</td></tr>
@@ -394,20 +394,19 @@ pointer-flip rebuild.</td>
 results, correct pagination, no leaked facets. Stop the worker and delete the tables: browse,
 ingest, and commit all work; <code>/search</code> returns 503; rebuild restores it.</td></tr>
 
-<tr><td class="k">P5 — Governance<br><span class="tag">partial</span></td>
-<td>Project-admin amendments with the field allow-list and single fold implementation; reclassification
-as its own audited permission; two-person purge; retention: per-category TTL, pins, legal holds,
-<code>EXPIRED</code> markers; the unified <a href="catalog-search.html#schema-registry">schema
-registry</a> (decision 16): platform/org/project scopes, project-enrichment composition, immutable
-published versions mirrored to storage — science profiles and extension schemas as registry kinds,
-envelope validation against the effective schema at ingest; quota enforcement at
-<code>BeginIngest</code>.
-The amendment fold and field allow-list are implemented
-(<code>core/raw/amendments.py</code>); the rest is not started.</td>
-<td>Every forbidden amendment field rejected; fold correct across 3 chained amendments; two-person
-purge enforced by the database, idempotent on re-run, reported lawful by the reconciler; expiry
-removes only TTL-category files, only after Silver exists, writes the marker, honors holds; the
-consequence text appears in the API response that sets the policy.</td></tr>
+<tr><td class="k">P5 — Governance<br><span class="tag">todo</span></td>
+<td>Reclassification as its own audited permission; two-person purge; retention: per-category TTL,
+pins, legal holds, <code>EXPIRED</code> markers; the unified
+<a href="catalog-search.html#schema-registry">schema registry</a> (decision 16):
+platform/org/project scopes, project-enrichment composition, immutable published versions mirrored
+to storage — science profiles and extension schemas as registry kinds, envelope validation against
+the effective schema at ingest; quota enforcement at <code>BeginIngest</code>. Not started.
+<strong>Retired 2026-10-21:</strong> Raw amendments, with their fold, field allow-list and
+<code>AMENDMENT_FIELD_FORBIDDEN</code> error code. A committed Raw revision is immutable; a
+correction is a new revision.</td>
+<td>Two-person purge enforced by the database, idempotent on re-run, reported lawful by the
+reconciler; expiry removes only TTL-category files, only after Silver exists, writes the marker,
+honors holds; the consequence text appears in the API response that sets the policy.</td></tr>
 
 <tr><td class="k">P6 — Bronze<br><span class="tag">todo</span></td>
 <td>Jobs table + runners, Icechunk repos on the object store, candidate → validated → published snapshot flow,
@@ -577,9 +576,9 @@ resource; killing the projection service yields the degraded state, not a 200-wi
 the watermark visibly lags and recovers.</td></tr>
 
 <tr><td class="k">7 — Revisions &amp; manifests<br><span class="tag">todo</span></td>
-<td>Built: the amendment fold and field allow-list; the manifest model. Adds: revision history
+<td>Built: the manifest model. Adds: revision history
 with per-layer materialization state; manifests paginated or streamed, never one JSON body;
-effective metadata (base + folded amendments) with its amendment history; short-lived authorized
+each revision's metadata (its immutable <code>metadata.json</code>); short-lived authorized
 raw-file downloads, API-streamed — STS-vended credentials remain milestone 23. Release tags,
 their creation and withdrawal, were retired on 2026-10-15 (owner decision); the fixture-backed
 release pages leave the web app with the web milestones.</td>
@@ -756,13 +755,11 @@ per-dataset Silver repos may be concatenated — never storage layout.</td>
 <td>A profile or contract version, once referenced by any snapshot, cannot be mutated — only
 superseded by a new version.</td></tr>
 
-<tr><td class="k">21 — Validation, retention &amp; amendments<br><span class="tag">todo</span><br>backend P5</td>
-<td>Built: the amendment fold and field allow-list. Adds: structured validation findings with
-history on revisions and snapshots; retention categories, TTLs, pins, and legal holds —
-including the start condition for entry-above-raw datasets, which have no Silver publication to
-count from; amendment submission routes with effective metadata everywhere the catalog renders
-metadata; extracted-parameter storage and display; the two-person purge — request, independent
-approval, execution, tombstone.</td>
+<tr><td class="k">21 — Validation &amp; retention<br><span class="tag">todo</span><br>backend P5</td>
+<td>Adds: structured validation findings with history on revisions and snapshots; retention
+categories, TTLs, pins, and legal holds — including the start condition for entry-above-raw
+datasets, which have no Silver publication to count from; extracted-parameter storage and display;
+the two-person purge — request, independent approval, execution, tombstone.</td>
 <td>A purge cannot be requested and approved by the same principal (contract test); a legal hold
 blocks TTL expiry until released.</td></tr>
 
