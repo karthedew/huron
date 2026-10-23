@@ -5,7 +5,7 @@ from __future__ import annotations
 import hmac
 from typing import TYPE_CHECKING
 
-from huron.core.security.authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
 from huron.core.security.errors import OidcNotConfigured, UsernameTaken
 from huron.core.security.oidc import LoginFlow, code_challenge_s256
 from huron.core.security.principals import PrincipalSubjectExists

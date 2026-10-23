@@ -12,9 +12,7 @@ from uuid import UUID
 import jwt
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from huron.core.foundation.errors import ResourceNotFound
-from huron.core.security.authentication_errors import AuthError
-from huron.core.security.errors import Forbidden
+from huron.core.foundation.errors import AuthError, Forbidden, ResourceNotFound
 from huron.core.security.principal import Principal
 from huron.core.security.rules import Binding, ScopeType
 

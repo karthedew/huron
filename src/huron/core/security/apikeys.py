@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
-from .authentication_errors import ApiKeyExpired, ApiKeyRevoked, AuthError
+from huron.core.foundation.errors import AuthError
+
+from .authentication_errors import ApiKeyExpired, ApiKeyRevoked
 from .principal import Principal
 
 if TYPE_CHECKING:

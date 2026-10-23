@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from huron.applications.api.app import create_app
+from huron.applications.api.raw_web import operations
 from huron.applications.api.settings import ApiSettings, ClassificationValue
 from huron.core.raw import ingest
-from tests.raw_web_client import SECRET, RawWebClient
+from huron.core.security.principal import Principal
+from huron.core.security.raw_delegation import DelegationTarget, RawDelegation
+from tests.raw_web_client import ACTOR, SECRET, TARGET, RawWebClient
 from tests.raw_web_support import raw_web_stores
 
 if TYPE_CHECKING:
@@ -219,7 +225,7 @@ def test_delegation_requires_signature_lifetime_and_strong_configuration(raw: Ra
 
     from pydantic import ValidationError
 
-    from huron.core.security.authentication_errors import AuthError
+    from huron.core.foundation.errors import AuthError
     from huron.core.security.raw_delegation import RawDelegationVerifier
 
     with pytest.raises(ValueError, match="32 bytes"):
@@ -257,6 +263,21 @@ def test_bridge_disabled_is_undiscoverable(tmp_path: Path) -> None:
             RawWebClient(client).request("GET", f"/api/raw-web/uploads/{uuid4()}").status_code
             == 404
         )
+
+
+def test_raw_web_answers_404_while_unconfigured(raw: RawWebClient) -> None:
+    """Without Raw web persistence the operations bind no workflow and answer 404 instead."""
+    delegation = RawDelegation(
+        Principal(ACTOR, authentication_method="web-delegation"),
+        DelegationTarget.model_validate(TARGET),
+        frozenset({"read", "write", "create"}),
+        datetime(2026, 9, 16, tzinfo=UTC),
+        hashlib.sha256(b"").hexdigest(),
+    )
+    unconfigured = replace(raw.client.app.state.runtime, raw_web=None)
+    with pytest.raises(HTTPException) as refused:
+        operations(unconfigured, delegation)
+    assert refused.value.status_code == 404
 
 
 async def test_delegated_bindings_never_grant_service_account_authority() -> None:

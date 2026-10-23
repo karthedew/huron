@@ -21,9 +21,8 @@ from starlette.requests import ClientDisconnect
 
 from huron.core.catalog.errors import ERROR_CODES as CATALOG_ERROR_CODES
 from huron.core.foundation.errors import ERROR_CODES as FOUNDATION_ERROR_CODES
-from huron.core.foundation.errors import DomainError
+from huron.core.foundation.errors import AuthError, DomainError
 from huron.core.raw.errors import ERROR_CODES as RAW_ERROR_CODES
-from huron.core.security.authentication_errors import AuthError
 from huron.core.security.errors import ERROR_CODES as SECURITY_ERROR_CODES
 from huron.core.security.roles import RoleError
 
@@ -100,11 +99,27 @@ def problem(status: int, code: str, detail: str, **context: object) -> JSONRespo
     return JSONResponse(status_code=status, content=body, media_type=PROBLEM_MEDIA_TYPE)
 
 
+def _problem_headers(exc: DomainError) -> dict[str, str] | None:
+    """Return the response headers a domain error's class declares.
+
+    Args:
+        exc: The typed failure being answered.
+
+    Returns:
+        ``Retry-After`` carrying the class's delay in seconds, or None when
+        the class declares no delay.
+    """
+    if exc.retry_after is None:
+        return None
+    return {"Retry-After": str(exc.retry_after)}
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """Register the seven handlers that keep every failure in the problem shape.
 
     Typed failures map to their own status: a ``DomainError`` to the status
-    it declares, an ``AuthError`` to 401, a ``RoleError`` to 422. The
+    it declares (with ``Retry-After`` when its class declares a delay), an
+    ``AuthError`` to 401, a ``RoleError`` to 422. The
     framework's own failures are covered too - Starlette's HTTP exceptions
     keep their status and headers, FastAPI's request validation answers 422
     with the validation errors attached, a client disconnecting mid-body
@@ -118,7 +133,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(DomainError)
     async def domain_error(_request: Request, exc: DomainError) -> JSONResponse:
-        """Answer with the status and body the domain error itself declares.
+        """Answer with the status, body and retry delay the domain error itself declares.
 
         Args:
             _request: The failing request; unused, the error is
@@ -126,12 +141,14 @@ def install_error_handlers(app: FastAPI) -> None:
             exc: The typed failure, whose ``as_problem`` renders the body.
 
         Returns:
-            The error's own status with its problem body.
+            The error's own status with its problem body, carrying
+            ``Retry-After`` when the error's class declares a delay.
         """
         return JSONResponse(
             status_code=exc.status_code,
             content=exc.as_problem(),
             media_type=PROBLEM_MEDIA_TYPE,
+            headers=_problem_headers(exc),
         )
 
     @app.exception_handler(AuthError)

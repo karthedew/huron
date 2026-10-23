@@ -25,12 +25,23 @@ from huron.applications.api.problems import (
     problem_response,
     wire_error_codes,
 )
-from huron.core.security.authentication_errors import AuthError
-from huron.core.security.errors import Forbidden
+from huron.core.foundation.errors import AuthError, Forbidden
 from huron.core.catalog.errors import SlugExists
 from huron.core.security.roles import UnknownRole
 
 pytestmark = pytest.mark.unit
+
+
+class _SlugExistsRetryLater(SlugExists):
+    """``SlugExists`` asking for a delay; it inherits the code, so the code walks never see it."""
+
+    retry_after = 30
+
+
+class _SlugExistsRetryAtOnce(SlugExists):
+    """``SlugExists`` asking for a zero delay, which is still a delay to announce."""
+
+    retry_after = 0
 
 
 def _app() -> FastAPI:
@@ -41,6 +52,14 @@ def _app() -> FastAPI:
     @app.get("/domain")
     def _domain() -> None:
         raise SlugExists("organization slug already exists: astro")
+
+    @app.get("/domain/retry-later")
+    def _domain_retry_later() -> None:
+        raise _SlugExistsRetryLater("organization slug already exists: astro")
+
+    @app.get("/domain/retry-at-once")
+    def _domain_retry_at_once() -> None:
+        raise _SlugExistsRetryAtOnce("organization slug already exists: astro")
 
     @app.get("/auth")
     def _auth() -> None:
@@ -85,6 +104,24 @@ def test_domain_error_answers_its_own_status_and_code(client: TestClient) -> Non
     assert response.status_code == 409
     assert response.headers["content-type"] == PROBLEM_MEDIA_TYPE
     _assert_problem_shape(response.json(), status=409, code="SLUG_EXISTS")
+
+
+@pytest.mark.parametrize(
+    ("path", "retry_after"),
+    [("/domain/retry-later", "30"), ("/domain/retry-at-once", "0"), ("/domain", None)],
+)
+def test_problem_headers_carry_retry_after(
+    client: TestClient, path: str, retry_after: str | None
+) -> None:
+    """A domain error's declared delay answers as ``Retry-After``; no delay sends no header.
+
+    The delay changes nothing else: each answer keeps the status and code
+    its class inherits.
+    """
+    response = client.get(path)
+    assert response.status_code == 409
+    _assert_problem_shape(response.json(), status=409, code="SLUG_EXISTS")
+    assert response.headers.get("retry-after") == retry_after
 
 
 def test_auth_error_answers_401_with_a_bearer_challenge(client: TestClient) -> None:

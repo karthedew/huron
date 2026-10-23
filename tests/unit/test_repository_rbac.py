@@ -25,7 +25,7 @@ from huron.core.security.scopes import require_scope_exists
 from huron.core.security.apikeys import ApiKeyRecord
 from huron.core.metastore import MemoryApiKeyStore, InMemoryHierarchyStore, InMemoryRbacStore
 from huron.core.security.principal import Principal as AuthPrincipal
-from huron.core.foundation.errors import ResourceNotFound
+from huron.core.foundation.errors import Forbidden, ResourceNotFound
 from huron.core.security.errors import AttachmentExists, BindingExists, ServiceAccountExists
 from huron.core.rawstore import PosixRawStore
 from huron.core.security.rules import (
@@ -465,8 +465,6 @@ async def test_policies_are_creatable_and_listable_by_any_authenticated_actor(
 
 async def test_policies_attach_requires_the_scope_specific_permission(tmp_path: Path) -> None:
     """Attaching a policy at a scope needs that scope's own ``policy_attach`` capability."""
-    from huron.core.security.errors import Forbidden
-
     repository = _repository(tmp_path)
     access = await _root(repository)
     organization = await (await creation_for(repository)).create_organization(

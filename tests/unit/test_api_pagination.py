@@ -24,7 +24,7 @@ from huron.applications.api.routes.v1.pagination import (
     slug_cursor_key,
 )
 from huron.applications.api.errors import InvalidCursor
-from huron.core.catalog.types import Window
+from huron.core.foundation.paging import Window
 
 pytestmark = pytest.mark.unit
 

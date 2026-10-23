@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import AsyncClient, Response
 from jwt.algorithms import RSAAlgorithm
 
-from huron.core.security.authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
 from huron.core.security.oidc import (
     JwksVerifier,
     LoginFlow,

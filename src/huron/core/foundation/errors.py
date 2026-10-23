@@ -6,10 +6,16 @@ from typing import ClassVar
 
 
 class DomainError(Exception):
-    """A failure whose stable code is part of Huron's public contract."""
+    """A failure whose stable code is part of Huron's public contract.
+
+    A subclass declares its ``code`` and ``status_code``. It may also declare
+    ``retry_after``, the number of seconds a client should wait before
+    repeating the refused request; None, the default, asks for no wait.
+    """
 
     code: str
     status_code: ClassVar[int]
+    retry_after: ClassVar[int | None] = None
 
     def __init__(self, detail: str | None = None, *, context: dict[str, object] | None = None):
         """Record the human-readable detail and structured context.
@@ -61,6 +67,19 @@ class ResourceNotFound(DomainError):
     code, status_code = "NOT_FOUND", 404
 
 
+class Forbidden(DomainError):
+    """The caller is authenticated, but its authority does not allow this.
+
+    Raised once the principal is known, so it is always a 403 and never a
+    401: the credential was fine, the authority was not. Every source of
+    authority refuses this way - role bindings, the permissions a delegated
+    request carries, ownership of the addressed resource - and so does an
+    account whose standing no longer allows the operation.
+    """
+
+    code, status_code = "FORBIDDEN", 403
+
+
 class PathRuleViolation(DomainError):
     """A lexical path or storage-layout rule failed."""
 
@@ -83,6 +102,29 @@ class PathRuleViolation(DomainError):
         super().__init__(detail, context={"path": path} if path is not None else None)
 
 
+class AuthError(Exception):
+    """A credential could not be resolved to a principal.
+
+    The base of every authentication failure and the ``INVALID_CREDENTIAL``
+    condition in its own right: a malformed token, an unknown key or
+    session id, a secret that does not match, a signature or claim the
+    verifier rejects, or no credential at all. A resolver raises it
+    directly whenever nothing more specific is true, and the message is
+    the only place it says which of those cases applied. It is not a
+    ``DomainError``: every authentication failure answers 401 together
+    with a challenge naming the scheme the service accepts.
+    """
+
+    code = "INVALID_CREDENTIAL"
+
+
 ERROR_CODES = frozenset(
-    {"IDEMPOTENCY_KEY_REUSED", "PRECONDITION_FAILED", "NOT_FOUND", "PATH_RULE_VIOLATION"}
+    {
+        "IDEMPOTENCY_KEY_REUSED",
+        "PRECONDITION_FAILED",
+        "NOT_FOUND",
+        "FORBIDDEN",
+        "PATH_RULE_VIOLATION",
+        "INVALID_CREDENTIAL",
+    }
 )

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
         DescriptionTransaction,
         GenerationStorage,
     )
-    from huron.core.catalog.types import Window
+    from huron.core.foundation.paging import Window
     from huron.core.security import AccessPolicy
 
 

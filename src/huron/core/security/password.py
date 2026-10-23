@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Protocol
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
-from .authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
 
 if TYPE_CHECKING:
     from uuid import UUID

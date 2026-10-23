@@ -22,12 +22,13 @@ from uuid import UUID
 import asyncpg
 
 from huron.core.catalog.errors import SlugExists
-from huron.core.catalog.types import Dataset, Organization, PlatformRoot, Project, Window
+from huron.core.catalog.types import Dataset, Organization, PlatformRoot, Project
 from huron.core.foundation.errors import (
     IdempotencyKeyReused,
     PreconditionFailed,
     ResourceNotFound,
 )
+from huron.core.foundation.paging import Window
 from huron.core.foundation.retry import Replay
 from huron.core.security.rules import ProjectVisibility
 

@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from huron.core.foundation.canonical import content_identity
+from huron.core.foundation.errors import Forbidden
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
 from huron.core.raw.ingest import IngestFile, IngestState
 from huron.core.raw.manifest import validate_manifest
 from huron.core.raw.retry import session_claim
 from huron.core.raw.web_ports import RawRegistration
-from huron.core.security.errors import Forbidden
 
 if TYPE_CHECKING:
     import os

@@ -23,10 +23,11 @@ from huron.core.security import (
     self_access_summary,
     terminate_session,
 )
+from huron.core.foundation.errors import AuthError, Forbidden
 from huron.core.security.apikeys import ApiKeyResolver, create_api_key
-from huron.core.security.authentication_errors import ApiKeyExpired, AuthError
+from huron.core.security.authentication_errors import ApiKeyExpired
 from huron.core.security.dev import DevHeaderResolver
-from huron.core.security.errors import Forbidden, OidcNotConfigured, UsernameTaken
+from huron.core.security.errors import OidcNotConfigured, UsernameTaken
 from huron.core.security.oidc import (
     JwksVerifier,
     LoginFlow,
@@ -248,6 +249,50 @@ async def test_api_key_scopes_and_project_survive_resolution_and_logout():
     assert stores.api_keys.touched == [key.key_id]
     await terminate_session(resolved.actor, resolved.session, stores.sessions, clock=clock)
     assert (await authentication.resolve(bearer_token=token)).actor == resolved.actor
+
+
+@pytest.mark.parametrize(
+    "ttl", [timedelta(0), timedelta(seconds=-1), timedelta(days=400, microseconds=1)]
+)
+def test_api_key_ttl_outside_one_second_to_400_days_is_refused(ttl: timedelta) -> None:
+    """No key is minted that is expired on arrival or that outlives 400 days."""
+    with pytest.raises(ValueError, match="between 1 second and 400 days"):
+        create_api_key("alice", name="key", now=NOW, ttl=ttl)
+
+
+@pytest.mark.parametrize("ttl", [timedelta(seconds=1), timedelta(days=400)])
+def test_api_key_ttl_at_either_bound_expires_exactly_that_long_after_creation(
+    ttl: timedelta,
+) -> None:
+    """The shortest and the longest accepted lifetimes both mint a key expiring on time."""
+    record, _ = create_api_key("alice", name="key", now=NOW, ttl=ttl)
+    assert record.expires_at == NOW + ttl
+
+
+async def test_unknown_api_key_is_an_invalid_credential() -> None:
+    """A well-formed key naming no stored record is refused exactly as a wrong secret is.
+
+    Both answer the generic ``INVALID_CREDENTIAL`` with one message, so a
+    caller probing key ids learns nothing from the refusal.
+    """
+    stores = memory_stores()
+    record, token = create_api_key("alice", name="key", now=NOW)
+    await stores.api_keys.add(record)
+    resolver = ApiKeyResolver(stores.api_keys, clock=FakeClock(NOW))
+    assert (await resolver.resolve(token)).subject == "alice"
+    refusals = []
+    for credential in ("hk_unknownkeyid_not-the-secret", f"hk_{record.key_id}_not-the-secret"):
+        with pytest.raises(AuthError) as refused:
+            await resolver.resolve(credential)
+        refusals.append((type(refused.value), refused.value.code, str(refused.value)))
+    assert refusals == [(AuthError, "INVALID_CREDENTIAL", "invalid API key")] * 2
+
+
+@pytest.mark.parametrize("env", ["production", "staging", "Development", ""])
+def test_dev_header_resolver_refuses_other_environments(env: str) -> None:
+    """Only the exact ``development`` environment can build a resolver that trusts headers."""
+    with pytest.raises(ValueError, match="dev headers are refused outside development"):
+        DevHeaderResolver(env)
 
 
 async def test_credential_fallback_and_failures_do_not_downgrade():

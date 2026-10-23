@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from huron.core.security.errors import Forbidden
+from huron.core.foundation.errors import Forbidden
 from huron.core.security.types import ScopeCapabilities, SelfAccessSummary
 
 from .access import as_rbac_principal, bindings_for_principal

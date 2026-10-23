@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from anyio import CapacityLimiter
 from asyncer import asyncify
 
-from huron.core.security.authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
 from huron.core.security.password import hash_password, needs_rehash, verify_password
 from huron.core.security.sessions import create_session
 from huron.core.security.types import LoginSession

@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from huron.core.security.authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
 from huron.core.metastore import MemorySessionStore
 from huron.core.security.sessions import (
     ABSOLUTE_TTL,

@@ -25,7 +25,7 @@ from huron.core.security import AccessPolicy
 from huron.core.foundation.retry import request_sha256, IdempotencyClaim
 from huron.core.security.scopes import resource_scope
 from huron.core.security.principal import Principal
-from huron.core.security.errors import Forbidden
+from huron.core.foundation.errors import Forbidden
 from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
 from huron.core.rawstore import PosixRawStore
 from huron.core.security.rules import (

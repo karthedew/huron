@@ -475,7 +475,7 @@ the fixture release pages), and move the shared error and paging types into foun
   - Every modified file at 100 % in the unit run, the five cases above included; statements only
     move, so the floor cannot drop.
 - Dependencies: none.
-- Status: pending
+- Status: done (verification passed, 2026-10-23)
 
 ## Milestone 2 — Layout, documents, placement and storage roots (slice 1)
 
@@ -6895,3 +6895,57 @@ here as tasks complete.
   freshly started servers had not yet answered (the pages still showed "Uploading…" or "Waiting
   for Polaris…"): `ingestion.test.ts:31`, `organizations.test.ts:76` and `polaris.test.ts:16`.
   None touches the fixture tree; re-run, Playwright passed 48/48 in 58 s.
+
+### M1.3
+
+- Coverage floor (ratchet). Unit coverage before: 5,590 of 5,847 statements covered (95.60%, 257
+  missed, 1,508 tests at `f1c44e3`, re-measured; equal to M1.2's result). After: 5,602 of 5,854
+  (95.695%, 252 missed, 1,524 tests). The total rose, so `fail_under` was raised from 95.60 to
+  95.69 (floor(10000 × 5,602 / 5,854) / 100). The five lines the task names are now covered
+  (`core/security/dev.py` 45, `core/security/apikeys.py` 124 and 189,
+  `applications/api/raw_web.py` 83, `applications/api/authorization/guards.py` 426), and no other
+  file's missed lines changed. Statement counts moved only in modified files:
+  `foundation/errors.py` 30 → 35 (`Forbidden`, `AuthError`, `retry_after`), the new
+  `foundation/paging.py` 6, `catalog/types.py` 72 → 68, `security/errors.py` 26 → 24,
+  `security/authentication_errors.py` 8 → 7, `api/problems.py` 75 → 78 (`_problem_headers`), and
+  import lines in `security/_impl/access.py` 59 → 58, `security/raw_delegation.py` 88 → 86,
+  `security/apikeys.py` 58 → 59, `metastore/hierarchy.py` 249 → 250 and `metastore/queries.py`
+  31 → 32. Every modified source file is at 100% in the unit run except those two PostgreSQL
+  adapters, measured with `-m "unit or contract"`: `metastore/queries.py` at 100% and
+  `metastore/hierarchy.py` at 99.60%, whose one missing line (now 762; 761 in M0.3's note) is the
+  same unreachable `RuntimeError` for an idempotency claim that vanishes mid-transaction.
+- Test counts against `f1c44e3` (1,508 / 32 / 14). Unit 1,524 (+16): the five named cases
+  (`test_dev_header_resolver_refuses_other_environments` over four environments,
+  `test_api_key_ttl_outside_one_second_to_400_days_is_refused` over three lifetimes,
+  `test_unknown_api_key_is_an_invalid_credential`, `test_raw_web_answers_404_while_unconfigured`
+  and `test_upload_owner_refuses_another_actors_session`), `test_problem_headers_carry_retry_after`
+  over three cases (a 30-second delay, a zero delay and none), and two beyond the listed tests:
+  `test_api_key_ttl_at_either_bound_expires_exactly_that_long_after_creation` (the accepted
+  1-second and 400-day bounds) and `test_each_code_is_declared_by_exactly_one_class` in
+  `test_error_contract.py`, which pins that `FORBIDDEN`, `INVALID_CREDENTIAL` and every other code
+  keep exactly one declaring class. Contract 32 and integration 14, unchanged. Import-linter keeps
+  16 contracts.
+- Duplication: the guard passes without a baseline edit, at 123 clones in 41 groups as at
+  `f1c44e3` (fragments 823 → 824).
+- Beyond the listed text:
+  - `test_raw_web_answers_404_while_unconfigured` calls `operations()` directly with the fixture's
+    runtime minus its Raw web persistence. Over HTTP the `signed_request` dependency refuses an
+    unconfigured runtime with the same 404 before `operations()` runs, so line 83 is reachable
+    only by a direct call. Its delegation is built from fixed values rather than signed, so the
+    case reads no clock.
+  - `test_error_contract.py` moves its class walk into `_declaring_classes_by_code()`, shared by
+    `_class_name_by_code()` (unchanged: the last class visited names a code) and the new
+    uniqueness test. `test_repository_rbac.py`'s function-local `Forbidden` import joins the
+    module's `foundation.errors` import, and `test_authorization_guards.py`'s module docstring
+    lists `upload_owner`.
+  - Docstrings: `security/errors.py`'s module docstring said "catalog and authorization failures";
+    it now names Security's governance conflicts and grant refusals and places the shared
+    `FORBIDDEN` and `INVALID_CREDENTIAL` in foundation without naming either moved class, so the
+    task's `rg` check stays empty. `catalog/types.py`'s drops "discovery results",
+    `authentication_errors.py`'s points at foundation's `AuthError`, `AuthError`'s states why it
+    is not a `DomainError`, and `install_error_handlers` and `domain_error` mention `Retry-After`.
+  - `design/api.html` is unchanged: `FORBIDDEN` and `INVALID_CREDENTIAL` keep their rows and
+    statuses, and the `Retry-After` column lands with the first added row.
+  - Left as written: `AGENTS.md`, `design/architecture.html` and
+    `docs/getting-started/repository-layout.md` summarize Foundation in one line each without
+    naming paging. Each summary stays true, and `design/core-map.html` names `paging` (`Window`).

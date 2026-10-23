@@ -14,7 +14,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from huron.core.security.authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
 from huron.core.security.principal import Principal
 from huron.core.security.sessions import SessionRecord
 

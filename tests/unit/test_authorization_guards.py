@@ -2,11 +2,11 @@
 
 Covers the four ``require_*`` factories and the ingest-session guards
 (``dataset_raw_writer``, ``project_intake``, ``session_overseer``,
-``session_owner``), including that an unknown or invisible scope answers
-404 before any binding or layer check runs, and that a principal's kind
-refuses a raw write before any binding is even consulted. Exercising these
-also drives ``scopes.py``'s three resolvers, which have no test module of
-their own.
+``session_owner``, ``upload_owner``), including that an unknown or
+invisible scope answers 404 before any binding or layer check runs, and
+that a principal's kind refuses a raw write before any binding is even
+consulted. Exercising these also drives ``scopes.py``'s three resolvers,
+which have no test module of their own.
 """
 
 from __future__ import annotations
@@ -25,12 +25,12 @@ from huron.applications.api.authorization.guards import (
     require_system,
     session_overseer,
     session_owner,
+    upload_owner,
 )
 from huron.core.raw._impl.ingest import IngestService
 from huron.core.foundation.retry import request_sha256, IdempotencyClaim
 from huron.core.security.principal import Principal
-from huron.core.foundation.errors import ResourceNotFound
-from huron.core.security.errors import Forbidden
+from huron.core.foundation.errors import Forbidden, ResourceNotFound
 from huron.core.catalog.layers import LayerWriteForbidden
 from huron.core.raw.manifest import ManifestEntry
 from huron.core.metastore import (
@@ -776,3 +776,31 @@ async def test_session_owner_returns_the_drive_for_the_owner(tmp_path: Path) -> 
 
     assert drive.owner is True
     assert drive.ledger.id == session_id
+
+
+async def test_upload_owner_refuses_another_actors_session(tmp_path: Path) -> None:
+    """A raw writer who did not open the session may not drive one of its files' uploads."""
+    repository, ingest = _stack(tmp_path)
+    organization = await _organization(repository)
+    project = await _project(repository, organization.id)
+    dataset = await _dataset(repository, project.id)
+    await repository.rbac.grant_role(
+        principal="user:carl",
+        role_code="developer",
+        scope_type=ScopeType.PROJECT,
+        scope_id=project.id,
+        created_by="admin",
+    )
+    session_id = await _opened_session(ingest, dataset, created_by="alice")
+    (planned,) = (await ingest.ledger(session_id)).files
+
+    with pytest.raises(Forbidden, match=f"carl does not own ingest session {session_id}"):
+        await upload_owner(
+            file_id=planned.file_id,
+            principal=Principal(subject="carl"),
+            repository=repository.rbac,
+            ingest=ingest,
+            cache={},
+            hierarchy=repository.hierarchy,
+            visibility=Visibility.ALL,
+        )

@@ -7,10 +7,10 @@ from fastapi import Depends, HTTPException, Request
 
 from huron.core.catalog import CatalogCreation, DatasetCollection
 from huron.core.catalog.external import PROVISIONER_SUBJECT, ExternalCatalog
+from huron.core.foundation.errors import AuthError
 from huron.core.raw import RawIngestionService, RevisionReadService
 from huron.core.raw.web import RawWebOperations
 from huron.core.security import AccessPolicy
-from huron.core.security.authentication_errors import AuthError
 from huron.core.security.principal import Principal
 from huron.core.security.raw_delegation import (
     DelegatedBindings,

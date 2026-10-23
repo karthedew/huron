@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-from huron.core.foundation.errors import DomainError
+from huron.core.foundation.errors import DomainError, Forbidden
 from huron.core.security.errors import (
     AttachmentExists,
     BindingExists,
-    Forbidden,
     OidcNotConfigured,
     PrincipalKindMismatch,
     ServiceAccountExists,

@@ -22,9 +22,9 @@ from huron.core.catalog.layers import (
     ensure_layer_writable,
     required_capability,
 )
+from huron.core.foundation.errors import Forbidden
 from huron.core.raw.ingest import IngestFile
 from huron.core.raw.types import RevisionRecord, SessionLedger
-from huron.core.security.errors import Forbidden
 from huron.core.security.facts import BindingFacts
 from huron.core.security.principal import Principal
 from huron.core.security.rules import Scope, ScopeType

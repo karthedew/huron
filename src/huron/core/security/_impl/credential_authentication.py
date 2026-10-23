@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from huron.core.foundation.errors import AuthError
 from huron.core.security.apikeys import ApiKeyResolver, parse_api_key
-from huron.core.security.authentication_errors import AuthError
 from huron.core.security.sessions import SessionResolver
 from huron.core.security.types import ResolvedCredential
 

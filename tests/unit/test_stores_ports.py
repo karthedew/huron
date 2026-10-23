@@ -14,7 +14,7 @@ import pytest
 
 from huron.core.foundation.retry import IdempotencyClaim, Replay
 from huron.core.raw.types import LedgerEntry
-from huron.core.catalog.types import Window
+from huron.core.foundation.paging import Window
 from tests.unit.support import ingest_file
 
 pytestmark = pytest.mark.unit

@@ -11,9 +11,10 @@ if TYPE_CHECKING:
     from pathlib import Path, PurePosixPath
     from uuid import UUID
 
+    from huron.core.foundation.paging import Window
     from huron.core.security.rules import Visibility
 
-    from .types import Dataset, Organization, PlatformRoot, Project, Window
+    from .types import Dataset, Organization, PlatformRoot, Project
 
 
 class CollectionReader[ItemT, ParentT](Protocol):

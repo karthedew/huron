@@ -1,25 +1,16 @@
-"""Transport-independent catalog and authorization failures.
+"""Transport-independent Security failures: governance conflicts and grant refusals.
 
-Stable codes are documented in design/api.html. HTTP adapters render their
-status mappings; core and domain objects raise these errors without importing
-FastAPI or any other application layer.
+Stable codes are documented in design/api.html. ``ERROR_CODES`` also names
+the codes of the credential and role-model failures that Security's other
+modules declare; the refusals every domain shares, ``FORBIDDEN`` and
+``INVALID_CREDENTIAL``, belong to :mod:`huron.core.foundation.errors`. HTTP
+adapters render their status mappings; core and domain objects raise these
+errors without importing FastAPI or any other application layer.
 """
 
 from __future__ import annotations
 
 from huron.core.foundation.errors import DomainError
-
-
-class Forbidden(DomainError):
-    """The caller is authenticated but its role bindings do not allow this.
-
-    Raised by the binding check once the principal is known, so it is
-    always a 403 and never a 401: the credential was fine, the authority
-    was not. The service-account routes raise it too, for an account that
-    has been disabled.
-    """
-
-    code, status_code = "FORBIDDEN", 403
 
 
 class BindingExists(DomainError):
@@ -115,7 +106,6 @@ __all__ = [
     "AttachmentExists",
     "BindingExists",
     "ClassificationExceeded",
-    "Forbidden",
     "GrantExpired",
     "GrantScopeExceeded",
     "InputNotReadable",
@@ -127,7 +117,6 @@ __all__ = [
 
 ERROR_CODES = frozenset(
     {
-        "FORBIDDEN",
         "BINDING_EXISTS",
         "SERVICE_ACCOUNT_EXISTS",
         "ATTACHMENT_EXISTS",
@@ -138,7 +127,6 @@ ERROR_CODES = frozenset(
         "GRANT_SCOPE_EXCEEDED",
         "INPUT_NOT_READABLE",
         "CLASSIFICATION_EXCEEDED",
-        "INVALID_CREDENTIAL",
         "APIKEY_EXPIRED",
         "APIKEY_REVOKED",
         "PASSWORD_REJECTED",

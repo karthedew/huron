@@ -1,29 +1,17 @@
-"""Stable authentication error codes shared by every credential resolver.
+"""API-key refusals a caller can act on differently from a wrong credential.
 
-Every resolver in this package fails the same way: it raises one of these
-classes, and the service answers with a 401 whose problem-detail ``code``
-is the class's ``code`` attribute. The class names mirror those codes on
-purpose, so a name in a traceback and a code in a response point at the
-same condition. Catching :class:`AuthError` catches every authentication
-failure; the subclasses exist for the conditions a caller can act on
-differently from "the credential is wrong".
+Every credential resolver fails with :class:`huron.core.foundation.errors.AuthError`
+or one of its subclasses, and the service answers with a 401 whose
+problem-detail ``code`` is the class's ``code`` attribute. Catching
+``AuthError`` catches every authentication failure; the two subclasses here
+report an API key whose secret matched but which may no longer be used. The
+class names mirror those codes on purpose, so a name in a traceback and a
+code in a response point at the same condition.
 """
 
 from __future__ import annotations
 
-
-class AuthError(Exception):
-    """A credential could not be resolved to a principal.
-
-    The base of every authentication failure and the ``INVALID_CREDENTIAL``
-    condition in its own right: a malformed token, an unknown key or
-    session id, a secret that does not match, a signature or claim the
-    verifier rejects, or no credential at all. A resolver raises it
-    directly whenever nothing more specific is true, and the message is
-    the only place it says which of those cases applied.
-    """
-
-    code = "INVALID_CREDENTIAL"
+from huron.core.foundation.errors import AuthError
 
 
 class ApiKeyExpired(AuthError):
@@ -52,5 +40,4 @@ class ApiKeyRevoked(AuthError):
 __all__ = [
     "ApiKeyExpired",
     "ApiKeyRevoked",
-    "AuthError",
 ]

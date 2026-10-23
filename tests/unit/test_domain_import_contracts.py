@@ -25,7 +25,7 @@ def test_foundation_import_does_not_initialize_domains_or_adapters() -> None:
             "-c",
             """
 import sys
-from huron.core.foundation import canonical, clock, errors, identifiers, names, retry
+from huron.core.foundation import canonical, clock, errors, identifiers, names, paging, retry
 for owner in ('security', 'catalog', 'raw', 'metastore', 'rawstore'):
     assert 'huron.core.' + owner not in sys.modules, owner
 assert 'huron.applications.api' not in sys.modules

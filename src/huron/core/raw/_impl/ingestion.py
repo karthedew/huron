@@ -18,11 +18,11 @@ if TYPE_CHECKING:
     from huron.core.security import AccessPolicy
 
 from huron.core.catalog.layers import ensure_layer_writable
+from huron.core.foundation.errors import Forbidden
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
 from huron.core.raw.manifest import validate_manifest
 from huron.core.raw.metadata import MetadataSubmission
 from huron.core.raw.retry import session_claim
-from huron.core.security.errors import Forbidden
 from huron.core.security.rules import ScopeType
 
 

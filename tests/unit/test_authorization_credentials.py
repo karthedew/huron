@@ -18,7 +18,7 @@ from huron.applications.api.authorization.credentials import _enforce_csrf
 from huron.applications.api.runtime import ApiRuntime
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
 from huron.core.raw import RawRuntime
-from huron.core.security.authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
 from huron.core.security.oidc import OidcResolver
 from huron.core.security.sessions import SessionRecord, create_session
 from huron.core.metastore import SystemClock

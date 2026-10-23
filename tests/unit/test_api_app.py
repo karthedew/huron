@@ -27,7 +27,7 @@ from httpx import Response
 import huron.applications.api.app as app_module
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
-from huron.core.security.authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
 from huron.core.metastore import (
     PostgresApiKeyStore,
     PostgresCredentialStore,

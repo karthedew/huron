@@ -24,7 +24,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
 
-from .authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
+
 from .principal import Principal
 
 if TYPE_CHECKING:

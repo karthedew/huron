@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 from asyncer import asyncify
 
-from huron.core.foundation.errors import ResourceNotFound
+from huron.core.foundation.errors import Forbidden, ResourceNotFound
 from huron.core.security.apikeys import create_api_key
-from huron.core.security.errors import Forbidden, PrincipalKindMismatch, UsernameTaken
+from huron.core.security.errors import PrincipalKindMismatch, UsernameTaken
 from huron.core.security.password import make_credential
 from huron.core.security.principals import PrincipalSubjectExists
 from huron.core.security.rules import ScopeType

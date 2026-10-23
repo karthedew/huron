@@ -1,4 +1,4 @@
-"""Immutable hierarchy entities and discovery results."""
+"""Immutable hierarchy entities, their references and versioned descriptive changes."""
 
 from __future__ import annotations
 
@@ -29,14 +29,6 @@ class DescriptionChange:
     slug: str | None = None
     title: str | None = None
     description: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Window[ItemT]:
-    """A visibility-filtered keyset page and whether another visible row follows."""
-
-    items: list[ItemT]
-    has_more: bool
 
 
 @dataclass(frozen=True, slots=True)

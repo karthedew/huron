@@ -1,11 +1,11 @@
 """The error contract end to end: documented codes, statuses, uniform shape, and the base class.
 
 ``design/api.html`` §7 and the exception classes the service can actually
-raise name the same codes; each documented status matches the class that
-answers with it; every documented disposition matches whether the tree
-actually raises the code anywhere; all seven error handlers answer in the
-same shape; and the base class enforcing all of this stays impossible to
-raise directly.
+raise name the same codes; each code has exactly one declaring class; each
+documented status matches the class that answers with it; every documented
+disposition matches whether the tree actually raises the code anywhere; all
+seven error handlers answer in the same shape; and the base class enforcing
+all of this stays impossible to raise directly.
 """
 
 from __future__ import annotations
@@ -27,8 +27,7 @@ from huron.applications.api.problems import (
     install_error_handlers,
     wire_error_codes,
 )
-from huron.core.security.authentication_errors import AuthError
-from huron.core.foundation.errors import DomainError, ResourceNotFound
+from huron.core.foundation.errors import AuthError, DomainError, ResourceNotFound
 from huron.core.security.roles import RoleError, UnknownRole
 
 if TYPE_CHECKING:
@@ -159,29 +158,54 @@ def test_domain_error_rows_document_their_class_status_code() -> None:
     assert not mismatched, f"§7 status disagrees with the raising class: {mismatched}"
 
 
+def _declaring_classes_by_code() -> dict[str, list[type[Exception]]]:
+    """Map each code to the live error classes that declare it as their own, in walk order.
+
+    Walks the live subclass trees of ``DomainError``, ``AuthError`` and
+    ``RoleError`` the same way ``wire_error_codes`` does. Only a class's own
+    ``code`` counts: a subclass that inherits its code declares none.
+
+    Returns:
+        Each declared ``code`` string mapped to the classes that declare it.
+    """
+    mapping: dict[str, list[type[Exception]]] = {}
+    for base in (DomainError, AuthError, RoleError):
+        stack: list[type[Exception]] = [base]
+        while stack:
+            cls = stack.pop()
+            code = cls.__dict__.get("code")
+            if isinstance(code, str) and cls not in mapping.get(code, []):
+                mapping.setdefault(code, []).append(cls)
+            stack.extend(cls.__subclasses__())
+    return mapping
+
+
 def _class_name_by_code() -> dict[str, str]:
     """Map every code a live ``DomainError``, ``AuthError`` or ``RoleError`` subclass declares.
 
-    Walks each hierarchy's live subclass tree the same way
-    ``wire_error_codes`` does, so a §7 row is matched to the class that
-    actually answers it - never by CamelCasing the code back into a class
-    name, which does not round-trip (``NOT_FOUND`` is ``ResourceNotFound``,
-    not ``NotFound``).
+    A §7 row is matched to the class that actually answers it - never by
+    CamelCasing the code back into a class name, which does not round-trip
+    (``NOT_FOUND`` is ``ResourceNotFound``, not ``NotFound``).
 
     Returns:
         The declared ``code`` string mapped to the name of the class that
         declares it; a code no live class declares is absent.
     """
-    mapping: dict[str, str] = {}
-    for base in (DomainError, AuthError, RoleError):
-        stack = [base]
-        while stack:
-            cls = stack.pop()
-            code = cls.__dict__.get("code")
-            if isinstance(code, str):
-                mapping[code] = cls.__name__
-            stack.extend(cls.__subclasses__())
-    return mapping
+    return {code: classes[-1].__name__ for code, classes in _declaring_classes_by_code().items()}
+
+
+def test_each_code_is_declared_by_exactly_one_class() -> None:
+    """No two live error classes declare the same code, so each documented row names one class.
+
+    ``_class_name_by_code`` keeps a single class per code; a second
+    declaring class would make each check built on it depend on walk order.
+    """
+    shared = {
+        code: sorted(f"{cls.__module__}.{cls.__qualname__}" for cls in classes)
+        for code, classes in _declaring_classes_by_code().items()
+        if len(classes) > 1
+    }
+    assert not shared, f"codes declared by more than one class: {shared}"
 
 
 def _raise_site_class_names() -> frozenset[str]:

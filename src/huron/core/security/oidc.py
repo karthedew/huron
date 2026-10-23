@@ -27,7 +27,8 @@ from urllib.parse import urlencode
 import httpx
 import jwt
 
-from .authentication_errors import AuthError
+from huron.core.foundation.errors import AuthError
+
 from .principal import Principal
 
 if TYPE_CHECKING:

@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from huron.core.catalog.types import Dataset, Organization, PlatformRoot, Project, Window
+from huron.core.catalog.types import Dataset, Organization, PlatformRoot, Project
 from huron.core.foundation.errors import ResourceNotFound
+from huron.core.foundation.paging import Window
 
 from . import rows
 
