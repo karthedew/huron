@@ -55,35 +55,6 @@ export interface Dataset {
 	profile: string;
 	tags: string[];
 	layers: LayerAvailability;
-	releaseCount: number;
-}
-
-export interface Release {
-	slug: string;
-	datasetSlug: string;
-	projectSlug: string;
-	orgSlug: string;
-	createdAt: string;
-	layers: LayerAvailability;
-	revisionCount: number;
-	sealed: boolean;
-}
-
-export interface Revision {
-	number: number;
-	reason: string;
-	createdAt: string;
-	fileCount: number;
-	totalBytes: number;
-	sealed: boolean;
-}
-
-export interface ManifestEntry {
-	path: string;
-	bytes: number;
-	checksum: string;
-	retentionCategory: string;
-	expiresAt: string | null;
 }
 
 export interface SearchHit {

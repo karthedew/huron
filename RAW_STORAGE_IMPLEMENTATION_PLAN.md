@@ -406,7 +406,7 @@ the fixture release pages), and move the shared error and paging types into foun
     "getRelease|listReleases|listRevisions|getRevision|getManifest" web/src web/e2e` prints nothing.
   - No visual QA: the changed page is unreachable while signed in (hook redirect); report that.
 - Dependencies: none.
-- Status: pending
+- Status: done (verification passed on attempt 2, 2026-10-22)
 
 ### M1.3 Move shared errors and paging into foundation; Retry-After plumbing
 
@@ -6850,3 +6850,48 @@ here as tasks complete.
   fixture revision page under `web/src/routes/[org]/[project]/[dataset]/[release]/` (M1.2).
 - Leftover database objects (dropped by the later legacy-retirement migration): the
   `revision_amendments` table, which nothing writes.
+
+### M1.2
+
+- Delivery-order deviation (1): the fixture-backed `[release]` and `[revision]` pages leave here,
+  with the release table of the fixture `[dataset]` page and the fixture helpers, types and data
+  that only they used, ahead of the rest of §21.2 row 15, which stays with the web milestones.
+- Beyond the listed text: the `[dataset]` page also loses its `Callout` import, which nothing on
+  the page used, and keys its tags `{#each}` by the tag, the svelte-autofixer's one remaining
+  finding on that file (its two other findings, an unkeyed `{#each}` and an `href` without
+  `resolve()`, left with the release table). The private `layers()` helper of `fixtures.ts` loses
+  its `'~'` (building) code, whose only input was the unsealed `run-0002` release.
+  `web/src/lib/reserved-slugs.ts` derived the reserved root slugs from "design/frontend.html §1"
+  and quoted deep links of the form `/{org}/{project}/{dataset}/{release}`; that page has not
+  said so since `8286b2e` and the `{release}` route is gone, so the comment now names
+  `/{org}/{project}/{dataset}` without the citation.
+  `web/src/lib/design/components/DataTable.svelte` lost all three of its users, the release table
+  and the two deleted pages; implementers cannot delete tracked files, so it was reported, and
+  the orchestrator removed it with `git rm`.
+- Kept on purpose: `web/src/lib/design/components/Callout.svelte` has no user now. The deleted
+  `[release]` page was the only one that rendered it (the `[dataset]` page only imported it). It
+  stays because §20.1 names it among the existing components the web tasks reuse, and the
+  wizard's Raw-disabled state renders it again (§20.4.1, M10.5).
+- Left in place, because none is used only by the release pages: the `/queue` fixture page still
+  shows each fixture ingest job's release slug (`IngestJob.release`); `SearchHit.kind` still
+  admits `'release'`, though no fixture hit uses it; and `LayerState` still admits `building`,
+  which `LayerBadges` renders, though no fixture layer is building any more. Like the fixture
+  tree, `/queue` redirects every signed-in request to `/browse`.
+- Counts: no Python file changed. Unit 1,508, contract 32 and integration 14, unchanged; unit
+  coverage 5,590 of 5,847 statements (95.60%), as after M1.1, so `fail_under` stays 95.60. The
+  duplication guard passes at 123 clones in 41 groups without a baseline edit. Vitest 269 tests in
+  25 files, unchanged (no case covered the removed helpers). Playwright 48 scenarios; "obsolete
+  scientific fixture routes redirect into live browse" passes, now by the hook alone.
+- No visual QA: the changed page is unreachable while signed in, because the hook sends every
+  signed-in request outside the workspace routes to `/browse` (and an anonymous one to `/login`).
+- Machine load: the first `npm test` and `npm run test:e2e` coincided with heavy memory pressure
+  (load average up to 37 on 8 cores, about 10.4 of 11.2 GB swap in use, Docker's VM holding 4 GiB).
+  Vitest timed out one password-hashing case of `huron-accounts.test.ts` at its 5 s limit (the run
+  took 955 s), and Playwright timed out four sign-in and user-creation scenarios at 30 s
+  (`ingestion.test.ts:186`, `organizations.test.ts:131`, `polaris.test.ts:88`, `smoke.test.ts:42`).
+  None exercises the fixture page or the removed helpers. Re-run, Vitest passed 269/269 in 4.5 s
+  and Playwright 48/48 in 55 s. A later `npm run test:e2e`, with about 10 of 11 GB of swap in use,
+  timed out three scenarios at their 5 s expectations, each its worker's first mutation while the
+  freshly started servers had not yet answered (the pages still showed "Uploading…" or "Waiting
+  for Polaris…"): `ingestion.test.ts:31`, `organizations.test.ts:76` and `polaris.test.ts:16`.
+  None touches the fixture tree; re-run, Playwright passed 48/48 in 58 s.

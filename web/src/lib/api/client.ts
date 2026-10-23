@@ -12,14 +12,11 @@ import type {
 	ApiKey,
 	Dataset,
 	IngestJob,
-	ManifestEntry,
 	Organization,
 	OrganizationMember,
 	Page,
 	PermissionGrant,
 	Project,
-	Release,
-	Revision,
 	SearchResults,
 	WhoAmI
 } from './types';
@@ -67,53 +64,6 @@ export async function getDataset(
 	);
 	if (!dataset) throw new NotFound(`dataset ${orgSlug}/${projectSlug}/${datasetSlug}`);
 	return dataset;
-}
-
-export async function listReleases(
-	orgSlug: string,
-	projectSlug: string,
-	datasetSlug: string
-): Promise<Page<Release>> {
-	return onePage(
-		fixtures.releases.filter(
-			(r) => r.orgSlug === orgSlug && r.projectSlug === projectSlug && r.datasetSlug === datasetSlug
-		)
-	);
-}
-
-export async function getRelease(
-	orgSlug: string,
-	projectSlug: string,
-	datasetSlug: string,
-	releaseSlug: string
-): Promise<Release> {
-	const release = fixtures.releases.find(
-		(r) =>
-			r.orgSlug === orgSlug &&
-			r.projectSlug === projectSlug &&
-			r.datasetSlug === datasetSlug &&
-			r.slug === releaseSlug
-	);
-	if (!release) throw new NotFound(`release ${releaseSlug}`);
-	return release;
-}
-
-export async function listRevisions(releaseSlug: string): Promise<Page<Revision>> {
-	return onePage(fixtures.revisions[releaseSlug] ?? []);
-}
-
-export async function getRevision(releaseSlug: string, number: number): Promise<Revision> {
-	const revision = (fixtures.revisions[releaseSlug] ?? []).find((r) => r.number === number);
-	if (!revision) throw new NotFound(`revision ${number}`);
-	return revision;
-}
-
-export async function getManifest(
-	releaseSlug: string,
-	revisionNumber: number
-): Promise<Page<ManifestEntry>> {
-	await getRevision(releaseSlug, revisionNumber);
-	return onePage(fixtures.manifest);
 }
 
 export async function search(query: string): Promise<SearchResults> {

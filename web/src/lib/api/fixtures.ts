@@ -2,8 +2,8 @@
  * SYNTHETIC FIXTURES — DELETED AT P1. Only `client.ts` may import this file.
  *
  * Deliberately obvious placeholders: enough shape to prove every layout and state
- * renders (populated, empty, stale, unavailable index, unsealed release), and not one
- * row more. This is not a demo dataset. See ./README.md.
+ * renders (populated, empty, stale, unavailable index), and not one row more. This is
+ * not a demo dataset. See ./README.md.
  */
 
 import type {
@@ -11,24 +11,17 @@ import type {
 	Dataset,
 	IngestJob,
 	LayerAvailability,
-	ManifestEntry,
 	Organization,
 	OrganizationMember,
 	PermissionGrant,
 	Project,
-	Release,
-	Revision,
 	SearchResults,
 	WhoAmI
 } from './types';
 
 const layers = (raw: string, bronze: string, silver: string, gold: string): LayerAvailability => {
 	const parse = (v: string) =>
-		v === '+'
-			? ({ state: 'present' } as const)
-			: v === '~'
-				? ({ state: 'building' } as const)
-				: ({ state: 'absent' } as const);
+		v === '+' ? ({ state: 'present' } as const) : ({ state: 'absent' } as const);
 	return { raw: parse(raw), bronze: parse(bronze), silver: parse(silver), gold: parse(gold) };
 };
 
@@ -82,8 +75,7 @@ export const datasets: Dataset[] = [
 		classification: 'unclassified',
 		profile: 'example-profile@1',
 		tags: ['placeholder', 'fixture'],
-		layers: layers('+', '+', '+', '+'),
-		releaseCount: 2
+		layers: layers('+', '+', '+', '+')
 	},
 	{
 		slug: 'draft-dataset',
@@ -95,8 +87,7 @@ export const datasets: Dataset[] = [
 		classification: 'unclassified',
 		profile: 'example-profile@1',
 		tags: ['placeholder'],
-		layers: layers('-', '-', '-', '-'),
-		releaseCount: 0
+		layers: layers('-', '-', '-', '-')
 	}
 ];
 
@@ -120,84 +111,6 @@ export const ingestJobs: IngestJob[] = [
 		layer: 'bronze',
 		status: 'running',
 		createdAt: '2026-02-02T14:34:00Z'
-	}
-];
-
-export const releases: Release[] = [
-	{
-		slug: 'run-0001',
-		datasetSlug: 'example-sweep',
-		projectSlug: 'example-study',
-		orgSlug: 'example-org',
-		createdAt: '2026-01-15T10:00:00Z',
-		layers: layers('+', '+', '+', '-'),
-		revisionCount: 2,
-		sealed: true
-	},
-	{
-		slug: 'run-0002',
-		datasetSlug: 'example-sweep',
-		projectSlug: 'example-study',
-		orgSlug: 'example-org',
-		createdAt: '2026-02-02T14:30:00Z',
-		layers: layers('+', '~', '-', '-'),
-		revisionCount: 1,
-		sealed: false
-	}
-];
-
-export const revisions: Record<string, Revision[]> = {
-	'run-0001': [
-		{
-			number: 2,
-			reason: 'rev 2: placeholder correction reason',
-			createdAt: '2026-01-20T09:12:00Z',
-			fileCount: 3,
-			totalBytes: 1_240_000,
-			sealed: true
-		},
-		{
-			number: 1,
-			reason: 'initial ingest',
-			createdAt: '2026-01-15T10:00:00Z',
-			fileCount: 3,
-			totalBytes: 1_180_000,
-			sealed: true
-		}
-	],
-	'run-0002': [
-		{
-			number: 1,
-			reason: 'initial ingest',
-			createdAt: '2026-02-02T14:30:00Z',
-			fileCount: 2,
-			totalBytes: 640_000,
-			sealed: false
-		}
-	]
-};
-
-export const manifest: ManifestEntry[] = [
-	{
-		path: 'inputs/placeholder.inp',
-		bytes: 4_096,
-		checksum: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
-		retentionCategory: 'essential-input',
-		expiresAt: null
-	},
-	{
-		path: 'outputs/placeholder.out',
-		bytes: 1_048_576,
-		checksum: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
-		retentionCategory: 'bulk-output',
-		expiresAt: '2026-06-01T00:00:00Z'
-	},
-	{
-		path: 'outputs/placeholder.msht',
-		bytes: 187_328,
-		checksum: 'sha256:2222222222222222222222222222222222222222222222222222222222222222',
-		retentionCategory: 'bulk-output',
-		expiresAt: '2026-06-01T00:00:00Z'
 	}
 ];
 

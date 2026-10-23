@@ -1,9 +1,8 @@
 /**
  * Route segments at the URL root that are NOT organization slugs.
  *
- * design/frontend.html §1 requires shareable deep links of the form
- * `/{org}/{project}/{dataset}/{release}`, which puts organization slugs at the root of
- * the URL space, where they collide with the app's own static routes. SvelteKit resolves
+ * Deep links of the form `/{org}/{project}/{dataset}` put organization slugs at the root
+ * of the URL space, where they collide with the app's own static routes. SvelteKit resolves
  * static routes ahead of dynamic ones, so an organization slugged `admin` would be
  * permanently unreachable in the UI.
  *

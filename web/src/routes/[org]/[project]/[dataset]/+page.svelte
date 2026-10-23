@@ -1,11 +1,7 @@
 <script lang="ts">
 	import Breadcrumbs from '$design/components/Breadcrumbs.svelte';
-	import DataTable from '$design/components/DataTable.svelte';
-	import LayerBadges from '$design/components/LayerBadges.svelte';
 	import LifecycleChip from '$design/components/LifecycleChip.svelte';
 	import Badge from '$design/components/Badge.svelte';
-	import EmptyState from '$design/components/EmptyState.svelte';
-	import Callout from '$design/components/Callout.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -37,28 +33,8 @@
 <p class="meta">
 	<Badge>{data.dataset.classification}</Badge>
 	<Badge tone="accent">{data.dataset.profile}</Badge>
-	{#each data.dataset.tags as tag}<Badge>{tag}</Badge>{/each}
+	{#each data.dataset.tags as tag (tag)}<Badge>{tag}</Badge>{/each}
 </p>
-
-<h2>Releases</h2>
-{#if data.releases.length === 0}
-	<EmptyState title="No releases" detail="Nothing has been ingested into this dataset yet." />
-{:else}
-	<DataTable caption="Per-release materialization state across the four layers.">
-		{#snippet head()}
-			<tr><th>Release</th><th>Created</th><th>Revisions</th><th>Layers</th><th>Sealed</th></tr>
-		{/snippet}
-		{#each data.releases as release}
-			<tr>
-				<td><a href="{base}/{release.slug}">{release.slug}</a></td>
-				<td class="mono">{release.createdAt.slice(0, 10)}</td>
-				<td>{release.revisionCount}</td>
-				<td><LayerBadges layers={release.layers} /></td>
-				<td>{release.sealed ? 'yes' : 'no'}</td>
-			</tr>
-		{/each}
-	</DataTable>
-{/if}
 
 <h2>Canonical contract</h2>
 <p class="muted">Variables, dims, units, and version history. Not built (P7).</p>
