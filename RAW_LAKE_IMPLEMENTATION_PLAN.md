@@ -489,7 +489,7 @@ combined T-docs-0 closing check. No file under `src/`, `tests/`, `migrations/`, 
   - `CLAUDE.md` is unchanged (`git diff --quiet HEAD -- CLAUDE.md`).
 - Dependencies: M0.1.
 - Decisions: OQ-1.2 (settled, owner decision 12)
-- Status: pending
+- Status: done
 
 ### M0.3 T-docs-0b: `CONTEXT.md` glossary, ADR 0002 amendment and ADRs 0003–0007
 

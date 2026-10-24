@@ -16,6 +16,10 @@ rules belong here so the two files do not maintain competing copies.
   descriptions. Reconcile affected design pages, imports, tooling, tests, and
   entry points when implementing the relevant migration. Do not silently change
   unrelated runtime behavior or mark planned capabilities as built.
+- The Raw lake (`RAW_LAKE_SPEC.md`, `RAW_LAKE_DESIGN.md`) replaces the Raw engine.
+  The package tree and dependency table below are its target.
+  Until `RAW_LAKE_IMPLEMENTATION_PLAN.md` completes, `uv run lint-imports` decides
+  which packages and edges exist today.
 - Explicit task scope governs: a review or documentation request does not authorize
   implementing the architecture. Preserve unrelated working-tree changes.
 
@@ -24,14 +28,16 @@ rules belong here so the two files do not maintain competing copies.
 ```text
 src/huron/
   core/
-    foundation/    Shared errors, canonical JSON, IDs, names, retry and clock contracts
-    security/      Authentication, identity, authorization and their workflows
-    catalog/       Hierarchy, dataset configuration, layer rules and discovery
-    raw/           Ingestion, revision publication/reads and expiry
-    metastore/     PostgreSQL and in-memory adapters
-    rawstore/      POSIX storage adapters
-  applications/    Runnable entry points, transport, configuration, and wiring
-  schema/          Shared document contracts and validation
+    foundation/    Shared errors, canonical JSON, IDs, names, paging, retry and clock contracts
+    security/      Authentication, identity, authorization; broker/ issues and verifies Huron JWTs
+    hierarchy/     Legacy organization/project/dataset hierarchy, layer rules and discovery
+    lake/          Raw lake: catalogs, metadata schemas, collections, files, commits, audit, reconciler
+    metastore/     PostgreSQL and in-memory adapters (lake/ holds the lake's)
+    rawstore/      Volume and directory-permission adapters for the Raw mount
+  applications/
+    api/           FastAPI service, commit worker, reconciler entry point
+    cli/           The `huron` Typer CLI
+  schema/          Shared document contracts, naming rules and metadata validation
 ```
 
 ### Domain-owned workflows and adapters
@@ -44,9 +50,16 @@ src/huron/
   input access themselves. Early HTTP guards do not replace these checks.
 - Security establishes identity through credential workflows. Bootstrap, expiry and
   operator maintenance use explicit trusted deployment authority. Security consumes
-  its own narrow catalog-fact projections; full hierarchy entities belong to Catalog.
-- Raw owns storage-first publication and its single-connection transaction recording
-  revision, session outcome, audit, outbox and retry receipt.
+  its own narrow catalog-fact projections; full hierarchy entities belong to Hierarchy.
+  Lake routes accept only the Huron JWT. On every request the token's `groups` are
+  mapped through the current role mappings, and the `roles` claim is never read for
+  authority. Legacy `/api/v1` keeps API keys, service accounts, dev headers and the
+  company bearer.
+- Lake owns the Raw catalog. PostgreSQL schema `lake` is the source of truth: a file
+  is real only once its row commits, and every lake SQL statement is schema-qualified.
+  One transaction records a change's rows, the collection's `version` bump and its
+  `audit_log` entries. A commit's transaction runs in the commit worker after the
+  server re-hashes every add from the mount.
 - Inject storage, persistence, clocks and external capabilities through interfaces
   owned by their consumers. One adapter may structurally satisfy several interfaces;
   verify conformance at application wiring. Domains decide the workflow and adapters
@@ -71,6 +84,16 @@ src/huron/
 - Do not implement reusable business workflows here. Applications must not import
   sibling applications; share behavior through Core's public interfaces.
 
+### `applications/cli`: the Raw lake CLI
+
+- The CLI imports `huron.schema` and no other Huron package. It reaches every remote
+  party (company IdP, Huron API) through an injected `httpx.Client`.
+- It writes to the volume only through `applications/cli/writer.py`, and only below
+  one collection's directory, as partials placed by link (or by rename with
+  `--overwrite`). `metadata.json` is the server's alone.
+- Stdout carries only results; prompts, progress and diagnostics go to stderr.
+  `ExitCode` is the exit-code table, and every command exits through it.
+
 ### Dependency rules and OOP
 
 - Direction: `applications → core → schema`. Within Core, the permitted direct
@@ -80,10 +103,14 @@ src/huron/
   | --- | --- |
   | `foundation` | No Huron packages |
   | `security` | `foundation` |
-  | `catalog` | `security`, `foundation` |
-  | `raw` | `catalog`, `security`, `foundation`, `schema` |
-  | `metastore` | `catalog`, `raw`, `security`, `foundation` |
-  | `rawstore` | `schema` |
+  | `hierarchy` | `security`, `foundation` |
+  | `lake` | `security`, `foundation`, `schema` |
+  | `metastore` | `hierarchy`, `lake`, `security`, `foundation` |
+  | `rawstore` | `lake`, `foundation` |
+
+  `security` is the only Core owner that may use `httpx`, `jwt` and `cryptography`.
+  `lake` and `hierarchy` never import each other. `applications.cli` imports `schema`
+  only, and no application imports another.
 
 - Cross-package callers use published interfaces: root operations and supported
   value/error/port/codec modules. `_impl` subtrees are private. Applications import
@@ -98,37 +125,47 @@ src/huron/
   Immutable domain objects are encouraged where useful. Keep pure calculations as
   functions when an object adds no responsibility. Avoid inheritance hierarchies,
   generic managers, and classes that merely wrap unrelated functions.
-- The scientist-facing Python SDK calls the backend; it does not import server core
-  or require server storage dependencies. Local validation may share lightweight
-  contracts, but the backend remains authoritative.
+- Scientist-facing clients (the `huron` CLI now, a Python SDK later) call the backend.
+  They import `huron.schema` at most, never server Core or storage dependencies. Local
+  validation uses the same `huron.schema` rules, and the backend re-checks everything
+  it is sent.
 
 ## Scientific workflow contracts
 
-- Dataset creation establishes identity and stable configuration. Getting a dataset
-  retrieves that identity; each successful Raw upload creates a new immutable revision.
-- Proposed Raw client surface: `dataset.upload(source=..., metadata=...)`, accepting
-  a file, files or a directory, with required revision metadata. Validate metadata
-  with Pydantic in the client and again on the backend. Verify paths, sizes, checksums
-  and actual transfer completeness separately.
-- Each Raw revision contains exactly that submission's complete files. No automatic
-  carry-forward, parent-manifest diffing, hardlink deduplication across revisions,
-  or Git-like file tracking. Migration `0010_independent_raw` refuses legacy
-  hardlink ledgers until their files are copied or re-ingested.
-- Raw upload hides staging and commit from the normal client API. A successful return
-  means committed and readable. A retry of the same upload identity must return the
-  same revision; a distinct upload creates a new revision.
+- Raw keeps no versions. PostgreSQL holds current state, one row per `rel_path`, and
+  ONTAP snapshots are the only history and the only undo.
+- File bytes travel only over the NFS mount, never over HTTP. The API carries
+  metadata, tokens and commits.
+- A collection's path comes from its identity fields under its catalog's pinned
+  config. The fields are frozen once it is settled, and only `mv` changes them.
+- An add to an existing `rel_path` needs `overwrite: true`. Its audit entry keeps the
+  old hash, size, uploader and time. A remove must name the current hash. Any refusal
+  refuses the whole commit.
+- The server re-hashes every add before its row commits, and it deletes no user-named
+  content except partials. The reconciler reports every other disagreement as a
+  finding.
+- `audit_log` is append-only. A database trigger enforces it, and nothing in Huron
+  edits or deletes an entry.
 - Bronze processing can use the Ray-backed array engine to convert pinned Raw inputs
-  into candidate Zarr data. Direct-to-Bronze ingestion records an external origin
-  rather than inventing a Raw parent. Execution/storage integrations remain planned
-  until implemented and verified.
+  (see the lineage-pin rule) into candidate Zarr data. Direct-to-Bronze ingestion
+  records an external origin rather than inventing a Raw parent. Execution/storage
+  integrations remain planned until implemented and verified.
 - Candidate writes are not authoritative publication. Core validates and finalizes
   completed output; storage access must prevent workers from bypassing publication.
   Define recoverable crash states across storage and PostgreSQL, not an imaginary
   distributed transaction. Scientific approval, if required, is distinct from commit.
-- Lineage connects exact input revisions/snapshots, processing runs and output
-  snapshots. Record immutable code identity, parameters, origin, initiating actor,
-  execution identity and outcomes. Publish catalog lineage with the output record
-  in the same database transaction. Preserve previous chains and failed-run evidence.
+- Lineage connects pinned Raw inputs or exact Bronze/Silver snapshots, processing
+  runs and output snapshots. Record immutable code identity, parameters, origin,
+  initiating actor, execution identity and outcomes. Publish catalog lineage with the
+  output record in the same database transaction. Preserve previous chains and
+  failed-run evidence.
+- A Raw input is pinned as `(collection id, rel_path, sha256)`, copied from the file
+  row when the run is planned. A pin never uses a collection identifier or `version`.
+  A run reads the bytes through the mount and accepts them only if they hash to the
+  pin's `sha256`. If the row has since changed or gone, the collection's audit log
+  names the replaced hash and its time (`overwrite`, `rm`), and the bytes are restored
+  from an ONTAP snapshot taken before that time. A pin does not keep bytes alive: they
+  last only as long as such a snapshot is retained.
 - Resolve dataset ancestry on the server. The token determines identity, never a
   caller-supplied username. Authorize every input and the exact output layer/target.
 - Interactive compute carries delegated scientist authority. Approved platform jobs
@@ -214,6 +251,10 @@ that a command name runs all test categories.
   coverage independent of HTTP tests.
 - Test observable contracts rather than private call sequences. Control time and
   randomness. Mock external boundaries, not the domain behavior under test.
+- Production code runs unchanged against the local mocks (company IdP, group
+  directory, volume stand-in). They differ only behind existing seams: settings URLs
+  and paths, injected transports and clients, and the signing-key source. Tests that
+  need missing mock behaviour extend the fake.
 
 ### Commands and gates
 
