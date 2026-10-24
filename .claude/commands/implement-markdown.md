@@ -108,6 +108,8 @@ Complexity failures and the clean sweep: consolidating legacy paths often pushes
 - Tests for deleted code are deleted, not skipped, commented out, or left failing.
 - Test names describe the behavior under test in plain language. They must not reference the plan, phases, or task numbers.
 - Fixtures and parametrization are used to remove duplication; test files are held to the same quality bar as production code.
+- New tests do not duplicate existing coverage. Before writing tests, read the existing tests for the code under change and its callers; extend or parametrize an existing test rather than adding one that proves the same behavior.
+- Existing fixtures come first. Reuse a shared fixture that fits; adapt an existing fixture when a reasonable change covers the new need; add a new one only when none can. New fixtures are written for reuse by other tests: general names, no single-test assumptions, placed in the shared conftest or support module where other tests can use them.
 
 ## Serial loop
 

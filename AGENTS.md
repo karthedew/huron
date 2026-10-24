@@ -251,6 +251,13 @@ that a command name runs all test categories.
   coverage independent of HTTP tests.
 - Test observable contracts rather than private call sequences. Control time and
   randomness. Mock external boundaries, not the domain behavior under test.
+- Before writing a test, read the tests that already cover the code and its callers
+  (`rg` the symbol under `tests/`). Extend or parametrize an existing test instead of
+  adding one that proves the same behaviour. Before writing a fixture, read the shared
+  ones (each tier's `conftest.py`, `tests/unit/support.py` and the `tests/*_support.py`
+  modules): reuse one that fits, extend it when a reasonable parameter covers the new
+  case, and add a new one only when none can. Write a new fixture for reuse: a general
+  name and a docstring, in the shared module of its tier rather than one test file.
 - Production code runs unchanged against the local mocks (company IdP, group
   directory, volume stand-in). They differ only behind existing seams: settings URLs
   and paths, injected transports and clients, and the signing-key source. Tests that
