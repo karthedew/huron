@@ -2,16 +2,19 @@
 
 ```text
 huron/
-├── design/                  authoritative architecture record and source-linked atlases
-├── IMPLEMENTATION_PLAN.md   duplication refactoring sequence and verification gates
-├── P3_DESIGN.md              superseded integrity-service design, kept as history
-├── P3_IMPLEMENTATION_PLAN.md superseded integrity-service plan, kept as history
-├── docs/                    this site — how to work on the repository
-├── migrations/              Alembic; schema.sql is a read-only summary of the whole metastore
-├── scripts/                 bucket bootstrap and other operational helpers
-├── src/huron/               the application (see below)
-├── tests/                   unit · contract · integration · acceptance
-└── web/                     SvelteKit front end
+├── design/                             authoritative architecture record and source-linked atlases
+├── IMPLEMENTATION_PLAN.md              duplication refactoring sequence and verification gates
+├── RAW_LAKE_SPEC.md                    Raw lake spec of record
+├── RAW_LAKE_DESIGN.md                  Raw lake design
+├── RAW_LAKE_IMPLEMENTATION_PLAN.md     Raw lake implementation plan
+├── RAW_STORAGE_DESIGN.md               Raw storage design: superseded, kept as history
+├── RAW_STORAGE_IMPLEMENTATION_PLAN.md  Raw storage plan: superseded, kept as history
+├── docs/                               this site — how to work on the repository
+├── migrations/                         Alembic; schema.sql is a read-only summary of the whole metastore
+├── scripts/                            bucket bootstrap and other operational helpers
+├── src/huron/                          the application (see below)
+├── tests/                              unit · contract · integration · acceptance
+└── web/                                SvelteKit front end
 ```
 
 ## Backend boundaries

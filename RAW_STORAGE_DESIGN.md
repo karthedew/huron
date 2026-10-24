@@ -1,6 +1,6 @@
 # Huron Raw storage redesign
 
-> **Superseded 2026-10-23** by `RAW_LAKE_DESIGN.md` and `RAW_LAKE_SPEC.md`. Milestones 0–1 of its plan shipped (through `fa51f46`); the rest of this design will not be built.
+**Superseded 2026-10-23** by RAW_LAKE_DESIGN.md (spec RAW_LAKE_SPEC.md); kept as history. Milestones 0–1 of its plan are done (248f7bf..fa51f46); nothing else here is work.
 
 Status: Design — not implemented; plan: RAW_STORAGE_IMPLEMENTATION_PLAN.md
 

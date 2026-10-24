@@ -411,3 +411,41 @@ Build auth first, because every other command needs a token.
 
 Every other entry in the planning gap memo's register (L-1..L-44) takes that memo's recommendation as the default
 unless the design finds a reason to differ, in which case it flags the entry as an open question.
+
+## Design amendments (2026-10-23)
+
+These amend the body as the owner decisions do; each item names the design task, and the open question
+whose recommended option it assumes.
+
+| # | Spec lines | Amendment | Source |
+| --- | --- | --- | --- |
+| A-1 | `:34`, `:145` | "vocabulary-controlled" → "vocabulary-controlled where the catalog defines a vocabulary; a field without one is open and slugified" | DT-8, OQ-8.1 (a) |
+| A-2 | `:69-71` | `aud` example `["huron-api"]` (always an array); `roles` example `["PRINCIPAL_ROLE:heliophysics.developer"]`. Grammar: `PRINCIPAL_ROLE:<catalog>.<role_code>` or `PRINCIPAL_ROLE:<role_code>`. Lake routes never read `roles` (Owner decision 7). | DT-5 L-6 (a), G-30 |
+| A-3 | `:87` | Project Admin's "bulk metadata edits" is `POST /api/v1/catalogs/{catalog}/metadata-edits` (1–200 `{id, version}` pairs, one merge patch, all or nothing) and the CLI `meta bulk-update` | DT-15, OQ-15.1 (a) |
+| A-4 | `:109-118` | Config `schema: heliophysics-v1` → `schema: {name: heliophysics, version: 1}`. Optional `title`. `collection_name` is `{field: <name>}` or `{generate: collection_id}`. | DT-8 L-23 (a), G-22, L-40 (c) |
+| A-5 | `:131` | Segments match `^[a-z0-9][a-z0-9_-]{0,63}$` | DT-8, OQ-8.3 (a) |
+| A-6 | `:133` | Reserved also: `metadata.json` at a collection root (case-folded). Partials are named `<name>.<token>.part`, with a 32-hex token per staged add. | DT-12 L-42 (a); DT-13 G-27 |
+| A-7 | `:136-141` | Three stored states: `draft`, `active`, `incomplete`. "Resolved" is a validation outcome shown as the path preview, not a state. Active and Incomplete are *settled*. Activation provisions the directory, then commits, then the server writes `metadata.json`. Incomplete means the metadata fails the collection's validator after a schema change (a missing field or one that no longer conforms). | DT-12 G-2; DT-9, OQ-9.1 (a) |
+| A-8 | `:148` | "Changes to a catalog config apply only to new collections", plus: `namespace_fields` and `collection_name` are equal in every version of a catalog | DT-8, OQ-8.2 (a) |
+| A-9 | `:152` | "Nine tables" → the lake tables of DT-17's revisions `0015`–`0018`, all in Postgres schema `lake`, PostgreSQL ≥ 16 (hyphenated ltree labels). Owner decision 2 already replaces SQLAlchemy Core. | DT-1 L-20 (a); DT-8 R8-1; DT-17 |
+| A-10 | `:157` | `metadata_schemas.version` is per `name`; `name` is a segment; `org` is the base series | DT-9 |
+| A-11 | `:159` | `collections.etag` → `version` (bigint). `identifier` is null until activation, and `identifier` is unique. The table gains `file_count`, `created_at` and `created_by`, and a foreign key from `(catalog_id, config_version)` to the stored config. | DT-1 L-29 (a); DT-12; DT-17 `0016` |
+| A-12 | `:160` | `files` has no `id` and no `etag`. Key `(collection_id, rel_path)`, plus `rel_path_key` unique per collection. | OQ-13.3 (a); OQ-1.2 (a); DT-13 |
+| A-13 | `:161` | `audit_log` gains `catalog_id`. Actions are the fourteen `(action, object_type)` pairs of DT-7 (`activate`, `catalog_config`, `schema_publish`, `role_map`, `key_rotate`, `key_withdraw` added). File actions are recorded against the collection. | DT-7; OQ-5.2 (a) for `key_withdraw` |
+| A-14 | `:162-163` | `roles(code, title, rank, scope)` with `scope` ∈ {catalog, global}. `group_role_map` holds one row per (group, catalog or all). Group gids are in `ldap_groups`. | DT-4 C-5; OQ-4.2 (a); OQ-4.1 (a) |
+| A-15 | `:164` | `private_ref` names a PKCS#8 PEM file in a mounted Secret directory. `kid` is the RFC 7638 thumbprint. | DT-5 L-2 (a) |
+| A-16 | `:168` | "`version` increments on every write to a collection (draft save, publish, `mv`, commit); updates use `WHERE version = $expected`. Files carry no version; their preconditions are `overwrite` and `expected_sha256`." | DT-1 L-29 (a); OQ-1.2 (a) |
+| A-17 | `:169` | Append-only is enforced by a trigger that refuses `UPDATE`, `DELETE` and `TRUNCATE`. The grant split is deployment hardening. | DT-7 L-43 |
+| A-18 | `:170` | The CHECK mirrors the `rel_path` rule (NFC, ≤ 1024 bytes, ≤ 200 per segment, no empty/`.`/`..`, no `Cc`, no backslash, no reserved segment), not the segment rule | DT-13 L-13 (b), G-1; OQ-13.1 (a), OQ-13.2 (a) |
+| A-19 | `:175`, `:177-193` | Lake routes live under `/api/v1`. `POST /auth/exchange` and the discovery documents are at the root. Updates send `If-Match: "N"`, and creating calls send `Idempotency-Key`. The route table is DT-18's, which adds commit status, `DELETE /collections/{id}`, the administration routes, bulk edits and findings. | DT-1 L-27 (a), L-29 (a); DT-18 |
+| A-20 | `:199` | `base_etag` is removed; the collection version travels in `If-Match` | DT-1 L-29 (a) |
+| A-21 | `:218` | "Then one transaction …" → "The commit answers 202 with a commit id; a worker re-hashes the adds and then one transaction updates `files`, bumps the version, writes the audit entries and marks the commit `succeeded`; the CLI polls `GET …/commits/{commit_id}`." | DT-14, Owner decision 3 |
+| A-22 | `:222-224` | `409 PATH_EXISTS`, `409 CHANGED_SINCE_READ`, `412 PRECONDITION_FAILED` (stale `If-Match`). The lowercase names survive as the problem `type` suffix. Also `409 PATH_COLLISION` and `409 FILE_MISMATCH`, and `413 TOO_MANY_FILES` and `413 FILE_TOO_LARGE`. | DT-1 L-28 (a); DT-13 |
+| A-23 | `:226-275` | The CLI reference gains `delete collection`, `meta bulk-update`, the administration verbs (catalogs, configs, schema versions, role mappings, signing keys) and `discard [paths] [--files] [--metadata]`. `create collection` ends with the new collection checked out. `--set` parses each value by its field's kind. | DT-20; DT-10 |
+| A-24 | `:250` | `huron check` reads the reconciler's findings and the catalog's Incomplete collections (Project Admin); there is no `--repair` | DT-16, OQ-16.1 (a), OQ-16.2 (a) |
+| A-25 | `:288-296` | `collections/<uuid>/` gains `files.jsonl` (the paged file listing). `staged.json` also holds push progress and each add's partial token. | DT-20, OQ-20.2 (c); DT-21 |
+| A-26 | `:302`, `:309-312` | Step 4 streams to the token-scoped partial. Step 5 places it by link (by rename with `--overwrite`). Step 6 submits the commit with `If-Match` and `Idempotency-Key`, then polls it. Step 7 unlinks removed files and publishes changed metadata with `If-Match` set to the commit's resulting version; there is no `metadata.json` rewrite. | DT-21; DT-12; DT-14 |
+| A-27 | `:317-318` | "Copy interrupted: only this push's partial is left; the next push resumes it by hashing what exists and appending." "Commit refused after placement: the file has no row; the reconciler reports it as `FILE_UNRECORDED`." | DT-21; DT-16 |
+| A-28 | `:334-339` | "A nightly CronJob from the API image (`python -m huron.applications.api.reconcile`), not a CLI command." Its findings are the fourteen DT-16 codes. Partials older than a day are removed. Unrecorded files are listed, never deleted. ACL drift is reset. | DT-16, L-15 (b), OQ-16.3 (a) |
+| A-29 | `:280` | No change under OQ-20.3 (a): `organization` is prefilled only when the company ID token carries that claim. Under (b) it is dropped from the prefill list. | DT-20, OQ-20.3 |
+| A-30 | `:5-6` | The quoted preface gains: "The design amendments after the owner decisions amend it in the same way." | this section |

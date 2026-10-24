@@ -607,7 +607,7 @@ combined T-docs-0 closing check. No file under `src/`, `tests/`, `migrations/`, 
 - Decisions: OQ-16.3 (settled, owner decision 12)
 - Decisions: OQ-20.2 (settled, owner decision 12)
 - Decisions: OQ-20.3 (settled, owner decision 12)
-- Status: pending
+- Status: done
 
 ### M0.5 T-docs-0d: DT-26's constraint lines on the design record and the T-docs-0 closing check
 
@@ -9679,3 +9679,11 @@ name. Nothing is recorded here before M0.1 runs.
   the ADR 0002 amendment block and `CONTEXT.md` is the design's text: the new ADRs without the design's
   `> ` quote markers, the ADR 0002 amendment keeping them as its block, and `CONTEXT.md` with the
   two-space indent stripped.
+
+### M0.4 follow-up (orchestrator): the stale P3 sentence in `docs/backend-design.md`
+
+- M0.4's verification found that `docs/backend-design.md:65-66` still says "The remaining P3 design and
+  implementation plan stay at the repository root"; it has been false since `fa51f46` removed both files.
+  No task, D-2 row or DT-26 row names that line, so M0.4 left it alone (task scope). M19.3, which edits
+  `docs/backend-design.md` (`:14`, `:17`, `:31`), also rewrites this sentence: it points at the pinned P3
+  links in `docs/history.md`'s "Archived plans" table instead of the repository root.

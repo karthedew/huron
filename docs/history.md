@@ -107,15 +107,16 @@ the remaining P3 activation, recovery and cleanup work.
 | PostgreSQL schema | [Design](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/SCHEMA_DESIGN.md), [execution plan](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/SCHEMA_IMPLEMENTATION_PLAN.md), [audit](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/schema_audit.md) |
 | Foundations | [P1 design](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P1_DESIGN.md), [P1 execution plan](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P1_IMPLEMENTATION_PLAN.md) |
 | Raw ingestion | [P2 design](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_DESIGN.md), [P2 execution plan](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_IMPLEMENTATION_PLAN.md) |
+| Integrity services | [P3 design](https://github.com/karthedew/huron/blob/f1c44e3d56b10806c05373fce5b51c7a44abf146/P3_DESIGN.md), [P3 execution plan](https://github.com/karthedew/huron/blob/f1c44e3d56b10806c05373fce5b51c7a44abf146/P3_IMPLEMENTATION_PLAN.md) |
 | Integrity authority | [Authority design](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P3_M1B_AUTHORITY_DESIGN.md), [execution plan](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P3_M1B_AUTHORITY_IMPLEMENTATION_PLAN.md), [architectural review](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P3_M1B_ARCHITECTURAL_REVIEW.md) |
 | Integrity progress | [Execution ledger](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P3_EXECUTION.md), [M1a validation](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P3_M1A_VALIDATION.md), [M1b validation](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P3_M1B_VALIDATION.md), [superseded proposal](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P3_PROPOSAL.md) |
 | Earlier findings and prototypes | [Findings plan](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/FINDINGS_IMPLEMENTATION_PLAN.md), [retired control-plane plan](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/CONTROL_PLANE_PLAN.md) |
 | Duplication redesign | [Original plan and status ledger](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/IMPLEMENTATION_PLAN.md), [superseded architecture proposal](https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/design/duplication-architecture.md) |
 
-The superseded P3 design/implementation plan and the duplication backlog remain at
-the repository root. Archiving earlier reports does not complete the backlog's
-outstanding work. The controlled-cutover operator instructions were retired with the
-machinery they described; see [Legacy cutover retirement](#legacy-cutover-retirement).
+The duplication backlog remains at the repository root. Archiving earlier reports
+does not complete the backlog's outstanding work. The controlled-cutover operator
+instructions were retired with the machinery they described; see
+[Legacy cutover retirement](#legacy-cutover-retirement).
 
 ## Report housekeeping
 
