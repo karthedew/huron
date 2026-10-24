@@ -111,9 +111,12 @@ The <a href="core-map.html">Core map</a> describes the migrated working tree, no
 <tr><td>Semantic similarity (later)</td><td>LanceDB</td></tr>
 </table>
 
-<p class="warn"><span class="k">Standing bans, still standing.</span> No
-<code>tsvector</code>/GIN/<code>pg_trgm</code> anywhere. No <code>q=</code> or <code>ILIKE</code>
-on browse endpoints. No fallback from LanceDB to PostgreSQL: LanceDB down ⇒ <code>/search</code>
+<p class="warn"><span class="k">Standing bans, still standing.</span>
+<strong>PostgreSQL holds no metadata mirror and no text search, except the lake:
+<code>lake.collections.metadata</code> is the catalog of record and is searched in PostgreSQL by the GIN
+<code>jsonb_path_ops</code> index <code>collections_metadata_gin</code> for <code>label</code> equality
+(DT-17, DT-18). P4's LanceDB projection covers Bronze, Silver and Gold only.</strong>
+No fallback from LanceDB to PostgreSQL: LanceDB down ⇒ <code>/search</code>
 returns <code>503 PROJECTION_UNAVAILABLE</code>, browse keeps working. Lineage traversal is a
 structural query and therefore PostgreSQL — asking "similar products" is matching and therefore
 LanceDB. Classify every new query before writing it; never serve one question from two stores.</p>

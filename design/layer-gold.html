@@ -190,7 +190,7 @@ on which case it is.</p>
 <p>Snapshot IDs are pinned <em>by Huron at submission time</em> — the scientist names datasets and
 layers; the platform resolves and freezes the exact snapshots before the transform runs, so a
 concurrent Silver append cannot make the record ambiguous. Lineage edges
-(<code>gold_version ← silver_snapshot ← bronze_snapshot ← raw_revision</code>) land in PostgreSQL
+(<code>gold_version ← silver_snapshot ← bronze_snapshot ← Raw pins</code>) land in PostgreSQL
 in the same transaction as publication.</p>
 
 <h2 id="workflow">4. Publication workflow</h2>

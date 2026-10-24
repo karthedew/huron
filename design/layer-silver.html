@@ -99,13 +99,13 @@ Bronze, but data that is already canonical when it reaches Huron enters Silver
 or a published reference dataset such as the ICRP coefficients cited in the
 <a href="layer-gold.html#lineage">Gold derivation record</a>. Such a dataset has no Raw and no
 Bronze and never will — that is a fact about where it came from, not a gap to be backfilled — so
-its snapshots carry an external-provenance block where the raw-revision and Bronze-snapshot
+its snapshots carry an external-provenance block where the Raw-pin and Bronze-snapshot
 references would otherwise be (<a href="#pipeline">§4</a>). Entry is allowed at Raw, Bronze or
 Silver; <a href="layer-gold.html#purpose">Gold alone</a> cannot be an entry layer, because a
 product without a derivation record is not a product.</p>
 
 <pre>
-Bronze (per revision, source-faithful)        Silver (per contract, canonical)
+Bronze (per build, source-faithful)           Silver (per contract, canonical)
 mesh_104.value(x_index, y_index,              particle_flux(run, energy, x, y, z)
               z_index, energy_bin)            coordinates: run, shield_thickness,
 tally_4.value(energy_bin)                       shield_material, random_seed,
@@ -152,8 +152,9 @@ array is a derived artifact with its own provenance, inputs and validation, whic
 of Gold rather than Silver.</p>
 
 <p>Like Bronze, a Silver repo covers exactly one dataset, and each publication is a snapshot of
-that dataset's canonical view: a new revision of <code>run-0042</code> re-canonicalizes and commits
-a new snapshot in <code>run-0042</code>'s own repo, touching nothing another run can read. The
+that dataset's canonical view: a new Bronze snapshot of <code>run-0042</code>, built after an
+<code>overwrite</code> of a pinned file, is re-canonicalized and committed as a new snapshot in
+<code>run-0042</code>'s own repo, touching nothing another run can read. The
 dataset still carries a <code>run</code> coordinate — sized one — so that concatenating member repos
 along it needs no reshaping. Every snapshot remains addressable forever: an analysis pinned to
 <code>S117</code> reproduces byte-identically regardless of later publications.</p>
@@ -161,7 +162,7 @@ along it needs no reshaping. Every snapshot remains addressable forever: an anal
 <table>
 <tr><th>Event</th><th>Silver operation</th><th>Snapshot</th></tr>
 <tr><td>New dataset published in Bronze under this contract</td><td>Create that dataset's Silver repo; write its canonical arrays</td><td>lineage root</td></tr>
-<tr><td>New revision correcting an existing dataset</td><td>Re-canonicalize into that dataset's repo</td><td>new</td></tr>
+<tr><td>New Bronze snapshot correcting an existing dataset (built after an <code>overwrite</code> of a pinned file)</td><td>Re-canonicalize into that dataset's repo</td><td>new</td></tr>
 <tr><td>Dataset retracted</td><td>Mark the repo retracted in the catalog; provenance retained</td><td>none</td></tr>
 <tr><td>Canonical contract version bump</td><td>Re-canonicalize each member dataset into its own repo under the new contract version</td><td>new lineage root per dataset</td></tr>
 </table>
@@ -226,16 +227,16 @@ Validator — silver checks:
    ✓ coordinate monotonicity and coverage; no unexplained NaN regions
    ✓ conservation/consistency checks the profile defines
      (e.g. mesh-integrated flux vs tally totals within tolerance)
-   ✓ per-run provenance block complete (raw revision, bronze snapshot, converter digest)
+   ✓ per-run provenance block complete (Raw pins or external origin, bronze snapshot, converter digest)
    ✓ round-trip: sampled Silver values map back to Bronze values under the recorded conversion
    ▼
 publish: fast-forward main, tag silver/{Snnn}, catalog row + lineage edges
-         (silver snapshot ← bronze snapshot ← raw revision), outbox → search index,
+         (silver snapshot ← bronze snapshot ← Raw pins), outbox → search index,
          gold staleness evaluation
 </pre>
 
 <p>Lineage is recorded per <em>run region</em>, not just per snapshot: snapshot S119 knows that the
-<code>run-0042</code> slab came from Bronze B187 (revision 2) while every other slab is unchanged
+<code>run-0042</code> slab came from Bronze B187, built from new pins, while every other slab is unchanged
 from S118. That is what lets Gold staleness be computed precisely — a product that never touched
 <code>run-0042</code> is not stale.</p>
 
@@ -244,7 +245,7 @@ from S118. That is what lets Gold staleness be computed precisely — a product 
 <p>A dataset declares an <strong>entry layer</strong> — <code>raw</code> (the default),
 <code>bronze</code> or <code>silver</code>. Entry above Raw means the lake is not the origin of
 these bytes: no ingest session, no manifest, no Bronze extraction, and the retention clock
-(<a href="layer-raw.html#retention">Raw §9</a>, <code>starts: after_silver_published</code>) has
+(<a href="layer-raw.html#recovery">Raw §9</a>, <code>starts: after_silver_published</code>) has
 nothing to count. The publication path is otherwise identical — candidate on a working branch,
 the same validator, fast-forward and tag — because the contract check is the same check.
 Direct entry has two intake forms: <strong>manual upload</strong> by a scientist or engineer —
@@ -291,7 +292,7 @@ is untouched.)</p>
 </pre>
 
 <p><strong>Lineage roots at the entry layer.</strong> A direct-entry Silver snapshot is a lineage
-root exactly as a raw revision is: Gold products built on it record it as a pinned input in the
+root exactly as a Raw pin is: Gold products built on it record it as a pinned input in the
 normal way, and staleness propagates from it normally. What downstream consumers lose is the
 ability to re-derive it — the source is outside Huron's custody, which is precisely what the
 provenance block records rather than conceals.</p>
@@ -313,8 +314,8 @@ request canonicalization parameters and contract changes through the project adm
 storage (invariant J).</p>
 
 <p class="note"><span class="k">Consistency stance.</span> Silver is eventually consistent with Raw
-by design — the dataset page shows per-revision materialization state
-(<code>raw: committed · bronze: published · silver: S118</code>) rather than pretending the layers
+by design — the dataset page shows materialization state per Bronze snapshot
+(<code>bronze: B187 published · silver: S118</code>) rather than pretending the layers
 move atomically. "Latest" always means <em>latest published and validated</em>, never a candidate.</p>
 
 </main>

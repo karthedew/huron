@@ -665,7 +665,7 @@ combined T-docs-0 closing check. No file under `src/`, `tests/`, `migrations/`, 
 - Dependencies: M0.2, M0.3, M0.4.
 - Decisions: OQ-1.2 (settled, owner decision 12)
 - Decisions: OQ-18.3 (settled, owner decision 12)
-- Status: pending
+- Status: done
 
 ## Milestone 1 — Legacy Raw deletion
 
@@ -9687,3 +9687,60 @@ name. Nothing is recorded here before M0.1 runs.
   No task, D-2 row or DT-26 row names that line, so M0.4 left it alone (task scope). M19.3, which edits
   `docs/backend-design.md` (`:14`, `:17`, `:31`), also rewrites this sentence: it points at the pinned P3
   links in `docs/history.md`'s "Archived plans" table instead of the repository root.
+
+### M0.5 deviations: the `rbac.html` §8 default and the Bronze, Silver and Gold pages' remaining Raw coupling
+
+- `design/rbac.html:439` (§8 "Recommended default policy") gets no wording of its own in DT-26's row, which
+  words only §4's cell. Its "nobody overwrites committed raw" becomes "committed Raw files are overwritten
+  only by a Developer's audited `overwrite` commit (§4)", linking §4 instead of restating the cell, so
+  `rg -n 'overwrite: true' design/rbac.html` prints only the §4 line.
+- `design/layer-bronze.html` (line numbers at `fa51f46`, unchanged at `HEAD` for this file): DT-26's
+  replacements are applied wherever the page states the same Raw coupling, also outside the cited lines:
+  the manual-intake validator check (`:232`, "raw link resolves to a COMMITTED revision of this dataset")
+  becomes "each Raw pin resolves (§1): its collection's current file row, or an overwrite/rm audit entry
+  for that rel_path, carries its sha256 (when asserted)", DT-25's resolution order, so a pin whose file
+  has since been overwritten or removed still resolves; and §4b's seams sentence (`:279-280`) and "manual
+  intake with a raw link" (`:283`) name the explicit build request and Raw pins. Inside the cited lines,
+  the builder reads the pinned bytes through the mount (`:292`, DT-26's pin wording); both provenance
+  examples drop `source_revision_number`, the first also `source_dataset` and `source_files` (a pin
+  carries `rel_path` and `sha256`); the "Linked to Raw" bullet drops its cross-dataset sentence, because
+  collections do not live under datasets; and the failed-build branch drops "raw retained for diagnosis"
+  and the "Raw: committed" dataset state.
+- `design/layer-bronze.html` tag model: DT-26 removes the `raw/{revision_number}` tag (`:115`) and names
+  no replacement, and none is invented. §2's branch/tag bullet (`:112-117`) says every manual-intake
+  snapshot, whichever provenance assertion it carries (Raw pins or external origin), is tagged
+  `intake/{nnnnnn}`, and a Raw-derived build snapshot carries no tag and is resolved through its catalog
+  row; §4b's builder publish step (`:304`) drops "tag, ", and §4a's manual-intake publish step (`:235`)
+  keeps it.
+- `design/layer-silver.html` and `design/layer-gold.html` (line numbers at `fa51f46`): beyond DT-26's rows
+  (`:229-233`, `:294`, the `:247` href), the Silver page's other Raw-revision lineage and correction lines
+  and the Gold page's lineage line take the Bronze page's pin and build wording, because DT-26 makes
+  derived-layer lineage wording a T-docs-0 constraint (B-8) and no later task names them (M19.2 takes
+  only Silver's `:244-248`; no task, DT-26 row or broken-links row names the Gold page beyond its kept
+  `:154` `#layout` link). Silver: `:102` "raw-revision and Bronze-snapshot references" becomes "Raw-pin
+  and Bronze-snapshot references"; `:108` "Bronze (per revision, …)" becomes "Bronze (per build, …)"; in
+  `:155` and `:164` the correcting event is a new Bronze snapshot built after an `overwrite` of a pinned
+  file; `:238` says B187 was built from new pins instead of "(revision 2)"; and `:316-317` shows
+  materialization state per Bronze snapshot (`bronze: B187 published · silver: S118`) without
+  "per-revision" or "raw: committed". Gold: `:193` (§3 `lineage`) ends its lineage chain
+  `gold_version ← silver_snapshot ← bronze_snapshot ← Raw pins` instead of `← raw_revision`, as Silver
+  and roadmap P9 do; the rest of the Gold page is unchanged (`:152-154` is hierarchy wording whose
+  `#layout` link DT-26's broken-links table keeps).
+  `rg -n -i 'revision' design/layer-gold.html design/layer-silver.html design/layer-bronze.html` prints
+  nothing.
+
+### M0.5 follow-up (orchestrator): Raw-revision wording no task names
+
+M0.5's verification found these lines still describing Raw revisions or Raw-layer search. They lie outside
+M0.5's cited lines and no task or DT-26 row names them, so each is routed to the task whose scope fits; that
+task rewrites them in the lake's terms (pins, `overwrite`, the lake's own search) in its own commit.
+
+- `design/catalog-search.html`: §1's "One index, all four layers" paragraph ("One LanceDB projection covers
+  raw, Bronze, Silver and Gold"), the lede (`:83` at `fa51f46`) and the §1 question-table rows that name
+  revisions or Raw metadata sidecars → M7.2, which already rewrites this page's DT-9 rows.
+- `design/roadmap.html`: P6's same-dataset raw link and `--link-raw-revision 1` (`:471`, `:475-476`) and P7's
+  gate ("a corrected revision of run-0042", `:485`) → M19.2, which edits the roadmap's remaining Raw items.
+- `design/layer-bronze.html`: "feeds Raw retention" (`:164`), "same transfer surface as raw ingest"
+  (`:224`) and the Raw TTL text (`:341-345`) → M19.2 (derived-layer pages, T-docs-Z).
+- `design/api.html` §4: "per-revision materialization" (`:171`) and the intake body's `raw_revision_number`
+  (`:175`) → M19.2.

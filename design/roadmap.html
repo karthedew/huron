@@ -456,8 +456,9 @@ platform/org/project scopes, project-enrichment composition, immutable published
 to storage — science profiles and extension schemas as registry kinds, envelope validation against
 the effective schema at ingest; quota enforcement at <code>BeginIngest</code>. Not started.
 <strong>Retired 2026-10-21:</strong> Raw amendments, with their fold, field allow-list and
-<code>AMENDMENT_FIELD_FORBIDDEN</code> error code. A committed Raw revision is immutable; a
-correction is a new revision.</td>
+<code>AMENDMENT_FIELD_FORBIDDEN</code> error code. The lake keeps no Raw versions. A correction is
+<code>meta update</code> then publish, or <code>add --overwrite</code>, each audited
+(<a href="../docs/adr/0005-no-raw-versioning.md">ADR 0005</a>).</td>
 <td>Two-person purge enforced by the database, idempotent on re-run, reported lawful by the
 reconciler; expiry removes only TTL-category files, only after Silver exists, writes the marker,
 honors holds; the consequence text appears in the API response that sets the policy.</td></tr>
@@ -510,9 +511,9 @@ compose stack.</td></tr>
 staleness propagation, cross-project inputs with redacted lineage, Iceberg materialization for
 tabular products.</td>
 <td>The MCNP thread end-to-end: flux → dose published with lineage
-<code>G021 ← S117+S031 ← B182 ← rev-1</code>; an upstream correction marks it STALE with the
-reason; recompute produces 1.0.1 pinned to the successors; the derivation record alone re-executes
-to a bit-identical G021 (invariant K).</td></tr>
+<code>G021 ← S117+S031 ← B182 ← Raw pins of run-0042</code>; an <code>overwrite</code> of a pinned
+file marks it STALE with the reason; recompute produces 1.0.1 pinned to the successors; the
+derivation record alone re-executes to a bit-identical G021 (invariant K).</td></tr>
 
 <tr><td class="k">P10 — Polaris<br><span class="tag">partial</span></td>
 <td>The beta now uses Polaris as catalog/access authority: native Icechunk browsing/registration,
@@ -674,28 +675,28 @@ the search projection" is P4's consumer; P2 proves the outbox row.</td></tr>
 <td><em>Deferred with the auto-builder (<a href="layer-bronze.html#auto-builder">Bronze
 §4b</a>): requires per-profile extractor images — custom code per data kind that v1 does not ask
 of projects. Milestone 10 carries bronze materialization until then.</em>
-Committed raw revisions listed as build candidates; transform resolution with immutable
+Files of settled collections, pinned as inputs; transform resolution with immutable
 digests; science-profile and canonical-contract compatibility validated at enqueue, not at
 failure; the bronze builder consuming milestone 11's jobs — extraction into Zarr + Icechunk on
-the object store, validation evidence stored, immutable snapshot published; provenance recorded raw revision
+the object store, validation evidence stored, immutable snapshot published; provenance recorded Raw pins
 → bronze snapshot as a <code>promotion</code> block
 (<span class="inv">invariant N</span>).</td>
-<td>A raw revision builds to a published bronze snapshot whose provenance names the exact
-revision and transform digest; a contract-incompatible request is refused at enqueue.</td></tr>
+<td>A set of Raw pins builds to a published bronze snapshot whose provenance names those exact
+pins and the transform digest; a contract-incompatible request is refused at enqueue.</td></tr>
 
 <tr><td class="k">10 — Manual bronze intake<br><span class="tag">todo</span><br>backend P6</td>
 <td>Built: <code>entry_layer</code> with the invariant-N checks, entry validation, the external
 provenance schema, and entry validation in <code>core/catalog/layers.py</code>. Adds: the
 <a href="layer-bronze.html#manual-intake">manual intake path</a> — scientist/engineer uploads of
 NetCDF/HDF5/zipped-Zarr through UI wizard and <code>huron bronze upload</code>, never requiring
-raw to exist; the one-of-two provenance assertion — a raw revision of the same dataset
+raw to exist; the one-of-two provenance assertion — Raw pins of a settled collection
 (<code>promotion</code>, method <code>upload</code>, <code>user:</code> ingested-by, uploaded-file
-digests) or an external-provenance record (source system, URI/digest, streaming window) as the
-snapshot's lineage root; plus a registration path for an existing bronze object-store location;
-validation before publish — structure against the declared profile, schema, checksums.</td>
+digests), or external origin: an external-provenance record (source system, URI/digest, streaming
+window) as the snapshot's lineage root; plus a registration path for an existing bronze
+object-store location; validation before publish — structure against the declared profile, schema, checksums.</td>
 <td>A bronze-entry dataset publishes a snapshot whose provenance is a valid
-<code>external</code> block, and a raw-holding dataset one whose <code>promotion</code> block pins
-the linked revision; an upload asserting neither or both is refused; a checksum mismatch or
+<code>external</code> block, and a Raw-derived upload one whose <code>promotion</code> block
+carries its Raw pins; an upload asserting neither or both is refused; a checksum mismatch or
 profile violation is refused with structured findings.</td></tr>
 
 <tr><td class="k">11 — Jobs &amp; queue<br><span class="tag">todo</span></td>

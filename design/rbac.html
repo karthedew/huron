@@ -280,7 +280,7 @@ export-controlled geometry).</p>
 <tr><td>Read raw <em>payload</em></td><td>reader today; intended: an explicit stricter grant (§2 note)</td></tr>
 <tr><td>Change TTL / pin / legal hold</td><td>project_admin (policy), governance authority (hold)</td></tr>
 <tr><td>Delete committed payload</td><td>retention service only (TTL/purge paths)</td></tr>
-<tr><td>Overwrite committed files</td><td class="k">nobody</td></tr>
+<tr><td>Overwrite committed files</td><td class="k">Developer, by a commit with <code>overwrite: true</code>; the replaced hash is audited as <code>overwrite</code>.</td></tr>
 </table>
 
 <h3>Bronze</h3>
@@ -436,8 +436,9 @@ platform service identities (internal)        → bronze builds/intake, retentio
 </pre>
 
 <p>The load-bearing defaults: org members don't create projects; project membership is explicit;
-datasets are created under inherited policy and are active immediately; nobody overwrites
-committed raw; only services write published Bronze/Silver/Gold; the project is the pond.
+datasets are created under inherited policy and are active immediately; committed Raw files
+are overwritten only by a Developer's audited <code>overwrite</code> commit (<a href="#layers">§4</a>);
+only services write published Bronze/Silver/Gold; the project is the pond.
 Roles stack — a person can hold <code>developer</code> on one project and
 <code>project_admin</code> on another; bind IdP groups, not individuals, wherever possible.</p>
 

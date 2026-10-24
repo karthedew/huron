@@ -90,9 +90,17 @@ making me parse the format."</em> It preserves source-specific meaning — <code
 <code>mesh_104</code>, <code>relative_error</code>, MCNP unit notation, original energy bins —
 and records exactly which raw bytes each array came from. It does <strong>not</strong> standardize
 names, units, or coordinates (that is <a href="layer-silver.html">Silver</a>), and it does not
-merge datasets: one Bronze snapshot corresponds to one raw revision — or, for a
-<a href="#manual-intake">direct-entry dataset</a>, to one intake batch, with lineage rooting at
+merge datasets: there is one Bronze snapshot per build from a set of pins — or, for a
+<a href="#manual-intake">direct-entry dataset</a>, one per intake batch, with lineage rooting at
 Bronze (invariant <span class="inv">N</span>).</p>
+
+<p class="note"><span class="k">Raw pins.</span> A Bronze build from Raw records each input as a pin
+<code>(collection id, rel_path, sha256)</code>, copied from the collection's file listing when the
+build is planned. The build reads the bytes through the mount and refuses any whose hash differs
+from its pin. A pin names bytes, not a collection version. If a file has since been overwritten or
+removed, the collection's audit log gives the replaced hash and its time, and the bytes come back
+from an ONTAP snapshot taken before then. A pin keeps nothing alive: recovery lasts only as long as
+snapshot retention.</p>
 
 <h2 id="storage">2. Storage model</h2>
 
@@ -106,15 +114,16 @@ Bronze (invariant <span class="inv">N</span>).</p>
 </pre>
 
 <ul>
-<li><strong>One Icechunk repo per dataset.</strong> Snapshots within it are per raw revision. This
-keeps grant scoping (one prefix = one dataset's bronze), keeps repo count proportional to datasets,
-and lets Icechunk's history hold the full audit trail of rebuilds.</li>
+<li><strong>One Icechunk repo per dataset.</strong> Snapshots within it are one per build from a
+set of pins. This keeps grant scoping (one prefix = one dataset's bronze), keeps repo count
+proportional to datasets, and lets Icechunk's history hold the full audit trail of rebuilds.</li>
 <li><strong>Branch/tag model.</strong> Writers commit on a working branch —
-<code>build/{revision_id}</code> for raw-derived snapshots, <code>intake/{ingest_id}</code> for
-manual intake — and after validation the publisher fast-forwards <code>main</code> and tags:
-<code>raw/{revision_number}</code> when the snapshot derives from a raw revision,
-<code>intake/{nnnnnn}</code> (monotonic per dataset) when it entered directly. Consumers resolve
-tags through the catalog, never by guessing.</li>
+<code>build/{run_id}</code> for Raw-derived snapshots, <code>intake/{ingest_id}</code> for
+manual intake — and after validation the publisher fast-forwards <code>main</code>. Every
+manual-intake snapshot, whichever provenance assertion it carries, is tagged
+<code>intake/{nnnnnn}</code> (monotonic per dataset); a Raw-derived build snapshot carries no tag
+and is resolved through its catalog row. Consumers resolve tags through the catalog, never by
+guessing.</li>
 <li><strong>Group layout inside a snapshot</strong> is defined by the science profile. For
 <code>mcnp-run@1.0</code>:</li>
 </ul>
@@ -132,10 +141,10 @@ provenance record:</p>
 
 <pre>
 {
-  "source_revision_id": "rev-0001-uuid",
-  "source_dataset": "run-0042",
-  "source_revision_number": 1,
-  "source_files": {"meshtal": "sha256:…", "outp": "sha256:…"},
+  "raw_inputs": [
+    {"collection_id": "coll-0042-uuid", "rel_path": "meshtal", "sha256": "5e1f…"},
+    {"collection_id": "coll-0042-uuid", "rel_path": "outp", "sha256": "b47a…"}
+  ],
   "profile": "mcnp-run@1.0.0",
   "extractor_digest": "sha256:9a1c…",
   "built_at": "2026-08-23T17:40:12Z"
@@ -201,12 +210,10 @@ a Bronze snapshot through the web UI or the Python client. The uploader supplies
 two provenance assertions, and intake refuses an upload that supplies neither or both:</p>
 
 <ul>
-<li><strong>Linked to raw:</strong> the upload names a raw revision <em>of the same dataset</em>.
-The snapshot's provenance is a <code>promotion</code> block with
-<code>method:&nbsp;"upload"</code> — same kind as a pipeline build, different builder. Links may
-not reach into other datasets: the one-spine layout means everything about one body of data lives
-under one dataset prefix, and a cross-dataset link would put a lineage claim in one dataset's
-history that its own path cannot substantiate.</li>
+<li><strong>Linked to Raw:</strong> the upload names the Raw files it was converted from as pins
+(<a href="#purpose">§1</a>), copied from a settled collection's file listing. The snapshot's
+provenance is a <code>promotion</code> block with <code>method:&nbsp;"upload"</code> — same kind
+as a pipeline build, different builder.</li>
 <li><strong>No raw exists:</strong> the snapshot carries an
 <a href="layer-silver.html#direct-entry">external-provenance block</a> naming the true source, and
 becomes a lineage root (invariant <span class="inv">N</span>).</li>
@@ -217,7 +224,7 @@ scientist / engineer uploads NetCDF · HDF5 · zipped-Zarr files
   (web UI or `huron bronze upload`; same transfer surface as raw ingest)
   + metadata envelope, validated against the effective schema
     (org base + project enrichment — <a href="catalog-search.html#schema-registry">schema registry</a>)
-  + provenance assertion: raw revision link  -or-  external source
+  + provenance assertion: Raw pins  -or-  external source
    │
    ▼
 bronze intake service (service account — humans never hold storage
@@ -229,7 +236,8 @@ Validator runs the profile's bronze validations:
    ✓ structure matches the declared profile layout   ✓ file checksums verified
    ✓ dims/shapes/dtypes self-consistent              ✓ coordinate bounds monotonic
    ✓ NaN/missing-value behavior known                ✓ provenance assertion complete
-   ✓ raw link resolves to a COMMITTED revision of this dataset (when asserted)
+   ✓ each Raw pin resolves (<a href="#purpose">§1</a>): its collection's current file row, or an
+     overwrite/rm audit entry for that rel_path, carries its sha256 (when asserted)
    ✓ snapshot reopens through the client read path
    │
    ├─ pass → publish: fast-forward main, tag, catalog row (state PUBLISHED),
@@ -256,8 +264,10 @@ provenance.</p>
 {                                          {
   "kind": "promotion",                       "kind": "external",
   "method": "upload",                        "source_system": "legacy-fluent-cluster",
-  "source_revision_id": "rev-0003-uuid",     "source_uri": "file://…/campaign-7/",
-  "source_revision_number": 3,               "source_digest": "sha256:0b71…",
+  "raw_inputs": [                            "source_uri": "file://…/campaign-7/",
+    {"collection_id": "coll-0042-uuid",      "source_digest": "sha256:0b71…",
+     "rel_path": "meshtal",
+     "sha256": "5e1f…"}],
   "uploaded_files":                          "uploaded_files":
     {"run42.nc": "sha256:aa10…"},              {"campaign7.h5": "sha256:cc32…"},
   "profile": "mcnp-run@1.0.0",               "profile": "cfd-run@0.3.0",
@@ -276,22 +286,22 @@ and who vouches for them; the other says who held the credentials.</p>
 
 <p class="warn"><span class="k">Deferred, not designed away.</span> Automation requires a
 per-profile <code>extractor_image</code> — custom code written and maintained per data kind,
-which Huron does not ask of projects at this stage. The seams stay in place — the raw-commit
-outbox event, the jobs table, the working-branch/validate/publish flow above — so a project that
+which Huron does not ask of projects at this stage. The seams stay in place — the explicit
+build request, the jobs table, the working-branch/validate/publish flow above — so a project that
 later wants push-button raw&rarr;bronze adds an extractor to its profile and turns this on
 without touching the model. Until then, "bronze from raw" means a scientist converts locally and
-uses manual intake with a raw link.</p>
+uses manual intake with Raw pins.</p>
 
 <p>When enabled, the flow is:</p>
 
 <pre>
-raw revision COMMITTED (outbox event)
+explicit build request naming a set of Raw pins
    │
    ▼
 Bronze builder claims job (PG jobs table, SKIP LOCKED)
-   │  reads NFS payload read-only; extractor container, no network
+   │  reads the pinned bytes through the mount read-only; extractor container, no network
    ▼
-candidate snapshot on branch build/{revision_id}
+candidate snapshot on branch build/{run_id}
    │
    ▼
 Validator runs profile's bronze validations:
@@ -301,22 +311,21 @@ Validator runs profile's bronze validations:
    ✓ NaN/missing-value behavior known  ✓ sampled values agree with source text
    ✓ snapshot reopens through the client read path
    │
-   ├─ pass → publish: fast-forward main, tag, catalog row (state PUBLISHED),
+   ├─ pass → publish: fast-forward main, catalog row (state PUBLISHED),
    │         outbox → LanceDB index + Silver canonicalization queued
    └─ fail → catalog row state FAILED with structured findings;
-             raw retained for diagnosis; dataset page shows
-             "Raw: committed / Bronze: failed"; retry after profile fix
+             dataset page shows "Bronze: failed"; retry after profile fix
 </pre>
 
 <ul>
-<li><strong>Idempotent builds:</strong> a rebuild for the same revision replaces the working branch
-and produces a new snapshot; the catalog records the latest published snapshot per revision and
-keeps prior ones addressable (they are Icechunk history, not deleted state).</li>
-<li><strong>Corrections:</strong> a new raw revision of the dataset triggers a fresh Bronze
-snapshot; the previous revision's snapshot remains tagged and readable. Downstream impact is
-handled in Silver (region replacement) and Gold (staleness), not by mutating Bronze. With the
-builder deferred, the same holds manually: the correcting scientist re-uploads against the new
-revision, and the dataset page shows the gap until they do.</li>
+<li><strong>Idempotent builds:</strong> a rebuild for the same set of pins replaces the working
+branch and produces a new snapshot; the catalog records the latest published snapshot per set of
+pins and keeps prior ones addressable (they are Icechunk history, not deleted state).</li>
+<li><strong>Corrections:</strong> an <code>overwrite</code> changes the hash, so a pin taken
+earlier no longer matches and a new build is requested; the earlier snapshot remains readable.
+Downstream impact is handled in Silver (region replacement) and Gold (staleness), not by mutating
+Bronze. With the builder deferred, the same holds manually: the correcting scientist re-uploads
+against the new pins, and the dataset page shows the gap until they do.</li>
 <li><strong>Failure is not publication:</strong> Huron never publishes a broken Bronze snapshot —
 on either path. Validation evidence (pass or fail) is stored as structured JSON on the catalog
 row and shown in the UI.</li>
