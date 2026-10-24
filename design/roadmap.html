@@ -162,14 +162,16 @@ P0 ── P1 ── P2 ── P3 ─────────── P5 ── P6 
 
 <tr><td class="k">P0 — Bootstrap<br><span class="tag">done</span></td>
 <td>Repository skeleton and dependency groups; tooling (ruff, mypy strict across <code>core/</code> and
-<code>schema/</code>, import-linter, pytest markers); compose stack (PostgreSQL, MinIO for derived layers, a local
-volume standing in for NFS); settings module whose startup refusals are tested (dev-auth outside
+<code>schema/</code>, import-linter, pytest markers); compose stack (PostgreSQL, MinIO for derived
+layers); settings module whose startup refusals are tested (dev-auth outside
 development, invalid classification vocabulary); CI with lint → unit → contract → integration
-stages.</td>
+stages. Withdrawn: the local NFS stand-in volume this row once claimed was never in compose
+(<code>RAW_LAKE_DESIGN.md</code> "Roadmap Drift", D-1); the volume stand-in is
+<a href="#raw-lake">RL</a> step 3's.</td>
 <td>Green CI on the empty tree; a deliberately added <code>import fastapi</code> in
 <code>core/catalog/</code>, an undeclared domain edge, and an import of one application
-from another each fail their contract; the compose stack boots and bootstraps buckets and
-volumes from a clean checkout.</td></tr>
+from another each fail their contract; the compose stack boots and bootstraps buckets from a
+clean checkout.</td></tr>
 
 <tr><td class="k">P1 — Foundations<br><span class="tag">done</span></td>
 <td>Domain model for the three-level hierarchy in <code>core/catalog/</code>;
@@ -272,6 +274,58 @@ and revoke and no update verb exists at any scope; no file under <code>migration
 the owner's answer — an unanswered decision means its milestone is not done regardless of gate
 state.</td></tr>
 
+<tr id="raw-lake"><td class="k">RL: Raw lake<br><span class="tag">todo</span></td>
+<td>The Raw data lake of <code>RAW_LAKE_SPEC.md</code> and its owner decisions 1–12: Raw files in
+mutable collections on an NFS volume, cataloged in Huron's PostgreSQL and written through the
+<code>huron</code> CLI. Designed in <a href="../RAW_LAKE_DESIGN.md">the Raw lake design</a> and
+planned 2026-10-23 as Milestones M0–M19 of the
+<a href="../RAW_LAKE_IMPLEMENTATION_PLAN.md">Raw lake implementation plan</a>; every open question
+is settled (owner decision 12). Not started. It supersedes <code>RAW_STORAGE_DESIGN.md</code> and its
+plan (owner decision 9), whose Milestones 0–1 shipped 2026-10-15 to 2026-10-23 (<code>248f7bf</code>
+… <code>fa51f46</code>): the retirements recorded in P1, P3, P5 and milestone 7, and shared errors and
+paging moved into foundation. Its Milestone 1 deletes the legacy Raw engine with no backwards
+compatibility (owner decision 11), retiring P2, P3 and milestones 7–8; RL then stands where P2 stood, before every
+derived layer, and M19.2 redraws the §2 sketch and §4 to match. Each step below carries its own
+tag, which the plan task named in it flips; M19.2 flips this row.
+<p id="rl-step-1"><strong>Step 1 — Auth</strong> <span class="tag">todo</span>
+<code>/auth/exchange</code>, signing keys, JWKS, <code>group_role_map</code>; <code>huron login</code>,
+<code>whoami</code>, <code>catalog use</code> (DT-4, DT-5, DT-6, DT-19, DT-22; flipped by M10.4).</p>
+<p id="rl-step-2"><strong>Step 2 — Catalog config and schemas</strong> <span class="tag">todo</span>
+<code>catalogs</code>, <code>metadata_schemas</code> with <code>extends</code>; <code>explain</code>,
+<code>meta template</code>, <code>meta validate</code>; administration verbs, audited (DT-8, DT-9,
+DT-10, DT-20; flipped by M10.7).</p>
+<p id="rl-step-3"><strong>Step 3 — Collections</strong> <span class="tag">todo</span> Drafts, the
+walkthrough, activation, path resolution, directories with permissions; <code>create
+collection</code>, <code>get</code>, <code>describe</code> (DT-11, DT-12, DT-20; flipped by
+M12.3).</p>
+<p id="rl-step-4"><strong>Step 4 — Files</strong> <span class="tag">todo</span>
+<code>checkout</code>, <code>add</code>, <code>rm</code>, <code>status</code>, <code>push</code>; the
+commit endpoint (202, poll) and the <code>.part</code>/<code>rename</code> path (DT-13, DT-14, DT-21,
+DT-23; flipped by M15.4).</p>
+<p id="rl-step-5"><strong>Step 5 — Metadata editing and audit</strong> <span class="tag">todo</span>
+<code>meta update</code>, publish, <code>diff</code>, <code>log</code>, <code>mv</code> (DT-7, DT-15;
+flipped by M18.3).</p>
+<p id="rl-step-6"><strong>Step 6 — Maintenance</strong> <span class="tag">todo</span>
+<code>huron check</code> and the reconciler CronJob (DT-16; flipped by M18.3).</p></td>
+<td><p>Step 1: <code>tests/unit/test_api_router_composition.py</code> pins the <code>/auth</code>
+family to exactly <code>POST /auth/exchange</code>; a removed mapping refuses the next request
+without a new token (owner decision 7); a company JWT on a lake route gives 401; the manual
+<code>huron login --device</code> smoke against compose Keycloak passes.</p>
+<p>Step 2: local <code>meta validate</code> and the server return the same verdict on the shared
+fixtures; republishing a schema version with different content gives 409
+<code>SCHEMA_VERSION_EXISTS</code>; every administration write has one audit entry.</p>
+<p>Step 3: activation creates the directory and its ACL on the stand-in (recording fake), and on
+loopback NFS in the <code>nfs</code> job; a drift between the namespace and the path is
+refused.</p>
+<p>Step 4: <code>tests/acceptance/test_push_large_file.py</code> (plain directory, ≥ 12&nbsp;GiB
+free) passes; an interrupted push resumes without re-copying placed files; a re-hash mismatch ends
+<code>failed</code> with no rows; the commit recovers after a worker crash.</p>
+<p>Step 5: each accepted write has exactly one audit entry and a no-op has none; <code>mv</code>
+keeps the UUID; the audit trigger refuses <code>UPDATE</code>/<code>DELETE</code>/<code>TRUNCATE</code>.</p>
+<p>Step 6: the reconciler cases on the <code>.snapshot</code> fixture pass; the nightly
+<code>acceptance and nfs</code> scale case writes <code>reconciler-scale.json</code>, which the
+runbook's sizing rule reads.</p></td></tr>
+
 <tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">done</span></td>
 <td>Delivers, each item named with the module it lives in and the test module that pins it
 and verified by the test suites: the session state machine and lease
@@ -373,7 +427,7 @@ operator CLI and the controlled-deployment contract were deleted, and <code>prot
 protocol activation and API startup gating will not be built.
 <a href="../docs/history.md#legacy-cutover-retirement">Implementation history</a> records the
 removal and retains the earlier failed attempts and authority redesign; the
-<a href="../P3_DESIGN.md">design</a> and <a href="../P3_IMPLEMENTATION_PLAN.md">implementation plan</a>
+<a href="https://github.com/karthedew/huron/blob/f1c44e3d56b10806c05373fce5b51c7a44abf146/P3_DESIGN.md">design</a> and <a href="https://github.com/karthedew/huron/blob/f1c44e3d56b10806c05373fce5b51c7a44abf146/P3_IMPLEMENTATION_PLAN.md">implementation plan</a>
 are superseded and kept as history. Local verification does not certify production or NFS support.
 Remaining work: recovery orchestration using the implemented RECOVERING state and safe orphan import, versioned governance evidence, integrity/read
 rules, findings, staging-only guarded cleanup and offline Raw catalog rebuild. P5 originates governance
@@ -777,8 +831,8 @@ pass a failing contract check into publication without an explicit, audited over
 <tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
 <tr><td class="k">23 — Snapshots &amp; data access<br><span class="tag">todo</span><br>backend P8</td>
-<td>Built: the write-intent authorization stub on
-<code>/datasets/{id}/layers/{layer}/write-intents</code>. Adds: the snapshot registry surface —
+<td>Adds: the write-intent authorization stub on
+<code>/datasets/{id}/layers/{layer}/write-intents</code>; the snapshot registry surface —
 provenance, validation, layer state; "latest published" always resolving to a pinned snapshot
 id, never a floating reference; STS-vended short-lived prefix-scoped credentials — read grants
 for clients, write credentials minted only from write-intents; per-dataset Silver repos exist

@@ -1,5 +1,7 @@
 # Huron Raw storage redesign — implementation plan
 
+> **Superseded 2026-10-23** by `RAW_LAKE_DESIGN.md`, `RAW_LAKE_IMPLEMENTATION_PLAN.md` and `RAW_LAKE_SPEC.md`. Do not execute further tasks from this plan; Milestones 0–1 shipped (through `fa51f46`), and their execution notes stay as history.
+
 Status: Milestone 0 done; Milestones 1+ pending.
 
 Branch `raw-storage`; baseline commit `8b6f270`; Milestones 1–14 start from `9882690`, the commit
