@@ -452,7 +452,7 @@ combined T-docs-0 closing check. No file under `src/`, `tests/`, `migrations/`, 
     owner's two inserted banner lines and their blank lines; `git diff --check HEAD~1 HEAD` prints nothing.
   - The baseline entry carries every number listed above, each with the command that produced it.
 - Dependencies: none.
-- Status: pending
+- Status: done
 
 ### M0.2 T-docs-0a: `AGENTS.md` binding rules
 
@@ -9630,3 +9630,42 @@ them, so they do not shift.
 Entries are appended as tasks run, newest last, each headed by its task id: M0.1's baseline first, then
 every deviation, receipt, `fail_under` change, duplication-baseline edit and owner receipt the tasks above
 name. Nothing is recorded here before M0.1 runs.
+
+### M0.1 baseline (measured 2026-10-24 on the planning base `6f4afd8`; `src/`, `tests/`, `migrations/` and `web/` are `fa51f46`'s)
+
+- Plan-wide gate on `fa51f46`'s tree: all fifteen commands exit 0, `radon cc` and `radon mi` print nothing
+  (the commands run in the order listed in "Plan-wide rules"): GATE PASS.
+- `uv run lint-imports`: "Contracts: 16 kept, 0 broken."
+- `uv run pytest -q`: 1524 passed, 47 deselected. `uv run pytest -m contract -q`: 32 passed, 1539 deselected.
+  `uv run pytest -m integration -q`: 14 passed, 1557 deselected.
+- Unit coverage, `uv run pytest -q --cov=src/huron --cov-report=json:<scratch>/baseline.json`
+  (`totals`): `covered_lines` 5602, `num_statements` 5854, `percent_covered` 95.69525111035189 (252 missed;
+  term-missing TOTAL 95.70 %). `fail_under` in `pyproject.toml` is 95.69 and was reached.
+- Duplication guard, `uv run --locked python scripts/check_duplication.py src`: 123 clones in 41 groups
+  (clone threshold 0.8, pyscn 1.31.1; 123 of 824 fragments cloned, 144 clone pairs, native score 75/100,
+  reported and not gated), equal to `scripts/duplication_baseline.json` (`total_clones` 123, `clone_groups` 41).
+- Legacy `/api/v1` operation count: 52 (paths x methods under `/api/v1` in `create_app(settings=<dev-headers
+  settings>, stores=memory_stores()).openapi()["paths"]`, from a scratch script outside the repository run
+  as `PYTHONPATH=. uv run python <scratch>/opcount.py`).
+- From `web/`: `npm test`: 25 test files passed, 269 tests passed. `rg -c "^test\(" e2e/*.ts`: 39 top-level
+  Playwright tests (ingestion 6, organizations 5, smoke 10, dataset-types 5, polaris 13).
+- Gate summary, verbatim:
+
+  ```text
+  PASS  1 rc=0    1s     1 lines  uv run ruff check src
+  PASS  2 rc=0    0s     1 lines  uv run ruff format --check src
+  PASS  3 rc=0    0s     0 lines  uv run pydoclint src
+  PASS  4 rc=0    1s     1 lines  uv run mypy
+  PASS  5 rc=0    0s     1 lines  uv run ty check
+  PASS  6 rc=0    1s    36 lines  uv run lint-imports
+  PASS  7 rc=0    0s     0 lines  uv run python scripts/check_schema_map.py
+  PASS  8 rc=0    0s     0 lines  uv run radon cc src --min C
+  PASS  9 rc=0    1s     0 lines  uv run radon mi src --min B
+  PASS 10 rc=0    0s   995 lines  uv run complexipy src --max-complexity-allowed 15
+  PASS 11 rc=0    0s   230 lines  uv run --locked pyscn check src
+  PASS 12 rc=0    1s    19 lines  uv run --locked python scripts/check_duplication.py src
+  PASS 13 rc=0   66s   269 lines  uv run pytest --cov=src/huron --cov-report=term-missing
+  PASS 14 rc=0   95s    28 lines  uv run pytest -m contract
+  PASS 15 rc=0   19s    25 lines  uv run pytest -m integration
+  GATE PASS
+  ```
