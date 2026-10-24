@@ -4,6 +4,12 @@ status: accepted
 
 # Domain modules own their workflows
 
+> *Amended 2026-10-23.* The Raw lake (ADR 0004) changes the domain list, but not the decision. The Core
+> owners are now `foundation`, `security` (with the auth broker), `hierarchy` (the former Catalog,
+> renamed), `lake` (the Raw catalog), and the adapters `metastore` and `rawstore`. The Raw domain, its
+> release tags and the Integrity domain no longer exist (M0.2–M0.3, DT-2). `lake` and `hierarchy` never
+> import each other, and import-linter checks the graph in `AGENTS.md`.
+
 Huron's separate `pkg` and `core` tiers distribute a domain's values, invariants,
 authorized operations, and persistence interfaces across the repository. We decided
 on 2026-09-15 to colocate them in domain subpackages under `huron.core`, with an

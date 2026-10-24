@@ -540,7 +540,7 @@ combined T-docs-0 closing check. No file under `src/`, `tests/`, `migrations/`, 
 - Decisions: OQ-18.1 (settled, owner decision 12)
 - Decisions: OQ-18.3 (settled, owner decision 12)
 - Decisions: OQ-20.3 (settled, owner decision 12)
-- Status: pending
+- Status: done
 
 ### M0.4 T-docs-0c: Spec amendments, superseded banners, D-2 links and the history row
 
@@ -9669,3 +9669,13 @@ name. Nothing is recorded here before M0.1 runs.
   PASS 15 rc=0   19s    25 lines  uv run pytest -m integration
   GATE PASS
   ```
+
+### M0.3 deviation: ADR 0006's Consequences list
+
+- `docs/adr/0006-asynchronous-raw-commit.md` has one blank line between "Consequences:" and its first `-`
+  item, which "DT-25 ADRs" does not have. Without it Zensical's Markdown (`make docs`) renders the four
+  consequences as one paragraph with literal `- ` runs (checked in `site/adr/0006-asynchronous-raw-commit/`),
+  where the design means a Consequences list. Every word and every other line break of the five ADRs,
+  the ADR 0002 amendment block and `CONTEXT.md` is the design's text: the new ADRs without the design's
+  `> ` quote markers, the ADR 0002 amendment keeping them as its block, and `CONTEXT.md` with the
+  two-space indent stripped.
