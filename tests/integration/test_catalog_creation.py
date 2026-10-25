@@ -22,7 +22,7 @@ from huron.core.foundation.errors import IdempotencyKeyReused
 from huron.core.catalog.paths import organization_dir, project_dir
 from huron.core.catalog.types import Dataset
 from huron.core.metastore import InMemoryRbacStore, PostgresHierarchyStore
-from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.rules import Classification, RoleBindingAuthorizer, ScopeType, Visibility
 from tests.hierarchy_contract import _organization, _project
 
@@ -39,7 +39,7 @@ def _claim(kind: str, key: str, title: str) -> IdempotencyClaim:
 async def _workspace(pool: asyncpg.Pool, root: Path, kind: str):
     """Seed immutable parent rows and files, then bind the explicit creation operation."""
     store = PostgresHierarchyStore(pool)
-    storage = PosixRawStore(str(root))
+    storage = PosixGenerationStore(root)
     storage.initialize()
     organization = _organization(slug=f"parent-{uuid4().hex}")
     project = _project(organization_id=organization.id, slug="parent-project")

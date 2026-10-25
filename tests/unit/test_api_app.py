@@ -15,7 +15,8 @@ import asyncio
 import dataclasses
 import shutil
 import time
-from typing import TYPE_CHECKING, Any, cast
+from pathlib import Path
+from typing import Any, cast
 
 import asyncpg
 import httpx
@@ -35,9 +36,6 @@ from huron.core.metastore import (
     PostgresSessionStore,
 )
 from tests.unit.support import memory_stores
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 import pytest
 
@@ -64,19 +62,6 @@ class _FakePool:
         if self._fails_with is not None:
             raise self._fails_with
         return 1
-
-
-class _HangingRoot:
-    """A raw-store root whose ``exists()`` blocks well past the readiness timeout.
-
-    Standing in for a wedged network mount, it runs the block on a real
-    thread rather than an awaited coroutine, matching what ``stat`` behind
-    ``Path.exists()`` actually does when the filesystem hangs.
-    """
-
-    def exists(self) -> bool:
-        time.sleep(2.0)
-        return True
 
 
 def _with_database_pool(app: Any, pool: _FakePool) -> None:
@@ -533,7 +518,7 @@ def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_pool(
 def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_generations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A wedged raw-store mount times out instead of hanging the ``/readyz`` probe forever.
+    """A wedged generation-store mount times out instead of hanging the ``/readyz`` probe forever.
 
     A ``stat`` that never answers must not hang the probe forever - the
     orchestrator's own probe timeout would otherwise expire first, so the
@@ -551,7 +536,15 @@ def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_generations(
     )
     app = create_app(settings=settings, stores=memory_stores())
     with TestClient(app) as client:
-        app.state.runtime.generations.root = _HangingRoot()
+        root = app.state.runtime.generations.root
+        original_exists = Path.exists
+
+        def exists(path: Path) -> bool:
+            if path == root:
+                time.sleep(2.0)
+            return original_exists(path)
+
+        monkeypatch.setattr(Path, "exists", exists)
         started = time.monotonic()
         response = client.get("/readyz")
         elapsed = time.monotonic() - started

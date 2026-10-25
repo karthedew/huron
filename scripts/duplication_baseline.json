@@ -1,5 +1,5 @@
 {
-  "clone_groups": 30,
+  "clone_groups": 29,
   "clone_threshold": 0.8,
   "groups": [
     {
@@ -172,13 +172,6 @@
     },
     {
       "files": [
-        "src/huron/core/rawstore/materialize.py",
-        "src/huron/core/rawstore/store.py"
-      ],
-      "size": 2
-    },
-    {
-      "files": [
         "src/huron/core/security/_impl/bindings.py"
       ],
       "size": 2
@@ -206,5 +199,5 @@
     }
   ],
   "pyscn_version": "1.31.1",
-  "total_clones": 89
+  "total_clones": 87
 }

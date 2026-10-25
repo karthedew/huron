@@ -1,4 +1,4 @@
-"""Closed, independent candidates installed with an exclusive rename."""
+"""Anchored POSIX descriptors, complete writes and durable directory entries."""
 
 from __future__ import annotations
 
@@ -10,10 +10,9 @@ import stat
 import sys
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -167,114 +166,20 @@ def write_all(descriptor: int, payload: bytes, *, offset: int | None = None) -> 
             offset += count
 
 
-@contextmanager
-def candidate(parent: int, chunks: Iterable[bytes]) -> Iterator[str]:
-    """Write, seal, fsync and close a private candidate before exposing its name.
+def fsync_dir(directory: Path) -> None:
+    """Flush a directory's entries to stable storage.
+
+    Opens the directory read-only and fsyncs the descriptor. This is the
+    step that makes a rename, a newly created name or a removal durable
+    once the bytes behind it already are; fsyncing the file alone does not
+    persist the entry that names it.
 
     Args:
-        parent: Existing private candidate directory descriptor.
-        chunks: Bytes to copy into a newly allocated inode.
-
-    Yields:
-        The closed candidate name, removed on exit unless already renamed.
+        directory: An existing directory; the open uses ``O_DIRECTORY``, so
+            any other kind of path fails.
     """
-    name = uuid4().hex
-    descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent)
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        try:
-            for chunk in chunks:
-                write_all(descriptor, chunk)
-            os.fchmod(descriptor, 0o444)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        os.fsync(parent)
-        yield name
-    finally:
-        with suppress(FileNotFoundError):
-            os.unlink(name, dir_fd=parent)
-        os.fsync(parent)
-
-
-def install(
-    parent: int, name: str, target_dir: int, target: str, expected: tuple[int, str]
-) -> None:
-    """Install a closed candidate or verify the concurrent winner, durably.
-
-    Args:
-        parent: Candidate directory descriptor.
-        name: Closed candidate name.
-        target_dir: Destination parent descriptor.
-        target: Installed file name.
-        expected: Required byte count and SHA-256.
-
-    Raises:
-        ValueError: If an existing destination disagrees with the candidate.
-    """
-    try:
-        rename_exclusive(parent, name, target_dir, target)
-    except FileExistsError:
-        if observe(target_dir, target) != expected:
-            raise ValueError(f"installed file conflicts with verified content: {target}") from None
-    os.fsync(target_dir)
-    os.fsync(parent)
-
-
-def file_chunks(parent: int, name: str) -> Iterator[bytes]:
-    """Read an upload input without following links or accepting special files.
-
-    Args:
-        parent: Existing upload directory descriptor.
-        name: Input file name.
-
-    Yields:
-        Bounded blocks from the upload input.
-
-    Raises:
-        ValueError: If the upload input is not a regular independent file.
-    """
-    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
-            raise ValueError(f"upload input is not an independent regular file: {name}")
-        while block := os.read(descriptor, 1 << 20):
-            yield block
+        os.fsync(descriptor)
     finally:
         os.close(descriptor)
-
-
-def flush_tree(root: int, *, seal: bool = False) -> None:
-    """Flush a held tree, optionally sealing each descendant before its parent.
-
-    Args:
-        root: Existing directory descriptor; the root itself remains writable.
-        seal: Whether to remove write permissions from all descendants.
-
-    Raises:
-        ValueError: If any file is not regular and independently owned.
-    """
-    for name in sorted(os.listdir(root)):
-        info = os.stat(name, dir_fd=root, follow_symlinks=False)
-        if stat.S_ISDIR(info.st_mode):
-            with descendant(root, (name,)) as child:
-                flush_tree(child, seal=seal)
-                if seal:
-                    os.fchmod(child, 0o555)
-                    os.fsync(child)
-        else:
-            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
-            try:
-                info = os.fstat(descriptor)
-                if (
-                    not stat.S_ISREG(info.st_mode)
-                    or info.st_nlink != 1
-                    or info.st_uid != os.geteuid()
-                ):
-                    raise ValueError(f"tree contains an unsafe file: {name}")
-                if seal:
-                    os.fchmod(descriptor, 0o444)
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
-    os.fsync(root)

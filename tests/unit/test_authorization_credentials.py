@@ -19,7 +19,7 @@ from huron.applications.api.runtime import ApiRuntime
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
 from huron.core.foundation.errors import AuthError
 from huron.core.metastore import SystemClock
-from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.oidc import OidcResolver
 from huron.core.security.rules import RoleBindingAuthorizer
 from huron.core.security.sessions import SessionRecord, create_session
@@ -48,14 +48,14 @@ def _request(
     return Request(scope)
 
 
-def _generations(tmp_path: Path) -> PosixRawStore:
+def _generations(tmp_path: Path) -> PosixGenerationStore:
     """An initialized, filesystem-backed generation store under ``tmp_path``."""
-    store = PosixRawStore(str(tmp_path / "raw"))
+    store = PosixGenerationStore(tmp_path / "raw")
     store.initialize()
     return store
 
 
-def _runtime(*, generations: PosixRawStore, stores: ApiStores, settings: ApiSettings) -> ApiRuntime:
+def _runtime(*, generations: PosixGenerationStore, stores: ApiStores, settings: ApiSettings) -> ApiRuntime:
     """An ApiRuntime wired to the given generation store and stores, with no OIDC configured."""
     return ApiRuntime(
         settings=settings,

@@ -33,7 +33,7 @@ from huron.core.foundation.errors import (
 )
 from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
 from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
-from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.rules import RoleBindingAuthorizer, ScopeType, Visibility
 from tests.catalog_creation_support import creation_for
 from tests.repository_fixture import RepositoryFixture
@@ -47,7 +47,7 @@ pytestmark = pytest.mark.unit
 async def _repository(tmp_path: Path) -> RepositoryFixture:
     """Build a storage bundle at ``tmp_path`` over a fresh in-memory hierarchy store."""
     repository = RepositoryFixture(
-        PosixRawStore(str(tmp_path / "raw")),
+        PosixGenerationStore(tmp_path / "raw"),
         InMemoryHierarchyStore(),
         InMemoryRbacStore(),
     )

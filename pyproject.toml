@@ -300,5 +300,5 @@ include = ["src"]
 # climbs. Lower it only when the whole drop comes from deleted covered code or
 # from new PostgreSQL adapter code the contract suite covers in full, never to
 # admit uncovered code. New or touched files are covered in full.
-fail_under = 96.28
+fail_under = 96.02
 precision = 2

@@ -9,7 +9,7 @@ import pytest
 from huron.core.foundation.retry import request_sha256, IdempotencyClaim
 from huron.core.catalog.lifecycle import DatasetLifecycle
 from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
-from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import PosixGenerationStore
 from tests.catalog_creation_support import creation_for
 from tests.repository_fixture import RepositoryFixture
 
@@ -40,7 +40,7 @@ def _claim(operation: str, *parts: str, key: str) -> IdempotencyClaim:
 async def test_created_dataset_is_active(tmp_path: Path) -> None:
     """A freshly created dataset's lifecycle state is ACTIVE, both as enum member and as string."""
     repository = RepositoryFixture(
-        PosixRawStore(str(tmp_path / "raw")),
+        PosixGenerationStore(tmp_path / "raw"),
         InMemoryHierarchyStore(),
         InMemoryRbacStore(),
     )

@@ -19,7 +19,7 @@ from huron.core.metastore import (
     InMemoryHierarchyStore,
     InMemoryRbacStore,
 )
-from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.principal import Principal
 from huron.core.security.rules import ScopeType, Visibility
 from tests.catalog_creation_support import creation_for
@@ -36,7 +36,7 @@ pytestmark = pytest.mark.unit
 def _repository(tmp_path: Path) -> RepositoryFixture:
     """A real, filesystem-backed storage bundle for the guard tests."""
     return RepositoryFixture(
-        PosixRawStore(str(tmp_path / "raw")),
+        PosixGenerationStore(tmp_path / "raw"),
         InMemoryHierarchyStore(),
         InMemoryRbacStore(),
     )

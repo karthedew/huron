@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import asyncpg
@@ -27,7 +28,7 @@ from huron.core.metastore import (
     PostgresSessionStore,
     SystemClock,
 )
-from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import PosixGenerationStore
 from huron.core.security import bootstrap_platform_owner
 from huron.core.security.oidc import JwksVerifier, OidcClient, OidcResolver
 from huron.core.security.rules import Classification, RoleBindingAuthorizer
@@ -93,7 +94,7 @@ def _build_runtime(
         The runtime every injected route reads through
         ``huron.applications.api.runtime``.
     """
-    generations = PosixRawStore(settings.data_root)
+    generations = PosixGenerationStore(Path(settings.data_root))
     generations.initialize()
     oidc_resolver, oidc_client = oidc
     return ApiRuntime(

@@ -30,7 +30,7 @@ src/huron/
   core/security/      authentication, identity, authorization and their complete workflows
   core/catalog/       hierarchy, dataset/layer configuration, descriptions and discovery
   core/metastore/     PostgreSQL and in-memory persistence adapters
-  core/rawstore/      POSIX staging, hashing, independent copies, rename and sealing
+  core/rawstore/      the hierarchy's generation store and the POSIX primitives the Volume adapter adopts
   schema/             canonical JSON schemas, loaders and shared primitive contracts
 ```
 

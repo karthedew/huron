@@ -1,20 +1,16 @@
-"""Raw POSIX/NFS evidence-tier mechanisms.
+"""Hierarchy generation storage and anchored POSIX primitives for volume adapters."""
 
-The package's public surface is :class:`PosixRawStore`, the store the
-catalog and the hierarchy repository write through, and the publication
-primitives it is built on: :func:`commit_envelope`,
-:func:`assert_same_filesystem` and :class:`CrossDeviceCommitError`.
-"""
-
-from huron.schema.storage import PartLengthMismatchError
-
-from .commit import CrossDeviceCommitError, assert_same_filesystem, commit_envelope
-from .store import PosixRawStore
+from .completion import CompletionAdmission
+from .generations import PosixGenerationStore
+from .materialize import descendant, directory, fsync_dir, observe, rename_exclusive, write_all
 
 __all__ = [
-    "CrossDeviceCommitError",
-    "PartLengthMismatchError",
-    "PosixRawStore",
-    "assert_same_filesystem",
-    "commit_envelope",
+    "CompletionAdmission",
+    "PosixGenerationStore",
+    "descendant",
+    "directory",
+    "fsync_dir",
+    "observe",
+    "rename_exclusive",
+    "write_all",
 ]

@@ -23,7 +23,7 @@ from huron.core.security.principal import Principal
 from huron.core.foundation.errors import PreconditionFailed
 from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
 from huron.core.metastore import InMemoryRbacStore, PostgresHierarchyStore
-from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.rules import Classification, RoleBindingAuthorizer, ScopeType
 from tests.hierarchy_contract import _dataset, _organization, _project
 
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.integration
 async def _workspace(pool: asyncpg.Pool, root: Path, kind: str):
     """Seed real rows and generation files, then bind an authorized typed collection."""
     store = PostgresHierarchyStore(pool)
-    storage = PosixRawStore(str(root))
+    storage = PosixGenerationStore(root)
     storage.initialize()
     organization = _organization(slug=f"description-{uuid4().hex}")
     project = _project(organization_id=organization.id, slug="project")

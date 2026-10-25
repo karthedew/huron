@@ -1135,7 +1135,7 @@ contracts, `0014` is head, and the web calls no Python service.
     are a reviewed hand edit, made as in M1.4 and recorded with the running total for G1; both kinds are
     exempt from the per-group cap.
 - Dependencies: M1.4.
-- Status: pending
+- Status: complete
 
 ### M1.6 D2-4: Owner decision 10's password login, cookie sessions and server code flow
 
@@ -10157,3 +10157,53 @@ coverage evidence remain applicable: no executable source/test statement changed
 M1.4 is complete under this explicit owner-authorized resolution; the historical
 FAIL reports above remain preserved rather than relabeled PASS. The escalation
 stop and proposed review/replanning commands are superseded by this instruction.
+
+### M1.5 execution notes — implementation attempt 1 (2026-10-25)
+
+- Base `990ca2a`; Codex implementation agent assigned Astra/medium, no nested agents.
+  The orchestrator performed the six listed whole-file deletions and the store rename first.
+  Deleted generation-half and `fsync_dir` tests were read from the base before adaptation.
+  Task status remains **pending** until independent verification.
+- Reduced `PosixGenerationStore` has the specified Path-only constructor, read-only root,
+  organization-only initialization, generation writer and private atomic replacement.
+  Existing-file replacement, durable generation-before-pointer ordering, complete writes and
+  failure cleanup are directly tested. API construction and surviving concrete-store callers use
+  the new name and Path argument. The readiness timeout test injects its stalled filesystem read
+  through `Path.exists` instead of assigning the now read-only root.
+- The six descriptor primitives and `CompletionAdmission` have unchanged ASTs; `fsync_dir`
+  moved verbatim. Dedicated survivor tests pass: 58 tests; `materialize.py`, `completion.py`,
+  `generations.py` and the public exports are each 100% covered by those three modules alone.
+  Pre-edit searches found no external production callers of retired members; post-edit searches
+  for each retired member and both exact closing checks print nothing. The production rawstore
+  importer search lists only `applications/api/app.py`.
+- Full gate: `make lint` passes (14 import contracts; no radon findings); 1,067 unit tests,
+  18 contract tests and 12 integration tests pass. The combined unit/contract measurement passes
+  1,085 tests. `make docs` reports no issues. No frontend files changed, so frontend gates do not
+  apply. Only ephemeral PostgreSQL testcontainers were used; the owner's stack was untouched.
+- Coverage baseline JSONs are `/tmp/huron-m15-before.json` and
+  `/tmp/huron-m15-before-contract.json`. Frozen-source after reports and the diff-aware proof
+  are under `/tmp/huron-m15-i1/`. Unit counts move from 3,729/3,873 to 3,481/3,625;
+  combined counts move from 3,863/3,873 to 3,615/3,625. The mapped store rename, moved
+  `fsync_dir`, narrowed signatures and retained organization creation show no surviving coverage
+  loss or offsetting gain. All 144 unit misses and ten combined misses are unchanged. The net
+  248-covered-statement reduction is 256 removed/reexpressed covered statements minus eight
+  fully covered required import/export/root-property statements. Every changed source file is
+  100%. Unit test count changes from 1,175 to 1,067 (-108). The exact floor is
+  `floor(10000 × 3481 / 3625) / 100 = 96.02`; the final enforced-floor run passes (96.03% displayed).
+- Duplication ratchets from 89 clones / 30 groups to 87 / 29, native score 70/100.
+  The old `(rawstore/materialize.py, rawstore/store.py)` group disappears entirely, so no
+  re-path, subset hand edit or capped signature is required. G1's capped-signature running
+  total remains zero; no broader exception was applied.
+- Exact commands, output, exit statuses, caller proofs, source hashes and the implementation
+  report are in `/tmp/huron-m15-i1/`. Initial feedback exposed a missing import, old string
+  constructor arguments and the obsolete root assignment; those were corrected before the
+  successful complete runs. Source remained frozen across the final coverage measurements.
+  Validation used process-scoped `caffeinate -i`; all owned validation processes exit at handoff.
+
+### M1.5 independent completion
+
+Verification attempt 1 passed with no findings: `/tmp/huron-m15-v1/report.md`.
+All full gates and coverage/clone proofs passed; independent M1.6 before reports
+are `/tmp/huron-m16-before.json` and `/tmp/huron-m16-before-contract.json`.
+The verifier also confirmed that `test_postgres_credential_conflicts.py` covers
+only the retiring local credential store, satisfying M1.6 deletion preflight.

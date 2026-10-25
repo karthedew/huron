@@ -27,7 +27,7 @@ from huron.core.metastore import MemoryApiKeyStore, InMemoryHierarchyStore, InMe
 from huron.core.security.principal import Principal as AuthPrincipal
 from huron.core.foundation.errors import Forbidden, ResourceNotFound
 from huron.core.security.errors import AttachmentExists, BindingExists, ServiceAccountExists
-from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.rules import (
     Binding,
     Classification,
@@ -52,7 +52,7 @@ pytestmark = pytest.mark.unit
 def _repository(tmp_path: Path) -> RepositoryFixture:
     """Build a storage bundle at ``tmp_path`` with only "open" classification allowed."""
     return RepositoryFixture(
-        PosixRawStore(str(tmp_path / "raw")),
+        PosixGenerationStore(tmp_path / "raw"),
         InMemoryHierarchyStore(),
         InMemoryRbacStore(),
     )

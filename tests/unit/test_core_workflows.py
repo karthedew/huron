@@ -19,7 +19,7 @@ from huron.core.catalog import (
 from huron.core.foundation.errors import Forbidden, ResourceNotFound
 from huron.core.foundation.retry import IdempotencyClaim
 from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
-from huron.core.rawstore import PosixRawStore
+from huron.core.rawstore import PosixGenerationStore
 from huron.core.security import AccessPolicy, Bindings
 from huron.core.security.principal import Principal
 from huron.core.security.rules import Classification, RoleBindingAuthorizer, ScopeType
@@ -64,7 +64,7 @@ async def workspace(
     CatalogCreation,
 ]:
     """Wire real domain, core and POSIX objects without importing the FastAPI application."""
-    storage = PosixRawStore(str(tmp_path / "raw"))
+    storage = PosixGenerationStore(tmp_path / "raw")
     hierarchy = InMemoryHierarchyStore(clock=Clock())
     repository = RepositoryFixture(storage, hierarchy, InMemoryRbacStore())
     await repository.rbac.grant_role(
