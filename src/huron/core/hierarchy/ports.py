@@ -1,4 +1,4 @@
-"""Catalog-owned hierarchy discovery, generation storage and mutation ports."""
+"""Hierarchy-owned hierarchy discovery, generation storage and mutation ports."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from .types import Dataset, Organization, PlatformRoot, Project
 
 
-class CollectionReader[ItemT, ParentT](Protocol):
+class ListingReader[ItemT, ParentT](Protocol):
     """Discoverable point reads and visibility-before-limit keyset windows."""
 
     async def get(self, resource_id: UUID, visibility: Visibility) -> ItemT:
@@ -54,21 +54,21 @@ class CollectionReader[ItemT, ParentT](Protocol):
         ...
 
 
-class CatalogReaders(Protocol):
+class HierarchyReaders(Protocol):
     """Typed readers for committed hierarchy records."""
 
     @property
-    def organizations(self) -> CollectionReader[Organization, PlatformRoot]:
+    def organizations(self) -> ListingReader[Organization, PlatformRoot]:
         """Return the organization reader."""
         ...
 
     @property
-    def projects(self) -> CollectionReader[Project, UUID]:
+    def projects(self) -> ListingReader[Project, UUID]:
         """Return the project reader."""
         ...
 
     @property
-    def datasets(self) -> CollectionReader[Dataset, UUID]:
+    def datasets(self) -> ListingReader[Dataset, UUID]:
         """Return the dataset reader."""
         ...
 
@@ -105,7 +105,7 @@ class DescriptionTransaction(Protocol):
         ...
 
 
-class DescriptionStore(CatalogReaders, Protocol):
+class DescriptionStore(HierarchyReaders, Protocol):
     """Committed ancestry and atomic descriptive changes."""
 
     def transaction(self) -> AbstractAsyncContextManager[DescriptionTransaction]:
@@ -146,7 +146,7 @@ class CreationTransaction(RetryTransaction, Protocol):
         ...
 
 
-class CreationStore(CatalogReaders, Protocol):
+class CreationStore(HierarchyReaders, Protocol):
     """Committed ancestry and atomic identity creation."""
 
     def transaction(self) -> AbstractAsyncContextManager[CreationTransaction]:

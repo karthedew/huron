@@ -28,7 +28,7 @@ src/huron/
   applications/api/   FastAPI routes, credentials/cookies, settings and lifecycle wiring
   core/foundation/    canonical JSON, identities/names, common errors, retry and clock contracts
   core/security/      authentication, identity, authorization and their complete workflows
-  core/catalog/       hierarchy, dataset/layer configuration, descriptions and discovery
+  core/hierarchy/     legacy organization/project/dataset hierarchy, descriptions and discovery
   core/metastore/     PostgreSQL and in-memory persistence adapters
   core/rawstore/      the hierarchy's generation store and the POSIX primitives the Volume adapter adopts
   schema/             canonical JSON schemas, loaders and shared primitive contracts

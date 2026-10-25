@@ -14,13 +14,13 @@ import asyncpg
 import pytest
 
 from huron.core.security import AccessPolicy
-from huron.core.catalog import CatalogCreation
-from huron.core.catalog._impl.documents import GenerationDocuments
+from huron.core.hierarchy import HierarchyCreation
+from huron.core.hierarchy._impl.documents import GenerationDocuments
 from huron.core.foundation.retry import request_sha256, IdempotencyClaim
 from huron.core.security.principal import Principal
 from huron.core.foundation.errors import IdempotencyKeyReused
-from huron.core.catalog.paths import organization_dir, project_dir
-from huron.core.catalog.types import Dataset
+from huron.core.hierarchy.paths import organization_dir, project_dir
+from huron.core.hierarchy.types import Dataset
 from huron.core.metastore import InMemoryRbacStore, PostgresHierarchyStore
 from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.rules import Classification, RoleBindingAuthorizer, ScopeType, Visibility
@@ -67,7 +67,7 @@ async def _workspace(pool: asyncpg.Pool, root: Path, kind: str):
         bindings,
         RoleBindingAuthorizer((Classification("open", 0, True),)),
     )
-    creation = CatalogCreation(access, store, storage, classification_vocabulary=("open",))
+    creation = HierarchyCreation(access, store, storage, classification_vocabulary=("open",))
     slug = f"created-{uuid4().hex}"
     choices = {
         "organization": (

@@ -7,26 +7,32 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, ClassVar
 from uuid import UUID
 
-from huron.core.catalog.layers import LAYER_ORDER, LAYER_SPECS
-from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
-from huron.core.catalog.types import Dataset, DescriptionChange, Organization, PlatformRoot, Project
+from huron.core.hierarchy.layers import LAYER_ORDER, LAYER_SPECS
+from huron.core.hierarchy.paths import dataset_dir, organization_dir, project_dir
+from huron.core.hierarchy.types import (
+    Dataset,
+    DescriptionChange,
+    Organization,
+    PlatformRoot,
+    Project,
+)
 from huron.core.security import as_rbac_principal
 from huron.core.security.rules import Decision, ScopeType, Visibility, decide
 
 from .documents import GenerationDocuments
 
 if TYPE_CHECKING:
-    from huron.core.catalog.ports import (
-        CollectionReader,
+    from huron.core.foundation.paging import Window
+    from huron.core.hierarchy.ports import (
         DescriptionStore,
         DescriptionTransaction,
         GenerationStorage,
+        ListingReader,
     )
-    from huron.core.foundation.paging import Window
     from huron.core.security import AccessPolicy
 
 
-class _Collection[ItemT: (Organization, Project, Dataset), ParentT: (PlatformRoot, UUID)](ABC):
+class _Listing[ItemT: (Organization, Project, Dataset), ParentT: (PlatformRoot, UUID)](ABC):
     """A fixed reader and parent scope, selected together by concrete construction."""
 
     _parent_kind: ClassVar[ScopeType]
@@ -56,7 +62,7 @@ class _Collection[ItemT: (Organization, Project, Dataset), ParentT: (PlatformRoo
 
     @property
     @abstractmethod
-    def _reader(self) -> CollectionReader[ItemT, ParentT]:
+    def _reader(self) -> ListingReader[ItemT, ParentT]:
         """Return the fixed typed reader selected by this collection's entity kind."""
         ...
 
@@ -147,35 +153,35 @@ class _Collection[ItemT: (Organization, Project, Dataset), ParentT: (PlatformRoo
         return dataset_dir(self._root, organization, project, item)
 
 
-class OrganizationCollection(_Collection[Organization, PlatformRoot]):
+class OrganizationListing(_Listing[Organization, PlatformRoot]):
     """Organization discovery at the platform root."""
 
     _parent_kind = ScopeType.SYSTEM
 
     @property
-    def _reader(self) -> CollectionReader[Organization, PlatformRoot]:
+    def _reader(self) -> ListingReader[Organization, PlatformRoot]:
         """Return the organization reader with its explicit platform parent."""
         return self._store.organizations
 
 
-class ProjectCollection(_Collection[Project, UUID]):
+class ProjectListing(_Listing[Project, UUID]):
     """Project discovery beneath an admitted organization."""
 
     _parent_kind = ScopeType.ORGANIZATION
 
     @property
-    def _reader(self) -> CollectionReader[Project, UUID]:
+    def _reader(self) -> ListingReader[Project, UUID]:
         """Return the project reader with its organization parent."""
         return self._store.projects
 
 
-class DatasetCollection(_Collection[Dataset, UUID]):
+class DatasetListing(_Listing[Dataset, UUID]):
     """Dataset discovery beneath an admitted project."""
 
     _parent_kind = ScopeType.PROJECT
 
     @property
-    def _reader(self) -> CollectionReader[Dataset, UUID]:
+    def _reader(self) -> ListingReader[Dataset, UUID]:
         """Return the dataset reader with its project parent."""
         return self._store.datasets
 

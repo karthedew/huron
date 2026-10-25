@@ -13,8 +13,8 @@ import pytest
 pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).parents[2]
-OWNERS = ("foundation", "security", "catalog", "metastore", "rawstore")
-PRIVATE_OWNERS = ("security", "catalog")
+OWNERS = ("foundation", "security", "hierarchy", "metastore", "rawstore")
+PRIVATE_OWNERS = ("security", "hierarchy")
 
 
 def test_foundation_import_does_not_initialize_domains_or_adapters() -> None:
@@ -26,7 +26,7 @@ def test_foundation_import_does_not_initialize_domains_or_adapters() -> None:
             """
 import sys
 from huron.core.foundation import canonical, clock, errors, identifiers, names, paging, retry
-for owner in ('security', 'catalog', 'metastore', 'rawstore'):
+for owner in ('security', 'hierarchy', 'metastore', 'rawstore'):
     assert 'huron.core.' + owner not in sys.modules, owner
 assert 'huron.applications.api' not in sys.modules
 """,
@@ -92,8 +92,8 @@ def test_declared_edges_and_owner_root_reexports_are_allowed(tmp_path: Path) -> 
     edges = {
         "foundation": (),
         "security": ("core.foundation",),
-        "catalog": ("core.security", "core.foundation"),
-        "metastore": ("core.catalog", "core.security", "core.foundation"),
+        "hierarchy": ("core.security", "core.foundation"),
+        "metastore": ("core.hierarchy", "core.security", "core.foundation"),
         "rawstore": ("schema",),
     }
     edits = {
@@ -109,24 +109,24 @@ def test_declared_edges_and_owner_root_reexports_are_allowed(tmp_path: Path) -> 
     [
         (
             {"huron/core/metastore/public.py": "import huron.schema\n"},
-            "metastore uses catalog security and foundation only",
+            "metastore uses hierarchy security and foundation only",
         ),
         (
             {
-                "huron/core/security/public.py": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import huron.core.catalog\n"
+                "huron/core/security/public.py": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import huron.core.hierarchy\n"
             },
             "security uses foundation only",
         ),
         (
             {
-                "huron/core/catalog/public.py": "import huron.schema.bridge\n",
+                "huron/core/hierarchy/public.py": "import huron.schema.bridge\n",
                 "huron/schema/bridge.py": "import huron.core.metastore\n",
             },
             "domains never depend on adapters even indirectly",
         ),
         (
             {
-                "huron/core/catalog/public.py": "import huron.schema.bridge\n",
+                "huron/core/hierarchy/public.py": "import huron.schema.bridge\n",
                 "huron/schema/bridge.py": "import fastapi\n",
             },
             "domains exclude frameworks and infrastructure libraries even indirectly",
@@ -136,11 +136,11 @@ def test_declared_edges_and_owner_root_reexports_are_allowed(tmp_path: Path) -> 
             "security implementations are private to their owner",
         ),
         (
-            {"huron/core/metastore/public.py": "import huron.core.catalog._impl.operations\n"},
-            "catalog implementations are private to their owner",
+            {"huron/core/metastore/public.py": "import huron.core.hierarchy._impl.operations\n"},
+            "hierarchy implementations are private to their owner",
         ),
         (
-            {"huron/core/catalog/public.py": "import huron.core.security._impl.operations\n"},
+            {"huron/core/hierarchy/public.py": "import huron.core.security._impl.operations\n"},
             "security implementations are private to their owner",
         ),
         ({"huron/core/unclassified.py": "value = 1\n"}, "every core sibling has an explicit owner"),

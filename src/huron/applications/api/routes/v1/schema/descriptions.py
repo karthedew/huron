@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel
 
-from huron.core.catalog.types import DescriptionChange
+from huron.core.hierarchy.types import DescriptionChange
 
 
 class DescriptionPatch(BaseModel):

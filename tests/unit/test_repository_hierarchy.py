@@ -17,21 +17,21 @@ from typing import TYPE_CHECKING
 import pytest
 
 from huron.core.security import AccessPolicy
-from huron.core.catalog import (
-    DatasetCollection,
-    OrganizationCollection,
-    ProjectCollection,
+from huron.core.hierarchy import (
+    DatasetListing,
+    OrganizationListing,
+    ProjectListing,
 )
-from huron.core.catalog.types import DescriptionChange, PlatformRoot
+from huron.core.hierarchy.types import DescriptionChange, PlatformRoot
 from huron.core.foundation.retry import request_sha256, IdempotencyClaim
 from huron.core.security.principal import Principal
-from huron.core.catalog.errors import ClassificationUnknown, SlugImmutable, SlugExists
+from huron.core.hierarchy.errors import ClassificationUnknown, SlugImmutable, SlugExists
 from huron.core.foundation.errors import (
     IdempotencyKeyReused,
     PreconditionFailed,
     ResourceNotFound,
 )
-from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
+from huron.core.hierarchy.paths import dataset_dir, organization_dir, project_dir
 from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
 from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.rules import RoleBindingAuthorizer, ScopeType, Visibility
@@ -66,9 +66,9 @@ async def _repository(tmp_path: Path) -> RepositoryFixture:
 class _Collections:
     """The three typed collections one actor-bound test needs together."""
 
-    organizations: OrganizationCollection
-    projects: ProjectCollection
-    datasets: DatasetCollection
+    organizations: OrganizationListing
+    projects: ProjectListing
+    datasets: DatasetListing
 
 
 def _descriptions(repository: RepositoryFixture, visibility: Visibility) -> _Collections:
@@ -76,9 +76,9 @@ def _descriptions(repository: RepositoryFixture, visibility: Visibility) -> _Col
     actor = Principal("tester" if visibility.unrestricted else "outsider")
     access = AccessPolicy(actor, repository.hierarchy, repository.rbac, RoleBindingAuthorizer())
     return _Collections(
-        OrganizationCollection(access, repository.hierarchy, repository.raw_store),
-        ProjectCollection(access, repository.hierarchy, repository.raw_store),
-        DatasetCollection(access, repository.hierarchy, repository.raw_store),
+        OrganizationListing(access, repository.hierarchy, repository.raw_store),
+        ProjectListing(access, repository.hierarchy, repository.raw_store),
+        DatasetListing(access, repository.hierarchy, repository.raw_store),
     )
 
 

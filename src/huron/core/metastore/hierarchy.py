@@ -21,8 +21,6 @@ from uuid import UUID
 
 import asyncpg
 
-from huron.core.catalog.errors import SlugExists
-from huron.core.catalog.types import Dataset, Organization, PlatformRoot, Project
 from huron.core.foundation.errors import (
     IdempotencyKeyReused,
     PreconditionFailed,
@@ -30,6 +28,8 @@ from huron.core.foundation.errors import (
 )
 from huron.core.foundation.paging import Window
 from huron.core.foundation.retry import Replay
+from huron.core.hierarchy.errors import SlugExists
+from huron.core.hierarchy.types import Dataset, Organization, PlatformRoot, Project
 from huron.core.security.rules import ProjectVisibility
 
 from .queries import _DATASETS, _ORGANIZATIONS, _PROJECTS, _PostgresCollection

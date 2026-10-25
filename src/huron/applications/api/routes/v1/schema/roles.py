@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from huron.core.catalog.layers import Layer
+from huron.core.hierarchy.layers import Layer
 from huron.core.security.rules import ScopeType
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from huron.core.security import AccessPolicy
-from huron.core.catalog import CatalogCreation
+from huron.core.hierarchy import HierarchyCreation
 from huron.core.security.principal import Principal
 from huron.core.security.rules import RoleBindingAuthorizer, ScopeType
 
@@ -18,7 +18,7 @@ async def creation_for(
     *,
     classifications: tuple[str, ...] = ("open",),
     visible: bool = True,
-) -> CatalogCreation:
+) -> HierarchyCreation:
     """Bind a seeded owner or an undiscovering actor to the real creation workflow."""
     if visible:
         grants = await repository.rbac.bindings_at(ScopeType.SYSTEM, None)
@@ -38,7 +38,7 @@ async def creation_for(
         repository.rbac,
         RoleBindingAuthorizer(),
     )
-    return CatalogCreation(
+    return HierarchyCreation(
         access,
         repository.hierarchy,
         repository.raw_store,

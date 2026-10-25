@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.core.catalog.paths import dataset_dir
+from huron.core.hierarchy.paths import dataset_dir
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
@@ -116,7 +116,7 @@ def _dataset(client: TestClient, project_id: str, slug: str = "run-0001") -> str
 
 @dataclasses.dataclass(frozen=True)
 class _Ref:
-    """The id and slug a path constructor from ``huron.core.catalog.paths`` needs."""
+    """The id and slug a path constructor from ``huron.core.hierarchy.paths`` needs."""
 
     id: UUID
     slug: str

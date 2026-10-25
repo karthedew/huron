@@ -1,4 +1,4 @@
-"""Catalog failures, including the reserved publication vocabulary."""
+"""Hierarchy failures, including the reserved publication vocabulary."""
 
 from huron.core.foundation.errors import DomainError
 

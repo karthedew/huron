@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from huron.core.catalog.ports import GenerationStorage
+    from huron.core.hierarchy.ports import GenerationStorage
 
 pytestmark = pytest.mark.unit
 

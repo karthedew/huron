@@ -28,7 +28,7 @@ from tests.repository_fixture import RepositoryFixture
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from huron.core.catalog.types import Dataset, Organization, Project
+    from huron.core.hierarchy.types import Dataset, Organization, Project
 
 pytestmark = pytest.mark.unit
 

@@ -4,11 +4,11 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from huron.core.catalog import (
-    CatalogCreation,
-    DatasetCollection,
-    OrganizationCollection,
-    ProjectCollection,
+from huron.core.hierarchy import (
+    DatasetListing,
+    HierarchyCreation,
+    OrganizationListing,
+    ProjectListing,
 )
 from huron.core.security import AccessPolicy, Bindings, IdentityService, Policies, ServiceAccounts
 
@@ -30,7 +30,7 @@ def _access_policy(runtime: Runtime, actor: CurrentPrincipal) -> AccessPolicy:
     return AccessPolicy(actor, runtime.hierarchy, runtime.rbac, runtime.authorizer)
 
 
-def organization_collection(runtime: Runtime, actor: CurrentPrincipal) -> OrganizationCollection:
+def organization_collection(runtime: Runtime, actor: CurrentPrincipal) -> OrganizationListing:
     """Bind organization discovery and descriptions to the authenticated actor.
 
     Args:
@@ -40,15 +40,15 @@ def organization_collection(runtime: Runtime, actor: CurrentPrincipal) -> Organi
     Returns:
         Authorized organization reads and descriptive updates.
     """
-    return OrganizationCollection(
+    return OrganizationListing(
         _access_policy(runtime, actor), runtime.hierarchy, runtime.generations
     )
 
 
-Organizations = Annotated[OrganizationCollection, Depends(organization_collection)]
+Organizations = Annotated[OrganizationListing, Depends(organization_collection)]
 
 
-def project_collection(runtime: Runtime, actor: CurrentPrincipal) -> ProjectCollection:
+def project_collection(runtime: Runtime, actor: CurrentPrincipal) -> ProjectListing:
     """Bind project discovery and descriptions to the authenticated actor.
 
     Args:
@@ -58,13 +58,13 @@ def project_collection(runtime: Runtime, actor: CurrentPrincipal) -> ProjectColl
     Returns:
         Authorized project reads and descriptive updates.
     """
-    return ProjectCollection(_access_policy(runtime, actor), runtime.hierarchy, runtime.generations)
+    return ProjectListing(_access_policy(runtime, actor), runtime.hierarchy, runtime.generations)
 
 
-Projects = Annotated[ProjectCollection, Depends(project_collection)]
+Projects = Annotated[ProjectListing, Depends(project_collection)]
 
 
-def dataset_collection(runtime: Runtime, actor: CurrentPrincipal) -> DatasetCollection:
+def dataset_collection(runtime: Runtime, actor: CurrentPrincipal) -> DatasetListing:
     """Bind dataset discovery, descriptions and layer views to the authenticated actor.
 
     Args:
@@ -74,13 +74,13 @@ def dataset_collection(runtime: Runtime, actor: CurrentPrincipal) -> DatasetColl
     Returns:
         Authorized dataset reads, descriptive updates and layer descriptions.
     """
-    return DatasetCollection(_access_policy(runtime, actor), runtime.hierarchy, runtime.generations)
+    return DatasetListing(_access_policy(runtime, actor), runtime.hierarchy, runtime.generations)
 
 
-Datasets = Annotated[DatasetCollection, Depends(dataset_collection)]
+Datasets = Annotated[DatasetListing, Depends(dataset_collection)]
 
 
-def catalog_creation(runtime: Runtime, actor: CurrentPrincipal) -> CatalogCreation:
+def catalog_creation(runtime: Runtime, actor: CurrentPrincipal) -> HierarchyCreation:
     """Bind explicit identity creation to the authenticated actor.
 
     Args:
@@ -90,7 +90,7 @@ def catalog_creation(runtime: Runtime, actor: CurrentPrincipal) -> CatalogCreati
     Returns:
         Authorized creation with transaction-scoped retry and durable publication.
     """
-    return CatalogCreation(
+    return HierarchyCreation(
         _access_policy(runtime, actor),
         runtime.hierarchy,
         runtime.generations,
@@ -100,7 +100,7 @@ def catalog_creation(runtime: Runtime, actor: CurrentPrincipal) -> CatalogCreati
     )
 
 
-Creation = Annotated[CatalogCreation, Depends(catalog_creation)]
+Creation = Annotated[HierarchyCreation, Depends(catalog_creation)]
 
 
 def role_bindings(runtime: Runtime, actor: CurrentPrincipal) -> Bindings:

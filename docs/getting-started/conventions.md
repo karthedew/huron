@@ -94,7 +94,7 @@ and a mutable display `title`. **No role can change a slug** — not an organiza
 platform owner. A slug is baked into the storage path, so an immutable slug is what makes paths
 permanently stable, which is what makes citations durable.
 
-`core/catalog/paths.py` owns hierarchy/generation and cross-layer layout;
+`core/hierarchy/paths.py` owns hierarchy/generation and cross-layer layout;
 `core/raw/paths.py` owns staging and revision layout. Use these published
 constructors rather than concatenating paths in callers.
 

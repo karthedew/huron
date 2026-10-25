@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from huron.applications.api.routes.v1.schema.roles import LayerGrantView, RoleView
-from huron.core.catalog.layers import Layer
+from huron.core.hierarchy.layers import Layer
 from huron.core.security.roles import ROLES, RoleDefinition
 
 router = APIRouter(prefix="/roles", tags=["roles"])

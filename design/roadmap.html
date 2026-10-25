@@ -109,7 +109,7 @@ src/huron/
   applications/api/   FastAPI transport, settings, authentication extraction and wiring
   core/foundation/    shared errors, canonical JSON, IDs/names, retry and clocks
   core/security/      authentication, identity, authorization and their workflows
-  core/catalog/       hierarchy identity, descriptions, layer configuration and discovery
+  core/hierarchy/       hierarchy identity, descriptions, layer configuration and discovery
   core/rawstore/      generation files and the anchored POSIX primitives
   core/metastore/     PostgreSQL and in-memory persistence adapters
   schema/             canonical JSON schemas, shared document validation and primitive contracts
@@ -170,12 +170,12 @@ stages. Withdrawn: the local NFS stand-in volume this row once claimed was never
 (<code>RAW_LAKE_DESIGN.md</code> "Roadmap Drift", D-1); the volume stand-in is
 <a href="#raw-lake">RL</a> step 3's.</td>
 <td>Green CI on the empty tree; a deliberately added <code>import fastapi</code> in
-<code>core/catalog/</code>, an undeclared domain edge, and an import of one application
+<code>core/hierarchy/</code>, an undeclared domain edge, and an import of one application
 from another each fail their contract; the compose stack boots and bootstraps buckets from a
 clean checkout.</td></tr>
 
 <tr><td class="k">P1 — Foundations<br><span class="tag">done</span></td>
-<td>Domain model for the three-level hierarchy in <code>core/catalog/</code>;
+<td>Domain model for the three-level hierarchy in <code>core/hierarchy/</code>;
 Catalog/Raw path construction and parsing with Foundation name validation; Raw manifest/Foundation JCS
 module with the full rejection matrix; UUIDv7; <code>PosixRawStore</code> in
 <code>core/rawstore/</code>; migrations (hierarchy, role_bindings, api_keys, audit, outbox);
@@ -564,7 +564,7 @@ pins and the transform digest; a contract-incompatible request is refused at enq
 
 <tr><td class="k">10 — Manual bronze intake<br><span class="tag">todo</span><br>backend P6</td>
 <td>Built: <code>entry_layer</code> with the invariant-N checks, entry validation, the external
-provenance schema, and entry validation in <code>core/catalog/layers.py</code>. Adds: the
+provenance schema, and entry validation in <code>core/hierarchy/layers.py</code>. Adds: the
 <a href="layer-bronze.html#manual-intake">manual intake path</a> — scientist/engineer uploads of
 NetCDF/HDF5/zipped-Zarr through UI wizard and <code>huron bronze upload</code>, never requiring
 raw to exist; the one-of-two provenance assertion — Raw pins of a settled collection
@@ -781,7 +781,7 @@ explicit cross-tier dependencies: 9→11; 18→8, 11, 12, 16; 19→20, 21; 22→
 <ol>
 <li>Stand up the fresh repository per §1 — layout, tooling, compose, CI (P0).</li>
 <li>Build the pure rules first: <code>core/foundation/identifiers.py</code>,
-<code>core/catalog/paths.py</code> with its property
+<code>core/hierarchy/paths.py</code> with its property
 tests — everything else leans on them.</li>
 <li>Prototype in parallel, throwaway-labeled: an Icechunk repo on MinIO exercised through
 <code>xarray.open_zarr</code> on a read-only session, and an STS

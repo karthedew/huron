@@ -1426,7 +1426,7 @@ route is added; contract 7, the lake entries of the others and contract 19 arriv
     (recorded).
   - `uv run --locked python scripts/check_duplication.py src` exits 0 against the hand-edited baseline.
 - Dependencies: M1.5, M1.7.
-- Status: pending
+- Status: complete
 
 ### M2.2 Shared route modules and the application docstrings
 
@@ -10319,3 +10319,61 @@ Full static,899unit,15contract,12integration,914combined,docs and focused migrat
 checks passed. Changed Python files have100%coverage; source hashes and coverage
 line sets are unchanged. All Milestone1 tasks are complete. Fresh M2.1 baseline
 reports are `/tmp/huron-m21-before.json` and `/tmp/huron-m21-before-contract.json`.
+
+### M2.1 implementation evidence — 2026-10-25 (verification pending)
+
+Renamed the legacy `core/catalog` package to `core/hierarchy` and its private
+`collections.py` to `listings.py`; rewrote all specified importers and symbol names,
+without aliases or compatibility modules. Test filenames and behavior are unchanged.
+The fourteen import contracts now name hierarchy; the credential-library contract
+also covers `jwt`, `cryptography`, Metastore and Rawstore as specified. Updated the
+assigned current-source links, repository layout, conventions and roadmap paths;
+removed the obsolete Raw ownership link and clause from `catalog-search.html`.
+
+The duplication baseline has exactly three reviewed path substitutions: the size-3
+`core/catalog/_impl/creation.py` entry now names `core/hierarchy/_impl/creation.py`,
+and both size-3 `core/catalog/types.py` entries now name `core/hierarchy/types.py`.
+All files and sizes otherwise remain identical to `12f579b`; these are pure re-paths,
+exempt from the cap. G1 adds zero capped signatures and its running total remains
+zero. The guard reports unchanged 76 clones, 26 groups and native score 70/100.
+
+Implementation gates pass: `make lint` (14 kept, 0 broken; empty radon findings),
+899 unit, 15 contract, 12 integration and 914 combined unit/contract tests, and
+`make docs`. All exact closing scans are empty, `core/catalog` is absent, and
+`git diff --check` passes. No frontend files changed. Validation used only disposable
+test-owned containers; no owner stack actions occurred. Validation-scoped caffeinate
+exited with the gate runner.
+
+Source equivalence evidence compares all 99 Python modules against `12f579b`:
+ASTs are identical after only the specified renames, docstrings and import/export
+sorting. Coverage remains 2,832/2,958 unit (95.74%) and 2,955/2,958 combined (99.90%);
+the floor stays 95.74. Mapped per-file counts and missing-line content are identical.
+The touched `metastore/hierarchy.py:661` retains its existing defensive failure if a
+locked idempotency claim vanishes mid-transaction; independent verification must
+explicitly assess this uncovered line. Every other touched module is fully covered
+at the appropriate unit/contract tier.
+
+Twenty isolated planted-import cases reject the expected contracts. All twelve
+new credential owner/library combinations break exactly the credential contract,
+and hierarchy's private-implementation violation breaks exactly its contract.
+The task's phrase "each breaking exactly its contract" needs qualification for two
+pre-existing schema-bridge cases: the adapter bridge breaks the layering, hierarchy
+and domain-to-adapter contracts, and the FastAPI bridge breaks the hierarchy and
+framework contracts. A separate baseline run proves all eight original violation
+sets are unchanged after name normalization. No test assertions or contracts were
+weakened; independent verification must assess this literal acceptance discrepancy.
+
+Exact commands, exit statuses, full logs, before/after source hashes, AST and coverage
+proofs and planted-import results are in `/tmp/huron-m21-i1/`; implementation report:
+`/tmp/huron-m21-i1/report.md`. The original baseline reports remain untouched at
+`/tmp/huron-m21-before.json` and `/tmp/huron-m21-before-contract.json`.
+The task remains pending until independent verification passes.
+
+### M2.1 independent completion
+
+Verification attempt1 passed: `/tmp/huron-m21-v1/report.md`. Full gates and
+99-module normalized AST/coverage equivalence pass. Exactly three duplication
+path substitutions were verified. The pre-existing overlapping import violations
+and unchanged defensive claim branch were independently assessed without weakening
+contracts. Fresh M2.2 baseline JSONs are `/tmp/huron-m22-before.json` and
+`/tmp/huron-m22-before-contract.json`.

@@ -42,8 +42,8 @@ from huron.applications.api.routes.v1.schema.datasets import (
     LayerView,
     PatchDataset,
 )
-from huron.core.catalog.types import Dataset
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
+from huron.core.hierarchy.types import Dataset
 from huron.core.security.principal import Principal
 
 project_datasets = APIRouter(prefix="/projects/{project_id}/datasets", tags=["datasets"])

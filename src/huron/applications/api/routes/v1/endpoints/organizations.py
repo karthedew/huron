@@ -38,8 +38,8 @@ from huron.applications.api.routes.v1.schema.organizations import (
     OrganizationView,
     PatchOrganization,
 )
-from huron.core.catalog.types import Organization, PlatformRoot
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
+from huron.core.hierarchy.types import Organization, PlatformRoot
 from huron.core.security.principal import Principal
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])

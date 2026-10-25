@@ -11,8 +11,8 @@ from huron.core.foundation.canonical import canonical_bytes, jsonable
 if TYPE_CHECKING:
     from pathlib import PurePosixPath
 
-    from huron.core.catalog.ports import GenerationStorage
-    from huron.core.catalog.types import Dataset, Organization, Project
+    from huron.core.hierarchy.ports import GenerationStorage
+    from huron.core.hierarchy.types import Dataset, Organization, Project
 
 
 class GenerationDocuments:

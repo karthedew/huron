@@ -38,8 +38,8 @@ from huron.applications.api.routes.v1.schema.projects import (
     PatchProject,
     ProjectView,
 )
-from huron.core.catalog.types import Project
 from huron.core.foundation.retry import IdempotencyClaim, request_sha256
+from huron.core.hierarchy.types import Project
 from huron.core.security.principal import Principal
 
 organization_projects = APIRouter(

@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from huron.core.catalog.types import (
+from huron.core.hierarchy.types import (
     Dataset,
     Organization,
     Project,

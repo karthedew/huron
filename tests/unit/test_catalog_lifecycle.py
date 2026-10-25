@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from huron.core.foundation.retry import request_sha256, IdempotencyClaim
-from huron.core.catalog.lifecycle import DatasetLifecycle
+from huron.core.hierarchy.lifecycle import DatasetLifecycle
 from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
 from huron.core.rawstore import PosixGenerationStore
 from tests.catalog_creation_support import creation_for

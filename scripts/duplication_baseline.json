@@ -85,19 +85,19 @@
     },
     {
       "files": [
-        "src/huron/core/catalog/_impl/creation.py"
+        "src/huron/core/hierarchy/_impl/creation.py"
       ],
       "size": 3
     },
     {
       "files": [
-        "src/huron/core/catalog/types.py"
+        "src/huron/core/hierarchy/types.py"
       ],
       "size": 3
     },
     {
       "files": [
-        "src/huron/core/catalog/types.py"
+        "src/huron/core/hierarchy/types.py"
       ],
       "size": 3
     },

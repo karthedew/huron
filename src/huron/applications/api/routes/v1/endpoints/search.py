@@ -13,7 +13,7 @@ from typing import NoReturn
 from fastapi import APIRouter
 
 from huron.applications.api.problems import problem_response
-from huron.core.catalog.errors import ProjectionUnavailable
+from huron.core.hierarchy.errors import ProjectionUnavailable
 
 router = APIRouter(prefix="/search", tags=["search"])
 

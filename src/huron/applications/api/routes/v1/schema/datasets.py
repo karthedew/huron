@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from huron.applications.api.routes.v1.schema.descriptions import DescriptionPatch
-from huron.core.catalog.layers import Layer
+from huron.core.hierarchy.layers import Layer
 
 
 class CreateDataset(BaseModel):

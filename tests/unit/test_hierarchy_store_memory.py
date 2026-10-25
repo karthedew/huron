@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.core.catalog.types import Organization, PlatformRoot
+from huron.core.hierarchy.types import Organization, PlatformRoot
 from huron.core.foundation.errors import ResourceNotFound
 from huron.core.foundation.identifiers import uuid7
 from huron.core.foundation.retry import IdempotencyClaim, Replay

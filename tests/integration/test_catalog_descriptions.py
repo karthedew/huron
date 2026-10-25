@@ -12,16 +12,16 @@ import asyncpg
 import pytest
 
 from huron.core.security import AccessPolicy
-from huron.core.catalog import (
-    DatasetCollection,
-    OrganizationCollection,
-    ProjectCollection,
+from huron.core.hierarchy import (
+    DatasetListing,
+    OrganizationListing,
+    ProjectListing,
 )
-from huron.core.catalog._impl.documents import GenerationDocuments
-from huron.core.catalog.types import DescriptionChange, Dataset, Organization, Project
+from huron.core.hierarchy._impl.documents import GenerationDocuments
+from huron.core.hierarchy.types import DescriptionChange, Dataset, Organization, Project
 from huron.core.security.principal import Principal
 from huron.core.foundation.errors import PreconditionFailed
-from huron.core.catalog.paths import dataset_dir, organization_dir, project_dir
+from huron.core.hierarchy.paths import dataset_dir, organization_dir, project_dir
 from huron.core.metastore import InMemoryRbacStore, PostgresHierarchyStore
 from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.rules import Classification, RoleBindingAuthorizer, ScopeType
@@ -66,12 +66,12 @@ async def _workspace(pool: asyncpg.Pool, root: Path, kind: str):
     )
     choices = {
         "organization": (
-            OrganizationCollection(access, store, storage),
+            OrganizationListing(access, store, storage),
             organization,
             directories[0],
         ),
-        "project": (ProjectCollection(access, store, storage), project, directories[1]),
-        "dataset": (DatasetCollection(access, store, storage), dataset, directories[2]),
+        "project": (ProjectListing(access, store, storage), project, directories[1]),
+        "dataset": (DatasetListing(access, store, storage), dataset, directories[2]),
     }
     collection, item, directory = choices[kind]
     return storage, collection, item, Path(directory)

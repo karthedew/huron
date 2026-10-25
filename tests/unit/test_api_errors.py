@@ -17,7 +17,7 @@ from huron.core.security.errors import (
     UsernameTaken,
 )
 from huron.applications.api.errors import DependencyUnavailable
-from huron.core.catalog.errors import SlugExists
+from huron.core.hierarchy.errors import SlugExists
 
 pytestmark = pytest.mark.unit
 

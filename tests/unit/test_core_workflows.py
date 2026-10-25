@@ -10,11 +10,11 @@ from uuid import uuid4
 
 import pytest
 
-from huron.core.catalog import (
-    CatalogCreation,
-    DatasetCollection,
-    OrganizationCollection,
-    ProjectCollection,
+from huron.core.hierarchy import (
+    HierarchyCreation,
+    DatasetListing,
+    OrganizationListing,
+    ProjectListing,
 )
 from huron.core.foundation.errors import Forbidden, ResourceNotFound
 from huron.core.foundation.retry import IdempotencyClaim
@@ -28,7 +28,7 @@ from tests.repository_fixture import RepositoryFixture
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from huron.core.catalog.types import Dataset
+    from huron.core.hierarchy.types import Dataset
 
 pytestmark = pytest.mark.unit
 
@@ -53,15 +53,15 @@ def claim(key: str, subject: str = "root") -> IdempotencyClaim:
 async def workspace(
     tmp_path: Path,
 ) -> tuple[
-    OrganizationCollection,
-    ProjectCollection,
-    DatasetCollection,
+    OrganizationListing,
+    ProjectListing,
+    DatasetListing,
     Bindings,
     AccessPolicy,
     Dataset,
     RepositoryFixture,
     InMemoryHierarchyStore,
-    CatalogCreation,
+    HierarchyCreation,
 ]:
     """Wire real domain, core and POSIX objects without importing the FastAPI application."""
     storage = PosixGenerationStore(tmp_path / "raw")
@@ -80,11 +80,11 @@ async def workspace(
         repository.rbac,
         RoleBindingAuthorizer((Classification("open", 0, True),)),
     )
-    organizations = OrganizationCollection(access, repository.hierarchy, repository.raw_store)
-    projects = ProjectCollection(access, repository.hierarchy, repository.raw_store)
-    datasets = DatasetCollection(access, repository.hierarchy, repository.raw_store)
+    organizations = OrganizationListing(access, repository.hierarchy, repository.raw_store)
+    projects = ProjectListing(access, repository.hierarchy, repository.raw_store)
+    datasets = DatasetListing(access, repository.hierarchy, repository.raw_store)
     bindings = Bindings(access, repository.hierarchy, repository.rbac)
-    creation = CatalogCreation(
+    creation = HierarchyCreation(
         access, repository.hierarchy, repository.raw_store, classification_vocabulary=("open",)
     )
     org = await creation.create_organization(
@@ -162,8 +162,8 @@ async def test_core_cannot_create_or_discover_under_another_actor(workspace) -> 
     access = AccessPolicy(
         Principal("outsider"), repository.hierarchy, repository.rbac, RoleBindingAuthorizer()
     )
-    datasets = DatasetCollection(access, repository.hierarchy, repository.raw_store)
-    creation = CatalogCreation(
+    datasets = DatasetListing(access, repository.hierarchy, repository.raw_store)
+    creation = HierarchyCreation(
         access, repository.hierarchy, repository.raw_store, classification_vocabulary=("open",)
     )
     with pytest.raises(Forbidden, match=r"organization\.create denied"):
@@ -188,7 +188,7 @@ async def test_core_cannot_create_or_discover_under_another_actor(workspace) -> 
 
 async def test_collections_read_and_page_with_current_narrow_grants(workspace) -> None:
     """Narrow discovery admits ancestors and granted datasets until the binding is revoked."""
-    from huron.core.catalog.types import PlatformRoot
+    from huron.core.hierarchy.types import PlatformRoot
     from huron.core.security.rules import Visibility
 
     (
@@ -225,9 +225,9 @@ async def test_collections_read_and_page_with_current_narrow_grants(workspace) -
         repository.rbac,
         RoleBindingAuthorizer((Classification("open", 0, True),)),
     )
-    organizations = OrganizationCollection(access, hierarchy, repository.raw_store)
-    projects = ProjectCollection(access, hierarchy, repository.raw_store)
-    datasets = DatasetCollection(access, hierarchy, repository.raw_store)
+    organizations = OrganizationListing(access, hierarchy, repository.raw_store)
+    projects = ProjectListing(access, hierarchy, repository.raw_store)
+    datasets = DatasetListing(access, hierarchy, repository.raw_store)
     assert (await access.visibility()).project_ids == frozenset()
     assert await datasets.get(dataset.id) == dataset
     assert await projects.get(project.id) == project
@@ -275,8 +275,8 @@ async def test_descriptions_preserve_noop_validation_and_empty_replacements(
     workspace, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     """A no-op avoids transactions while stale and renamed requests fail before any write."""
-    from huron.core.catalog.errors import SlugImmutable
-    from huron.core.catalog.types import DescriptionChange
+    from huron.core.hierarchy.errors import SlugImmutable
+    from huron.core.hierarchy.types import DescriptionChange
     from huron.core.foundation.errors import PreconditionFailed
 
     organizations, projects, datasets, _, _, dataset, _, hierarchy, _ = workspace
@@ -315,7 +315,7 @@ async def test_descriptions_preserve_noop_validation_and_empty_replacements(
 
 async def test_descriptions_require_authority_beyond_discovery(workspace) -> None:
     """A narrow reader can discover every ancestor but cannot describe any of those resources."""
-    from huron.core.catalog.types import DescriptionChange
+    from huron.core.hierarchy.types import DescriptionChange
 
     _, projects, _, bindings, _, dataset, repository, hierarchy, _ = workspace
     project = await projects.get(dataset.project_id)
@@ -331,9 +331,9 @@ async def test_descriptions_require_authority_beyond_discovery(workspace) -> Non
         repository.rbac,
         RoleBindingAuthorizer((Classification("open", 0, True),)),
     )
-    reader_organizations = OrganizationCollection(access, hierarchy, repository.raw_store)
-    reader_projects = ProjectCollection(access, hierarchy, repository.raw_store)
-    reader_datasets = DatasetCollection(access, hierarchy, repository.raw_store)
+    reader_organizations = OrganizationListing(access, hierarchy, repository.raw_store)
+    reader_projects = ProjectListing(access, hierarchy, repository.raw_store)
+    reader_datasets = DatasetListing(access, hierarchy, repository.raw_store)
     for collection, resource_id in (
         (reader_organizations, project.organization_id),
         (reader_projects, project.id),

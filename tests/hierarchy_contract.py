@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.core.catalog.errors import SlugExists
-from huron.core.catalog.layers import Layer
-from huron.core.catalog.lifecycle import DatasetLifecycle
-from huron.core.catalog.types import Dataset, Organization, PlatformRoot, Project
+from huron.core.hierarchy.errors import SlugExists
+from huron.core.hierarchy.layers import Layer
+from huron.core.hierarchy.lifecycle import DatasetLifecycle
+from huron.core.hierarchy.types import Dataset, Organization, PlatformRoot, Project
 from huron.core.foundation.errors import IdempotencyKeyReused, PreconditionFailed, ResourceNotFound
 from huron.core.foundation.identifiers import uuid7
 from huron.core.foundation.retry import IdempotencyClaim, Replay

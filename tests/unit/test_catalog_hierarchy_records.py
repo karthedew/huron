@@ -7,8 +7,8 @@ from uuid import UUID
 import pytest
 
 from huron.core.foundation.errors import PreconditionFailed
-from huron.core.catalog.errors import SlugImmutable
-from huron.core.catalog.types import Dataset, Organization, Project
+from huron.core.hierarchy.errors import SlugImmutable
+from huron.core.hierarchy.types import Dataset, Organization, Project
 
 pytestmark = pytest.mark.unit
 

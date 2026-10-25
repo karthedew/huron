@@ -6,19 +6,19 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
-from huron.core.catalog.errors import ClassificationUnknown
-from huron.core.catalog.layers import Layer, parse_entry_layer
-from huron.core.catalog.lifecycle import DatasetLifecycle
-from huron.core.catalog.paths import (
+from huron.core.foundation.identifiers import uuid7
+from huron.core.foundation.names import validate_org_slug, validate_slug
+from huron.core.foundation.retry import Replay
+from huron.core.hierarchy.errors import ClassificationUnknown
+from huron.core.hierarchy.layers import Layer, parse_entry_layer
+from huron.core.hierarchy.lifecycle import DatasetLifecycle
+from huron.core.hierarchy.paths import (
     dataset_dir,
     organization_dir,
     project_dir,
 )
-from huron.core.catalog.retry import claimed_result
-from huron.core.catalog.types import Dataset, Organization, Project
-from huron.core.foundation.identifiers import uuid7
-from huron.core.foundation.names import validate_org_slug, validate_slug
-from huron.core.foundation.retry import Replay
+from huron.core.hierarchy.retry import claimed_result
+from huron.core.hierarchy.types import Dataset, Organization, Project
 from huron.core.security.rules import ScopeType, Visibility
 
 from .documents import GenerationDocuments
@@ -26,12 +26,12 @@ from .documents import GenerationDocuments
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from huron.core.catalog.ports import CreationStore, GenerationStorage
     from huron.core.foundation.retry import IdempotencyClaim, RetryTransaction
+    from huron.core.hierarchy.ports import CreationStore, GenerationStorage
     from huron.core.security import AccessPolicy
 
 
-class CatalogCreation:
+class HierarchyCreation:
     """Create authorized catalog identities with transaction-scoped retry claims."""
 
     def __init__(

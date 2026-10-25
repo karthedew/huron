@@ -6,8 +6,8 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from huron.core.catalog.layers import Layer
-from huron.core.catalog.paths import (
+from huron.core.hierarchy.layers import Layer
+from huron.core.hierarchy.paths import (
     dataset_dir,
     dataset_layer_dir,
     generation_file,
@@ -15,7 +15,7 @@ from huron.core.catalog.paths import (
     product_dir,
     project_dir,
 )
-from huron.core.catalog.types import EntityRef
+from huron.core.hierarchy.types import EntityRef
 from huron.core.foundation.errors import PathRuleViolation
 from huron.core.foundation.identifiers import uuid7
 from huron.core.foundation.names import ORG_PROJECT_SLUG_MAX, validate_org_slug, validate_slug

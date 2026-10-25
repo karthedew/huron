@@ -40,8 +40,8 @@ from .settings import ApiSettings
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
-    from huron.core.catalog.ports import GenerationStorage
     from huron.core.foundation.clock import Clock
+    from huron.core.hierarchy.ports import GenerationStorage
 
 
 def _postgres_stores(pool: asyncpg.Pool, clock: Clock) -> ApiStores:

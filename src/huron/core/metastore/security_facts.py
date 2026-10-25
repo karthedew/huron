@@ -9,16 +9,16 @@ from huron.core.security.rules import Scope, ScopeType, Visibility
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from huron.core.catalog.ports import CollectionReader
-    from huron.core.catalog.types import Dataset, Organization, PlatformRoot, Project
+    from huron.core.hierarchy.ports import ListingReader
+    from huron.core.hierarchy.types import Dataset, Organization, PlatformRoot, Project
 
 
 class SecurityFacts:
     """Project only the facts Security needs, preserving the existing visibility predicates."""
 
-    organizations: CollectionReader[Organization, PlatformRoot]
-    projects: CollectionReader[Project, UUID]
-    datasets: CollectionReader[Dataset, UUID]
+    organizations: ListingReader[Organization, PlatformRoot]
+    projects: ListingReader[Project, UUID]
+    datasets: ListingReader[Dataset, UUID]
 
     async def resource_scope(
         self, kind: ScopeType, resource_id: UUID, visibility: Visibility

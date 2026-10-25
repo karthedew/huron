@@ -33,9 +33,9 @@ from testcontainers.postgres import PostgresContainer
 
 from huron.applications.api.capabilities import HierarchyStore
 from huron.applications.api.capabilities import Mutation as HierarchyWriter
-from huron.core.catalog.layers import Layer
-from huron.core.catalog.lifecycle import DatasetLifecycle
-from huron.core.catalog.types import Dataset, Organization, PlatformRoot, Project
+from huron.core.hierarchy.layers import Layer
+from huron.core.hierarchy.lifecycle import DatasetLifecycle
+from huron.core.hierarchy.types import Dataset, Organization, PlatformRoot, Project
 from huron.core.foundation.identifiers import uuid7
 from huron.core.foundation.retry import IdempotencyClaim, Replay
 from huron.core.metastore import (

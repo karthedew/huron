@@ -99,8 +99,8 @@ convention = "google"
 "src/huron/core/security/authentication_errors.py" = ["N818"]
 "src/huron/core/security/principals.py" = ["N818"]
 "src/huron/core/foundation/errors.py" = ["N818"]
-"src/huron/core/catalog/errors.py" = ["N818"]
-"src/huron/core/catalog/layers.py" = ["N818"]
+"src/huron/core/hierarchy/errors.py" = ["N818"]
+"src/huron/core/hierarchy/layers.py" = ["N818"]
 # The role/rbac error names intentionally mirror their stable API codes.
 "src/huron/core/security/roles.py" = ["N818"]
 "src/huron/core/security/errors.py" = ["N818"]
@@ -171,7 +171,7 @@ layers = ["huron.applications", "huron.core", "huron.schema"]
 name = "every core sibling has an explicit owner"
 type = "layers"
 containers = ["huron.core"]
-layers = ["foundation:security:catalog:metastore:rawstore"]
+layers = ["foundation:security:hierarchy:metastore:rawstore"]
 exhaustive = true
 
 [[tool.importlinter.contracts]]
@@ -185,7 +185,7 @@ name = "foundation has no Huron dependencies"
 type = "forbidden"
 source_modules = ["huron.core.foundation"]
 forbidden_modules = [
-    "huron.core.security", "huron.core.catalog", "huron.core.metastore",
+    "huron.core.security", "huron.core.hierarchy", "huron.core.metastore",
     "huron.core.rawstore", "huron.schema", "huron.applications",
 ]
 
@@ -195,21 +195,21 @@ type = "forbidden"
 allow_indirect_imports = true
 source_modules = ["huron.core.security"]
 forbidden_modules = [
-    "huron.core.catalog", "huron.core.metastore", "huron.core.rawstore",
+    "huron.core.hierarchy", "huron.core.metastore", "huron.core.rawstore",
     "huron.schema",
 ]
 
 [[tool.importlinter.contracts]]
-name = "catalog uses security and foundation only"
+name = "hierarchy uses security and foundation only"
 type = "forbidden"
 allow_indirect_imports = true
-source_modules = ["huron.core.catalog"]
+source_modules = ["huron.core.hierarchy"]
 forbidden_modules = [
     "huron.core.metastore", "huron.core.rawstore", "huron.schema",
 ]
 
 [[tool.importlinter.contracts]]
-name = "metastore uses catalog security and foundation only"
+name = "metastore uses hierarchy security and foundation only"
 type = "forbidden"
 allow_indirect_imports = true
 source_modules = ["huron.core.metastore"]
@@ -220,7 +220,7 @@ name = "rawstore uses schema only"
 type = "forbidden"
 source_modules = ["huron.core.rawstore"]
 forbidden_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.catalog",
+    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy",
     "huron.core.metastore",
 ]
 
@@ -229,7 +229,7 @@ forbidden_modules = [
 name = "domains exclude frameworks and infrastructure libraries even indirectly"
 type = "forbidden"
 source_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.catalog",
+    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy",
 ]
 forbidden_modules = [
     "fastapi",
@@ -252,11 +252,14 @@ forbidden_modules = [
 # Security performs credential HTTP. Its consumers use that public capability;
 # only Security imports the HTTP client itself.
 [[tool.importlinter.contracts]]
-name = "only security performs credential HTTP directly"
+name = "only security performs credential HTTP and token cryptography directly"
 type = "forbidden"
 allow_indirect_imports = true
-source_modules = ["huron.core.foundation", "huron.core.catalog"]
-forbidden_modules = ["httpx"]
+source_modules = [
+    "huron.core.foundation", "huron.core.hierarchy", "huron.core.metastore",
+    "huron.core.rawstore",
+]
+forbidden_modules = ["httpx", "jwt", "cryptography"]
 
 # The authorization package is entered through its public surface. Its five
 # submodules are one unit with one contract; a route that reaches past
@@ -274,15 +277,15 @@ forbidden_modules = ["huron.applications.api.authorization.*"]
 name = "domains never depend on adapters even indirectly"
 type = "forbidden"
 source_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.catalog",
+    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy",
 ]
 forbidden_modules = ["huron.core.metastore", "huron.core.rawstore"]
 
 [[tool.importlinter.contracts]]
-name = "catalog implementations are private to their owner"
+name = "hierarchy implementations are private to their owner"
 type = "protected"
-protected_modules = ["huron.core.catalog._impl"]
-allowed_importers = ["huron.core.catalog"]
+protected_modules = ["huron.core.hierarchy._impl"]
+allowed_importers = ["huron.core.hierarchy"]
 
 [[tool.importlinter.contracts]]
 name = "security implementations are private to their owner"

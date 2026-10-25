@@ -15,8 +15,8 @@ from typing import Annotated
 import asyncpg
 from fastapi import Depends, Request
 
-from huron.core.catalog.ports import GenerationStorage
 from huron.core.foundation.clock import Clock
+from huron.core.hierarchy.ports import GenerationStorage
 from huron.core.security import CredentialAuthentication
 from huron.core.security.dev import DevHeaderResolver
 from huron.core.security.facts import BindingFacts, CatalogFacts
