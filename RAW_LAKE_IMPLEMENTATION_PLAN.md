@@ -901,7 +901,7 @@ contracts, `0014` is head, and the web calls no Python service.
     `rg -n 'Target design; sections land' design/layer-raw.html` prints the status line.
   - The coverage-floor procedure's three pass conditions hold and the new `fail_under` is recorded.
 - Dependencies: M1.2.
-- Status: pending
+- Status: done (verification passed on attempt 1, 2026-10-24)
 
 ### M1.4 D2-2: The Raw engine, its `/api/v1` surface and the nightly workflow
 
@@ -9895,3 +9895,60 @@ task rewrites them in the lake's terms (pins, `overwrite`, the lake's own search
   Python changes: `/tmp/huron-m13-before.json` (5,602 / 5,854 statements) and
   `/tmp/huron-m13-before-contract.json` (5,833 / 5,854, 1,556 unit/contract tests). M1.2 changes
   no Python files, so these reports remain the M1.3 starting baseline.
+
+### M1.3 execution notes — implementation attempt 1 (2026-10-24)
+
+- Removed the Raw bridge's router, HS256 delegation, external-dataset/publication ports and adapter,
+  settings and composition wiring. The orchestrator removed the eleven named whole files; this pass
+  removed the remaining symbols and the launcher's Raw API/database/secret branches, including
+  `raw_environment`. The Polaris launcher was not run, and the owner's stack was untouched.
+- The router tests pin the exact 52 legacy path/method operations, anonymous 401 problem responses for
+  every operation, 15 resource tags, and the retired prefix's absence/404 with or without a legacy
+  credential. The execution-model inventory drops the eleven bridge handlers. The shared store builder
+  and direct settings tests contained no bridge arguments/cases; they need no edits. The existing error
+  contract passes unchanged: no error class or §7 row lost its last raise site.
+- Replaced the Raw engine design sections with the lake lede, target-design status, Polaris and History;
+  moved the pinned P3 links to History and updated the catalog-search inbound link. The DT-26 outline's
+  past-tense claim that the whole engine was deleted on 2026-10-23 would be inaccurate at this step:
+  History instead records the bridge's removal and the remaining engine's retirement in progress.
+  The intentionally retained inbound `layout`/`commit` fragments return with their owning later tasks.
+- Independent before reports are preserved in `/tmp/huron-m13-i1/before.json` and
+  `before-contract.json`. Unit: 5,602 covered / 5,854 statements → 5,222 / 5,450; missing statements
+  252 → 228. The seven deleted source files account for 364 covered / 388 total statements; deleted
+  statements in app/capabilities/runtime/settings account for another 16 covered / 16 total. The exact
+  covered drop is therefore 380 and total drop 404. Surviving statement identities were mapped against
+  `91a768d`, including the edited capabilities import, rather than comparing shifted line numbers.
+  No surviving statement gains a miss, no coverage gain masks a loss, and every modified source file
+  is at 100% (app 107/107, capabilities 10/10, runtime 67/67, settings 56/56).
+- Unit+contract: 5,833 / 5,854 → 5,436 / 5,450 (99.74%); exactly 397 covered / 404 total statements
+  removed, no new misses or gains. Unit count: 1,524 → 1,500 (27 removed bridge cases, three added
+  invariant tests); contract: 32 → 31 and integration: 14 → 13 (both lost cases were in the removed
+  integration module). Combined measurement passes 1,531 tests. The coverage floor is now
+  `floor(10000 × 5222 / 5450) / 100 = 95.81`, up from 95.69; the subsequent configured unit gate
+  passes 1,500 tests at 95.82%. Detailed per-file/line evidence is in `coverage-evidence*.json`.
+- All twelve static commands pass; import-linter keeps 16 contracts; both radon outputs are empty.
+  Duplication remains 123 clones / 41 groups (native score 75/100), so no baseline edit was needed.
+  Standalone contract and integration gates, `make docs`, `bash -n scripts/polaris-dev.sh`,
+  `uv run python -m py_compile scripts/polaris_dev.py`, local design-link target checks and closing
+  greps pass. The sole bridge-name grep output is the three allowed migration-revision references.
+  No web files changed, so frontend checks do not apply.
+- Validation recovery: the initial focused test call hit the uv-cache sandbox restriction and passed
+  on the immediate escalated retry. One initial coverage receipt was invalid because removal of a
+  stale settings comment shifted line numbers after module import; it is retained as
+  `invalid-during-comment-edit.*` and is not used for the floor. Frozen-source unit and combined
+  receipts, plus the final configured unit receipt, agree. Concurrent coverage runs used separate
+  coverage data files. No assertion, exclusion or suppression was weakened or added.
+- Full outputs and implementation report: `/tmp/huron-m13-i1/`. All launched validation processes
+  exited. Task status remains pending for independent verification; no additional file deletion or
+  rename is requested.
+
+- Independent verification attempt 1: PASS. The Astra/Medium verifier independently ran all
+  static checks (16 import contracts, unchanged 123-clone/41-group baseline), 1,500 unit tests,
+  31 contract tests, 13 integration tests, combined coverage, docs and script checks. Its own
+  statement mapping confirms 380 covered / 404 total unit statements removed and 397 covered /
+  404 total combined statements removed, with no surviving loss and all four edited source
+  modules at 100%. The 95.81 floor is exact. Report: `/tmp/huron-m13-v1/report.md`; complete
+  outputs: `/tmp/huron-m13-v1/full-gate-output.txt`. All runner sessions exited and the parent
+  confirmed no validation processes remained.
+- Next-task baseline captured before M1.4 deletions: `/tmp/huron-m14-before.json`
+  (5,222 / 5,450 statements) and `/tmp/huron-m14-before-contract.json` (5,436 / 5,450).

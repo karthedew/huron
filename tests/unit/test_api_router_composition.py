@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 from uuid import uuid4
@@ -160,7 +161,7 @@ def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decid
     assert calls == ["rbac.binding_manage", "rbac.binding_manage"]
 
 
-def test_the_openapi_document_carries_sixteen_resource_grained_tags(tmp_path: Path) -> None:
+def test_the_openapi_document_carries_the_resource_grained_tags(tmp_path: Path) -> None:
     """The OpenAPI document tags one per resource rather than one per module.
 
     ``role-bindings`` and ``service-accounts`` are distinct groups, the
@@ -175,7 +176,7 @@ def test_the_openapi_document_carries_sixteen_resource_grained_tags(tmp_path: Pa
     for methods in schema["paths"].values():
         for operation in methods.values():
             tags.update(operation.get("tags", []))
-    assert len(tags) == 16
+    assert len(tags) == 15
     assert "auth" not in tags
     assert tags == {
         "organizations",
@@ -193,7 +194,6 @@ def test_the_openapi_document_carries_sixteen_resource_grained_tags(tmp_path: Pa
         "users",
         "search",
         "authentication",
-        "raw-web",
     }
 
 
@@ -413,3 +413,81 @@ def test_no_auth_operation_redeclares_a_status_the_auth_router_already_covers() 
 
     for module in (login, oidc, session):
         assert _decorator_response_statuses(module) & {422, 500} == set()
+
+
+LEGACY_OPERATIONS = {
+    "/api/v1/organizations": ["get", "post"],
+    "/api/v1/organizations/{organization_id}": ["get", "patch"],
+    "/api/v1/organizations/{organization_id}/projects": ["get", "post"],
+    "/api/v1/projects/{project_id}": ["get", "patch"],
+    "/api/v1/projects/{project_id}/datasets": ["get", "post"],
+    "/api/v1/datasets/{dataset_id}": ["get", "patch"],
+    "/api/v1/datasets/{dataset_id}/layers": ["get"],
+    "/api/v1/revisions/{revision_id}": ["get"],
+    "/api/v1/revisions/{revision_id}/manifest": ["get"],
+    "/api/v1/revisions/{revision_id}/files/{path}": ["get"],
+    "/api/v1/datasets/{dataset_id}/ingest-sessions": ["post"],
+    "/api/v1/projects/{project_id}/ingest-sessions": ["post"],
+    "/api/v1/ingest-sessions/{session_id}": ["get"],
+    "/api/v1/ingest-sessions/{session_id}/heartbeat": ["post"],
+    "/api/v1/ingest-sessions/{session_id}/abort": ["post"],
+    "/api/v1/ingest-sessions/{session_id}/verify": ["post"],
+    "/api/v1/ingest-sessions/{session_id}/commit": ["post"],
+    "/api/v1/transfer/uploads/{file_id}/parts/{part}": ["put"],
+    "/api/v1/transfer/uploads/{file_id}/complete": ["post"],
+    "/api/v1/roles": ["get"],
+    "/api/v1/bindings": ["get", "post"],
+    "/api/v1/bindings/{binding_id}": ["delete"],
+    "/api/v1/organizations/{organization_id}/bindings": ["get", "post"],
+    "/api/v1/organizations/{organization_id}/bindings/{binding_id}": ["delete"],
+    "/api/v1/projects/{project_id}/bindings": ["get", "post"],
+    "/api/v1/projects/{project_id}/bindings/{binding_id}": ["delete"],
+    "/api/v1/datasets/{dataset_id}/bindings": ["get", "post"],
+    "/api/v1/datasets/{dataset_id}/bindings/{binding_id}": ["delete"],
+    "/api/v1/organizations/{organization_id}/service-accounts": ["get", "post"],
+    "/api/v1/organizations/{organization_id}/service-accounts/{principal_id}/api-keys": ["post"],
+    "/api/v1/organizations/{organization_id}/service-accounts/{principal_id}/disable": ["post"],
+    "/api/v1/policies": ["get", "post"],
+    "/api/v1/organizations/{organization_id}/policy-attachments": ["post"],
+    "/api/v1/projects/{project_id}/policy-attachments": ["post"],
+    "/api/v1/datasets/{dataset_id}/policy-attachments": ["post"],
+    "/api/v1/auth/api-keys": ["post"],
+    "/api/v1/users": ["post"],
+    "/api/v1/users/{principal_id}/password": ["put"],
+    "/api/v1/users/{principal_id}/disable": ["post"],
+    "/api/v1/search": ["get"],
+}
+
+
+def test_the_legacy_v1_router_serves_exactly_its_operations(client: TestClient) -> None:
+    """The legacy surface retains every reviewed path and method, with no additions."""
+    paths = client.get("/openapi.json").json()["paths"]
+    actual = {
+        path: sorted(methods) for path, methods in paths.items() if path.startswith("/api/v1/")
+    }
+    assert actual == LEGACY_OPERATIONS
+    assert sum(map(len, actual.values())) == 52
+
+
+def test_every_legacy_v1_operation_refuses_an_anonymous_request(client: TestClient) -> None:
+    """Every legacy operation rejects missing credentials before resolving resource access."""
+    paths = client.get("/openapi.json").json()["paths"]
+    for path, methods in paths.items():
+        if not path.startswith("/api/v1/"):
+            continue
+        target = re.sub(r"\{[^}]+\}", lambda _: str(uuid4()), path)
+        for method in methods:
+            response = client.request(method, target)
+            assert response.status_code == 401, (method, path, response.text)
+            assert response.headers["content-type"] == "application/problem+json"
+            assert response.json()["status"] == 401
+
+
+def test_the_retired_bridge_prefix_has_no_route(client: TestClient) -> None:
+    """The former bridge URL is absent even when a legacy credential is supplied."""
+    paths = client.get("/openapi.json").json()["paths"]
+    assert not any(path.startswith("/api/raw-web") for path in paths)
+    for headers in ({}, {"X-Huron-Subject": "root"}):
+        response = client.get(f"/api/raw-web/uploads/{uuid4()}", headers=headers)
+        assert response.status_code == 404
+        assert response.headers["content-type"] == "application/problem+json"

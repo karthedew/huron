@@ -109,17 +109,6 @@ EXPECTED_COROUTINE_FUNCTION = {
     "create_user": True,
     "set_password": True,
     "disable_user": True,
-    "create_upload": True,
-    "upload": True,
-    "receive_upload_part": True,
-    "complete_file": True,
-    "commit_upload": True,
-    "acknowledge_registration": True,
-    "advance_upload": True,
-    "list_revisions": True,
-    "manifest": True,
-    "payload": True,
-    "revision": True,
 }
 
 DOCUMENTATION_ENDPOINTS = frozenset(

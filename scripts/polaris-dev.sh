@@ -10,7 +10,6 @@ polaris_dir="${POLARIS_PROJECT:-${HOME}/repo/polaris}"
 java_dir="${POLARIS_JAVA_HOME:-/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home}"
 java_bin="${java_dir}/bin/java"
 python_bin="${repo_dir}/.venv/bin/python"
-raw_database="huron-raw-local"
 
 if [[ ! -x "${python_bin}" ]]; then
   python_bin="$(command -v python3)"
@@ -99,19 +98,6 @@ start() {
   fi
   wait_url http://127.0.0.1:8182/q/health/ready Polaris
 
-  if ! alive "${state_dir}/raw-api.pid" "huron.applications.api.main:app"; then
-    if lsof -iTCP:8080 -sTCP:LISTEN -t >/dev/null 2>&1; then
-      echo 'Huron Raw API port 8080 is already in use by another process.' >&2
-      return 1
-    fi
-    if [[ -z "${HURON_DATABASE_URL:-}" ]]; then
-      start_raw_database
-    fi
-    "${python_bin}" "${script_dir}/polaris_dev.py" raw-command "${state_dir}" uv run alembic upgrade head
-    "${python_bin}" "${script_dir}/polaris_dev.py" launch "${state_dir}" raw-api "${repo_dir}/.venv/bin/uvicorn" huron.applications.api.main:app --host 127.0.0.1 --port 8080
-  fi
-  wait_url http://127.0.0.1:8080/readyz 'Huron Raw API'
-
   if ! alive "${state_dir}/web.pid" "${repo_dir}/web/node_modules/vite/bin/vite.js"; then
     if lsof -iTCP:5173 -sTCP:LISTEN -t >/dev/null 2>&1; then
       echo 'Huron port 5173 is already in use by another process.' >&2
@@ -123,63 +109,24 @@ start() {
   status
 }
 
-owns_raw_database() {
-  [[ "$(docker inspect --format '{{index .Config.Labels "huron.local.project"}}' "${raw_database}" 2>/dev/null)" == "${repo_dir}" ]]
-}
-
-start_raw_database() {
-  if ! docker info >/dev/null 2>&1; then
-    echo 'Start Docker for the isolated PostgreSQL 16 Raw database, or set HURON_DATABASE_URL to a PostgreSQL 15+ database.' >&2
-    return 1
-  fi
-  if docker inspect "${raw_database}" >/dev/null 2>&1; then
-    if ! owns_raw_database; then
-      echo "Container ${raw_database} belongs to another project; set HURON_DATABASE_URL." >&2
-      return 1
-    fi
-    docker start "${raw_database}" >/dev/null
-  else
-    if lsof -iTCP:5440 -sTCP:LISTEN -t >/dev/null 2>&1; then
-      echo 'Raw PostgreSQL port 5440 is already in use.' >&2
-      return 1
-    fi
-    docker run --detach --name "${raw_database}" \
-      --label "huron.local.project=${repo_dir}" \
-      --publish 127.0.0.1:5440:5432 \
-      --env-file "${repo_dir}/.local/huron/raw-postgres.env" \
-      --mount type=volume,source=huron-raw-local-data,target=/var/lib/postgresql/data \
-      postgres:16 >/dev/null
-  fi
-  for _ in {1..60}; do
-    if pg_isready --host 127.0.0.1 --port 5440 --username huron --dbname huron_raw >/dev/null 2>&1; then return; fi
-    sleep 1
-  done
-  echo 'The Raw PostgreSQL database did not become ready.' >&2
-  return 1
-}
-
 status() {
   if alive "${state_dir}/polaris.pid" "${state_dir}/server/quarkus-run.jar"; then echo 'Polaris: http://127.0.0.1:8181'; else echo 'Polaris: stopped'; fi
   if alive "${state_dir}/web.pid" "${repo_dir}/web/node_modules/vite/bin/vite.js"; then echo 'Huron: http://127.0.0.1:5173/login'; else echo 'Huron: stopped'; fi
-  if alive "${state_dir}/raw-api.pid" "huron.applications.api.main:app"; then echo 'Huron Raw API: http://127.0.0.1:8080'; else echo 'Huron Raw API: stopped'; fi
   if [[ -d "${state_dir}/pgdata" ]] && pg_ctl -D "${state_dir}/pgdata" status >/dev/null 2>&1; then echo 'PostgreSQL: 127.0.0.1:5439'; else echo 'PostgreSQL: stopped'; fi
-  if owns_raw_database && [[ "$(docker inspect --format '{{.State.Running}}' "${raw_database}")" == true ]]; then echo 'Raw PostgreSQL: 127.0.0.1:5440'; fi
   echo "Private Polaris bootstrap credentials: ${state_dir}/credentials.json"
   echo "Huron administrator password: ${repo_dir}/.local/huron/initial-admin.json"
   echo "Science import receipts: ${state_dir}/nasa-samples.json and mission-samples.json"
   echo "Topic demo passwords: ${repo_dir}/.local/huron/topic-demo-accounts.json"
   echo "Persistent Zarr repositories: ${state_dir}/nasa-storage"
-  echo "Committed Raw revisions: ${repo_dir}/.local/huron/raw"
   echo 'Science catalogs: geoscience; heliophysics; international_space_station'
   echo 'Run samples to download and initialize the real mission datasets.'
   echo 'FILE storage has no vended cloud credentials; filesystem access follows local OS permissions.'
 }
 
 stop() {
-  for name in web raw-api polaris; do
+  for name in web polaris; do
     local expected_command="${state_dir}/server/quarkus-run.jar"
     if [[ "${name}" == web ]]; then expected_command="${repo_dir}/web/node_modules/vite/bin/vite.js"; fi
-    if [[ "${name}" == raw-api ]]; then expected_command="huron.applications.api.main:app"; fi
     if alive "${state_dir}/${name}.pid" "${expected_command}"; then
       kill "$(cat "${state_dir}/${name}.pid")"
       rm "${state_dir}/${name}.pid"
@@ -188,7 +135,6 @@ stop() {
   if [[ -d "${state_dir}/pgdata" ]] && pg_ctl -D "${state_dir}/pgdata" status >/dev/null 2>&1; then
     pg_ctl -D "${state_dir}/pgdata" stop -m fast
   fi
-  if owns_raw_database; then docker stop "${raw_database}" >/dev/null; fi
   echo 'Local services stopped. Development data is preserved.'
 }
 

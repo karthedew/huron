@@ -15,8 +15,6 @@ from typing import Literal, Self
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from huron.core.security.raw_delegation import raw_bridge_key
-
 
 class ClassificationValue(BaseModel):
     """One level of the data-classification vocabulary a deployment defines.
@@ -86,8 +84,6 @@ class ApiSettings(BaseSettings):
     #: The configured identity provider. Required when auth_mode="oidc".
     oidc: OidcSettings | None = None
     password_login_enabled: bool = True
-    #: Server-only signing key enabling the dedicated Raw web delegation routes.
-    raw_bridge_secret: str = ""
     #: Signs the transient huron_login flow cookie. Required outside development.
     login_flow_secret: str = ""
     session_cookie_name: str = "huron_session"
@@ -130,22 +126,6 @@ class ApiSettings(BaseSettings):
         if not codes:
             raise ValueError("classification vocabulary may not be empty")
         return vocabulary
-
-    @field_validator("raw_bridge_secret")
-    @classmethod
-    def _bridge_key_strength(cls, secret: str) -> str:
-        """Refuse short keys while allowing the bridge to remain disabled.
-
-        Args:
-            secret: Configured shared key, or empty to disable the bridge.
-
-        Returns:
-            The validated key.
-
-        """
-        if secret:
-            raw_bridge_key(secret)
-        return secret
 
     @model_validator(mode="after")
     def _refuse_unsafe_authentication(self) -> Self:

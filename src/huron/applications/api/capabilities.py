@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from huron.core.catalog.external import ExternalDatasetStore
 from huron.core.catalog.ports import (
     CreationStore,
     CreationTransaction,
@@ -14,7 +13,6 @@ from huron.core.catalog.ports import (
 )
 from huron.core.raw.ports import HierarchyStore as RawPersistence
 from huron.core.raw.ports import HierarchyWriter, RawStore
-from huron.core.raw.web_ports import RawPublicationStore
 from huron.core.security.facts import CatalogFacts
 
 if TYPE_CHECKING:
@@ -39,7 +37,3 @@ class HierarchyStore(CreationStore, DescriptionStore, RawPersistence, CatalogFac
 
 class Storage(RawStore, GenerationStorage, Protocol):
     """One POSIX adapter supplies both generation and Raw storage capabilities."""
-
-
-class RawWebPersistence(ExternalDatasetStore, RawPublicationStore, Protocol):
-    """One adapter supplies durable catalog mappings and publication receipts."""

@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 BASE_URL = "http://127.0.0.1:8181"
@@ -68,49 +68,6 @@ def configure(state: Path) -> None:
     config_path = state / "application.properties"
     config_path.write_text("\n".join(f"{key}={value}" for key, value in properties.items()) + "\n")
     config_path.chmod(0o600)
-    bridge_secret(state)
-    raw_postgres_env = state.parent / "huron" / "raw-postgres.env"
-    raw_postgres_env.write_text(
-        "POSTGRES_USER=huron\nPOSTGRES_DB=huron_raw\n"
-        f"POSTGRES_PASSWORD={password_path.read_text().strip()}\n"
-    )
-    raw_postgres_env.chmod(0o600)
-
-
-def bridge_secret(state: Path) -> str:
-    """Reuse the private key shared by the local web and Raw services."""
-    directory = state.parent / "huron"
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    key = directory / "raw-bridge-key"
-    try:
-        with key.open("x") as stream:
-            key.chmod(0o600)
-            stream.write(secrets.token_urlsafe(48) + "\n")
-    except FileExistsError:
-        pass
-    return key.read_text().strip()
-
-
-def raw_environment(state: Path) -> dict[str, str]:
-    """Configure an isolated Raw database and storage without exposing secrets."""
-    environment = os.environ.copy()
-    password = quote((state / "db-password").read_text().strip(), safe="")
-    defaults = {
-        "HURON_ENV": "development",
-        "HURON_AUTH_MODE": "credentials",
-        "HURON_DATABASE_URL": f"postgresql://huron:{password}@127.0.0.1:5440/huron_raw",
-        "HURON_DATA_ROOT": str(state.parent / "huron" / "raw"),
-        "HURON_CLASSIFICATION_VOCABULARY": json.dumps(
-            [{"code": "open", "order": 0, "discoverable": True}]
-        ),
-        "HURON_WEB_APP_URL": "http://127.0.0.1:5173",
-        "HURON_RAW_API_URL": "http://127.0.0.1:8080",
-        "HURON_RAW_POLARIS_AUTHORIZATION": "rbac",
-        "HURON_RAW_BRIDGE_SECRET": bridge_secret(state),
-    }
-    for key, value in defaults.items():
-        environment.setdefault(key, value)
-    return environment
 
 
 def request(
@@ -180,12 +137,6 @@ def launch(state: Path, name: str, command: list[str]) -> None:
     environment = os.environ.copy()
     if name == "web":
         working_directory = state.parents[1] / "web"
-        raw_settings = raw_environment(state)
-        for key in ("HURON_RAW_API_URL", "HURON_RAW_POLARIS_AUTHORIZATION", "HURON_RAW_BRIDGE_SECRET"):
-            environment[key] = raw_settings[key]
-    elif name == "raw-api":
-        working_directory = state.parents[1]
-        environment = raw_environment(state)
     elif name == "polaris":
         working_directory = state
     else:
@@ -210,12 +161,5 @@ if __name__ == "__main__":
     state_directory = Path(directory).resolve()
     if operation == "launch":
         launch(state_directory, arguments[0], arguments[1:])
-    elif operation == "raw-command":
-        subprocess.run(
-            arguments,
-            cwd=state_directory.parents[1],
-            env=raw_environment(state_directory),
-            check=True,
-        )
     else:
         {"configure": configure}[operation](state_directory)
