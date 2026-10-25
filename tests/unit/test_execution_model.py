@@ -13,22 +13,16 @@ from fastapi.testclient import TestClient
 
 import huron.applications.api as api_package
 import huron.applications.api.app as app_module
-import huron.core.security._impl.identity as identity_module
-import huron.core.security._impl.password_authentication as login
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.core.security.password import make_credential as real_make_credential
-from huron.core.security.password import verify_password as real_verify_password
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-    from uuid import UUID
 
     from fastapi import FastAPI
 
     from huron.core.catalog.ports import GenerationStorage
-    from huron.core.security.password import CredentialRecord
 
 pytestmark = pytest.mark.unit
 
@@ -42,12 +36,6 @@ EXPECTED_COROUTINE_FUNCTION = {
     "healthz": True,
     "readyz": True,
     "search_unavailable": True,
-    "password_login": True,
-    "logout": True,
-    "oidc_start": True,
-    "oidc_callback": True,
-    "session_info": True,
-    "providers": True,
     "create_organization": True,
     "list_organizations": True,
     "get_organization": True,
@@ -84,8 +72,6 @@ EXPECTED_COROUTINE_FUNCTION = {
     "attach_to_project": True,
     "attach_to_dataset": True,
     "issue_api_key": True,
-    "create_user": True,
-    "set_password": True,
     "disable_user": True,
 }
 
@@ -162,50 +148,6 @@ def _event_loop_is_running() -> bool:
     return True
 
 
-def test_the_three_blocking_calls_execute_off_the_event_loop_thread(tmp_path: Path) -> None:
-    """The blocking calls inside login, user creation and password reset run off the loop.
-
-    ``password_login``, ``create_user`` and ``set_password`` stay
-    ``async def`` because they also await store calls, so their one
-    blocking call must run on a worker thread rather than the event loop.
-    """
-    ran_on_the_event_loop: list[bool] = []
-
-    def _tracking_verify_password(record: CredentialRecord | None, password: str) -> bool:
-        ran_on_the_event_loop.append(_event_loop_is_running())
-        return real_verify_password(record, password)
-
-    def _tracking_make_credential(
-        principal_id: UUID, password: str, *, updated_by: str
-    ) -> CredentialRecord:
-        ran_on_the_event_loop.append(_event_loop_is_running())
-        return real_make_credential(principal_id, password, updated_by=updated_by)
-
-    settings = _settings(tmp_path, bootstrap_platform_owner="root")
-    headers = {"X-Huron-Subject": "root"}
-    with (
-        patch.object(login, "verify_password", _tracking_verify_password),
-        patch.object(identity_module, "make_credential", _tracking_make_credential),
-        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
-    ):
-        client.post("/auth/login", json={"username": "nobody", "password": "wrong-password"})
-        created = client.post(
-            "/api/v1/users",
-            json={"username": "eve", "display_name": "Eve", "password": "a-strong-password"},
-            headers=headers,
-        )
-        assert created.status_code == 201, created.text
-        principal_id = created.json()["id"]
-        reset = client.put(
-            f"/api/v1/users/{principal_id}/password",
-            json={"password": "another-strong-password"},
-            headers=headers,
-        )
-        assert reset.status_code == 200, reset.text
-
-    assert ran_on_the_event_loop == [False, False, False]
-
-
 def test_readyz_s_generation_store_stat_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
     """``readyz``'s generation-store stat still executes off the event-loop thread via ``asyncify``.
 
@@ -234,8 +176,8 @@ def test_readyz_s_generation_store_stat_executes_off_the_event_loop_thread(tmp_p
 def test_no_asyncify_call_site_in_the_service_tier_is_cancellable() -> None:
     """No ``asyncify`` call site in the service tier passes ``cancellable=``.
 
-    A cancelled ``asyncify`` call would abandon a rawstore write or a
-    credential hash mid-flight; every call site in the tier must accept the
+    A cancelled ``asyncify`` call would abandon filesystem work
+    mid-flight; every call site in the tier must accept the
     default (non-cancellable) behavior.
     """
     package_root = Path(api_package.__file__).resolve().parent

@@ -705,7 +705,7 @@ class PostgresRbacStore:
             ServiceAccountExists: If the organization already has an
                 account with this ``name`` (the ``service_accounts``
                 unique constraint refused the row).
-            UsernameTaken: If some other principal - a password user, an
+            UsernameTaken: If some other principal - a human identity, an
                 OIDC login, or another organization's service account -
                 already holds ``subject`` (the ``principals.subject``
                 unique constraint refused the row).

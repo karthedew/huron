@@ -164,8 +164,6 @@ def identity_service(runtime: Runtime, actor: CurrentPrincipal) -> IdentityServi
     return IdentityService(
         _access_policy(runtime, actor),
         runtime.principals,
-        runtime.credentials,
-        runtime.sessions,
         runtime.api_keys,
         service_account_administration(runtime, actor),
     )

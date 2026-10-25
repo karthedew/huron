@@ -66,17 +66,6 @@ class PrincipalKindMismatch(DomainError):
     code, status_code = "PRINCIPAL_KIND_MISMATCH", 409
 
 
-class OidcNotConfigured(DomainError):
-    """The OIDC routes are mounted, but no identity provider is configured.
-
-    The routes exist in every deployment so the API surface is stable;
-    without ``HURON_OIDC__*`` settings they answer 404 to say that this
-    login method is absent here, not broken.
-    """
-
-    code, status_code = "OIDC_NOT_CONFIGURED", 404
-
-
 class GrantExpired(DomainError):
     """The data-access grant has expired."""
 
@@ -109,7 +98,6 @@ __all__ = [
     "GrantExpired",
     "GrantScopeExceeded",
     "InputNotReadable",
-    "OidcNotConfigured",
     "PrincipalKindMismatch",
     "ServiceAccountExists",
     "UsernameTaken",
@@ -122,16 +110,12 @@ ERROR_CODES = frozenset(
         "ATTACHMENT_EXISTS",
         "USERNAME_TAKEN",
         "PRINCIPAL_KIND_MISMATCH",
-        "OIDC_NOT_CONFIGURED",
         "GRANT_EXPIRED",
         "GRANT_SCOPE_EXCEEDED",
         "INPUT_NOT_READABLE",
         "CLASSIFICATION_EXCEEDED",
         "APIKEY_EXPIRED",
         "APIKEY_REVOKED",
-        "PASSWORD_REJECTED",
-        "SESSION_EXPIRED",
-        "SESSION_REVOKED",
         "UNKNOWN_ROLE",
         "PRINCIPAL_KIND_NOT_ALLOWED",
         "SCOPE_NOT_BINDABLE",

@@ -21,11 +21,9 @@ from fastapi.openapi.utils import get_openapi
 
 from huron.core.metastore import (
     PostgresApiKeyStore,
-    PostgresCredentialStore,
     PostgresHierarchyStore,
     PostgresPrincipalStore,
     PostgresRbacStore,
-    PostgresSessionStore,
     SystemClock,
 )
 from huron.core.rawstore import PosixGenerationStore
@@ -35,7 +33,6 @@ from huron.core.security.rules import Classification, RoleBindingAuthorizer
 
 from .errors import DependencyUnavailable
 from .problems import Problem, install_error_handlers, problem_response
-from .routes import auth as auth_routes
 from .routes import v1
 from .runtime import ApiRuntime, ApiStores, Runtime
 from .settings import ApiSettings
@@ -57,14 +54,12 @@ def _postgres_stores(pool: asyncpg.Pool, clock: Clock) -> ApiStores:
             idempotency and lease arithmetic.
 
     Returns:
-        The six stores, each a thin wrapper around the pool.
+        The four stores, each a thin wrapper around the pool.
     """
     return ApiStores(
         hierarchy=PostgresHierarchyStore(pool, clock=clock),
         rbac=PostgresRbacStore(pool),
         api_keys=PostgresApiKeyStore(pool),
-        credentials=PostgresCredentialStore(pool),
-        sessions=PostgresSessionStore(pool),
         principals=PostgresPrincipalStore(pool),
     )
 
@@ -74,7 +69,7 @@ def _build_runtime(
     wired: ApiStores,
     clock: Clock,
     pool: asyncpg.Pool | None,
-    oidc: tuple[OidcResolver | None, OidcClient | None],
+    oidc: OidcResolver | None,
 ) -> ApiRuntime:
     """Compose the generation store, the facades and the authorizer into one published runtime.
 
@@ -88,7 +83,7 @@ def _build_runtime(
             built.
         pool: The database pool this instance opened, or None when
             ``wired`` was injected; published unchanged for ``/readyz``.
-        oidc: The resolver and client ``_configure_oidc`` produced.
+        oidc: The resolver ``_configure_oidc`` produced.
 
     Returns:
         The runtime every injected route reads through
@@ -96,7 +91,6 @@ def _build_runtime(
     """
     generations = PosixGenerationStore(Path(settings.data_root))
     generations.initialize()
-    oidc_resolver, oidc_client = oidc
     return ApiRuntime(
         settings=settings,
         generations=generations,
@@ -109,11 +103,8 @@ def _build_runtime(
             )
         ),
         api_keys=wired.api_keys,
-        credentials=wired.credentials,
-        sessions=wired.sessions,
         principals=wired.principals,
-        oidc_resolver=oidc_resolver,
-        oidc_client=oidc_client,
+        oidc_resolver=oidc,
         database_pool=pool,
         clock=clock,
     )
@@ -122,7 +113,7 @@ def _build_runtime(
 async def _configure_oidc(
     settings: ApiSettings,
     oidc_verify: Callable[[str], Mapping[str, object]] | None,
-) -> tuple[OidcResolver | None, OidcClient | None, httpx.AsyncClient | None]:
+) -> tuple[OidcResolver | None, httpx.AsyncClient | None]:
     """Wire the bearer-JWT resolver from an injected verifier or a real provider.
 
     A test-injected verifier wins outright, otherwise a configured provider
@@ -138,11 +129,8 @@ async def _configure_oidc(
             test never needs a reachable issuer.
 
     Returns:
-        A ``(resolver, client, http)`` triple. With an injected verifier only
-        the resolver is set; with no provider configured all three are
-        ``None``; after real discovery all three are set, and the HTTP
-        client is the caller's to close at shutdown because the OIDC client
-        keeps using it for the authorization-code flow.
+        A resolver and discovery HTTP client, or None when unused. The caller
+        closes the HTTP client at shutdown.
 
     Raises:
         Exception: Whatever provider discovery raised, re-raised unchanged
@@ -150,21 +138,13 @@ async def _configure_oidc(
             not leave an open connection pool behind.
     """
     if oidc_verify is not None:
-        return OidcResolver(oidc_verify), None, None
+        return OidcResolver(oidc_verify), None
     if settings.oidc is None:
-        return None, None, None
+        return None, None
     oidc = settings.oidc
     http = httpx.AsyncClient()
     try:
-        client = await OidcClient.discover(
-            http,
-            oidc.issuer,
-            client_id=oidc.client_id,
-            client_secret=oidc.client_secret,
-            redirect_url=oidc.redirect_url,
-            scopes=oidc.scopes,
-            groups_claim=oidc.groups_claim,
-        )
+        client = await OidcClient.discover(http, oidc.issuer)
     except Exception:
         await http.aclose()
         raise
@@ -173,7 +153,7 @@ async def _configure_oidc(
         audience=oidc.audience or oidc.client_id,
         jwks_url=client.provider.jwks_uri,
     )
-    return OidcResolver(verifier), client, http
+    return OidcResolver(verifier), http
 
 
 class _HuronFastAPI(FastAPI):
@@ -216,7 +196,7 @@ def create_app(
 
     Nothing is connected when this returns. The lifespan builds one
     :class:`ApiRuntime` - the initialized generation store, the authorizer, the RBAC
-    and authentication stores, the optional OIDC resolver and client, the
+    and authentication stores, the optional OIDC resolver, the
     optional database pool - and publishes it on ``app.state.runtime`` as
     the application's only piece of mutable state; every injected route
     reads it through ``huron.applications.api.runtime``. An application whose
@@ -225,8 +205,8 @@ def create_app(
     unauthenticated request answered as though it were authenticated.
 
     The unversioned ``/healthz`` and ``/readyz`` probes, the error handlers
-    that keep every failure in the problem+json shape, and the ``/auth`` and
-    ``/api/v1`` routers are all mounted here and nowhere else.
+    that keep every failure in the problem+json shape, and the
+    ``/api/v1`` router are all mounted here and nowhere else.
 
     Args:
         settings: The validated configuration; ``database_url`` is where
@@ -278,8 +258,8 @@ def create_app(
             else:
                 pool = await asyncpg.create_pool(settings.database_url)
                 wired = _postgres_stores(pool, clock)
-            oidc_resolver, oidc_client, http = await _configure_oidc(settings, oidc_verify)
-            runtime = _build_runtime(settings, wired, clock, pool, (oidc_resolver, oidc_client))
+            oidc_resolver, http = await _configure_oidc(settings, oidc_verify)
+            runtime = _build_runtime(settings, wired, clock, pool, oidc_resolver)
             app.state.runtime = runtime
             await bootstrap_platform_owner(runtime.rbac, settings.bootstrap_platform_owner)
             yield
@@ -333,7 +313,6 @@ def create_app(
             raise DependencyUnavailable("a dependency is unavailable", context={"checks": failed})
         return {"status": "ready"}
 
-    app.include_router(auth_routes.router)
     app.include_router(v1.router)
     return app
 

@@ -113,7 +113,6 @@ Pagination, credential issuance and streaming retain their transport-specific re
 <tr><td>POST</td><td><code>/api/v1/auth/api-keys</code></td><td>Create key (name, scopes, optional project restriction, expiry) → secret shown once (versioned: a key is a resource — see <a href="auth.html#routes">Authentication §5</a>)</td></tr>
 <tr><td>GET</td><td><code>/api/v1/auth/api-keys</code></td><td>List own keys: id, name, scopes, expiry, last_used_at</td></tr>
 <tr><td>POST</td><td><code>/api/v1/auth/api-keys/{id}:revoke</code></td><td>Owner, project owner (project-scoped keys), or admin</td></tr>
-<tr><td>GET</td><td><code>/auth/session</code></td><td>Principal, groups, effective roles per scope, session expiry and CSRF token — the client's sanity check (unversioned: a login concern, not a v1 resource — see <a href="auth.html#routes">Authentication §5</a>)</td></tr>
 <tr><td>POST</td><td><code>/polaris/credentials</code></td><td>Short-lived Polaris engine credentials mapped from Huron RBAC (<a href="polaris.html#authz">Polaris §3</a>)</td></tr>
 </table>
 
@@ -269,7 +268,6 @@ but no shipped route raises it yet.</p>
 <tr><td>BAD_REQUEST</td><td>400</td><td>live</td><td>the request body could not be read (for example, the client disconnected before sending it completely) — raised inside FastAPI's request-body reading, once a route has already matched</td></tr>
 <tr><td>FORBIDDEN</td><td>403</td><td>live</td><td>role bindings do not allow this capability here</td></tr>
 <tr><td>NOT_FOUND</td><td>404</td><td>live</td><td>no such resource, or no such route</td></tr>
-<tr><td>OIDC_NOT_CONFIGURED</td><td>404</td><td>live</td><td>the OIDC routes are mounted but no identity provider is configured</td></tr>
 <tr><td>METHOD_NOT_ALLOWED</td><td>405</td><td>live</td><td>path exists, method does not</td></tr>
 <tr><td>REQUESTED_RANGE_NOT_SATISFIABLE</td><td>416</td><td>live</td><td>a Range header names bytes outside the file; answered by the file response with an empty body and Content-Range, not a problem document</td></tr>
 <tr><td>SLUG_EXISTS</td><td>409</td><td>live</td><td>an organization, project or dataset already holds this slug</td></tr>
@@ -282,9 +280,6 @@ but no shipped route raises it yet.</p>
 <tr><td>INTERNAL_ERROR</td><td>500</td><td>live</td><td>an unhandled failure; nothing about it is on the wire</td></tr>
 <tr><td>DEPENDENCY_UNAVAILABLE</td><td>503</td><td>live</td><td><code>/readyz</code>: a probed dependency did not answer</td></tr>
 <tr><td>INVALID_CREDENTIAL</td><td>401</td><td>live</td><td>no usable credential, deliberately non-specific</td></tr>
-<tr><td>PASSWORD_REJECTED</td><td>401</td><td>live</td><td>password verification failed</td></tr>
-<tr><td>SESSION_EXPIRED</td><td>401</td><td>live</td><td>the login session passed its idle or absolute TTL</td></tr>
-<tr><td>SESSION_REVOKED</td><td>401</td><td>live</td><td>the login session was revoked</td></tr>
 <tr><td>APIKEY_EXPIRED</td><td>401</td><td>live</td><td>the API key passed its expiry</td></tr>
 <tr><td>APIKEY_REVOKED</td><td>401</td><td>live</td><td>the API key was revoked</td></tr>
 <tr><td>UNKNOWN_ROLE</td><td>422</td><td>live</td><td>no such role code</td></tr>

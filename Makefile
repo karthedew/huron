@@ -78,7 +78,7 @@ docs-serve: ## Serve the documentation with live reload on :8000.
 web-install: ## Install the frontend's locked dependencies (npm ci in web/).
 	cd web && npm ci
 
-web: ## Serve the frontend with hot reload on :5173 (the URL HURON_WEB_APP_URL in dev.env points at).
+web: ## Serve the frontend with hot reload on :5173.
 	cd web && npm run dev
 
 web-build: ## Production build of the frontend (adapter-node).

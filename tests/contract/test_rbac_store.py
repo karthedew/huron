@@ -313,6 +313,9 @@ async def _assert_grant_role_round_trips_through_bindings_for_and_bindings_at(
     revoked = await store.revoke_role(granted.id)
     assert revoked.id == granted.id
     assert await store.bindings_for(frozenset({principal})) == ()
+    assert await store.bindings_for(frozenset()) == ()
+    with pytest.raises(ResourceNotFound):
+        await store.revoke_role(granted.id)
     with pytest.raises(ResourceNotFound):
         await store.get_role_binding(granted.id)
 
@@ -336,6 +339,9 @@ async def _assert_service_account_round_trip(pool: asyncpg.Pool) -> None:
 
     fetched = await store.get_service_account(account.principal_id)
     assert fetched == account
+    assert await store.service_account_by_subject(account.subject) == account
+    with pytest.raises(ResourceNotFound):
+        await store.service_account_by_subject("astro-sa/unknown")
 
     listed = await store.list_service_accounts(organization_id)
     assert [item.principal_id for item in listed] == [account.principal_id]
@@ -358,7 +364,7 @@ async def _assert_create_service_account_reports_a_missing_organization(
 async def _assert_create_service_account_reports_a_subject_collision(pool: asyncpg.Pool) -> None:
     """A subject some other principal already holds is refused as UsernameTaken.
 
-    The derived subject is ``{organization slug}/{name}``; a password user
+    The derived subject is ``{organization slug}/{name}``; a human identity
     provisioned with exactly that username collides with it on the
     ``principals.subject`` constraint - a different conflict from another
     service account in the same organization sharing this ``name``, and

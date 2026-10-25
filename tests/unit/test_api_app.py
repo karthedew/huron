@@ -30,10 +30,8 @@ from huron.applications.api.settings import ApiSettings, ClassificationValue, Oi
 from huron.core.foundation.errors import AuthError
 from huron.core.metastore import (
     PostgresApiKeyStore,
-    PostgresCredentialStore,
     PostgresPrincipalStore,
     PostgresRbacStore,
-    PostgresSessionStore,
 )
 from tests.unit.support import memory_stores
 
@@ -84,12 +82,9 @@ def _oidc_settings(tmp_path: Path) -> ApiSettings:
         data_root=str(tmp_path / "data"),
         database_url="postgresql://unused",
         classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
-        login_flow_secret="flow-secret",
         oidc=OidcSettings(
             issuer=ISSUER,
             client_id="huron-web",
-            client_secret="shh",
-            redirect_url="https://app.example/auth/oidc/callback",
         ),
     )
 
@@ -120,7 +115,6 @@ def test_lifespan_discovers_the_configured_oidc_provider_and_closes_its_client(
         )
         app = create_app(settings=_oidc_settings(tmp_path), stores=memory_stores())
         with TestClient(app) as client:
-            assert app.state.runtime.oidc_client is not None
             assert app.state.runtime.oidc_resolver is not None
             assert client.get("/healthz").status_code == 200
     assert len(created) == 1
@@ -224,7 +218,6 @@ def test_lifespan_prefers_an_injected_oidc_verifier_over_discovery(tmp_path: Pat
         settings=settings, stores=memory_stores(), oidc_verify=lambda _token: {"sub": "svc"}
     )
     with TestClient(app) as client:
-        assert app.state.runtime.oidc_client is None
         assert app.state.runtime.oidc_resolver is not None
         assert client.get("/healthz").status_code == 200
 
@@ -276,8 +269,6 @@ def test_create_app_without_injected_stores_opens_one_pool_and_wires_every_postg
         assert calls == [("postgresql://example/huron",)]
         assert isinstance(runtime.rbac, PostgresRbacStore)
         assert isinstance(runtime.api_keys, PostgresApiKeyStore)
-        assert isinstance(runtime.credentials, PostgresCredentialStore)
-        assert isinstance(runtime.sessions, PostgresSessionStore)
         assert isinstance(runtime.principals, PostgresPrincipalStore)
 
 
@@ -327,8 +318,6 @@ def test_injected_stores_are_the_ones_the_runtime_exposes(tmp_path: Path) -> Non
         runtime = client.app.state.runtime
         assert runtime.rbac is stores.rbac
         assert runtime.api_keys is stores.api_keys
-        assert runtime.credentials is stores.credentials
-        assert runtime.sessions is stores.sessions
         assert runtime.principals is stores.principals
         actual = [
             (item.code, item.order, item.discoverable)

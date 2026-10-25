@@ -64,17 +64,10 @@ def test_a_route_two_routers_below_v1_still_requires_a_credential(tmp_path: Path
     assert response.headers["content-type"] == "application/problem+json"
 
 
-def test_router_and_parameter_share_one_guard_and_core_rechecks(
+def test_user_disablement_has_transport_and_core_guards(
     tmp_path: Path,
 ) -> None:
-    """Router and parameter share one decision; core independently checks the operation.
-
-    ``create_user`` reads the ``user.manage`` principal as a parameter and
-    ``users.router`` also requires it; both reference the same module-level
-    closure, so transport reaches ``decide()`` once and core once - two
-    independent ``require_system("user.manage")`` closures would decide
-    three times including core.
-    """
+    """The router and domain independently authorize user disablement."""
     calls: list[str] = []
     real_decide = decisions.decide
 
@@ -96,11 +89,10 @@ def test_router_and_parameter_share_one_guard_and_core_rechecks(
         TestClient(create_app(settings=settings, stores=memory_stores())) as client,
     ):
         response = client.post(
-            "/api/v1/users",
-            json={"username": "dana", "display_name": "Dana", "password": "a-strong-password"},
+            f"/api/v1/users/{uuid4()}/disable",
             headers={"X-Huron-Subject": "root", "Idempotency-Key": str(uuid4())},
         )
-    assert response.status_code == 201
+    assert response.status_code == 404
     assert calls == ["user.manage", "user.manage"]
 
 
@@ -164,8 +156,7 @@ def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decid
 def test_the_openapi_document_carries_the_resource_grained_tags(tmp_path: Path) -> None:
     """The OpenAPI document tags one per resource rather than one per module.
 
-    ``role-bindings`` and ``service-accounts`` are distinct groups; the
-    unversioned credential surface carries ``authentication``.
+    ``role-bindings`` and ``service-accounts`` are distinct groups.
     """
     app = create_app(settings=_settings(tmp_path), stores=memory_stores())
     schema = app.openapi()
@@ -173,7 +164,7 @@ def test_the_openapi_document_carries_the_resource_grained_tags(tmp_path: Path) 
     for methods in schema["paths"].values():
         for operation in methods.values():
             tags.update(operation.get("tags", []))
-    assert len(tags) == 12
+    assert len(tags) == 11
     assert "auth" not in tags
     assert tags == {
         "organizations",
@@ -187,7 +178,6 @@ def test_the_openapi_document_carries_the_resource_grained_tags(tmp_path: Path) 
         "api-keys",
         "users",
         "search",
-        "authentication",
     }
 
 
@@ -304,16 +294,11 @@ def test_router_level_responses_are_inherited_two_levels_deep(tmp_path: Path) ->
     ``organization_bindings`` is included into ``v1.router``, which is in
     turn included into the app - two levels - and declares no ``responses=``
     of its own, so the ``401``/``403``/``422``/``500`` its operations answer
-    with come entirely from the ``/api/v1`` router. The unversioned side
-    mirrors this: ``oidc.router`` under ``auth.router`` inherits ``422``/
-    ``500`` with no declaration at either the endpoint router or operation.
+    with come entirely from the ``/api/v1`` router.
     """
     schema = create_app(settings=_settings(tmp_path), stores=memory_stores()).openapi()
     binding_create = schema["paths"]["/api/v1/organizations/{organization_id}/bindings"]["post"]
     assert {401, 403, 422, 500} <= {int(status) for status in binding_create["responses"]}
-
-    oidc_start = schema["paths"]["/auth/oidc/start"]["get"]
-    assert {422, 500} <= {int(status) for status in oidc_start["responses"]}
 
 
 def test_per_operation_responses_add_to_the_inherited_set_rather_than_replace_it(
@@ -336,9 +321,6 @@ def test_per_operation_responses_add_to_the_inherited_set_rather_than_replace_it
         422,
         500,
     }
-
-    login = schema["paths"]["/auth/login"]["post"]
-    assert {int(status) for status in login["responses"]} == {200, 401, 422, 500}
 
 
 def _decorator_response_statuses(module: ModuleType) -> set[int]:
@@ -401,14 +383,6 @@ def test_no_v1_operation_redeclares_a_status_the_v1_router_already_covers() -> N
         assert _decorator_response_statuses(module) & {401, 403, 422, 500} == set()
 
 
-def test_no_auth_operation_redeclares_a_status_the_auth_router_already_covers() -> None:
-    """``UNIVERSAL_ERRORS`` (422/500) is declared once, on ``routes/auth/__init__.py``'s router."""
-    from huron.applications.api.routes.auth.endpoints import login, oidc, session
-
-    for module in (login, oidc, session):
-        assert _decorator_response_statuses(module) & {422, 500} == set()
-
-
 LEGACY_OPERATIONS = {
     "/api/v1/organizations": ["get", "post"],
     "/api/v1/organizations/{organization_id}": ["get", "patch"],
@@ -434,8 +408,6 @@ LEGACY_OPERATIONS = {
     "/api/v1/projects/{project_id}/policy-attachments": ["post"],
     "/api/v1/datasets/{dataset_id}/policy-attachments": ["post"],
     "/api/v1/auth/api-keys": ["post"],
-    "/api/v1/users": ["post"],
-    "/api/v1/users/{principal_id}/password": ["put"],
     "/api/v1/users/{principal_id}/disable": ["post"],
     "/api/v1/search": ["get"],
 }
@@ -448,7 +420,8 @@ def test_the_legacy_v1_router_serves_exactly_its_operations(client: TestClient) 
         path: sorted(methods) for path, methods in paths.items() if path.startswith("/api/v1/")
     }
     assert actual == LEGACY_OPERATIONS
-    assert sum(map(len, actual.values())) == 40
+    assert not any(path.startswith("/auth") for path in paths)
+    assert sum(map(len, actual.values())) == 38
 
 
 def test_every_legacy_v1_operation_refuses_an_anonymous_request(client: TestClient) -> None:

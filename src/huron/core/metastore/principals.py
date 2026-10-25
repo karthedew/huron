@@ -32,8 +32,8 @@ _SUBJECT_UNIQUE_CONSTRAINT = "principals_subject_key"
 class PostgresPrincipalStore:
     """The ``principals`` table behind ``pkg.auth.PrincipalStore``.
 
-    ``upsert_oidc_user`` is the upsert performed on OIDC login: the first
-    login for a given ``idp_subject`` inserts the row (``subject`` mirrors
+    ``upsert_oidc_user`` records a provider identity: the first
+    upsert for a given ``idp_subject`` inserts the row (``subject`` mirrors
     ``idp_subject``, matching what the bearer-JWT path already treats as
     the OIDC subject), every later one only refreshes the display name. A
     first-ever ``idp_subject`` that collides with another principal's
@@ -53,35 +53,8 @@ class PostgresPrincipalStore:
         """
         self._pool = pool
 
-    async def get_user_by_subject(self, subject: str) -> PrincipalRecord | None:
-        """Return the enabled user with this subject, for password login.
-
-        The WHERE clause folds "unknown username", "disabled account" and
-        "this subject names a service account" into the same None, so
-        ``verify_password`` runs its constant-shape check against every one
-        of those the same way it does an unknown user.
-
-        Args:
-            subject: The username the login form submitted.
-
-        Returns:
-            The user principal, or None when no enabled user has this
-            subject.
-        """
-        row = await self._pool.fetchrow(
-            """
-            SELECT id, kind, subject, display_name, idp_subject, disabled_at, created_at
-            FROM principals
-            WHERE subject = $1 AND kind = 'user' AND disabled_at IS NULL
-            """,
-            subject,
-        )
-        if row is None:
-            return None
-        return principal_record(row)
-
     async def upsert_oidc_user(self, user: OidcUser) -> PrincipalRecord:
-        """Create the principal on a first OIDC login, refresh its name on every later one.
+        """Create a provider identity or refresh its existing display name.
 
         One ``INSERT ... ON CONFLICT (idp_subject) DO UPDATE ... RETURNING``:
         a new ``idp_subject`` inserts a user whose ``subject`` is that same
@@ -90,7 +63,7 @@ class PostgresPrincipalStore:
         ``disabled_at`` as they were. Unlike ``DO NOTHING``, this form
         always yields exactly one row, so the result is never None. A
         disabled user is returned with ``disabled_at`` set, not refused -
-        the login route decides what that means. The conflict target is
+        the caller decides what that means. The conflict target is
         ``idp_subject`` alone: a first-ever ``idp_subject`` that instead
         collides with the ``subject`` UNIQUE constraint - some other
         principal already holds it - is not an ``idp_subject`` conflict,
@@ -152,45 +125,6 @@ class PostgresPrincipalStore:
             principal_id,
         )
         return principal_record(row) if row is not None else None
-
-    async def create_user(self, *, subject: str, display_name: str) -> PrincipalRecord:
-        """Provision a password user.
-
-        ``subject`` is globally UNIQUE across every principal
-        (``0002_rbac``), so a name already claimed - by an OIDC login or
-        another password user - surfaces here as
-        :class:`~huron.core.security.principals.PrincipalSubjectExists`, the same refusal
-        the memory store raises rather than one silently duplicating what
-        the other's constraint rejects. The row is a user with no
-        ``idp_subject``, enabled, stamped with the database clock; the
-        password itself is a separate ``local_credentials`` row the caller
-        writes next.
-
-        Args:
-            subject: The username the user will log in with.
-            display_name: The name shown for the user.
-
-        Returns:
-            The principal row as inserted.
-
-        Raises:
-            PrincipalSubjectExists: If any principal already holds
-                ``subject``.
-        """
-        try:
-            row = await self._pool.fetchrow(
-                """
-                INSERT INTO principals (id, kind, subject, display_name, created_at)
-                VALUES ($1, 'user', $2, $3, now())
-                RETURNING id, kind, subject, display_name, idp_subject, disabled_at, created_at
-                """,
-                uuid7(),
-                subject,
-                display_name,
-            )
-        except asyncpg.exceptions.UniqueViolationError as exc:
-            raise PrincipalSubjectExists(subject) from exc
-        return principal_record(row)
 
     async def disable(self, principal_id: UUID, *, disabled_at: datetime) -> PrincipalRecord | None:
         """Set ``disabled_at`` on a principal and return the updated row.

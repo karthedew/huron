@@ -5,23 +5,17 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from asyncer import asyncify
-
 from huron.core.foundation.errors import Forbidden, ResourceNotFound
 from huron.core.security.apikeys import create_api_key
-from huron.core.security.errors import PrincipalKindMismatch, UsernameTaken
-from huron.core.security.password import make_credential
-from huron.core.security.principals import PrincipalSubjectExists
+from huron.core.security.errors import PrincipalKindMismatch
 from huron.core.security.rules import ScopeType
 
 if TYPE_CHECKING:
     from uuid import UUID
 
     from huron.core.security.apikeys import ApiKeyRecord
-    from huron.core.security.password import CredentialStore
     from huron.core.security.ports import ApiKeyWriter
     from huron.core.security.principals import PrincipalRecord, PrincipalStore
-    from huron.core.security.sessions import SessionStore
     from huron.core.security.types import ServiceAccount
 
     from .access import AccessPolicy
@@ -35,8 +29,6 @@ class IdentityService:
         self,
         access: AccessPolicy,
         principals: PrincipalStore,
-        credentials: CredentialStore,
-        sessions: SessionStore,
         api_keys: ApiKeyWriter,
         service_accounts: ServiceAccounts,
     ) -> None:
@@ -45,15 +37,11 @@ class IdentityService:
         Args:
             access: The caller's authorization policy.
             principals: Durable identities.
-            credentials: Password credential storage.
-            sessions: Browser session storage.
             api_keys: Programmatic credential storage.
             service_accounts: Authorized service-account administration.
         """
         self._access = access
         self._principals = principals
-        self._credentials = credentials
-        self._sessions = sessions
         self._api_keys = api_keys
         self._service_accounts = service_accounts
 
@@ -78,49 +66,8 @@ class IdentityService:
             raise PrincipalKindMismatch(f"principal is not a user: {principal_id}")
         return principal
 
-    async def create_user(self, username: str, display_name: str, password: str) -> PrincipalRecord:
-        """Create a new human identity and its initial password credential.
-
-        Args:
-            username: The unique subject.
-            display_name: The human-readable name.
-            password: The initial password.
-
-        Returns:
-            The created identity.
-
-        Raises:
-            UsernameTaken: If the subject already exists.
-        """
-        await self._access.require("user.manage", ScopeType.SYSTEM)
-        try:
-            principal = await self._principals.create_user(
-                subject=username, display_name=display_name
-            )
-        except PrincipalSubjectExists as exc:
-            raise UsernameTaken(str(exc)) from exc
-        credential = await asyncify(make_credential)(
-            principal.id, password, updated_by=self._access.actor.subject
-        )
-        await self._credentials.upsert(credential)
-        return principal
-
-    async def set_password(self, principal_id: UUID, password: str) -> None:
-        """Replace a password and revoke the user's existing credentials.
-
-        Args:
-            principal_id: The user to update.
-            password: The replacement password.
-        """
-        principal = await self._user(principal_id)
-        credential = await asyncify(make_credential)(
-            principal_id, password, updated_by=self._access.actor.subject
-        )
-        await self._credentials.upsert(credential)
-        await self._revoke(principal.subject, datetime.now(UTC))
-
     async def disable_user(self, principal_id: UUID) -> PrincipalRecord:
-        """Disable a user and revoke their browser and programmatic credentials.
+        """Disable a user and revoke their programmatic credentials.
 
         Args:
             principal_id: The user to disable.
@@ -146,7 +93,6 @@ class IdentityService:
             subject: The identity losing access.
             now: The revocation instant.
         """
-        await self._sessions.revoke_all_for(subject, now)
         await self._api_keys.revoke_all_for(subject, now)
 
     async def issue_key(

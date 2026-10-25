@@ -1,9 +1,4 @@
-"""Admin-provisioned password users through the HTTP surface.
-
-Covers the ``user.manage`` guard, the duplicate-subject refusal shared by
-memory and Postgres principal stores, the two write routes' session-revoking
-side effects, and the exact field set the responses publish.
-"""
+"""Authorized human identity disablement and API-key revocation through HTTP."""
 
 from __future__ import annotations
 
@@ -71,19 +66,8 @@ def client(app: FastAPI) -> Iterator[TestClient]:
         yield client
 
 
-def _create_user(client: TestClient, *, username: str, password: str = "a-strong-password") -> str:
-    """Creates a password user named `username` as root and returns its principal id."""
-    response = client.post(
-        "/api/v1/users",
-        json={"username": username, "display_name": username.title(), "password": password},
-        headers=_headers("root"),
-    )
-    assert response.status_code == 201, response.text
-    return str(response.json()["id"])
-
-
 def test_user_manage_is_denied_to_an_organization_admin(client: TestClient) -> None:
-    """An organization admin, lacking user.manage, is denied creating a user with 403."""
+    """An organization admin, lacking user.manage, is denied disabling a user with 403."""
     organization = client.post(
         "/api/v1/organizations",
         json={"slug": "astro", "title": "Astro"},
@@ -97,160 +81,8 @@ def test_user_manage_is_denied_to_an_organization_admin(client: TestClient) -> N
     )
     assert bound.status_code == 201
 
-    denied = client.post(
-        "/api/v1/users",
-        json={"username": "dana", "display_name": "Dana", "password": "a-strong-password"},
-        headers=_headers("mallory"),
-    )
+    denied = client.post(f"/api/v1/users/{uuid4()}/disable", headers=_headers("mallory"))
     assert denied.status_code == 403
-
-
-def test_user_manage_is_granted_to_the_platform_owner(client: TestClient) -> None:
-    """The platform owner can create a user, whose response never leaks a password or its hash."""
-    response = client.post(
-        "/api/v1/users",
-        json={"username": "dana", "display_name": "Dana", "password": "a-strong-password"},
-        headers=_headers("root"),
-    )
-    assert response.status_code == 201
-    body = response.json()
-    assert body["subject"] == "dana"
-    assert body["disabled_at"] is None
-    assert "password" not in body
-    assert "password_hash" not in body
-
-
-def test_created_user_response_publishes_exactly_the_declared_fields(client: TestClient) -> None:
-    """A created user's response publishes exactly its declared fields, not kind or idp_subject.
-
-    ``kind`` and ``idp_subject`` are on ``PrincipalRecord`` but neither is
-    part of this contract: ``kind`` is constant "user" on every route that
-    returns this model, and ``idp_subject`` is always null here - it is set
-    only by the OIDC login path, which this surface never reaches.
-    """
-    response = client.post(
-        "/api/v1/users",
-        json={"username": "dana", "display_name": "Dana", "password": "a-strong-password"},
-        headers=_headers("root"),
-    )
-    assert response.status_code == 201
-    assert set(response.json()) == {
-        "id",
-        "subject",
-        "display_name",
-        "disabled_at",
-        "created_at",
-    }
-
-
-def test_create_user_refuses_a_subject_that_already_exists(client: TestClient) -> None:
-    """Creating a user with a subject that already exists is refused with 409 USERNAME_TAKEN."""
-    _create_user(client, username="dana")
-    conflict = client.post(
-        "/api/v1/users",
-        json={"username": "dana", "display_name": "Someone Else", "password": "another-password"},
-        headers=_headers("root"),
-    )
-    assert conflict.status_code == 409
-    assert conflict.json()["code"] == "USERNAME_TAKEN"
-    assert "dana" in conflict.json()["detail"]
-
-
-def test_set_password_refuses_a_service_account_id_with_an_honest_error(
-    client: TestClient, stores: ApiStores
-) -> None:
-    """Setting a password for a service-account id fails with an honest kind mismatch, not 404.
-
-    A service account can never legitimately reach this route - the
-    kind guard here must say so plainly, not report "does not exist" the
-    way the Postgres kind-guard trigger's generic RaiseError would if this
-    route let a mismatched id fall all the way through to it. Service
-    accounts live in ``rbac_store`` for the memory backend (there is no
-    unified ``principals`` table the way Postgres has one), so the
-    ``principals`` row is seeded directly here, the same seam
-    ``test_api_login.py`` uses for its own service-account scenario.
-    """
-    account = PrincipalRecord(
-        id=uuid4(),
-        kind="service_account",
-        subject="astro/pipeline",
-        display_name="",
-        idp_subject=None,
-        disabled_at=None,
-        created_at=datetime.now(UTC),
-    )
-    stores.principals.records[account.id] = account
-
-    response = client.put(
-        f"/api/v1/users/{account.id}/password",
-        json={"password": "a-strong-password"},
-        headers=_headers("root"),
-    )
-    assert response.status_code == 409
-    assert response.json()["code"] == "PRINCIPAL_KIND_MISMATCH"
-    assert "not a user" in response.json()["detail"]
-
-
-def test_set_password_404s_for_an_unknown_principal_id(client: TestClient) -> None:
-    """Setting a password for an unknown principal id 404s."""
-    response = client.put(
-        f"/api/v1/users/{uuid4()}/password",
-        json={"password": "a-strong-password"},
-        headers=_headers("root"),
-    )
-    assert response.status_code == 404
-
-
-def test_password_reset_revokes_every_session_for_that_subject(
-    app: FastAPI, client: TestClient
-) -> None:
-    """Resetting a password revokes the old session but a fresh login with the new one succeeds."""
-    principal_id = _create_user(client, username="erin", password="erins-first-password")
-    # A separate cookie jar against the same app - dev-header requests and a
-    # session cookie must never share one TestClient (the cookie branch of
-    # ``current_principal`` outranks dev headers, so they would collide).
-    user_client = TestClient(app)
-    login = user_client.post(
-        "/auth/login", json={"username": "erin", "password": "erins-first-password"}
-    )
-    assert login.status_code == 200
-    assert user_client.get("/auth/session").status_code == 200
-
-    reset = client.put(
-        f"/api/v1/users/{principal_id}/password",
-        json={"password": "erins-second-password"},
-        headers=_headers("root"),
-    )
-    assert reset.status_code == 200
-    assert reset.json() == {"status": "password-reset"}
-
-    assert user_client.get("/auth/session").status_code == 401
-    relogin = user_client.post(
-        "/auth/login", json={"username": "erin", "password": "erins-second-password"}
-    )
-    assert relogin.status_code == 200
-
-
-def test_disable_sets_disabled_at_and_revokes_every_session(
-    app: FastAPI, client: TestClient
-) -> None:
-    """Disabling a user sets disabled_at, revokes their session, and blocks any further login."""
-    principal_id = _create_user(client, username="frank", password="franks-password")
-    user_client = TestClient(app)
-    login = user_client.post(
-        "/auth/login", json={"username": "frank", "password": "franks-password"}
-    )
-    assert login.status_code == 200
-
-    disabled = client.post(f"/api/v1/users/{principal_id}/disable", headers=_headers("root"))
-    assert disabled.status_code == 200
-    assert disabled.json()["disabled_at"] is not None
-
-    assert user_client.get("/auth/session").status_code == 401
-    relogin = user_client.post(
-        "/auth/login", json={"username": "frank", "password": "franks-password"}
-    )
-    assert relogin.status_code == 401
 
 
 def _mint_api_key(client: TestClient, *, subject: str) -> str:
@@ -262,46 +94,44 @@ def _mint_api_key(client: TestClient, *, subject: str) -> str:
     return str(issued.json()["secret"])
 
 
-def test_disable_revokes_every_api_key_the_user_holds(app: FastAPI, client: TestClient) -> None:
-    """Disabling a user revokes the API keys they minted, not only their sessions."""
-    principal_id = _create_user(client, username="alice")
+def test_disable_revokes_every_api_key_the_user_holds(
+    app: FastAPI, client: TestClient, stores: ApiStores
+) -> None:
+    """Disabling a user revokes the API keys they minted, and returns their disabled identity."""
+    user = PrincipalRecord(uuid4(), "user", "alice", "Alice", None, None, datetime.now(UTC))
+    stores.principals.records[user.id] = user
+    principal_id = user.id
     key_client = TestClient(app)
     secret = _mint_api_key(key_client, subject="alice")
     assert (
-        key_client.get("/auth/session", headers={"Authorization": f"Bearer {secret}"}).status_code
+        key_client.get(
+            "/api/v1/organizations", headers={"Authorization": f"Bearer {secret}"}
+        ).status_code
         == 200
     )
 
     disabled = client.post(f"/api/v1/users/{principal_id}/disable", headers=_headers("root"))
     assert disabled.status_code == 200
+    assert disabled.json()["disabled_at"] is not None
+    assert set(disabled.json()) == {"id", "subject", "display_name", "disabled_at", "created_at"}
 
-    revoked = key_client.get("/auth/session", headers={"Authorization": f"Bearer {secret}"})
+    revoked = key_client.get("/api/v1/organizations", headers={"Authorization": f"Bearer {secret}"})
     assert revoked.status_code == 401
     assert revoked.json()["code"] == "APIKEY_REVOKED"
 
 
-def test_set_password_revokes_every_api_key_the_user_holds(
-    app: FastAPI, client: TestClient
-) -> None:
-    """Resetting a user's password revokes the API keys they minted, not only their sessions."""
-    principal_id = _create_user(client, username="bob")
-    key_client = TestClient(app)
-    secret = _mint_api_key(key_client, subject="bob")
-    assert (
-        key_client.get("/auth/session", headers={"Authorization": f"Bearer {secret}"}).status_code
-        == 200
+def test_disable_refuses_a_service_account_id(client: TestClient, stores: ApiStores) -> None:
+    """A service-account identity is refused with a kind conflict and remains enabled."""
+    account = PrincipalRecord(
+        uuid4(), "service_account", "astro/pipeline", "Pipeline", None, None, datetime.now(UTC)
     )
+    stores.principals.records[account.id] = account
 
-    reset = client.put(
-        f"/api/v1/users/{principal_id}/password",
-        json={"password": "bobs-second-password"},
-        headers=_headers("root"),
-    )
-    assert reset.status_code == 200
+    response = client.post(f"/api/v1/users/{account.id}/disable", headers=_headers("root"))
 
-    revoked = key_client.get("/auth/session", headers={"Authorization": f"Bearer {secret}"})
-    assert revoked.status_code == 401
-    assert revoked.json()["code"] == "APIKEY_REVOKED"
+    assert response.status_code == 409
+    assert response.json()["code"] == "PRINCIPAL_KIND_MISMATCH"
+    assert stores.principals.records[account.id] == account
 
 
 def test_disable_404s_for_an_unknown_principal_id(client: TestClient) -> None:
@@ -313,7 +143,7 @@ def test_disable_404s_for_an_unknown_principal_id(client: TestClient) -> None:
 class _VanishingPrincipalStore(MemoryPrincipalStore):
     """A principal store whose disable() always reports hitting no row.
 
-    Stands in for the principal disappearing between ``_existing_user``'s
+    Stands in for the principal disappearing between the identity service's
     read and the write that follows it, two separate store round trips
     with no transaction across them. The existence check must not be
     trusted to still hold by the time the write runs.

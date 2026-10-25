@@ -1,6 +1,6 @@
 """The identity every credential resolver produces, before authorization runs.
 
-Whatever the credential was - an API key, a session cookie, an OIDC bearer
+Whatever the credential was - an API key, an OIDC bearer
 token, or a development header - its resolver ends in a :class:`Principal`,
 and everything downstream, authorization first, works from that object
 rather than from the credential. This module holds only the dataclass so
@@ -21,10 +21,10 @@ class Principal:
     was resolved, and nothing after that point can add a group or widen a
     scope. ``subject`` is the globally unique name the principal is known
     by everywhere else. ``groups`` come from the identity provider's claim
-    or, for a session, from the snapshot taken at login. ``scopes`` and
+    or explicitly trusted development headers. ``scopes`` and
     ``project_id`` are the restrictions an API key was minted with and are
     empty or ``None`` for every other credential. ``authentication_method``
-    records how the subject proved itself (``"api-key"``, ``"session"``,
+    records how the subject proved itself (``"api-key"``,
     ``"oidc"`` or ``"dev-headers"``) and is reported back to the caller.
     """
 

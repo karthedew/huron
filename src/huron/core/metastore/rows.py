@@ -21,9 +21,7 @@ from huron.core.catalog.types import (
     Project,
 )
 from huron.core.security.apikeys import ApiKeyRecord
-from huron.core.security.password import CredentialRecord
 from huron.core.security.principals import PrincipalRecord
-from huron.core.security.sessions import SessionRecord
 from huron.core.security.types import Policy, RoleBindingRecord, ServiceAccount
 
 if TYPE_CHECKING:
@@ -126,51 +124,6 @@ def api_key_record(row: asyncpg.Record) -> ApiKeyRecord:
         expires_at=row["expires_at"],
         revoked_at=row["revoked_at"],
         owner_kind=row["owner_kind"],
-    )
-
-
-def credential_record(row: asyncpg.Record) -> CredentialRecord:
-    """Decode one ``local_credentials`` row.
-
-    Args:
-        row: A row selecting ``principal_id, password_hash, updated_at,
-            updated_by``.
-
-    Returns:
-        The stored password credential, hash included.
-    """
-    return CredentialRecord(
-        principal_id=row["principal_id"],
-        password_hash=row["password_hash"],
-        updated_at=row["updated_at"],
-        updated_by=row["updated_by"],
-    )
-
-
-def session_record(row: asyncpg.Record) -> SessionRecord:
-    """Decode one ``sessions`` row, turning the ``groups`` array into a frozenset.
-
-    Args:
-        row: A row selecting ``id, secret_sha256, csrf_token, subject,
-            groups, authentication_method, created_at, last_seen_at,
-            idle_expires_at, absolute_expires_at, revoked_at``.
-
-    Returns:
-        The session as stored, whatever its expiry or revocation state;
-        judging that is ``SessionResolver``'s job.
-    """
-    return SessionRecord(
-        id=row["id"],
-        secret_sha256=row["secret_sha256"],
-        csrf_token=row["csrf_token"],
-        subject=row["subject"],
-        groups=frozenset(row["groups"]),
-        authentication_method=row["authentication_method"],
-        created_at=row["created_at"],
-        last_seen_at=row["last_seen_at"],
-        idle_expires_at=row["idle_expires_at"],
-        absolute_expires_at=row["absolute_expires_at"],
-        revoked_at=row["revoked_at"],
     )
 
 

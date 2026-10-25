@@ -19,7 +19,7 @@
     {
       "clientId": "huron-web",
       "name": "Huron web app (dev)",
-      "description": "Confidential client for the browser login code flow (/auth/oidc/start, /auth/oidc/callback). Dev-only secret, valid only for the Keycloak instance docker-compose.yml runs locally.",
+      "description": "Client whose ID is the audience of the bearer tokens the API's legacy verifier accepts. Dev-only secret, valid only for the Keycloak instance docker-compose.yml runs locally.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -30,7 +30,6 @@
       "serviceAccountsEnabled": false,
       "authorizationServicesEnabled": false,
       "redirectUris": [
-        "http://localhost:8080/auth/oidc/callback",
         "http://keycloak:8081/*"
       ],
       "webOrigins": [

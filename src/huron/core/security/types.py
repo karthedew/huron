@@ -10,59 +10,13 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from .principal import Principal
-    from .sessions import SessionRecord
-
-
-@dataclass(frozen=True, slots=True)
-class LoginSession:
-    """A persisted login session and its one-time secret, ready for transport delivery."""
-
-    session: SessionRecord
-    token: str
-    display_name: str
-
-
-@dataclass(frozen=True, slots=True)
-class OidcLoginStart:
-    """Provider authorization target and signed pending-login state."""
-
-    authorization_url: str
-    flow_token: str
-
-
-@dataclass(frozen=True, slots=True)
-class OidcLoginResult:
-    """Completed OIDC login and the authenticated flow's local return path."""
-
-    login: LoginSession
-    return_to: str
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedCredential:
-    """Authenticated actor and optional session after credential bookkeeping."""
+    """Authenticated actor after credential bookkeeping."""
 
     actor: Principal
-    session: SessionRecord | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ScopeCapabilities:
-    """Sorted capability codes for one scope, not role names."""
-
-    scope_type: str
-    scope_id: UUID | None
-    capabilities: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class SelfAccessSummary:
-    """An authenticated actor's own identity, authority and optional session details."""
-
-    actor: Principal
-    scopes: tuple[ScopeCapabilities, ...]
-    csrf_token: str | None
-    expires_at: datetime | None
 
 
 @dataclass(slots=True)

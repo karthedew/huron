@@ -31,15 +31,13 @@ def test_defaults_construct_a_working_development_configuration() -> None:
     """The default constructor kwargs produce a working development configuration."""
     settings = ApiSettings(**_kwargs())
     assert "store_backend" not in ApiSettings.model_fields
-    assert settings.password_login_enabled is True
-    assert settings.session_cookie_name == "huron_session"
     assert settings.oidc is None
 
 
 def test_dev_headers_are_refused_outside_development() -> None:
     """``dev-headers`` auth mode is refused outside a development environment."""
     with pytest.raises(ValidationError, match="dev-headers auth is refused"):
-        ApiSettings(**_kwargs(env="production", login_flow_secret="s"))
+        ApiSettings(**_kwargs(env="production"))
 
 
 def test_oidc_auth_mode_requires_oidc_settings() -> None:
@@ -56,38 +54,11 @@ def test_oidc_auth_mode_succeeds_once_oidc_settings_are_supplied() -> None:
             oidc=OidcSettings(
                 issuer="https://idp.example",
                 client_id="huron-web",
-                client_secret="shh",
-                redirect_url="https://app.example/auth/oidc/callback",
             ),
         )
     )
     assert settings.oidc is not None
     assert settings.oidc.audience is None
-    assert settings.oidc.scopes == ("openid", "profile", "email")
-
-
-def test_login_flow_secret_is_required_outside_development() -> None:
-    """An empty ``login_flow_secret`` is refused outside development, where it is required."""
-    with pytest.raises(ValidationError, match="login_flow_secret is required"):
-        ApiSettings(
-            **_kwargs(
-                env="staging",
-                auth_mode="oidc",
-                login_flow_secret="",
-                oidc=OidcSettings(
-                    issuer="https://idp.example",
-                    client_id="huron-web",
-                    client_secret="shh",
-                    redirect_url="https://app.example/auth/oidc/callback",
-                ),
-            )
-        )
-
-
-def test_login_flow_secret_is_optional_in_development() -> None:
-    """An empty ``login_flow_secret`` is accepted in development, where it is optional."""
-    settings = ApiSettings(**_kwargs(login_flow_secret=""))
-    assert settings.login_flow_secret == ""
 
 
 def test_classification_codes_must_be_unique() -> None:

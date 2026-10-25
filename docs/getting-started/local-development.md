@@ -68,8 +68,7 @@ user, `uvicorn ... --host 0.0.0.0 --port 8080`) and brings up two more services 
 - `api` — the whole application, published on `http://localhost:8080`, configured entirely
   through the `HURON_*` environment variables set in `docker-compose.yml` (see the table below
   for what each one means). The API always connects to `HURON_DATABASE_URL`, real Postgres
-  here, and `HURON_AUTH_MODE=oidc` makes this the one place the whole login flow (password
-  *and* OIDC) runs end-to-end against real Postgres and a real IdP.
+  here, and `HURON_AUTH_MODE=oidc` verifies bearer tokens against the real IdP.
 
 **The issuer, decided once — and `make hosts` is required in BOTH modes.** The compose
 `keycloak` service sets `KC_HOSTNAME: http://keycloak:8081`, which fixes Keycloak's *entire*
@@ -78,7 +77,7 @@ discovery document — `issuer`, `authorization_endpoint`, `token_endpoint`, `jw
 `/.well-known/openid-configuration` in the first place. Fetch discovery from `localhost:8081`
 and you still get `keycloak:8081` URLs back. So every consumer of this realm needs `keycloak`
 to resolve — the browser (redirected to `authorization_endpoint`) **and** the API's own
-outbound calls during discovery and token exchange, regardless of whether the API process
+outbound calls during discovery and signing-key retrieval, regardless of whether the API process
 itself is running in the compose network (`make stack`, where `keycloak` already resolves as a
 service name) or on the host (`make api`, where it needs the `make hosts` line). There is no
 host-mode variant that can skip it or use `localhost:8081` instead — `HURON_OIDC__ISSUER` is
@@ -88,7 +87,7 @@ Run `make hosts` once. The OIDC variables are the same whether `api` runs in the
 on the host: both read `dev.env` (below), and the compose service overrides only
 `HURON_DATABASE_URL`.
 
-Both dev users seeded in the realm log in at Keycloak's own login form during the code flow:
+The realm seeds two development users:
 `karl` / `karl-dev-password` (realm role `platform-admins`, surfaced as the OIDC `groups`
 claim — though what actually seeds karl's `platform_owner` RBAC binding is
 `HURON_BOOTSTRAP_PLATFORM_OWNER=karl`, unrelated to Keycloak) and `sam` / `sam-dev-password`
@@ -160,11 +159,7 @@ single-quoted so uv, Docker Compose and podman-compose all read it byte for byte
 | `HURON_CLASSIFICATION_VOCABULARY` | yes | Codes and orders must each be unique, and the list may not be empty |
 | `HURON_DATA_ROOT` | no | Defaults to `/data` |
 | `HURON_BOOTSTRAP_PLATFORM_OWNER` | no | Subject granted a SYSTEM-scope `platform_owner` binding at startup |
-| `HURON_LOGIN_FLOW_SECRET` | outside `development` | Signs the transient `huron_login` flow cookie |
-| `HURON_OIDC__*` | when `HURON_AUTH_MODE=oidc` | Nested via `__`, e.g. `HURON_OIDC__ISSUER`, `HURON_OIDC__CLIENT_ID`, `HURON_OIDC__CLIENT_SECRET`, `HURON_OIDC__REDIRECT_URL` |
-| `HURON_PASSWORD_LOGIN_ENABLED` | no | Defaults to `true` |
-| `HURON_SESSION_COOKIE_NAME` | no | Defaults to `huron_session` |
-| `HURON_WEB_APP_URL` | no | Where `/auth/oidc/callback` lands the browser after login; defaults to `http://localhost:5173` |
+| `HURON_OIDC__*` | when `HURON_AUTH_MODE=oidc` | Nested via `__`, e.g. `HURON_OIDC__ISSUER`, `HURON_OIDC__CLIENT_ID` |
 
 ### Authenticating in development
 
@@ -172,7 +167,7 @@ With `HURON_AUTH_MODE=dev-headers`, identity comes from request headers:
 
 ```bash
 curl -H 'X-Huron-Subject: alice' -H 'X-Huron-Groups: physics,leads' \
-     http://localhost:8080/auth/session
+     http://localhost:8080/api/v1/organizations
 ```
 
 `DevHeaderResolver` refuses to construct outside `development`, and `ApiSettings` refuses the
@@ -198,6 +193,5 @@ make web-test           # vitest
 make web-build          # production build (adapter-node)
 ```
 
-`http://localhost:5173` is where `/auth/oidc/callback` sends the browser after login
-(`HURON_WEB_APP_URL` in `dev.env`), so the API and the frontend are meant to run side by side:
+The frontend at `http://localhost:5173` and the API run side by side:
 `make up`, `make migrate`, then `make api` in one terminal and `make web` in another.

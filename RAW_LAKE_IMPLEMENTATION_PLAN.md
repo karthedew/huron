@@ -1223,6 +1223,11 @@ contracts, `0014` is head, and the web calls no Python service.
     its scanned size, then `--update-baseline` ratchets the baseline down to the scan. Any other new or
     grown group stops the task. Each added signature, its source group and the running total go under
     "Execution notes"; deletion subsets are exempt from the per-group cap.
+    Narrow owner-approved exception (2026-10-25): admit the size-2 signature
+    `core/metastore/api_keys.py` + `core/metastore/memory_principals.py` from that size-7
+    six-file group. Its two fragments are unchanged; deleting `principals.py`'s
+    `get_user_by_subject` within the surviving file accounts for the narrower signature.
+    This exception admits no other regrouping or growth and consumes no capped signature.
 - Design: "DT-2 design: …" → "DT-2 decisions" (Item 10 boundary), "DT-2 deletion steps" (D2-4), "DT-2
   interfaces and contracts" (Coverage floor procedure, Surviving-surface invariant), "DT-2 deletions";
   "DT-6 design: …" → "DT-6 the L-5 reading and the credential ledger" (what stays for DT-6); "DT-26
@@ -1258,12 +1263,13 @@ contracts, `0014` is head, and the web calls no Python service.
     `rg -n 'security/(password|sessions)\.py' pyproject.toml` prints nothing;
     `rg -n '/auth/(login|logout|oidc|session|providers)' design/roadmap.html` prints nothing.
   - `uv run --locked python scripts/check_duplication.py src` exits 0 against the hand-edited baseline;
-    every signature added to it is a subset of a pre-task signature that lost only deleted files, and
+    every signature added to it is a subset of a pre-task signature that lost only deleted files,
+    except the exact size-2 signature approved above, and
     "Execution notes" lists each with its source group and the running total.
   - The coverage-floor procedure as in M1.3 (adapter modules measured from the "unit or contract" run).
 - Dependencies: M1.4.
 - Decisions: OQ-2.2 (settled, owner decision 12)
-- Status: pending
+- Status: complete
 
 ### M1.7 D2-5: Migration `0014_retire_legacy_raw` and the schema map
 
@@ -10207,3 +10213,73 @@ All full gates and coverage/clone proofs passed; independent M1.6 before reports
 are `/tmp/huron-m16-before.json` and `/tmp/huron-m16-before-contract.json`.
 The verifier also confirmed that `test_postgres_credential_conflicts.py` covers
 only the retiring local credential store, satisfying M1.6 deletion preflight.
+
+### M1.6 implementation evidence — 2026-10-25 (verification pending)
+
+Implementation at base `528bfe8` removes the Python login/session/code-flow surface,
+its stores/settings and `/auth` router while preserving bearer discovery/verification,
+API keys, service-account keys, dev headers and user disablement. The parent reviewed
+`test_api_oidc.py` and deleted it whole: all twelve cases were browser-flow tests;
+bearer and discovery tests remain in their dedicated modules. The caller-free
+`api_settings`/`Settings` wiring also leaves with its only route consumers. The mixed
+RBAC delegation scenario retains its supported operations and checks key revocation
+through the layers route instead of retired introspection.
+
+The duplication guard initially stopped on a size-2 signature, not the predicted
+size-3 one. The owner explicitly approved only
+`src/huron/core/metastore/api_keys.py` + `src/huron/core/metastore/memory_principals.py`:
+base scan group 16 had seven fragments across six files; current group 17 has two.
+The surviving fragments are byte-identical: `api_keys.py:47–70`, pyscn hash
+`5b34c9c982c37e22`, and `memory_principals.py:85–100` → `41–56`, hash
+`337c5a776ab6cbee`. The third surviving-file member was
+`principals.py:56–81` (`get_user_by_subject`), deleted by this task. The approved
+signature was added at size 2, then the updater ratcheted the baseline from
+87 clones/29 groups to 76 clones/26 groups. No other new signature was admitted;
+this task adds zero capped signatures, leaving G1's capped running total unchanged
+at zero. The exact task rule above records this narrow exception.
+
+Frozen-source coverage maps retain reduced imports, tuple arities and call signatures
+explicitly. Unit coverage moves from 3481/3625 to 2832/2958: exactly 667 statements
+removed, 649 covered, zero surviving coverage losses or gains, and zero new missed
+statements. The floor moves from 96.02 to
+`floor(10000 × 2832 / 2958) / 100 = 95.74`. The unit inventory moves from 1067 to 899.
+Combined unit-or-contract coverage moves from 3615/3625 to 2955/2958: 667 covered
+statements deleted and seven independently listed gains in surviving PostgreSQL
+adapter error/empty-input paths, with zero losses. Extended existing real-PostgreSQL
+contracts cover repeated binding revocation, empty binding lookup, service-account
+subject lookup and a principal primary-key collision with a controlled UUID source.
+Every modified source module reaches 100% at its prescribed measurement tier; no
+unreachable-code exception is needed. Baseline reports remain unchanged.
+
+Evidence lives under `/tmp/huron-m16-i1`: `coverage.py`, `coverage-proof*.json`,
+`touched-coverage.json`, `source-freeze.json`, `duplication-provenance.json`, preserved
+before/current clone scans and final command logs. The implementation report records
+final gate receipts and process shutdown. Task status remains pending until independent
+verification. No frontend files changed and no owner stack lifecycle operation ran.
+
+### M1.6 fix pass 1 — 2026-10-25 (verification 2 pending)
+
+Verification 1's two findings are fixed: removed orphan `T0` from
+`tests/unit/test_auth_oidc.py`, preserving used datetime imports; corrected the
+stale disablement and malformed lookup descriptions in `test_auth_store.py`.
+The partial-test prose sweep also removed that file's obsolete “admin provisioning”
+heading phrase. No test behavior or production source changed.
+
+All twelve static commands, unit (899), contract (18), integration (12), combined
+unit-or-contract (917), docs, compose syntax, Makefile dry-run, focused error/router/
+disable tests (38), exact closing checks and diff whitespace checks passed. Fourteen
+import contracts remain; radon outputs are empty; duplication remains 76 clones/26
+groups, native score 70. Unit 2832/2958 and combined 2955/2958 match verification 1
+exactly, including every file's coverage data. Source hashes, coverage floor, clone
+baseline and all saved before JSON reports are unchanged. Evidence and exact output
+live in `/tmp/huron-m16-fix1/report.md`, `validation-output.txt`, command manifests,
+`proof.json` and their adjacent logs. All launched validation processes and scoped
+caffeinate exited. No frontend files changed; independent verification 2 is pending.
+
+### M1.6 independent completion
+
+Verification attempt2 passed with no findings: `/tmp/huron-m16-v2/report.md`.
+All required static,899unit,18contract,12integration,917combined,docs and closing
+checks pass. Final coverage and exact owner-approved duplication provenance were
+independently verified. The next-task baseline reports remain
+`/tmp/huron-m17-before.json` and `/tmp/huron-m17-before-contract.json`.

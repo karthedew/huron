@@ -18,14 +18,12 @@ from huron.core.metastore.rows import (
     affected_row_count,
     api_key_record,
     binding_record,
-    credential_record,
     dataset,
     organization,
     policy,
     principal_record,
     project,
     service_account,
-    session_record,
 )
 
 pytestmark = pytest.mark.unit
@@ -128,46 +126,6 @@ def test_api_key_record_leaves_project_id_none_when_the_key_is_unscoped() -> Non
     }
     record = api_key_record(row)
     assert record.project_id is None
-
-
-def test_credential_record_maps_every_column() -> None:
-    """``credential_record`` maps every column of a row onto the record."""
-    principal_id = uuid4()
-    now = datetime.now(UTC)
-    row = {
-        "principal_id": principal_id,
-        "password_hash": "$argon2id$v=19$...",
-        "updated_at": now,
-        "updated_by": "admin",
-    }
-    record = credential_record(row)
-    assert record.principal_id == principal_id
-    assert record.password_hash == "$argon2id$v=19$..."
-    assert record.updated_at == now
-    assert record.updated_by == "admin"
-
-
-def test_session_record_maps_groups_to_a_frozenset() -> None:
-    """``session_record`` maps ``groups`` to a frozenset."""
-    session_id = uuid4()
-    now = datetime.now(UTC)
-    row = {
-        "id": session_id,
-        "secret_sha256": "0" * 64,
-        "csrf_token": "csrf",
-        "subject": "alice",
-        "groups": ["physics", "leads"],
-        "authentication_method": "password",
-        "created_at": now,
-        "last_seen_at": now,
-        "idle_expires_at": now,
-        "absolute_expires_at": now,
-        "revoked_at": None,
-    }
-    record = session_record(row)
-    assert record.id == session_id
-    assert record.groups == frozenset({"physics", "leads"})
-    assert record.revoked_at is None
 
 
 def test_principal_record_maps_every_column() -> None:

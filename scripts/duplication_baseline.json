@@ -1,5 +1,5 @@
 {
-  "clone_groups": 29,
+  "clone_groups": 26,
   "clone_threshold": 0.8,
   "groups": [
     {
@@ -104,18 +104,7 @@
     {
       "files": [
         "src/huron/core/metastore/api_keys.py",
-        "src/huron/core/metastore/credentials.py",
-        "src/huron/core/metastore/memory_principals.py",
-        "src/huron/core/metastore/memory_sessions.py",
-        "src/huron/core/metastore/principals.py",
-        "src/huron/core/metastore/sessions.py"
-      ],
-      "size": 7
-    },
-    {
-      "files": [
-        "src/huron/core/metastore/api_keys.py",
-        "src/huron/core/metastore/sessions.py"
+        "src/huron/core/metastore/memory_principals.py"
       ],
       "size": 2
     },
@@ -136,13 +125,6 @@
       "files": [
         "src/huron/core/metastore/hierarchy.py",
         "src/huron/core/metastore/rbac.py"
-      ],
-      "size": 2
-    },
-    {
-      "files": [
-        "src/huron/core/metastore/memory_apikeys.py",
-        "src/huron/core/metastore/memory_sessions.py"
       ],
       "size": 2
     },
@@ -189,15 +171,8 @@
         "src/huron/core/security/_impl/identity.py"
       ],
       "size": 2
-    },
-    {
-      "files": [
-        "src/huron/core/security/apikeys.py",
-        "src/huron/core/security/sessions.py"
-      ],
-      "size": 2
     }
   ],
   "pyscn_version": "1.31.1",
-  "total_clones": 87
+  "total_clones": 76
 }

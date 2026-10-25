@@ -556,18 +556,8 @@ handling as shared interceptors.</td>
 deleted and zero edits outside <code>src/lib/api/</code>; both generated clients build; CI fails
 when the live schema and <code>openapi/v1.json</code> diverge.</td></tr>
 
-<tr><td class="k">2 — Authentication &amp; browser sessions<br><span class="tag">todo</span></td>
-<td>Built: the full <a href="auth.html">auth</a> stack — <code>/auth</code> login, logout, OIDC
-start/callback, <code>GET /auth/session</code>, providers; opaque session cookie (12&nbsp;h idle
-sliding, 7&nbsp;d absolute); CSRF echo on cookie-authed mutations. Adds: session bootstrap in the
-root layout from <code>GET /auth/session</code>; account menu, sign-in/out, and return-to
-redirects; 401 handling distinct from permission denial; CSRF header injection in the client;
-authorization-aware navigation driven by the session's effective-access summary; the two open
-items in auth §7 — a purpose-built login-CSRF defense, and re-login revoking the prior
-session.</td>
-<td>A Playwright round-trip against <code>make stack</code>: sign in through Keycloak, load a
-catalog page, mutate with CSRF, sign out, confirm the session is dead. This gate also exercises
-the compose stack and Keycloak realm import for the first time.</td></tr>
+<tr><td class="k">2 — Authentication &amp; browser sessions<br><span class="tag">retired</span></td>
+<td colspan="2"><p>The Python login, sessions and CSRF were deleted on 2026-10-23; the web keeps its own sessions.</p></td></tr>
 
 <tr><td class="k">3 — Authorization &amp; discoverability<br><span class="tag">todo</span></td>
 <td>Built: the <code>core/security</code> authorization engine (exactly the five roles of
@@ -689,7 +679,7 @@ page tracks a running job's progress with no fixture data.</td></tr>
 <tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
 <tr><td class="k">12 — Organization users &amp; teams<br><span class="tag">todo</span></td>
-<td>Built: admin-provisioned users (<code>user.manage</code>, platform-owner only), binding
+<td>Built: binding
 creation, listing and scoped revocation at all four roots, with no update verb, as completed
 by the <a href="#api-sweep">API tier clean sweep</a>. Also built: OIDC upsert-on-login,
 the Keycloak groups mapper. Adds: user/group listing

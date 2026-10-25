@@ -12,7 +12,6 @@ from huron.core.foundation.errors import DomainError, Forbidden
 from huron.core.security.errors import (
     AttachmentExists,
     BindingExists,
-    OidcNotConfigured,
     PrincipalKindMismatch,
     ServiceAccountExists,
     UsernameTaken,
@@ -30,7 +29,6 @@ _CLASSES = [
     (AttachmentExists, "ATTACHMENT_EXISTS", 409),
     (UsernameTaken, "USERNAME_TAKEN", 409),
     (PrincipalKindMismatch, "PRINCIPAL_KIND_MISMATCH", 409),
-    (OidcNotConfigured, "OIDC_NOT_CONFIGURED", 404),
     (DependencyUnavailable, "DEPENDENCY_UNAVAILABLE", 503),
 ]
 

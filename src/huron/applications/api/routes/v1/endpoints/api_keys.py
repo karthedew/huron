@@ -2,10 +2,8 @@
 
 A key is minted for whoever calls and never for anyone else: it inherits the
 caller's subject and kind, so it can do exactly what the caller's own role
-bindings allow and nothing more. Who-am-I lives at ``GET /auth/session``
-(unversioned): an API key is a resource, so its issuance route stays
-versioned, but identity introspection is a login concern, not a v1
-resource.
+bindings allow and nothing more. Identity comes from the request credential;
+API-key issuance belongs to the versioned resource API.
 """
 
 from __future__ import annotations

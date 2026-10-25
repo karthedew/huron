@@ -1,7 +1,7 @@
 """Development-only header-based principal resolution.
 
-The last resort the service reaches for a request that carries neither a
-bearer credential nor a session cookie, and only when it is configured for
+The last resort the service reaches for a request without a bearer
+credential, and only when it is configured for
 ``dev-headers`` authentication: the caller simply asserts who it is in
 ``X-Huron-Subject`` and which groups it belongs to in ``X-Huron-Groups``.
 Nothing is proved, which is why :class:`DevHeaderResolver` refuses to exist

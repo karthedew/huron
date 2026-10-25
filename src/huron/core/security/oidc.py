@@ -1,28 +1,9 @@
-"""OIDC bearer-token resolution and the browser login code flow.
-
-Two ways in from one identity provider. A programmatic caller presents a
-token as a bearer credential, which :class:`JwksVerifier` validates against
-the provider's published keys and :class:`OidcResolver` maps to a
-:class:`Principal`. A browser goes through the authorization-code flow
-with PKCE, driven by :class:`OidcClient`, with the pending-login state
-riding in a signed :class:`LoginFlow` cookie between the start redirect
-and the callback rather than in server-side storage. Both paths read the
-same claims: ``sub`` names the subject and a configurable groups claim
-supplies the groups, an absent claim resolving to an empty set.
-"""
+"""OIDC provider discovery and bearer-token verification."""
 
 from __future__ import annotations
 
-import base64
-import dataclasses
-import hashlib
-import hmac
-import json
-import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from urllib.parse import urlencode
 
 import httpx
 import jwt
@@ -174,7 +155,7 @@ class OidcProviderConfig:
 
 @dataclass(frozen=True, slots=True)
 class OidcUser:
-    """What the callback hands the service: enough to upsert a principal.
+    """Verified provider identity fields used to upsert a principal.
 
     ``idp_subject`` is the provider's stable ``sub`` and becomes both the
     principal's ``subject`` and its ``idp_subject``. ``display_name``
@@ -220,66 +201,21 @@ def _validate_discovery_document(document: Mapping[str, object], issuer: str) ->
 
 
 class OidcClient:
-    """Discovery plus the authorization-code flow for one configured provider.
+    """Discover the endpoints published by one configured provider."""
 
-    Holds the client credentials and the redirect URL registered with the
-    provider, and builds its own :class:`JwksVerifier` with the client id
-    as audience, which is what an ID token is issued for. The flow is
-    always PKCE (``S256``) with a nonce: the caller keeps ``state``,
-    ``nonce`` and the code verifier across the redirect (see
-    :class:`LoginFlow`) and hands them back to :meth:`exchange_code`.
-    """
-
-    def __init__(
-        self,
-        http: httpx.AsyncClient,
-        provider: OidcProviderConfig,
-        *,
-        client_id: str,
-        client_secret: str,
-        redirect_url: str,
-        scopes: tuple[str, ...] = ("openid", "profile", "email"),
-        groups_claim: str = "groups",
-    ) -> None:
-        """Build a client for an already-discovered provider.
+    def __init__(self, provider: OidcProviderConfig) -> None:
+        """Keep the validated provider endpoints.
 
         Args:
-            http: The async HTTP client used for the token exchange; the
-                caller owns its lifetime.
-            provider: The provider's endpoints, usually from
-                :meth:`discover`.
-            client_id: The client id registered with the provider; also
-                the audience ID tokens are verified against.
-            client_secret: The matching secret, sent on the token
-                exchange.
-            redirect_url: The callback URL registered with the provider;
-                it must match exactly on both legs of the flow.
-            scopes: The scopes requested at authorization; ``openid`` is
-                what makes the provider issue an ID token at all.
-            groups_claim: The ID-token claim carrying the user's groups.
+            provider: The discovered provider document.
         """
-        self._http = http
         self._provider = provider
-        self._client_id = client_id
-        self._client_secret = client_secret
-        self._redirect_url = redirect_url
-        self._scopes = scopes
-        self._groups_claim = groups_claim
-        self._verifier = JwksVerifier(
-            issuer=provider.issuer, audience=client_id, jwks_url=provider.jwks_uri
-        )
 
     @classmethod
     async def discover(
         cls,
         http: httpx.AsyncClient,
         issuer: str,
-        *,
-        client_id: str,
-        client_secret: str,
-        redirect_url: str,
-        scopes: tuple[str, ...] = ("openid", "profile", "email"),
-        groups_claim: str = "groups",
     ) -> OidcClient:
         """Fetch ``{issuer}/.well-known/openid-configuration`` and build a client.
 
@@ -290,16 +226,8 @@ class OidcClient:
         trusted.
 
         Args:
-            http: The async HTTP client used for discovery and, afterwards,
-                the token exchange; the caller owns its lifetime.
+            http: The async HTTP client used for discovery; the caller owns its lifetime.
             issuer: The provider's issuer URL.
-            client_id: The client id registered with the provider; also
-                the audience ID tokens are verified against.
-            client_secret: The matching secret, sent on the token
-                exchange.
-            redirect_url: The callback URL registered with the provider.
-            scopes: The scopes requested at authorization.
-            groups_claim: The ID-token claim carrying the user's groups.
 
         Returns:
             A client configured from the discovery document.
@@ -323,312 +251,22 @@ class OidcClient:
             jwks_uri=document["jwks_uri"],
             end_session_endpoint=document.get("end_session_endpoint"),
         )
-        return cls(
-            http,
-            provider,
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_url=redirect_url,
-            scopes=scopes,
-            groups_claim=groups_claim,
-        )
+        return cls(provider)
 
     @property
     def provider(self) -> OidcProviderConfig:
         """The discovered provider document.
 
         The composition root needs the JWKS endpoint to build the
-        bearer-token verifier alongside this client's own code-flow one.
+        bearer-token verifier.
         """
         return self._provider
-
-    def authorization_url(self, *, state: str, nonce: str, code_challenge: str) -> str:
-        """Build the URL the browser is redirected to for the authorization leg.
-
-        Args:
-            state: The opaque value the provider echoes back on the
-                callback, so the callback can be matched to the flow that
-                started it.
-            nonce: The value the provider binds into the ID token, which
-                :meth:`exchange_code` checks.
-            code_challenge: The ``S256`` challenge for the flow's code
-                verifier, from :func:`code_challenge_s256`.
-
-        Returns:
-            The provider's authorization endpoint with the ``code``
-            response type, the client id, redirect URL, scopes, ``state``,
-            ``nonce`` and PKCE parameters as its query string.
-        """
-        params = {
-            "response_type": "code",
-            "client_id": self._client_id,
-            "redirect_uri": self._redirect_url,
-            "scope": " ".join(self._scopes),
-            "state": state,
-            "nonce": nonce,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256",
-        }
-        return f"{self._provider.authorization_endpoint}?{urlencode(params)}"
-
-    async def exchange_code(self, *, code: str, code_verifier: str, nonce: str) -> OidcUser:
-        """Exchange the callback's authorization code for a verified user.
-
-        POST the token endpoint, then verify the ID token (sig, iss, aud,
-        exp via JwksVerifier; nonce here) and map claims to OidcUser. The
-        verifier's own rejection propagates as the same error type, so
-        the callback treats every failure on this leg alike.
-
-        Args:
-            code: The authorization code the provider sent to the
-                callback.
-            code_verifier: The PKCE verifier whose challenge started the
-                flow; the provider refuses the exchange if they do not
-                match.
-            nonce: The nonce the flow started with; must equal the ID
-                token's ``nonce`` claim.
-
-        Returns:
-            The verified identity, ready for the principal store's upsert.
-
-        Raises:
-            AuthError: If the token endpoint returns an error status, the
-                response carries no ``id_token``, or the token's nonce is
-                not the one this flow started with.
-        """
-        response = await self._http.post(
-            self._provider.token_endpoint,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": self._redirect_url,
-                "client_id": self._client_id,
-                "client_secret": self._client_secret,
-                "code_verifier": code_verifier,
-            },
-        )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as error:
-            raise AuthError(f"OIDC token exchange failed: {error}") from error
-        id_token = response.json().get("id_token")
-        if not isinstance(id_token, str):
-            raise AuthError("OIDC token response is missing an id_token")
-        claims = self._verifier(id_token)
-        if claims.get("nonce") != nonce:
-            raise AuthError("OIDC token nonce mismatch")
-        return self._map_claims(claims)
-
-    def _map_claims(self, claims: Mapping[str, object]) -> OidcUser:
-        """Map verified ID-token claims to an :class:`OidcUser`, tolerating optional ones.
-
-        Only ``sub`` is mandatory. ``name`` falls back to the subject,
-        ``email`` to None, and the groups claim to an empty set when it is
-        missing or is not a list of strings - a malformed groups claim is
-        treated like an absent one rather than refusing the login.
-
-        Args:
-            claims: The claims :class:`JwksVerifier` returned.
-
-        Returns:
-            The user as the principal store's upsert expects it.
-
-        Raises:
-            AuthError: If ``sub`` is missing or not a string.
-        """
-        subject = claims.get("sub")
-        if not isinstance(subject, str):
-            raise AuthError("OIDC token is missing a subject claim")
-        display_name = claims.get("name")
-        if not isinstance(display_name, str):
-            display_name = subject
-        email = claims.get("email")
-        if not isinstance(email, str):
-            email = None
-        raw_groups = claims.get(self._groups_claim, [])
-        if not isinstance(raw_groups, list) or not all(isinstance(g, str) for g in raw_groups):
-            raw_groups = []
-        return OidcUser(
-            idp_subject=subject,
-            display_name=display_name,
-            email=email,
-            groups=frozenset(raw_groups),
-        )
-
-
-def code_challenge_s256(code_verifier: str) -> str:
-    """Derive the RFC 7636 ``S256`` PKCE code challenge for the given verifier.
-
-    Args:
-        code_verifier: The high-entropy ASCII verifier the flow keeps to
-            itself until the token exchange.
-
-    Returns:
-        The unpadded URL-safe base64 of the verifier's SHA-256, as the
-        ``code_challenge`` parameter expects it.
-    """
-    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-
-
-_SIGNATURE_LENGTH = hashlib.sha256().digest_size
-
-
-def _split_signed_payload(raw: bytes) -> tuple[bytes, bytes] | None:
-    """Split ``payload + b"." + signature`` without ambiguity from stray dots.
-
-    The signature is a fixed-length SHA-256 digest, so the separator is
-    found by counting back from the end rather than by searching for a
-    dot - the JSON payload may contain dots and so may the raw digest
-    bytes.
-
-    Args:
-        raw: The base64-decoded cookie bytes.
-
-    Returns:
-        The payload and the signature, or None if ``raw`` is too short to
-        hold both or the byte before the signature is not a dot.
-    """
-    if len(raw) < _SIGNATURE_LENGTH + 2:
-        return None
-    separator_index = len(raw) - _SIGNATURE_LENGTH - 1
-    if raw[separator_index : separator_index + 1] != b".":
-        return None
-    return raw[:separator_index], raw[separator_index + 1 :]
-
-
-@dataclass(frozen=True, slots=True)
-class LoginFlow:
-    """Pending-login state for one browser's OIDC login.
-
-    Carried in an HMAC-signed cookie between ``/auth/oidc/start`` and the
-    callback - there is no server-side storage for it. The cookie is
-    signed, not encrypted: ``state``, ``nonce`` and ``code_verifier`` are
-    only useful to whoever can also produce a valid signature, and
-    ``issued_at`` bounds how long a flow stays usable. ``return_to`` is
-    the path to land on after login and is validated at construction to
-    be a local path, so a decoded cookie can never send the browser
-    off-site.
-    """
-
-    state: str
-    nonce: str
-    code_verifier: str
-    issued_at: int
-    return_to: str  # path-only; validated to start with "/" and not "//"
-
-    def __post_init__(self) -> None:
-        """Refuse a ``return_to`` that is not a local path.
-
-        Raises:
-            AuthError: If ``return_to`` does not start with ``/``, or
-                starts with ``//`` and would therefore be read as a
-                scheme-relative URL.
-        """
-        if not self.return_to.startswith("/") or self.return_to.startswith("//"):
-            raise AuthError("login flow return_to must be a local path")
-
-    @classmethod
-    def new(cls, *, return_to: str = "/", now: datetime | None = None) -> LoginFlow:
-        """Start a flow with fresh random state, nonce and PKCE verifier.
-
-        Args:
-            return_to: The local path to land on after login; the app
-                root when omitted.
-            now: The instant recorded as ``issued_at``, for deterministic
-                tests; the current UTC time when omitted.
-
-        Returns:
-            A flow whose ``state`` and ``nonce`` are 24-byte and whose
-            ``code_verifier`` is a 64-byte URL-safe random token.
-        """
-        moment = now or datetime.now(UTC)
-        return cls(
-            state=secrets.token_urlsafe(24),
-            nonce=secrets.token_urlsafe(24),
-            code_verifier=secrets.token_urlsafe(64),
-            issued_at=int(moment.timestamp()),
-            return_to=return_to,
-        )
-
-    def encode(self, secret: bytes) -> str:
-        """Serialize the flow as a signed, URL-safe cookie value.
-
-        The payload is compact JSON of every field, followed by a dot and
-        the HMAC-SHA256 of that payload under ``secret``, the whole
-        URL-safe base64 encoded.
-
-        Args:
-            secret: The service's login-flow signing key; the same key
-                must be used to decode.
-
-        Returns:
-            The cookie value.
-        """
-        payload = json.dumps(dataclasses.asdict(self), separators=(",", ":")).encode()
-        signature = hmac.new(secret, payload, hashlib.sha256).digest()
-        return base64.urlsafe_b64encode(payload + b"." + signature).decode()
-
-    @classmethod
-    def decode(
-        cls, value: str, secret: bytes, *, max_age: int = 600, now: datetime | None = None
-    ) -> LoginFlow:
-        """Decode a cookie value back into a flow, refusing anything untrustworthy.
-
-        Reject bad signatures and flows older than ``max_age`` seconds.
-        The signature is checked before the payload is parsed, so a
-        forged cookie never reaches the JSON decoder, and a flow stamped
-        in the future is rejected too, since this service cannot have
-        issued it. ``max_age`` should equal the cookie's own lifetime, so
-        a flow the browser still holds is never rejected as stale and one
-        it has forgotten is never accepted. A payload whose ``return_to``
-        is not a local path is refused by construction.
-
-        Args:
-            value: The cookie value as the browser returned it.
-            secret: The signing key :meth:`encode` used.
-            max_age: How many seconds after ``issued_at`` a flow remains
-                usable.
-            now: The instant age is judged against, for deterministic
-                tests; the current UTC time when omitted.
-
-        Returns:
-            The flow exactly as it was encoded.
-
-        Raises:
-            AuthError: If the value is not valid base64, is too short or
-                lacks the separator, fails the signature check, is not a
-                well-formed payload, or was issued more than ``max_age``
-                seconds ago or in the future.
-        """
-        try:
-            raw = base64.urlsafe_b64decode(value.encode("ascii"))
-        except ValueError as error:
-            raise AuthError("invalid login flow encoding") from error
-        split = _split_signed_payload(raw)
-        if split is None:
-            raise AuthError("invalid login flow encoding")
-        payload, signature = split
-        expected = hmac.new(secret, payload, hashlib.sha256).digest()
-        if not hmac.compare_digest(expected, signature):
-            raise AuthError("invalid login flow signature")
-        try:
-            flow = cls(**json.loads(payload))
-        except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as error:
-            raise AuthError("invalid login flow payload") from error
-        moment = now or datetime.now(UTC)
-        age = int(moment.timestamp()) - flow.issued_at
-        if age < 0 or age > max_age:
-            raise AuthError("login flow has expired")
-        return flow
 
 
 __all__ = [
     "JwksVerifier",
-    "LoginFlow",
     "OidcClient",
     "OidcProviderConfig",
     "OidcResolver",
     "OidcUser",
-    "code_challenge_s256",
 ]

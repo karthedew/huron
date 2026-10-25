@@ -154,8 +154,6 @@ def test_rbac_delegation_and_layer_write_eligibility(client: TestClient) -> None
     # Its authority is intrinsic - no binding step. Silver and gold only:
     # raw and bronze are the human contribution surface.
     service_headers = {"Authorization": f"Bearer {token}"}
-    session_info = client.get("/auth/session", headers=service_headers)
-    assert session_info.json()["kind"] == "service_account"
     # Its intrinsic authority lands on silver and gold instead - the layer
     # listing is where that write eligibility becomes visible, since the
     # account never has an occasion to actually write either layer here.
@@ -190,7 +188,10 @@ def test_rbac_delegation_and_layer_write_eligibility(client: TestClient) -> None
     )
     assert disabled.status_code == 200
     assert disabled.json()["disabled_at"] is not None
-    assert client.get("/auth/session", headers=service_headers).status_code == 401
+    assert (
+        client.get(f"/api/v1/datasets/{dataset_id}/layers", headers=service_headers).status_code
+        == 401
+    )
 
 
 def test_policy_attachment_requires_the_scoped_capability(client: TestClient) -> None:
@@ -242,30 +243,6 @@ def test_issuing_an_api_key_requires_an_idempotency_key(client: TestClient) -> N
         headers={**headers, "Idempotency-Key": ""},
     )
     assert empty.status_code == 422
-
-
-def test_api_keys_inherit_the_callers_identity(client: TestClient) -> None:
-    """An issued API key resolves back to the issuing user's own identity and SYSTEM-scope roles."""
-    issued = client.post(
-        "/api/v1/auth/api-keys",
-        json={"name": "laptop"},
-        headers=_headers("root"),
-    )
-    assert issued.status_code == 201
-    token = issued.json()["secret"]
-    info = client.get("/auth/session", headers={"Authorization": f"Bearer {token}"}).json()
-    identity = {key: value for key, value in info.items() if key != "effective_roles"}
-    assert identity == {
-        "subject": "root",
-        "kind": "user",
-        "groups": [],
-        "authentication_method": "api-key",
-        "csrf_token": None,
-        "expires_at": None,
-    }
-    # A bearer credential resolves the same binding set a cookie session
-    # would - the bootstrap platform owner's one SYSTEM-scope grant.
-    assert [entry["scope_type"] for entry in info["effective_roles"]] == ["SYSTEM"]
 
 
 def test_slugs_are_immutable_at_every_level_for_every_role(client: TestClient) -> None:

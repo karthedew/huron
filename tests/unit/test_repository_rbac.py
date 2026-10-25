@@ -537,7 +537,7 @@ async def test_touch_api_key_failure_does_not_break_authentication(
     """The touch is best-effort: a store that raises must not surface to the caller."""
     from huron.core.security import CredentialAuthentication
     from huron.core.security.apikeys import create_api_key
-    from huron.core.metastore import MemoryApiKeyStore, MemorySessionStore, SystemClock
+    from huron.core.metastore import MemoryApiKeyStore, SystemClock
 
     class _ExplodingStore(MemoryApiKeyStore):
         """An API-key store whose ``touch_last_used`` always raises."""
@@ -549,7 +549,7 @@ async def test_touch_api_key_failure_does_not_break_authentication(
     store = _ExplodingStore()
     await store.add(record)
     resolved = await CredentialAuthentication(
-        store, MemorySessionStore(), clock=SystemClock(), oidc=None, development=None
+        store, clock=SystemClock(), oidc=None, development=None
     ).resolve(bearer_token=token)
     assert resolved.actor.subject == "alice"
     assert "failed to record API key last-used timestamp" in caplog.text

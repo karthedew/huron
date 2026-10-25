@@ -1,4 +1,4 @@
-"""Principal identities and persistence contracts shared by login and administration."""
+"""Principal identities and persistence contracts for identity administration."""
 
 from __future__ import annotations
 
@@ -41,17 +41,6 @@ class PrincipalRecord:
 class PrincipalStore(Protocol):
     """Principal lookup and provisioning without automatic cross-credential identity linking."""
 
-    async def get_user_by_subject(self, subject: str) -> PrincipalRecord | None:
-        """Resolve an enabled user for password authentication.
-
-        Args:
-            subject: Presented username.
-
-        Returns:
-            The enabled user; None for missing, disabled or non-user identities.
-        """
-        ...
-
     async def get_by_id(self, principal_id: UUID) -> PrincipalRecord | None:
         """Read a principal of any kind and state.
 
@@ -60,18 +49,6 @@ class PrincipalStore(Protocol):
 
         Returns:
             The record or None.
-        """
-        ...
-
-    async def create_user(self, *, subject: str, display_name: str) -> PrincipalRecord:
-        """Provision a password user, refusing subjects held by any existing principal.
-
-        Args:
-            subject: Globally unique subject.
-            display_name: Human-readable name.
-
-        Returns:
-            The enabled user without an identity-provider subject.
         """
         ...
 

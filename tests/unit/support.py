@@ -14,9 +14,7 @@ from huron.core.metastore import (
     InMemoryHierarchyStore,
     InMemoryRbacStore,
     MemoryApiKeyStore,
-    MemoryCredentialStore,
     MemoryPrincipalStore,
-    MemorySessionStore,
 )
 
 if TYPE_CHECKING:
@@ -78,8 +76,6 @@ def memory_stores(*, clock: Clock | None = None) -> ApiStores:
         hierarchy=InMemoryHierarchyStore(clock=clock),
         rbac=InMemoryRbacStore(),
         api_keys=MemoryApiKeyStore(),
-        credentials=MemoryCredentialStore(),
-        sessions=MemorySessionStore(),
         principals=MemoryPrincipalStore(),
     )
 

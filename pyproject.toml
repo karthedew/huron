@@ -97,9 +97,7 @@ convention = "google"
 "src/huron/applications/api/app.py" = ["D301"]
 # Stable public error names intentionally mirror their API codes.
 "src/huron/core/security/authentication_errors.py" = ["N818"]
-"src/huron/core/security/password.py" = ["N818"]
 "src/huron/core/security/principals.py" = ["N818"]
-"src/huron/core/security/sessions.py" = ["N818"]
 "src/huron/core/foundation/errors.py" = ["N818"]
 "src/huron/core/catalog/errors.py" = ["N818"]
 "src/huron/core/catalog/layers.py" = ["N818"]
@@ -300,5 +298,5 @@ include = ["src"]
 # climbs. Lower it only when the whole drop comes from deleted covered code or
 # from new PostgreSQL adapter code the contract suite covers in full, never to
 # admit uncovered code. New or touched files are covered in full.
-fail_under = 96.02
+fail_under = 95.74
 precision = 2
