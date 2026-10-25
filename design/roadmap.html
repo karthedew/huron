@@ -327,96 +327,12 @@ keeps the UUID; the audit trigger refuses <code>UPDATE</code>/<code>DELETE</code
 <code>acceptance and nfs</code> scale case writes <code>reconciler-scale.json</code>, which the
 runbook's sizing rule reads.</p></td></tr>
 
-<tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">done</span></td>
-<td>Delivers, each item named with the module it lives in and the test module that pins it
-and verified by the test suites: the session state machine and lease
-(<code>core/raw/ingest.py</code> — <code>tests/unit/test_catalog_ingest.py</code>,
-<code>tests/unit/test_catalog_properties.py</code>); the dataset-scoped lock and gap-free
-allocator, migrations <code>0009_ingest_ledger</code> and <code>0010_independent_raw</code>
-(<code>core/metastore/ingest.py</code> — <code>tests/unit/test_hierarchy_store_memory.py</code>,
-<code>tests/contract/test_hierarchy_store.py</code>); the upload plan with complete independent uploads
-(<code>core/raw/ingest.py</code>'s <code>compute_upload_plan</code> —
-<code>tests/unit/test_catalog_ingest.py</code>, <code>tests/unit/test_api_raw_revisions.py</code>);
-streaming in-flight hashing (<code>core/rawstore/store.py</code>'s <code>write_part</code> —
-<code>tests/unit/test_rawstore_store.py</code>, <code>tests/unit/test_api_ingest_sessions.py</code>);
-the POSIX commit protocol and sealing (<code>core/rawstore/commit.py</code>,
-<code>core/rawstore/store.py</code>'s <code>seal</code> —
-<code>tests/unit/test_rawstore_commit.py</code>,
-<code>tests/unit/test_api_ingest_crash_matrix.py</code>); the HTTP surface, nine ingest
-operations and three revision read routes (<code>core/raw/_impl/ingest.py</code>,
-<code>core/raw/_impl/revisions.py</code>, <code>applications/api/routes/v1/endpoints/ingest_sessions.py</code>,
-<code>.../revisions.py</code> — <code>tests/unit/test_api_ingest_sessions.py</code>,
-<code>tests/unit/test_api_revisions.py</code>); the expiry sweep
-(<code>applications/api/expiry.py</code> — <code>tests/unit/test_api_expiry.py</code>,
-<code>tests/unit/test_api_ingest_expiry.py</code>); download capabilities as a per-request
-<code>data.read@raw</code> check, nothing minted (<code>D-13</code>) — every human role carries
-unrestricted <code>data.read</code>, so a download's 403 is reachable only for a service account
-(the <code>SERVICE_ACCOUNT_LAYERS</code> restriction, not an absent capability); revoking a
-human's sole binding removes visibility with the grant, so the next request answers 404, not
-403; role-compiled bindings never set <code>maximum_classification</code>, so a project whose
-classification is not discoverable is visible only to a SYSTEM-scope principal and nobody can
-commit into it — the restricted-project download rows therefore use a sibling open project the
-outsider holds no binding on; <code>INDEX.json</code> written best-effort at commit
-(<code>core/raw/documents.py</code>'s <code>RevisionIndex</code> — <code>D-12</code>).
-A session whose driver crashed in <code>COMMITTING</code> holds its dataset lock until the P3 reconciler; the owner's abort cannot release it (<code>D-1</code>).
-<code>Slugged</code>'s <code>id</code> and <code>slug</code> are read-only properties, so a
-frozen <code>EntityRef</code> satisfies it structurally (<code>core/foundation/names.py</code>); the
-protocol's read-only properties are enforced by mypy on <code>src/huron</code> only where a
-caller passes an <code>EntityRef</code> where a <code>Slugged</code> is expected, and no shipped
-caller does yet, so no gate step pins the protocol shape today.
-Excluded from the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_DESIGN.md">historical P2 scope</a>: the staging sweeper and
-the post-rename orphan importer are P3's (P7, P8); the search projection consuming the
-<code>revision.committed</code> outbox row is P4's (M4).
-Decision register, <code>D-1</code>–<code>D-23</code>, each with the answer the tree implements:
-D-1 the <code>COMMITTING</code>-lock gap above, with a <code>COMMITTING → COMMITTING</code>
-re-entry against the current etag (D-11, the same decision); D-2/D-6 multipart at
-<code>PART_BYTES = 64 MiB</code>; D-3 the metadata document travels with <code>/commit</code>, no
-draft column; D-4 no absolute TTL — a heartbeating client is alive; D-5 a post-rename retry reads
-back <code>final/COMMITTED</code> and <code>metadata.json</code>, no persisted commit instant;
-D-7 no purge in P2, the total unique index and total max stand; D-8 <code>Idempotency-Key</code>
-kept on <code>/commit</code>; D-9 a service account may mint a dataset but never upload to
-<code>raw</code>; D-10 route 2's dataset half claims
-<code>IdempotencyClaim(key=f"{key}/dataset")</code>; D-12 P2 writes <code>INDEX.json</code>
-best-effort, P3 owns regeneration; D-13 R1–R3 shipped, the capability is per-request
-<code>data.read@raw</code>; D-14 <code>data_classification</code> is server-sourced from the
-project; D-15 <code>jsonschema[format-nongpl]</code> added, <code>date-time</code> enforced;
-D-16 the sweep interval defaults to 60 s; D-17 no per-replica disable, <code>gt=0</code>;
-D-18 a nightly <code>acceptance.yml</code> plus manual dispatch; D-19 <em>amended in
-verification</em> — the in-process app over <code>memory_stores()</code> and the real
-<code>PosixRawStore</code> stands, but serves over a loopback <code>uvicorn</code> socket rather
-than <code>TestClient</code>/<code>ASGITransport</code>, which both materialize a whole response
-body in memory (a 9 GiB download would need ≈18.5 GiB and be killed on a 16 GB runner); D-20 the
-four pre-existing <code>radon</code> C-grade items reduced to B before any P2 task ran; D-21 superseded by independent-copy tests: unchanged files are uploaded, repeated content creates
-new revision identities, omitted files are absent, and deleting an earlier revision preserves later bytes; D-22 measured B
-(10.27) after M3.3 with the session and file methods in place, so the split ran there — both
-adapters' ingest methods now live in <code>core/metastore/ingest.py</code> as four mixin bases
-behind the port in <code>core/raw/ports.py</code>; the historical measurements after that split were
-A (25.94) for <code>pkg/metastore/hierarchy.py</code> and A (44.47) for
-<code>pkg/metastore/ingest.py</code>; D-23
-<code>RevisionRecord.metadata_sha256</code> is the digest of <code>metadata.json</code>'s
-canonical bytes, no column change.
-<p id="p2-verified"><strong>Completion verified.</strong>
-<a href="https://github.com/karthedew/huron/actions/runs/34177077449">Acceptance run 34177077449</a> passed on
-2026-09-08 (UTC) against <code>db5fc84cd7bfe049692ef2abb16fb32570ccf5a2</code>.
-It executes <code>tests/acceptance/test_raw_ingest_gate.py</code>: an interrupted 9 GiB upload
-resumes at the real 64 MiB part size and downloads byte-identically. This closes the final P2 gate.
-The same implementation passed 990 local unit tests (94.32% coverage), 13 PostgreSQL contract
-tests, <code>make lint</code>, and the strict documentation build. The integration marker has
-no tests; it is not additional integration coverage. Automatic staging deletion and orphan
-reconciliation remain P3; search projection remains P4. <strong>P3 remains incomplete:</strong> verified completion copies and frozen commit documents
-have independent functional acceptance; the writer-exclusion, offline-cutover and startup-gate
-prerequisites were retired on 2026-10-15 rather than delivered. P2's historical tests did not
-exclude stale writable handles. P3 adds verified completion copies, frozen commit intent and
-COMMITTED v2; this historical P2 receipt does not verify those new guarantees.</p></td>
-<td>Round trip: a tree with NFC/NFD pairs, a zero-byte file, 8-level nesting, and a 9 GiB file
-ingests and downloads byte-identically. Crash matrix: kill after every protocol step; staging
-crashes invisible and swept; post-rename crash imported as an orphan with no duplicate on retry.
-Resume re-sends only incomplete files. Two racing <code>BeginIngest</code> calls: exactly one wins;
-100 sequential ingests number 1..100 gap-free. Replayed commit returns the same revision. Each new submission uploads every declared file
-into an independent revision, including unchanged bytes. Every path-rejection rule produces its documented error code. Per
-the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_DESIGN.md">historical P2 design</a>, "staging crashes … swept" and
-"post-rename crash imported as an orphan" are proven by P3's sweeper and reconciler, not here; P2
-proves the on-disk state each crash leaves.</td></tr>
+<tr><td class="k">P2 — Raw ingest &amp; commit<br><span class="tag">retired</span></td>
+<td>Shipped 2026-09 and deleted 2026-10-23 (Owner decision 1): sessions, the dataset lock,
+revisions, the expiry sweep and the 9 GiB HTTP gate. Replaced by RL.</td>
+<td id="p2-verified">The <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_IMPLEMENTATION_PLAN.md">archived P2 plan</a>
+and <a href="https://github.com/karthedew/huron/actions/runs/34177077449">run 34177077449</a>
+remain as history.</td></tr>
 
 <tr><td class="k">P3 — Integrity services<br><span class="tag">retired</span></td>
 <td>The built part (verified completion and frozen commit documents) was deleted with the Raw engine.

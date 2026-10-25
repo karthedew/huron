@@ -1345,7 +1345,7 @@ contracts, `0014` is head, and the web calls no Python service.
     deleted test case was the last cover of a line, which the pass conditions forbid).
 - Dependencies: M1.4, M1.6.
 - Decisions: OQ-1.1 (settled, owner decision 12)
-- Status: pending
+- Status: complete
 
 ## Milestone 2 — Hierarchy rename and shared route modules
 
@@ -10283,3 +10283,39 @@ All required static,899unit,18contract,12integration,917combined,docs and closin
 checks pass. Final coverage and exact owner-approved duplication provenance were
 independently verified. The next-task baseline reports remain
 `/tmp/huron-m17-before.json` and `/tmp/huron-m17-before-contract.json`.
+
+
+### M1.7 implementation evidence — 2026-10-25 (verification pending)
+
+Added the unconditional, irreversible `0014_retire_legacy_raw` revision after
+`0013_retire_releases`, dropping all fourteen legacy tables and five guard functions,
+deleting obsolete lineage edges and narrowing both endpoint vocabularies. Updated the
+schema map and retired roadmap P2 while preserving its archived plan and run receipt.
+Removed tests and helpers for discarded tables; surviving catalog lifecycle, JSON,
+jobs and lineage checks run at the pinned new head. The hierarchy fixture already
+listed only surviving tables at base `ea6a4e6`, so it needed no change.
+
+Four new PostgreSQL 16 testcontainer cases prove empty/populated upgrades, every dropped
+object, rejection of both Raw lineage endpoint kinds, preservation of hierarchy,
+principals, RBAC seeds and a surviving lineage edge, explicit-range offline CLI SQL,
+and the exact downgrade refusal. Tests used only disposable test-owned containers;
+the owner's stack and database were not started, stopped, reset or migrated.
+
+Implementation gate: `make lint` (14 import contracts, empty radon output), 899 unit,
+15 contract, 12 integration, 914 combined unit/contract tests, `make docs`, and all
+closing checks passed. Source hashes, source diff, coverage floor and duplication
+baseline are unchanged. Duplication remains 76 clones / 26 groups, native score 70.
+Unit covered/total statements stay 2,832/2,958 (95.74%; 899 tests before and after).
+Combined covered/total statements stay 2,955/2,958 (99.90%). No surviving file gains
+missing lines; the measured unit floor remains 95.74. Exact logs, JSON reports and
+proofs: `/tmp/huron-m17-i1/`; report: `/tmp/huron-m17-i1/report.md`.
+
+The task remains pending until independent verification passes.
+
+### M1.7 independent completion
+
+Verification attempt1 passed without findings: `/tmp/huron-m17-v1/report.md`.
+Full static,899unit,15contract,12integration,914combined,docs and focused migration
+checks passed. Changed Python files have100%coverage; source hashes and coverage
+line sets are unchanged. All Milestone1 tasks are complete. Fresh M2.1 baseline
+reports are `/tmp/huron-m21-before.json` and `/tmp/huron-m21-before-contract.json`.

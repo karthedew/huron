@@ -7,7 +7,7 @@
 -- to carry what a schema dump cannot - the trigger annotations, the vocabularies,
 -- and the invariant each rule serves. Do not replace it with pg_dump output.
 --
--- Reflects: 0013_retire_releases
+-- Reflects: 0014_retire_legacy_raw
 --
 -- Every revision that changes the schema updates this file in the same commit
 -- and moves the Reflects line to the new head. scripts/check_schema_map.py
@@ -26,7 +26,7 @@
 -- metadata mirrors, no text search (invariant A: LanceDB owns matching;
 -- sidecars authoritative).
 -- ============================================================================
--- 1. Hierarchy: Organization -> Project -> Dataset -> revisions
+-- 1. Hierarchy: Organization -> Project -> Dataset
 -- ============================================================================
 
 CREATE TABLE organizations (
@@ -83,116 +83,8 @@ CREATE TABLE datasets (
     created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
 );
 
-CREATE TABLE dataset_revisions (
-    -- [app] service.api.stores.ingest begin_ingest: linear and gap-free -
-    -- max(revision_number) + 1 over every row, taken under
-    -- SELECT ... FOR UPDATE on the datasets row; immutable (invariant E) -
-    -- no constraint or trigger holds that.
-    id uuid PRIMARY KEY,
-    dataset_id uuid NOT NULL REFERENCES datasets,
-    revision_number integer NOT NULL,   -- 1..999999; UNIQUE (dataset_id, revision_number)
-    manifest_sha256 text NOT NULL,      -- Identical manifests are allowed in distinct revisions.
-    metadata_sha256 text NOT NULL,
-    revision_path text UNIQUE NOT NULL, -- /data/.../dataset/{...}/raw/revision/000042--{id}
-    file_count integer NOT NULL, total_bytes bigint NOT NULL,
-    state text NOT NULL DEFAULT 'COMMITTED',
-    committed_by text NOT NULL, committed_at timestamptz NOT NULL
-    -- [db] UNIQUE (id, dataset_id) dataset_revisions_id_dataset_id_unique:
-    -- redundant with the primary key; no foreign key has cited it since
-    -- release tags were dropped (0013)
-    -- [db] dataset_revisions_state_vocabulary CHECK IN ('COMMITTED',
-    -- 'EXPIRED_PARTIAL','EXPIRED','PURGED','DEGRADED'): COMMITTED is ingest's
-    -- only output; retention, purge and the reconciler write the rest
-);
-
--- releases (release tags) and its releases_immutable() trigger function
--- dropped (0013): a dataset keeps only its full, numbered revisions
-
-CREATE TABLE revision_amendments (    -- project-admin metadata amendments, append-only
-    id uuid PRIMARY KEY,
-    revision_id uuid NOT NULL REFERENCES dataset_revisions,
-    sequence integer NOT NULL,          UNIQUE (revision_id, sequence),
-    changed_keys text[] NOT NULL, document jsonb NOT NULL,
-    -- [db] revision_amendments_document_is_an_object CHECK: object shape
-    reclassified boolean NOT NULL DEFAULT false,
-    created_by text NOT NULL, created_at timestamptz NOT NULL
-);
-
 -- ============================================================================
--- 2. Raw ingest workflow
--- ============================================================================
-
-CREATE TABLE ingest_sessions (
-    id uuid PRIMARY KEY,
-    dataset_id uuid NOT NULL REFERENCES datasets,
-    revision_id uuid UNIQUE NOT NULL, revision_number integer NOT NULL,
-    manifest_sha256 text NOT NULL,
-    state text NOT NULL,  -- PREPARING|UPLOADING|VERIFYING|COMMITTING|RECOVERING|COMMITTED|ABORTED|FAILED
-    -- [db] ingest_sessions_state_check: CHECK restricts state to the vocabulary above
-    etag integer NOT NULL DEFAULT 1,
-    expires_at timestamptz NOT NULL,
-    created_by text NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
-    -- [db] trigger ingest_sessions_revision_guard: a session may claim
-    -- COMMITTED only about the revision it reserved - same id, dataset,
-    -- revision_number and manifest_sha256 - checked FOR KEY SHARE
-);
--- [db] one_open_ingest_per_dataset: partial unique index, at most ONE open
--- ingest per dataset, excludes only COMMITTED/ABORTED/FAILED
--- [db] one_claim_per_revision_number: partial unique index on
--- (dataset_id, revision_number) excluding ABORTED/FAILED - a dead session's
--- number is freed for retry, a COMMITTED one stays spent forever
--- [db] index ingest_sessions_dataset (dataset_id) - neither partial unique
--- index above serves a predicate-free lookup
--- [db] index ingest_sessions_lapsing (expires_at) WHERE state IN
--- ('PREPARING','UPLOADING','VERIFYING') - the expiry sweep's listing
-
-CREATE TABLE ingest_commit_intents (
-    ingest_id uuid PRIMARY KEY REFERENCES ingest_sessions ON DELETE RESTRICT,
-    command bytea NOT NULL,
-    manifest bytea NOT NULL,
-    metadata bytea NOT NULL,
-    committed bytea NOT NULL,
-    command_sha256 text GENERATED ALWAYS AS (encode(sha256(command), 'hex')) STORED,
-    manifest_sha256 text GENERATED ALWAYS AS (encode(sha256(manifest), 'hex')) STORED,
-    metadata_sha256 text GENERATED ALWAYS AS (encode(sha256(metadata), 'hex')) STORED,
-    committed_sha256 text GENERATED ALWAYS AS (encode(sha256(committed), 'hex')) STORED,
-    committed_by text NOT NULL,
-    committed_at timestamptz NOT NULL
-);
--- [db] trigger ingest_commit_intents_immutable: refuses UPDATE and DELETE
-
--- [db] trigger ingest_recoveries_ownership: attempt identity, paths, actor and start are immutable
-CREATE TABLE ingest_recoveries (
-    ingest_id uuid PRIMARY KEY REFERENCES ingest_sessions ON DELETE RESTRICT,
-    attempt_id uuid NOT NULL UNIQUE,
-    original_path text NOT NULL CHECK (length(original_path) > 0),
-    candidate_path text NOT NULL CHECK (length(candidate_path) > 0),
-    checkpoint text NOT NULL CHECK (checkpoint IN ('CLAIMED', 'RELOCATED', 'MATERIALIZED', 'PUBLISHED', 'RECORDED')),
-    actor text NOT NULL CHECK (length(actor) > 0),
-    started_at timestamptz NOT NULL,
-    updated_at timestamptz NOT NULL CHECK (updated_at >= started_at),
-    CHECK (original_path <> candidate_path)
-);
-
-CREATE TABLE ingest_files (
-    file_id uuid PRIMARY KEY,
-    ingest_id uuid NOT NULL REFERENCES ingest_sessions ON DELETE CASCADE,
-    path text NOT NULL,                 UNIQUE (ingest_id, path),
-    size bigint NOT NULL, expected_sha256 text NOT NULL,
-    action text NOT NULL CHECK (action = 'upload'),
-    state text NOT NULL DEFAULT 'PENDING',
-    -- [db] ingest_files_state_vocabulary CHECK IN ('PENDING','COMPLETE'):
-    -- PENDING until every part is in the envelope and proven
-    part_count integer NOT NULL,
-    -- [db] ingest_files_part_count_positive CHECK: >= 1,
-    completed_parts jsonb NOT NULL DEFAULT '[]'
-    -- [db] ingest_files_completed_parts_is_an_array CHECK: array shape -
-    -- the resume ledger for a multipart upload, the one jsonb column that
-    -- is not an object
-);
-
--- ============================================================================
--- 3. Identity and RBAC (0002)
+-- 2. Identity and RBAC (0002)
 --
 --    principal --< role_bindings >-- roles --< role_capabilities >-- capabilities
 --    Bindings inherit downward: SYSTEM > ORGANIZATION > PROJECT > DATASET.
@@ -223,7 +115,7 @@ CREATE TABLE service_accounts (        -- owned by an organization; roleless (00
     -- [db] trigger service_accounts_kind_guard: principal must be kind service_account
 );
 
-CREATE TABLE roles (                   -- seeded from huron.pkg.rbac.roles.ROLES
+CREATE TABLE roles (                   -- seeded from huron.core.security.roles.ROLES
     code text PRIMARY KEY,              -- reader | developer | project_admin |
                                         -- organization_admin | platform_owner
                                         -- data_steward removed (0006);
@@ -287,31 +179,8 @@ CREATE TABLE api_keys (
 );
 -- [db] index api_keys_project (project_id)
 
--- Password + session login (0005). local_credentials is admin-provisioned,
--- users only (trigger local_credentials_kind_guard); sessions is the
--- server-side half of the cookie login - the browser holds the secret,
--- only its SHA-256 lands here.
-CREATE TABLE local_credentials (
-    principal_id uuid PRIMARY KEY REFERENCES principals,
-    password_hash text NOT NULL,        -- argon2id string (CHECK '$argon2id$%')
-    updated_at timestamptz NOT NULL, updated_by text NOT NULL
-);
-
-CREATE TABLE sessions (
-    id uuid PRIMARY KEY,
-    secret_sha256 text NOT NULL,        -- CHECK ^[0-9a-f]{64}$
-    csrf_token text NOT NULL,
-    subject text NOT NULL, groups text[] NOT NULL DEFAULT '{}',
-    authentication_method text NOT NULL,  -- 'oidc' | 'password'
-    created_at timestamptz NOT NULL, last_seen_at timestamptz NOT NULL,
-    idle_expires_at timestamptz NOT NULL, absolute_expires_at timestamptz NOT NULL,
-    revoked_at timestamptz
-    -- [db] CHECK (idle_expires_at <= absolute_expires_at)
-);
--- [db] partial index sessions_subject_active (subject) WHERE revoked_at IS NULL
-
 -- ============================================================================
--- 4. Governance: policies, purge, retention, profiles
+-- 3. Governance: policies, purge, retention, profiles
 -- ============================================================================
 
 CREATE TABLE policies (
@@ -334,18 +203,6 @@ CREATE TABLE policy_attachments (      -- attach requires {org,project,dataset}.
 -- [db] policy_attachments_scope: index on (scope_type, scope_id) - the same
 -- scope-listing access path role_bindings_scope serves on the sibling table
 
-CREATE TABLE purge_records (           -- two-person purge: approver <> requester (CHECK)
-    id uuid PRIMARY KEY,
-    revision_id uuid NOT NULL REFERENCES dataset_revisions,
-    reason text NOT NULL,
-    requested_by text NOT NULL, requested_at timestamptz NOT NULL,
-    approved_by text, approved_at timestamptz, executed_at timestamptz,
-    state text NOT NULL DEFAULT 'REQUESTED'
-    -- [db] purge_records_state_vocabulary CHECK IN ('REQUESTED','APPROVED',
-    -- 'EXECUTED'): one member per timestamp column above
-);
--- [db] index purge_records_revision (revision_id)
-
 CREATE TABLE retention_holds (
     id uuid PRIMARY KEY,
     scope_kind text NOT NULL,           -- PROJECT | DATASET | REVISION
@@ -365,7 +222,7 @@ CREATE TABLE science_profiles (        -- published (name, version) immutable
 );
 
 -- ============================================================================
--- 5. Published representations: bronze/silver/gold state
+-- 4. Published representations: bronze/silver/gold state
 -- ============================================================================
 
 CREATE TABLE snapshots (               -- one row per published Icechunk snapshot
@@ -427,8 +284,8 @@ CREATE TABLE lineage_edges (
     upstream_kind text NOT NULL, upstream_id uuid NOT NULL,
     downstream_kind text NOT NULL, downstream_id uuid NOT NULL,
     -- [db] lineage_edges_upstream_kind_vocabulary and
-    -- lineage_edges_downstream_kind_vocabulary, both CHECK IN ('raw_revision',
-    -- 'bronze_snapshot','silver_snapshot','gold_version'): one node kind per
+    -- lineage_edges_downstream_kind_vocabulary, both CHECK IN
+    -- ('bronze_snapshot','silver_snapshot','gold_version'): one node kind per
     -- table an id lives in; both columns draw on the full set - a recomputed
     -- product version's supersession edge is gold_version on both ends at once
     region jsonb, created_at timestamptz NOT NULL,
@@ -438,33 +295,8 @@ CREATE TABLE lineage_edges (
 );
 
 -- ============================================================================
--- 6. Operational plumbing
+-- 5. Operational plumbing
 -- ============================================================================
-
-CREATE TABLE audit_events (
-    id uuid PRIMARY KEY, kind text NOT NULL,
-    -- [db] audit_events_kind_format CHECK: lowercase dotted-or-flat
-    -- snake-case name, length 2-63. Open on purpose, not enumerated: one entry
-    -- per mutating route and per denied operation, so refusing an unforeseen
-    -- kind would abort the transaction being recorded
-    actor text NOT NULL, subject_kind text NOT NULL, subject_id uuid,
-    payload jsonb NOT NULL,
-    -- [db] audit_events_payload_is_an_object CHECK: object shape
-    created_at timestamptz NOT NULL
-);
--- [db] index audit_events_created_at (created_at, id)
-
-CREATE TABLE outbox_events (           -- transactional outbox -> search projection etc.
-    id uuid PRIMARY KEY, kind text NOT NULL, subject_id uuid NOT NULL,
-    -- [db] outbox_events_kind_format CHECK: lowercase dotted-or-flat
-    -- snake-case name, length 2-63. Open on purpose, not enumerated: the
-    -- consumer set grows a phase at a time and refusing an unforeseen kind
-    -- inside the catalog-commit transaction is worse than recording it
-    payload jsonb NOT NULL, created_at timestamptz NOT NULL, processed_at timestamptz
-    -- [db] outbox_events_payload_is_an_object CHECK: object shape
-);
--- [db] outbox_unprocessed: partial index on (created_at, id) WHERE
--- processed_at IS NULL - the claim access path, FOR UPDATE SKIP LOCKED
 
 CREATE TABLE idempotency_records (
     principal text NOT NULL, key text NOT NULL,  PRIMARY KEY (principal, key),
@@ -490,26 +322,3 @@ CREATE TABLE jobs (
 );
 -- [db] jobs_claim: partial index on (available_at, id) WHERE state = 'QUEUED' -
 -- the claim access path, FOR UPDATE SKIP LOCKED
-
-CREATE TABLE reconciliation_findings (
-    id uuid PRIMARY KEY, code text NOT NULL, severity text NOT NULL,
-    -- [spec] vocabulary undecided: no severity vocabulary exists in the design
-    -- record yet; code already carries the finding type
-    path text, subject_id uuid, detail jsonb NOT NULL,
-    -- [db] reconciliation_findings_detail_is_an_object CHECK: object shape
-    found_at timestamptz NOT NULL, resolved_at timestamptz
-);
-
--- Immutable Polaris target mappings and post-commit catalog acknowledgements.
-CREATE TABLE raw_external_datasets (
-    target_key text PRIMARY KEY, -- SHA-256 of canonical external target, hex CHECK
-    endpoint text NOT NULL, realm text NOT NULL, catalog text NOT NULL,
-    namespace text[] NOT NULL, name text NOT NULL,
-    dataset_id uuid NOT NULL UNIQUE REFERENCES datasets(id) ON DELETE RESTRICT
-    -- [db] bounds on endpoint/realm/catalog/namespace/name; immutable UPDATE/DELETE trigger
-);
-CREATE TABLE raw_catalog_publications (
-    revision_id uuid PRIMARY KEY REFERENCES dataset_revisions(id) ON DELETE RESTRICT,
-    registered_at timestamptz NOT NULL DEFAULT now()
-    -- [db] immutable UPDATE/DELETE trigger; absence after commit means pending registration
-);
