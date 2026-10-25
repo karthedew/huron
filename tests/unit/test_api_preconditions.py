@@ -15,7 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
 from huron.applications.api.app import create_app
-from huron.applications.api.routes.v1.preconditions import expected_version
+from huron.applications.api.routes.preconditions import expected_version
 from huron.applications.api.settings import ApiSettings, ClassificationValue
 from tests.unit.support import memory_stores
 

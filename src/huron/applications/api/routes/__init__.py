@@ -1,7 +1,7 @@
-"""The HTTP route packages, each mounted under its own URL prefix.
+"""HTTP routes and shared request helpers.
 
-``v1`` is the versioned resource API at ``/api/v1``. A route package owns its path
-operations and the request and response bodies they exchange, and nothing
-else: authorization policy lives in ``huron.applications.api.authorization`` and
-the domain rules in the repository.
+``v1`` exposes the legacy resource API at ``/api/v1``. ``preconditions`` provides
+idempotency and optimistic-concurrency headers, and ``pagination`` provides page
+envelopes and keyset cursors. Route packages own HTTP parsing and serialization;
+domain operations enforce authorization and domain rules.
 """

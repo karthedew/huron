@@ -21,7 +21,7 @@ from huron.applications.api.authorization import require_organization
 from huron.applications.api.dependencies import Identity
 from huron.applications.api.dependencies import ServiceAccountAdministration as Repository
 from huron.applications.api.problems import problem_response
-from huron.applications.api.routes.v1.pagination import Page, PageCursor, PageLimit, paginate
+from huron.applications.api.routes.pagination import Page, PageCursor, PageLimit, paginate
 from huron.applications.api.routes.v1.schema.api_keys import CreateApiKey
 from huron.applications.api.routes.v1.schema.service_accounts import (
     CreateServiceAccount,

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends
 
 from huron.applications.api.authorization import CurrentPrincipal
 from huron.applications.api.dependencies import Identity
-from huron.applications.api.routes.v1.preconditions import IdempotencyHeader
+from huron.applications.api.routes.preconditions import IdempotencyHeader
 from huron.applications.api.routes.v1.schema.api_keys import CreateApiKey, IssuedApiKey
 
 router = APIRouter(prefix="/auth/api-keys", tags=["api-keys"])

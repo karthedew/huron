@@ -1,7 +1,6 @@
 """Runnable application entry points and composition roots.
 
-Applications load settings, construct adapters, bind authenticated actors to core
-services, and manage process lifetimes. Shared workflows belong in core; domain
-rules and capability implementations belong in pkg. Entry points do not import
-one another.
+The ``api`` application loads settings, constructs adapters, binds authenticated
+actors to core services, and manages process lifetimes. Shared workflows and
+domain rules belong in core. Applications do not import one another.
 """

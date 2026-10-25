@@ -14,7 +14,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from huron.applications.api.routes.v1.pagination import (
+from huron.applications.api.routes.pagination import (
     Page,
     after_key,
     decode_cursor,

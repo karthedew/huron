@@ -198,7 +198,7 @@ a service account or scope an API key in the one deployment shape that exists. D
 <code>Visibility</code> before it reaches the store, the predicate is applied in SQL before
 <code>LIMIT</code>, and an id the caller cannot discover answers 404 from every read, guard and
 mutation. Browse with keyset pagination <span class="tag">done</span>: the store itself windows by
-the keyset (<code>slug_cursor_key</code> in <code>routes/v1/pagination.py</code> decodes the cursor
+the keyset (<code>slug_cursor_key</code> in <code>routes/pagination.py</code> decodes the cursor
 into it), filtered by visibility before the
 window, so a walk at <code>limit=1</code> enumerates every visible row exactly once. The verification
 debts — property tests over the pure core, a

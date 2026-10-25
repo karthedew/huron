@@ -55,7 +55,7 @@ from alembic.config import Config
 from pydantic import BaseModel, ConfigDict
 from testcontainers.postgres import PostgresContainer
 
-from huron.applications.api.routes.v1.pagination import paginate
+from huron.applications.api.routes.pagination import paginate
 from huron.core.security.ports import ApiKeyWriter, RbacStore
 from huron.core.security.apikeys import ApiKeyRecord
 from huron.core.foundation.errors import ResourceNotFound

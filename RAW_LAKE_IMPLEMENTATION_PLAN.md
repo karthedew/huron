@@ -1462,7 +1462,7 @@ route is added; contract 7, the lake entries of the others and contract 19 arriv
     38 operations and 11 tags (no `/auth` router after M1.6; owner decision 11, B-13); every moved or
     modified file at 100 %; `fail_under` unchanged.
 - Dependencies: M2.1.
-- Status: pending
+- Status: complete
 
 ## Milestone 3 — Broker values, keys and tokens
 
@@ -10377,3 +10377,11 @@ path substitutions were verified. The pre-existing overlapping import violations
 and unchanged defensive claim branch were independently assessed without weakening
 contracts. Fresh M2.2 baseline JSONs are `/tmp/huron-m22-before.json` and
 `/tmp/huron-m22-before-contract.json`.
+
+### M2.2 independent completion
+
+Verification attempt1 passed without findings: `/tmp/huron-m22-v1/report.md`.
+All gates pass; moved helpers are byte-identical, normalized source ASTs and
+coverage unchanged, all touched source fully covered. Milestones1 and2 are now
+complete. Fresh M3.1 before reports are `/tmp/huron-m31-before.json` and
+`/tmp/huron-m31-before-contract.json`.

@@ -22,7 +22,7 @@ from huron.applications.api.authorization import (
 )
 from huron.applications.api.dependencies import PolicyAdministration as Repository
 from huron.applications.api.problems import problem_response
-from huron.applications.api.routes.v1.pagination import Page, PageCursor, PageLimit, paginate
+from huron.applications.api.routes.pagination import Page, PageCursor, PageLimit, paginate
 from huron.applications.api.routes.v1.schema.policies import (
     AttachPolicy,
     CreatePolicy,

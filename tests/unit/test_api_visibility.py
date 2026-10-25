@@ -24,7 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from huron.applications.api.app import create_app
-from huron.applications.api.routes.v1.pagination import decode_cursor
+from huron.applications.api.routes.pagination import decode_cursor
 from huron.applications.api.settings import ApiSettings, ClassificationValue
 from tests.unit.support import memory_stores
 
