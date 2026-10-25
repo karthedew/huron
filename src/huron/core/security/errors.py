@@ -90,6 +90,18 @@ class ClassificationExceeded(DomainError):
     code, status_code = "CLASSIFICATION_EXCEEDED", 403
 
 
+class SigningKeyUnavailable(DomainError):
+    """No loaded signing key can issue a Huron token."""
+
+    code, status_code, retry_after = "SIGNING_KEY_UNAVAILABLE", 503, 30
+
+
+class RotationRefused(DomainError):
+    """A signing-key rotation or withdrawal cannot be performed."""
+
+    code, status_code = "ROTATION_REFUSED", 409
+
+
 __all__ = [
     "ERROR_CODES",
     "AttachmentExists",
@@ -99,12 +111,16 @@ __all__ = [
     "GrantScopeExceeded",
     "InputNotReadable",
     "PrincipalKindMismatch",
+    "RotationRefused",
     "ServiceAccountExists",
+    "SigningKeyUnavailable",
     "UsernameTaken",
 ]
 
 ERROR_CODES = frozenset(
     {
+        "ROTATION_REFUSED",
+        "SIGNING_KEY_UNAVAILABLE",
         "BINDING_EXISTS",
         "SERVICE_ACCOUNT_EXISTS",
         "ATTACHMENT_EXISTS",

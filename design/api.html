@@ -285,6 +285,8 @@ but no shipped route raises it yet.</p>
 <tr><td>UNKNOWN_ROLE</td><td>422</td><td>live</td><td>no such role code</td></tr>
 <tr><td>SCOPE_NOT_BINDABLE</td><td>422</td><td>live</td><td>the role cannot be bound at that scope level</td></tr>
 <tr><td>PRINCIPAL_KIND_NOT_ALLOWED</td><td>422</td><td>live</td><td>that kind of principal may not hold that role</td></tr>
+<tr><td>ROTATION_REFUSED</td><td>409</td><td>live</td><td>a signing-key rotation or withdrawal is refused (context: reason, kid)</td></tr>
+<tr><td>SIGNING_KEY_UNAVAILABLE</td><td>503</td><td>live</td><td>no signing key can sign a Huron token; retry after Retry-After (context: reason)</td></tr>
 </table>
 
 <p class="note">Every code in this table has exactly one exception class, and every exception class

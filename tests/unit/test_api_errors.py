@@ -8,20 +8,24 @@ from __future__ import annotations
 
 import pytest
 
+from huron.applications.api.errors import DependencyUnavailable
 from huron.core.foundation.errors import DomainError, Forbidden
+from huron.core.hierarchy.errors import SlugExists
 from huron.core.security.errors import (
     AttachmentExists,
     BindingExists,
     PrincipalKindMismatch,
+    RotationRefused,
     ServiceAccountExists,
+    SigningKeyUnavailable,
     UsernameTaken,
 )
-from huron.applications.api.errors import DependencyUnavailable
-from huron.core.hierarchy.errors import SlugExists
 
 pytestmark = pytest.mark.unit
 
 _CLASSES = [
+    (SigningKeyUnavailable, "SIGNING_KEY_UNAVAILABLE", 503),
+    (RotationRefused, "ROTATION_REFUSED", 409),
     (Forbidden, "FORBIDDEN", 403),
     (SlugExists, "SLUG_EXISTS", 409),
     (BindingExists, "BINDING_EXISTS", 409),
@@ -61,3 +65,9 @@ def test_context_travels_into_as_problem() -> None:
     assert problem["context"] == {"slug": "astro"}
     assert problem["code"] == "SLUG_EXISTS"
     assert problem["status"] == 409
+
+
+def test_signing_failures_distinguish_retryable_unavailability_from_refusal() -> None:
+    """Unavailable signing requests may retry after 30 seconds; refusals promise no retry."""
+    assert SigningKeyUnavailable.retry_after == 30
+    assert RotationRefused.retry_after is None

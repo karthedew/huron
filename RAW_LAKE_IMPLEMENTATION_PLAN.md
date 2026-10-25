@@ -1640,7 +1640,7 @@ with their raise sites and their `design/api.html` §7 rows (convention 1).
   - `keys.py` and the modified `errors.py` at 100 % line coverage in the unit run.
 - Dependencies: M3.1.
 - Decisions: OQ-5.1 (settled, owner decision 12)
-- Status: pending
+- Status: complete
 
 ### M3.3 Key source, key reader and the refreshing `HuronKeys`
 
@@ -10704,3 +10704,17 @@ including968unit,15contract,12integration,983combined and69focused cases. Broker
 modules are100%covered; existing source and coverage unchanged. Frozen floor95.74
 and reviewed new-module clone accounting G2=1/4,G1=0 confirmed. Next baselines:
 `/tmp/huron-m32-before.json` and `/tmp/huron-m32-before-contract.json`.
+
+### M3.2 implementation and independent completion
+
+Pure signing-key values, immutable ring, lifecycle/rotation rules and two live
+Security errors implemented. Report `/tmp/huron-m32-i1/report.md`. Verification1
+failed only on PostgreSQL container startup during a proven901-second host sleep
+(`/tmp/huron-m32-v1/report.md`, `/tmp/huron-m32-fix1/diagnosis.md`). No code or
+timeout workaround was introduced. One fresh awake gate passed, then independent
+verification2 passed `/tmp/huron-m32-v2/report.md` with no findings: lint,1004unit,
+15contract,12integration,1019combined,docs,67focused. All ownedprocesses exited.
+Unit2944/3070→3059/3185; combined3067/3070→3182/3185; all touchedproduction100%,
+no surviving coverage loss. Floor stays95.74. Duplication unchanged78/27; G2capped
+usage1/4,G1zero. Next snapshots `/tmp/huron-m33-before.json` and
+`/tmp/huron-m33-before-contract.json`.
