@@ -15,7 +15,6 @@ import asyncio
 import dataclasses
 import shutil
 import time
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import asyncpg
@@ -35,8 +34,7 @@ from huron.core.metastore import (
     PostgresRbacStore,
     PostgresSessionStore,
 )
-from tests.hierarchy_contract import seed_hierarchy
-from tests.unit.support import FakeClock, memory_stores
+from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -194,12 +192,12 @@ def test_lifespan_closes_an_already_open_pool_when_oidc_discovery_fails(
     assert closed == 1
 
 
-def test_lifespan_closes_the_pool_when_raw_store_initialization_fails(
+def test_lifespan_closes_the_pool_when_generations_initialization_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A raw-store initialization failure after the pool opens still closes that pool.
 
-    Application startup initializes the raw store's directory layout,
+    Application startup initializes the generation store's directory layout,
     which fails when ``data_root`` already exists as a regular file
     rather than a directory; the pool opened just before it must not
     leak on every restart of a crash loop.
@@ -259,7 +257,7 @@ def test_lifespan_leaves_the_oidc_resolver_unset_when_no_provider_is_configured(
     )
     app = create_app(settings=settings, stores=memory_stores())
     with TestClient(app) as client:
-        assert app.state.runtime.raw_store is not None
+        assert app.state.runtime.generations is not None
         assert app.state.runtime.oidc_resolver is None
         assert client.get("/healthz").status_code == 200
 
@@ -434,7 +432,7 @@ def test_readyz_refuses_once_the_raw_root_is_gone(tmp_path: Path) -> None:
     assert response.headers["content-type"] == "application/problem+json"
     body = response.json()
     assert body["code"] == "DEPENDENCY_UNAVAILABLE"
-    assert body["context"]["checks"] == {"raw_store": "root is unavailable"}
+    assert body["context"]["checks"] == {"generations": "root is unavailable"}
 
 
 def test_readyz_reports_ready_when_the_raw_root_and_database_pool_both_answer(
@@ -532,7 +530,7 @@ def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_pool(
     assert checks["database"] == "TimeoutError: "
 
 
-def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_raw_store(
+def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_generations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A wedged raw-store mount times out instead of hanging the ``/readyz`` probe forever.
@@ -553,7 +551,7 @@ def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_raw_store(
     )
     app = create_app(settings=settings, stores=memory_stores())
     with TestClient(app) as client:
-        app.state.runtime.raw_store.root = _HangingRoot()
+        app.state.runtime.generations.root = _HangingRoot()
         started = time.monotonic()
         response = client.get("/readyz")
         elapsed = time.monotonic() - started
@@ -563,42 +561,5 @@ def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_raw_store(
     body = response.json()
     assert body["code"] == "DEPENDENCY_UNAVAILABLE"
     checks = body["context"]["checks"]
-    assert checks.keys() == {"raw_store"}
-    assert checks["raw_store"] == "did not answer within 0.05s"
-
-
-async def test_the_lifespan_sweeps_lapsed_sessions_before_serving_the_first_request(
-    tmp_path: Path,
-) -> None:
-    """The lifespan's first sweep pass reaps an already-lapsed session before any request lands."""
-    now = datetime.now(UTC)
-    clock = FakeClock(now - timedelta(hours=3))
-    stores = memory_stores(clock=clock)
-    ids = await seed_hierarchy(stores.hierarchy)
-    dataset_id = ids.datasets["run-0001"]
-    async with stores.hierarchy.transaction() as writer:
-        reserved = await writer.begin_ingest(
-            dataset_id, "a" * 64, created_by="user:alice", files=()
-        )
-    opened = reserved.open(now=clock.now())
-    async with stores.hierarchy.transaction() as writer:
-        await writer.update_ingest_session(opened, expected_etag=reserved.etag)
-
-    settings = ApiSettings(
-        env="development",
-        auth_mode="dev-headers",
-        data_root=str(tmp_path / "data"),
-        database_url="postgresql://unused",
-        classification_vocabulary=[ClassificationValue(code="open", order=0, discoverable=True)],
-        bootstrap_platform_owner="alice",
-    )
-    with TestClient(create_app(settings=settings, stores=stores)) as client:
-        response = client.get(
-            f"/api/v1/ingest-sessions/{opened.lease.ingest_id}",
-            headers={"X-Huron-Subject": "alice"},
-        )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["state"] == "ABORTED"
-    expired_events = [event for event in stores.hierarchy._audit if event.kind == "ingest.expired"]
-    assert len(expired_events) == 1
+    assert checks.keys() == {"generations"}
+    assert checks["generations"] == "did not answer within 0.05s"

@@ -3,31 +3,25 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
 
-from huron.core.raw import RawRuntime
-from huron.core.security import AccessPolicy, Bindings
 from huron.core.catalog import (
+    CatalogCreation,
     DatasetCollection,
     OrganizationCollection,
     ProjectCollection,
 )
-from huron.core.catalog import CatalogCreation
-from huron.core.raw import RawIngestionService
-from huron.core.raw import RevisionReadService
-from huron.core.security.principal import Principal
-from huron.core.raw.ingest import FileState
-from huron.core.raw.manifest import ManifestEntry
 from huron.core.foundation.errors import Forbidden, ResourceNotFound
 from huron.core.foundation.retry import IdempotencyClaim
 from huron.core.metastore import InMemoryHierarchyStore, InMemoryRbacStore
 from huron.core.rawstore import PosixRawStore
+from huron.core.security import AccessPolicy, Bindings
+from huron.core.security.principal import Principal
 from huron.core.security.rules import Classification, RoleBindingAuthorizer, ScopeType
 from tests.repository_fixture import RepositoryFixture
 
@@ -41,7 +35,7 @@ pytestmark = pytest.mark.unit
 
 @dataclass(frozen=True)
 class Clock:
-    """A deterministic clock for uploads and their in-memory ledger."""
+    """A deterministic clock for hierarchy operations and idempotency claims."""
 
     def now(self) -> datetime:
         """Return a fixed instant."""
@@ -63,12 +57,10 @@ async def workspace(
     ProjectCollection,
     DatasetCollection,
     Bindings,
-    RawIngestionService,
     AccessPolicy,
     Dataset,
     RepositoryFixture,
     InMemoryHierarchyStore,
-    RevisionReadService,
     CatalogCreation,
 ]:
     """Wire real domain, core and POSIX objects without importing the FastAPI application."""
@@ -121,27 +113,22 @@ async def workspace(
         profile_version="1.0",
         claim=claim("dataset"),
     )
-    runtime = RawRuntime(storage, hierarchy, clock=Clock())
-    raw = runtime.ingestion(access, creation, datasets)
-    revisions = runtime.revisions(access)
     return (
         organizations,
         projects,
         datasets,
         bindings,
-        raw,
         access,
         dataset,
         repository,
         hierarchy,
-        revisions,
         creation,
     )
 
 
 async def test_catalog_does_not_accept_a_foreign_claim(workspace) -> None:
     """Every create rejects a claim naming someone other than the authenticated actor."""
-    _, projects, _, _, _, _, dataset, _, _, _, creation = workspace
+    _, projects, _, _, _, dataset, _, _, creation = workspace
     org = await projects.get(dataset.project_id)
     for operation in (
         creation.create_organization(
@@ -171,7 +158,7 @@ async def test_catalog_does_not_accept_a_foreign_claim(workspace) -> None:
 
 async def test_core_cannot_create_or_discover_under_another_actor(workspace) -> None:
     """An actor with no bindings cannot mutate the catalog or discover its datasets."""
-    _, _, _, _, _, _, dataset, repository, _, _, creation = workspace
+    _, _, _, _, _, dataset, repository, _, creation = workspace
     access = AccessPolicy(
         Principal("outsider"), repository.hierarchy, repository.rbac, RoleBindingAuthorizer()
     )
@@ -199,124 +186,6 @@ async def test_core_cannot_create_or_discover_under_another_actor(workspace) -> 
         await access.scope(ScopeType.PROJECT)
 
 
-async def test_raw_checks_owner_target_metadata_and_revocation_before_commit(workspace) -> None:
-    """Direct callers cannot spoof owners, mix files, forge metadata or commit after revocation."""
-    (
-        _organizations,
-        _projects,
-        _datasets,
-        bindings,
-        raw,
-        _access,
-        dataset,
-        repository,
-        hierarchy,
-        revisions,
-        creation,
-    ) = workspace
-    contents = b"field measurements"
-    entry = ManifestEntry(
-        path="payload/field.txt", size=len(contents), sha256=hashlib.sha256(contents).hexdigest()
-    )
-    with pytest.raises(Forbidden, match="idempotency"):
-        await raw.create(dataset.id, files=[entry], claim=claim("bad", "other"))
-    ledger = await raw.create(dataset.id, files=[entry], claim=claim("upload"))
-    assert ledger.created_by == "root"
-    assert (await raw.ledger(ledger.id)).dataset_id == dataset.id
-    second = await creation.create_dataset(
-        dataset.project_id,
-        slug="second",
-        title="Second",
-        description="",
-        profile_name="mcnp-run",
-        profile_version="1.0",
-        claim=claim("second"),
-    )
-    other = await raw.create(second.id, files=[entry], claim=claim("other-upload"))
-    file = ledger.files[0]
-    for operation in (
-        raw.receive_part(
-            ledger.id, other.files[0].file_id, 1, [contents], content_length=len(contents)
-        ),
-        raw.complete_file(ledger.id, other.files[0].file_id),
-    ):
-        with pytest.raises(Forbidden, match="file does not belong"):
-            await operation
-    other_access = AccessPolicy(
-        Principal("other"),
-        repository.hierarchy,
-        repository.rbac,
-        RoleBindingAuthorizer((Classification("open", 0, True),)),
-    )
-    stranger = RawRuntime(repository.raw_store, hierarchy, clock=Clock()).ingestion(
-        other_access,
-        CatalogCreation(
-            other_access,
-            repository.hierarchy,
-            repository.raw_store,
-            classification_vocabulary=("open",),
-        ),
-        DatasetCollection(other_access, repository.hierarchy, repository.raw_store),
-    )
-    await bindings.grant_role(
-        principal="user:other",
-        role_code="platform_owner",
-        scope_type=ScopeType.SYSTEM,
-        scope_id=None,
-    )
-    assert (await stranger.ledger(ledger.id)).id == ledger.id
-    for operation in (
-        stranger.verify(ledger.id),
-        stranger.receive_part(ledger.id, uuid4(), 1, [contents], content_length=len(contents)),
-        stranger.complete_file(ledger.id, uuid4()),
-        stranger.commit(
-            ledger.id,
-            expected_etag=ledger.etag,
-            manifest_sha256=ledger.manifest_sha256,
-            metadata={},
-            claim=claim("unowned-commit", "forged"),
-        ),
-    ):
-        with pytest.raises(Forbidden, match="owner"):
-            await operation
-    assert await raw.ledger(ledger.id) == ledger
-    await raw.receive_part(ledger.id, file.file_id, 1, [contents], content_length=len(contents))
-    completed = await raw.complete_file(ledger.id, file.file_id)
-    assert completed.file_id == file.file_id
-    assert completed.state is FileState.COMPLETE
-    ledger = await raw.verify(ledger.id)
-    args = dict(
-        expected_etag=ledger.etag,
-        manifest_sha256=ledger.manifest_sha256,
-        metadata={"title": "Field", "creators": ["scientist"]},
-        claim=claim("commit"),
-    )
-    with pytest.raises(Forbidden, match="idempotency"):
-        await raw.commit(ledger.id, **(args | {"claim": claim("badcommit", "other")}))
-    with pytest.raises(ValidationError):
-        await raw.commit(ledger.id, **(args | {"metadata": {"title": "missing creators"}}))
-    project_bindings = await bindings.bindings_at(ScopeType.PROJECT, dataset.project_id)
-    root_binding = next(
-        b for b in project_bindings if b.principal == "user:root" and b.role_code == "developer"
-    )
-    await bindings.revoke_role(root_binding.id)
-    with pytest.raises((Forbidden, ResourceNotFound)):
-        await raw.commit(ledger.id, **args)
-    await bindings.grant_role(
-        principal="user:root",
-        role_code="developer",
-        scope_type=ScopeType.PROJECT,
-        scope_id=dataset.project_id,
-    )
-    committed = await raw.commit(ledger.id, **args)
-    assert committed.committed_by == "root"
-    assert (await raw.commit(ledger.id, **args)).id == committed.id
-    forged = replace(committed, revision_path="/etc")
-    payload = await revisions.payload_file(forged, "payload/field.txt")
-    assert payload.location.read_bytes() == contents
-    assert (await revisions.revision(committed.id)).dataset_id == dataset.id
-
-
 async def test_collections_read_and_page_with_current_narrow_grants(workspace) -> None:
     """Narrow discovery admits ancestors and granted datasets until the binding is revoked."""
     from huron.core.catalog.types import PlatformRoot
@@ -328,11 +197,9 @@ async def test_collections_read_and_page_with_current_narrow_grants(workspace) -
         _,
         bindings,
         _,
-        _,
         dataset,
         repository,
         hierarchy,
-        _,
         creation,
     ) = workspace
     project = await root_projects.get(dataset.project_id)
@@ -394,7 +261,7 @@ async def test_collections_read_and_page_with_current_narrow_grants(workspace) -
 
 async def test_collections_refuse_absent_parents_before_empty_pages(workspace) -> None:
     """A platform owner receives not found for missing child-browse parents and point targets."""
-    organizations, projects, datasets, _, _, _, _, _, _, _, _ = workspace
+    organizations, projects, datasets, _, _, _, _, _, _ = workspace
     for collection in (projects, datasets):
         with pytest.raises(ResourceNotFound):
             await collection.browse(uuid4(), limit=10, after=None)
@@ -408,11 +275,11 @@ async def test_descriptions_preserve_noop_validation_and_empty_replacements(
     workspace, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     """A no-op avoids transactions while stale and renamed requests fail before any write."""
+    from huron.core.catalog.errors import SlugImmutable
     from huron.core.catalog.types import DescriptionChange
     from huron.core.foundation.errors import PreconditionFailed
-    from huron.core.catalog.errors import SlugImmutable
 
-    organizations, projects, datasets, _, _, _, dataset, _, hierarchy, _, _ = workspace
+    organizations, projects, datasets, _, _, dataset, _, hierarchy, _ = workspace
     project = await projects.get(dataset.project_id)
     organization = await organizations.get(project.organization_id)
     collection, item = {
@@ -450,7 +317,7 @@ async def test_descriptions_require_authority_beyond_discovery(workspace) -> Non
     """A narrow reader can discover every ancestor but cannot describe any of those resources."""
     from huron.core.catalog.types import DescriptionChange
 
-    _, projects, _, bindings, _, _, dataset, repository, hierarchy, _, _ = workspace
+    _, projects, _, bindings, _, dataset, repository, hierarchy, _ = workspace
     project = await projects.get(dataset.project_id)
     grant = await bindings.grant_role(
         principal="user:reader",

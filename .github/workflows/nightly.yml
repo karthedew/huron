@@ -1,0 +1,19 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+  pull_request:
+    types: [labeled, synchronize]
+
+jobs:
+  unit-macos:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'nightly')
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - run: uv sync --all-groups
+      - run: uv run pytest -m unit --no-header -q

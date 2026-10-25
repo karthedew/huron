@@ -34,21 +34,6 @@ def test_defaults_construct_a_working_development_configuration() -> None:
     assert settings.password_login_enabled is True
     assert settings.session_cookie_name == "huron_session"
     assert settings.oidc is None
-    assert settings.ingest_sweep_interval_seconds == 60.0
-    assert settings.ingest_sweep_limit == 100
-    assert settings.completion_max_concurrent == 1
-    assert settings.completion_reserve_bytes == 1 << 30
-
-
-@pytest.mark.parametrize(
-    "overrides", [{"completion_max_concurrent": 0}, {"completion_reserve_bytes": -1}]
-)
-def test_completion_capacity_configuration_refuses_invalid_limits(
-    overrides: dict[str, int],
-) -> None:
-    """Copy concurrency must be positive and the retained disk reserve nonnegative."""
-    with pytest.raises(ValidationError):
-        ApiSettings(**_kwargs(**overrides))
 
 
 def test_dev_headers_are_refused_outside_development() -> None:
@@ -135,16 +120,3 @@ def test_classification_vocabulary_may_not_be_empty() -> None:
     """An empty classification vocabulary is refused outright."""
     with pytest.raises(ValidationError, match="classification vocabulary may not be empty"):
         ApiSettings(**_kwargs(classification_vocabulary=[]))
-
-
-@pytest.mark.parametrize("interval", [0, -5])
-def test_sweep_interval_must_be_positive(interval: int) -> None:
-    """A zero or negative sweep interval is refused."""
-    with pytest.raises(ValidationError, match="greater than 0"):
-        ApiSettings(**_kwargs(ingest_sweep_interval_seconds=interval))
-
-
-def test_sweep_limit_must_be_at_least_one() -> None:
-    """A zero sweep limit is refused."""
-    with pytest.raises(ValidationError, match="greater than or equal to 1"):
-        ApiSettings(**_kwargs(ingest_sweep_limit=0))

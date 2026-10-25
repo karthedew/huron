@@ -10,7 +10,6 @@ from huron.core.catalog import (
     OrganizationCollection,
     ProjectCollection,
 )
-from huron.core.raw import RawIngestionService, RevisionReadService
 from huron.core.security import AccessPolicy, Bindings, IdentityService, Policies, ServiceAccounts
 
 from .authorization.credentials import CurrentPrincipal
@@ -42,7 +41,7 @@ def organization_collection(runtime: Runtime, actor: CurrentPrincipal) -> Organi
         Authorized organization reads and descriptive updates.
     """
     return OrganizationCollection(
-        _access_policy(runtime, actor), runtime.hierarchy, runtime.raw_store
+        _access_policy(runtime, actor), runtime.hierarchy, runtime.generations
     )
 
 
@@ -59,7 +58,7 @@ def project_collection(runtime: Runtime, actor: CurrentPrincipal) -> ProjectColl
     Returns:
         Authorized project reads and descriptive updates.
     """
-    return ProjectCollection(_access_policy(runtime, actor), runtime.hierarchy, runtime.raw_store)
+    return ProjectCollection(_access_policy(runtime, actor), runtime.hierarchy, runtime.generations)
 
 
 Projects = Annotated[ProjectCollection, Depends(project_collection)]
@@ -75,7 +74,7 @@ def dataset_collection(runtime: Runtime, actor: CurrentPrincipal) -> DatasetColl
     Returns:
         Authorized dataset reads, descriptive updates and layer descriptions.
     """
-    return DatasetCollection(_access_policy(runtime, actor), runtime.hierarchy, runtime.raw_store)
+    return DatasetCollection(_access_policy(runtime, actor), runtime.hierarchy, runtime.generations)
 
 
 Datasets = Annotated[DatasetCollection, Depends(dataset_collection)]
@@ -94,7 +93,7 @@ def catalog_creation(runtime: Runtime, actor: CurrentPrincipal) -> CatalogCreati
     return CatalogCreation(
         _access_policy(runtime, actor),
         runtime.hierarchy,
-        runtime.raw_store,
+        runtime.generations,
         classification_vocabulary=tuple(
             value.code for value in runtime.settings.classification_vocabulary
         ),
@@ -102,26 +101,6 @@ def catalog_creation(runtime: Runtime, actor: CurrentPrincipal) -> CatalogCreati
 
 
 Creation = Annotated[CatalogCreation, Depends(catalog_creation)]
-
-
-def raw_ingestion_service(runtime: Runtime, actor: CurrentPrincipal) -> RawIngestionService:
-    """Bind Raw ingestion to the authenticated actor.
-
-    Args:
-        runtime: The process's configured capabilities.
-        actor: The authenticated caller.
-
-    Returns:
-        Authorized Raw ingestion operations.
-    """
-    return runtime.raw.ingestion(
-        _access_policy(runtime, actor),
-        catalog_creation(runtime, actor),
-        dataset_collection(runtime, actor),
-    )
-
-
-RawIngestion = Annotated[RawIngestionService, Depends(raw_ingestion_service)]
 
 
 def role_bindings(runtime: Runtime, actor: CurrentPrincipal) -> Bindings:
@@ -193,19 +172,3 @@ def identity_service(runtime: Runtime, actor: CurrentPrincipal) -> IdentityServi
 
 
 Identity = Annotated[IdentityService, Depends(identity_service)]
-
-
-def revision_service(runtime: Runtime, actor: CurrentPrincipal) -> RevisionReadService:
-    """Bind revision reads to the authenticated actor.
-
-    Args:
-        runtime: The configured capabilities.
-        actor: The authenticated caller.
-
-    Returns:
-        Authorized revision reads.
-    """
-    return runtime.raw.revisions(_access_policy(runtime, actor))
-
-
-Revisions = Annotated[RevisionReadService, Depends(revision_service)]

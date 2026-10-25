@@ -26,8 +26,6 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
-_EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
@@ -55,8 +53,8 @@ def _headers(subject: str, groups: str = "") -> dict[str, str]:
     return headers
 
 
-def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
-    """Delegation gates each step; a developer opens raw ingest, a service account cannot.
+def test_rbac_delegation_and_layer_write_eligibility(client: TestClient) -> None:
+    """Delegation gates each step and service-account authority follows the layer rules.
 
     ``list_layers`` shows the service account's write eligibility landing
     on silver and gold only, the opposite of the developer's.
@@ -126,24 +124,6 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
     assert dataset.status_code == 201
     dataset_id = dataset.json()["id"]
 
-    # bob may open a raw ingest session; alice, who administers the org
-    # but holds no write anywhere, may not.
-    manifest_body = {"files": [{"path": "payload/a.bin", "size": 0, "sha256": _EMPTY_SHA256}]}
-    opened = client.post(
-        f"/api/v1/datasets/{dataset_id}/ingest-sessions",
-        json=manifest_body,
-        headers=_headers("bob"),
-    )
-    assert opened.status_code == 201, opened.text
-
-    forbidden = client.post(
-        f"/api/v1/datasets/{dataset_id}/ingest-sessions",
-        json=manifest_body,
-        headers=_headers("alice"),
-    )
-    assert forbidden.status_code == 403
-    assert forbidden.json()["code"] == "FORBIDDEN"
-
     # alice creates the pipeline service account and mints its key.
     account = client.post(
         f"/api/v1/organizations/{organization_id}/service-accounts",
@@ -176,14 +156,6 @@ def test_rbac_delegation_and_layer_writes(client: TestClient) -> None:
     service_headers = {"Authorization": f"Bearer {token}"}
     session_info = client.get("/auth/session", headers=service_headers)
     assert session_info.json()["kind"] == "service_account"
-    forbidden_sa = client.post(
-        f"/api/v1/datasets/{dataset_id}/ingest-sessions",
-        json=manifest_body,
-        headers={**service_headers, "Idempotency-Key": str(uuid4())},
-    )
-    assert forbidden_sa.status_code == 403
-    assert forbidden_sa.json()["code"] == "LAYER_WRITE_FORBIDDEN"
-
     # Its intrinsic authority lands on silver and gold instead - the layer
     # listing is where that write eligibility becomes visible, since the
     # account never has an occasion to actually write either layer here.

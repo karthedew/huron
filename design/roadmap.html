@@ -110,7 +110,6 @@ src/huron/
   core/foundation/    shared errors, canonical JSON, IDs/names, retry and clocks
   core/security/      authentication, identity, authorization and their workflows
   core/catalog/       hierarchy identity, descriptions, layer configuration and discovery
-  core/raw/           ingestion, revision publication/reads and expiry
   core/rawstore/      POSIX staging, checksums, atomic publication and sealing
   core/metastore/     PostgreSQL and in-memory persistence adapters
   schema/             canonical JSON schemas, shared document validation and primitive contracts
@@ -146,7 +145,9 @@ Ray execution, Zarr publication or transformation lineage services are implement
 <h2 id="phases">2. Phases</h2>
 
 <p>Each phase and milestone carries a status tag — <span class="tag">done</span>,
-<span class="tag">partial</span>, or <span class="tag">todo</span> — describing this checkout.
+<span class="tag">partial</span>, <span class="tag">todo</span>, or <span class="tag">retired</span>
+(shipped or planned, then removed by an owner decision; the row keeps one paragraph and its history links)
+— describing this checkout.
 Status is tracked here, on the plan itself: landing work updates its tag in the same change,
 and <code>docs/backend-design.md</code> defers to this page rather than keeping a second
 copy.</p>
@@ -417,9 +418,10 @@ the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d92
 "post-rename crash imported as an orphan" are proven by P3's sweeper and reconciler, not here; P2
 proves the on-disk state each crash leaves.</td></tr>
 
-<tr><td class="k">P3 — Integrity services<br><span class="tag">partial</span></td>
-<td><strong>Implementation partial; recovery and later integrity workflows remain open.</strong>
-Verified completion and frozen commit documents are implemented. <strong>Retired 2026-10-15
+<tr><td class="k">P3 — Integrity services<br><span class="tag">retired</span></td>
+<td>The built part (verified completion and frozen commit documents) was deleted with the Raw engine.
+Recovery orchestration, findings, guarded cleanup and offline Raw rebuild are replaced by RL steps 4 and 6.
+<strong>Retired 2026-10-15
 (owner decision):</strong> the one-time legacy cutover is no longer planned. Its local controller
 and generation epoch (<a href="../docs/adr/0001-controller-generation-is-the-verification-epoch.md">ADR-0001</a>,
 superseded), writer and database-role exclusion, legacy verification, the <code>lakectl</code>
@@ -429,15 +431,7 @@ protocol activation and API startup gating will not be built.
 removal and retains the earlier failed attempts and authority redesign; the
 <a href="https://github.com/karthedew/huron/blob/f1c44e3d56b10806c05373fce5b51c7a44abf146/P3_DESIGN.md">design</a> and <a href="https://github.com/karthedew/huron/blob/f1c44e3d56b10806c05373fce5b51c7a44abf146/P3_IMPLEMENTATION_PLAN.md">implementation plan</a>
 are superseded and kept as history. Local verification does not certify production or NFS support.
-Remaining work: recovery orchestration using the implemented RECOVERING state and safe orphan import, versioned governance evidence, integrity/read
-rules, findings, staging-only guarded cleanup and offline Raw catalog rebuild. P5 originates governance
-workflows; P3 recognizes their records and guards continuation of existing intents. No search or array
-registry work is included.</td>
-<td>Stale upload/completion handles cannot change published bytes. Real adapter crash/concurrency tests prove recovery and cleanup.
-Drop/migrate/rebuild yields identical hierarchy and revisions, including lawful
-purge/expiry and non-destructive pending removal. Missing parents/conflicting identities block activation;
-known corruption stays DEGRADED without blocking healthy inventory. Real NFS evidence is required for an
-NFS deployment. P3 acceptance needs calculated copy capacity, at least 25 GiB for the 9 GiB flow.</td></tr>
+</td><td>Retired; see RL.</td></tr>
 
 <tr><td class="k">P4 — Search projection<br><span class="tag">todo</span></td>
 <td>Outbox consumer (single writer), LanceDB datasets + revisions + snapshots + products tables
@@ -631,14 +625,10 @@ the UI renders; real "last ingest" and catalog-health metrics.</td>
 resource; killing the projection service yields the degraded state, not a 200-with-nothing;
 the watermark visibly lags and recovers.</td></tr>
 
-<tr><td class="k">7 — Revisions &amp; manifests<br><span class="tag">todo</span></td>
-<td>Built: the manifest model. Adds: revision history
-with per-layer materialization state; manifests paginated or streamed, never one JSON body;
-each revision's metadata (its immutable <code>metadata.json</code>); short-lived authorized
-raw-file downloads, API-streamed — STS-vended credentials remain milestone 23. Release tags,
-their creation and withdrawal, were retired on 2026-10-15 (owner decision); the fixture-backed
-release and revision pages have been removed from the web app.</td>
-<td>A 100k-entry manifest pages in constant memory.</td></tr>
+<tr><td class="k">7 — Revisions &amp; manifests<br><span class="tag">retired</span></td>
+<td>Raw revision history, manifests and raw-file downloads were deleted with the engine (2026-10-23).
+The lake’s file listing is RL step 4. Derived snapshot history is milestone 23.</td>
+<td>Retired; see RL.</td></tr>
 </table>
 
 <h3 id="t2">T2 — Ingestion and jobs</h3>
@@ -646,31 +636,12 @@ release and revision pages have been removed from the web app.</td>
 <table>
 <tr><th>Milestone</th><th>Delivers</th><th>Gate (mechanical)</th></tr>
 
-<tr><td class="k">8 — Raw ingestion<br><span class="tag">done</span><br>backend P2</td>
-<td>Delivers: the nine ingest operations over HTTP — create on an existing raw dataset or minting
-one at intake, get, heartbeat, upload part, complete, verify, commit, abort — and the three
-revision read routes (<code>GET /revisions/{id}</code>, <code>/manifest</code>,
-<code>/files/{path}</code>), every one unit-tested: a nine-row crash matrix proves the on-disk and
-catalog state after a fault at each protocol step, independent-copy tests prove all submitted files are uploaded without carry-forward, and a hundred sequential ingests number 1..100 gap-free.
-Dataset-creation-at-intake is open to humans with <code>dataset.create</code> and
-<code>data.write@raw</code>; an organization service account may mint the dataset but
-cannot upload to <code>raw</code> (<code>D-9</code>). An expiry sweep is a lifespan-owned task
-in every
-API replica, not a separate service (the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_DESIGN.md">historical P2 design</a>, Design 6), reaping leases past the
-lease TTL plus one sweep interval. Commit persists the revision and emits the audit and outbox
-events milestones 6 and 18 consume, and writes <code>INDEX.json</code> best-effort
-(<code>D-12</code>). Raw-file downloads are re-authorized per request under
-<code>data.read@raw</code> — nothing is minted, the authorized response is the capability itself
-(<code>D-13</code>). The <a href="../docs/history.md#archived-plans-and-investigations">archived P2 plan</a>
-records milestones M0–M10. The final acceptance gate is closed by the
-<a href="#p2-verified">recorded successful run in §2</a>.</td>
-<td>An interrupted multi-GB upload resumes without re-sending completed parts — proven at the
-real 64&nbsp;MiB part size by <code>tests/acceptance/test_raw_ingest_gate.py</code>, collected and
-scheduled by <code>.github/workflows/acceptance.yml</code>, and passed in
-<a href="https://github.com/karthedew/huron/actions/runs/34177077449">run 34177077449</a>; two
-sessions racing one dataset serialize on the lock; a committed revision appears in the catalog and
-the audit stream. Per the <a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/P2_DESIGN.md">historical P2 scope</a>, "appears in …
-the search projection" is P4's consumer; P2 proves the outbox row.</td></tr>
+<tr><td class="k">8 — Raw ingestion<br><span class="tag">retired</span></td>
+<td>Shipped 2026-09 and deleted 2026-10-23 (Owner decision 1): sessions, the dataset lock,
+revisions, the expiry sweep and the 9 GiB HTTP gate. Replaced by RL.
+The <a href="../docs/history.md#archived-plans-and-investigations">archived P2 plan</a> and
+<a href="https://github.com/karthedew/huron/actions/runs/34177077449">run 34177077449</a> remain as history.</td>
+<td>Retired; see RL.</td></tr>
 
 <tr><td class="k">9 — Automatic bronze builds<br><span class="tag">deferred</span><br>backend P6</td>
 <td><em>Deferred with the auto-builder (<a href="layer-bronze.html#auto-builder">Bronze
@@ -904,7 +875,7 @@ explicit cross-tier dependencies: 9→11; 18→8, 11, 12, 16; 19→20, 21; 22→
 <ol>
 <li>Stand up the fresh repository per §1 — layout, tooling, compose, CI (P0).</li>
 <li>Build the pure rules first: <code>core/foundation/identifiers.py</code>,
-<code>core/catalog/paths.py</code>, <code>core/raw/paths.py</code>, <code>core/raw/manifest.py</code> with their property
+<code>core/catalog/paths.py</code> with its property
 tests — everything else leans on them.</li>
 <li>Prototype in parallel, throwaway-labeled: an Icechunk repo on MinIO exercised through
 <code>xarray.open_zarr</code> on a read-only session, and an STS

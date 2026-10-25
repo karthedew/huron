@@ -126,23 +126,9 @@ def test_every_documented_code_has_a_class_and_every_class_has_a_row() -> None:
     assert not orphaned, f"§7 rows with no raisable code behind them: {sorted(orphaned)}"
 
 
-def test_public_vocabularies_match_independent_classes_and_path_raise_sites() -> None:
-    """Published vocabularies match actual exception declarations and parameterized path raises."""
-    from huron.core.raw import manifest
-    import inspect
-
-    path_codes = set()
-    for node in ast.walk(ast.parse(inspect.getsource(manifest))):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "PathRuleViolation"
-            and len(node.args) == 2
-        ):
-            assert isinstance(node.args[0], ast.Constant)
-            path_codes.add(node.args[0].value)
-    assert path_codes
-    declared = set(_class_name_by_code()) | path_codes
+def test_public_vocabularies_match_independent_classes() -> None:
+    """Published vocabularies match actual exception declarations."""
+    declared = set(_class_name_by_code())
     transport = {HTTPStatus(status).name for status in FRAMEWORK_STATUSES}
     assert wire_error_codes() == declared | transport | {"REQUEST_INVALID", "INTERNAL_ERROR"}
 

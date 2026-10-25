@@ -7,10 +7,7 @@ credential into a principal), ``scopes`` (path identifier to RBAC scope,
 404 before 403), ``decisions`` (the per-request ``BindingCache``, the
 bindings a caller is judged by, ``check`` - the one allow-or-403 call - and
 ``current_visibility``, the caller's ``Visibility`` computed once per
-request) and ``guards`` (the ``require_*`` factories and the ingest-session
-guards, ``dataset_raw_writer``, ``project_intake``, ``session_overseer``,
-``session_owner`` and ``upload_owner``, plus ``revision_raw_reader`` for
-downloading a revision's raw bytes, that routes declare). Routes import
+request) and ``guards`` (the ``require_*`` factories that routes declare). Routes import
 from here, never from the modules.
 """
 
@@ -25,19 +22,10 @@ from .decisions import (
     current_visibility,
 )
 from .guards import (
-    IngestDrive,
-    RevisionRead,
-    UploadTarget,
-    dataset_raw_writer,
-    project_intake,
     require_dataset,
     require_organization,
     require_project,
     require_system,
-    revision_raw_reader,
-    session_overseer,
-    session_owner,
-    upload_owner,
 )
 
 __all__ = [
@@ -46,24 +34,15 @@ __all__ = [
     "CurrentPrincipal",
     "CurrentSession",
     "CurrentVisibility",
-    "IngestDrive",
-    "RevisionRead",
-    "UploadTarget",
     "as_rbac_principal",
     "bindings_for_principal",
     "check",
     "current_principal",
     "current_visibility",
-    "dataset_raw_writer",
     "login_flow_cookie",
-    "project_intake",
     "require_dataset",
     "require_organization",
     "require_project",
     "require_system",
-    "revision_raw_reader",
     "session_cookie",
-    "session_overseer",
-    "session_owner",
-    "upload_owner",
 ]

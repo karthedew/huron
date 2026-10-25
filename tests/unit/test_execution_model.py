@@ -1,11 +1,4 @@
-"""The event-loop/threadpool boundary: which operations block, and where the loop must never stall.
-
-Pins which of the service's operations run on the event loop directly (they
-only ``await``) versus which wrap a blocking call in ``asyncify``: every
-hierarchy, ingest and revision operation now awaits its store, so all of
-them are coroutine functions, and the tripwire this module keeps is that the
-raw store's filesystem calls stay off the loop thread.
-"""
+"""Service operations await storage; blocking credential and readiness calls run off the loop."""
 
 from __future__ import annotations
 
@@ -24,20 +17,17 @@ import huron.core.security._impl.identity as identity_module
 import huron.core.security._impl.password_authentication as login
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue
-from huron.core.rawstore import PosixRawStore
 from huron.core.security.password import make_credential as real_make_credential
 from huron.core.security.password import verify_password as real_verify_password
-from tests.ingest_client import IngestClient, manifest_file
 from tests.unit.support import memory_stores
 
 if TYPE_CHECKING:
-    import os
     from collections.abc import Callable, Iterator
     from uuid import UUID
 
     from fastapi import FastAPI
 
-    from huron.core.raw.ports import RawStore
+    from huron.core.catalog.ports import GenerationStorage
     from huron.core.security.password import CredentialRecord
 
 pytestmark = pytest.mark.unit
@@ -70,19 +60,7 @@ EXPECTED_COROUTINE_FUNCTION = {
     "list_datasets": True,
     "get_dataset": True,
     "patch_dataset": True,
-    "get_revision": True,
-    "get_revision_manifest": True,
-    "get_revision_file": True,
     "list_layers": True,
-    "create_dataset_ingest_session": True,
-    "create_project_ingest_session": True,
-    "get_ingest_session": True,
-    "heartbeat_ingest_session": True,
-    "upload_part": True,
-    "complete_upload": True,
-    "verify_ingest_session": True,
-    "commit_ingest_session": True,
-    "abort_ingest_session": True,
     "list_roles": True,
     "list_system_bindings": True,
     "create_system_binding": True,
@@ -228,125 +206,28 @@ def test_the_three_blocking_calls_execute_off_the_event_loop_thread(tmp_path: Pa
     assert ran_on_the_event_loop == [False, False, False]
 
 
-def test_readyz_s_raw_store_stat_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
-    """``readyz``'s raw-store stat still executes off the event-loop thread via ``asyncify``.
+def test_readyz_s_generation_store_stat_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
+    """``readyz``'s generation-store stat still executes off the event-loop thread via ``asyncify``.
 
     ``readyz`` is ``async def`` - it also awaits the database check - so
-    the raw-store stat's off-loop guarantee no longer falls out of the
+    the generation-store stat's off-loop guarantee no longer falls out of the
     disposition table above; it comes only from the ``asyncify`` wrapping
     around the call site in ``app.py``, which this pins directly.
     """
     ran_on_the_event_loop: list[bool] = []
-    real_raw_store_failure = app_module._raw_store_failure
+    real_generation_store_failure = app_module._generation_store_failure
 
-    def _tracking_raw_store_failure(raw_store: RawStore) -> str | None:
+    def _tracking_generation_store_failure(generations: GenerationStorage) -> str | None:
         ran_on_the_event_loop.append(_event_loop_is_running())
-        return real_raw_store_failure(raw_store)
+        return real_generation_store_failure(generations)
 
     with (
-        patch.object(app_module, "_raw_store_failure", _tracking_raw_store_failure),
+        patch.object(app_module, "_generation_store_failure", _tracking_generation_store_failure),
         TestClient(create_app(settings=_settings(tmp_path), stores=memory_stores())) as client,
     ):
         response = client.get("/readyz")
 
     assert response.status_code == 200
-    assert ran_on_the_event_loop and not any(ran_on_the_event_loop)
-
-
-def test_the_upload_route_s_write_part_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
-    """The upload route's positional write still executes off the event-loop thread.
-
-    ``upload_part`` is ``async def`` - it also awaits the ledger update -
-    so the off-loop guarantee for the raw store's write comes only from
-    the ``asyncify`` wrapping inside ``IngestService``, which this pins
-    directly by driving one real upload through the route.
-    """
-    ran_on_the_event_loop: list[bool] = []
-    real_write_part = PosixRawStore.write_part
-
-    def _tracking_write_part(self: PosixRawStore, *args: object, **kwargs: object) -> str:
-        ran_on_the_event_loop.append(_event_loop_is_running())
-        return real_write_part(self, *args, **kwargs)
-
-    settings = _settings(tmp_path, bootstrap_platform_owner="root")
-    with (
-        patch.object(PosixRawStore, "write_part", _tracking_write_part),
-        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
-    ):
-        ingest = IngestClient(client)
-        _, dataset_id = ingest.developer_dataset()
-        session = ingest.create(dataset_id, [manifest_file("payload/a.bin", b"hello")]).json()
-        file_id = session["files"][0]["file_id"]
-
-        response = ingest.put_part(file_id, 1, b"hello")
-
-    assert response.status_code == 200, response.text
-    assert ran_on_the_event_loop and not any(ran_on_the_event_loop)
-
-
-def test_the_commit_route_s_envelope_publication_executes_off_the_event_loop_thread(
-    tmp_path: Path,
-) -> None:
-    """The commit route's envelope publication still executes off the event-loop thread.
-
-    ``commit_ingest_session`` is ``async def`` - it also awaits the
-    recording transaction - so the off-loop guarantee for the envelope's
-    rename comes only from the ``asyncify`` wrapping inside
-    ``IngestService``, which this pins directly by driving one real commit
-    through the route.
-    """
-    ran_on_the_event_loop: list[bool] = []
-    real_commit_envelope = PosixRawStore.commit_envelope
-
-    def _tracking_commit_envelope(self: PosixRawStore, *args: object, **kwargs: object) -> None:
-        ran_on_the_event_loop.append(_event_loop_is_running())
-        real_commit_envelope(self, *args, **kwargs)
-
-    settings = _settings(tmp_path, bootstrap_platform_owner="root")
-    with (
-        patch.object(PosixRawStore, "commit_envelope", _tracking_commit_envelope),
-        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
-    ):
-        ingest = IngestClient(client)
-        _, dataset_id = ingest.developer_dataset()
-        data = b"hello"
-        session = ingest.create(dataset_id, [manifest_file("payload/a.bin", data)]).json()
-        ingest.put_part(session["files"][0]["file_id"], 1, data)
-        verified = ingest.verify(session["id"]).json()
-
-        response = ingest.commit(
-            session["id"], verified["etag"], {"title": "Run", "creators": ["bob"]}
-        )
-
-    assert response.status_code == 201, response.text
-    assert ran_on_the_event_loop and not any(ran_on_the_event_loop)
-
-
-def test_the_file_download_s_stat_executes_off_the_event_loop_thread(tmp_path: Path) -> None:
-    """The file-download route's stat still executes off the event-loop thread via asyncify.
-
-    ``get_revision_file`` is ``async def`` - it also awaits the manifest
-    read - so the off-loop guarantee for the payload file's stat comes
-    only from the ``asyncify`` wrapping inside ``RevisionService``, which
-    this pins directly by driving one real download through the route.
-    """
-    ran_on_the_event_loop: list[bool] = []
-    real_stat = PosixRawStore.stat_document
-
-    def _tracking_stat(self: PosixRawStore, path: Path) -> os.stat_result:
-        ran_on_the_event_loop.append(_event_loop_is_running())
-        return real_stat(self, path)
-
-    settings = _settings(tmp_path, bootstrap_platform_owner="root")
-    with (
-        patch.object(PosixRawStore, "stat_document", _tracking_stat),
-        TestClient(create_app(settings=settings, stores=memory_stores())) as client,
-    ):
-        ingest = IngestClient(client)
-        _, revision_id = ingest.committed([("payload/a.bin", b"hello")])
-        response = ingest.download(revision_id, "payload/a.bin")
-
-    assert response.status_code == 200, response.text
     assert ran_on_the_event_loop and not any(ran_on_the_event_loop)
 
 

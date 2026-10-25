@@ -2,7 +2,7 @@
 
 ``InMemoryHierarchyStore`` is the reference every other backend is compared
 against - the transaction, uniqueness, optimistic-concurrency, idempotency
-and revision contracts are proven here first, in ``tests/hierarchy_contract.py``,
+contracts are proven here first, in ``tests/hierarchy_contract.py``,
 and ``PostgresHierarchyStore`` is held to the same scenarios against a
 migrated database.
 """
@@ -32,14 +32,6 @@ from huron.core.foundation.paging import Window
 from huron.core.foundation.retry import Replay
 from huron.core.security.rules import ProjectVisibility
 
-from . import rows
-from .ingest import (
-    InMemoryIngestReader,
-    InMemoryIngestWriter,
-    PostgresIngestReader,
-    PostgresIngestWriter,
-    latest_revision,
-)
 from .queries import _DATASETS, _ORGANIZATIONS, _PROJECTS, _PostgresCollection
 from .security_facts import SecurityFacts
 
@@ -48,9 +40,6 @@ if TYPE_CHECKING:
 
     from huron.core.foundation.clock import Clock
     from huron.core.foundation.retry import IdempotencyClaim
-    from huron.core.raw.documents import CommitIntent
-    from huron.core.raw.ingest import IngestSession
-    from huron.core.raw.types import AuditEvent, LedgerEntry, OutboxEvent, RevisionRecord
     from huron.core.security.rules import Visibility
 
 #: How long an idempotency claim stands before it may be taken over by a
@@ -78,11 +67,6 @@ class TransactionBuffer:
         organizations: Organizations to insert or replace, by id.
         projects: Projects to insert or replace, by id.
         datasets: Datasets to insert or replace, by id.
-        revisions: Revisions to insert, by id.
-        sessions: Ingest sessions to insert or replace, by id.
-        files: Ingest ledger entries to insert or replace, by file id.
-        audit: Audit rows to append, in call order.
-        outbox: Outbox rows to append, in call order.
         idempotency: Idempotency records to insert or replace, by
             ``(principal, key)``.
     """
@@ -90,18 +74,12 @@ class TransactionBuffer:
     organizations: dict[UUID, Organization] = field(default_factory=dict)
     projects: dict[UUID, Project] = field(default_factory=dict)
     datasets: dict[UUID, Dataset] = field(default_factory=dict)
-    revisions: dict[UUID, RevisionRecord] = field(default_factory=dict)
-    sessions: dict[UUID, IngestSession] = field(default_factory=dict)
-    intents: dict[UUID, CommitIntent] = field(default_factory=dict)
-    files: dict[UUID, LedgerEntry] = field(default_factory=dict)
-    audit: list[AuditEvent] = field(default_factory=list)
-    outbox: list[OutboxEvent] = field(default_factory=list)
     idempotency: dict[tuple[str, str], tuple[str, Replay | None, datetime]] = field(
         default_factory=dict
     )
 
 
-class _TransactionWriter(InMemoryIngestWriter):
+class _TransactionWriter:
     """The write surface of one in-memory transaction, staged until commit.
 
     Every ``insert_*``/``update_*`` here writes into ``buffer``, never into
@@ -132,8 +110,6 @@ class _TransactionWriter(InMemoryIngestWriter):
     async def claim(self, claim: IdempotencyClaim) -> Replay | None:
         """Stake this transaction's claim to a principal-scoped idempotency key.
 
-        An unfinished ingest commit retains its binding beyond the ordinary TTL.
-
         Args:
             claim: The principal, key and request digest to stake.
 
@@ -152,7 +128,7 @@ class _TransactionWriter(InMemoryIngestWriter):
             entry = self._store._idempotency.get(key)
         if entry is not None:
             request_sha256, replay, expires_at = entry
-            if expires_at > now or (replay is not None and replay.kind == "ingest_commit"):
+            if expires_at > now:
                 if request_sha256 == claim.request_sha256:
                     self._buffer.idempotency[key] = entry
                     return replay
@@ -242,30 +218,6 @@ class _TransactionWriter(InMemoryIngestWriter):
         ):
             raise SlugExists(f"dataset slug already exists: {item.slug!r}")
         self._buffer.datasets[item.id] = item
-
-    async def insert_revision(self, record: RevisionRecord) -> None:
-        """Insert the row a COMMITTING session publishes when its commit lands.
-
-        Args:
-            record: The revision to insert, fully formed.
-        """
-        self._buffer.revisions[record.id] = record
-
-    async def insert_audit_event(self, event: AuditEvent) -> None:
-        """Append one audit row.
-
-        Args:
-            event: The audit row to append, fully formed.
-        """
-        self._buffer.audit.append(event)
-
-    async def insert_outbox_event(self, event: OutboxEvent) -> None:
-        """Append one outbox row, unprocessed.
-
-        Args:
-            event: The event to append, fully formed.
-        """
-        self._buffer.outbox.append(event)
 
 
 class _MemoryDescriptionWriter[ItemT: (Organization, Project, Dataset)]:
@@ -471,7 +423,7 @@ class _MemoryCollection[ItemT: (Organization, Project, Dataset), ParentT]:
         return _window(visible, key=lambda item: (item.slug, item.id), limit=limit, after=after)
 
 
-class InMemoryHierarchyStore(InMemoryIngestReader, SecurityFacts):
+class InMemoryHierarchyStore(SecurityFacts):
     """The reference ``HierarchyStore``: dicts and lists held in process memory.
 
     Every write goes through :meth:`transaction`, which serializes on one
@@ -496,12 +448,6 @@ class InMemoryHierarchyStore(InMemoryIngestReader, SecurityFacts):
         self._organizations: dict[UUID, Organization] = {}
         self._projects: dict[UUID, Project] = {}
         self._datasets: dict[UUID, Dataset] = {}
-        self._revisions: dict[UUID, RevisionRecord] = {}
-        self._sessions: dict[UUID, IngestSession] = {}
-        self._intents: dict[UUID, CommitIntent] = {}
-        self._files: dict[UUID, LedgerEntry] = {}
-        self._audit: list[AuditEvent] = []
-        self._outbox: list[OutboxEvent] = []
         self._idempotency: dict[tuple[str, str], tuple[str, Replay | None, datetime]] = {}
         self._lock = asyncio.Lock()
         self.organizations = _MemoryCollection[Organization, PlatformRoot](
@@ -536,12 +482,6 @@ class InMemoryHierarchyStore(InMemoryIngestReader, SecurityFacts):
             self._organizations.update(buffer.organizations)
             self._projects.update(buffer.projects)
             self._datasets.update(buffer.datasets)
-            self._revisions.update(buffer.revisions)
-            self._sessions.update(buffer.sessions)
-            self._intents.update(buffer.intents)
-            self._files.update(buffer.files)
-            self._audit.extend(buffer.audit)
-            self._outbox.extend(buffer.outbox)
             self._idempotency.update(buffer.idempotency)
 
     async def project_visibilities(self) -> list[ProjectVisibility]:
@@ -576,39 +516,6 @@ class InMemoryHierarchyStore(InMemoryIngestReader, SecurityFacts):
             if dataset.id in dataset_ids
         }
 
-    async def revision(self, revision_id: UUID) -> RevisionRecord:
-        """Return one revision row in any state.
-
-        Args:
-            revision_id: The revision to read.
-
-        Returns:
-            The stored revision.
-
-        Raises:
-            ResourceNotFound: If no revision has ``revision_id``.
-        """
-        found = self._revisions.get(revision_id)
-        if found is None:
-            raise ResourceNotFound(f"revision does not exist: {revision_id}")
-        return found
-
-    async def latest_committed_revision(self, dataset_id: UUID) -> RevisionRecord | None:
-        """Return the dataset's highest-numbered committed revision.
-
-        Every revision this store holds is COMMITTED - nothing here ever
-        writes another state - so the highest-numbered one is simply the
-        one with the greatest ``number``.
-
-        Args:
-            dataset_id: The dataset to read.
-
-        Returns:
-            The dataset's highest-numbered revision, or None if it has
-            never committed one.
-        """
-        return latest_revision(self._revisions.values(), dataset_id)
-
 
 #: Postgres's name for ``organizations``' slug UNIQUE constraint.
 _ORGANIZATION_SLUG_CONSTRAINT = "organizations_slug_key"
@@ -618,13 +525,6 @@ _PROJECT_SLUG_CONSTRAINT = "projects_organization_id_slug_key"
 
 #: Postgres's name for ``datasets``' per-project slug UNIQUE constraint.
 _DATASET_SLUG_CONSTRAINT = "datasets_project_id_slug_key"
-
-#: Every column ``revision_record`` decodes, shared by ``revision`` and
-#: ``latest_committed_revision`` so the two SELECTs stay in lockstep.
-_REVISION_COLUMNS = (
-    "id, dataset_id, revision_number, manifest_sha256, metadata_sha256, revision_path, "
-    "file_count, total_bytes, committed_by, committed_at"
-)
 
 
 class _PostgresDescriptionWriter[ItemT: (Organization, Project, Dataset)]:
@@ -678,7 +578,7 @@ class _PostgresDescriptionWriter[ItemT: (Organization, Project, Dataset)]:
             raise PreconditionFailed(f"{self._kind} version conflict: {item.id}")
 
 
-class _PostgresTransactionWriter(PostgresIngestWriter):
+class _PostgresTransactionWriter:
     """The write surface of one Postgres transaction, bound to the connection that opened it.
 
     Every statement here runs on ``connection``, inside the transaction
@@ -709,7 +609,7 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
 
         The claim is staked with an ``INSERT ... ON CONFLICT DO UPDATE``
         that only takes over a row whose ``expires_at`` has already
-        passed and is not an unfinished ingest commit. A live conflicting row is
+        passed. A live conflicting row is
         left untouched and read back to decide between a replay and a reuse.
 
         Args:
@@ -739,7 +639,6 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
                     response = '{}'::jsonb, created_at = EXCLUDED.created_at,
                     expires_at = EXCLUDED.expires_at
                 WHERE idempotency_records.expires_at <= EXCLUDED.created_at
-                  AND idempotency_records.response->>'kind' IS DISTINCT FROM 'ingest_commit'
             RETURNING key
             """,
             claim.principal,
@@ -898,70 +797,8 @@ class _PostgresTransactionWriter(PostgresIngestWriter):
                 raise
             raise SlugExists(f"dataset slug already exists: {item.slug!r}") from exc
 
-    async def insert_revision(self, record: RevisionRecord) -> None:
-        """Insert the row a COMMITTING session publishes when its commit lands.
 
-        Args:
-            record: The revision to insert, fully formed.
-        """
-        await self._connection.execute(
-            f"""
-            INSERT INTO dataset_revisions ({_REVISION_COLUMNS})
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            """,
-            record.id,
-            record.dataset_id,
-            record.number,
-            record.manifest_sha256,
-            record.metadata_sha256,
-            record.revision_path,
-            record.file_count,
-            record.total_bytes,
-            record.committed_by,
-            record.committed_at,
-        )
-
-    async def insert_audit_event(self, event: AuditEvent) -> None:
-        """Append one audit row.
-
-        Args:
-            event: The audit row to append, fully formed.
-        """
-        await self._connection.execute(
-            """
-            INSERT INTO audit_events (id, kind, actor, subject_kind, subject_id, payload,
-                                       created_at)
-            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-            """,
-            event.id,
-            event.kind,
-            event.actor,
-            event.subject_kind,
-            event.subject_id,
-            json.dumps(event.payload),
-            event.created_at,
-        )
-
-    async def insert_outbox_event(self, event: OutboxEvent) -> None:
-        """Append one outbox row, unprocessed.
-
-        Args:
-            event: The event to append, fully formed.
-        """
-        await self._connection.execute(
-            """
-            INSERT INTO outbox_events (id, kind, subject_id, payload, created_at)
-            VALUES ($1, $2, $3, $4::jsonb, $5)
-            """,
-            event.id,
-            event.kind,
-            event.subject_id,
-            json.dumps(event.payload),
-            event.created_at,
-        )
-
-
-class PostgresHierarchyStore(PostgresIngestReader, SecurityFacts):
+class PostgresHierarchyStore(SecurityFacts):
     """Real storage for the hierarchy tables ``migrations/versions/0001_foundations.py`` creates.
 
     Every read applies its level's visibility predicate in SQL before any
@@ -1039,42 +876,3 @@ class PostgresHierarchyStore(PostgresIngestReader, SecurityFacts):
             list(dataset_ids),
         )
         return {row["id"]: row["project_id"] for row in fetched}
-
-    async def revision(self, revision_id: UUID) -> RevisionRecord:
-        """Return one revision row in any state.
-
-        Args:
-            revision_id: The revision to read.
-
-        Returns:
-            The stored revision.
-
-        Raises:
-            ResourceNotFound: If no revision has ``revision_id``.
-        """
-        row = await self._pool.fetchrow(
-            f"SELECT {_REVISION_COLUMNS} FROM dataset_revisions WHERE id = $1", revision_id
-        )
-        if row is None:
-            raise ResourceNotFound(f"revision does not exist: {revision_id}")
-        return rows.revision_record(row)
-
-    async def latest_committed_revision(self, dataset_id: UUID) -> RevisionRecord | None:
-        """Return the dataset's highest-numbered committed revision.
-
-        Args:
-            dataset_id: The dataset to read.
-
-        Returns:
-            The dataset's highest-numbered revision in state COMMITTED, or
-            None if it has never committed one.
-        """
-        row = await self._pool.fetchrow(
-            f"""
-            SELECT {_REVISION_COLUMNS} FROM dataset_revisions
-            WHERE dataset_id = $1 AND state = 'COMMITTED'
-            ORDER BY revision_number DESC LIMIT 1
-            """,
-            dataset_id,
-        )
-        return rows.revision_record(row) if row is not None else None

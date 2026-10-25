@@ -86,21 +86,6 @@ class PathRuleViolation(DomainError):
     code = "PATH_RULE_VIOLATION"
     status_code = 400
 
-    def __init__(self, code_or_detail: str, path: str | None = None):
-        """Build a shared-code failure or a specific path-rule failure.
-
-        Args:
-            code_or_detail: Detail without a path, otherwise a specific error code.
-            path: The offending path, when using a specific code.
-        """
-        if path is None:
-            detail = code_or_detail
-            self.code = type(self).code
-        else:
-            detail = f"{code_or_detail}: {path!r}"
-            self.code = code_or_detail
-        super().__init__(detail, context={"path": path} if path is not None else None)
-
 
 class AuthError(Exception):
     """A credential could not be resolved to a principal.

@@ -72,10 +72,6 @@ class ApiSettings(BaseSettings):
     auth_mode: Literal["oidc", "dev-headers", "credentials"]
     data_root: str = "/data"
     database_url: str
-    #: Per-process verified completion copy limit; uploads have separate concurrency.
-    completion_max_concurrent: int = Field(default=1, ge=1)
-    #: Free filesystem bytes retained beyond active completion-copy reservations.
-    completion_reserve_bytes: int = Field(default=1 << 30, ge=0)
     #: Subject granted a SYSTEM-scope platform_owner binding at startup, so a
     #: fresh deployment has exactly one way in. Unset it once real bindings
     #: exist.
@@ -89,12 +85,6 @@ class ApiSettings(BaseSettings):
     session_cookie_name: str = "huron_session"
     #: Where /auth/oidc/callback lands the browser after login.
     web_app_url: str = "http://localhost:5173"
-    #: Seconds between two passes of this replica's ingest expiry sweep. A
-    #: lapsed session holds its dataset lock for at most the lease TTL
-    #: plus this.
-    ingest_sweep_interval_seconds: float = Field(default=60.0, gt=0)
-    #: Lapsed sessions one pass flips at most; a backlog drains oldest first.
-    ingest_sweep_limit: int = Field(default=100, ge=1)
 
     @field_validator("classification_vocabulary")
     @classmethod

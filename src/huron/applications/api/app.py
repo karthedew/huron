@@ -1,6 +1,6 @@
 """FastAPI composition root for the Huron control plane.
 
-This module only wires: settings, the raw store and its adapters, the optional
+This module only wires: settings, the generation store and its adapters, the optional
 OIDC verifier, exception mapping, and the versioned routers. Authorization policy lives in
 ``core/security`` (the pure engine, role model and reusable workflows), request guards in
 ``huron.applications.api.authorization``, and route handlers under ``routes/v1``.
@@ -27,14 +27,12 @@ from huron.core.metastore import (
     PostgresSessionStore,
     SystemClock,
 )
-from huron.core.raw import RawRuntime
 from huron.core.rawstore import PosixRawStore
 from huron.core.security import bootstrap_platform_owner
 from huron.core.security.oidc import JwksVerifier, OidcClient, OidcResolver
 from huron.core.security.rules import Classification, RoleBindingAuthorizer
 
 from .errors import DependencyUnavailable
-from .expiry import ExpirySweep
 from .problems import Problem, install_error_handlers, problem_response
 from .routes import auth as auth_routes
 from .routes import v1
@@ -44,8 +42,8 @@ from .settings import ApiSettings
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
+    from huron.core.catalog.ports import GenerationStorage
     from huron.core.foundation.clock import Clock
-    from huron.core.raw.ports import RawStore
 
 
 def _postgres_stores(pool: asyncpg.Pool, clock: Clock) -> ApiStores:
@@ -77,14 +75,14 @@ def _build_runtime(
     pool: asyncpg.Pool | None,
     oidc: tuple[OidcResolver | None, OidcClient | None],
 ) -> ApiRuntime:
-    """Compose the raw store, the facades and the authorizer into one published runtime.
+    """Compose the generation store, the facades and the authorizer into one published runtime.
 
     Args:
         settings: The validated configuration; read for ``data_root`` and
             the classification vocabulary every facade shares.
         wired: The RBAC and authentication stores, injected or freshly
             wired to Postgres.
-        clock: The source of the current time for the ingest facade; the
+        clock: The source of the current time for credential workflows; the
             hierarchy store's own clock was already set when ``wired`` was
             built.
         pool: The database pool this instance opened, or None when
@@ -95,20 +93,14 @@ def _build_runtime(
         The runtime every injected route reads through
         ``huron.applications.api.runtime``.
     """
-    raw_store = PosixRawStore(
-        settings.data_root,
-        max_concurrent_completions=settings.completion_max_concurrent,
-        completion_reserve_bytes=settings.completion_reserve_bytes,
-    )
-    raw_store.initialize()
+    generations = PosixRawStore(settings.data_root)
+    generations.initialize()
     oidc_resolver, oidc_client = oidc
-    raw = RawRuntime(raw_store, wired.hierarchy, clock=clock)
     return ApiRuntime(
         settings=settings,
-        raw_store=raw_store,
+        generations=generations,
         hierarchy=wired.hierarchy,
         rbac=wired.rbac,
-        raw=raw,
         authorizer=RoleBindingAuthorizer(
             classifications=tuple(
                 Classification(value.code, value.order, value.discoverable)
@@ -222,7 +214,7 @@ def create_app(
     """Build the application, deferring every connection to its lifespan.
 
     Nothing is connected when this returns. The lifespan builds one
-    :class:`ApiRuntime` - the initialized raw store, the authorizer, the RBAC
+    :class:`ApiRuntime` - the initialized generation store, the authorizer, the RBAC
     and authentication stores, the optional OIDC resolver and client, the
     optional database pool - and publishes it on ``app.state.runtime`` as
     the application's only piece of mutable state; every injected route
@@ -255,20 +247,16 @@ def create_app(
 
         The RBAC and authentication stores come from the injected set, else
         the lifespan opens a fresh pool from ``settings.database_url`` and
-        wires every store to Postgres; the raw store is initialized and the
+        wires every store to Postgres; the generation store is initialized and the
         authorizer is built fresh here, over the classification vocabulary
         the settings declare. The bearer-JWT
         resolver follows the same injected-first rule as the stores.
         Opening the pool, discovering the OIDC provider, running the
-        bootstrap grant, running the ingest expiry sweep and suspending at
+        bootstrap grant and suspending at
         ``yield`` all happen inside one block whose ``finally`` closes the
         pool and the HTTP client, so a failure at any point after the pool
         opens still closes it before the error surfaces - including a
         discovery failure that happens after the pool is already open.
-        The sweep's task starts only once the runtime is published and the
-        bootstrap grant has run, and is cancelled and awaited before the
-        ``finally`` closes the pool, so no pass ever runs against a
-        connection that has already gone away.
 
         Args:
             app: The application whose ``state.runtime`` is set for the
@@ -293,12 +281,7 @@ def create_app(
             runtime = _build_runtime(settings, wired, clock, pool, (oidc_resolver, oidc_client))
             app.state.runtime = runtime
             await bootstrap_platform_owner(runtime.rbac, settings.bootstrap_platform_owner)
-            async with ExpirySweep(
-                runtime.raw,
-                interval_seconds=settings.ingest_sweep_interval_seconds,
-                limit=settings.ingest_sweep_limit,
-            ):
-                yield
+            yield
         finally:
             if pool is not None:
                 await pool.close()
@@ -328,7 +311,7 @@ def create_app(
         A readiness probe that reports the process rather than its
         dependencies sends traffic to an instance whose first authenticated
         request will fail, so the failure is a 503 - the status an
-        orchestrator is configured to act on - and never a 4xx. The raw
+        orchestrator is configured to act on - and never a 4xx. The generation
         store's root is always probed; the database is probed only when
         this instance was wired with a pool.
         \f
@@ -357,7 +340,7 @@ def create_app(
 async def _dependency_checks(runtime: ApiRuntime) -> list[tuple[str, str | None]]:
     """Probe each dependency this instance was wired with.
 
-    The raw store's stat runs on a worker thread so a hung mount never
+    The generation store's stat runs on a worker thread so a hung mount never
     stalls the event loop the other requests share, and the database
     round-trip runs on the loop directly; both are bounded by the same
     ``READINESS_TIMEOUT_SECONDS`` so neither can hang the probe past it.
@@ -371,14 +354,14 @@ async def _dependency_checks(runtime: ApiRuntime) -> list[tuple[str, str | None]
         where ``failure`` is ``None`` for a dependency that answered and
         the reason it did not otherwise.
     """
-    checks = [("raw_store", await _raw_store_probe(runtime.raw_store))]
+    checks = [("generations", await _generation_store_probe(runtime.generations))]
     if runtime.database_pool is not None:
         checks.append(("database", await _database_failure(runtime.database_pool)))
     return checks
 
 
-async def _raw_store_probe(raw_store: RawStore) -> str | None:
-    """Stat the raw root on a worker thread, within the readiness timeout.
+async def _generation_store_probe(generations: GenerationStorage) -> str | None:
+    """Stat the generation root on a worker thread, within the readiness timeout.
 
     A mount that never answers ``stat`` must not hang the probe forever, so
     the wait is bounded the same way the database round-trip is. Timing out
@@ -391,7 +374,7 @@ async def _raw_store_probe(raw_store: RawStore) -> str | None:
     so blocked threads accumulate for as long as the hang persists.
 
     Args:
-        raw_store: The wired store, whose root names the directory the
+        generations: The wired store, whose root names the directory the
             data plane writes under.
 
     Returns:
@@ -401,27 +384,27 @@ async def _raw_store_probe(raw_store: RawStore) -> str | None:
     """
     try:
         async with asyncio.timeout(READINESS_TIMEOUT_SECONDS):
-            return await asyncify(_raw_store_failure)(raw_store)
+            return await asyncify(_generation_store_failure)(generations)
     except TimeoutError:
         return f"did not answer within {READINESS_TIMEOUT_SECONDS}s"
 
 
-def _raw_store_failure(raw_store: RawStore) -> str | None:
-    """Stat the raw root; a hung mount must never stall the event loop.
+def _generation_store_failure(generations: GenerationStorage) -> str | None:
+    """Stat the generation root; a hung mount must never stall the event loop.
 
     Deliberately synchronous: the ``stat`` behind ``exists()`` can block on
     a network filesystem, so the caller runs this on a worker thread rather
     than from a coroutine.
 
     Args:
-        raw_store: The wired store, whose root names the directory the
+        generations: The wired store, whose root names the directory the
             data plane writes under.
 
     Returns:
         ``None`` while the root exists, otherwise the reason the probe
         reports for it.
     """
-    return None if raw_store.root.exists() else "root is unavailable"
+    return None if generations.root.exists() else "root is unavailable"
 
 
 async def _database_failure(pool: asyncpg.Pool) -> str | None:

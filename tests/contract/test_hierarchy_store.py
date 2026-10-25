@@ -33,46 +33,35 @@ from testcontainers.postgres import PostgresContainer
 
 from huron.applications.api.capabilities import HierarchyStore
 from huron.applications.api.capabilities import Mutation as HierarchyWriter
-from huron.core.raw.errors import DatasetLocked
-from huron.core.foundation.identifiers import uuid7
-from huron.core.raw.ingest import LEASE_TTL
 from huron.core.catalog.layers import Layer
 from huron.core.catalog.lifecycle import DatasetLifecycle
-from huron.core.catalog.types import PlatformRoot, Dataset, Organization, Project
+from huron.core.catalog.types import Dataset, Organization, PlatformRoot, Project
+from huron.core.foundation.identifiers import uuid7
 from huron.core.foundation.retry import IdempotencyClaim, Replay
-from huron.core.security.rules import Visibility
 from huron.core.metastore import (
     InMemoryHierarchyStore,
     PostgresHierarchyStore,
 )
+from huron.core.security.rules import Visibility
 from tests.hierarchy_contract import (
     VisibleIds,
     scenario_1_write_invisible_until_commit,
     scenario_2_uniqueness,
     scenario_3_optimistic_concurrency,
     scenario_4_idempotency,
-    scenario_5_revisions,
     scenario_6_ordering,
     scenario_7_windows,
     scenario_8_visibility,
     scenario_9_visibility_inputs,
-    scenario_10_begin_ingest_reserves_and_locks,
-    scenario_11_a_dead_session_frees_its_number_and_a_commit_spends_it,
-    scenario_12_state_edges_cas_on_etag_and_renew_does_not,
-    scenario_13_file_ledger_updates_fence_on_pending_and_parts,
-    scenario_14_the_commit_transaction_is_atomic_and_replays,
-    scenario_15_expiry_flips_lapsed_sessions_only,
-    scenario_16_a_hundred_sequential_ingests_number_gap_free,
     seed_hierarchy,
 )
-from tests.unit.support import FakeClock
 from tests.security_fact_contract import security_fact_projection_contract
+from tests.unit.support import FakeClock
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from uuid import UUID
 
-    from huron.core.raw.ingest import IngestSession
 
 pytestmark = pytest.mark.contract
 
@@ -81,11 +70,6 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 #: Every table one hierarchy fixture can touch, in an order ``TRUNCATE ... CASCADE`` accepts
 #: together regardless of their foreign-key dependencies.
 _HIERARCHY_TABLES = (
-    "audit_events",
-    "outbox_events",
-    "ingest_files",
-    "ingest_sessions",
-    "dataset_revisions",
     "idempotency_records",
     "datasets",
     "projects",
@@ -200,25 +184,10 @@ _SCENARIOS = (
     scenario_2_uniqueness,
     scenario_3_optimistic_concurrency,
     scenario_4_idempotency,
-    scenario_5_revisions,
     scenario_6_ordering,
     scenario_7_windows,
     scenario_8_visibility,
     scenario_9_visibility_inputs,
-)
-
-#: The instant every ingest scenario below is reset to before it runs, so a
-#: clock advance made by one scenario never leaks into the next.
-_INGEST_SCENARIOS_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
-
-_INGEST_SCENARIOS: tuple[Callable[[HierarchyStore, FakeClock], Awaitable[None]], ...] = (
-    scenario_10_begin_ingest_reserves_and_locks,
-    scenario_11_a_dead_session_frees_its_number_and_a_commit_spends_it,
-    scenario_12_state_edges_cas_on_etag_and_renew_does_not,
-    scenario_13_file_ledger_updates_fence_on_pending_and_parts,
-    scenario_14_the_commit_transaction_is_atomic_and_replays,
-    scenario_15_expiry_flips_lapsed_sessions_only,
-    scenario_16_a_hundred_sequential_ingests_number_gap_free,
 )
 
 
@@ -235,22 +204,17 @@ async def _assert_every_scenario(dsn: str) -> None:
     Several scenarios seed the same fixture slugs (``astro``, ``org-a``...), and an organization's
     slug is unique platform-wide, so each scenario runs against freshly truncated tables here - the
     same fresh start the in-memory reference suite gets by constructing a new
-    ``InMemoryHierarchyStore`` per scenario. The ingest scenarios run second, over the same pool
-    and store, with the clock reset to their shared epoch and the tables truncated between each.
+    ``InMemoryHierarchyStore`` per scenario.
 
     Args:
         dsn: The migrated database's plain connection string.
     """
     pool = await asyncpg.create_pool(dsn)
     try:
-        clock = FakeClock(_INGEST_SCENARIOS_EPOCH)
+        clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
         store = PostgresHierarchyStore(pool, clock=clock)
         for scenario in _SCENARIOS:
             await scenario(store)
-            await _reset_hierarchy_tables(pool)
-        for ingest_scenario in _INGEST_SCENARIOS:
-            clock.set(_INGEST_SCENARIOS_EPOCH)
-            await ingest_scenario(store, clock)
             await _reset_hierarchy_tables(pool)
     finally:
         await pool.close()
@@ -619,147 +583,7 @@ async def _assert_rolled_back_claim_and_expired_takeover(dsn: str) -> None:
         await pool.close()
 
 
-# -- 6. two concurrent begin_ingest calls serialize on the dataset row -------
-
-
-def test_two_concurrent_begin_ingest_calls_serialize_on_the_dataset_row() -> None:
-    """Two concurrent begin_ingest calls on one dataset serialize on the datasets row lock."""
-    with PostgresContainer("postgres:16") as postgres:
-        _migrate(postgres.get_connection_url(driver="asyncpg"))
-        asyncio.run(
-            _assert_concurrent_begin_ingest_calls_serialize(
-                postgres.get_connection_url(driver=None)
-            )
-        )
-
-
-async def _assert_concurrent_begin_ingest_calls_serialize(dsn: str) -> None:
-    """Forces a second begin_ingest to block on the first's row lock, then checks exactly one wins.
-
-    The first transaction reserves a session and holds its transaction open - deliberately not
-    committing - until a third connection observes, in ``pg_stat_activity``, that the second
-    transaction's own ``begin_ingest`` call is genuinely blocked on the ``datasets`` row's ``FOR
-    UPDATE`` lock. Only once that wait is confirmed does the first transaction commit, so the
-    ordering is proven from an observed lock wait, never from the relative timing of two Python
-    coroutines resuming on their own connections.
-
-    Args:
-        dsn: The migrated database's plain connection string.
-    """
-    pool = await asyncpg.create_pool(dsn)
-    try:
-        store = PostgresHierarchyStore(pool)
-        hierarchy = await seed_hierarchy(store)
-        dataset_id = hierarchy.datasets["run-0001"]
-        locked = asyncio.Event()
-
-        async def first_attempt() -> IngestSession:
-            """Open the first session and hold its transaction open until the second one blocks."""
-            async with store.transaction() as writer:
-                session = await writer.begin_ingest(
-                    dataset_id,
-                    "a" * 64,
-                    created_by="user:alice",
-                    files=(),
-                )
-                locked.set()
-                await _wait_until_a_backend_blocks_on(
-                    pool, query_fragment="FROM datasets WHERE id = $1 FOR UPDATE"
-                )
-            return session
-
-        async def second_attempt() -> DatasetLocked:
-            """Attempt a second session once the first is certain to hold the row lock."""
-            await locked.wait()
-            with pytest.raises(DatasetLocked) as excinfo:
-                async with store.transaction() as writer:
-                    await writer.begin_ingest(
-                        dataset_id,
-                        "b" * 64,
-                        created_by="user:bob",
-                        files=(),
-                    )
-            return excinfo.value
-
-        winner, loser = await asyncio.gather(first_attempt(), second_attempt())
-        assert loser.context["session_id"] == str(winner.lease.ingest_id)
-        count = await pool.fetchval(
-            "SELECT count(*) FROM ingest_sessions WHERE dataset_id = $1", dataset_id
-        )
-        assert count == 1
-    finally:
-        await pool.close()
-
-
-# -- 7. begin_ingest binds every stamped column to one read of the clock -----
-
-
-class _IncrementingClock:
-    """A ``Clock`` whose ``now()`` returns a later instant on every call.
-
-    A store method that reads the clock more than once when it should read
-    it exactly once ends up stamping its columns from different instants;
-    this exposes that as two stamps disagreeing by the clock's step instead
-    of a subtler timing race.
-    """
-
-    def __init__(self, start: datetime, *, step: timedelta) -> None:
-        """Start the clock at ``start``, advancing by ``step`` on every read.
-
-        Args:
-            start: The instant the first call to ``now()`` returns.
-            step: How far the clock moves forward after each call.
-        """
-        self._next = start
-        self._step = step
-
-    def now(self) -> datetime:
-        """Return the current instant, then advance the clock by one step.
-
-        Returns:
-            The instant this call observed.
-        """
-        current = self._next
-        self._next += self._step
-        return current
-
-
-def test_begin_ingest_binds_expires_at_created_at_and_updated_at_to_one_instant() -> None:
-    """begin_ingest stamps expires_at, created_at and updated_at from a single now() read."""
-    with PostgresContainer("postgres:16") as postgres:
-        _migrate(postgres.get_connection_url(driver="asyncpg"))
-        asyncio.run(
-            _assert_begin_ingest_binds_one_instant(postgres.get_connection_url(driver=None))
-        )
-
-
-async def _assert_begin_ingest_binds_one_instant(dsn: str) -> None:
-    """Reserves a session through a clock that moves on every read, then checks its stamps agree.
-
-    Args:
-        dsn: The migrated database's plain connection string.
-    """
-    pool = await asyncpg.create_pool(dsn)
-    try:
-        clock = _IncrementingClock(datetime(2026, 1, 1, tzinfo=UTC), step=timedelta(seconds=1))
-        store = PostgresHierarchyStore(pool, clock=clock)
-        hierarchy = await seed_hierarchy(store)
-        dataset_id = hierarchy.datasets["run-0001"]
-        async with store.transaction() as writer:
-            session = await writer.begin_ingest(
-                dataset_id, "a" * 64, created_by="user:alice", files=()
-            )
-        row = await pool.fetchrow(
-            "SELECT created_at, updated_at, expires_at FROM ingest_sessions WHERE id = $1",
-            session.lease.ingest_id,
-        )
-        assert row["created_at"] == row["updated_at"]
-        assert row["expires_at"] - row["created_at"] == LEASE_TTL
-    finally:
-        await pool.close()
-
-
-# -- 8. structural conformance, not inheritance -------------------------------
+# -- 6. structural conformance, not inheritance -------------------------------
 
 
 def test_stores_conform_to_their_ports_structurally_not_by_inheritance() -> None:

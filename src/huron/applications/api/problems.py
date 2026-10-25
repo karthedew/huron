@@ -22,7 +22,6 @@ from starlette.requests import ClientDisconnect
 from huron.core.catalog.errors import ERROR_CODES as CATALOG_ERROR_CODES
 from huron.core.foundation.errors import ERROR_CODES as FOUNDATION_ERROR_CODES
 from huron.core.foundation.errors import AuthError, DomainError
-from huron.core.raw.errors import ERROR_CODES as RAW_ERROR_CODES
 from huron.core.security.errors import ERROR_CODES as SECURITY_ERROR_CODES
 from huron.core.security.roles import RoleError
 
@@ -278,7 +277,6 @@ def wire_error_codes() -> frozenset[str]:
     for vocabulary in (
         FOUNDATION_ERROR_CODES,
         CATALOG_ERROR_CODES,
-        RAW_ERROR_CODES,
         SECURITY_ERROR_CODES,
         TRANSPORT_ERROR_CODES,
     ):

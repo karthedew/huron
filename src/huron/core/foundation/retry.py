@@ -21,15 +21,12 @@ class IdempotencyClaim:
 
 @dataclass(frozen=True, slots=True)
 class Replay:
-    """A durable receipt; unfinished ingest commits retain their reservation beyond TTL."""
+    """A durable receipt for an accepted mutation."""
 
     kind: Literal[
         "organization",
         "project",
         "dataset",
-        "ingest_session",
-        "ingest_commit",
-        "revision",
     ]
     resource_id: UUID
 
@@ -56,7 +53,7 @@ class RetryTransaction(Protocol):
         """Reserve a principal/key pair or return its identical prior receipt.
 
         Conflicting fingerprints raise IdempotencyKeyReused. Expired claims may
-        be replaced except for unfinished ingest-commit reservations. Rollback
+        be replaced. Rollback
         discards the claim together with the mutation.
 
         Args:

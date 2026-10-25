@@ -51,7 +51,7 @@ original source checksums are preserved. TSIS native zero-valued missing observa
 live in `.local/polaris/source-files/`. Import retries verify and reuse snapshots.
 Receipts live in `.local/polaris/`.
 
-To show all three dataset types together, first run `samples` above to retain the
+To show Iceberg observations alongside Icechunk arrays, first run `samples` above to retain the
 original ACE downloads, then run these commands from the repository root:
 
 ```sh
@@ -63,10 +63,8 @@ uv pip install --python .local/polaris/icechunk-venv/bin/python \
 
 The dependencies stay in the ignored local science environment; the SQLite extra
 supports the seed's temporary SDK tests. The seed checks pinned source hashes and
-copies 480,992 bytes into the existing heliophysics catalog's allowed FILE root:
+creates an Iceberg table in the existing heliophysics catalog's allowed FILE root:
 
-- `heliophysics.solar_wind.ace.ace_source_files`: a generic-table registration
-  pointing to the original ACE CSV and native HAPI metadata, labeled Generic.
 - `heliophysics.solar_wind.ace.ace_observations`: a native Iceberg table containing
   all 5,401 observations as nine columns, retaining exact UTC nanoseconds, vector
   components, units and missing-value sentinels without resampling.
@@ -77,8 +75,7 @@ Retries verify every Iceberg value and reuse its snapshot; conflicting existing
 data is never replaced. `--verify-only` checks existing registrations and values
 without writing dataset storage or catalog metadata. Receipts are saved to
 `.local/polaris/catalog-types-samples.json`. This operator seed creates a genuine
-Iceberg snapshot. The generic-table registration records metadata only; it does not
-upload or verify the files at its location.
+Iceberg snapshot.
 
 The header selects only the organization. Browse opens its realm root and lists accessible catalogs at the top of Explorer with database icons. The filesystem-style Explorer
 shows nested namespace folders and repository leaves; expanding a folder loads

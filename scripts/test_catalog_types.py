@@ -1,4 +1,4 @@
-"""Verify exact NASA values, immutable source copies and real Iceberg retry behavior."""
+"""Verify exact NASA values and real Iceberg retry behavior."""
 
 from __future__ import annotations
 
@@ -28,22 +28,6 @@ class CatalogTypeSeedTests(unittest.TestCase):
         self.assertEqual(arrow["bgsm_z_nt"][0].as_py(), -0.435)
         self.assertIn("GSE Cartesian", schema.find_field("bgsec_y_nt").doc)
         self.assertIn("GSM Cartesian", schema.find_field("bgsm_z_nt").doc)
-
-    def test_source_copy_retries_preserve_bytes_and_refuse_conflicting_storage(self):
-        """Retrying a source copy leaves its identity unchanged and never overwrites other bytes."""
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary).resolve() / "source" / "data.csv"
-            seeder.preserve_file(path, ACE_CSV)
-            original = path.stat().st_ino
-            seeder.preserve_file(path, ACE_CSV)
-            self.assertEqual(path.stat().st_ino, original)
-            with self.assertRaisesRegex(RuntimeError, "refusing to overwrite"):
-                seeder.preserve_file(path, b"different")
-            self.assertEqual(path.read_bytes(), ACE_CSV)
-            linked = path.parent / "linked.csv"
-            linked.symlink_to(path)
-            with self.assertRaisesRegex(RuntimeError, "symlink"):
-                seeder.preserve_file(linked, ACE_CSV)
 
     def test_real_iceberg_readback_and_retry_reuses_the_same_snapshot(self):
         """Actual Parquet and Iceberg metadata round-trip every value without a duplicate append."""

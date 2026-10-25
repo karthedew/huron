@@ -16,11 +16,9 @@ from .endpoints import (
     api_keys,
     bindings,
     datasets,
-    ingest_sessions,
     organizations,
     policies,
     projects,
-    revisions,
     roles,
     search,
     service_accounts,
@@ -37,11 +35,6 @@ router.include_router(projects.organization_projects)
 router.include_router(projects.router)
 router.include_router(datasets.project_datasets)
 router.include_router(datasets.router)
-router.include_router(revisions.router)
-router.include_router(ingest_sessions.dataset_ingest_sessions)
-router.include_router(ingest_sessions.project_ingest_sessions)
-router.include_router(ingest_sessions.router)
-router.include_router(ingest_sessions.transfer)
 router.include_router(roles.router)
 router.include_router(bindings.router)
 router.include_router(bindings.organization_bindings)

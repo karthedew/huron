@@ -14,20 +14,16 @@ from uuid import uuid4
 
 import pytest
 
-from huron.core.raw.ingest import FileState, IngestState, UploadAction
 from huron.core.metastore.rows import (
     affected_row_count,
     api_key_record,
     binding_record,
     credential_record,
     dataset,
-    ingest_file,
-    ingest_session,
     organization,
     policy,
     principal_record,
     project,
-    revision_record,
     service_account,
     session_record,
 )
@@ -262,91 +258,6 @@ def test_dataset_maps_every_column_and_ignores_data_classification() -> None:
     assert record.profile_name == "timeseries"
     assert record.entry_layer == "raw"
     assert record.lifecycle_state == "ACTIVE"
-
-
-def test_revision_record_maps_revision_number_to_number() -> None:
-    """``revision_record`` decodes every column, renaming ``revision_number`` to ``number``."""
-    revision_id = uuid4()
-    dataset_id = uuid4()
-    now = datetime.now(UTC)
-    row = {
-        "id": revision_id,
-        "dataset_id": dataset_id,
-        "revision_number": 3,
-        "manifest_sha256": "a" * 64,
-        "metadata_sha256": "b" * 64,
-        "revision_path": "revisions/000003--" + str(revision_id),
-        "file_count": 5,
-        "total_bytes": 1024,
-        "committed_by": "user:alice",
-        "committed_at": now,
-    }
-    record = revision_record(row)
-    assert record.id == revision_id
-    assert record.dataset_id == dataset_id
-    assert record.number == 3
-    assert record.manifest_sha256 == "a" * 64
-    assert record.metadata_sha256 == "b" * 64
-    assert record.revision_path == row["revision_path"]
-    assert record.file_count == 5
-    assert record.total_bytes == 1024
-    assert record.committed_by == "user:alice"
-    assert record.committed_at == now
-
-
-def test_ingest_session_decodes_the_lease_and_declared_identity() -> None:
-    """``ingest_session`` decodes a full row into the lease, state and declared manifest."""
-    session_id = uuid4()
-    dataset_id = uuid4()
-    revision_id = uuid4()
-    parent_id = uuid4()
-    now = datetime.now(UTC)
-    row = {
-        "id": session_id,
-        "dataset_id": dataset_id,
-        "revision_id": revision_id,
-        "revision_number": 3,
-        "manifest_sha256": "a" * 64,
-        "state": "UPLOADING",
-        "etag": 2,
-        "expires_at": now,
-        "created_by": "user:alice",
-        "parent_revision_id": parent_id,
-    }
-    session = ingest_session(row)
-    assert session.lease.ingest_id == session_id
-    assert session.lease.dataset_id == dataset_id
-    assert session.lease.revision_id == revision_id
-    assert session.lease.revision_number == 3
-    assert session.lease.expires_at == now
-    assert session.state is IngestState.UPLOADING
-    assert session.manifest_sha256 == "a" * 64
-    assert session.created_by == "user:alice"
-    assert session.etag == 2
-
-
-def test_ingest_file_decodes_action_state_and_completed_parts() -> None:
-    """``ingest_file`` decodes the action, state and completed_parts from their stored forms."""
-    file_id = uuid4()
-    row = {
-        "file_id": file_id,
-        "path": "payload/a.bin",
-        "size": 20,
-        "expected_sha256": "b" * 64,
-        "action": "upload",
-        "part_count": 2,
-        "state": "PENDING",
-        "completed_parts": json.dumps([1]),
-    }
-    file = ingest_file(row)
-    assert file.file_id == file_id
-    assert file.path == "payload/a.bin"
-    assert file.size == 20
-    assert file.expected_sha256 == "b" * 64
-    assert file.action is UploadAction.UPLOAD
-    assert file.part_count == 2
-    assert file.state is FileState.PENDING
-    assert file.completed_parts == frozenset({1})
 
 
 @pytest.mark.parametrize(

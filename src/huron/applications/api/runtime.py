@@ -15,8 +15,8 @@ from typing import Annotated
 import asyncpg
 from fastapi import Depends, Request
 
+from huron.core.catalog.ports import GenerationStorage
 from huron.core.foundation.clock import Clock
-from huron.core.raw import RawRuntime
 from huron.core.security import CredentialAuthentication, OidcAuthentication, PasswordAuthentication
 from huron.core.security.dev import DevHeaderResolver
 from huron.core.security.facts import BindingFacts, CatalogFacts
@@ -27,7 +27,7 @@ from huron.core.security.principals import PrincipalStore
 from huron.core.security.rules import RoleBindingAuthorizer
 from huron.core.security.sessions import SessionStore
 
-from .capabilities import HierarchyStore, Storage
+from .capabilities import HierarchyStore
 from .settings import ApiSettings
 
 
@@ -42,11 +42,11 @@ class ApiStores:
     Attributes:
         hierarchy: Durable storage for the organization/project/dataset
             hierarchy and its idempotency claims.
-        rbac: Storage for role bindings, service accounts and policies.
-        api_keys: Storage for API keys.
-        credentials: Storage for password credentials.
-        sessions: Storage for browser sessions.
-        principals: Storage for user and service-account identities.
+        rbac: Persistence for role bindings, service accounts and policies.
+        api_keys: Persistence for API keys.
+        credentials: Persistence for password credentials.
+        sessions: Persistence for browser sessions.
+        principals: Persistence for user and service-account identities.
     """
 
     hierarchy: HierarchyStore
@@ -72,10 +72,9 @@ class ApiRuntime:
     """
 
     settings: ApiSettings
-    raw_store: Storage
+    generations: GenerationStorage
     hierarchy: HierarchyStore
     rbac: RbacStore
-    raw: RawRuntime
     authorizer: RoleBindingAuthorizer
     api_keys: ApiKeyWriter
     credentials: CredentialStore

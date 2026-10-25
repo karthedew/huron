@@ -159,22 +159,12 @@ single-quoted so uv, Docker Compose and podman-compose all read it byte for byte
 | `HURON_DATABASE_URL` | yes | |
 | `HURON_CLASSIFICATION_VOCABULARY` | yes | Codes and orders must each be unique, and the list may not be empty |
 | `HURON_DATA_ROOT` | no | Defaults to `/data` |
-| `HURON_COMPLETION_MAX_CONCURRENT` | no | Verified completion copies per API process; defaults to `1`, minimum `1` |
-| `HURON_COMPLETION_RESERVE_BYTES` | no | Free bytes retained beyond active completion-copy reservations; defaults to `1073741824` (1 GiB), minimum `0` |
 | `HURON_BOOTSTRAP_PLATFORM_OWNER` | no | Subject granted a SYSTEM-scope `platform_owner` binding at startup |
 | `HURON_LOGIN_FLOW_SECRET` | outside `development` | Signs the transient `huron_login` flow cookie |
 | `HURON_OIDC__*` | when `HURON_AUTH_MODE=oidc` | Nested via `__`, e.g. `HURON_OIDC__ISSUER`, `HURON_OIDC__CLIENT_ID`, `HURON_OIDC__CLIENT_SECRET`, `HURON_OIDC__REDIRECT_URL` |
 | `HURON_PASSWORD_LOGIN_ENABLED` | no | Defaults to `true` |
 | `HURON_SESSION_COOKIE_NAME` | no | Defaults to `huron_session` |
 | `HURON_WEB_APP_URL` | no | Where `/auth/oidc/callback` lands the browser after login; defaults to `http://localhost:5173` |
-| `HURON_INGEST_SWEEP_INTERVAL_SECONDS` | no | Seconds between two passes of a replica's ingest expiry sweep; defaults to `60` |
-| `HURON_INGEST_SWEEP_LIMIT` | no | Lapsed sessions one sweep pass flips at most; defaults to `100` |
-
-Completion admission is local to each API process. It reserves each copy's full
-expected size until installation and cleanup finish; already-installed retries
-do not need new capacity. Other replicas, uploads and held file descriptors can
-still consume space. Size the filesystem for those consumers as well as the
-configured reserve; the limit is not a deployment-wide storage reservation.
 
 ### Authenticating in development
 

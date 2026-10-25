@@ -1,14 +1,4 @@
-"""Direct unit tests for ``InMemoryHierarchyStore``.
-
-The transaction, uniqueness, optimistic-concurrency, idempotency,
-revision-resolution and ingest contracts are pinned once, in
-``tests/hierarchy_contract.py``, and run here against the in-memory store;
-this module adds what is specific to this backend - the injectable clock's
-24-hour TTL boundary and default, transactional revision insertion, direct
-coverage of the reads window ordering and the three visibility predicates
-the shared scenarios do not otherwise exercise, and the point reads' not-found
-paths the ingest scenarios have no reason to hit.
-"""
+"""In-memory hierarchy contracts, idempotency expiry and discoverable reads."""
 
 from __future__ import annotations
 
@@ -17,31 +7,21 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.core.foundation.errors import IdempotencyKeyReused, ResourceNotFound
+from huron.core.catalog.types import Organization, PlatformRoot
+from huron.core.foundation.errors import ResourceNotFound
 from huron.core.foundation.identifiers import uuid7
-from huron.core.raw.types import OutboxEvent, AuditEvent
 from huron.core.foundation.retry import IdempotencyClaim, Replay
-from huron.core.catalog.types import PlatformRoot, Organization
 from huron.core.metastore.hierarchy import InMemoryHierarchyStore, SystemClock
 from huron.core.security.rules import Visibility
 from tests.hierarchy_contract import (
-    committed_revision,
     scenario_1_write_invisible_until_commit,
     scenario_2_uniqueness,
     scenario_3_optimistic_concurrency,
     scenario_4_idempotency,
-    scenario_5_revisions,
     scenario_6_ordering,
     scenario_7_windows,
     scenario_8_visibility,
     scenario_9_visibility_inputs,
-    scenario_10_begin_ingest_reserves_and_locks,
-    scenario_11_a_dead_session_frees_its_number_and_a_commit_spends_it,
-    scenario_12_state_edges_cas_on_etag_and_renew_does_not,
-    scenario_13_file_ledger_updates_fence_on_pending_and_parts,
-    scenario_14_the_commit_transaction_is_atomic_and_replays,
-    scenario_15_expiry_flips_lapsed_sessions_only,
-    scenario_16_a_hundred_sequential_ingests_number_gap_free,
     seed_hierarchy,
 )
 from tests.unit.support import FakeClock
@@ -81,12 +61,6 @@ async def test_idempotency_claims_replay_reject_and_serialize_across_transaction
     """Pins the idempotency contract against the in-memory store."""
     store = InMemoryHierarchyStore()
     await scenario_4_idempotency(store)
-
-
-async def test_revisions_resolve_by_id_and_the_latest_is_the_highest_commit() -> None:
-    """Pins the revision-resolution contract against the in-memory store."""
-    store = InMemoryHierarchyStore()
-    await scenario_5_revisions(store)
 
 
 async def test_organizations_projects_and_datasets_sort_by_c_collation_order() -> None:
@@ -155,81 +129,6 @@ async def test_an_expired_claim_is_taken_over_rather_than_rejected() -> None:
 
     replayed = await store.organizations.get(second_id, Visibility.ALL)
     assert replayed.id == second_id
-
-
-async def test_an_unfinished_commit_claim_cannot_expire_before_its_revision_receipt() -> None:
-    """Elapsed retry TTL cannot release a key while publication is still unresolved."""
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    store = InMemoryHierarchyStore(clock=clock)
-    claim = IdempotencyClaim("user:alice", "commit", "a" * 64)
-    pending = Replay(kind="ingest_commit", resource_id=uuid7())
-    async with store.transaction() as writer:
-        assert await writer.claim(claim) is None
-        await writer.remember(claim, pending)
-    clock.advance(timedelta(days=2))
-    conflicting = IdempotencyClaim(claim.principal, claim.key, "b" * 64)
-    with pytest.raises(IdempotencyKeyReused):
-        async with store.transaction() as writer:
-            await writer.claim(conflicting)
-    async with store.transaction() as writer:
-        assert await writer.claim(claim) == pending
-        await writer.remember(claim, Replay(kind="revision", resource_id=uuid7()))
-    async with store.transaction() as writer:
-        assert await writer.claim(conflicting) is None
-        await writer.remember(conflicting, Replay(kind="revision", resource_id=uuid7()))
-
-
-async def test_insert_revision_accepts_repeated_content_with_a_new_identity() -> None:
-    """Each revision has its own identity even when its manifest repeats earlier content."""
-    store = InMemoryHierarchyStore()
-    hierarchy = await seed_hierarchy(store)
-    dataset_id = hierarchy.datasets["run-0001"]
-    first = committed_revision(dataset_id, 1, manifest_sha256="a" * 64)
-    async with store.transaction() as writer:
-        await writer.insert_revision(first)
-    duplicate = committed_revision(dataset_id, 2, manifest_sha256="a" * 64)
-    async with store.transaction() as writer:
-        await writer.insert_revision(duplicate)
-    assert await store.revision(duplicate.id) == duplicate
-
-
-async def test_a_rolled_back_transaction_leaves_no_revision_audit_or_outbox_row() -> None:
-    """insert_revision, insert_audit_event and insert_outbox_event all roll back together."""
-    store = InMemoryHierarchyStore()
-    hierarchy = await seed_hierarchy(store)
-    dataset_id = hierarchy.datasets["run-0001"]
-    revision = committed_revision(dataset_id, 1, manifest_sha256="a" * 64)
-    audit = AuditEvent(
-        id=uuid7(),
-        kind="revision.committed",
-        actor="user:alice",
-        subject_kind="revision",
-        subject_id=revision.id,
-        payload={},
-        created_at=datetime.now(UTC),
-    )
-    outbox = OutboxEvent(
-        id=uuid7(),
-        kind="revision.committed",
-        subject_id=revision.id,
-        payload={},
-        created_at=datetime.now(UTC),
-    )
-
-    class _AbortedError(Exception):
-        """Raised deliberately, from inside an open transaction, to force a rollback."""
-
-    with pytest.raises(_AbortedError):
-        async with store.transaction() as writer:
-            await writer.insert_revision(revision)
-            await writer.insert_audit_event(audit)
-            await writer.insert_outbox_event(outbox)
-            raise _AbortedError
-
-    with pytest.raises(ResourceNotFound):
-        await store.revision(revision.id)
-    assert store._audit == []
-    assert store._outbox == []
 
 
 async def test_the_in_memory_store_reads_its_clock_when_none_is_injected() -> None:
@@ -365,72 +264,3 @@ async def test_dataset_parents_maps_only_the_ids_that_exist() -> None:
     hierarchy = await seed_hierarchy(store, _TREE)
     parents = await store.dataset_parents(frozenset({hierarchy.datasets["ds-a1x"], uuid7()}))
     assert parents == {hierarchy.datasets["ds-a1x"]: hierarchy.projects["proj-a1"]}
-
-
-async def test_begin_ingest_reserves_and_locks() -> None:
-    """Pins the allocator and dataset-lock contract against the in-memory store."""
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    store = InMemoryHierarchyStore(clock=clock)
-    await scenario_10_begin_ingest_reserves_and_locks(store, clock)
-
-
-async def test_a_dead_session_frees_its_number_and_a_commit_spends_it() -> None:
-    """Pins gap-free numbering across an aborted, a committed and a failed session."""
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    store = InMemoryHierarchyStore(clock=clock)
-    await scenario_11_a_dead_session_frees_its_number_and_a_commit_spends_it(store, clock)
-
-
-async def test_state_edges_cas_on_etag_and_renew_does_not() -> None:
-    """Pins the etag CAS on state edges and renew's separate, etag-free fence."""
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    store = InMemoryHierarchyStore(clock=clock)
-    await scenario_12_state_edges_cas_on_etag_and_renew_does_not(store, clock)
-
-
-async def test_file_ledger_updates_fence_on_pending_and_parts() -> None:
-    """Pins the per-file ledger's fence on PENDING state and the expected parts."""
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    store = InMemoryHierarchyStore(clock=clock)
-    await scenario_13_file_ledger_updates_fence_on_pending_and_parts(store, clock)
-
-
-async def test_the_commit_transaction_is_atomic_and_replays() -> None:
-    """Pins the commit transaction's atomicity and its idempotent replay."""
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    store = InMemoryHierarchyStore(clock=clock)
-    await scenario_14_the_commit_transaction_is_atomic_and_replays(store, clock)
-
-
-async def test_expiry_flips_lapsed_sessions_only() -> None:
-    """Pins the sweep's listing and flip, never touching a renewed or COMMITTING session."""
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    store = InMemoryHierarchyStore(clock=clock)
-    await scenario_15_expiry_flips_lapsed_sessions_only(store, clock)
-
-
-async def test_a_hundred_sequential_ingests_number_gap_free() -> None:
-    """Pins gap-free numbering across a hundred commits interleaved with failed attempts."""
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    store = InMemoryHierarchyStore(clock=clock)
-    await scenario_16_a_hundred_sequential_ingests_number_gap_free(store, clock)
-
-
-async def test_ingest_session_point_read_raises_for_an_unknown_id() -> None:
-    """ingest_session() reports an id that names nothing as not found."""
-    store = InMemoryHierarchyStore()
-    with pytest.raises(ResourceNotFound):
-        await store.ingest_session(uuid7())
-
-
-async def test_ingest_file_point_read_raises_for_an_unknown_id() -> None:
-    """ingest_file() reports an id that names nothing as not found."""
-    store = InMemoryHierarchyStore()
-    with pytest.raises(ResourceNotFound):
-        await store.ingest_file(uuid7())
-
-
-async def test_ingest_files_returns_empty_for_an_unknown_session() -> None:
-    """ingest_files() returns an empty tuple for a session that does not exist."""
-    store = InMemoryHierarchyStore()
-    assert await store.ingest_files(uuid7()) == ()

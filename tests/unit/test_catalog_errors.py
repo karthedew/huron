@@ -26,11 +26,3 @@ def test_path_rule_violation_defaults_to_the_shared_code() -> None:
     assert error.code == "PATH_RULE_VIOLATION"
     assert error.status_code == 400
     assert error.detail == "invalid slug: 'Bad Slug'"
-
-
-def test_path_rule_violation_carries_a_more_specific_code_with_a_path() -> None:
-    """With a path, the given code replaces the default and the path lands in detail and context."""
-    error = PathRuleViolation("PATH_TOO_LONG", "a/very/long/path.txt")
-    assert error.code == "PATH_TOO_LONG"
-    assert error.detail == "PATH_TOO_LONG: 'a/very/long/path.txt'"
-    assert error.context == {"path": "a/very/long/path.txt"}

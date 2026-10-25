@@ -1,11 +1,4 @@
-"""Path construction for the shared org/project/dataset layout.
-
-Covers ``revision_dir``'s nesting and revision-number range,
-``organization_dir``, ``dataset_layer_dir``, single-source vs. fused
-``product_dir`` placement, ``generation_file``'s range and zero-padding,
-``staging_dir`` and ``staging_paths``, ``validate_slug``'s pattern rule and
-``validate_org_slug``'s reserved-route rule.
-"""
+"""Hierarchy, layer and product paths validate identities and generation bounds."""
 
 from __future__ import annotations
 
@@ -13,11 +6,7 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from huron.core.foundation.errors import PathRuleViolation
-from huron.core.foundation.identifiers import uuid7
 from huron.core.catalog.layers import Layer
-from huron.core.catalog.types import EntityRef
-from huron.core.foundation.names import ORG_PROJECT_SLUG_MAX, validate_org_slug, validate_slug
 from huron.core.catalog.paths import (
     dataset_dir,
     dataset_layer_dir,
@@ -26,7 +15,10 @@ from huron.core.catalog.paths import (
     product_dir,
     project_dir,
 )
-from huron.core.raw.paths import revision_dir, staging_dir, staging_paths
+from huron.core.catalog.types import EntityRef
+from huron.core.foundation.errors import PathRuleViolation
+from huron.core.foundation.identifiers import uuid7
+from huron.core.foundation.names import ORG_PROJECT_SLUG_MAX, validate_org_slug, validate_slug
 
 pytestmark = pytest.mark.unit
 
@@ -45,22 +37,6 @@ class Hierarchy:
         self.organization = _entity("nuclear-engineering")
         self.project = _entity("huron-shielding-study")
         self.dataset = _entity("reactor-shielding-sweep")
-
-
-def test_revision_dir_nests_raw_and_revision_under_the_dataset() -> None:
-    """A revision directory nests as ``{dataset dir}/raw/revision/{NNNNNN}--{id}``."""
-    hierarchy = Hierarchy()
-    revision_id = uuid7()
-    path = revision_dir(
-        ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, 42, revision_id
-    )
-    expected_tail = (
-        dataset_dir(ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset)
-        / "raw"
-        / "revision"
-        / f"000042--{revision_id.hex}"
-    )
-    assert path == expected_tail
 
 
 def test_organization_dir_accepts_a_frozen_entity_ref() -> None:
@@ -141,13 +117,7 @@ def test_single_source_and_fused_products_never_collide() -> None:
     assert single_source != fused
 
 
-def test_staging_dir_sits_at_the_data_root() -> None:
-    """An ingest session's staging directory sits at the data root, under ``.staging``."""
-    ingest_id = uuid7()
-    assert staging_dir(ROOT, ingest_id) == ROOT / ".staging" / ingest_id.hex
-
-
-@pytest.mark.parametrize("slug", ["auth", "login", "logout", "signup", "settings", "ingestion", "polaris"])
+@pytest.mark.parametrize("slug", ["auth", "login", "logout", "signup", "settings", "polaris"])
 def test_validate_org_slug_reserves_root_routes(slug: str) -> None:
     """An organization slugged like an application route would be unreachable."""
     with pytest.raises(PathRuleViolation):
@@ -173,16 +143,6 @@ def test_validate_slug_rejects_a_slug_that_could_not_serve_as_a_path_component(s
         validate_slug(slug, ORG_PROJECT_SLUG_MAX)
 
 
-@pytest.mark.parametrize("number", [0, 1_000_000])
-def test_revision_dir_rejects_a_revision_number_outside_the_legal_range(number: int) -> None:
-    """revision_dir refuses a revision number outside 1 to 999,999."""
-    hierarchy = Hierarchy()
-    with pytest.raises(PathRuleViolation):
-        revision_dir(
-            ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset, number, uuid7()
-        )
-
-
 @pytest.mark.parametrize("generation", [0, 1_000_000])
 def test_generation_file_rejects_a_generation_outside_the_legal_range(generation: int) -> None:
     """generation_file refuses a generation number outside 1 to 999,999."""
@@ -197,15 +157,3 @@ def test_generation_file_zero_pads_a_valid_generation_number() -> None:
     hierarchy = Hierarchy()
     entity_dir = dataset_dir(ROOT, hierarchy.organization, hierarchy.project, hierarchy.dataset)
     assert generation_file(entity_dir, 42) == entity_dir / "generations" / "000042.json"
-
-
-def test_staging_areas_separate_request_inputs_from_published_envelope() -> None:
-    """Every fixed session area has a distinct name below the reserved root."""
-    ingest_id = uuid7()
-    paths = staging_paths(ROOT, ingest_id)
-    assert paths.root == staging_dir(ROOT, ingest_id)
-    assert paths.upload == paths.root / "upload"
-    assert paths.completion == paths.root / "completion"
-    assert paths.envelope == paths.root / "envelope"
-    assert paths.envelope not in paths.upload.parents
-    assert paths.envelope not in paths.completion.parents

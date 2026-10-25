@@ -75,12 +75,6 @@ class ProfileUnknown(DomainError):
     code, status_code = "PROFILE_UNKNOWN", 400
 
 
-class ContractMismatch(DomainError):
-    """The payload violates its registered contract."""
-
-    code, status_code = "CONTRACT_MISMATCH", 409
-
-
 class ClassificationUnknown(DomainError):
     """The classification is outside the deployment vocabulary."""
 
@@ -101,7 +95,6 @@ ERROR_CODES = frozenset(
         "QUOTA_EXCEEDED",
         "RETENTION_HOLD_PRESENT",
         "PROFILE_UNKNOWN",
-        "CONTRACT_MISMATCH",
         "CLASSIFICATION_UNKNOWN",
         "LAYER_WORKFLOW_VIOLATION",
         "LAYER_WRITE_FORBIDDEN",

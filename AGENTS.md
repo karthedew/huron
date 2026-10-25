@@ -270,8 +270,6 @@ make lint
 uv run pytest -m unit --cov=src/huron --cov-report=term-missing
 uv run pytest -m contract
 uv run pytest -m integration
-# For ingestion/durability acceptance changes; requires at least 25 GiB free disk:
-make test-acceptance
 # When changing documentation included in the documentation site:
 make docs
 ```

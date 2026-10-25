@@ -1,9 +1,9 @@
-"""Register retained NASA ACE source files and their exact observations as Raw and Iceberg.
+"""Register exact observations from retained NASA ACE source files as Iceberg.
 
 Run with .local/polaris/icechunk-venv/bin/python scripts/seed_catalog_types.py.
 Dependencies: pyiceberg[pyarrow]==0.11.1. The existing NASA Icechunk sample is unchanged.
 Native REST operations use local deployment credentials; no credentials are printed or stored
-in scientific metadata. Registration does not claim a Huron Raw revision or scientific lineage.
+in scientific metadata. Registration does not claim scientific lineage.
 """
 
 from __future__ import annotations
@@ -12,15 +12,13 @@ import argparse
 import fcntl
 import hashlib
 import json
-import os
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import unquote, urlparse
 
 import pyarrow as pa
 from import_mission_samples import ACE_SAMPLE, parse_ace_csv
-from polaris_dev import BASE_URL, REALM, exists, obtain_token, request, save
+from polaris_dev import BASE_URL, REALM, obtain_token, request, save
 from pyiceberg.catalog.rest import RestCatalog
 from pyiceberg.exceptions import NoSuchTableError
 from pyiceberg.schema import Schema
@@ -32,14 +30,10 @@ if TYPE_CHECKING:
 STATE = Path(__file__).resolve().parents[1] / ".local" / "polaris"
 CATALOG = "heliophysics"
 NAMESPACE = ("solar_wind", "ace")
-RAW_NAME = "ace_source_files"
 TABLE_NAME = "ace_observations"
 DATA_HASH = "abc23cc8f079789ab1ad92caf868303397c2ed2f50d77efe3d2fe87c867e00b6"
 METADATA_HASH = "e267b2bc0ccf9d4f14d8bdab622b3dd5fb8fe5d91e6f69e109f63456fa5f05d8"
 SEED_ID = "huron-nasa-ace-catalog-types-v1"
-RAW_PATH = (
-    f"/api/catalog/polaris/v1/{CATALOG}/namespaces/{quote(chr(31).join(NAMESPACE))}/generic-tables"
-)
 
 
 def source_bytes(state: Path = STATE) -> tuple[bytes, bytes]:
@@ -106,43 +100,6 @@ def observations(payload: bytes, metadata: bytes) -> tuple[pa.Table, Schema]:
         ]
     )
     return pa.Table.from_pydict(columns, schema=arrow_schema), Schema(*fields)
-
-
-def preserve_file(path: Path, payload: bytes) -> None:
-    """Publish a retained source copy once and refuse to replace differing existing bytes.
-
-    Args:
-        path: Destination inside the verified catalog storage root.
-        payload: Exact source bytes.
-
-    Raises:
-        RuntimeError: Existing storage is a symlink or contains different bytes.
-    """
-    if any(parent.is_symlink() for parent in [path, *path.parents]):
-        raise RuntimeError("Refusing a symlink in the local sample destination.")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        if path.read_bytes() != payload:
-            raise RuntimeError("Existing source copy differs; refusing to overwrite it.")
-        return
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
-        temporary = Path(output.name)
-        try:
-            output.write(payload)
-            output.flush()
-            os.fsync(output.fileno())
-            try:
-                os.link(temporary, path)
-            except FileExistsError:
-                if path.is_symlink() or path.read_bytes() != payload:
-                    raise RuntimeError("Existing source copy changed during publication.") from None
-        finally:
-            temporary.unlink(missing_ok=True)
-    descriptor = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def seed_iceberg(
@@ -231,7 +188,7 @@ def run(*, verify_only: bool = False) -> dict:
         verify_only: Require and verify existing registrations without modifying storage or Polaris.
 
     Returns:
-        Verified Raw registration and Iceberg snapshot receipts, containing no credentials.
+        Verified Iceberg snapshot receipts, containing no credentials.
 
     Raises:
         RuntimeError: The local catalog, source copies or existing registration differs.
@@ -256,39 +213,6 @@ def run(*, verify_only: bool = False) -> dict:
         or any(parent.is_symlink() for parent in [root, *root.parents])
     ):
         raise RuntimeError("The heliophysics catalog is not the expected local FILE sandbox.")
-    raw_root = root.joinpath(*NAMESPACE, RAW_NAME)
-    if any(parent.is_symlink() for parent in [raw_root, *raw_root.parents]):
-        raise RuntimeError("Refusing a symlink in the Raw sample destination.")
-    for name, content in [("ace_2020-01-01.csv", payload), ("hapi_metadata.json", metadata)]:
-        target = raw_root / name
-        if verify_only:
-            if target.is_symlink() or target.read_bytes() != content:
-                raise RuntimeError("The retained Raw copy differs from its original source.")
-        else:
-            preserve_file(target, content)
-    raw = {
-        "name": RAW_NAME,
-        "format": "raw",
-        "base-location": raw_root.as_uri(),
-        "doc": (
-            "Original NASA ACE/MAG HAPI CSV and native metadata; 2020-01-01 UTC. "
-            "Catalog registration only, no Huron Raw revision is asserted."
-        ),
-        "properties": {
-            "huron.dataset-type": "raw",
-            "huron.layer": "bronze",
-            "source.dataset": "AC_H0_MFI",
-            "source.url": ACE_SAMPLE["url"],
-            "source.title": ACE_SAMPLE["title"],
-            "source.sha256": DATA_HASH,
-        },
-    }
-    if not exists(f"{RAW_PATH}/{RAW_NAME}", token):
-        if verify_only:
-            raise RuntimeError("The Raw sample is not registered.")
-        request(RAW_PATH, token=token, method="POST", data=raw)
-    if request(f"{RAW_PATH}/{RAW_NAME}", token=token)["table"] != raw:
-        raise RuntimeError("Existing Raw registration differs; refusing to replace it.")
     catalog = RestCatalog(
         CATALOG,
         uri=f"{BASE_URL}/api/catalog",
@@ -302,11 +226,11 @@ def run(*, verify_only: bool = False) -> dict:
         },
     )
     receipt = seed_iceberg(catalog, root, arrow, schema, verify_only=verify_only)
-    return {"raw": raw, "iceberg": receipt, "sourceBytes": len(payload) + len(metadata)}
+    return {"iceberg": receipt, "sourceBytes": len(payload) + len(metadata)}
 
 
 def main() -> None:
-    """Serialize local runs and save receipts after both registrations and values are verified."""
+    """Serialize local runs and save receipts after the registration and values are verified."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()

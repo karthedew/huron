@@ -410,15 +410,18 @@ def test_write_document_is_immutable_and_refuses_a_nested_or_reserved_name(
 
 
 def test_read_document_returns_the_bytes_and_refuses_a_missing_file(tmp_path: Path) -> None:
-    """read_document returns exactly the stored bytes and refuses a missing document."""
+    """Document reads and stat report stored bytes and refuse missing documents."""
     store = PosixRawStore(tmp_path)
     document = tmp_path / "manifest.json"
     document.write_bytes(b"content")
 
     assert store.read_document(document) == b"content"
+    assert store.stat_document(document).st_size == len(b"content")
 
     with pytest.raises(FileNotFoundError):
         store.read_document(tmp_path / "missing.json")
+    with pytest.raises(FileNotFoundError):
+        store.stat_document(tmp_path / "missing.json")
 
 
 def test_atomic_replace_leaves_the_old_bytes_when_the_write_fails(

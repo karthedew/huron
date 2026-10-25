@@ -164,11 +164,8 @@ def test_a_dataset_scoped_binding_capability_bound_on_router_and_parameter_decid
 def test_the_openapi_document_carries_the_resource_grained_tags(tmp_path: Path) -> None:
     """The OpenAPI document tags one per resource rather than one per module.
 
-    ``role-bindings`` and ``service-accounts`` are distinct groups, the
-    part-upload transport carries its own ``transfer`` tag apart from
-    ``ingest-sessions``, downloading a committed revision carries its own
-    ``revisions`` tag, and nothing is tagged ``auth`` any more - the
-    unversioned surface carries ``authentication`` instead.
+    ``role-bindings`` and ``service-accounts`` are distinct groups; the
+    unversioned credential surface carries ``authentication``.
     """
     app = create_app(settings=_settings(tmp_path), stores=memory_stores())
     schema = app.openapi()
@@ -176,15 +173,12 @@ def test_the_openapi_document_carries_the_resource_grained_tags(tmp_path: Path) 
     for methods in schema["paths"].values():
         for operation in methods.values():
             tags.update(operation.get("tags", []))
-    assert len(tags) == 15
+    assert len(tags) == 12
     assert "auth" not in tags
     assert tags == {
         "organizations",
         "projects",
         "datasets",
-        "revisions",
-        "ingest-sessions",
-        "transfer",
         "roles",
         "role-bindings",
         "service-accounts",
@@ -423,18 +417,6 @@ LEGACY_OPERATIONS = {
     "/api/v1/projects/{project_id}/datasets": ["get", "post"],
     "/api/v1/datasets/{dataset_id}": ["get", "patch"],
     "/api/v1/datasets/{dataset_id}/layers": ["get"],
-    "/api/v1/revisions/{revision_id}": ["get"],
-    "/api/v1/revisions/{revision_id}/manifest": ["get"],
-    "/api/v1/revisions/{revision_id}/files/{path}": ["get"],
-    "/api/v1/datasets/{dataset_id}/ingest-sessions": ["post"],
-    "/api/v1/projects/{project_id}/ingest-sessions": ["post"],
-    "/api/v1/ingest-sessions/{session_id}": ["get"],
-    "/api/v1/ingest-sessions/{session_id}/heartbeat": ["post"],
-    "/api/v1/ingest-sessions/{session_id}/abort": ["post"],
-    "/api/v1/ingest-sessions/{session_id}/verify": ["post"],
-    "/api/v1/ingest-sessions/{session_id}/commit": ["post"],
-    "/api/v1/transfer/uploads/{file_id}/parts/{part}": ["put"],
-    "/api/v1/transfer/uploads/{file_id}/complete": ["post"],
     "/api/v1/roles": ["get"],
     "/api/v1/bindings": ["get", "post"],
     "/api/v1/bindings/{binding_id}": ["delete"],
@@ -466,7 +448,7 @@ def test_the_legacy_v1_router_serves_exactly_its_operations(client: TestClient) 
         path: sorted(methods) for path, methods in paths.items() if path.startswith("/api/v1/")
     }
     assert actual == LEGACY_OPERATIONS
-    assert sum(map(len, actual.values())) == 52
+    assert sum(map(len, actual.values())) == 40
 
 
 def test_every_legacy_v1_operation_refuses_an_anonymous_request(client: TestClient) -> None:

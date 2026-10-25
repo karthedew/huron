@@ -52,7 +52,7 @@ api: ## Run the API on the host with autoreload, configured by dev.env, against 
 test: ## Run the fast unit suite.
 	uv run pytest -m unit
 
-test-acceptance: ## Run the acceptance suite (needs ≥ 25 GiB free disk).
+test-acceptance: ## Run the acceptance suite.
 	uv run pytest -m acceptance
 
 lint: ## Lint source under src and validate the migration schema map.

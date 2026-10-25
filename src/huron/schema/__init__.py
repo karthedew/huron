@@ -4,7 +4,7 @@ The ``schema`` tier is the one thing every service and package may import,
 so it holds only contracts: the Draft 2020-12 documents packaged under
 ``documents/`` and the three functions that load and apply them. A document
 is addressed by its file name, and the name carries the version
-(``manifest-v1.json``, ``generation-v1.json``), so a change of contract is a
+(``generation-v1.json``), so a change of contract is a
 new file rather than an edit under an existing caller's feet.
 
 ``format: date-time`` is not a no-op here: ``rfc3339-validator``, pulled in
@@ -27,7 +27,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 def load_schema(name: str) -> dict[str, Any]:
     """Load one packaged schema document by file name.
 
-    The name is a bare file name such as ``manifest-v1.json``: path
+    The name is a bare file name such as ``generation-v1.json``: path
     separators are refused so a caller can never reach outside the
     ``documents`` directory, and the ``.json`` suffix is required so the
     name says which version it asks for. A name that matches no packaged

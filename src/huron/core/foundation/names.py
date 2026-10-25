@@ -18,7 +18,6 @@ RESERVED_ROOT_SLUGS = frozenset(
         "admin",
         "browse",
         "account",
-        "queue",
         "product",
         "polaris",
         "snapshot",
@@ -29,7 +28,6 @@ RESERVED_ROOT_SLUGS = frozenset(
         "logout",
         "signup",
         "settings",
-        "ingestion",
     }
 )
 

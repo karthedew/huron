@@ -19,7 +19,7 @@ from huron.schema import load_schema
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("name", ["../escape.json", "sub/dir.json", "manifest-v1", r"a\b.json"])
+@pytest.mark.parametrize("name", ["../escape.json", "sub/dir.json", "generation-v1", r"a\b.json"])
 def test_load_schema_refuses_a_name_with_a_path_separator_or_no_json_suffix(name: str) -> None:
     """A name that could escape the documents directory, or lacks .json, is refused."""
     with pytest.raises(ValueError, match="invalid schema name"):
@@ -33,4 +33,4 @@ def test_load_schema_refuses_a_document_whose_top_level_is_not_an_object(
     load_schema.cache_clear()
     monkeypatch.setattr(huron_schema, "json", SimpleNamespace(loads=lambda _: []))
     with pytest.raises(ValueError, match="is not an object"):
-        load_schema("manifest-v1.json")
+        load_schema("generation-v1.json")

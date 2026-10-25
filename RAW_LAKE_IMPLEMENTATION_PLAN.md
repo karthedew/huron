@@ -1020,14 +1020,16 @@ contracts, `0014` is head, and the web calls no Python service.
     `core/metastore/ingest.py` and `core/raw/` leaves subset signatures of baseline clone groups, which
     `check_duplication._regressions` reports as new or grown. The implementer runs
     `uv run --locked python scripts/check_duplication.py src`; every reported group must be a baseline
-    signature minus files this task deletes (expected: `core/metastore/hierarchy.py` + `principals.py`
-    from the `hierarchy`/`ingest`/`principals` group, and `hierarchy.py` + `rbac.py` from the 12-clone
-    `hierarchy`/`ingest`/`rbac` group, which outgrows the size-2 `hierarchy`/`rbac` signature). Each is
+    signature minus files this task deletes. The owner approved one additional, exact regrouping
+    on 2026-10-24: the six unchanged `core/metastore/rbac.py` fragments from pre-task group 16
+    (`hierarchy`/`ingest`/`rbac`, size 12) may form an `rbac.py`-only signature of size 6 after the
+    Raw revision methods leave `hierarchy.py`. This exception requires fragment-hash proof and
+    `rbac.py` byte identity with `1519c98`; it permits no other regrouping or clone growth. Each is
     added to `groups` with its scanned size, then
     `uv run --locked python scripts/check_duplication.py src --update-baseline` ratchets the baseline down
     to the scan (the groups naming deleted files leave). Any other new or grown group stops the task. Each
     added signature, the group it came from and the running total go under "Execution notes"; these
-    deletion subsets are exempt from the per-group cap (plan-wide "Duplication baseline" rule).
+    deletion subsets and this one unchanged-fragment regrouping are exempt from the per-group cap.
 - Design: "DT-2 design: …" → "DT-2 decisions" (Raw path rules and errors, Order with DT-1), "DT-2
   deletion steps" (D2-2), "DT-2 interfaces and contracts" (Coverage floor procedure, Surviving-surface
   invariant), "DT-2 deletions"; "DT-1 design: …" → "DT-1 import-linter contract set (diff against the
@@ -1065,13 +1067,14 @@ contracts, `0014` is head, and the web calls no Python service.
     exits 0; `rg -n 'pytest -m acceptance' .github` prints nothing; `test ! -e .github/workflows/acceptance.yml`.
   - `rg -n '25 GiB' AGENTS.md Makefile docs/getting-started/testing.md` prints nothing.
   - `uv run --locked python scripts/check_duplication.py src` exits 0 against the hand-edited baseline;
-    every signature added to it is a subset of a pre-task signature that lost only deleted files, and
+    every signature added to it is a subset of a pre-task signature that lost only deleted files,
+    or the exact six-fragment `rbac.py` regrouping explicitly approved above, and
     "Execution notes" lists each with its source group and the running total.
   - The coverage-floor procedure as in M1.3; the new `fail_under` and the unit test-count change are
     recorded.
 - Dependencies: M1.3.
 - Decisions: OQ-2.1 (settled, owner decision 12)
-- Status: pending
+- Status: complete
 
 ### M1.5 D2-3: `rawstore` reduced to `PosixGenerationStore` and the surviving primitives
 
@@ -9952,3 +9955,205 @@ task rewrites them in the lake's terms (pins, `overwrite`, the lake's own search
   confirmed no validation processes remained.
 - Next-task baseline captured before M1.4 deletions: `/tmp/huron-m14-before.json`
   (5,222 / 5,450 statements) and `/tmp/huron-m14-before-contract.json` (5,436 / 5,450).
+
+### M1.4 execution notes — implementation attempt 1 (2026-10-24, stopped)
+
+- The pre-step inventory at `1519c98` found 28 matching test files: 12 whole-file matches,
+  16 partial matches and no unlisted matches. Inspection found `test_catalog_documents.py`
+  wholly obsolete (all Raw document/manifest/revision/frozen-commit tests); the orchestrator
+  reclassified and deleted it. `test_api_settings.py` additionally required partial removal
+  of assertions for the four deleted settings. No additional whole files were deleted by
+  the implementer. Rawstore and credential workflows remain for their next assigned tasks.
+- Removed Raw engine wiring, guards, routes, settings, error codes, metastore ingest state,
+  retry exemptions and associated named tests; retained generation storage through the
+  renamed `ApiRuntime.generations`. Updated the requested nightly workflow and document
+  handoffs, including the stale layer-raw history and web seed instructions. This is an
+  incomplete working tree, not a completed task.
+- The duplication scan triggered the task's stop rule before any baseline edit: 89 clones,
+  30 groups, native score 70. The new creation-only signature (size 3 from creation/Raw-ingest
+  size 4) and hierarchy/principals (size 4 from hierarchy/ingest/principals size 5) are literal
+  deletion subsets. The grown rbac-only signature (size 6; prior singleton size 3) is not:
+  its possible size-12 parent also contains surviving hierarchy.py. It therefore cannot be
+  admitted under the rule allowing only loss of whole files deleted in this task. Baseline
+  remains untouched; no signature was added and the capped-signature running total is zero.
+- Independent before coverage remains 5,222 / 5,450 unit statements (1,500 tests) and
+  5,436 / 5,450 combined statements (1,531 tests). No after measurement or floor adjustment
+  was made; `fail_under` remains 95.81. Feedback collection initially selected 1,181 unit
+  tests before six additional settings/slug cases were retired. Ruff and mypy feedback passed,
+  as did 18 app-lifecycle/readiness tests. A leftover Raw transaction flush was fixed; the
+  next feedback failure is `test_api_rbac.py` calling a removed ingest route and still needs
+  adaptation. Full gates, coverage proof, documentation/closing checks and frontend checks
+  remain outstanding due to the stop condition.
+- Tool recovery: uv-cache access succeeded on immediate escalation. Automatic approval review
+  rejected one broad scripted edit; it never ran. Smaller exact module edits and visible
+  patches were accepted. No owner stack was operated, no files staged or committed by the
+  implementer, and no launched process remains. Full handoff and exact logs:
+  `/tmp/huron-m14-i1/report.md`. Task status remains pending.
+
+### M1.4 execution notes — resumed implementation attempt 1 (2026-10-24)
+
+- The owner explicitly approved the narrow regrouping exception after the mandated stop.
+  All six current `rbac.py` fragments retain their pre-task hashes and originate in group 16
+  (size 12, hierarchy/ingest/rbac); the file itself remains byte-identical to `1519c98`
+  (`496885925375030b69773287aa9c23c21a9f4a02`). Evidence:
+  `/tmp/huron-m14-preflight/rbac-regrouping-proof.json`, pre-scan
+  `.pyscn/reports/analyze_20261024_224655.json`, post-scan
+  `.pyscn/reports/analyze_20261024_230400.json`. Only this size-6 signature is additionally
+  permitted; the total-clone ratchet, all other signature rules and all quality thresholds remain.
+  M1.4's task-specific wording now records that exception. No generalized exception was added.
+- The reviewed baseline admits exactly three scanned signatures: creation.py alone, size 3,
+  from creation.py/Raw ingest.py size 4; hierarchy.py/principals.py, size 4, from
+  hierarchy.py/metastore ingest.py/principals.py size 5; and the explicitly approved rbac.py
+  singleton size 6 above. The intermediate signature inventory was 44 (41 + 3), with the
+  total-clone ceiling held at 123; the successful ratchet is 89 clones / 30 groups,
+  538 fragments, 92 pairs, native score 70/100. Capped-signature running total remains zero.
+  Original baseline and exact entry receipt: `/tmp/huron-m14-i1/duplication-before.json`
+  and `duplication-approved-entries.json` in that directory. An initial ratchet rejected
+  stale group-count metadata (41); correcting it to 44 permitted the reviewed ratchet.
+- Finished the surviving API RBAC test's partial adaptation and removed only obsolete settings
+  cases. Contrary to the task's environment/test note, `scripts/test_catalog_types.py` did
+  contain an exclusive Raw source-copy test. Removed that method with `preserve_file`, keeping
+  the three live SDK cases. All three pass in the existing Icechunk SDK environment; uv still
+  lacks pyiceberg. No local stack was started, stopped, reset or installed.
+- Final frozen-source measurements: unit 3,729 / 3,873 statements, 1,175 tests (from
+  5,222 / 5,450 and 1,500 tests); combined unit/contract 3,863 / 3,873, 1,193 tests
+  (from 5,436 / 5,450 and 1,531 tests). Diff-aware statement maps account for exactly
+  1,493 covered / 1,577 total unit statements removed and 1,573 covered / 1,577 total
+  combined statements removed, with no surviving coverage loss and no offsetting gains.
+  Renamed generation capability statements, narrowed base lists and the simplified claim
+  condition are explicitly mapped. Existing canonical-order and document-read tests were
+  extended to retain direct evidence for `content_identity` and `stat_document`, whose
+  covering Raw tests left. No new duplicate test case or production-code change was needed.
+- The exact floor is `floor(10000 * 3729 / 3873) / 100 = 96.28`, raised from 95.81.
+  All modified source files have 100% unit coverage except PostgreSQL hierarchy.py, measured
+  with contracts: its sole missed line is 661, the unchanged claim-vanished defensive
+  `RuntimeError` (base line 762, already missed). The transaction retains the conflicting
+  claim row lock, so its subsequent SELECT cannot lose that row through a concurrent delete.
+  This specific preexisting unreachable branch is submitted for the independent verifier's
+  judgment; no exclusion or mock test was added to conceal it.
+- Required checks passed: all 12 Python static commands (14 import contracts, no radon
+  findings, no dead-code/complexity findings, duplication guard green), docs, 14 error-code
+  tests, script compilation, 18 standalone contract tests and 12 integration tests. The
+  README-only frontend gate passed check, 215 unit tests, lint, build and 36 e2e tests.
+  All exact closing greps have no matches with the task's explicit exclusions; nightly YAML
+  has the exact single job, triggers, label gate and pinned steps. No acceptance test remains;
+  only its Makefile dry-run was inspected. Source hashes remained frozen during coverage.
+- Evidence: `/tmp/huron-m14-i1/after.json`, `after-contract.json`, and the two
+  `coverage-evidence*.json` files preserve reusable measurements and per-statement mappings.
+  Full gate receipts and final configured coverage run are in that directory's report and
+  `full-gate-output.txt`. Task remains pending for independent verification.
+- The configured final unit gate passed 1,175 tests at the new 96.28 floor;
+  `after-final.json` exactly matches the measured unit report's executed/missing lines.
+  All task validation processes exited. The preexisting Vite server (PID 66410, started
+  2026-10-13) was left untouched; process provenance is in the implementation report.
+
+### M1.4 execution notes — browser diagnosis after verification attempt 2 (2026-10-25)
+
+- Verification attempt 2 remains FAIL: 31 browser cases passed and five failed; all
+  Python, static, documentation and other frontend checks passed. Original evidence
+  is preserved in `/tmp/huron-m14-v2/`; no failed case was retried during diagnosis.
+- Independent macOS lifecycle evidence identifies an interrupted test environment.
+  The unified power log records `kIOMessageSystemWillSleep` at 07:38:03.735 MDT;
+  all three `ERR_NETWORK_IO_SUSPENDED` artifacts were created at 07:38:04. Idle
+  Sleep ran from 07:38:33 to 07:38:57; the namespace timeout and admin-navigation
+  timeout artifacts were created at 07:38:57 and 07:38:58. The admin refusal
+  snapshot is expected content for the test's final HTTP 403 assertion. Current
+  test names were checked because emitted source locations were inconsistent.
+- Diagnosis evidence and ranked falsifiable alternatives are recorded in
+  `/tmp/huron-m14-fix2/diagnosis.md`, with original artifact timestamps, unified
+  logs and `pmset` logs beside it. No application, test, timeout, assertion or
+  configuration change was justified or made. Deliberately putting the owner's
+  machine to sleep was not used as a reproduction experiment.
+- The single fresh complete gate passed with process-scoped `caffeinate -i`:
+  all 12 static commands, docs, 14 error-contract tests, script compilation, three
+  SDK tests, 1,175 unit tests, 18 contract tests, 12 integration tests, and 1,193
+  combined unit/contract tests; frontend check, 215 unit tests, lint, build and all
+  36 browser cases passed. Exact closing greps/YAML checks and `git diff --check`
+  passed. Unit coverage remains 3,729/3,873 (96.28%); combined remains 3,863/3,873.
+  Every measured source hash and executed/missing coverage line matches attempt 2.
+- Fresh OS logs show no sleep during validation; captured assertions prove the
+  temporary sleep prevention was active. The browser suite ran once, with no test
+  retries. All test-owned processes and assertions exited; ports 4173 and 8189
+  have no listeners. The owner stack and preexisting Vite PID 66410 remain untouched.
+  Exact outputs and report are in `/tmp/huron-m14-fix2/`. The environmental control
+  should also cover independent verification. M1.4 remains pending that verification;
+  attempt 3 has not been used.
+
+## Escalation
+
+### M1.4 — verification cap reached (2026-10-25)
+
+M1.4 is **incomplete and uncommitted**. M1.1–M1.3 are committed through
+`1519c98`; M1.5–M4 have not started. The third verifier returned FAIL, so the
+invoked `.claude/commands/implement-markdown.md` iteration cap stops execution.
+No fourth fix pass, subsequent task, or M1.4 commit was attempted.
+
+Verification reports:
+
+1. `/tmp/huron-m14-v1-recovery/report.md`: four small cleanup findings. All
+   gates passed; all four findings were corrected in fix pass 1. This report
+   recovers the interrupted original verification attempt, not an extra attempt.
+2. `/tmp/huron-m14-v2/report.md`: five browser failures while macOS entered
+   sleep. `/tmp/huron-m14-fix2/diagnosis.md` correlates the OS sleep notification
+   with all three network-suspended artifacts and wake with the two timeout
+   artifacts. One fresh full gate under process-scoped `caffeinate -i` passed
+   without application, test, assertion, timeout or threshold changes.
+3. `/tmp/huron-m14-v3/report.md`: one small remaining cleanup issue, explicitly
+   classified as fixable within the current plan: three empty section headings
+   for deleted `dataset_raw_writer`, `project_intake`, and
+   `session_overseer/session_owner` at
+   `tests/unit/test_authorization_guards.py:411,414,417`.
+
+The final complete gate is green: all static checks and docs; 1,175 unit tests,
+18 contract tests, 12 integration tests, 1,193 combined unit/contract tests;
+215 frontend unit tests and 36 browser tests. Unit coverage is 3,729/3,873
+(96.28%); combined is 3,863/3,873. Independent diff mapping establishes no
+surviving coverage losses or offsetting gains. The approved narrow duplication
+regrouping is verified; the guard reports 89 clones in 30 groups. The only
+review finding is the three orphaned comments. All owned validation processes
+have stopped; the owner's stack and preexisting Vite were untouched.
+
+The working tree builds and its automated gate passes, so no revert or isolation
+is necessary. The partial M1.4 source/test/document changes, staged deletions and
+workflow rename remain intact and uncommitted; unrelated workflow and research
+changes remain preserved. The task's status remains pending. The preceding
+fix-pass note that attempt 3 was unused describes that earlier checkpoint and
+is superseded by this escalation.
+
+Diagnosis: the prescribed cap was exhausted by incremental cleanup findings and
+an independently evidenced environmental interruption. There is no demonstrated
+architectural defect, ambiguous business contract or irreducible complexity.
+The concrete remaining correction is deletion of three stale test comments.
+The workflow's mandatory architectural escalation is procedural; this report
+does not invent a design defect to justify it.
+
+Questions before resumption: does review confirm that the three headings are
+purely obsolete and require no retained behavior, and how should the execution
+plan resume after this exhausted verification cycle? No scientific-domain or
+runtime design decision has been identified as unresolved.
+
+Required next prompt invocation (Codex reads this command file; it is not a shell
+executable):
+
+```text
+./.claude/commands/architectural-review.md tests/unit/test_authorization_guards.py RAW_LAKE_M14_ARCHITECTURAL_REVIEW.md "Assess the remaining retired-guard comment cleanup and whether any actual architectural issue exists; preserve unrelated work" RAW_LAKE_IMPLEMENTATION_PLAN.md#escalation
+```
+
+After that review, the workflow recommends a focused companion plan rather than
+overwriting the existing partially delivered plan:
+
+```text
+./.claude/commands/design-plan.md tests/unit/test_authorization_guards.py RAW_LAKE_M14_RECOVERY_DESIGN.md RAW_LAKE_M14_RECOVERY_PLAN.md "Resolve the capped M1.4 cleanup and specify resumption of RAW_LAKE_IMPLEMENTATION_PLAN.md without reopening settled domain decisions" design/roadmap.html "RAW_LAKE_IMPLEMENTATION_PLAN.md#escalation; RAW_LAKE_M14_ARCHITECTURAL_REVIEW.md"
+```
+
+### M1.4 owner-authorized completion (2026-10-25)
+
+The owner explicitly authorized fixing the three stale test headings and moving
+on to M1.5 after the capped review. An Astra/medium cleanup agent removed exactly
+those headings and trailing whitespace; AST comparison confirms executable test
+code is unchanged, and `git diff --check` passes. Parent independently confirmed
+the three retired headings are absent. The final verifier's full green gate and
+coverage evidence remain applicable: no executable source/test statement changed.
+M1.4 is complete under this explicit owner-authorized resolution; the historical
+FAIL reports above remain preserved rather than relabeled PASS. The escalation
+stop and proposed review/replanning commands are superseded by this instruction.

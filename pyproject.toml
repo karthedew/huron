@@ -102,7 +102,6 @@ convention = "google"
 "src/huron/core/security/sessions.py" = ["N818"]
 "src/huron/core/foundation/errors.py" = ["N818"]
 "src/huron/core/catalog/errors.py" = ["N818"]
-"src/huron/core/raw/errors.py" = ["N818"]
 "src/huron/core/catalog/layers.py" = ["N818"]
 # The role/rbac error names intentionally mirror their stable API codes.
 "src/huron/core/security/roles.py" = ["N818"]
@@ -174,7 +173,7 @@ layers = ["huron.applications", "huron.core", "huron.schema"]
 name = "every core sibling has an explicit owner"
 type = "layers"
 containers = ["huron.core"]
-layers = ["foundation:security:catalog:raw:metastore:rawstore"]
+layers = ["foundation:security:catalog:metastore:rawstore"]
 exhaustive = true
 
 [[tool.importlinter.contracts]]
@@ -188,7 +187,7 @@ name = "foundation has no Huron dependencies"
 type = "forbidden"
 source_modules = ["huron.core.foundation"]
 forbidden_modules = [
-    "huron.core.security", "huron.core.catalog", "huron.core.raw", "huron.core.metastore",
+    "huron.core.security", "huron.core.catalog", "huron.core.metastore",
     "huron.core.rawstore", "huron.schema", "huron.applications",
 ]
 
@@ -198,7 +197,7 @@ type = "forbidden"
 allow_indirect_imports = true
 source_modules = ["huron.core.security"]
 forbidden_modules = [
-    "huron.core.catalog", "huron.core.raw", "huron.core.metastore", "huron.core.rawstore",
+    "huron.core.catalog", "huron.core.metastore", "huron.core.rawstore",
     "huron.schema",
 ]
 
@@ -208,18 +207,11 @@ type = "forbidden"
 allow_indirect_imports = true
 source_modules = ["huron.core.catalog"]
 forbidden_modules = [
-    "huron.core.raw", "huron.core.metastore", "huron.core.rawstore", "huron.schema",
+    "huron.core.metastore", "huron.core.rawstore", "huron.schema",
 ]
 
 [[tool.importlinter.contracts]]
-name = "raw uses catalog security foundation and schema only"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["huron.core.raw"]
-forbidden_modules = ["huron.core.metastore", "huron.core.rawstore"]
-
-[[tool.importlinter.contracts]]
-name = "metastore uses catalog raw security and foundation only"
+name = "metastore uses catalog security and foundation only"
 type = "forbidden"
 allow_indirect_imports = true
 source_modules = ["huron.core.metastore"]
@@ -230,7 +222,7 @@ name = "rawstore uses schema only"
 type = "forbidden"
 source_modules = ["huron.core.rawstore"]
 forbidden_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.catalog", "huron.core.raw",
+    "huron.core.foundation", "huron.core.security", "huron.core.catalog",
     "huron.core.metastore",
 ]
 
@@ -239,7 +231,7 @@ forbidden_modules = [
 name = "domains exclude frameworks and infrastructure libraries even indirectly"
 type = "forbidden"
 source_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.catalog", "huron.core.raw",
+    "huron.core.foundation", "huron.core.security", "huron.core.catalog",
 ]
 forbidden_modules = [
     "fastapi",
@@ -265,7 +257,7 @@ forbidden_modules = [
 name = "only security performs credential HTTP directly"
 type = "forbidden"
 allow_indirect_imports = true
-source_modules = ["huron.core.foundation", "huron.core.catalog", "huron.core.raw"]
+source_modules = ["huron.core.foundation", "huron.core.catalog"]
 forbidden_modules = ["httpx"]
 
 # The authorization package is entered through its public surface. Its five
@@ -284,7 +276,7 @@ forbidden_modules = ["huron.applications.api.authorization.*"]
 name = "domains never depend on adapters even indirectly"
 type = "forbidden"
 source_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.catalog", "huron.core.raw",
+    "huron.core.foundation", "huron.core.security", "huron.core.catalog",
 ]
 forbidden_modules = ["huron.core.metastore", "huron.core.rawstore"]
 
@@ -300,12 +292,6 @@ type = "protected"
 protected_modules = ["huron.core.security._impl"]
 allowed_importers = ["huron.core.security"]
 
-[[tool.importlinter.contracts]]
-name = "raw implementations are private to their owner"
-type = "protected"
-protected_modules = ["huron.core.raw._impl"]
-allowed_importers = ["huron.core.raw"]
-
 [tool.ty.src]
 include = ["src"]
 
@@ -314,5 +300,5 @@ include = ["src"]
 # climbs. Lower it only when the whole drop comes from deleted covered code or
 # from new PostgreSQL adapter code the contract suite covers in full, never to
 # admit uncovered code. New or touched files are covered in full.
-fail_under = 95.81
+fail_under = 96.28
 precision = 2

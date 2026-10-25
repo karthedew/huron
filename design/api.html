@@ -244,35 +244,19 @@ but no shipped route raises it yet.</p>
 
 <table id="error-codes">
 <tr><th>Code</th><th>HTTP status</th><th>Live/reserved</th><th>Meaning</th></tr>
-<tr><td>EMPTY_REVISION</td><td>400</td><td>live</td><td>manifest declares no files</td></tr>
-<tr><td>PATH_RULE_VIOLATION</td><td>400</td><td>live</td><td>a slug or path breaks a storage-layout rule not covered by a more specific code below</td></tr>
-<tr><td>PATH_OUTSIDE_PAYLOAD</td><td>400</td><td>live</td><td>manifest path does not begin with <code>payload/</code></td></tr>
-<tr><td>PATH_NOT_NFC</td><td>400</td><td>live</td><td>manifest path is not Unicode NFC-normalized</td></tr>
-<tr><td>PATH_TOO_LONG</td><td>400</td><td>live</td><td>manifest path exceeds 1024 UTF-8 bytes</td></tr>
-<tr><td>PATH_TRAVERSAL</td><td>400</td><td>live</td><td>manifest path contains an empty, <code>.</code> or <code>..</code> segment</td></tr>
-<tr><td>PATH_CONTROL_CHARS</td><td>400</td><td>live</td><td>manifest path contains a control character</td></tr>
-<tr><td>PATH_SEPARATOR</td><td>400</td><td>live</td><td>manifest path contains a backslash</td></tr>
+<tr><td>PATH_RULE_VIOLATION</td><td>400</td><td>live</td><td>a slug or path breaks a storage-layout rule</td></tr>
 <tr><td>IDEMPOTENCY_KEY_REUSED</td><td>409</td><td>live</td><td>same idempotency key, different request body</td></tr>
 <tr><td>SLUG_IMMUTABLE</td><td>409</td><td>live</td><td><code>PATCH</code> tried to change a slug</td></tr>
-<tr><td>PATH_COLLISION</td><td>409</td><td>live</td><td>two manifest entries claim one path</td></tr>
-<tr><td>ILLEGAL_INGEST_TRANSITION</td><td>409</td><td>live</td><td>ingest session state machine refused the transition</td></tr>
 <tr><td>LAYER_WORKFLOW_VIOLATION</td><td>409</td><td>live</td><td>unknown layer, or a derivation the workflow forbids</td></tr>
 <tr><td>LAYER_WRITE_FORBIDDEN</td><td>403</td><td>live</td><td>this principal kind may never write this layer</td></tr>
 <tr><td>PRECONDITION_FAILED</td><td>412</td><td>live</td><td><code>If-Match</code> version did not match; the header is <code>"N"</code>, <code>W/"N"</code>, or a bare integer (a legacy form kept for existing callers), and any other value is <code>REQUEST_INVALID</code></td></tr>
-<tr><td>FILE_TOO_LARGE</td><td>413</td><td>live</td><td>one file exceeds the configured limit</td></tr>
-<tr><td>TOO_MANY_FILES</td><td>413</td><td>live</td><td>revision exceeds the file-count limit</td></tr>
-<tr><td>REVISION_TOO_LARGE</td><td>413</td><td>live</td><td>revision exceeds the byte limit</td></tr>
 <tr><td>PROJECTION_UNAVAILABLE</td><td>503</td><td>live</td><td>the search projection is not configured or is down</td></tr>
-<tr><td>MANIFEST_MISMATCH</td><td>400</td><td>live</td><td>uploaded content does not match the declared manifest (§3 ingest)</td></tr>
 <tr><td>PROFILE_UNKNOWN</td><td>400</td><td>reserved</td><td>unknown dataset profile (§2 dataset profiles)</td></tr>
-<tr><td>INGEST_SESSION_EXPIRED</td><td>409</td><td>live</td><td>ingest session passed its idle TTL, or is terminal and cannot be renewed (§3 ingest)</td></tr>
-<tr><td>DATASET_LOCKED</td><td>409</td><td>live</td><td>dataset is locked against concurrent ingest (§3 ingest)</td></tr>
 <tr><td>LAYER_NOT_MATERIALIZED</td><td>409</td><td>reserved</td><td>referenced layer has not been materialized (§4 layers)</td></tr>
 <tr><td>SNAPSHOT_NOT_PUBLISHED</td><td>409</td><td>reserved</td><td>referenced snapshot has not been published (§4 snapshots)</td></tr>
 <tr><td>PRODUCT_VERSION_EXISTS</td><td>409</td><td>reserved</td><td>product version already published (§4 products)</td></tr>
 <tr><td>PRODUCT_STALE_INPUT</td><td>409</td><td>reserved</td><td>product input is stale relative to its pinned sources (§4 products)</td></tr>
 <tr><td>VALIDATION_REQUIRED</td><td>409</td><td>reserved</td><td>validation evidence is required before publishing (§4 validation)</td></tr>
-<tr><td>CONTRACT_MISMATCH</td><td>409</td><td>live</td><td>payload violates its registered schema contract (§6 schema registry) — in P2 the registered contract is the packaged <code>metadata-v1.json</code></td></tr>
 <tr><td>RETENTION_HOLD_PRESENT</td><td>409</td><td>reserved</td><td>a retention hold blocks the operation (§6 retention)</td></tr>
 <tr><td>VALIDATION_FAILED</td><td>422</td><td>reserved</td><td>validation evidence did not pass (§4 validation)</td></tr>
 <tr><td>GRANT_EXPIRED</td><td>401</td><td>reserved</td><td>data-access grant passed its expiry (§5 data-access grants)</td></tr>
@@ -313,25 +297,6 @@ the service can raise has exactly one row here. <code>tests/unit/test_error_cont
 asserts the bijection and the status column in both directions; a code added to either side without
 the other fails CI.</p>
 
-<h3 id="planned-p3-error-codes">Planned P3 error codes</h3>
-<p>These codes describe the planned P3 contract. They have no runtime exception classes yet
-and are separate from the current live/reserved error contract above.</p>
-
-<table>
-<tr><th>Code</th><th>HTTP status</th><th>Status</th><th>Meaning</th></tr>
-<tr><td>INGEST_RECOVERY_IN_PROGRESS</td><td>409</td><td>planned P3</td><td>RECOVERING retains the dataset/number claim; retry cannot take over</td></tr>
-<tr><td>RAW_REMOVAL_PENDING</td><td>409</td><td>planned P3</td><td>new read selects content covered by a pending removal intent</td></tr>
-<tr><td>RAW_CONTENT_REMOVED</td><td>410</td><td>planned P3</td><td>authorized/discoverable content was lawfully removed</td></tr>
-<tr><td>REVISION_DEGRADED</td><td>409</td><td>planned P3</td><td>new payload read blocked by revision integrity; documents require independent trust</td></tr>
-</table>
-
-<h2 id="p3-read-admission">P3 integrity read admission (planned)</h2>
-<p>Core resolves discovery and authorization before reporting integrity/removal status; undiscoverable
-resources stay 404. DEGRADED blocks all new payload downloads. Pending purge blocks payload and manifest;
-pending expiry blocks selected files, permitting unselected retained content. Already-authorized streams
-may finish. An incomplete amendment history never restores broader classification; trusted metadata may
-be shown only when effective access is independently established. Latest revision never silently falls
-back to an older healthy revision. See <a href="layer-raw.html#sweeper">Raw integrity services</a>.</p>
 </main>
 </body>
 </html>

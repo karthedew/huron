@@ -8,7 +8,7 @@ reason or reassuring for no reason.
 | `unit` | Are rules and workflows correct? | injected doubles and temporary local filesystems | milliseconds to seconds |
 | `contract` | Does an adapter honour its Protocol? | Docker (testcontainers) | seconds |
 | `integration` | Do the pieces work together? | Docker (PostgreSQL testcontainers) and temporary POSIX storage | seconds to minutes |
-| `acceptance` | Does a phase gate hold end to end? | ≥ 25 GiB free disk | minutes |
+| `acceptance` | Does a phase gate hold end to end? | — | minutes |
 
 `pyproject.toml` sets `addopts = "-m unit --strict-markers"`, so:
 
@@ -70,7 +70,7 @@ are written by hand in two files and nothing else keeps them in sync.
 
 ## Integration
 
-`tests/integration/` exercises catalog creation/descriptions and Raw upload
+`tests/integration/` exercises catalog creation/descriptions
 across real PostgreSQL and POSIX storage, including application restarts. Like the
 contract suite, it needs a Docker daemon.
 
@@ -82,29 +82,7 @@ Run every test. A deselected case or no collected tests is not evidence of an in
 
 ## Acceptance
 
-Proves a phase gate holds end to end, at real sizes, over a real socket — the one suite too slow
-and too disk-hungry to run on every push. `tests/acceptance/test_raw_ingest_gate.py` round-trips a
-9 GiB file through an interrupted, resumed multipart upload and a streamed download, driven by
-`httpx` against the real app over a loopback `uvicorn` socket (`memory_stores()` for the hierarchy,
-the real `PosixRawStore` for storage) rather than `TestClient`, which would materialize the whole
-response body in memory.
-
-```bash
-make test-acceptance       # needs ≥ 25 GiB free disk
-uv run pytest -m acceptance
-```
-
-`.github/workflows/acceptance.yml` runs it nightly (`workflow_dispatch` also triggers it by hand)
-on a runner with the disk to spare, and records a `df -h .` receipt in the job log before the test
-runs.
-
-The test refuses to start below 25 GiB free on its temporary-data filesystem.
-Its sparse source occupies negligible blocks, but the 9 GiB upload and independent
-9 GiB completion candidate coexist. The remaining 7 GiB allows the default 1 GiB
-completion reserve plus filesystem overhead and other local consumers. This
-preflight does not reserve space against concurrent writers; concurrent acceptance
-runs require additional capacity. With `--junitxml=receipt.xml`, the test records
-the completion and commit request durations as suite properties.
+No acceptance test is currently defined. The Raw lake large-file gate remains planned.
 
 ## Rules
 

@@ -1,13 +1,7 @@
 {
-  "clone_groups": 41,
+  "clone_groups": 30,
   "clone_threshold": 0.8,
   "groups": [
-    {
-      "files": [
-        "src/huron/applications/api/authorization/guards.py"
-      ],
-      "size": 2
-    },
     {
       "files": [
         "src/huron/applications/api/authorization/guards.py"
@@ -71,12 +65,6 @@
     },
     {
       "files": [
-        "src/huron/applications/api/routes/v1/endpoints/ingest_sessions.py"
-      ],
-      "size": 3
-    },
-    {
-      "files": [
         "src/huron/applications/api/routes/v1/endpoints/policies.py"
       ],
       "size": 3
@@ -97,10 +85,9 @@
     },
     {
       "files": [
-        "src/huron/core/catalog/_impl/creation.py",
-        "src/huron/core/raw/_impl/ingest.py"
+        "src/huron/core/catalog/_impl/creation.py"
       ],
-      "size": 4
+      "size": 3
     },
     {
       "files": [
@@ -140,55 +127,14 @@
     },
     {
       "files": [
-        "src/huron/core/metastore/hierarchy.py"
-      ],
-      "size": 2
-    },
-    {
-      "files": [
         "src/huron/core/metastore/hierarchy.py",
-        "src/huron/core/metastore/ingest.py"
-      ],
-      "size": 2
-    },
-    {
-      "files": [
-        "src/huron/core/metastore/hierarchy.py",
-        "src/huron/core/metastore/ingest.py",
         "src/huron/core/metastore/principals.py"
       ],
-      "size": 5
+      "size": 4
     },
     {
       "files": [
         "src/huron/core/metastore/hierarchy.py",
-        "src/huron/core/metastore/ingest.py",
-        "src/huron/core/metastore/rbac.py"
-      ],
-      "size": 12
-    },
-    {
-      "files": [
-        "src/huron/core/metastore/hierarchy.py",
-        "src/huron/core/metastore/rbac.py"
-      ],
-      "size": 2
-    },
-    {
-      "files": [
-        "src/huron/core/metastore/ingest.py"
-      ],
-      "size": 2
-    },
-    {
-      "files": [
-        "src/huron/core/metastore/ingest.py"
-      ],
-      "size": 2
-    },
-    {
-      "files": [
-        "src/huron/core/metastore/ingest.py",
         "src/huron/core/metastore/rbac.py"
       ],
       "size": 2
@@ -220,29 +166,9 @@
     },
     {
       "files": [
-        "src/huron/core/raw/_impl/ingest.py"
+        "src/huron/core/metastore/rbac.py"
       ],
-      "size": 4
-    },
-    {
-      "files": [
-        "src/huron/core/raw/_impl/ingestion.py"
-      ],
-      "size": 3
-    },
-    {
-      "files": [
-        "src/huron/core/raw/_impl/ingestion.py",
-        "src/huron/core/security/_impl/identity.py"
-      ],
-      "size": 2
-    },
-    {
-      "files": [
-        "src/huron/core/raw/paths.py",
-        "src/huron/core/rawstore/store.py"
-      ],
-      "size": 2
+      "size": 6
     },
     {
       "files": [
@@ -280,5 +206,5 @@
     }
   ],
   "pyscn_version": "1.31.1",
-  "total_clones": 123
+  "total_clones": 89
 }
