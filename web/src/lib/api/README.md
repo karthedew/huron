@@ -16,17 +16,8 @@ endpoint; storage credentials and OAuth configuration are never included.
 
 Components consume typed page/action data. Scientific synthetic examples continue
 to import through `$api/client`; only `client.ts` may import `fixtures.ts`.
-The Raw ingest wizard uses typed browser functions in `$api/client` to call the
-authenticated `/ingestion/api` bridge. It transfers actual file parts, verifies
-checksums and publishes immutable revisions through the existing Huron Raw core.
-The server checks current organization membership and native Polaris RBAC grants
-on each operation, then sends a short-lived request-bound delegation to the Raw
-API. Browser DTOs never contain delegation credentials. A committed revision is
-registered in Polaris with a stable Huron dataset ID; pending registration is
-retryable without publishing a second revision. Managed Raw detail reads the
-revision list and manifests through the same authorization boundary. External
-generic-table registrations retain metadata-only behavior; unknown storage formats
-remain Generic.
+Polaris generic-table registrations are metadata-only, and every generic table
+renders as Generic whatever its storage format or properties.
 Legacy scientific fixture routes are not available in beta navigation and redirect
 to live Browse.
 
@@ -44,6 +35,5 @@ infer scientific publication/lineage guarantees from Polaris repository registra
 Organization roots map one-to-one to configured Polaris realms. The server selects an
 accessible organization before constructing the realm-specific client; public organization
 DTOs carry the realm name, never connection credentials. Catalog names are unique only
-inside a realm. Generated Browse URLs and every Raw request include the organization,
-and a frozen Raw target retains it through retries. Account login is global; credentials,
-grant discovery, catalog membership and Raw backend identities remain realm-scoped.
+inside a realm. Generated Browse URLs include the organization. Account login is global;
+credentials, grant discovery and catalog membership remain realm-scoped.

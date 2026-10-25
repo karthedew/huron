@@ -7,7 +7,7 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
-		"start": "node --env-file-if-exists=.env scripts/start.mjs",
+		"start": "node --env-file-if-exists=.env build/index.js",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run",
@@ -36,7 +36,6 @@
 	},
 	"dependencies": {
 		"@lucide/svelte": "^1.37.0",
-		"hash-wasm": "^4.12.0",
 		"unicode-case-folding": "^1.1.1"
 	}
 }

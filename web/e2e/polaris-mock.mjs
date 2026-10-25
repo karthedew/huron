@@ -110,10 +110,10 @@ function realmHandler(realm) {
 		icebergTables.set(key('huron-local', ['science'], 'observations'), icebergFixture);
 		genericTables.set(key('huron-local', ['science'], 'source_files'), {
 			name: 'source_files',
-			format: 'raw',
+			format: 'parquet',
 			'base-location': 'file:///tmp/huron-browser-test/raw/',
 			doc: 'Protocol-test source collection',
-			properties: { 'huron.dataset-type': 'raw', 'huron.layer': 'bronze' }
+			properties: { 'huron.layer': 'bronze' }
 		});
 		genericTables.set(key('huron-local', ['science'], 'external_delta'), {
 			name: 'external_delta',
@@ -583,17 +583,9 @@ function realmHandler(realm) {
 }
 
 const realms = new Map(
-	[
-		'POLARIS',
-		'E2E_EMPTY',
-		'E2E_ALPHA',
-		'E2E_BETA',
-		'E2E_ORGADMIN',
-		'E2E_TOOLBAR',
-		'E2E_RETRY',
-		'E2E_RAW_ALPHA',
-		'E2E_RAW_BETA'
-	].map((realm) => [realm, realmHandler(realm)])
+	['POLARIS', 'E2E_EMPTY', 'E2E_ALPHA', 'E2E_BETA', 'E2E_ORGADMIN', 'E2E_TOOLBAR', 'E2E_RETRY'].map(
+		(realm) => [realm, realmHandler(realm)]
+	)
 );
 const server = createServer((request, response) => {
 	if (request.url === '/health') {

@@ -1,9 +1,7 @@
 /**
  * THE SEAM. The whole app codes against this module and nothing else.
  *
- * Legacy scientific views read from `fixtures.ts`. Raw ingestion uses the authenticated
- * same-origin API below. Live Raw data never falls back to fixtures.
- * See ./README.md.
+ * Legacy scientific views read from `fixtures.ts`. See ./README.md.
  */
 
 import * as fixtures from './fixtures';
@@ -11,7 +9,6 @@ import { NotFound } from './types';
 import type {
 	ApiKey,
 	Dataset,
-	IngestJob,
 	Organization,
 	OrganizationMember,
 	Page,
@@ -48,10 +45,6 @@ export async function listDatasets(orgSlug: string, projectSlug: string): Promis
 	return onePage(
 		fixtures.datasets.filter((d) => d.orgSlug === orgSlug && d.projectSlug === projectSlug)
 	);
-}
-
-export async function listIngestJobs(): Promise<Page<IngestJob>> {
-	return onePage(fixtures.ingestJobs);
 }
 
 export async function getDataset(
@@ -99,17 +92,3 @@ export async function listProjectPermissions(
 }
 
 export { NotFound };
-
-export {
-	RawApiError,
-	browseRawTargets,
-	beginRawUpload,
-	getRawUpload,
-	uploadRawPart,
-	completeRawFile,
-	operateRawUpload,
-	commitRawUpload,
-	registerRawUpload,
-	listRawRevisions,
-	rawFileDownloadUrl
-} from './raw-ingestion-client';

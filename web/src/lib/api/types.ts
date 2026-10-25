@@ -1,6 +1,6 @@
 /**
  * Legacy scientific-view types remain hand-written against the design record.
- * Live Polaris, organization and Raw bridge contracts are re-exported below.
+ * Live Polaris and organization contracts are re-exported below.
  * See ./README.md for each API seam's delivery status.
  */
 
@@ -83,17 +83,6 @@ export interface ApiKey {
 	createdAt: string;
 	lastUsedAt: string | null;
 	expiresAt: string | null;
-}
-
-export interface IngestJob {
-	id: string;
-	organization: string;
-	project: string;
-	dataset: string;
-	release: string;
-	layer: 'raw' | 'bronze';
-	status: 'queued' | 'running' | 'succeeded' | 'failed';
-	createdAt: string;
 }
 
 export interface RoleBinding {
@@ -186,18 +175,3 @@ export type {
 	PolarisDatasetPolicies,
 	PolarisDatasetGovernance
 } from './polaris-governance-types';
-export type {
-	RawTarget,
-	RawManifestFile,
-	RawRevisionMetadata,
-	RawIngestFile,
-	RawRegistration,
-	RawIngestSession,
-	RawRevision,
-	RawCommitReceipt,
-	RawRevisionPage,
-	RawRevisionManifest,
-	RawTargetBranch,
-	RawInspection,
-	RawErrorResponse
-} from './raw-ingestion-types';

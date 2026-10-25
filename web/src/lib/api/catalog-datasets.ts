@@ -55,8 +55,8 @@ export function datasetLayer(namespace: string[], properties?: PolarisProperties
 	};
 }
 
-export function datasetTypeLabel(dataset: { format?: string; isRaw?: boolean | null }): string {
-	if (dataset.format === 'raw') return dataset.isRaw === true ? 'Raw files' : 'Generic';
+export function datasetTypeLabel(dataset: { format?: string }): 'Generic' | 'Iceberg' | 'Icechunk' {
+	if (dataset.format === 'raw') return 'Generic';
 	if (dataset.format === 'iceberg') return 'Iceberg';
 	return 'Icechunk';
 }

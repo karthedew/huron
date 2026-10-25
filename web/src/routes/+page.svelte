@@ -18,7 +18,7 @@
 		</p>
 		<h1>{data.organization?.name ?? 'Your organizations'}</h1>
 		<p class="mt-2 max-w-2xl text-sm text-app-muted">
-			Browse domain catalogs and their Raw collections, Iceberg tables, and Icechunk arrays.
+			Browse domain catalogs and their Iceberg tables, Icechunk arrays and generic tables.
 		</p>
 	</div>
 	{#if data.user?.isAdmin}

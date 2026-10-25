@@ -63,8 +63,8 @@ function directory(grants: PolarisGrant[]) {
 }
 
 describe('dataset-scoped Polaris access facts', () => {
-	it('reads Raw permission facts through the caller’s generic-table endpoint and reports unsupported policies', async () => {
-		const own = client(() => Response.json({ table: { name: 'energy', format: 'raw' } }));
+	it('reads generic-table permission facts through the caller’s generic-table endpoint and reports unsupported policies', async () => {
+		const own = client(() => Response.json({ table: { name: 'energy', format: 'parquet' } }));
 		const facts = directory([{ type: 'catalog', privilege: 'TABLE_READ_DATA' }]);
 		const data = await loadDatasetGovernance(
 			own.api,
@@ -79,11 +79,11 @@ describe('dataset-scoped Polaris access facts', () => {
 		expect(data.policies.message).toContain('generic-table assets');
 	});
 
-	it('rechecks Raw discovery after permission lookup so revoked generic metadata is not disclosed', async () => {
+	it('rechecks generic-table discovery after permission lookup so revoked generic metadata is not disclosed', async () => {
 		let reads = 0;
 		const own = client(() =>
 			++reads === 1
-				? Response.json({ table: { name: 'energy', format: 'raw' } })
+				? Response.json({ table: { name: 'energy', format: 'parquet' } })
 				: new Response(null, { status: 403 })
 		);
 		const facts = directory([{ type: 'catalog', privilege: 'TABLE_READ_DATA' }]);

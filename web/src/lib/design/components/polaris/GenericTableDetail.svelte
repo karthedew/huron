@@ -5,16 +5,13 @@
 	import type { PolarisBrowseData, PolarisRawTable } from '$api/types';
 	import { datasetLayer, datasetTypeLabel } from '$api/catalog-datasets';
 	import DatasetGovernance from './DatasetGovernance.svelte';
-	import RawRevisionBrowser from '../ingestion/RawRevisionBrowser.svelte';
 
 	let {
 		data,
-		organization,
 		table,
 		href
 	}: {
 		data: PolarisBrowseData;
-		organization: string;
 		table: PolarisRawTable;
 		href: (changes: Record<string, string | null>) => '/browse' | `/browse?${string}`;
 	} = $props();
@@ -31,21 +28,6 @@
 	);
 	const layer = $derived(datasetLayer(data.selected.namespace, table.properties));
 	const description = $derived(table.doc || table.properties.description || '');
-	const managed = $derived(data.rawInspection?.state === 'managed' ? data.rawInspection : null);
-	const target = $derived({
-		organization,
-		catalog: data.selected.catalog,
-		namespace: data.selected.namespace,
-		name: table.name
-	});
-	const ingestQuery = $derived(
-		new URLSearchParams({
-			organization,
-			catalog: target.catalog,
-			namespace: JSON.stringify(target.namespace),
-			table: target.name
-		})
-	);
 </script>
 
 <div class="min-w-0">
@@ -56,11 +38,6 @@
 			class="shrink-0 rounded border border-app-line px-2 py-0.5 text-[10px] font-medium text-app-muted"
 			>{datasetTypeLabel(table)}</span
 		>
-		{#if managed}<a
-				href={resolve(`/ingestion?${ingestQuery}`)}
-				class="shrink-0 rounded border border-app-line px-3 py-1.5 text-xs font-medium text-brand-strong"
-				>Upload revision</a
-			>{/if}
 	</header>
 	<nav
 		aria-label="Dataset details"
@@ -100,9 +77,8 @@
 				</div>
 			</dl>
 			<p class="mt-5 border-t border-app-line pt-4 text-xs leading-5 text-app-muted">
-				{managed
-					? 'Huron manages immutable Raw revisions and verified file manifests for this Polaris dataset.'
-					: 'This page shows the registered dataset metadata. Registration does not verify or upload the files at its storage location.'}
+				This page shows the registered dataset metadata. Registration does not verify or upload the
+				files at its storage location.
 			</p>
 			{#if Object.keys(table.properties).length}<details class="mt-5">
 					<summary class="text-xs font-medium">Catalog properties</summary>
@@ -122,8 +98,6 @@
 				kind={active}
 				{href}
 			/>
-		{:else if managed && (active === 'files' || active === 'history')}
-			<RawRevisionBrowser inspection={managed} {target} history={active === 'history'} {href} />
 		{:else if active === 'files'}
 			<h2 class="m-0 border-0 p-0 text-sm font-semibold">Files and manifests</h2>
 			<p class="mt-3 max-w-2xl text-sm leading-6 text-app-muted">
@@ -132,13 +106,9 @@
 			</p>
 			{#if table.location}<p class="mt-4 break-all font-mono text-xs">{table.location}</p>{/if}
 		{:else if active === 'history'}
-			<h2 class="m-0 border-0 p-0 text-sm font-semibold">
-				{table.isRaw ? 'Revision history' : 'Version history'}
-			</h2>
+			<h2 class="m-0 border-0 p-0 text-sm font-semibold">Version history</h2>
 			<p class="mt-3 max-w-2xl text-sm leading-6 text-app-muted">
-				{table.isRaw
-					? 'Raw revision history is not connected to this catalog registration. No immutable upload revision or publication receipt is available here.'
-					: 'Version history is not connected to this generic catalog registration.'}
+				Version history is not connected to this generic catalog registration.
 			</p>
 		{:else}
 			<h2 class="m-0 border-0 p-0 text-sm font-semibold">Lineage</h2>

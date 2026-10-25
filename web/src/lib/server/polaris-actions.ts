@@ -22,7 +22,6 @@ import {
 	version
 } from './polaris-forms';
 import { POLARIS_PRIVILEGES } from './polaris-privileges';
-import { registerRawTable } from './polaris-raw-actions';
 import { registerIcebergTable } from './polaris-iceberg-actions';
 
 export const POLARIS_ACTION_NAMES = [
@@ -33,7 +32,6 @@ export const POLARIS_ACTION_NAMES = [
 	'updateNamespace',
 	'deleteNamespace',
 	'createTable',
-	'registerRawTable',
 	'registerIcebergTable',
 	'loadTable',
 	'deleteTable',
@@ -81,8 +79,6 @@ export async function executePolarisAction(
 	};
 
 	switch (action) {
-		case 'registerRawTable':
-			return registerRawTable(client, form);
 		case 'registerIcebergTable':
 			return registerIcebergTable(client, form);
 		case 'createCatalog': {

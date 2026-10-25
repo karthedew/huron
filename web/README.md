@@ -2,8 +2,9 @@
 
 SvelteKit frontend for the Polaris checkout’s native Icechunk extension. The main
 Catalog and Browse views use live Polaris catalogs, namespaces and repositories.
-Each organization binds one distinct Polaris realm and owns all catalogs under that realm’s root. Catalogs group programs or data domains; Raw, Iceberg and Icechunk are dataset types that can share a namespace. Huron supplies persistent local
+Each organization binds one distinct Polaris realm and owns all catalogs under that realm’s root. Catalogs group programs or data domains; Iceberg tables, Icechunk arrays and generic tables are dataset types that can share a namespace. Huron supplies persistent local
 username/password accounts and manual catalog onboarding; Polaris owns grants.
+The web has no Raw surface: Raw data is reached through the `huron` CLI.
 See [design](../design/polaris.html) and the [API seam](src/lib/api/README.md).
 
 ## Local stack
@@ -64,8 +65,8 @@ The dependencies stay in the ignored local science environment; the SQLite extra
 supports the seed's temporary SDK tests. The seed checks pinned source hashes and
 copies 480,992 bytes into the existing heliophysics catalog's allowed FILE root:
 
-- `heliophysics.solar_wind.ace.ace_source_files`: a Raw generic-table registration
-  pointing to the original ACE CSV and native HAPI metadata.
+- `heliophysics.solar_wind.ace.ace_source_files`: a generic-table registration
+  pointing to the original ACE CSV and native HAPI metadata, labeled Generic.
 - `heliophysics.solar_wind.ace.ace_observations`: a native Iceberg table containing
   all 5,401 observations as nine columns, retaining exact UTC nanoseconds, vector
   components, units and missing-value sentinels without resampling.
@@ -76,9 +77,8 @@ Retries verify every Iceberg value and reuse its snapshot; conflicting existing
 data is never replaced. `--verify-only` checks existing registrations and values
 without writing dataset storage or catalog metadata. Receipts are saved to
 `.local/polaris/catalog-types-samples.json`. This operator seed creates a genuine
-Iceberg snapshot. That external Raw registration does not publish a Huron Raw
-revision; use the ingest wizard with a new dataset name to upload its source files
-as managed, immutable revisions.
+Iceberg snapshot. The generic-table registration records metadata only; it does not
+upload or verify the files at its location.
 
 The header selects only the organization. Browse opens its realm root and lists accessible catalogs at the top of Explorer with database icons. The filesystem-style Explorer
 shows nested namespace folders and repository leaves; expanding a folder loads
@@ -94,7 +94,7 @@ Local PostgreSQL, copied Polaris packages and FILE-backed storage live in ignore
 `.local/polaris/`. Huron accounts, their private encryption key and the organization sidecar live in
 `.local/huron/`. The organization store defaults to `${HURON_ACCOUNT_STORE}.organizations.json` and can be overridden with `HURON_ORGANIZATION_STORE`; persist it alongside the account store. `stop` preserves data; `refresh` rebuilds the sibling Polaris
 checkout and restarts. Requirements: Java 21, native PostgreSQL tools, `uv`, Node
-22.9+, installed web dependencies and Docker for Raw PostgreSQL 16. Set `HURON_DATABASE_URL` to use an existing PostgreSQL 15+ Raw database instead. Polaris retains its separate native PostgreSQL instance. Override `POLARIS_PROJECT` and
+22.9+ and installed web dependencies. Polaris runs its own native PostgreSQL instance. Override `POLARIS_PROJECT` and
 `POLARIS_JAVA_HOME` for checkout/runtime paths. Restarting does not recreate synthetic repositories or reset grants.
 
 ## Endpoint configuration and deployment
@@ -125,7 +125,7 @@ Adding a person to an organization provisions their separate Polaris identity,
 without catalog grants; assign Reader, Writer or Catalog administrator afterward.
 
 The existing single NASA Science organization migrates to the existing `POLARIS`
-realm without moving data or changing grants or Raw identities. A legacy store with
+realm without moving data or changing grants. A legacy store with
 multiple Huron organizations sharing one realm requires an explicit operator migration;
 Huron refuses to guess or merge those organizations. Back up the private account and
 organization files before upgrading. Native realm isolation does not replace storage
@@ -149,11 +149,6 @@ server-side and terminated on restart or password/disable changes. This account
 store supports a single deployment host; replicated sessions/identity storage and
 OIDC integration remain future deployment work.
 
-The production start script defaults `BODY_SIZE_LIMIT` to 64 MiB for Raw upload
-parts, preserving an explicit environment override. Reverse proxies must also
-allow 64 MiB request bodies. The Raw bridge applies its own smaller JSON limit and
-checks every declared and received part length before publication.
-
 The web supports catalog/namespace administration, Icechunk registration/load/drop,
 credential checks, catalog membership and advanced external service principals,
 roles, assignments and grants. Huron-managed identities and fixed membership
@@ -175,26 +170,8 @@ with `scripts/inspect_icechunk.py`, `web/package.json` and `web/build/`, and pro
 the Icechunk/Zarr environment. The inspector does not read array chunks or write data;
 unsupported storage or unavailable inspection is shown explicitly.
 
-The Raw ingest page has four steps: Destination, Source, Metadata and Review.
-Its explorer lists all accessible catalogs in the selected organization and their
-namespace folders. Choose a new dataset or an existing managed Raw dataset, select
-files or a directory, supply revision metadata and upload. Files are hashed in a
-worker and transferred in bounded parts. Verification and publication use Huron's
-existing Raw core: each revision contains exactly the submitted files, and retrying
-the same upload returns the same revision. The wizard reports completion only after
-Polaris confirms the dataset registration. A registration failure leaves a readable,
-committed Raw revision and a retryable pending registration. Keep the page open to
-retry; automatic upload recovery after a browser restart is not provided.
-
-The local launcher starts the Raw API on port 8080 with an isolated `huron_raw`
-PostgreSQL 16 database on port 5440 (Docker container `huron-raw-local`, persistent volume `huron-raw-local-data`), storage in `.local/huron/raw`, and a persistent private key at
-`.local/huron/raw-bridge-key`. It uses credential authentication with development
-identity headers disabled. For deployment, configure `HURON_RAW_API_URL`, the same
-`HURON_RAW_BRIDGE_SECRET` (at least 32 bytes) in both services, and
-`HURON_RAW_POLARIS_AUTHORIZATION=rbac` in the web service. The bridge supports native
-Polaris RBAC; other authorization modes fail closed. Persist both Raw storage and
-its database. Organization membership, current Polaris data grants and request
-target are checked for every operation, including publication and downloads.
+The web calls no Huron Python service: its server talks only to Polaris, the
+Icechunk inspector and its own account and organization stores.
 
 Scientific transformation lineage, compute and the generated Huron scientific
 client remain planned. Legacy fixture routes redirect to Browse; unsupported
@@ -216,11 +193,10 @@ lists the selected organization's accessible catalogs. Dataset lists filter by
 name, type and processing layer within the loaded folder page. Layers use
 `huron.layer` and bronze/silver/gold namespace placement; conflicts are explicit.
 
-Namespace operations can register existing Raw collection storage (generic format
-`raw`), existing Iceberg metadata, or Icechunk repositories. Managed Raw detail
-shows committed revisions, checksummed manifests and authenticated downloads from
-Huron. External Raw registrations show registration properties only; generic-table
-APIs do not supply file manifests or revision history. Non-Raw generic formats are labeled Generic. Iceberg registration uses
+Namespace operations can register existing Iceberg metadata or Icechunk
+repositories. Every Polaris generic table is labeled Generic, whatever its storage
+format or properties, and shows its registration properties only; generic-table
+APIs do not supply file manifests or version history. Iceberg registration uses
 `overwrite: false`. No registration operation uploads or converts scientific data.
 
 ## Checks

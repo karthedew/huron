@@ -64,13 +64,13 @@ describe('Authenticated Polaris catalog navigation', () => {
 });
 
 describe('Polaris browse server projection', () => {
-	it('browses Raw, Icechunk and Iceberg assets together using their native identifiers and pagination', async () => {
+	it('browses generic, Icechunk and Iceberg assets together using their native identifiers and pagination', async () => {
 		const { client } = clientWith((url) => {
 			if (url.pathname.endsWith('/generic-tables/source_files'))
 				return Response.json({
 					table: {
 						name: 'source_files',
-						format: 'raw',
+						format: 'parquet',
 						'base-location': 'file:///science/raw/ace',
 						properties: { 'huron.layer': 'bronze' }
 					}
@@ -100,8 +100,7 @@ describe('Polaris browse server projection', () => {
 		expect(data.loadedRawTable).toMatchObject({
 			name: 'source_files',
 			format: 'raw',
-			storageFormat: 'raw',
-			isRaw: true
+			storageFormat: 'parquet'
 		});
 		expect(data.loadedTable).toBeNull();
 		expect(data.loadedIcebergTable).toBeNull();
@@ -117,10 +116,10 @@ describe('Polaris browse server projection', () => {
 		});
 	});
 
-	it('keeps an exact Raw asset readable when its namespace listing is undiscoverable', async () => {
+	it('keeps an exact generic asset readable when its namespace listing is undiscoverable', async () => {
 		const { client } = clientWith((url) =>
 			url.pathname.endsWith('/generic-tables/source_files')
-				? Response.json({ table: { name: 'source_files', format: 'raw' } })
+				? Response.json({ table: { name: 'source_files', format: 'parquet' } })
 				: new Response(null, { status: 403 })
 		);
 		const data = await loadPolarisBrowse(
@@ -137,10 +136,10 @@ describe('Polaris browse server projection', () => {
 	});
 
 	it.each(['branch=main', 'snapshot=revision-1'])(
-		'rejects unsupported Raw version selectors instead of implying a published revision: %s',
+		'rejects unsupported generic-table version selectors instead of implying a published revision: %s',
 		async (selection) => {
 			const { client } = clientWith(() =>
-				Response.json({ table: { name: 'source_files', format: 'raw' } })
+				Response.json({ table: { name: 'source_files', format: 'parquet' } })
 			);
 			await expect(
 				loadPolarisBrowse(

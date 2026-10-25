@@ -1,6 +1,5 @@
 import type { PolarisIcechunkTable, PolarisWorkspaceData } from './polaris-types';
 import type { IcechunkInspection } from './icechunk-types';
-import type { RawInspection } from './raw-ingestion-types';
 import type { PolarisRawTable, PolarisRawTableIdentifier } from './polaris-raw-types';
 import type {
 	PolarisCatalogTable,
@@ -34,5 +33,4 @@ export interface PolarisBrowseData extends PolarisWorkspaceData {
 	rawTables: PolarisRawTableIdentifier[];
 	nextRawPageToken: string | null;
 	loadedRawTable: PolarisRawTable | null;
-	rawInspection: RawInspection | null;
 }

@@ -31,10 +31,7 @@
 					dataset.namespace ?? data.selected.namespace,
 					'properties' in dataset ? dataset.properties : undefined
 				),
-				type:
-					dataset.format === 'raw' && dataset.isRaw !== true
-						? 'generic'
-						: (dataset.format ?? 'icechunk')
+				type: dataset.format === 'raw' ? 'generic' : (dataset.format ?? 'icechunk')
 			}))
 			.filter(
 				({ dataset, type, layer }) =>
@@ -73,9 +70,9 @@
 				bind:value={typeFilter}
 				class="rounded border border-app-line bg-app-bg text-xs"
 			>
-				<option value="all">All types</option><option value="raw">Raw files</option><option
-					value="icechunk">Icechunk</option
-				><option value="iceberg">Iceberg</option><option value="generic">Generic</option>
+				<option value="all">All types</option><option value="icechunk">Icechunk</option><option
+					value="iceberg">Iceberg</option
+				><option value="generic">Generic</option>
 			</select></label
 		>
 		<label
@@ -204,39 +201,6 @@
 			/>
 		</div>
 		{#if data.selected.namespace.length}
-			<details class="mt-5 border-t border-app-line pt-4">
-				<summary class="text-xs font-semibold">Register a Raw collection</summary>
-				<div class="mt-4">
-					<PolarisForm action="registerRawTable" submit="Register Raw collection">
-						<input type="hidden" name="catalog" value={data.selected.catalog} />
-						<input type="hidden" name="namespace" value={JSON.stringify(data.selected.namespace)} />
-						<label>Dataset name<input name="name" required placeholder="source_files" /></label>
-						<label
-							>Storage location · optional<input
-								name="location"
-								placeholder="s3://science-data/source-files/"
-							/></label
-						>
-						<label>Description · optional<textarea name="doc" rows="2"></textarea></label>
-						<label
-							>Processing layer<select name="layer"
-								><option value="">Use namespace placement</option><option value="bronze"
-									>Bronze</option
-								><option value="silver">Silver</option><option value="gold">Gold</option></select
-							></label
-						>
-						<label
-							>Dataset properties · JSON<textarea name="properties" rows="3" value={'{}'}
-							></textarea></label
-						>
-						<p class="text-xs leading-5 text-app-muted">
-							Registers existing Raw collection metadata in Polaris. No files are uploaded, verified
-							or published. Processing-layer metadata must agree with bronze, silver or gold
-							namespace placement.
-						</p>
-					</PolarisForm>
-				</div>
-			</details>
 			<details class="mt-5 border-t border-app-line pt-4">
 				<summary class="text-xs font-semibold">Register an Iceberg table</summary>
 				<div class="mt-4">

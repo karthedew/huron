@@ -349,6 +349,7 @@ file is not edited for them; an implementer follows the plan, and the named task
 - **Role-mapping `role_scope` test case (DT-10).** DT-10's test row has a PA mapping `organization_admin` on a catalog answer `role_scope`, but its order of checks refuses that PA at step 2 (the ceiling, 403) before step 3; the plan keeps the order, tests that PA case as 403 and drives the 422 `role_scope` case with a global OA (M7.6, M9.5).
 - **Signing-key idempotency receipts (DT-10).** `rotate`'s receipt is `Replay("signing_key", uuid5(<module namespace>, kid))`, where the design keys the receipt by UUID and the key by `kid` without naming the mapping (M7.7).
 - **Ruff `N818` per-file ignores.** A module declaring a design-named exception without an `Error` suffix gets an `N818` per-file ignore beside the existing errors-module entries, a tool-configuration change the design does not list ("Clean sweep"; M7.1, M7.2, M7.3, M7.8, M10.1, M10.7, M13.3, M14.1, M14.3).
+- **Web test count and DT-3's case-insensitive check (DT-3 R3-3, "Closing checks").** R3-3 counts two tests in `polaris-raw.test.ts`'s `describe('Raw collection registration')`; it holds six Vitest cases (two `it` and a four-row `it.each`), so after D2-0 `npm test` reports 19 files and 215 tests, not 219 (M1.1, M1.2). DT-3's first closing check runs `isRaw` under `-i`, which also matches `PolarisRawTable` and `PolarisRawTableIdentifier` until D2-0b renames them, so M1.1 accepts exactly those lines and checks `\bisRaw\b` case-sensitively, and M1.2 re-runs the full check (owner ruling, 2026-10-24).
 - **Nightly runs before the merge (DT-23 "Gates", "CI workflow job outlines").** `nightly.yml` keeps `schedule` and `workflow_dispatch` and also triggers on `pull_request` (types `labeled`, `synchronize`) behind the job-level `if` in the "Merge" rule, so the last two nightly runs come from the pull request's `nightly` label instead of a dispatch the default branch would refuse (M19.5).
 
 ## Milestone sequence
@@ -744,11 +745,14 @@ contracts, `0014` is head, and the web calls no Python service.
     --svelte-version 5` on each of the seven changed `.svelte` files DT-3's "Gate" names (its eighth,
     `queue/+page.svelte`, is deleted; owner decision 11, B-25) until no
     applicable finding remains, `npx prettier --write` on the changed files, then `npm run check`,
-    `npm test` (19 files, 219 tests), `npm run lint`, `npm run build` and `npm run test:e2e` (30
+    `npm test` (19 files, 215 tests), `npm run lint`, `npm run build` and `npm run test:e2e` (30
     top-level tests: `rg -c "^test\(" e2e/*.ts` sums to 30). No Python file changes, so `make lint`, the
     three pytest tiers and the Python floor are unchanged and green; `make docs` exits 0.
   - DT-3's closing checks, run from `web/`, each print nothing unless stated:
-    `rg -n -i "raw-web|rawBridge|raw_bridge|HURON_RAW|raw-ingestion|rawInspection|RawInspection|isRaw|registerRawTable|Raw files|hash-wasm|BODY_SIZE_LIMIT|raw_web_support|E2E_RAW" . --glob '!node_modules' --glob '!build' --glob '!.svelte-kit'`;
+    `rg -n -i "raw-web|rawBridge|raw_bridge|HURON_RAW|raw-ingestion|rawInspection|RawInspection|isRaw|registerRawTable|Raw files|hash-wasm|BODY_SIZE_LIMIT|raw_web_support|E2E_RAW" . --glob '!node_modules' --glob '!build' --glob '!.svelte-kit'`
+    prints only lines naming `PolarisRawTable` or `PolarisRawTableIdentifier` (its case-insensitive `isRaw`
+    matches "Polar**isRaw**Table"; M1.2 renames both, after which it prints nothing) and
+    `rg -n '\bisRaw\b' . --glob '!node_modules' --glob '!build' --glob '!.svelte-kit'` prints nothing;
     `rg -n "ingestion" src e2e` prints nothing (owner decision 11, B-24);
     `test ! -e src/routes/ingestion -a ! -e src/lib/ingestion -a ! -e scripts`; `test ! -e src/routes/queue`
     and `rg -n 'listIngestJobs|ingestJobs|IngestJob\b' src e2e` prints nothing (owner decision 11, B-25);
@@ -763,7 +767,11 @@ contracts, `0014` is head, and the web calls no Python service.
     table) and `external_delta`, two non-Raw generic tables, are both labelled Generic, both match the
     `generic` filter, and the type filter has no `raw` option (owner decision 11, B-6).
 - Dependencies: M0.5.
-- Status: pending
+- Review correction (owner approved): `web/src/routes/+layout.svelte` also replaces the desktop
+  footer's "Raw · Iceberg · Icechunk" with "Generic · Iceberg · Icechunk". Verification attempt 1
+  found this omitted copy line; its interrupted browser failures did not reproduce in the unchanged
+  full rerun (36 passed). Verification attempt 2 passed with the footer correction.
+- Status: done (verification passed on attempt 2, 2026-10-24)
 
 ### M1.2 D2-0b: Generic-table vocabulary rename
 
@@ -795,14 +803,15 @@ contracts, `0014` is head, and the web calls no Python service.
 - Verification:
   - The plan-wide `web/` gate: the autofixer on `NamespaceContents.svelte`, `NamespaceExplorer.svelte`,
     `DatasetDetail.svelte`, `GenericTableDetail.svelte` and `src/routes/browse/+page.svelte`; prettier;
-    `npm run check`, `npm test` (19 files, 219 tests: the renamed `polaris-generic.test.ts` keeps its
+    `npm run check`, `npm test` (19 files, 215 tests: the renamed `polaris-generic.test.ts` keeps its
     count), `npm run lint`, `npm run build`, `npm run test:e2e`. No Python file changes.
   - DT-3's closing check from `web/`:
     `rg -n "PolarisRawTable|rawTables?\b|RawPageToken|rawPageToken|loadedRawTable|format=raw|format === 'raw'" src e2e`
-    prints nothing.
+    prints nothing, and M1.1's case-insensitive DT-3 check (`rg -n -i "raw-web|…|isRaw|…|E2E_RAW" .` with its
+    three globs) now prints nothing.
   - A browse URL with `format=raw` answers 400 "Choose a supported table format." like any unknown format
     (`polaris-browse.ts:33-35`): one assertion inside an existing `polaris-browse.test.ts` test pins it,
-    so the file and test counts stay 19 and 219. The assertion builds its URL with
+    so the file and test counts stay 19 and 215. The assertion builds its URL with
     `url.searchParams.set('format', 'raw')`, so no literal `format=raw` remains under `src`.
   - `git diff --stat HEAD~1 -- <DT-3's untouched-surface paths other than DatasetDetail.svelte and
     NamespaceExplorer.svelte>` prints nothing.
@@ -9744,3 +9753,77 @@ task rewrites them in the lake's terms (pins, `overwrite`, the lake's own search
   (`:224`) and the Raw TTL text (`:341-345`) → M19.2 (derived-layer pages, T-docs-Z).
 - `design/api.html` §4: "per-revision materialization" (`:171`) and the intake body's `raw_revision_number`
   (`:175`) → M19.2.
+
+### M1.1 deviations and receipts: the web Raw surface
+
+- `web/src/lib/api/catalog-datasets.test.ts` asserts `datasetTypeLabel({ format: 'raw' })` is `'Generic'`, not
+  DT-3's `datasetTypeLabel({ format: 'parquet' })`. `format` is the generic-table transport token (`'raw'` until
+  M1.2 renames it), not Polaris's storage format, and DT-3's own contract (`format 'raw' -> 'Generic'; 'iceberg'
+  -> 'Iceberg'; otherwise 'Icechunk'`) and source edit make `{ format: 'parquet' }` `'Icechunk'`. The contract
+  ships unchanged; M1.2's rename turns the assertion's token into `'generic'`.
+- `web/src/lib/server/polaris-browse.test.ts` and `polaris-dataset-governance.test.ts`: besides DT-3's named
+  edits (no `isRaw`, no "Raw" in case names), the Polaris responses' storage `format: 'raw'` becomes
+  `'parquet'`, so every generic-table input is non-Raw (owner decision 11, B-6), as in `polaris-raw.test.ts`.
+  `polaris-raw.test.ts`'s metadata case passes the three dropped display properties with neutral values and
+  asserts the exact returned key set.
+- `design/polaris.html`: beyond the replaced section (`raw-outside-polaris`), the page's other Raw-surface
+  lines leave so the page agrees with the web after D2-0 (AGENTS.md "Sources of truth"): "Raw generic tables"
+  in `#icechunk-workspace`, "Raw identities", "Raw requests" and "Raw delegation" in `#organizations`, the Raw
+  label rule, managed entries and Raw registration in `#dataset-types` (now the Generic rule), the Raw bridge
+  sentence in `#architecture` and the Raw ingest sentences in `#samples`. Iceberg and Icechunk text is unchanged.
+- `design/layer-raw.html`: the "Polaris web integration" note (`:93-101` at `fa51f46`), which described the
+  deleted wizard and bridge, becomes a two-line note linking `polaris.html#raw-outside-polaris`, rather than
+  only re-pointing its link; M1.3 rewrites the page.
+- `web/README.md` `:128` ("or Raw identities") leaves with DT-3's cited lines, for the same reason. Its
+  `ace_source_files` bullet (`:67`) now describes a generic-table registration labelled Generic, which stays
+  true until M1.4 removes that registration from `scripts/seed_catalog_types.py`; M1.4 does not edit
+  `web/README.md`, so that bullet and "all three dataset types" (`:53`) need M1.4's attention.
+- Receipt, `npm test`: 19 files, 215 tests (the owner-approved plan-time resolution corrects DT-3 R3-3's 219). The deleted
+  `describe('Raw collection registration')` holds six Vitest cases (two `it` and a four-row `it.each`), not
+  two: 269 − 48 − 6 = 215. Every adapted case keeps its count (`polaris-raw.test.ts` 5, `catalog-datasets.test.ts`
+  9). M1.1 and M1.2 both expect 215 under that resolution.
+- Receipt, DT-3's first closing check: with `-i`, its `isRaw` term matches `PolarisRawTable` and
+  `PolarisRawTableIdentifier` ("Polar**isRaw**Table"), so after M1.1 it prints exactly those lines in
+  `polaris-raw-types.ts`, `polaris-browse-types.ts`, `types.ts:155`, `GenericTableDetail.svelte`,
+  `polaris-raw.ts` and `polaris-client.ts`, the names DT-3's D2-0b table lists as present after D2-0. Every
+  other term prints nothing; the owner-approved resolution permits only these matches until M1.2 and requires
+  the case-sensitive whole-word `isRaw` check to print nothing. M1.2's rename removes those lines, so M19.4's
+  re-run prints nothing.
+- Resumed implementation audit (2026-10-24): the seven Svelte autofixer runs report no issues. The layout's
+  sole suggestion is to consider an attachment instead of `bind:this`; it does not apply to this deletion:
+  the unchanged dialog reference is used by the navigation buttons to call `showModal()` and `close()`.
+  Formatting the changed web files changes no bytes. `npm run check`, `npm test`, `npm run lint`,
+  `npm run build` and `npm run test:e2e` exit 0. Playwright executes 36 cases: 30 top-level declarations
+  and six cases generated by the existing viewport loops. The closing checks and the untouched-surface
+  diffs against `fa51f46` satisfy M1.1's expectations. Independent verification was pending at that point.
+- Resumed Python/docs receipts: `make lint` exits 0 (16 kept import contracts; empty radon CC/MI output;
+  no dead-code or structural findings; duplication unchanged at 123 clones / 41 groups, native score 75).
+  The unit coverage run passes 1524 tests with 47 deselected: 5602 covered / 5854 statements, 95.70%,
+  against the unchanged 95.69 floor. Contract: 32 passed; integration: 14 passed; `make docs` and
+  `git diff --check` exit 0. No Python source, tests, configuration or root README changes.
+- Resumed browser QA: isolated Chromium checks cover the home, admin, folder and Generic detail pages at
+  390, 816 and 1440 px in both themes, Generic filtering and its empty state, all Generic tabs through
+  keyboard Enter with visible focus, and concealed 404s for missing tables and unsupported version selectors.
+  No document overflow or runtime/hydration errors were observed. The scratch check initially expected 400
+  for a version selector; the existing contract requires 404, and the corrected scratch check passes.
+  Screenshots expose unchanged sidebar footer copy, "Raw · Iceberg · Icechunk", outside DT-3's named
+  layout edit; this was reported to the orchestrator for a scope ruling rather than changed silently.
+- Independent verification attempt 2 (2026-10-24): PASS. The Codex verifier
+  `m11_verification_2` was explicitly configured as `gpt-6-astra` with `medium` reasoning.
+  It independently reran the full gate: `make lint` (16 import contracts, empty radon output,
+  123 clones / 41 groups), 1,524 unit tests (5,602 / 5,854 statements, 95.70%, floor 95.69
+  unchanged), 32 contract tests, 14 integration tests and `make docs`. All seven Svelte
+  autofixers, changed-file formatting checks, `npm run check`, `npm test` (215 tests in
+  19 files), `npm run lint`, `npm run build` and `npm run test:e2e` (36 cases) passed.
+  Closing checks, protected-surface diffs against `fa51f46` and `git diff --check` passed.
+- Independent browser QA: 38 observations passed against fresh isolated state, at 390, 816
+  and 1440 px in both themes. The verifier inspected Generic detail screenshots for all six
+  viewport/theme combinations and home, admin, folder and empty states; keyboard tabs retained
+  visible focus, filters and concealed 404s worked, and there was no document overflow or
+  runtime/hydration error. The corrected desktop footer was visible in both themes. The
+  owner's stack was untouched, and all validation and QA processes stopped before handoff.
+- Verification tooling recovery: sandbox restrictions initially blocked the uv cache and npm
+  lookup. Authorized reruns passed; the interrupted autofixer batch was confirmed stopped
+  before resuming the same verification attempt. No source edits or additional verification
+  attempt resulted. Exact outputs, the report and screenshots are retained locally under
+  `/tmp/huron-m11-v2/` and `/tmp/huron-m11-v2-*.log`. No findings remain; M1.2 is still pending.

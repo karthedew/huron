@@ -9,7 +9,6 @@
 import type {
 	ApiKey,
 	Dataset,
-	IngestJob,
 	LayerAvailability,
 	Organization,
 	OrganizationMember,
@@ -88,29 +87,6 @@ export const datasets: Dataset[] = [
 		profile: 'example-profile@1',
 		tags: ['placeholder'],
 		layers: layers('-', '-', '-', '-')
-	}
-];
-
-export const ingestJobs: IngestJob[] = [
-	{
-		id: 'ING-000042',
-		organization: 'Example Organization',
-		project: 'Example Study',
-		dataset: 'Example Sweep',
-		release: 'run-0002',
-		layer: 'raw',
-		status: 'succeeded',
-		createdAt: '2026-02-02T14:30:00Z'
-	},
-	{
-		id: 'ING-000043',
-		organization: 'Example Organization',
-		project: 'Example Study',
-		dataset: 'Example Sweep',
-		release: 'run-0002',
-		layer: 'bronze',
-		status: 'running',
-		createdAt: '2026-02-02T14:34:00Z'
 	}
 ];
 

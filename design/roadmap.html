@@ -496,12 +496,12 @@ after a subsequent append.</td></tr>
 
 <tr><td class="k">UI-α / UI-β<br><span class="tag">partial</span></td>
 <td>α (after P4): the Databricks-shaped shell (left rail + catalog explorer), browse, search,
-dataset/revision pages, Grafana-shaped permissions tabs, API-key management, read-only admin. β (after P8): validation evidence, lineage graph, retention panels, admin queues, the
+dataset/snapshot pages, Grafana-shaped permissions tabs, API-key management, read-only admin. β (after P8): validation evidence, lineage graph, retention panels, admin queues, the
 publication flow.
 Built so far: the SvelteKit shell and design tokens, live Polaris Catalog/Browse, durable Huron
-username/password accounts, organization ownership/membership, manual catalog grants and administration. Raw, Iceberg and Icechunk datasets share the catalog explorer, with registration forms and type/layer filters. Dataset tabs expose real
+username/password accounts, organization ownership/membership, manual catalog grants and administration. Dataset tabs expose real
 array schema, Icechunk references and snapshot history, scoped grants and recorded source provenance.
-The Raw wizard connects actual multipart uploads, immutable revision publication, retryable Polaris registration, revision history and authenticated downloads. Its destination explorer lists the selected organization's accessible catalogs. Derived scientific publication/lineage and generated Huron client integration remain planned;
+A later Raw browser reads the lake API (<a href="frontend.html#flows">frontend.html §3</a>). Derived scientific publication/lineage and generated Huron client integration remain planned;
 see the updated <a href="frontend.html">beta frontend contract</a>.</td>
 <td>The generated TypeScript client compiles in CI against every API change; E2E smoke against the
 compose stack.</td></tr>
@@ -518,7 +518,8 @@ derivation record alone re-executes to a bit-identical G021 (invariant K).</td><
 <tr><td class="k">P10 — Polaris<br><span class="tag">partial</span></td>
 <td>The beta now uses Polaris as catalog/access authority: native Icechunk browsing/registration,
 manual user roles, catalog administration, SDK metadata inspection and persistent local stack with three real science catalogs (heliophysics, geoscience and ISS).
-This supersedes the former Iceberg-only mirror/grant projection proposal. Raw generic-table registration and existing Iceberg metadata registration are implemented; file transfer, scientific publication and compute integration remain planned.</td>
+This supersedes the former Iceberg-only mirror/grant projection proposal. Existing Iceberg metadata registration is implemented; file transfer, scientific publication and compute integration remain planned.
+Raw is not registered in Polaris (<a href="../docs/adr/0004-raw-catalog-of-record-is-huron-postgresql.md">ADR 0004</a>); a Huron-managed projection (option C) is deferred (<code>RAW_LAKE_DESIGN.md</code> DT-24).</td>
 <td>Real local checks cover catalog creation, scoped membership, Icechunk registration/read,
 write denials, revoked access and restart persistence. Browser tests cover human onboarding and catalog
 isolation. NASA import verifies exact committed array values and provenance.</td></tr>

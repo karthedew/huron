@@ -17,12 +17,10 @@ export const RESERVED_ROOT_SLUGS = [
 	'admin',
 	'auth',
 	'browse',
-	'ingestion',
 	'login',
 	'logout',
 	'polaris',
 	'product',
-	'queue',
 	'settings',
 	'signup',
 	'snapshot'

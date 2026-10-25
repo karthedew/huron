@@ -12,7 +12,6 @@
 		Search,
 		Settings,
 		ShieldCheck,
-		UploadCloud,
 		X
 	} from '@lucide/svelte';
 	import AccountMenu from '$design/components/AccountMenu.svelte';
@@ -42,14 +41,6 @@
 			path: '/browse',
 			label: 'Browse',
 			icon: BookOpen
-		},
-		{
-			href: data.selectedOrganization
-				? (`/ingestion?organization=${encodeURIComponent(data.selectedOrganization)}` as const)
-				: '/ingestion',
-			path: '/ingestion',
-			label: 'Ingestion',
-			icon: UploadCloud
 		}
 	] as const);
 	const manage = $derived([
@@ -226,7 +217,7 @@
 				{#if !sidebarCollapsed}<p
 						class="hidden items-center gap-2 px-2.5 py-2 text-[11px] text-app-muted xl:flex"
 					>
-						<span class="size-1.5 rounded-full bg-brand"></span>Raw · Iceberg · Icechunk
+						<span class="size-1.5 rounded-full bg-brand"></span>Generic · Iceberg · Icechunk
 					</p>{/if}
 			</div>
 		</aside>

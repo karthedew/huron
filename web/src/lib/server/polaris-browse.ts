@@ -80,8 +80,7 @@ export async function loadPolarisBrowse(
 		loadedIcebergTable: null,
 		rawTables: [],
 		nextRawPageToken: null,
-		loadedRawTable: null,
-		rawInspection: null
+		loadedRawTable: null
 	};
 	if (!catalog) return data;
 	if (selected.table) {

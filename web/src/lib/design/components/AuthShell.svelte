@@ -60,7 +60,7 @@
 				<li class="flex items-center gap-3">
 					<span class="grid size-8 place-items-center rounded-md bg-white/10 text-brand"
 						><Layers3 size={16} /></span
-					>Explore NASA data and raw ingest examples
+					>Explore NASA data examples
 				</li>
 				<li class="flex items-center gap-3">
 					<span class="grid size-8 place-items-center rounded-md bg-white/10 text-brand"

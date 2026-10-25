@@ -446,8 +446,7 @@ export class PolarisClient {
 				name: text(entry.name),
 				namespace: strings(entry.namespace),
 				format: 'raw',
-				storageFormat: null,
-				isRaw: null
+				storageFormat: null
 			};
 		});
 		const tables: PolarisRawTableIdentifier[] = [];
@@ -461,7 +460,6 @@ export class PolarisClient {
 							return {
 								...identifier,
 								storageFormat: loaded.storageFormat,
-								isRaw: loaded.isRaw,
 								properties: loaded.properties
 							};
 						} catch (error) {

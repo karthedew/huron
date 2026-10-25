@@ -7,33 +7,14 @@ import { consumePolarisNotice } from '$lib/server/polaris-session';
 import { createPolarisActions } from '$lib/server/polaris-route-actions';
 import { inspectIcechunk } from '$lib/server/icechunk-inspector';
 import { loadDatasetGovernance } from '$lib/server/polaris-dataset-governance';
-import { loadRawInspection } from '$lib/server/raw-inspection';
 
 export const load: PageServerLoad = async (event) => {
 	const client = getAuthenticatedPolaris(event);
-	const { catalogs, selectedOrganization } = await event.parent();
+	const { catalogs } = await event.parent();
 	try {
 		const data = await loadPolarisBrowse(client, catalogs, event.url, client.connection);
 		data.notice = consumePolarisNotice(event.cookies);
 		const user = event.locals.user;
-		if (user && data.loadedRawTable) {
-			const cursor = event.url.searchParams.get('rawBefore');
-			const before = cursor === null ? null : Number(cursor);
-			if (before !== null && (!Number.isSafeInteger(before) || before < 1))
-				httpError(400, 'Invalid Raw revision cursor.');
-			data.rawInspection = await loadRawInspection(
-				client,
-				user,
-				{
-					organization: selectedOrganization,
-					catalog: data.selected.catalog,
-					namespace: data.selected.namespace,
-					name: data.selected.table
-				},
-				event.url.searchParams.get('revision'),
-				before
-			);
-		}
 		if (user && (data.loadedTable || data.loadedIcebergTable || data.loadedRawTable)) {
 			const [inspection, governance] = await Promise.all([
 				data.loadedTable
@@ -76,7 +57,6 @@ export const actions = createPolarisActions({
 		'updateNamespace',
 		'deleteNamespace',
 		'createTable',
-		'registerRawTable',
 		'registerIcebergTable',
 		'loadTable',
 		'deleteTable',

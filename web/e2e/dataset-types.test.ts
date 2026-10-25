@@ -8,21 +8,21 @@ function registrationForm(page: Page, submit: string) {
 		.filter({ has: page.getByRole('button', { name: submit, exact: true }) });
 }
 
-async function openRegistration(page: Page, kind: 'Raw collection' | 'Iceberg table') {
+async function openRegistration(page: Page, kind: 'Iceberg table') {
 	await page.getByText('Namespace operations', { exact: true }).click();
-	await page
-		.getByText(`Register ${kind === 'Raw collection' ? 'a' : 'an'} ${kind}`, { exact: true })
-		.click();
+	await page.getByText(`Register an ${kind}`, { exact: true }).click();
 	return registrationForm(page, `Register ${kind}`);
 }
 
-test('one namespace lists Raw, Icechunk, Iceberg and other generic assets with independent type and layer filters', async ({
+test('one namespace lists Icechunk, Iceberg and generic assets with independent type and layer filters', async ({
 	page
 }) => {
 	await signIn(page, 'admin', 'browser-admin-password', repositoryUrl);
 	const contents = page.getByRole('region', { name: 'Folder contents' });
+	const typeFilter = page.getByRole('combobox', { name: 'Dataset type', exact: true });
+	await expect(typeFilter.locator('option[value="raw"]')).toHaveCount(0);
 	await expect(contents.getByRole('row').filter({ hasText: 'source_files' })).toContainText(
-		'Raw files'
+		'Generic'
 	);
 	await expect(contents.getByRole('row').filter({ hasText: 'temperature' })).toContainText(
 		'Icechunk'
@@ -45,7 +45,7 @@ test('one namespace lists Raw, Icechunk, Iceberg and other generic assets with i
 		.getByRole('combobox', { name: 'Processing layer', exact: true })
 		.selectOption('unassigned');
 	await expect(contents.getByRole('link', { name: 'observations', exact: true })).toHaveCount(0);
-	await page.getByRole('combobox', { name: 'Dataset type', exact: true }).selectOption('raw');
+	await typeFilter.selectOption('generic');
 	await page
 		.getByRole('combobox', { name: 'Processing layer', exact: true })
 		.selectOption('bronze');
@@ -55,8 +55,11 @@ test('one namespace lists Raw, Icechunk, Iceberg and other generic assets with i
 	await page.getByRole('combobox', { name: 'Processing layer', exact: true }).selectOption('gold');
 	await expect(contents.getByRole('link', { name: 'source_files', exact: true })).toHaveCount(0);
 	await expect(page.getByText('No datasets match these filters on this page.')).toBeVisible();
-	await page.getByRole('combobox', { name: 'Dataset type', exact: true }).selectOption('generic');
 	await page.getByRole('combobox', { name: 'Processing layer', exact: true }).selectOption('all');
+	await expect(contents.getByRole('link', { name: 'source_files', exact: true })).toBeVisible();
+	await expect(contents.getByRole('link', { name: 'external_delta', exact: true })).toBeVisible();
+	await expect(contents.getByRole('link', { name: 'temperature', exact: true })).toHaveCount(0);
+	await expect(contents.getByRole('link', { name: 'observations', exact: true })).toHaveCount(0);
 	await contents.getByRole('link', { name: 'external_delta', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'external_delta', exact: true })).toBeVisible();
 	await expect(page.locator('main')).toContainText('Registered format');
@@ -64,96 +67,13 @@ test('one namespace lists Raw, Icechunk, Iceberg and other generic assets with i
 	await expect(page.locator('main')).toContainText('Generic');
 });
 
-test('a Writer registers a persistent Raw collection while files and revision publication remain explicit', async ({
-	page
-}) => {
-	await signIn(page);
-	const username = await createUser(page, 'huron-local', 'writer');
-	await signIn(page, username, USER_PASSWORD, repositoryUrl);
-	const name = `raw-${randomUUID().slice(0, 8)}`;
-	const form = await openRegistration(page, 'Raw collection');
-	await form.getByLabel('Dataset name', { exact: true }).fill(name);
-	await form
-		.getByLabel('Storage location · optional')
-		.fill(`file:///tmp/huron-browser-test/raw/${name}`);
-	await form.getByLabel('Description · optional').fill('Original source collection');
-	await form
-		.getByRole('combobox', { name: 'Processing layer', exact: true })
-		.selectOption('bronze');
-	await form.getByRole('button', { name: 'Register Raw collection', exact: true }).click();
-	await expect(
-		page.getByRole('status').filter({ hasText: `Raw collection ${name} registered in Polaris` })
-	).toContainText('No files were uploaded and no Raw revision was published');
-	await page.reload({ waitUntil: 'networkidle' });
-	await page
-		.getByRole('region', { name: 'Folder contents' })
-		.getByRole('link', { name, exact: true })
-		.click();
-	await expect(page).toHaveURL(new RegExp(`table=${name}.*format=raw`));
-	await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
-	await expect(page.locator('main')).toContainText('Persisted in Polaris');
-	await expect(page.locator('main')).toContainText('Bronze');
-	const tabs = page.getByRole('navigation', { name: 'Dataset details' });
-	await tabs.getByRole('link', { name: 'Files', exact: true }).click();
-	await expect(page.getByRole('heading', { name: 'Files and manifests' })).toBeVisible();
-	await expect(page.locator('main')).toContainText('File listing is not connected');
-	await tabs.getByRole('link', { name: 'History', exact: true }).click();
-	await expect(page.locator('main')).toContainText('Raw revision history is not connected');
-	await tabs.getByRole('link', { name: 'Permissions', exact: true }).click();
-	await expect(page.locator('main')).toContainText('TABLE_WRITE_DATA');
-	await tabs.getByRole('link', { name: 'Policies', exact: true }).click();
-	await expect(page.locator('main')).toContainText(
-		'does not support those bindings for generic-table assets'
-	);
-});
-
-test('Raw registration rejects conflicting processing stages before creating a catalog asset', async ({
-	page
-}) => {
-	await signIn(page);
-	const name = `layer-${randomUUID().slice(0, 8)}`;
-	const parent = await page.request.post('/browse?/createNamespace', {
-		headers: { Origin: 'http://localhost:4173', Accept: 'text/html' },
-		form: { catalog: 'huron-local', namespace: JSON.stringify([name]), properties: '{}' }
-	});
-	expect(parent.ok()).toBe(true);
-	const created = await page.request.post('/browse?/createNamespace', {
-		headers: { Origin: 'http://localhost:4173', Accept: 'text/html' },
-		form: { catalog: 'huron-local', namespace: JSON.stringify([name, 'bronze']), properties: '{}' }
-	});
-	expect(created.ok()).toBe(true);
-	await openPage(
-		page,
-		`/browse?catalog=huron-local&namespace=${encodeURIComponent(JSON.stringify([name, 'bronze']))}`
-	);
-	const form = await openRegistration(page, 'Raw collection');
-	await form.getByLabel('Dataset name', { exact: true }).fill('conflicting_files');
-	await form
-		.getByRole('combobox', { name: 'Processing layer', exact: true })
-		.selectOption('silver');
-	await form.getByRole('button', { name: 'Register Raw collection', exact: true }).click();
-	await expect(page.getByRole('alert')).toContainText(
-		'must identify the same bronze, silver or gold stage'
-	);
-	await expect(
-		page
-			.getByRole('region', { name: 'Folder contents' })
-			.getByRole('link', { name: 'conflicting_files' })
-	).toHaveCount(0);
-	await openPage(
-		page,
-		`/browse?catalog=huron-local&namespace=${encodeURIComponent(JSON.stringify([name, 'bronze']))}&table=conflicting_files&format=raw`
-	);
-	await expect(page.getByRole('heading', { name: 'Not found', exact: true })).toBeVisible();
-});
-
-test('a Reader cannot register Raw or Iceberg assets and cannot discover another catalog’s Raw assets', async ({
+test('a Reader cannot register Iceberg assets and cannot discover another catalog’s generic assets', async ({
 	page
 }) => {
 	await signIn(page);
 	const username = await createUser(page, 'huron-local', 'reader');
 	await signIn(page, username, USER_PASSWORD, repositoryUrl);
-	for (const action of ['registerRawTable', 'registerIcebergTable']) {
+	for (const action of ['registerIcebergTable']) {
 		const response = await page.request.post(`/browse?/${action}`, {
 			headers: { Origin: 'http://localhost:4173', Accept: 'text/html' },
 			form: {

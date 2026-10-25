@@ -2420,7 +2420,8 @@ Icechunk inspector and its own account and organization stores.
   it go (`:24,36,44-50`; `!rawApi &&` at `:51,69`; `:63-64`; the `rawApi` return at `:82-89`, leaving
   `httpError(status, message)`); `json` leaves the `@sveltejs/kit` import.
 - `src/routes/+layout.svelte`: the `Ingestion` entry of the primary navigation (`:46-53`) and the
-  `UploadCloud` import.
+  `UploadCloud` import. The desktop footer's dataset-type copy becomes
+  "Generic · Iceberg · Icechunk" so it no longer advertises a Raw web surface.
 - `src/routes/browse/+page.server.ts`: the `loadRawInspection` import and the `data.loadedRawTable`
   inspection block (`:19-35`, which reads `rawBefore` and `revision`); `'registerRawTable'` leaves
   `allowedActions`; imports the edit leaves unused go.

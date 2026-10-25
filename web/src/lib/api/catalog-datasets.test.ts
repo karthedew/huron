@@ -32,9 +32,7 @@ describe('dataset processing layers', () => {
 		expect(datasetLayer(['observations', 'bronze']).id).toBe('bronze');
 	});
 	it('keeps dataset type labels separate from layer labels', () => {
-		expect(datasetTypeLabel({ format: 'raw', isRaw: true })).toBe('Raw files');
-		expect(datasetTypeLabel({ format: 'raw', isRaw: false })).toBe('Generic');
-		expect(datasetTypeLabel({ format: 'raw', isRaw: null })).toBe('Generic');
+		expect(datasetTypeLabel({ format: 'raw' })).toBe('Generic');
 		expect(datasetTypeLabel({ format: 'iceberg' })).toBe('Iceberg');
 		expect(datasetTypeLabel({})).toBe('Icechunk');
 	});

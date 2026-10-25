@@ -31,9 +31,6 @@ const DISPLAY_PROPERTIES = new Set([
 	'description',
 	'owner',
 	'huron.layer',
-	'huron.dataset-type',
-	'huron.raw.dataset-id',
-	'huron.raw.service',
 	'source.dataset',
 	'source.doi',
 	'source.url',
@@ -55,18 +52,13 @@ function safeProperties(value: unknown): PolarisProperties {
 export function rawTable(value: unknown, namespace: string[], name: string): PolarisRawTable {
 	const table = object(object(value).table);
 	if (text(table.name) !== name) throw new TypeError('Generic-table identity did not match.');
-	const storageFormat = text(table.format);
-	const properties = safeProperties(table.properties);
 	return {
 		name,
 		namespace,
 		format: 'raw',
-		storageFormat,
-		isRaw:
-			['raw', 'huron.raw'].includes(storageFormat.toLowerCase()) ||
-			properties['huron.dataset-type']?.toLowerCase() === 'raw',
+		storageFormat: text(table.format),
 		location: table['base-location'] == null ? null : location(table['base-location']),
 		doc: table.doc == null ? '' : text(table.doc),
-		properties
+		properties: safeProperties(table.properties)
 	};
 }

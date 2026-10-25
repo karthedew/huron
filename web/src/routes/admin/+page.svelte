@@ -168,8 +168,8 @@
 				<section class="panel">
 					<h2>Polaris catalogs</h2>
 					<p class="hint mb-4">
-						Catalogs group datasets around a program or data domain. A catalog may contain Raw,
-						Iceberg, and Icechunk datasets.
+						Catalogs group datasets around a program or data domain. A catalog may contain Iceberg,
+						Icechunk and generic datasets.
 					</p>
 					<div class="grid gap-3">
 						{#each data.catalogs as catalog (catalog.name)}<div

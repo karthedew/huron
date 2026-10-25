@@ -7,7 +7,7 @@
 	import NamespaceExplorer from '$design/components/polaris/NamespaceExplorer.svelte';
 	import NamespaceContents from '$design/components/polaris/NamespaceContents.svelte';
 	import DatasetDetail from '$design/components/polaris/DatasetDetail.svelte';
-	import RawDatasetDetail from '$design/components/polaris/RawDatasetDetail.svelte';
+	import GenericTableDetail from '$design/components/polaris/GenericTableDetail.svelte';
 	import { browseHref } from '$lib/stores/workspace';
 	import type { PageData, ActionData } from './$types';
 
@@ -167,12 +167,7 @@
 					{/each}
 				</ul>
 			{:else if data.loadedRawTable}
-				<RawDatasetDetail
-					{data}
-					organization={data.selectedOrganization}
-					table={data.loadedRawTable}
-					{href}
-				/>
+				<GenericTableDetail {data} table={data.loadedRawTable} {href} />
 			{:else if scientificTable}
 				<DatasetDetail {data} table={scientificTable} inspection={data.inspection} {href} />
 			{:else}

@@ -150,7 +150,6 @@ test('sidebar becomes an icon rail and expands or collapses without losing the w
 	await page.getByRole('button', { name: 'Expand navigation' }).click();
 	const overlay = page.getByRole('dialog', { name: 'Expanded navigation' });
 	await expect(overlay).toBeVisible();
-	await expect(overlay.getByRole('link', { name: 'Ingestion' })).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(overlay).toBeHidden();
 	await page.setViewportSize({ width: 1440, height: 900 });

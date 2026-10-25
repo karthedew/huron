@@ -1,4 +1,4 @@
-import { error as httpError, json, redirect, type Handle } from '@sveltejs/kit';
+import { error as httpError, redirect, type Handle } from '@sveltejs/kit';
 import { clearHuronSession, getHuronSession, safeReturnTo } from '$lib/server/auth';
 import { accountStore } from '$lib/server/huron-accounts';
 import { organizationStore } from '$lib/server/huron-organizations';
@@ -15,13 +15,11 @@ const WORKSPACE_ROUTES = new Set([
 	'/settings/catalog',
 	'/settings/project',
 	'/account',
-	'/ingestion',
 	'/polaris'
 ]);
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const pathname = event.url.pathname;
-	const rawApi = pathname.startsWith('/ingestion/api/');
 	const session = getHuronSession(event.cookies);
 	const user = session
 		? await accountStore().sessionUser(session.user.id, session.authVersion)
@@ -33,7 +31,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const authenticated = user !== null;
 
 	if (!authenticated && !PUBLIC_ROUTES.has(pathname)) {
-		if (rawApi) return json({ message: 'Sign in to Huron to continue.' }, { status: 401 });
 		const returnTo = safeReturnTo(`${pathname}${event.url.search}`);
 		redirect(303, `/login?returnTo=${encodeURIComponent(returnTo)}`);
 	}
@@ -41,14 +38,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	if (authenticated && (pathname === '/login' || pathname === '/signup')) {
 		redirect(303, safeReturnTo(event.url.searchParams.get('returnTo')));
 	}
-	if (rawApi && !['GET', 'HEAD', 'OPTIONS'].includes(event.request.method)) {
-		if (event.request.headers.get('origin') !== event.url.origin)
-			return json(
-				{ message: 'The upload request must come from this Huron site.' },
-				{ status: 403 }
-			);
-	}
-	if (authenticated && !rawApi && !PUBLIC_ROUTES.has(pathname) && !WORKSPACE_ROUTES.has(pathname)) {
+	if (authenticated && !PUBLIC_ROUTES.has(pathname) && !WORKSPACE_ROUTES.has(pathname)) {
 		redirect(303, '/browse');
 	}
 
@@ -60,13 +50,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 				event.url.searchParams.get('organization'),
 				event.cookies.get('huron_organization')
 			);
-			if (rawApi && !event.url.searchParams.get('organization'))
-				throw new PolarisApiError(400, 'Choose an organization for this Raw request.');
 			event.locals.organization = organization;
 			const realm = organization?.realm ?? polarisSettings().realm;
 			if (user.isAdmin) await accountStore().ensureRealmIdentity(user.id, realm);
 			event.locals.polaris = await accountStore().polarisClient(user.id, realm);
-			if (organization && !rawApi && event.request.method === 'GET')
+			if (organization && event.request.method === 'GET')
 				event.cookies.set('huron_organization', organization.slug, {
 					path: '/',
 					httpOnly: true,
@@ -79,14 +67,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 				failure instanceof PolarisApiError
 					? failure.message
 					: 'Unable to connect to this organization’s Polaris realm.';
-			if (rawApi)
-				return json(
-					{
-						message,
-						...(event.url.pathname === '/ingestion/api/uploads' ? { uploadNotStarted: true } : {})
-					},
-					{ status }
-				);
 			httpError(status, message);
 		}
 	}
