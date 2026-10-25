@@ -31,7 +31,7 @@ export async function loadPolarisBrowse(
 	const selectedNamespace = url.searchParams.get('namespace');
 	const tableName = url.searchParams.get('table') || '';
 	const format = url.searchParams.get('format') ?? 'icechunk';
-	if (format !== 'icechunk' && format !== 'iceberg' && format !== 'raw')
+	if (format !== 'icechunk' && format !== 'iceberg' && format !== 'generic')
 		throw new PolarisApiError(400, 'Choose a supported table format.');
 	if (catalogName) fields.set('catalog', catalogName);
 	if (selectedNamespace !== null) fields.set('namespace', selectedNamespace);
@@ -78,9 +78,9 @@ export async function loadPolarisBrowse(
 		icebergTables: [],
 		nextIcebergPageToken: null,
 		loadedIcebergTable: null,
-		rawTables: [],
-		nextRawPageToken: null,
-		loadedRawTable: null
+		genericTables: [],
+		nextGenericPageToken: null,
+		loadedGenericTable: null
 	};
 	if (!catalog) return data;
 	if (selected.table) {
@@ -90,8 +90,8 @@ export async function loadPolarisBrowse(
 				selected.namespace,
 				selected.table
 			);
-		else if (format === 'raw')
-			data.loadedRawTable = await client.rawTable(
+		else if (format === 'generic')
+			data.loadedGenericTable = await client.genericTable(
 				selected.catalog,
 				selected.namespace,
 				selected.table
@@ -99,7 +99,10 @@ export async function loadPolarisBrowse(
 		else
 			data.loadedTable = await client.table(selected.catalog, selected.namespace, selected.table);
 	}
-	if (data.loadedRawTable && (url.searchParams.has('branch') || url.searchParams.has('snapshot')))
+	if (
+		data.loadedGenericTable &&
+		(url.searchParams.has('branch') || url.searchParams.has('snapshot'))
+	)
 		throw new PolarisApiError(404);
 	if (data.loadedIcebergTable) {
 		const branch = url.searchParams.get('branch');
@@ -122,7 +125,7 @@ export async function loadPolarisBrowse(
 			accept(await read());
 		} catch (error) {
 			// An exact repository grant need not include namespace metadata or listing rights.
-			if (!optional && !data.loadedTable && !data.loadedIcebergTable && !data.loadedRawTable)
+			if (!optional && !data.loadedTable && !data.loadedIcebergTable && !data.loadedGenericTable)
 				throw error;
 			data.errors[key] =
 				error instanceof PolarisApiError ? error.message : 'Unable to load Polaris data.';
@@ -187,16 +190,16 @@ export async function loadPolarisBrowse(
 		);
 		reads.push(
 			capture(
-				'rawTables',
+				'genericTables',
 				() =>
-					client.rawTables(
+					client.genericTables(
 						selected.catalog,
 						selected.namespace,
-						url.searchParams.get('rawPageToken') ?? ''
+						url.searchParams.get('genericPageToken') ?? ''
 					),
 				(result) => {
-					data.rawTables = result.tables;
-					data.nextRawPageToken = result.nextPageToken;
+					data.genericTables = result.tables;
+					data.nextGenericPageToken = result.nextPageToken;
 				},
 				true
 			)
@@ -210,15 +213,15 @@ export async function loadPolarisBrowse(
 	data.branches.push({
 		namespace: selected.namespace,
 		folders: data.namespaces,
-		repositories: [...data.tables, ...data.icebergTables, ...data.rawTables],
+		repositories: [...data.tables, ...data.icebergTables, ...data.genericTables],
 		namespacePageToken: url.searchParams.get('namespacePageToken'),
 		repositoryPageToken: url.searchParams.get('pageToken'),
 		icebergPageToken: url.searchParams.get('icebergPageToken'),
-		rawPageToken: url.searchParams.get('rawPageToken'),
+		genericPageToken: url.searchParams.get('genericPageToken'),
 		nextNamespacePageToken: data.nextNamespacePageToken,
 		nextRepositoryPageToken: data.nextPageToken,
 		nextIcebergPageToken: data.nextIcebergPageToken,
-		nextRawPageToken: data.nextRawPageToken,
+		nextGenericPageToken: data.nextGenericPageToken,
 		errors: data.errors
 	});
 	return data;
@@ -236,11 +239,11 @@ async function loadAncestorBranch(
 		namespacePageToken: null,
 		repositoryPageToken: null,
 		icebergPageToken: null,
-		rawPageToken: null,
+		genericPageToken: null,
 		nextNamespacePageToken: null,
 		nextRepositoryPageToken: null,
 		nextIcebergPageToken: null,
-		nextRawPageToken: null,
+		nextGenericPageToken: null,
 		errors: {}
 	};
 	const capture = async <T>(key: string, read: () => Promise<T>, accept: (value: T) => void) => {
@@ -286,11 +289,11 @@ async function loadAncestorBranch(
 	if (levels.length)
 		reads.push(
 			capture(
-				'rawTables',
-				() => client.rawTables(catalog, levels),
+				'genericTables',
+				() => client.genericTables(catalog, levels),
 				(result) => {
 					branch.repositories.push(...result.tables);
-					branch.nextRawPageToken = result.nextPageToken;
+					branch.nextGenericPageToken = result.nextPageToken;
 				}
 			)
 		);

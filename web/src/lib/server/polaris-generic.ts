@@ -1,4 +1,4 @@
-import type { PolarisProperties, PolarisRawTable } from '$api/types';
+import type { PolarisProperties, PolarisGenericTable } from '$api/types';
 
 function object(value: unknown): Record<string, unknown> {
 	if (typeof value !== 'object' || value === null || Array.isArray(value))
@@ -49,13 +49,17 @@ function safeProperties(value: unknown): PolarisProperties {
 }
 
 /** Decode only registered asset metadata; never return storage-access-configs to a browser. */
-export function rawTable(value: unknown, namespace: string[], name: string): PolarisRawTable {
+export function genericTable(
+	value: unknown,
+	namespace: string[],
+	name: string
+): PolarisGenericTable {
 	const table = object(object(value).table);
 	if (text(table.name) !== name) throw new TypeError('Generic-table identity did not match.');
 	return {
 		name,
 		namespace,
-		format: 'raw',
+		format: 'generic',
 		storageFormat: text(table.format),
 		location: table['base-location'] == null ? null : location(table['base-location']),
 		doc: table.doc == null ? '' : text(table.doc),

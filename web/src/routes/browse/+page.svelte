@@ -13,7 +13,7 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const scientificTable = $derived(data.loadedIcebergTable ?? data.loadedTable);
-	const table = $derived(data.loadedRawTable ?? scientificTable);
+	const table = $derived(data.loadedGenericTable ?? scientificTable);
 	const message = $derived(form?.message ?? data.notice);
 	const success = $derived(form?.message ? form.success : true);
 	const folderName = $derived(
@@ -166,8 +166,8 @@
 						</li>
 					{/each}
 				</ul>
-			{:else if data.loadedRawTable}
-				<GenericTableDetail {data} table={data.loadedRawTable} {href} />
+			{:else if data.loadedGenericTable}
+				<GenericTableDetail {data} table={data.loadedGenericTable} {href} />
 			{:else if scientificTable}
 				<DatasetDetail {data} table={scientificTable} inspection={data.inspection} {href} />
 			{:else}

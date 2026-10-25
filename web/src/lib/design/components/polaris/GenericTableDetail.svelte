@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { Files } from '@lucide/svelte';
-	import type { PolarisBrowseData, PolarisRawTable } from '$api/types';
+	import type { PolarisBrowseData, PolarisGenericTable } from '$api/types';
 	import { datasetLayer, datasetTypeLabel } from '$api/catalog-datasets';
 	import DatasetGovernance from './DatasetGovernance.svelte';
 
@@ -12,7 +12,7 @@
 		href
 	}: {
 		data: PolarisBrowseData;
-		table: PolarisRawTable;
+		table: PolarisGenericTable;
 		href: (changes: Record<string, string | null>) => '/browse' | `/browse?${string}`;
 	} = $props();
 	const tabs = [

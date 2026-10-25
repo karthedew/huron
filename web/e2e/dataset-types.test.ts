@@ -87,7 +87,7 @@ test('a Reader cannot register Iceberg assets and cannot discover another catalo
 	}
 	const response = await openPage(
 		page,
-		'/browse?catalog=ocean-data&namespace=%5B%22science%22%5D&table=source_files&format=raw'
+		'/browse?catalog=ocean-data&namespace=%5B%22science%22%5D&table=source_files&format=generic'
 	);
 	expect(response?.status()).toBe(404);
 	await expect(page.getByRole('heading', { name: 'Not found', exact: true })).toBeVisible();

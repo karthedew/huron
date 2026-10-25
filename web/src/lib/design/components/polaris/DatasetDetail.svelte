@@ -138,7 +138,7 @@
 					value={active}
 				/>
 				{#if iceberg}<input type="hidden" name="format" value="iceberg" />{/if}
-				{#each ['namespacePageToken', 'pageToken', 'icebergPageToken', 'rawPageToken', 'policiesPageToken'] as key (key)}{@const value =
+				{#each ['namespacePageToken', 'pageToken', 'icebergPageToken', 'genericPageToken', 'policiesPageToken'] as key (key)}{@const value =
 						page.url.searchParams.get(key)}{#if value}<input
 							type="hidden"
 							name={key}

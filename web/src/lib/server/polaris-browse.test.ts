@@ -93,26 +93,26 @@ describe('Polaris browse server projection', () => {
 			client,
 			catalogs,
 			new URL(
-				'http://localhost/browse?catalog=NASA+science&namespace=%5B%22bronze%22%5D&table=source_files&format=raw&rawPageToken=raw%2Fcurrent'
+				'http://localhost/browse?catalog=NASA+science&namespace=%5B%22bronze%22%5D&table=source_files&format=generic&genericPageToken=raw%2Fcurrent'
 			),
 			settings
 		);
-		expect(data.loadedRawTable).toMatchObject({
+		expect(data.loadedGenericTable).toMatchObject({
 			name: 'source_files',
-			format: 'raw',
+			format: 'generic',
 			storageFormat: 'parquet'
 		});
 		expect(data.loadedTable).toBeNull();
 		expect(data.loadedIcebergTable).toBeNull();
-		expect(data.rawTables[0].properties).toEqual({ 'huron.layer': 'bronze' });
+		expect(data.genericTables[0].properties).toEqual({ 'huron.layer': 'bronze' });
 		expect(data.branches.at(-1)?.repositories.map((entry) => entry.name)).toEqual([
 			'observations',
 			'summary',
 			'source_files'
 		]);
 		expect(data.branches.at(-1)).toMatchObject({
-			rawPageToken: 'raw/current',
-			nextRawPageToken: 'raw/next'
+			genericPageToken: 'raw/current',
+			nextGenericPageToken: 'raw/next'
 		});
 	});
 
@@ -126,12 +126,12 @@ describe('Polaris browse server projection', () => {
 			client,
 			catalogs,
 			new URL(
-				'http://localhost/browse?catalog=NASA+science&namespace=%5B%22bronze%22%5D&table=source_files&format=raw'
+				'http://localhost/browse?catalog=NASA+science&namespace=%5B%22bronze%22%5D&table=source_files&format=generic'
 			),
 			settings
 		);
-		expect(data.loadedRawTable?.name).toBe('source_files');
-		expect(data.errors.rawTables).toBe('Resource not found.');
+		expect(data.loadedGenericTable?.name).toBe('source_files');
+		expect(data.errors.genericTables).toBe('Resource not found.');
 		expect(data.namespaces).toEqual([]);
 	});
 
@@ -146,7 +146,7 @@ describe('Polaris browse server projection', () => {
 					client,
 					catalogs,
 					new URL(
-						`http://localhost/browse?catalog=NASA+science&namespace=%5B%22bronze%22%5D&table=source_files&format=raw&${selection}`
+						`http://localhost/browse?catalog=NASA+science&namespace=%5B%22bronze%22%5D&table=source_files&format=generic&${selection}`
 					),
 					settings
 				)
@@ -347,10 +347,10 @@ describe('Polaris browse server projection', () => {
 		expect(data.namespaces).toEqual([]);
 		expect(data.tables).toEqual([]);
 		expect(Object.keys(data.errors).sort()).toEqual([
+			'genericTables',
 			'icebergTables',
 			'namespaceProperties',
 			'namespaces',
-			'rawTables',
 			'tables'
 		]);
 		expect(JSON.stringify(data)).not.toContain('PRIVATE');
@@ -394,7 +394,7 @@ describe('Polaris browse server projection', () => {
 		}
 	);
 
-	it('rejects malformed namespace levels before reading upstream metadata', async () => {
+	it('rejects unsupported browse selections before reading upstream metadata', async () => {
 		const { client, fetcher } = clientWith(() => Response.json({}));
 		await expect(
 			loadPolarisBrowse(
@@ -404,6 +404,12 @@ describe('Polaris browse server projection', () => {
 				settings
 			)
 		).rejects.toMatchObject({ status: 400 });
+		const url = new URL('http://localhost/browse?catalog=NASA+science');
+		url.searchParams.set('format', 'raw');
+		await expect(loadPolarisBrowse(client, catalogs, url, settings)).rejects.toMatchObject({
+			status: 400,
+			message: 'Choose a supported table format.'
+		});
 		expect(fetcher).not.toHaveBeenCalled();
 	});
 });

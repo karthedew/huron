@@ -816,7 +816,7 @@ contracts, `0014` is head, and the web calls no Python service.
   - `git diff --stat HEAD~1 -- <DT-3's untouched-surface paths other than DatasetDetail.svelte and
     NamespaceExplorer.svelte>` prints nothing.
 - Dependencies: M1.1.
-- Status: pending
+- Status: done (verification passed on attempt 2, 2026-10-24)
 
 ### M1.3 D2-1: The Raw bridge and the launcher's Raw half
 
@@ -9827,3 +9827,71 @@ task rewrites them in the lake's terms (pins, `overwrite`, the lake's own search
   before resuming the same verification attempt. No source edits or additional verification
   attempt resulted. Exact outputs, the report and screenshots are retained locally under
   `/tmp/huron-m11-v2/` and `/tmp/huron-m11-v2-*.log`. No findings remain; M1.2 is still pending.
+
+
+### M1.2 execution notes — implementation attempt 1 (2026-10-24)
+
+- Renamed the three generic-table modules and all callers, transport tokens, browse fields/error keys,
+  pagination fields and URL parameters to `generic`. The namespace type mapping now reads the format
+  directly. Medallion-layer `raw` values and opaque fixture locations/page tokens are preserved.
+- Extended the existing invalid browse-selection test to assert the old format returns 400 with
+  "Choose a supported table format." before an upstream request; no alias is accepted. The existing
+  Reader e2e deep link uses the new token. Vitest remains 19 files and 215 tests.
+- Full Python gate passed: all 12 static commands, 16 import contracts, empty radon findings,
+  duplication guard at 123 clones/41 groups (native score 75/100), 1,524 unit tests at 95.70%
+  (5,602/5,854 statements), 32 contract tests and 14 integration tests. No Python or floor change.
+- Five Svelte autofixer runs, changed-file formatting, check, Vitest, lint, build and all 36 e2e
+  tests passed. Autofixer's existing external provenance-link suggestion in `DatasetDetail.svelte`
+  is inapplicable to an http/https URL; `NamespaceExplorer.svelte`'s Map is built within `$derived.by`
+  and replaced on recomputation, so it needs no independently reactive mutation. No suppressions added.
+- Real Chromium QA passed at 390, 816 and 1440 px, light and dark: generic detail and filters, empty
+  state, keyboard tabs with visible focus, generic pagination, old-format 400, and concealed missing
+  table/version-selector 404. Screenshots were inspected; no clipping, horizontal overflow or
+  hydration errors. The isolated mock's scratch copy adds a next-page token for paging QA only.
+  An initial scratch selector incorrectly scoped pagination inside the table region; correcting the
+  `/tmp` harness produced a full pass without source changes.
+- `make docs`, both closing greps (no matches), the untouched-surface `HEAD~1` diff (empty), and
+  `git diff --check` passed. Full command outputs, autofixer rationale, browser screenshots and the
+  report are in `/tmp/huron-m12-i1/`. Sandbox cache/network failures were retried escalated and the
+  failed logs retained. All launched validation/QA processes exited; the owner's stack was untouched.
+- Status remains pending for independent verification; no additional deletions or renames requested.
+
+
+### M1.2 execution notes — fix/revalidation pass 1 (2026-10-24)
+
+- Independent verification attempt 1 returned FAIL: its required e2e gate passed 35/36, with a
+  5-second catalog-create status timeout in the unchanged organization-admin setup. Original failed
+  output and DOM evidence remain in `/tmp/huron-m12-v1/`; the verifier's later traced diagnostic
+  36/36 pass does not erase the failure or establish its cause.
+- A bounded scratch browser harness repeated the exact catalog-create navigation, inputs, click and
+  5-second status expectation 20 times across four concurrent browser contexts and organization
+  realms. Every form was natively valid, every POST returned 200, and all 20 status assertions passed
+  in 326–1,206 ms. It captures validity and request/response timing without credentials or bodies.
+  This narrowed trigger workload does not reproduce every full-suite scheduling condition.
+- Root cause remains unproven. No source, protected test, timeout, assertion or configuration was
+  changed; no speculative fix or misleading regression test was added. The first failure remains
+  part of the record, rather than being described as fixed.
+- One fresh complete gate passed without retries: all 12 static commands, 16 import contracts,
+  empty radon findings, unchanged 123-clone/41-group duplication guard; 1,524 unit tests at 95.70%
+  (5,602/5,854), 32 contract tests and 14 integration tests; all five autofixer reviews, formatting
+  check, Svelte check, 215 Vitest tests, lint, build and all 36 e2e tests. Existing non-applicable
+  autofixer observations are unchanged. `make docs`, both closing greps, untouched-surface and
+  Python-unchanged checks, and `git diff --check` passed. Coverage floor and before JSONs are untouched.
+- Fresh real-browser QA passed generic paging, old-format 400, concealed errors, filters/empty state,
+  keyboard focus and tabs at 390/816/1440 px in both themes, with no overflow or hydration errors.
+  Scratch services/browser and all validation processes exited; no owner-stack operation occurred.
+- Full fresh receipts and diagnosis: `/tmp/huron-m12-fix1/report.md`, `diagnosis.md`, numbered
+  Python/frontend logs, `diagnostic-results.json`, `qa.log` and screenshots. Status remains pending
+  for independent verification attempt 2. This pass changed only these execution notes.
+
+- Independent verification attempt 2: PASS. The Astra/Medium verifier reran the full gate and
+  browser QA independently: 1,524 unit / 32 contract / 14 integration tests, 95.70% unit coverage,
+  215 frontend tests and 36 end-to-end cases, all passed. The required browser gate passed on its
+  first invocation; the original attempt-1 timeout remains recorded with unknown cause. Static,
+  Svelte, formatting, build, docs, closing and protected-surface checks passed; no source changes
+  or weakened tests were needed. Report and exact outputs: `/tmp/huron-m12-v2/report.md`.
+  All launched sessions exited, and the orchestrator confirmed no validation processes remained.
+- Pre-deletion coverage evidence for M1.3 was captured by the independent verifier before any
+  Python changes: `/tmp/huron-m13-before.json` (5,602 / 5,854 statements) and
+  `/tmp/huron-m13-before-contract.json` (5,833 / 5,854, 1,556 unit/contract tests). M1.2 changes
+  no Python files, so these reports remain the M1.3 starting baseline.

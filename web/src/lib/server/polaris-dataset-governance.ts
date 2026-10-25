@@ -69,8 +69,8 @@ export function datasetCapabilities(
 async function readDataset(client: PolarisClient, target: PolarisDatasetTarget): Promise<void> {
 	if (target.format === 'iceberg')
 		await client.icebergTable(target.catalog, target.namespace, target.table);
-	else if (target.format === 'raw')
-		await client.rawTable(target.catalog, target.namespace, target.table);
+	else if (target.format === 'generic')
+		await client.genericTable(target.catalog, target.namespace, target.table);
 	else await client.table(target.catalog, target.namespace, target.table);
 }
 
@@ -225,7 +225,7 @@ export async function loadDatasetPolicies(
 			policies: [],
 			nextPageToken: null,
 			error: null,
-			message: `Native Polaris policy bindings and policy inheritance support Iceberg tables. This Polaris checkout does not support those bindings for ${target.format === 'raw' ? 'generic-table assets' : 'Icechunk repositories'}. Polaris access-control grants still apply.`
+			message: `Native Polaris policy bindings and policy inheritance support Iceberg tables. This Polaris checkout does not support those bindings for ${target.format === 'generic' ? 'generic-table assets' : 'Icechunk repositories'}. Polaris access-control grants still apply.`
 		};
 	const query = new URLSearchParams({
 		namespace: target.namespace.join('\x1f'),

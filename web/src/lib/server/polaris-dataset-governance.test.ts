@@ -69,7 +69,7 @@ describe('dataset-scoped Polaris access facts', () => {
 		const data = await loadDatasetGovernance(
 			own.api,
 			user,
-			{ ...target, format: 'raw' },
+			{ ...target, format: 'generic' },
 			async () => facts.api
 		);
 		expect(data.permissions.capabilities.readData).toBe(true);
@@ -88,7 +88,7 @@ describe('dataset-scoped Polaris access facts', () => {
 		);
 		const facts = directory([{ type: 'catalog', privilege: 'TABLE_READ_DATA' }]);
 		await expect(
-			loadDatasetGovernance(own.api, user, { ...target, format: 'raw' }, async () => facts.api)
+			loadDatasetGovernance(own.api, user, { ...target, format: 'generic' }, async () => facts.api)
 		).rejects.toMatchObject({ status: 404 });
 	});
 

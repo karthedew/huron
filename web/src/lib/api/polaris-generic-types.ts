@@ -1,16 +1,16 @@
 import type { PolarisProperties } from './polaris-types';
 
-/** A Polaris generic-table identifier; `'raw'` selects the generic-table transport only. */
-export interface PolarisRawTableIdentifier {
+/** A Polaris generic-table identifier; `'generic'` selects the generic-table transport only. */
+export interface PolarisGenericTableIdentifier {
 	name: string;
 	namespace: string[];
-	format: 'raw';
+	format: 'generic';
 	storageFormat: string | null;
 	properties?: PolarisProperties;
 }
 
 /** Registered metadata only: generic tables expose no manifest, files or history. */
-export interface PolarisRawTable extends PolarisRawTableIdentifier {
+export interface PolarisGenericTable extends PolarisGenericTableIdentifier {
 	storageFormat: string;
 	location: string | null;
 	doc: string;

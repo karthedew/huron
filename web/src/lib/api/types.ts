@@ -152,7 +152,7 @@ export type {
 	IcechunkArraySchema
 } from './icechunk-types';
 export type { PolarisDatasetTab } from './polaris-dataset-view-types';
-export type { PolarisRawTableIdentifier, PolarisRawTable } from './polaris-raw-types';
+export type { PolarisGenericTableIdentifier, PolarisGenericTable } from './polaris-generic-types';
 export type { PolarisBrowseBranch, PolarisBrowseData } from './polaris-browse-types';
 export type {
 	HuronCatalogMembershipRole,

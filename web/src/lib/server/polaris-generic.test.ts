@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PolarisClient } from './polaris-client';
-import { rawTable } from './polaris-raw';
+import { genericTable } from './polaris-generic';
 
 function clientWith(handler: (url: URL, init?: RequestInit) => Response) {
 	const fetcher = vi.fn<typeof fetch>(async (input, init) => {
@@ -20,7 +20,7 @@ function clientWith(handler: (url: URL, init?: RequestInit) => Response) {
 
 describe('Polaris generic-table projection', () => {
 	it('preserves actual registered metadata without credential configurations or signed locators', () => {
-		const result = rawTable(
+		const result = genericTable(
 			{
 				table: {
 					name: 'source_files',
@@ -43,7 +43,7 @@ describe('Polaris generic-table projection', () => {
 			'source_files'
 		);
 		expect(result).toMatchObject({
-			format: 'raw',
+			format: 'generic',
 			storageFormat: 'parquet',
 			location: 'https://storage.test/files',
 			properties: {
@@ -65,24 +65,24 @@ describe('Polaris generic-table projection', () => {
 	it('decodes every generic format to the same identifier shape', () => {
 		for (const storageFormat of ['delta', 'csv', 'parquet'])
 			expect(
-				rawTable({ table: { name: 'asset', format: storageFormat } }, ['science'], 'asset')
+				genericTable({ table: { name: 'asset', format: storageFormat } }, ['science'], 'asset')
 			).toEqual({
 				name: 'asset',
 				namespace: ['science'],
-				format: 'raw',
+				format: 'generic',
 				storageFormat,
 				location: null,
 				doc: '',
 				properties: {}
 			});
 		expect(() =>
-			rawTable({ table: { name: 'different', format: 'delta' } }, ['science'], 'asset')
+			genericTable({ table: { name: 'different', format: 'delta' } }, ['science'], 'asset')
 		).toThrow();
 	});
 
 	it('accepts absent optional location and documentation when Polaris serializes them as null', () => {
 		expect(
-			rawTable(
+			genericTable(
 				{
 					table: {
 						name: 'source_files',
@@ -120,7 +120,11 @@ describe('Polaris generic-table projection', () => {
 				}
 			});
 		});
-		const result = await client.rawTables('NASA science', ['Earth.data', 'bronze'], 'opaque+/page');
+		const result = await client.genericTables(
+			'NASA science',
+			['Earth.data', 'bronze'],
+			'opaque+/page'
+		);
 		expect(result.tables.map(({ name, storageFormat }) => ({ name, storageFormat }))).toEqual([
 			{ name: 'parquet_files', storageFormat: 'parquet' },
 			{ name: 'delta_table', storageFormat: 'delta' },
@@ -139,7 +143,7 @@ describe('Polaris generic-table projection', () => {
 
 	it('conceals a direct generic-table denial as not found', async () => {
 		const { client } = clientWith(() => new Response(null, { status: 403 }));
-		await expect(client.rawTable('science', ['bronze'], 'private')).rejects.toMatchObject({
+		await expect(client.genericTable('science', ['bronze'], 'private')).rejects.toMatchObject({
 			status: 404
 		});
 	});

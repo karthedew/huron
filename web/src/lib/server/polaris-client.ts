@@ -8,13 +8,13 @@ import type {
 	PolarisNamedEntity,
 	PolarisPrincipal,
 	PolarisProperties,
-	PolarisRawTable,
-	PolarisRawTableIdentifier,
+	PolarisGenericTable,
+	PolarisGenericTableIdentifier,
 	PolarisRole,
 	PolarisStorageConfig
 } from '$api/types';
 import { icebergTable, parseIcebergResponseJson } from './polaris-iceberg';
-import { rawTable } from './polaris-raw';
+import { genericTable } from './polaris-generic';
 
 export class PolarisApiError extends Error {
 	constructor(
@@ -431,32 +431,32 @@ export class PolarisClient {
 			throw new PolarisApiError(502, 'Polaris returned invalid Iceberg scientific metadata.');
 		}
 	}
-	async rawTables(
+	async genericTables(
 		name: string,
 		namespace: string[],
 		pageToken = ''
-	): Promise<{ tables: PolarisRawTableIdentifier[]; nextPageToken: string | null }> {
+	): Promise<{ tables: PolarisGenericTableIdentifier[]; nextPageToken: string | null }> {
 		const query = new URLSearchParams({ pageSize: '100' });
 		if (pageToken) query.set('pageToken', pageToken);
 		const value = await this.read(`${genericTablePath(name, namespace)}?${query}`);
 		const next = object(value)['next-page-token'];
-		const identifiers = list(value, 'identifiers', (value): PolarisRawTableIdentifier => {
+		const identifiers = list(value, 'identifiers', (value): PolarisGenericTableIdentifier => {
 			const entry = object(value);
 			return {
 				name: text(entry.name),
 				namespace: strings(entry.namespace),
-				format: 'raw',
+				format: 'generic',
 				storageFormat: null
 			};
 		});
-		const tables: PolarisRawTableIdentifier[] = [];
+		const tables: PolarisGenericTableIdentifier[] = [];
 		// Generic identifiers have no format; resolve it using the same user's metadata authority.
 		for (let index = 0; index < identifiers.length; index += 8) {
 			tables.push(
 				...(await Promise.all(
 					identifiers.slice(index, index + 8).map(async (identifier) => {
 						try {
-							const loaded = await this.rawTable(name, identifier.namespace, identifier.name);
+							const loaded = await this.genericTable(name, identifier.namespace, identifier.name);
 							return {
 								...identifier,
 								storageFormat: loaded.storageFormat,
@@ -472,10 +472,14 @@ export class PolarisClient {
 		}
 		return { tables, nextPageToken: typeof next === 'string' && next ? next : null };
 	}
-	async rawTable(name: string, namespace: string[], tableName: string): Promise<PolarisRawTable> {
+	async genericTable(
+		name: string,
+		namespace: string[],
+		tableName: string
+	): Promise<PolarisGenericTable> {
 		const value = await this.read(genericTablePath(name, namespace, tableName));
 		try {
-			return rawTable(value, namespace, tableName);
+			return genericTable(value, namespace, tableName);
 		} catch {
 			throw new PolarisApiError(502, 'Polaris returned invalid generic-table metadata.');
 		}

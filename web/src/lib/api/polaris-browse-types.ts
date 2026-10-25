@@ -1,6 +1,6 @@
 import type { PolarisIcechunkTable, PolarisWorkspaceData } from './polaris-types';
 import type { IcechunkInspection } from './icechunk-types';
-import type { PolarisRawTable, PolarisRawTableIdentifier } from './polaris-raw-types';
+import type { PolarisGenericTable, PolarisGenericTableIdentifier } from './polaris-generic-types';
 import type {
 	PolarisCatalogTable,
 	PolarisDatasetGovernance,
@@ -11,15 +11,15 @@ import type {
 export interface PolarisBrowseBranch {
 	namespace: string[];
 	folders: string[][];
-	repositories: (PolarisIcechunkTable | PolarisCatalogTable | PolarisRawTableIdentifier)[];
+	repositories: (PolarisIcechunkTable | PolarisCatalogTable | PolarisGenericTableIdentifier)[];
 	namespacePageToken: string | null;
 	repositoryPageToken: string | null;
 	icebergPageToken: string | null;
-	rawPageToken: string | null;
+	genericPageToken: string | null;
 	nextNamespacePageToken: string | null;
 	nextRepositoryPageToken: string | null;
 	nextIcebergPageToken: string | null;
-	nextRawPageToken: string | null;
+	nextGenericPageToken: string | null;
 	errors: Record<string, string>;
 }
 
@@ -30,7 +30,7 @@ export interface PolarisBrowseData extends PolarisWorkspaceData {
 	icebergTables: PolarisCatalogTable[];
 	nextIcebergPageToken: string | null;
 	loadedIcebergTable: PolarisIcebergTable | null;
-	rawTables: PolarisRawTableIdentifier[];
-	nextRawPageToken: string | null;
-	loadedRawTable: PolarisRawTable | null;
+	genericTables: PolarisGenericTableIdentifier[];
+	nextGenericPageToken: string | null;
+	loadedGenericTable: PolarisGenericTable | null;
 }

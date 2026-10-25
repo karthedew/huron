@@ -56,7 +56,7 @@ export function datasetLayer(namespace: string[], properties?: PolarisProperties
 }
 
 export function datasetTypeLabel(dataset: { format?: string }): 'Generic' | 'Iceberg' | 'Icechunk' {
-	if (dataset.format === 'raw') return 'Generic';
+	if (dataset.format === 'generic') return 'Generic';
 	if (dataset.format === 'iceberg') return 'Iceberg';
 	return 'Icechunk';
 }

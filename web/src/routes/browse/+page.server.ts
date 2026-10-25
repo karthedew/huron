@@ -15,7 +15,7 @@ export const load: PageServerLoad = async (event) => {
 		const data = await loadPolarisBrowse(client, catalogs, event.url, client.connection);
 		data.notice = consumePolarisNotice(event.cookies);
 		const user = event.locals.user;
-		if (user && (data.loadedTable || data.loadedIcebergTable || data.loadedRawTable)) {
+		if (user && (data.loadedTable || data.loadedIcebergTable || data.loadedGenericTable)) {
 			const [inspection, governance] = await Promise.all([
 				data.loadedTable
 					? inspectIcechunk(
@@ -34,7 +34,11 @@ export const load: PageServerLoad = async (event) => {
 						catalog: data.selected.catalog,
 						namespace: data.selected.namespace,
 						table: data.selected.table,
-						format: data.loadedRawTable ? 'raw' : data.loadedIcebergTable ? 'iceberg' : 'icechunk'
+						format: data.loadedGenericTable
+							? 'generic'
+							: data.loadedIcebergTable
+								? 'iceberg'
+								: 'icechunk'
 					},
 					undefined,
 					event.url.searchParams.get('policiesPageToken') || ''

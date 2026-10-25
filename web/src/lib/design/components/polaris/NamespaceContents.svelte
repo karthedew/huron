@@ -24,14 +24,14 @@
 		)
 	);
 	const datasets = $derived(
-		[...data.tables, ...data.icebergTables, ...data.rawTables]
+		[...data.tables, ...data.icebergTables, ...data.genericTables]
 			.map((dataset) => ({
 				dataset,
 				layer: datasetLayer(
 					dataset.namespace ?? data.selected.namespace,
 					'properties' in dataset ? dataset.properties : undefined
 				),
-				type: dataset.format === 'raw' ? 'generic' : (dataset.format ?? 'icechunk')
+				type: dataset.format ?? 'icechunk'
 			}))
 			.filter(
 				({ dataset, type, layer }) =>
@@ -46,7 +46,7 @@
 		data.errors.namespaces ||
 			data.errors.tables ||
 			data.errors.icebergTables ||
-			data.errors.rawTables
+			data.errors.genericTables
 	);
 </script>
 
@@ -135,7 +135,7 @@
 								)}
 								class="inline-flex items-start gap-2 text-app-fg"
 							>
-								{#if dataset.format === 'raw'}<Files
+								{#if dataset.format === 'generic'}<Files
 										size={15}
 										class="mt-0.5 shrink-0 text-app-muted"
 									/>{:else if dataset.format === 'iceberg'}<Table2
@@ -179,8 +179,8 @@
 				href={resolve(href({ icebergPageToken: data.nextIcebergPageToken, table: null }))}
 				>Next Iceberg tables →</a
 			>{/if}
-		{#if data.nextRawPageToken}<a
-				href={resolve(href({ rawPageToken: data.nextRawPageToken, table: null }))}
+		{#if data.nextGenericPageToken}<a
+				href={resolve(href({ genericPageToken: data.nextGenericPageToken, table: null }))}
 				>Next file registrations →</a
 			>{/if}
 	</div>

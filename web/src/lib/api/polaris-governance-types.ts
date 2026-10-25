@@ -1,6 +1,6 @@
 import type { PolarisGrant, PolarisProperties } from './polaris-types';
 
-export type PolarisTableFormat = 'icechunk' | 'iceberg' | 'raw';
+export type PolarisTableFormat = 'icechunk' | 'iceberg' | 'generic';
 
 export interface PolarisCatalogTable {
 	name: string;

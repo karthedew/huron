@@ -104,7 +104,7 @@
 
 	function paginationHref(
 		branch: PolarisBrowseBranch,
-		kind: 'namespacePageToken' | 'pageToken' | 'icebergPageToken' | 'rawPageToken',
+		kind: 'namespacePageToken' | 'pageToken' | 'icebergPageToken' | 'genericPageToken',
 		token: string | null
 	): '/browse' | `/browse?${string}` {
 		const query = new URLSearchParams({ catalog: data.selected.catalog });
@@ -113,7 +113,7 @@
 		if (branch.namespacePageToken) query.set('namespacePageToken', branch.namespacePageToken);
 		if (branch.repositoryPageToken) query.set('pageToken', branch.repositoryPageToken);
 		if (branch.icebergPageToken) query.set('icebergPageToken', branch.icebergPageToken);
-		if (branch.rawPageToken) query.set('rawPageToken', branch.rawPageToken);
+		if (branch.genericPageToken) query.set('genericPageToken', branch.genericPageToken);
 		if (token) query.set(kind, token);
 		else query.delete(kind);
 		return `/browse?${query}`;
@@ -189,7 +189,7 @@
 								: 'text-app-fg hover:bg-app-sidebar-hover'
 						]}
 					>
-						{#if repository.format === 'raw'}<Files
+						{#if repository.format === 'generic'}<Files
 								size={14}
 								class="mt-0.5 shrink-0 text-brand-strong"
 							/>{:else if repository.format === 'iceberg'}<Table2
@@ -204,7 +204,7 @@
 				</li>
 			{/each}
 		</ul>
-		{#if branch.errors.namespaces || branch.errors.tables || branch.errors.icebergTables || branch.errors.rawTables}<p
+		{#if branch.errors.namespaces || branch.errors.tables || branch.errors.icebergTables || branch.errors.genericTables}<p
 				style:--tree-depth={depth}
 				class="folder-row py-2 pr-2 text-xs text-app-muted"
 			>
@@ -232,12 +232,12 @@
 				href={resolve(paginationHref(branch, 'pageToken', null))}
 				class="block px-3 py-1 text-xs">First repository page</a
 			>{/if}
-		{#if branch.nextRawPageToken}<a
-				href={resolve(paginationHref(branch, 'rawPageToken', branch.nextRawPageToken))}
+		{#if branch.nextGenericPageToken}<a
+				href={resolve(paginationHref(branch, 'genericPageToken', branch.nextGenericPageToken))}
 				class="block px-3 py-1 text-xs">Next file registrations →</a
 			>{/if}
-		{#if branch.rawPageToken}<a
-				href={resolve(paginationHref(branch, 'rawPageToken', null))}
+		{#if branch.genericPageToken}<a
+				href={resolve(paginationHref(branch, 'genericPageToken', null))}
 				class="block px-3 py-1 text-xs">First file registration page</a
 			>{/if}
 		{#if branch.nextIcebergPageToken}<a
