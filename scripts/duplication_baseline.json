@@ -1,5 +1,5 @@
 {
-  "clone_groups": 26,
+  "clone_groups": 27,
   "clone_threshold": 0.8,
   "groups": [
     {
@@ -171,8 +171,15 @@
         "src/huron/core/security/_impl/identity.py"
       ],
       "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/security/broker/ladder.py",
+        "src/huron/core/security/facts.py"
+      ],
+      "size": 2
     }
   ],
   "pyscn_version": "1.31.1",
-  "total_clones": 76
+  "total_clones": 78
 }

@@ -1533,7 +1533,7 @@ with their raise sites and their `design/api.html` §7 rows (convention 1).
   - `src/huron/core/security/broker/{__init__,ladder}.py` at 100 % line coverage in the unit run.
 - Dependencies: M2.
 - Decisions: OQ-4.2 (settled, owner decision 12)
-- Status: pending
+- Status: complete
 
 ### M3.2 Signing-key values, the key ring and the rotation rule
 
@@ -10385,3 +10385,60 @@ All gates pass; moved helpers are byte-identical, normalized source ASTs and
 coverage unchanged, all touched source fully covered. Milestones1 and2 are now
 complete. Fresh M3.1 before reports are `/tmp/huron-m31-before.json` and
 `/tmp/huron-m31-before-contract.json`.
+
+### M3.1 implementation evidence (pending independent verification)
+
+The broker's public surface now defines the isolated rank ladder, immutable normalized
+catalog/global grants, minimum-role readability filter, mapping-reader protocol and
+reversible informational role-claim grammar. No runtime, API, database or legacy RBAC
+implementation changed. The tests pin the legacy vocabulary only from the test side.
+The task remains pending until independent verification passes.
+
+Unit coverage moves from 2832/2958 to 2944/3070 statements: all 112 new statements are
+covered, both broker modules reach 100%, and every existing module retains exactly its
+executed and missing line sets. The unit test count grows from 899 to 968. Measured unit
+coverage is 95.8957654723%; the configured floor remains 95.74 under the M2–M18 frozen-floor
+rule. No exclusion or suppression was added. Tests cover rank/scope
+combinations, duplicate-scope normalization, catalog identity, ordering, immutable
+snapshots, exact Forbidden details/context, claim grammar refusals, opaque names,
+Polaris boundaries and both round-trip identities.
+
+The parent reviewed one capped new-module duplication signature:
+`[src/huron/core/security/broker/ladder.py, src/huron/core/security/facts.py]`, size 2.
+The fragments are `RoleMappingReader` (ladder.py:212–226) and
+`BindingFacts.bindings_for` (facts.py:66–75): abstract async protocol declarations
+accepting `frozenset[str]` and returning a tuple of their own domain values. There is
+no shared implementation to extract, and sharing legacy authority violates C-23.
+The manual baseline edit records 76→78 clones and 26→27 groups; G2 capped usage is
+1/4, and G1 remains at 0. The detector, threshold and exclusions are unchanged.
+Independent verification must recheck this reviewed provenance.
+
+Full command logs, status records, source hashes and before/after coverage proof are
+in `/tmp/huron-m31-i1/`; the implementation report is
+`/tmp/huron-m31-i1/report.md`. No site or frontend files changed, so their gates do not
+apply. The implementation uses scoped `caffeinate` only around validation and never
+starts or stops the owner's stack.
+
+### M3.1 verification 1 and fix pass 1 (pending independent verification)
+
+Verification attempt 1 failed on two evidence/configuration findings, with all runtime
+gates passing (`/tmp/huron-m31-v1/report.md`). The initial assignment incorrectly
+requested a floor of 95.89 and the implementation note charged the new signature to G1.
+Fix pass 1 restores `fail_under = 95.74` under the specific M2–M18 frozen-floor rule
+and corrects the current accounting to G2 1/4, G1 0. The measured 2944/3070 coverage
+and the reviewed size-2 signature are unchanged. No production or test code, detector,
+threshold, exclusion or approved baseline signature changes in this fix pass.
+
+Fresh full gates passed: lint (14 contracts), 968 unit, 15 contract, 12 integration,
+983 combined and 69 focused tests. Unit coverage remains 2944/3070 and combined
+coverage 3067/3070; existing source bytes and coverage line sets are unchanged.
+Evidence is in `/tmp/huron-m31-fix1/report.md`. M3.1 remains pending independent
+verification.
+
+### M3.1 independent completion
+
+Verification attempt2 passed: `/tmp/huron-m31-v2/report.md`. All full gates pass,
+including968unit,15contract,12integration,983combined and69focused cases. Broker
+modules are100%covered; existing source and coverage unchanged. Frozen floor95.74
+and reviewed new-module clone accounting G2=1/4,G1=0 confirmed. Next baselines:
+`/tmp/huron-m32-before.json` and `/tmp/huron-m32-before-contract.json`.
