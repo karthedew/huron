@@ -1,7 +1,8 @@
 # Huron Raw data lake — design
 
 Spec of record: `RAW_LAKE_SPEC.md` (repository root), as amended by its section "Owner decisions
-(2026-10-23)", items 1–12. In short: Raw only (the legacy Raw engine, `/api/raw-web`, the BFF delegation,
+(2026-10-23)", items 1–12, and owner decision 13 (2026-10-25). [N13](#n13-explicit-namespace-contracts)
+is the binding replacement for explicit placement, catalog-selected schemas and CLI structure. In short: Raw only (the legacy Raw engine, `/api/raw-web`, the BFF delegation,
 the web upload wizard and the Raw explorer are deleted; the web's own login and sessions, API keys,
 service accounts and the Polaris org/project/dataset API stay, while the clientless Python password
 login, cookie sessions and server code flow are deleted (item 10)); no backwards compatibility of any
@@ -18,6 +19,188 @@ takes that memo's recommendation unless this design flags it.
 
 Grill performed 2026-10-23 on branch `raw-storage` at `fa51f46` (working tree: only `RAW_LAKE_SPEC.md`
 untracked). Receipts below are commands run in this session unless marked as read from a file.
+
+## N13 explicit namespace contracts
+
+Binding replacement for owner decision 13 (2026-10-25). These are planned contracts, not delivered
+capabilities. This section wins over conflicting DT text, diagrams, examples, DDL, tests, handoffs,
+open-question recommendations and decision-11 commentary. Historical experiments remain evidence of
+what was tested, not evidence that the replacement is implemented. Unaffected auth, storage, commit,
+metadata security and recovery contracts remain in force.
+
+Assessment prototype preserved on branch `prototype/explicit-namespaces-20261025`
+(commit `ad502042342ee8ee38b2c05485958ba8ac522112`), at
+`design/prototypes/explicit-namespaces.prototype.html`. Its candidate checkout and byte-cleanup
+simplifications are not adopted; the binding CLI and durability contracts below govern.
+
+### N13 placement and namespace operations
+
+- `CatalogConfig` retains immutable version history, exact `schema: {name, version}`, optional title
+  and snapshot policy. Remove `namespace_fields`, `collection_name`, placement vocabularies,
+  `identity_fields`, `choices` for placement, `place` and slugify-as-placement. Reject those obsolete
+  config keys rather than accepting two shapes. Ordinary metadata enums, secure JSON Schema validation
+  and composition with the selected extension's exact org-base version remain.
+- Catalog names, namespace segments and collection names are distinct validated values sharing
+  `^[a-z0-9][a-z0-9_-]{0,63}$`. Reject invalid input; never sanitize it into another name. Reuse
+  `NamingError` / foundation `PATH_RULE_VIOLATION` (400), keeping DT-18's invalid catalog lookup 404.
+  Keep canonical/slash/mount identifier round trips and the separate scientific file `rel_path` rule.
+- Implementation policy: a namespace is a nonempty path of 1–6 segments within one catalog; a
+  collection requires a namespace, so the maximum total depth is eight. Empty namespaces are durable
+  rows, not inferred prefixes. Each non-top-level namespace has an existing parent in the same catalog.
+- `Namespaces.create(actor, catalog, path, parents, claim)` requires Project Admin on that catalog.
+  By default its immediate parent must exist; `parents=true` explicitly creates missing parents in the
+  same transaction. A pre-existing namespace target is a conflict (409 `NAMESPACE_EXISTS`); an exact idempotent replay
+  returns the original receipt. Each newly created row appends `create / namespace` audit detail with
+  catalog and path. Add `namespace` to replay kinds and audit vocabulary when these operations land.
+- `Namespaces.delete(actor, namespace_id, reason)` requires Project Admin and refuses any descendant
+  namespace or collection, including drafts (409 `NAMESPACE_NOT_EMPTY`). It deletes only that row and
+  appends `delete / namespace` with its former catalog/path. No namespace rename or move in first
+  delivery. A repeated deletion of an absent row is 404; no ETag is required for immutable namespace
+  rows. Existing discoverability rules apply before exposing a refusal or row.
+- Namespace CRUD is logical catalog administration: creating an empty namespace does not provision
+  its mount directory. Activation/move provisions required ancestors through existing directory and
+  permission contracts. Namespace deletion never recursively erases mount content. Any remaining
+  physical directory is handled by existing recovery/finding policy, never inferred as another namespace.
+- Collections are leaves. A namespace path and a collection identifier cannot occupy the same path,
+  even if the collection is a draft. A collection's full path cannot be a namespace ancestor. Because
+  every namespace parent exists and collections require one, checking the target sibling plus the
+  parent chain suffices to rule out nested collections. Empty namespaces are not auto-pruned after
+  collection deletion or move; remove attach/prune namespace helpers and their layout-derived races.
+
+### N13 draft reservation, persistence and concurrency
+
+- `Collections.create` requires Developer and explicit `catalog`, `namespace_id`, `name`, plus initial
+  metadata. Unknown or wrong-catalog namespaces are refused, never auto-created. Persist non-null
+  namespace, name and canonical identifier at draft creation and reserve uniqueness then. Partial
+  metadata remains allowed. Names stay fixed during draft edits; delete/recreate to choose another.
+- Keep UUID identity, version counter, creator and timestamps. Remove collection `config_version` as
+  an identity pin and its `collections_pinned_config` FK: current catalog config alone chooses validation.
+  Catalog config history still has its schema FK and current-version FK. Do not replace the removed
+  pin with a per-collection schema selector.
+- Replace DT-17's `collections_settled` NULL-identity CHECK and nullable identity columns with non-null
+  namespace/name/identifier for all states. Keep unique identifier and `(namespace_id, name)`, segment
+  and depth CHECKs, state CHECK, zero files for drafts, and same-catalog namespace foreign-key integrity.
+  `namespaces` gains same-catalog parent FK (null only at depth one), creator attribution, unique
+  `(catalog_id, path)` and parent/path consistency enforced by a trigger (cross-row checks are not SQL CHECKs). Add
+  `UNIQUE (catalog_id, id)` for composite same-catalog FKs and an index on `parent_id` for child lookup;
+  retain the namespace-path GiST index. No cascade deletes children or collections.
+- Cross-table sibling exclusion uses database triggers on namespace insert and collection insert/move
+  plus a shared catalog topology advisory lock, acquired before reading sibling occupancy. Both trigger
+  paths acquire the same lock, so concurrent raw SQL inserts cannot bypass the invariant. Mirror this
+  in the in-memory adapter and shared contract suite; retain unique constraints as race backstops.
+- Namespace create/delete, draft reservation/deletion, activation and move acquire that topology lock
+  for their transactional topology checks and mutations. Order: catalog config lock when required,
+  catalog topology lock, then collection row locks in UUID order. Schema apply and metadata publication
+  retain the catalog-before-collection serialization order. No transaction takes a catalog lock after
+  a collection lock. Activation provisions before its database transaction, then rechecks the reserved
+  namespace/name and sibling occupancy under the transaction's locks before settling. Draft reservation
+  and foreign keys prevent deletion of its namespace while the draft exists. Preserve the existing
+  staged move and activation recovery ordering; the topology lock does not move physical provisioning
+  into a database transaction or make PostgreSQL and NFS atomic together.
+- Activation validates against the current selected schema and provisions the reserved path. It does
+  not insert namespaces or allocate identity. Preserve activation retry, filesystem collision refusal,
+  permission setting, transaction/audit and server `metadata.json` recovery. Draft `path` in HTTP remains
+  null (no mounted directory), while its `identifier`, namespace and name expose its reservation to
+  authorized Developers. Readers still cannot discover drafts. Default listing remains settled; the
+  explicit draft listing keeps UUID pagination despite identifiers now being present.
+- Stored states remain `draft`, `active`, `incomplete`. Resolved means validation succeeded, not a
+  stored state. Settled rows never return to draft. No archived or closed state. Deletion still refuses
+  registered files, pending commits and unrecorded/unsafe mount content; deleting a draft releases its
+  reservation. Namespace rows survive both collection deletion and relocation.
+
+### N13 catalog schema adoption and metadata
+
+- All collections use the current catalog config's one exact immutable metadata schema version.
+  Publishing a version registers it without adoption. Catalog config apply is the existing
+  Organization Admin operation, guarded by the catalog's config-version ETag; it appends an immutable
+  config version and advances the catalog pointer. A title/policy-only change skips completeness work.
+- On a schema change, keep DT-9/M11.7's synchronous atomic adoption: lock catalog, scan settled rows
+  in batches with row locks, validate all metadata against the new org-base/extension composition,
+  change only differing active/incomplete states and bump each changed collection's version. Commit
+  config, state changes and their audit evidence together; any failure rolls back all. The existing
+  catalog-config audit records the adopted schema and completeness counts; no file rows or paths change.
+  No background partial adoption or new preview endpoint is introduced. Record scan duration on the
+  existing 10,000-collection contract measurement; scale is a deployment limitation, not a weaker promise.
+- Drafts are not assigned a settled completeness state on apply. Their next validation/activation uses
+  the new schema. Validation caching keys on selected schema identity (and its immutable base), not
+  pinned/current config pairs; catalog/schema response ETags invalidate clients on adoption.
+- Remove pinned-identity/current-descriptive schema composition, layout compatibility checks and
+  frozen metadata identity errors. Every metadata field is descriptive. Schema enums remain useful
+  walkthrough choices. Valid metadata publish restores Incomplete → Active, bumps version and audits
+  in the same transaction. Invalid settled metadata edits remain refused; draft partial-save behavior
+  remains. Metadata publish/bulk publish never moves a directory.
+- `move` takes an explicit existing destination namespace and explicit name within the source catalog,
+  not metadata `--set` or a metadata-derived resolver. Preserve Project Admin, `If-Match`, pending-commit
+  refusal, collision checking, UUID/file preservation, staged directory recovery and audit of old/new
+  identifiers. Retain the existing move requirement for valid metadata, now checked against the
+  current catalog schema; repair an Incomplete collection before moving. Moving never edits metadata
+  or creates/prunes namespaces.
+
+### N13 API and CLI replacements
+
+DT-18 is extended by these routes under `/api/v1`; its auth, paging, errors and response conventions
+otherwise stand. Route-count assertions must derive the new table (two added namespace routes), not
+retain the old 37-route count.
+
+| Method / route | Contract | Minimum role / result |
+| --- | --- | --- |
+| `POST /namespaces` | `{catalog, path, parents: false}` with `Idempotency-Key`; path is catalog-relative slash form | Project Admin; 201 namespace receipt (id, catalog, path, parent id, created attribution); replay per DT-18 |
+| `DELETE /namespaces/{id}` | Optional reason under existing delete convention; immutable target, no `If-Match` | Project Admin; 204; 404 absent/undiscoverable, 409 nonempty |
+| `POST /collections` (replace body) | `{catalog, namespace_id, name, metadata}` with `Idempotency-Key` | Developer; 201 reserved draft |
+| `POST /collections/{id}/move` (replace body) | `{namespace_id, name, reason}` with `If-Match` | Project Admin; existing move result/recovery |
+
+`GET /namespaces` includes persistent empty rows. Unknown namespace is 404 `NOT_FOUND`; a namespace
+outside the selected catalog is also 404. An occupied sibling is 409 `COLLECTION_EXISTS` when a
+collection holds it (existing context `{identifier, collection_id}`), or 409 `NAMESPACE_EXISTS` when
+a namespace holds it (new context `{catalog, path, namespace_id}`). Namespace deletion conflict
+`NAMESPACE_NOT_EMPTY` carries `{namespace_id}` without disclosing hidden draft details. Missing parent
+is 404. Keep file `PATH_EXISTS` and its file-specific context unchanged. No new placement-specific error replaces `IDENTITY_UNRESOLVED`: delete that obsolete code and
+identity-freeze errors from the future error table. Malformed request shape remains 422; validly parsed
+names failing the naming rule use 400. Collection schema reads return the current catalog schema.
+
+CLI organization follows the inspected Pyxis skeleton's small root, `options.py` and explicit
+`commands.register(app)` with session, catalog, collections and administration modules. Pyxis is
+print-only evidence for organization, not a dependency or a command contract to copy blindly. Keep
+Huron's injected HTTP client, `ExitCode`, output separation and exclusive volume writer rules.
+
+- Retain session/config/catalog/schema/role/key administration, browsing, metadata operations,
+  `checkout`, `add`, `rm`, `status`, `diff`, `discard`, `push`, `log` and `check`.
+- Add `create namespace <path> [--parents]`, `delete namespace <path>` and
+  `create collection <name> --namespace <path> [-f metadata.json]`. Creation resolves the namespace
+  through the API before reserving the name. `create catalog -f <config>` exposes existing catalog
+  creation; `catalog apply` retains explicit config/schema adoption.
+- `mv <collection> --namespace <path> --name <name>` is same-catalog relocation. Remove `switch` from
+  registration, documentation and tests; no separate local `commit` command exists. The server's durable
+  commit protocol remains part of `push`.
+- `checkout` selects a collection and preserves each UUID's separate staged work, using DT-20's existing
+  rebase/staleness rules. No new dirty-checkout refusal. Walkthrough asks explicit name/namespace before
+  draft creation, then required and optional metadata using schema field order/enums; remove placement
+  choice narrowing and identity-first fields. Resume uses the reserved draft location.
+- Implementation policy: retain current catalog plus current checkout context. Do not add `cd`, `pwd`
+  or `ls` in this delivery; `catalog use` and existing `get` verbs suffice. Register a command only with
+  its backed implementation, never a placeholder. Organizing modules does not change public admin verbs.
+- DT-21 push durability, partial recovery and per-collection staging remain unchanged. After successful
+  remove commit the CLI still unlinks removed files; the server never deletes user-named content.
+  Snapshot bytes remain the recovery history. External/unrecorded bytes may still block collection
+  deletion. The prototype's simplified byte cleanup is not a replacement contract.
+
+### N13 verification and documentation handoffs
+
+Replace future tests of slugification/placement vocabularies/pinned identity/layout/pruning with tests
+of strict rejection, explicit naming, empty namespace persistence, missing parent/namespace refusal,
+parent creation, draft reservation, wrong-catalog FK, sibling collision (including concurrent namespace
+and collection creation), delete-versus-draft/create races and no collection descendants. Real PostgreSQL
+contracts must exercise trigger/FK/backstop behavior as well as the shared fake's observable operations.
+Retain authorization/Reader draft hiding, idempotency, version races, secure schema validation, atomic
+adoption and metadata-repair transitions, activation/move crash recovery and all push storage tests.
+CLI tests prove command registration and absent switch/local commit, explicit creation/move and safe
+checkout across two staged collections. Documentation examples use these contracts as their source.
+
+The evaluated prototype and assessment are historical decision aids. Prototype capture is pending on a
+separate branch; its dirty-checkout and simplified cleanup policies are not approved. DT-26's future
+page/guide recipes use this section, including removal of `switch`, metadata-path derivation and pinned
+identity prose. Completed M1–M3.1 evidence and unrelated migration tasks remain unchanged.
+
 
 ## Roadmap Drift
 
@@ -4359,6 +4542,10 @@ the same person by `preferred_username`, so one person has two names across the 
 
 ## DT-7 design: Audit log
 
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
+
 Designed 2026-10-23 on `raw-storage` at `fa51f46`, consuming DT-1 (home `core/lake/audit.py`, ports in
 `core/lake/ports.py`, adapters in `core/metastore/lake/`, schema-qualified `lake.` SQL, keyset paging through
 `foundation.paging.Window` and `routes/pagination.py`, the `/api/v1/collections` segment), DT-4
@@ -4821,6 +5008,10 @@ the only read route is the per-collection log, so they are visible through SQL o
   need to review mapping changes for their catalog.
 
 ## DT-8 design: Catalog config, naming rules and paths
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 Designed 2026-10-23 on `raw-storage` at `fa51f46`. Consumes DT-1 (homes, contracts 7 and 18, `NamingError`,
 "lake validates catalog names", Postgres schema `lake`, integer versions) and DT-4's `CatalogRef` and
@@ -5345,6 +5536,10 @@ ltree label 1000 characters (R8-1), and identifiers are typed at a shell.
   characters. DT-25 records the tightened rule in the spec amendments.
 
 ## DT-9 design: Metadata schemas, composition, vocabularies and validation
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 Designed 2026-10-23 on `raw-storage` at `fa51f46`. Consumes DT-1 (homes: `huron.schema.metadata`,
 `huron.core.lake.schemas`; contracts 7 and 18; the error-code rules; the route prefix
@@ -5963,6 +6158,10 @@ identity" (`spec:280`), and the deleted `metadata-v1.json` required `title`, `cr
 
 ## DT-10 design: Administration surfaces and bootstrap
 
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
+
 Owner decision 8 and L-10 (a), settled: every power the role table grants above Developer gets an API route
 and a CLI verb, every write is audited in DT-7's vocabulary, and a configured LDAP group is seeded as global
 Platform Owner at startup. DT-10 owns the route and verb list, the Min roles and the seed. It reuses the
@@ -6459,6 +6658,10 @@ DT-1's L-29 decision says every lake resource that accepts updates carries a `ve
   a read before every CLI `role map`, and a 412 path with no information to show.
 
 ## DT-11 design: Volume, mount policy and directory permissions
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 The server touches the NFS volume through two lake-owned ports: `Volume` (probe, create directories,
 verify a file, write `metadata.json`, rename a collection, walk, remove a stale `.part`) and
@@ -7115,6 +7318,10 @@ traversal, so it is unaffected).
 | DT-26 | Operator runbook: writing the production marker, the prefix's own ACL, the pinned uid, OQ-11.4's limit. |
 
 ## DT-12 design: Collections lifecycle and activation
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 Designed 2026-10-23 on `raw-storage` at `fa51f46`. Consumes DT-1 (versions, `If-Match`, error conventions,
 `lake` schema), DT-4 (`require_on_collection`, `require_on_catalog`, `Grants.require`), DT-7 (`AuditWriter`,
@@ -8889,6 +9096,10 @@ that; without a checkpoint each restart restarts the hash, and `commit_max_failu
 
 ## DT-15 design: Metadata publish and mv
 
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
+
 Designed 2026-10-23 on `raw-storage` at `fa51f46`. Answers G-19 (`mv` semantics) and G-29 (bulk metadata
 edits). Consumes DT-1 (`If-Match` and `entity_tag`, `PreconditionFailed`, `REQUEST_INVALID`, the
 `/api/v1/collections` segment, `core/lake/metadata.py` as this task's home), DT-4 (`require_on_collection`,
@@ -9406,6 +9617,10 @@ access table), and keeps the collection's own ACL.
 | DT-25 | `CONTEXT.md`: Move (stage, switch, finish; the staging directory), Publish (full-document replace; no-op on an empty diff), Bulk metadata edit (if OQ-15.1 (a)). |
 
 ## DT-16 design: Reconciler
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 The reconciler is one lake operation, `Reconciler.run`, started by `python -m huron.applications.api.reconcile`
 from the API image as an OpenShift CronJob. It runs under trusted deployment authority (the API pods' service
@@ -10049,6 +10264,10 @@ reset's ACL comparison.
 | DT-26 | The operator runbook: the CronJob manifest; the first run with `--report-only`; reading `lake.reconciliation_status`; the on-demand `kubectl create job --from=cronjob/…`; the exit codes as alert conditions; restoring from `.snapshot` for `FILE_MISSING` and `FILE_DRIFT`. |
 
 ## DT-17 design: Lake persistence: schema, migrations 0015+, adapters and fakes
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 Physical DDL, revisions `0015`–`0018`, the Postgres adapters and in-memory fakes in
 `huron.core.metastore.lake`, the store bundle and the shared contract-test helper. Logical shapes stay with
@@ -10916,6 +11135,10 @@ never pruned (it is replaced on conflict only).
 
 ## DT-18 design: Lake API contract
 
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
+
 This section is the one place that lists every lake route with its method, Min role, request, response,
 status codes, problem codes and audit action. It consumes DT-1's router layout and conventions, DT-4's
 ladder and visibility rule, DT-6's exchange, DT-7's log contract and vocabulary, DT-9's schema routes, DT-10's
@@ -11541,6 +11764,10 @@ carries no type.
 | DT-26 | `design/api.html` §1 (this route table), §3 (Bearer on lake routes, company token on `/auth/exchange`, public discovery) and §7 (the rows above). |
 
 ## DT-19 design: CLI foundation: package, login, context and browsing
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 Designed 2026-10-23 on `raw-storage` at `fa51f46`. Consumes DT-1 (the `applications/cli` home, entry point,
 contracts 17 and 18, the Ruff `TC` entry, "the CLI imports `huron.schema` only", "only `client.py` builds a
@@ -12350,6 +12577,10 @@ The write path (DT-21) needs `link(2)`, `fsync` on NFS and a POSIX mount check. 
 
 ## DT-20 design: CLI collection workflow, walkthrough and administration verbs
 
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
+
 Designed 2026-10-23 on `raw-storage` at `fa51f46`, from artifacts only. It consumes DT-19 (the package, `Services`,
 `open_session(...).client`, `resolve_identifier`/`resolve_collection`, `CollectionDir`, `ExitCode`, `output.py`,
 the schema cache, `CompanyTokens.identity_hints()`), DT-9 (`ComposedSchema.fields()` order, `MetadataValidator.problems(partial=)`,
@@ -13027,6 +13258,10 @@ and `push`'s publish send the full pulled document with `If-Match`", which reads
 
 ## DT-21 design: CLI push: the NFS write path
 
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
+
 Scope: `huron push [-m]` from the mount check to the cleared staging area, the progress document it keeps
 in `staged.json`'s `push` member, the placement rule of L-11 (b), the resume rule, and the local half of
 `huron check`. Consumed, not reopened: DT-11's marker and probe table, DT-13's `rel_path` rule,
@@ -13503,6 +13738,10 @@ interplay) is a storage-admin setting.
 | DT-26 | User docs: the push sequence and how to resume, what each X-row's message asks the user to do, `nconnect=8` and `--jobs`, `mount_policy` for development, and restoring from `.snapshot` followed by `huron add --overwrite`. |
 
 ## DT-22 design: Local mocks: company IdP, LDAP-groups endpoint and signing keys
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 Designed 2026-10-23 on `raw-storage` at `fa51f46`. Consumes DT-5 (`FileSigningKeySource` over
 `TokenSettings.key_directory`, `private_ref` a bare file name, `tokens.initial_key`, ES256 for every key Huron
@@ -14115,6 +14354,10 @@ tests that consume them.
 
 ## DT-23 design: Volume stand-in, test tiers, CI jobs and the large-file gate
 
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
+
 Scope: owner decisions 4 and 5 for storage, L-36 (a) and L-39 (a)+(b), and the handoffs addressed to DT-23 by
 DT-2, DT-11, DT-13, DT-14, DT-15, DT-16, DT-17, DT-18, DT-19, DT-21 and DT-22. This section designs files only;
 the implementation plan schedules the edits to `docker-compose.yml`, `Makefile`, `dev.env`,
@@ -14701,6 +14944,10 @@ OQ-22.2 left "whether that tier runs in CI" to DT-23. It costs an image build an
 
 ## DT-24 design: Polaris projection seam (option C, deferred)
 
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
+
 Designed 2026-10-23 on `raw-storage` at `fa51f46`. This section is a design note only. Owner decision 6
 binds: Huron's PostgreSQL is the only Raw catalog, and nothing Polaris-related ships for Raw in this plan.
 The section names the seam where a Huron-managed Polaris projection (store study option C) could attach
@@ -15024,6 +15271,10 @@ with user tokens, because the projection itself uses the service principal.
 | Plan | The final verification task runs the closing check under "explicitly not built". No other task is scheduled for DT-24. |
 
 ## DT-25 design: Binding rules, glossary, ADRs and lineage pins
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 Designed 2026-10-23 on `raw-storage` at `fa51f46`. Planning only: this section designs the edits to
 `AGENTS.md`, `CONTEXT.md`, `docs/adr/`, the superseded plan files, the five dangling P3 links and the spec's
@@ -15715,6 +15966,10 @@ and ADR clause that depends on a pending OQ names it.
 | Every DT | A change to a decision cited by a B-rule, a glossary group or an amendment item updates that text in the same change (contract above). |
 
 ## DT-26 design: Design record, roadmap and operator documentation
+
+> **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
+> metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
+> CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
 
 Scope: every page of the design record, the roadmap, the developer docs and the two new lake pages (the CLI
 guide and the operator runbook), plus every documentation handoff that earlier sections address to DT-26

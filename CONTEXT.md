@@ -8,23 +8,21 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 ### Raw catalog
 
 **Catalog**: One science domain of the Raw lake, such as `heliophysics`, named by one segment that never changes; the scope of role mappings. _Avoid_: domain; write **Polaris catalog** for the analytical store's.
-**Catalog config**: A catalog's definition of its metadata schema, namespace fields, collection-name rule, vocabularies and snapshot class.
-**Config version**: One immutable version of a catalog config; a collection keeps the one current when its draft was created.
-**Identity layout**: A catalog's namespace fields and collection-name rule, the same in every config version; a new layout is a new catalog.
+**Catalog config**: A catalog's selection of one exact metadata schema version and its catalog policy, including snapshot class.
+**Config version**: One immutable version of a catalog config; the catalog's current version governs all its collections.
 **Segment**: One component of an identifier: a lowercase letter or digit followed by up to 63 of `a-z`, `0-9`, `_`, `-`.
-**Vocabulary**: The allowed values of one namespace field, optionally per value of the preceding field; a namespace field without one is open.
-**Namespace**: An intermediate level of a catalog's paths that exists exactly while a settled collection lies at or beneath it. _Avoid_: folder, Polaris namespace.
+**Vocabulary**: The allowed values of a descriptive metadata field, expressed by its metadata schema.
+**Namespace**: An explicitly named intermediate path within a catalog, which may be empty and persists until explicitly deleted. _Avoid_: folder, Polaris namespace.
 **Collection**: The unit of ownership, metadata and permission, and the only thing that contains files. _Avoid_: dataset, revision.
-**Draft**: A collection that has metadata but no identity, directory or files yet.
+**Draft**: A collection with a reserved namespace and name and potentially partial metadata, but no directory or files yet.
 **Settled**: An Active or Incomplete collection: it has an identity and a directory, may hold files, and never becomes a Draft again.
 **Active**: A settled collection whose metadata passes its validator.
 **Incomplete**: A settled collection whose metadata stopped passing its validator when its catalog adopted a new schema: a newly required field is missing or a field no longer conforms.
-**Resolved**: The outcome that a draft validates and has a place, shown as the path preview. _Avoid_: as a state.
-**Identity fields**: A collection's namespace fields and collection-name field; frozen once it is settled.
-**Descriptive fields**: Every metadata field that is not an identity field.
-**Identifier**: A settled collection's canonical dotted name, `<catalog>.<namespace path>.<name>`.
+**Resolved**: A successful validation outcome shown with a draft's reserved path preview. _Avoid_: as a state.
+**Descriptive fields**: The fields of collection metadata; they describe its contents without determining its location.
+**Identifier**: A collection's canonical dotted name, `<catalog>.<namespace path>.<name>`, reserved from draft creation.
 **Identifier forms**: Canonical (`heliophysics.psp.fields.enc17.run042`), catalog-rooted (`/psp/fields/enc17/run042`), fully qualified (`heliophysics/psp/fields/enc17/run042`) and mount path; all name one collection.
-**Metadata schema**: An immutable, numbered JSON Schema version: the org base schema or a catalog extension that extends it. _Avoid_: schema alone.
+**Metadata schema**: An immutable, numbered set of metadata rules, selected by a catalog for all its collections; an org base schema or an extension of it. _Avoid_: schema alone.
 **Org base schema**: The metadata schema series `org`, which every catalog extension extends.
 **Label**: A top-level string member of a collection's metadata, matched by equality in a search.
 **Organization**: The single company deployment of the Raw lake, implicit and unrecorded; it owns the org base schema and scopes the Organization Admin role. _Avoid_: realm.
@@ -42,7 +40,7 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 **Overwrite**: An add to a `rel_path` that already has a row, made only when asked for.
 **Publish**: Replacing a collection's descriptive metadata with a full document; nothing happens when nothing changed. _Avoid_: commit.
 **Bulk metadata edit**: One merge patch published to an explicit list of collections, all or none.
-**Move**: Changing a settled collection's identity fields and relocating its directory in three steps: stage, switch, finish. _Avoid_: rename.
+**Move**: An explicit change of a settled collection's namespace or name within its catalog, preserving its identity and contents. _Avoid_: metadata edit.
 **Staging directory**: The catalog-level directory that holds a collection between a move's stage and switch.
 **ONTAP snapshot**: A point-in-time copy of the Raw volume: the lake's only history and only undo. _Avoid_: snapshot alone, version.
 **Pin**: `(collection id, rel_path, sha256)`, the way downstream lineage names a Raw input.
@@ -78,7 +76,7 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 **Reconciler**: The scheduled server job that compares the volume with the catalog, repairs what is safe and reports the rest. _Avoid_: `huron check`, which only reads its findings.
 **Finding**: One disagreement the reconciler saw; open until a run repairs it (repaired) or stops seeing it (cleared).
 **Sweep**: Clearing every open finding of a catalog that its finished run did not see again.
-**Orphan directory**: A directory at collection depth with no settled collection at its identifier.
+**Orphan directory**: A physical directory that is not accounted for by the catalog's namespaces or settled collections.
 **Polaris projection (deferred)**: A one-way discovery copy of settled collections in Polaris, keyed by collection UUID; never the record.
 
 ### Development
@@ -97,9 +95,9 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 
 ## Relationships
 
-- A **Catalog** has one current **Config version**; each **Collection** keeps the one current when its **Draft** was created.
-- A **Catalog** contains **Namespaces**, which contain **Collections**, which contain **Files**; a **Namespace** exists only above **Settled** collections.
-- A **Collection**'s **Identifier** and directory follow from its **Identity fields** under its kept **Config version**.
+- A **Catalog** selects one current **Config version** and **Metadata schema** for every **Collection**.
+- A **Catalog** contains **Namespaces**, which may contain other **Namespaces** or leaf **Collections**; only **Collections** contain **Files**.
+- A **Collection**'s **Identifier** follows from its explicit **Catalog**, **Namespace** and name; metadata never determines its location.
 - A **Commit** changes the **Files** of one **Collection**, and each change appends an audit entry carrying the old and new hash.
 - An **Overwrite** or remove leaves the old bytes only in **ONTAP snapshots** taken before it; its audit entry gives the time that selects one.
 - A **Role mapping** grants a **Role** to a group; a request's authority is its groups mapped through the current **Role mappings**.

@@ -1,9 +1,10 @@
 # Huron Raw Data Lake — CLI, Auth Broker & Catalog Spec
 
-Oct 23, 2026 · @Karl
+Oct 25, 2026 · @Karl
 
 > Spec of record for the Raw data lake. The owner decisions at the end amend it; where they
-> differ from the body, the decisions win.
+> differ from the body, the decisions win. Owner decision 13 (2026-10-25) supersedes
+> the older placement, schema-selection and CLI contracts and amendments where they conflict.
 
 > Owner note (2026-10-23): the institutional IdP connection is not available here. Mock the company
 > OIDC provider, the LDAP-groups endpoint and the ONTAP NFS volume for local development, testing
@@ -31,7 +32,7 @@ Huron's raw data lake is three components: a Typer CLI that writes files directl
 - File bytes never travel over HTTP. The CLI writes over the NFS mount; the API carries only metadata.
 - No versioning of raw data. Postgres holds current state; ONTAP snapshots are the recovery path, as with Databricks Volumes and Snowflake stages.
 - Postgres is the source of truth. A file is real only once its row commits.
-- Paths come from metadata. A collection's location is derived from required, vocabulary-controlled fields defined by its catalog.
+- Paths use an explicit catalog, namespace and collection name. Metadata describes a collection and never determines its path.
 
 ## Architecture
 
@@ -84,7 +85,7 @@ Huron exchanges a company OIDC token for a short-lived Huron JWT that carries th
 | --- | --- |
 | Reader | List, describe and search collections; read files |
 | Developer | Create collections, add and remove files, edit descriptive metadata |
-| Project Admin | Everything above plus `mv`, bulk metadata edits and role mappings for their catalog |
+| Project Admin | Everything above plus namespace creation/deletion, `mv`, bulk metadata edits and role mappings for their catalog |
 | Organization Admin | Manage catalogs and their configs |
 | Platform Owner | Keys, global settings, all catalogs |
 
@@ -94,13 +95,14 @@ The same group mapping sets POSIX groups and ACLs when Huron creates catalog and
 
 ## Catalog model
 
-Each science domain is a catalog whose config defines its metadata schema and the ordered fields that build a collection's namespace path.
+Each science domain is a catalog. Its current config selects one exact immutable metadata schema
+version for every collection in that catalog, plus catalog policy such as snapshot class.
 
 **Objects**
 
-- **Catalog** — one per domain: heliophysics, geophysics, space science.
-- **Namespace** — any number of levels, created from a collection's metadata, never by hand.
-- **Collection** — the unit of ownership, metadata and permissions. Only collections contain files.
+- **Catalog** — the authorization and metadata-schema scope, such as `heliophysics`.
+- **Namespace** — an explicitly created path of one to six segments; empty namespaces persist.
+- **Collection** — an explicitly named leaf inside an existing namespace; only collections contain files.
 - **File** — one row per file, current state only.
 
 **Catalog config**
@@ -108,14 +110,15 @@ Each science domain is a catalog whose config defines its metadata schema and th
 ```yaml
 catalog: heliophysics
 config_version: 1
-schema: heliophysics-v1          # extends the org base schema
-namespace_fields: [mission, instrument, campaign]
-collection_name: { field: run_id }
-vocabularies:
-  mission: [psp, solo, soho]
-  instrument: { psp: [fields, sweap, isois] }
+schema: {name: heliophysics, version: 1} # extends one immutable org base version
 snapshot_class: standard
 ```
+
+An optional display `title` remains supported. Placement fields, name generators and dependent
+placement vocabularies are removed. Ordinary JSON Schema enums and org-base composition remain.
+Publishing a schema version only registers it. Explicit catalog config apply adopts it and revalidates
+settled collections atomically; there is no per-collection schema override or identity-config pin.
+Immutable catalog config history and optimistic concurrency remain for policy and audit.
 
 **Identifiers and paths**
 
@@ -126,26 +129,39 @@ snapshot_class: standard
 | Fully qualified | `heliophysics/psp/fields/enc17/run042` | CLI, ignores current catalog |
 | Mount path | `/projects/heliophysics/psp/fields/enc17/run042` or `.` | CLI, run from inside the directory |
 
-**Naming rules**
+**Naming and namespace rules**
 
-- Segments match `[a-z0-9_-]+`, lowercase, no dots, so slash and dot forms convert both ways.
-- Values are slugified from metadata: "Campaign 17" becomes `campaign17`.
-- Reserved: `.snapshot`, anything starting with `.`, anything ending in `.part`.
-- Maximum depth 8 segments including catalog and collection.
+- Every catalog, namespace segment and collection name matches `^[a-z0-9][a-z0-9_-]{0,63}$`.
+  Reject spaces, uppercase, dots, separators within a segment and other characters; never auto-slugify.
+- Maximum depth is eight segments including catalog and collection. Collections require an existing
+  namespace: no catalog-root collections and no implicit namespace creation during collection creation.
+- A namespace and a collection cannot occupy the same sibling path. Drafts reserve their chosen name
+  and namespace at creation. A collection cannot contain another namespace or collection.
+- Project Admin creates namespaces and deletes empty namespaces. Deletion refuses any child namespace
+  or collection, including drafts. Namespace rename/move is outside first delivery.
+- Reserved file paths retain the separate file rule: `.snapshot`, leading `.`, trailing `.part`, and
+  `metadata.json` at collection root; this does not constrain scientific filenames to the segment alphabet.
 
 **Collection lifecycle**
 
-1. **Draft** — `huron create collection` makes a UUID and a row. No path, no directory, no uploads. Partial metadata can be saved and resumed.
-2. **Resolved** — every namespace field is valid; the CLI shows the path preview for confirmation.
-3. **Active** — namespace rows and the directory are created with POSIX permissions, `metadata.json` is written beside the data, uploads unlock.
-4. **Incomplete** — an active collection whose catalog schema later gained a required field. Uploads still work; `huron check` lists them.
+1. **Draft** — creation reserves UUID, explicit namespace, name and identifier. Partial metadata may be
+   saved and resumed. There is no directory, file row or upload yet.
+2. **Active** — activation validates against the catalog's current selected schema, provisions the
+   reserved directory and permissions, commits the row, then writes server-owned `metadata.json`.
+3. **Incomplete** — a settled collection that fails validation after explicit catalog schema adoption.
+   File commits remain available. A valid metadata correction or later compatible adoption restores Active.
 
-**Field rules**
+Active and Incomplete are *settled* and never return to Draft. Resolved is a validation outcome/path
+preview, not a stored state. There are no archive or closed states. Collection deletion retains the
+existing guards against registered files, pending commits and unsafe/unrecorded mount content.
 
-- Namespace fields are required, single-valued and vocabulary-controlled.
-- Identity fields (namespace fields and the collection name) are frozen once active. Changing them takes a privileged `huron mv`.
-- Descriptive fields stay editable through pull, update and publish.
-- Changes to a catalog config apply only to new collections. Each collection records the `config_version` it was created under.
+**Metadata and relocation**
+
+All metadata is descriptive and editable under the schema. Editing it never changes a path. A
+privileged `huron mv <collection> --namespace <existing-path> --name <name>` explicitly relocates a
+settled collection within its catalog, preserving UUID, metadata and file rows. The recoverable move
+protocol, authorization, collision checks and version checks remain. Draft names are fixed until the
+draft is deleted; choosing a new name means creating a new draft. Empty namespaces are never auto-pruned.
 
 ## Postgres schema
 
@@ -153,10 +169,10 @@ Nine tables hold the whole raw catalog; schemas and metadata are JSONB so a new 
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
-| `catalogs` | `id`, `name`, `config` (JSONB), `config_version`, `created_at` | One row per domain; config holds namespace fields, vocabularies, snapshot class |
+| `catalogs` | `id`, `name`, `config` (JSONB), `config_version`, `created_at` | One row per domain; config selects exact metadata schema and snapshot class |
 | `metadata_schemas` | `id`, `name`, `version`, `extends_id`, `json_schema` (JSONB) | Org base schema plus catalog extensions |
 | `namespaces` | `id`, `catalog_id`, `path` (ltree), `created_at` | `ltree` gives cheap subtree queries; unique on (`catalog_id`, `path`) |
-| `collections` | `id` (UUID), `catalog_id`, `namespace_id`, `name`, `identifier`, `state`, `config_version`, `metadata` (JSONB), `updated_at`, `etag` | `state` in draft, active, incomplete; `identifier` null until resolved; unique on (`namespace_id`, `name`) |
+| `collections` | `id` (UUID), `catalog_id`, `namespace_id`, `name`, `identifier`, `state`, `metadata` (JSONB), `updated_at`, `etag` | `state` in draft, active, incomplete; namespace, name and identifier required even for drafts; unique on (`namespace_id`, `name`) |
 | `files` | `id`, `collection_id`, `rel_path`, `size_bytes`, `sha256`, `uploaded_by`, `uploaded_at`, `etag` | Current state only; unique on (`collection_id`, `rel_path`) |
 | `audit_log` | `id`, `at`, `actor`, `action`, `object_type`, `object_id`, `detail` (JSONB), `reason` | Append-only; actions: create, add, overwrite, rm, meta_publish, mv, delete |
 | `roles` | `id`, `name`, `scope` | Reader, Developer, Project Admin, Organization Admin, Platform Owner |
@@ -182,14 +198,16 @@ The API is a small FastAPI service that carries only metadata, auth and commits;
 | GET | `/catalogs/{c}/schema` | Resolved JSON Schema for the walkthrough | Reader |
 | GET | `/namespaces?under={ident}` | Subtree listing | Reader |
 | GET | `/collections?catalog=&under=&label=` | Search and filter | Reader |
-| POST | `/collections` | Create a draft | Developer |
+| POST | `/namespaces` | Explicitly create namespace (optional parents) | Project Admin |
+| DELETE | `/namespaces/{id}` | Delete only an empty namespace | Project Admin |
+| POST | `/collections` | Reserve explicit namespace and name as a draft | Developer |
 | PATCH | `/collections/{id}/draft` | Save partial draft metadata | Developer |
-| POST | `/collections/{id}/activate` | Validate, resolve path, create directory | Developer |
+| POST | `/collections/{id}/activate` | Validate metadata, provision reserved path | Developer |
 | GET | `/collections/{id}` | Metadata, state, etag, file count | Reader |
 | GET | `/collections/{id}/files` | Current file rows | Reader |
 | POST | `/collections/{id}/commit` | Record adds and removes after the CLI wrote the bytes | Developer |
 | PUT | `/collections/{id}/metadata` | Publish descriptive metadata | Developer |
-| POST | `/collections/{id}/move` | Change identity fields and relocate | Project Admin |
+| POST | `/collections/{id}/move` | Relocate to explicit namespace and name | Project Admin |
 | GET | `/collections/{id}/log` | Audit entries | Reader |
 
 **Commit request**
@@ -225,7 +243,9 @@ The API is a small FastAPI service that carries only metadata, auth and commits;
 
 ## CLI reference
 
-The CLI uses `oc`-style verbs for browsing the catalog and Git-style verbs for working on one collection; Git-style commands act on the current checkout unless given `-c <collection>`.
+The CLI uses a small Typer root with explicit command registration, shared options and session, catalog,
+collections and administration command modules (the Pyxis organization). Only backed commands are
+registered. It uses `oc`-style verbs for browsing the catalog and Git-style verbs for working on one collection; Git-style commands act on the current checkout unless given `-c <collection>`.
 
 **Session and context**
 
@@ -236,6 +256,8 @@ The CLI uses `oc`-style verbs for browsing the catalog and Git-style verbs for w
 | `huron whoami` | User, groups and Huron roles per catalog |
 | `huron catalog use <c>` | Sets the current catalog, like `oc project` |
 | `huron config view` | Current context and settings |
+| `huron create catalog -f <config>` | Organization Admin creates a catalog with an exact schema selection |
+| `huron catalog apply -f <config>` | Organization Admin explicitly adopts config/schema changes |
 
 **Browsing (`oc` style)**
 
@@ -246,15 +268,16 @@ The CLI uses `oc`-style verbs for browsing the catalog and Git-style verbs for w
 | `huron get collections <path> [-l k=v] [-o wide\|json\|yaml]` | Search by path and metadata |
 | `huron describe collection <path>` | Metadata, state, file count, last change |
 | `huron explain catalog <c>[.<field>]` | Schema fields, descriptions and vocabularies |
-| `huron create collection [-f metadata.json]` | New draft; runs the walkthrough if no file given |
+| `huron create namespace <path> [--parents]` | Create a persistent namespace; Project Admin |
+| `huron delete namespace <path>` | Delete an empty namespace; Project Admin |
+| `huron create collection <name> --namespace <path> [-f metadata.json]` | Reserve a draft; run metadata walkthrough if no file given |
 | `huron check [--catalog <c>]` | Incomplete collections and orphaned `.part` files |
 
 **Working on a collection (Git style)**
 
 | Command | Does |
 | --- | --- |
-| `huron checkout <path>` | Pulls metadata and file list, sets current collection |
-| `huron switch <path>` | Changes current collection; staged work is kept per collection |
+| `huron checkout <path>` | Pulls metadata and file list, sets current collection; preserves staging per collection |
 | `huron add <files…> [--to <rel_dir>] [--overwrite]` | Stages files to upload |
 | `huron rm <rel_path…>` | Stages removals |
 | `huron status` | Current collection, staged adds, removes and metadata changes |
@@ -271,12 +294,12 @@ The CLI uses `oc`-style verbs for browsing the catalog and Git-style verbs for w
 | `huron meta template --catalog <c>` | Blank skeleton for editing by hand |
 | `huron meta validate <file>` | Checks a file against the catalog schema |
 | `huron meta update` | Walks the editable fields of the checked-out metadata |
-| `huron mv <path> --set <field>=<value>` | Changes an identity field; Project Admin only |
+| `huron mv <path> --namespace <path> --name <name>` | Explicit same-catalog relocation; Project Admin only |
 
 **Walkthrough behaviour**
 
-- Namespace fields first, in catalog order, as select lists; later choices narrow by earlier ones.
-- Then required fields, then optional ones; Enter skips an optional field.
+- Ask for explicit namespace and collection name before creating the draft; validate both strictly.
+- Ask required metadata fields, then optional fields; Enter skips an optional field. Schema enums supply choices.
 - Prefills PI, organization and contact from the login identity.
 - Shows each field's schema description and examples; validates as each answer is given.
 - Saves after every answer to the draft; `--resume <draft-id>` continues.
@@ -344,7 +367,7 @@ Build auth first, because every other command needs a token.
 
 1. **Auth:** `/auth/exchange`, signing keys, JWKS, `group_role_map`; `huron login`, `whoami`, `catalog use`.
 2. **Catalog config and schemas:** `catalogs` and `metadata_schemas` tables, `explain`, `meta template`, `meta validate`.
-3. **Collections:** draft, walkthrough, activate, path resolution, directory creation with POSIX permissions; `create collection`, `get`, `describe`.
+3. **Collections:** explicit namespaces, named draft, walkthrough, activate, directory creation with POSIX permissions; `create collection`, `get`, `describe`.
 4. **Files:** `checkout`, `add`, `rm`, `status`, `push`, the commit endpoint and the `.part` and `rename` write path.
 5. **Metadata editing and audit:** `meta update`, publish, `diff`, `log`, `mv`.
 6. **Maintenance:** `huron check` and the reconciler.
@@ -355,7 +378,7 @@ Build auth first, because every other command needs a token.
 - [ ] Snapshot policy for the raw volume: how many hourly, daily and weekly copies.
 - [ ] Whether any catalog needs a SnapLock volume for retained data.
 - [ ] Which LDAP groups map to which roles for the first catalog.
-- [ ] Whether `collection_name` is chosen by the scientist or generated.
+- [x] Collection names are explicit user input (owner decision 13).
 
 ## Owner decisions (2026-10-23)
 
@@ -412,10 +435,29 @@ Build auth first, because every other command needs a token.
 Every other entry in the planning gap memo's register (L-1..L-44) takes that memo's recommendation as the default
 unless the design finds a reason to differ, in which case it flags the entry as an open question.
 
+## Owner decision 13 (2026-10-25): explicit namespaces and collection names
+
+The owner approved manual namespaces, explicit collection names with strict naming types, and one
+exact metadata schema version selected by each catalog. Metadata no longer determines placement.
+The catalog is homogeneous: per-collection schema overrides are not part of this decision. The
+collection lifecycle remains Draft → Active ↔ Incomplete, with guarded deletion; no new lifecycle
+states are introduced. The CLI adopts Pyxis's explicit registration and command-module organization,
+with checkout/add/rm/push and no `switch` or separate local commit.
+
+The implementation policies that complete this decision (namespace roles, depth, draft reservation,
+parent creation, locking, adoption and explicit move syntax) are recorded in
+[design amendment N13](RAW_LAKE_DESIGN.md#n13-explicit-namespace-contracts).
+They are design choices, not additional owner quotations. N13 and the
+[plan replacements](RAW_LAKE_IMPLEMENTATION_PLAN.md#n13-task-replacements) govern future work.
+This records a target change, not an implemented feature or permission to execute later milestones.
+The evaluated throwaway prototype is awaiting capture on a separate branch; it is not production
+behavior and its dirty-checkout refusal was not adopted.
+
 ## Design amendments (2026-10-23)
 
-These amend the body as the owner decisions do; each item names the design task, and the open question
-whose recommended option it assumes.
+Historical 2026-10-23 amendments follow. Owner decision 13 replaces A-1, the placement portions of
+A-4, A-7, A-8 and A-11, and any conflicting CLI portions of A-23. A-5 strict naming remains.
+Other amendments remain effective. Each item names its original design task and question.
 
 | # | Spec lines | Amendment | Source |
 | --- | --- | --- | --- |

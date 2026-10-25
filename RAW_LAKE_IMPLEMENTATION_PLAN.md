@@ -4,7 +4,9 @@ Status: pending
 
 Branch `raw-storage`; baseline commit `fa51f46`. Milestones M1–M19 start from the commit that adds
 `RAW_LAKE_SPEC.md`, `RAW_LAKE_DESIGN.md` and this plan (task M0.1). Spec of record: `RAW_LAKE_SPEC.md`.
-Its "Owner decisions (2026-10-23)" items 1–12 bind every task and amend the spec body where they differ:
+Its "Owner decisions (2026-10-23)" items 1–12 and owner decision 13 (2026-10-25) bind every task.
+[N13 task replacements](#n13-task-replacements) supersede conflicting future task details and gates;
+[design N13](RAW_LAKE_DESIGN.md#n13-explicit-namespace-contracts) is their contract. Earlier decisions:
 
 1. Reach: Raw only. The Raw engine, `/api/raw-web`, the BFF Raw delegation, the web upload wizard and the
    Raw explorer leave; web login, sessions, API keys and the Polaris org/project/dataset API keep running,
@@ -46,6 +48,53 @@ questions register" (OQ-1.1 … OQ-26.1, every entry settled by owner decision 1
 `RAW_STORAGE_DESIGN.md` and `RAW_STORAGE_IMPLEMENTATION_PLAN.md` are superseded (Owner decision 9): their
 Milestones 0–1 shipped (`248f7bf` … `fa51f46`) and stay as history; nothing else in them is work. This plan
 borrows only their format.
+
+## N13 task replacements
+
+Owner decision 13 (2026-10-25) and [design N13](RAW_LAKE_DESIGN.md#n13-explicit-namespace-contracts)
+replace the conflicting future work below, including its old symbols, test names, acceptance criteria,
+route counts, examples and handoffs. These replacements are mandatory inputs before executing each
+named task. Historical receipts and completed M1–M3.1 notes are unchanged; this amendment implements
+nothing. M3/M4 retain their security/store-foundation scope. Later milestones are not authorized by
+this documentation change.
+
+| Future tasks | Replace | Required deliverable and acceptance |
+| --- | --- | --- |
+| M6.1, M6.3 | Slugify properties, placement resolver, identity-layout config and dependent vocabularies | Strict segment/name/namespace values and identifier round trips; config accepts exact schema/title/policy only. Invalid names are refused unchanged. Namespace depth 1–6, total depth ≤8. Remove obsolete config keys and placement methods. |
+| M6.4–M6.5, M7.2–M7.5 | Frozen identity fields and pinned/current composition, placement-specific errors/cache | Keep secure org-base + exact extension composition, ordinary enums and field diffs. Validation resolves current catalog schema only; publishing a schema alone never adopts it. Config apply retains immutable history and ETag. Remove identity pin and layout-compatibility validation. |
+| M7.1, M8.2, M8.5–M8.6 | Closed audit/replay vocabularies and catalog examples containing placement fields | Seed create/delete namespace audit pairs and namespace replay kind with their owning namespace work (M11); catalog/schema contracts use N13 config shape. Catalog policy/version and administration race guarantees remain. |
+| M9 route/wiring tasks | Old catalog config/schema response examples and fixed route counts | Catalog/schema operations expose selected current schema, no collection override. Keep auth roles, headers and bootstrap. Additional namespace routes arrive with M11, not placeholder registration. |
+| M10 CLI foundation tasks | Monolithic/root command organization and copied Pyxis placeholders | Small root, shared options, explicit register, session/catalog/collections/administration modules; only backed commands. Retain Huron public admin spelling, HTTP injection, state-file and exit/output rules. No cd/pwd/ls context extension. |
+| M11.1, M11.3–M11.6 | Nullable draft identity, pinned config FK, inferred namespaces, attach/prune helpers | Explicit namespace read/write ports and `Namespaces` operations in lake; same-catalog parent FK and indexed parent access; non-null collection namespace/name/identifier with reservation at draft creation. Replace `collections_settled` NULL rule; keep draft zero-file constraint. Trigger-backed namespace/collection sibling exclusion and shared topology lock, mirrored by fake. Add both namespace routes to M11.13. |
+| M11.7 | Two-config completeness validation | Atomic current-schema adoption with locked settled scan, changed-state version bumps and config audit counts; rollback all on error. Drafts validate at next activation. Preserve 10,000-row timing evidence and metadata-publication race tests. |
+| M11.9–M11.10 | Metadata-driven identity at activation and namespace pruning on delete | Reserve explicit draft identity under Developer authorization; missing namespace refused; activation creates only physical path/permissions. Project Admin namespace create/delete, optional explicit parent creation, persistent empty rows. Deleting namespace refuses children/drafts; collection deletion retains file/commit/physical safety. |
+| M11.13–M11.14 | Read-only namespace surface and old collection-create body | N13 POST/DELETE namespace routes, list empty namespaces, create with namespace_id/name, draft visibility unchanged and draft path null. Update OpenAPI/model/route-count tests; validate names via existing foundation errors. |
+| M12.1–M12.3 | Placement-first walkthrough and metadata-derived collection creation | Explicit namespace/name before draft reservation; metadata schema prompts only; resume reserved draft; create/delete namespace CLI and create catalog backed by existing routes. No implicit namespace creation; preserve `--parents` as explicit opt-in. |
+| M14.2 and other staging tasks | `switch` registration and tests | `checkout` selects another UUID while preserving both collections' staged work. Keep existing rebase/staleness and push locking; remove switch, no local commit. |
+| M16.2–M16.5 | Identity metadata freeze, resolver-based move, attach/prune | All metadata descriptive; valid repair restores Active. Move takes destination namespace/name within catalog; reject absent namespace/sibling collision; never edit metadata. Keep pending-commit refusal and all staged move crash/recovery tests. |
+| M17 reconciler tasks | Fixed catalog-layout-depth classification and auto-prune assumptions | Match known explicit namespace paths and reserved/settled collection identities; empty namespaces and draft reservations are legitimate catalog state, not orphan settled directories. Report physical disagreement without deleting user content. Preserve existing partial cleanup, ACL, finding and recovery contracts. |
+| M18.1–M18.3 | Identity-specific metadata UI and `mv --set` | Current-schema metadata edits and explicit `mv --namespace --name`; retain audit log, check, bulk edits and metadata push recovery. |
+| M19 / T-docs-Z and all DT-26 landing rows | Derived namespace glossary/layout, switch and fixed-depth examples | Document N13 naming, explicit CRUD, catalog adoption, draft reservation, lifecycle and exact backed CLI commands. Keep implementation status honest; prototype remains separate historical evidence. |
+
+Across M11–M19, replace fixtures and acceptance scenarios that create a collection without an explicit
+namespace/name. Tests must include invalid names, missing/wrong-catalog namespace, draft reservation,
+namespace-versus-collection collision, persistent empty namespace, nonempty deletion (including drafts),
+concurrent sibling creation and delete/create races in PostgreSQL and fake; atomic schema adoption and
+metadata repair; unchanged paths after metadata edits; authorized relocation with crash recovery;
+Reader draft hiding; and checkout preserving two independent stages. Remove tests that only prove the
+superseded placement/slugification/pinning/pruning behavior. Keep every unrelated gate and scenario.
+
+Dependency addition: M11.13's namespace mutations require M11.9's namespace operations and M11.6's
+persistence; M12 namespace CLI requires those routes. M11.5 implements the revised constraints before
+M11.9 reserves any draft. Namespace audit/replay vocabulary lands no later than M11.5–M11.9 alongside
+its consumer, with migration seed and schema-map updates. No extra migration or compatibility layer is
+needed for the unbuilt original shape. Review old acceptance lines through these replacements, not as
+additional requirements to implement the retired model.
+
+DT-21 file semantics are unchanged: successful rm commit precedes CLI unlink; the server does not
+remove user-named files. External bytes still block unsafe collection deletion. No prototype scenario
+changes that rule or adds a dirty-checkout refusal.
+
 
 ## Goal and non-goals
 
@@ -2328,6 +2377,9 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
 
 ### M6.1 Naming rules in `huron.schema.naming`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: give the lake one copy of the identity-segment rule, slugify, the reserved-name predicate, the
   depth bound and the four identifier forms with their conversions, pure and stdlib-only, so the server
   (through `lake`) and the CLI decide every name the same way. DT-13 adds the `rel_path` rule to the same
@@ -2377,6 +2429,9 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
 - Status: pending
 
 ### M6.2 RE2-backed validator for every schema `huron.schema` builds
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: make every validator the package builds match `pattern` and `patternProperties` with RE2 and
   resolve no remote reference, so a catalog extension written by an Organization Admin can never make a
@@ -2431,6 +2486,9 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
 
 ### M6.3 Catalog config value, `catalog-config-v1.json` and the path resolver
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: one immutable value for a catalog config, loaded from the packaged contract plus the four
   cross-field rules JSON Schema cannot state, with the walkthrough's `choices` and the path resolver
   `place`, so the server's placement and the CLI's path preview are the same code.
@@ -2481,6 +2539,9 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
 
 ### M6.4 `huron.schema.metadata`: the field diff and the schema publish rules
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: the one JSON field diff that both the server's audit `changes` and the CLI's `huron diff` call,
   so the diff a user sees before `push` is the diff the log records; and the document-level publish rules
   (2–8) a metadata schema part must pass, as a keyword-aware walk over schema positions only.
@@ -2516,6 +2577,9 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
 - Status: pending
 
 ### M6.5 Composition, `MetadataValidator` and the org base seed
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: compose the org base, an optional extension and a catalog config's identity rules and
   vocabularies into one self-contained, closed Draft 2020-12 document (L-19 (a)), list its fields for the
@@ -2580,6 +2644,9 @@ now and M8 runs on PostgreSQL. Out of this milestone: `require_on_collection`, `
 (M16); the lifespan bootstrap, `PlatformOwnerSeed` as a setting and every route (M9).
 
 ### M7.1 Audit vocabulary, entries and the in-memory audit and claim halves
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: the closed set of fourteen `(action, object_type)` pairs, one frozen event class per pair and the
   `AuditEntry` value with its invariants and `detail()` encoding, plus the two in-memory transaction halves
@@ -2679,6 +2746,9 @@ now and M8 runs on PostgreSQL. Out of this milestone: `require_on_collection`, `
 
 ### M7.2 Metadata schema registry and the lake error vocabulary
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: publish, read, list and resolve metadata schema versions with DT-9's preconditions and refusal
   codes, the identical-republish no-op and the gap-free version rule decided by the insert, the
   `schema_publish` entry in the same transaction; and open `core/lake/errors.py` with its first two codes,
@@ -2767,6 +2837,9 @@ now and M8 runs on PostgreSQL. Out of this milestone: `require_on_collection`, `
 
 ### M7.3 Catalog values, the catalog store half and `require_on_catalog`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: the values that cross the catalog ports (`NamespacePath`'s ltree encoding, `CatalogRecord`,
   `CatalogConfigRecord`), the catalog store and writer ports with their in-memory half (immutable configs,
   fixed names, no deletion, the deferred current-config link, the readable filter before `LIMIT`), and DT-4's
@@ -2847,6 +2920,9 @@ now and M8 runs on PostgreSQL. Out of this milestone: `require_on_collection`, `
 
 ### M7.4 Catalog operations: create, publish config, get and list
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: DT-8's `Catalogs`: an Organization Admin creates a catalog with its first config and publishes
   new immutable config versions under `If-Match`; Readers get the current or a pinned config; listings show
   only readable catalogs. Every write records its audit entry, a create records its idempotency receipt, an
@@ -2911,6 +2987,9 @@ now and M8 runs on PostgreSQL. Out of this milestone: `require_on_collection`, `
 
 ### M7.5 Validation: resolved schemas, the validator cache and `require_valid`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: the one function that turns a catalog's current config and a collection's pinned config into the
   composed document, its digest and a cached validator (L-17 (a)), plus the problem check and the refusal
   every metadata write uses; `GET /catalogs/{c}/schema` (M9) is `resolved(current, current)`. The
@@ -2948,6 +3027,9 @@ now and M8 runs on PostgreSQL. Out of this milestone: `require_on_collection`, `
 - Status: pending
 
 ### M7.6 Role mappings: `apply_mapping`, `RoleMappings` and the mapping write half
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: audited group-to-role mapping writes at catalog and global scope with DT-10's order of checks
   (scope, ceiling on the new role, input, seed, then the locked write with the ceiling on the old role),
@@ -3033,6 +3115,9 @@ now and M8 runs on PostgreSQL. Out of this milestone: `require_on_collection`, `
 
 ### M7.7 Signing-key administration: list, rotate and withdraw
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: the write half of DT-5's key store as one audited Platform Owner operation: `rotate` follows
   DT-5's procedure (load the key, refresh the ring, `plan_rotation`, update-then-insert, `key_rotate`,
   refresh after commit), `withdraw` removes a still-pending key and re-opens its predecessor (OQ-5.2 (a)),
@@ -3089,6 +3174,9 @@ now and M8 runs on PostgreSQL. Out of this milestone: `require_on_collection`, `
 - Status: pending
 
 ### M7.8 Lake bootstrap: first key, org base and the Platform Owner seed
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: DT-10's idempotent "ensure" as one operation that M9's lifespan runs before `HuronKeys` is
   entered: under one bootstrap lock it makes (K) a signing key exist, (S) `org` version 1 exist (from
@@ -3150,6 +3238,9 @@ schema map").
 
 ### M8.1 One migrate helper: `tests/postgres.py`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: replace the per-module `_migrate` copies with DT-17's single Alembic helper before any lake
   contract module exists. From then on, every lake contract test, the integration tier and the `0014`
   retirement test migrate through one function. Constraint proofs go through `tests/postgres.py` only
@@ -3189,6 +3280,9 @@ schema map").
 - Status: pending
 
 ### M8.2 Revision `0015_lake_catalog`, `refuse_if_rows` and the `lake` map
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: create schema `lake` with the step 1–2 tables exactly as DT-17 writes them: DT-7's audit block
   spliced in, and `<SEGMENT>` written as the literal text of `huron.schema.naming.SEGMENT_PATTERN`. Add
@@ -3319,6 +3413,9 @@ schema map").
 
 ### M8.3 Pool boundary, lock key space, store root and transaction, and claims
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: start the PostgreSQL side of the composite store with these pieces:
   - the connection boundary that every lake adapter method enters through (OQ-18.1 (a));
   - the repository's text-bound jsonb convention;
@@ -3404,6 +3501,9 @@ schema map").
 
 ### M8.4 PostgreSQL role-mapping and signing-key halves
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: add the PostgreSQL halves of the identity tables and compose them into the root and the
   transaction. `PostgresRoleMappings` carries DT-4's per-request read, and DT-10's lister and writer under
   the per-scope advisory lock. `PostgresSigningKeys` carries DT-5's reader, and DT-10's initial key,
@@ -3466,6 +3566,9 @@ schema map").
 - Status: pending
 
 ### M8.5 PostgreSQL audit, catalog and metadata-schema halves
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: add the last 0015 writers:
   - `PostgresAudit`: DT-7's writer on the transaction and its `collection_log` read on the root (M16.1
@@ -3548,6 +3651,9 @@ schema map").
 - Status: pending
 
 ### M8.6 The store complete: conformance, administration races and `ApiStores.lake`
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: every 0015 half now exists. This task:
   - pins the four composites structurally;
@@ -3636,6 +3742,9 @@ has 18 members, all behind `current_actor`, and the OpenAPI tag set is the 11 le
 all.
 
 ### M9.1 Identity settings and the development environment (one step)
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: `ApiSettings` gains DT-6's `company_idp` and `group_directory`, DT-5's `tokens`, DT-10's
   `platform_owner_seed` and `dev_headers`, in place of `auth_mode` and `oidc`. The legacy company bearer
@@ -3796,6 +3905,9 @@ all.
 
 ### M9.2 The lake lifespan: bootstrap, signing keys, tokens and the exchange workflow
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: every app now starts the lake.
   - `LakeBootstrap` makes sure the first signing key, `org` version 1 and the seeded Platform Owner
     mapping exist before `HuronKeys` is entered.
@@ -3872,6 +3984,9 @@ all.
 
 ### M9.3 Discovery and `POST /auth/exchange` (rows 1–3)
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: add the two public discovery documents and the token-exchange route, re-creating the
   `routes/auth` package that M1.6 deleted with `/auth/session` and `/auth/providers`, so the `/auth`
   family is exactly `POST /auth/exchange` (RL step 1's gate) (owner decision 11, B-13).
@@ -3925,6 +4040,9 @@ all.
 - Status: pending
 
 ### M9.4 The lake router, `current_actor` and the catalog routes (rows 4–9)
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: add the lake router under `/api/v1`, behind `current_actor` (Huron JWT only), with catalog rows
   4–9. The lake error vocabulary joins the wire. This task also starts the derived anonymous-401 sweep and
@@ -4038,6 +4156,9 @@ all.
 
 ### M9.5 Role-mapping routes (rows 11–16)
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: serve the catalog and global role-mapping rows through DT-10's `RoleMappings`. Writes are a
   total `PUT` with no `If-Match`. The ceiling, last-owner and seeded-mapping refusals reach the wire, and
   every write is audited.
@@ -4096,6 +4217,9 @@ all.
 - Status: pending
 
 ### M9.6 Metadata-schema and signing-key routes (rows 17–22) and the store-outage answer
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: serve the metadata-schema rows through DT-9's `MetadataSchemas`, and the Platform-Owner
   signing-key rows through DT-10's `SigningKeyAdmin`. The withdraw row is included under OQ-5.2 (a). The
@@ -4196,6 +4320,9 @@ Every new test module under `tests/unit/cli/` sets `pytestmark = pytest.mark.uni
 modules do.
 
 ### M10.1 CLI package, entry point, error boundary and the state directory
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: give the CLI its home and the seams every verb uses (DT-1 L-30, L-31; DT-19 "Seam"). This means the
   console script and declared dependencies; contracts 17 and 18 and the Ruff `TC` entry, in the commit that
@@ -4336,6 +4463,9 @@ modules do.
 
 ### M10.2 Company OIDC client: discovery, device and loopback flows
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: the client half of the company login (DT-19 "L-30", "ID token on the client", "Flow choice").
   Discovery checks the issuer exactly. The RFC 8628 device grant sends PKCE S256 on the device request and
   `code_verifier` on every poll (OQ-22.1 (a)). The RFC 8252 loopback flow runs on `127.0.0.1`. Refresh
@@ -4405,6 +4535,9 @@ modules do.
 
 ### M10.3 Huron API client: problems, ETags, retries and paging
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: the only module that builds a Huron request (DT-1). It takes the bearer from an injected
   `Credentials`, turns a problem+json body into an `ApiError` by `code`, and reads versions from strong
   ETags. It holds the CLI's one retry rule (503 and transport errors; a write only with `Idempotency-Key`;
@@ -4443,6 +4576,9 @@ modules do.
 - Status: pending
 
 ### M10.4 Login session, `login`/`logout`/`whoami` and `catalog use`
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: spec build step 1 on the client (G-26). `Session` exchanges the company ID token at
   `POST /auth/exchange` and writes both token sets atomically under the state lock. Every request goes
@@ -4515,6 +4651,9 @@ modules do.
 
 ### M10.5 Identifier resolution, the schema cache, `get catalogs`, `explain` and `meta template`/`validate`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: DT-8's CLI obligations (`.`, `./x` and `../x` made absolute; the prefix realpath'd once; only
   canonical identifiers sent), the composed-schema cache revalidated with `If-None-Match`, and the step-2
   read verbs: `get catalogs`, `explain catalog [<c>[.<field>]]`, `meta template`, and
@@ -4577,6 +4716,9 @@ modules do.
 
 ### M10.6 Catalog and schema administration verbs
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: Owner decision 8 for catalogs, catalog configs and metadata schema versions. `catalog show`,
   `catalog apply`, `schema list`, `schema show` and `schema publish` live in `commands/admin.py`, each a
   thin wrapper over its DT-18 row. Rows 8 and 19 get a fresh `Idempotency-Key` (`uuid4().hex`) per
@@ -4623,6 +4765,9 @@ modules do.
 - Status: pending
 
 ### M10.7 The `Prompter` seam and the role-mapping and signing-key verbs
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: the TTY seam that every confirming or interactive verb uses (DT-20 keeps `questionary` behind
   `QuestionaryPrompter` only). With it come the remaining administration verbs, `role list`, `role map`,
@@ -4719,6 +4864,9 @@ recorded under "Execution notes".
 
 ### M11.1 Shared volume and merge-patch rules; the step-3 lake ports and values
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: land the pure rules and port shapes every later step-3 task builds on: the marker format and the
   mountinfo parsing shared by the server probe and the CLI, RFC 7396 merge patch shared by draft saves and the
   CLI's bulk-edit preview, and the lake-owned volume, permission, access-reset, collection and completeness
@@ -4776,6 +4924,9 @@ recorded under "Execution notes".
 - Status: pending
 
 ### M11.2 Anchored primitives, the mount probe and contract 9
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: turn the surviving `rawstore` primitives into the internal seam of the volume adapters, add the
   mount probe, and delete what no server operation needs (`CompletionAdmission`, `rename_exclusive`, the
@@ -4837,6 +4988,9 @@ recorded under "Execution notes".
 
 ### M11.3 `PosixVolume` and the volume stand-in module
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: build the only `Volume` adapter (unit, contract, development and production) over a descriptor held
   on the prefix, with the bounded hash, the common error table and DT-12's `remove_collection`; and land
   `tests/fakes/ontap_volume.py`, because the `.snapshot` walk case and the stand-in's own tests are its first
@@ -4883,6 +5037,9 @@ recorded under "Execution notes".
 - Status: pending
 
 ### M11.4 Directory permissions adapters, `Directories` and `mappings_for_catalog`
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: land the domain rule "role → access" and its top-down ordering in `lake.Directories`, both
   `DirectoryPermissions` adapters (the NFSv4 ACL encoder and the recording fake), and the role-mapping read
@@ -4939,6 +5096,9 @@ recorded under "Execution notes".
 
 ### M11.5 Revision `0016_lake_collections`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: create `lake.namespaces`, `lake.collections` and `lake.access_resets` exactly as DT-17 writes them,
   with the schema map and the DDL-level contract tests; the adapters that write the three tables land in
   M11.6–M11.8 of this milestone.
@@ -4980,6 +5140,9 @@ recorded under "Execution notes".
 - Status: pending
 
 ### M11.6 Collection and namespace store halves
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: implement `CollectionStore` and `CollectionWriter` on Postgres and in memory with DT-12's
   lock-then-check semantics, the layout and metadata-file advisory locks, and the `CollectionExists` mapping
@@ -5030,6 +5193,9 @@ recorded under "Execution notes".
 - Status: pending
 
 ### M11.7 Collection search, active paths and the Incomplete recompute
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: add the listing reads (`search` with the visibility and draft rules and the `label` containment
   filter, `active_paths` for resets) and DT-9's completeness half over collections, and call the recompute
@@ -5085,6 +5251,9 @@ recorded under "Execution notes".
 
 ### M11.8 Access-reset queue and the mapping-write reset request
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: make `lake.access_resets` a durable lease queue on both adapters and have every applied role-mapping
   change request a reset in its own transaction (D-6), so revocation reaches the volume through the worker of
   M11.12 rather than waiting for the reconciler.
@@ -5125,6 +5294,9 @@ recorded under "Execution notes".
 - Status: pending
 
 ### M11.9 Collections: drafts, reads, namespaces and `metadata.json`
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: build the aggregate's creating, saving and reading operations, the single writer of `metadata.json`
   and DT-4's collection visibility check, all over the in-memory store and a real `PosixVolume` on
@@ -5174,6 +5346,9 @@ recorded under "Execution notes".
 - Status: pending
 
 ### M11.10 Collections: activation and deletion
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: add T3, T4 and T11 with DT-12's sequences and failure tables: provision before the activation
   transaction, `metadata.json` after it, and a settled delete that refuses before any change while anything
@@ -5229,6 +5404,9 @@ recorded under "Execution notes".
 - Status: pending
 
 ### M11.11 The volume in the API, readiness and the development stand-in
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: open `PosixVolume` in the lifespan with the configured permissions adapter and `Directories`, report
   the volume in `/readyz`, refuse the relaxed policies outside development, publish the volume coordinates on
@@ -5295,6 +5473,9 @@ recorded under "Execution notes".
 
 ### M11.12 The access-reset worker and the permissions pages
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: drain `lake.access_resets` in every API process so a mapping change reaches the volume within one
   interval (catalog directory first, then every collection and its content), and land the design-record and
   operator lines that describe directory permissions.
@@ -5336,6 +5517,9 @@ recorded under "Execution notes".
 - Status: pending
 
 ### M11.13 Lake routes: namespaces and collection reads (rows 23, 24, 28, 30)
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: serve the namespace subtree, the collection search with its `label` grammar and draft rule, a
   collection, and its pinned composed schema, in DT-18's shapes.
@@ -5379,6 +5563,9 @@ recorded under "Execution notes".
 - Status: pending
 
 ### M11.14 Lake routes: drafts, activation and deletion (rows 25, 26, 27, 29)
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: serve draft creation, merge-patch saves, activation and deletion in DT-18's shapes, with the
   merge-patch media-type rule and its 415, and land the lifecycle section of the design record.
@@ -5431,6 +5618,9 @@ collection, and from M14.2 on, creation also checks it out. `describe collection
 row 36, which M16 serves, so it lands in M18.3. CLI guide §3 and §4 are completed here, and RL step 3 flips.
 
 ### M12.1 Walkthrough: plan, answer rules, draft and file sinks, and the state machine
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: DT-20's question loop. Fields are asked in `fields()` order with select lists narrowed by earlier
   answers. An answer is accepted only when partial validation and `place` raise nothing at its field, and
@@ -5503,6 +5693,9 @@ row 36, which M16 serves, so it lands in M18.3. CLI guide §3 and §4 are comple
 
 ### M12.2 Collection resolution, `get namespaces`, `get collections` and `describe collection`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: DT-19's browsing over the collection routes, together with the one resolution rule that every
   server-addressing verb uses for `<path>` and `-c`. The draft list is `get collections --state draft`
   (OQ-18.2 (a)), never a second verb (DT-20 decisions).
@@ -5553,6 +5746,9 @@ row 36, which M16 serves, so it lands in M18.3. CLI guide §3 and §4 are comple
 - Status: pending
 
 ### M12.3 `create collection`, `meta init`, `meta validate -c` and `delete collection`
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: the scientist's creation path, interactive and scripted. It runs the draft create, the
   walkthrough and activation with DT-12's answers, including a lost response, then sets the current
@@ -6053,6 +6249,9 @@ here, together with the §7 lines for `discard` and `switch`.
 
 ### M14.1 Working copy and pull
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: one collection's working copy as DT-20 specifies it. Values are immutable, every write is
   atomic under the state lock, `base.json` is written last as the commit point, and the listing is read by
   one streaming scan. With it comes `sync.pull`, the single pull that `checkout`, `switch`, `push` and
@@ -6122,6 +6321,9 @@ here, together with the §7 lines for `discard` and `switch`.
 - Status: pending
 
 ### M14.2 Staging verbs, `checkout`, `switch`, and created collections checked out
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: the Git-style verbs over the working copy. `add`, `rm`, `status`, `diff` and `discard` resolve
   `-c` locally and need no token, hashing runs before the lock, and staging is all or nothing. `checkout`
@@ -6199,6 +6401,9 @@ here, together with the §7 lines for `discard` and `switch`.
 
 ### M14.3 Mount writer and the push progress document
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: DT-21's deep module, `writer.py`, is everything push does to the mount, behind two calls:
   `probe_volume`, which runs DT-11's table over `huron.schema.volume` (OQ-21.1 (a)), and
   `CollectionDirectory.place`, the resume rules W2–W6 with descriptor-relative `link` or `rename`, fsyncs,
@@ -6272,6 +6477,9 @@ here, together with the §7 lines for `discard` and `switch`.
 - Status: pending
 
 ### M14.4 `huron push`
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: DT-21's step algorithm S0–S8: lock, route by phase, token, fresh read by UUID, mount, re-hash,
   place, commit, cleanup. The `Idempotency-Key` ticket is persisted before the POST and reused for every
@@ -6674,6 +6882,9 @@ landed the row with `size` and `type`), and `COLLECTION_EXISTS` with `collection
 
 ### M16.1 The collection log: reader halves and row 36
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: let a Reader page one collection's audit entries newest first, also after the collection is
   deleted, through DT-7's `collection_log` operation and one route with no wrapping class. DT-4's 404/403 split
   stays in `require_on_collection`, fed by a private adapter whose `catalog_of` reads the catalog recorded on
@@ -6745,6 +6956,9 @@ landed the row with `size` and `type`), and `COLLECTION_EXISTS` with `collection
 
 ### M16.2 Writer halves: `publish_metadata`, `relocate` and `lock_collections`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: give the collection transaction DT-15's three writes on both adapters: a metadata-only update that
   never touches identity columns, an identity switch valid only under the layout lock that maps a unique
   violation to `CollectionExists` with the holder, and a multi-row lock in ascending id order that extends
@@ -6784,6 +6998,9 @@ landed the row with `size` and `type`), and `COLLECTION_EXISTS` with `collection
 - Status: pending
 
 ### M16.3 Metadata publish and bulk edits (rows 34 and 10)
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: publish a settled collection's complete metadata document as one audited version, with identity
   fields frozen, validation against the pinned config re-run only when the catalog's config moved, an empty diff
@@ -6846,6 +7063,9 @@ landed the row with `size` and `type`), and `COLLECTION_EXISTS` with `collection
 
 ### M16.4 The staged move on the volume and `Directories.place_moved`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: give the `Volume` port the four methods DT-15 puts in place of `rename_collection`: a rename of the
   collection directory to a private dot-named staging entry in its catalog directory, a finish that creates the
   missing container levels and renames staging onto the committed path, a read-only listing of staging entries
@@ -6893,6 +7113,9 @@ landed the row with `size` and `type`), and `COLLECTION_EXISTS` with `collection
 - Status: pending
 
 ### M16.5 `mv`: `move`, `recover_move` and row 35
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: move a settled collection to the placement its new identity values resolve to, under one catalog,
   with the UUID unchanged: stage, switch and finish, so that at no instant does its directory sit at an
@@ -6978,6 +7201,9 @@ M18's.
 
 ### M17.1 Revision `0018_lake_reconciler` and the findings store halves
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: store findings with an open/resolved lifecycle deduplicated by the open key, one status row per
   catalog, and the read side the reconciler walks by (catalog layouts, settled rows by identifier, batch file
   probes, pending commit paths, stale drafts), on PostgreSQL and in memory, with DT-17's DDL and downgrade
@@ -7054,6 +7280,9 @@ M18's.
 
 ### M17.2 `Volume` walk depth, `changed_at`, `metadata_matches` and the scan classifiers
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: let the reconciler walk any catalog, container or collection with an optional depth bound and age
   entries by `max(changed_at, modified_at)`, compare `metadata.json` with its rendering without reading a file
   of the wrong size, and classify entries by pure rules (layout depth, partial patterns, non-conforming subtrees
@@ -7100,6 +7329,9 @@ M18's.
 - Status: pending
 
 ### M17.3 `Reconciler` and `ReconciliationFindings`
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: one idempotent pass per catalog under deployment authority: recover staged moves first, walk each
   settled collection and probe its rows in batches, run the row pass only when counts or the version disagree,
@@ -7156,6 +7388,9 @@ M18's.
 - Status: pending
 
 ### M17.4 The CronJob entry point, its settings and row 37
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: run the reconciler as a separate process from the API image with the API pods' settings, store and
   volume wiring and no HTTP app or lifespan worker, exiting 0, 1, 2 or 3 as OpenShift's alerting hook; and serve
@@ -7217,6 +7452,9 @@ M18's.
 - Status: pending
 
 ### M17.5 The reconciler on NFS, the nightly scale case and its pages
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: prove on the loopback mount that a stripped ACE isolates one collection and that the reset repairs
   access, measure entries per second on a large tree every night for the runbook's sizing rule, and land the
@@ -7283,6 +7521,9 @@ and has no `--repair`. The milestone completes CLI guide §7 and §9 and flips R
 
 ### M18.1 Metadata publish, `meta update` and push's publish step
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: staged metadata (OQ-20.4 (a)). `meta update` edits the checkout's `metadata.json` per answer
   through `CheckoutSink`, while identity fields stay `mv`'s. `publish_metadata` validates locally with
   the collection's pinned validator, sends the full pulled document with `If-Match`, and rebases on 412.
@@ -7346,6 +7587,9 @@ and has no `--repair`. The milestone completes CLI guide §7 and §9 and flips R
 
 ### M18.2 `meta bulk-update` and `mv`
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: the two Project Admin metadata verbs. `meta bulk-update` turns a `get collections -o json`
   listing into one row-10 request; it previews each collection's change through the shared
   `apply_merge_patch` (OQ-20.1 (a)) and never chunks, because the route is all or nothing (OQ-15.1 (a)).
@@ -7406,6 +7650,9 @@ and has no `--repair`. The milestone completes CLI guide §7 and §9 and flips R
 - Status: pending
 
 ### M18.3 `log`, `describe`'s last change and `check`
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: the read side of steps 5 and 6. `huron log` pages row 36, newest first, up to `--limit`, and
   `describe collection` gains its last change from the same route. `huron check` makes DT-16's two reads
@@ -7484,6 +7731,9 @@ not built in this plan" list is created by any task; M19.4's closing check prove
 
 ### M19.1 Stack and large-file tests: the step-5 assertions
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: finish DT-23's two test outlines with the clauses that need row 34, row 36 and M18's verbs: the stack
   test's log check and its Reader refusal, which is owner decision 7's per-request re-mapping through the real
   groups fake, and the large-file test's log check.
@@ -7511,6 +7761,9 @@ not built in this plan" list is created by any task; M19.4's closing check prove
 - Status: pending
 
 ### M19.2 T-docs-Z: overview pages, `auth.html` §7 and the roadmap
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: make the design record's summary pages describe what was built, replace every Raw-engine passage
   with the lake's, remove the temporary status lines that T-docs-0 added, and close the roadmap's RL phase.
@@ -7604,6 +7857,9 @@ not built in this plan" list is created by any task; M19.4's closing check prove
 
 ### M19.3 T-docs-Z: developer docs, dated atlases, B-1 and the design-link check
 
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
+
 - Intent: finish the documentation sweep (README lede, the docs site's index, backend page, history entry,
   repository layout and runbook §7, the "Raw lake" navigation group), date and pin the four kept UML atlases and
   retire `rawstore-uml`, delete B-1, and add the mechanical design-link check to `make docs` and to CI's `lint`
@@ -7669,6 +7925,9 @@ not built in this plan" list is created by any task; M19.4's closing check prove
 - Status: pending
 
 ### M19.4 Final verification on the local tree
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: prove the end state before anything leaves the machine: nothing of the deferred Polaris projection
   exists, no Raw versioning vocabulary remains in the lake, every closing check of the plan still holds, the
@@ -7749,6 +8008,9 @@ not built in this plan" list is created by any task; M19.4's closing check prove
 - Status: pending
 
 ### M19.5 Pull request, CI receipts, nightly runs and the merge commit
+
+> Apply [N13 task replacements](#n13-task-replacements) to the affected contracts and
+> acceptance criteria below; superseded placement/identity/switch requirements are not work.
 
 - Intent: the only task that pushes. It opens the pull request, records the first green CI run of every job
   as the receipt that M15.2–M15.5, M16.4, M17.5 and M19.1 deferred to it, obtains two consecutive green

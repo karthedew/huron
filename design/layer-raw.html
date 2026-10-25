@@ -88,6 +88,21 @@ A collection is a mutable directory with no versions, recovered from snapshots
 <p class="warn">Target design; sections land with their tasks in
 <a href="../RAW_LAKE_IMPLEMENTATION_PLAN.md"><code>RAW_LAKE_IMPLEMENTATION_PLAN.md</code></a>.</p>
 
+<h2 id="model">Explicit namespaces and collection lifecycle</h2>
+<p>Target contract approved 2026-10-25: a collection has an explicit namespace and name;
+metadata does not determine its path. Names use lowercase letters, digits, underscores and hyphens,
+start with a letter or digit, and contain at most 64 characters. Namespaces contain one to six
+segments, persist when empty, and are created and deleted explicitly by a Project Admin.</p>
+<p>A Draft reserves its name but has no directory or files. Activation validates metadata and
+provisions its directory. Active and Incomplete are settled states: explicit catalog schema adoption
+can change completeness, and a valid metadata repair restores Active. The catalog selects one exact
+immutable schema version for every collection; publishing a schema alone does not adopt it.
+Metadata edits never relocate a collection; an authorized move changes its explicit namespace/name.</p>
+<p>Deletion refuses registered files, pending commits and unsafe mount content. There are no archive,
+closed or stored resolved states. See <a href="../RAW_LAKE_SPEC.md#owner-decision-13-2026-10-25-explicit-namespaces-and-collection-names">owner decision 13</a>
+and <a href="../RAW_LAKE_DESIGN.md#n13-explicit-namespace-contracts">the binding replacement contracts</a>.
+These capabilities remain planned.</p>
+
 <h2 id="polaris">11. Polaris</h2>
 <p>Raw is not registered in Polaris. Option C remains a deferred, named seam;
 see <a href="polaris.html#raw-outside-polaris">Raw stays outside Polaris</a> and

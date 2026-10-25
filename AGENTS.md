@@ -136,8 +136,10 @@ src/huron/
   ONTAP snapshots are the only history and the only undo.
 - File bytes travel only over the NFS mount, never over HTTP. The API carries
   metadata, tokens and commits.
-- A collection's path comes from its identity fields under its catalog's pinned
-  config. The fields are frozen once it is settled, and only `mv` changes them.
+- A collection's path uses its explicit catalog, namespace and name, reserved at draft
+  creation. Names follow the strict segment rule; metadata never changes placement.
+  Only authorized `mv` relocates a settled collection. The catalog selects one exact
+  metadata schema version for all its collections (Raw lake owner decision 13).
 - An add to an existing `rel_path` needs `overwrite: true`. Its audit entry keeps the
   old hash, size, uploader and time. A remove must name the current hash. Any refusal
   refuses the whole commit.
