@@ -1755,7 +1755,7 @@ with their raise sites and their `design/api.html` §7 rows (convention 1).
   - `rg -n "^def test_|^async def test_" tests/lake_tokens.py` prints nothing.
   - `tokens.py` at 100 % line coverage in the unit run.
 - Dependencies: M3.3.
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ## Milestone 4 — In-memory lake store and request-time authentication
 
@@ -10748,3 +10748,36 @@ Source hashes remained unchanged during checks. Battery power was recorded with
 the idle-sleep assertion held; wall/monotonic timing showed no sleep discrepancy.
 All owned processes stopped. Next-task coverage snapshots are
 `/tmp/huron-m34-before.json` and `/tmp/huron-m34-before-contract.json`.
+
+
+### M3.4 implementation — pending independent verification
+
+Added immutable Huron JWT claims/receipts, synchronous issuance and verification,
+strict header/claim/lifetime validation using the injected clock, and shared real-token
+fixtures. A literal golden token and 65 new token tests cover both signing algorithms,
+role ordering, malformed claims/headers, validity boundaries, key lifecycle and ignored
+extra claims. No application wiring or M4 work was added.
+
+Final complete gate passed: make lint (14 contracts), 1110 unit, 15 contract,
+12 integration, 1125 combined and 164 focused tests. Unit coverage rises from
+3167/3293 to 3262/3388 (96.28%); combined from 3290/3293 to 3385/3388 (99.91%).
+Both touched production modules are 100%, including tokens.py at 94/94;
+untouched-file coverage summaries are unchanged. Floor stays 95.74. Duplication
+remains 78 pairs/27 groups; no baseline edit, G2 usage 1/4 and G1 zero.
+
+Evidence, exact command logs, source hashes and wall/monotonic receipts are in
+`/tmp/huron-m34-i1/report.md` and its directory. The scoped sleep assertion was
+recorded alongside actual power state; no owner-stack manipulation occurred.
+Task status remains pending until independent verification passes.
+
+### M3.4 independent completion
+
+Verification attempt 1 passed with no correction findings: `/tmp/huron-m34-v1/report.md`.
+Fresh lint, 1110 unit, 15 contract, 12 integration, 1125 combined and 164 focused
+tests passed. Unit coverage is 3262/3388; combined coverage is 3385/3388;
+`tokens.py` is 94/94, with no untouched-file coverage loss. Floor remains 95.74;
+duplication remains 78 pairs/27 groups, G2 capped usage 1/4. Source hashes match
+and all owned processes stopped. The successful contract run recorded 102.020
+wall seconds versus 32.936 monotonic seconds on battery power, consistent with
+host suspension; uninterrupted execution is not claimed. Milestone 3 is complete.
+Next baselines: `/tmp/huron-m41-before.json` and `/tmp/huron-m41-before-contract.json`.

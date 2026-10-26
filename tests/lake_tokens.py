@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from huron.core.security.broker import PrivateSigningKey, PublicSigningKey, SigningKeyRecord
+from huron.core.security.broker import (
+    PrivateSigningKey,
+    PublicSigningKey,
+    SigningKeyRecord,
+    HuronKeys,
+    HuronTokenIssuer,
+    Grants,
+)
+from huron.core.foundation.clock import Clock
 from huron.core.security.errors import SigningKeyUnavailable
 
 if TYPE_CHECKING:
@@ -89,3 +97,35 @@ class PausedSigningKeyReader(ScriptedSigningKeyReader):
         finally:
             self.inflight -= 1
             self.finished.set()
+
+
+TEST_ISSUER: Final = "https://huron.test"
+
+
+async def refreshed_test_keys(clock: Clock) -> HuronKeys:
+    """Build a refreshed ring without starting a refresh loop."""
+    keys = HuronKeys(
+        ScriptedSigningKeyReader([TEST_RECORD]),
+        InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY}),
+        clock,
+    )
+    await keys.refresh()
+    return keys
+
+
+def mint(
+    keys: HuronKeys,
+    clock: Clock,
+    *,
+    subject: str = "karl",
+    groups: frozenset[str] = frozenset({"helio-scientists"}),
+    grants: Grants | None = None,
+) -> str:
+    """Mint real tokens through the production issuer for reusable boundary tests."""
+    return (
+        HuronTokenIssuer(
+            keys, issuer=TEST_ISSUER, audience=("huron-api",), ttl=timedelta(hours=1), clock=clock
+        )
+        .issue(subject, groups, grants if grants is not None else Grants(subject, ()))
+        .token
+    )
