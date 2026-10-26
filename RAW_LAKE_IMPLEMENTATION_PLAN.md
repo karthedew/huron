@@ -10971,3 +10971,20 @@ tasks retain their independent verification evidence. Accepted N13/N14 hierarchy
 naming, schema and recursive-namespace changes govern future work; namespace
 runtime and membership-administration endpoints remain planned. Unrelated local
 workflow, research and prototype changes are preserved and excluded from commits.
+
+
+### M5.1 implementation — pending independent verification
+
+Added the shared immutable identity fixture, standalone groups service, root fixtures
+and 80 unit tests, with N14's `huron-administrators` group. Production source and
+settings are unchanged. Implementation evidence: `/tmp/huron-m51-i1/report.md`.
+The final frozen gate passed lint (17 import contracts), 1260 unit, 15 contract,
+12 integration, 1275 combined and 80 focused tests; all 27 contract/integration
+tests collected, standalone isolated loading printed `Starlette`, and both AST
+guards passed. The broader no-bypass scan retains three unchanged legacy matches
+(`test_auth_oidc.py:52`, `test_api_app.py:103,135`) whose removal belongs to M5.5. Unit coverage stays 3457/3583 (96.48%);
+combined stays 3580/3583 (99.92%), with identical per-file covered/missing lines.
+All new executable files are 100% covered. Floor 95.74 and duplication 78 pairs/27
+groups (G2 usage 1/4) are unchanged. Source hashes match; AC power, scoped
+caffeinate assertions and monotonic timings are recorded, and owned processes
+stopped. M5.1 remains pending until independent verification returns PASS.

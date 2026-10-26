@@ -1,0 +1,9 @@
+version: 1
+organization: Huron Development
+users:
+  - {id: 6f1c1a3e-0000-4000-8000-000000000001, username: karl, given_name: Karl, family_name: Owner,
+     email: karl@company.test, groups: [huron-administrators, helio-developers]}
+  - {id: 6f1c1a3e-0000-4000-8000-000000000002, username: sam, given_name: Sam, family_name: Developer,
+     email: sam@company.test, groups: [helio-developers]}
+  - {id: 6f1c1a3e-0000-4000-8000-000000000003, username: rita, given_name: Rita, family_name: Reader,
+     email: rita@company.test, groups: [helio-readers]}
