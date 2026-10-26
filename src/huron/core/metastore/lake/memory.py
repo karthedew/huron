@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from huron.core.metastore.lake.role_mappings import InMemoryRoleMappings
+from huron.core.metastore.lake.signing_keys import InMemorySigningKeys
 from huron.core.security.broker import Role
 
 if TYPE_CHECKING:
@@ -15,7 +17,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from huron.core.security.broker import SigningAlgorithm
+    from huron.core.security.broker import CatalogRef, SigningAlgorithm
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +50,7 @@ class RoleMappingRow:
     """A group's current role in one catalog or the organization."""
 
     ldap_group: str
-    catalog_id: UUID | None
+    catalog: CatalogRef | None
     role_code: str
     role_scope: str
     created_at: datetime
@@ -263,7 +265,7 @@ class InMemoryLakeTransaction:
         self._releases.clear()
 
 
-class InMemoryLakeStore:
+class InMemoryLakeStore(InMemoryRoleMappings, InMemorySigningKeys):
     """Independent committed lake state with atomic buffered transactions."""
 
     def __init__(self, *, seed: bool = True) -> None:

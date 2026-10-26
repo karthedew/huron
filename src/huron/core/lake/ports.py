@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from huron.core.security.broker import RoleMappingReader, SigningKeyReader
+
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
@@ -12,7 +14,7 @@ class LakeTransaction(Protocol):
     """One open database transaction: every lake write, plus reads that see its own writes."""
 
 
-class LakeStore(Protocol):
+class LakeStore(RoleMappingReader, SigningKeyReader, Protocol):
     """The lake's persistence root, with atomic transactions and a readiness probe."""
 
     def transaction(self) -> AbstractAsyncContextManager[LakeTransaction]:

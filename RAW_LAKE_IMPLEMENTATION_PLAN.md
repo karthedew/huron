@@ -1993,7 +1993,7 @@ added to `ApiStores` or `ApiRuntime` and nothing is wired into `create_app` (M8,
     coverage in the unit run.
 - Dependencies: M4.1.
 - Decisions: OQ-4.2 (settled, owner decision 12)
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M4.3 `Actor` and `LakeAuthentication`
 
@@ -10919,3 +10919,36 @@ coverage loss. Floor stays 95.74, duplication stays 78 pairs/27 groups (G2 1/4).
 Frozen source hashes match and owned processes stopped. Four scoped roles are
 implemented; recursive namespace runtime and administration remain future tasks.
 Next baselines: `/tmp/huron-m42-before.json` and `/tmp/huron-m42-before-contract.json`.
+
+
+### M4.2 implementation evidence — pending independent verification
+
+The memory root now composes scoped role-mapping and signing-key read halves, and
+`LakeStore` includes both broker reader ports. Mapping rows retain `CatalogRef`
+until the catalog join lands in M7.6; dictionary keys remain `(group, catalog id or None)`.
+The shared `LakeSeed`/`MemorySeed` and scenarios cover additive groups, unknown and
+empty groups, catalog isolation, invalid scope refusal, replacement per scope, and
+strict retirement filtering in activation order. Corrupt mapping rows fail closed.
+Structural conformance includes both reader bases and a public-name collision guard.
+
+Implementation gate: lint passes (17 import contracts; duplication unchanged at
+78 pairs / 27 groups, native score 75), 1169 unit, 15 contract and 12 integration
+tests pass. Unit coverage is 3438/3564 (96.46%), from 3411/3537 (96.44%);
+combined unit/contract coverage is 3561/3564 (99.92%), from 3534/3537 (99.92%).
+All four touched production files reach 100% and no existing coverage is lost.
+The 95.74 floor and duplication baseline remain unchanged; G2 remains 1/4.
+Six scans are empty, the superseded contract modules are absent, and focused
+memory/broker/import tests pass. Exact outputs, source-freeze hashes, power
+assertions and wall/monotonic command receipts are in `/tmp/huron-m42-i1/`.
+No application wiring, writer methods, clock, migrations, or later milestone code
+was added. No docs-site files changed. Status remains pending independent review.
+
+### M4.2 independent completion
+
+Verification 1 passed: `/tmp/huron-m42-v1/report.md`, with no findings. Fresh lint,
+1169 unit, 15 contract, 12 integration, 1184 combined and 275 focused tests passed.
+Unit 3411/3537 → 3438/3564; combined 3534/3537 → 3561/3564; all touched
+production files are 100% covered, with no prior coverage loss. Floor remains
+95.74; duplication remains 78 pairs/27 groups (G2 usage 1/4). Source hashes match,
+AC power and awake timing verified, owned processes stopped. Next baselines:
+`/tmp/huron-m43-before.json` and `/tmp/huron-m43-before-contract.json`.

@@ -18,8 +18,16 @@ from huron.core.metastore.lake.memory import (
     RoleMappingRow,
     SigningKeyRow,
 )
-from huron.core.security.broker import Role
-from tests.lake_store_contract import store_root_scenario, transaction_error_scenario
+from huron.core.security.broker import CatalogRef, Role, RoleMappingReader, SigningKeyReader
+from tests.lake_store_contract import (
+    LakeSeed,
+    MemorySeed,
+    role_mapping_scenario,
+    invalid_role_scope_scenario,
+    signing_key_scenario,
+    store_root_scenario,
+    transaction_error_scenario,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -64,7 +72,9 @@ async def test_buffer_reads_own_changes_and_commits_or_discards_all_tables(abort
     store.tables.ldap_groups[old.name] = old
     role = store.tables.roles["catalog_reader"]
     catalog = UUID(int=1)
-    mapping = RoleMappingRow(new.name, catalog, role.code, role.scope, NOW, "scientist")
+    mapping = RoleMappingRow(
+        new.name, CatalogRef(catalog, "heliophysics"), role.code, role.scope, NOW, "scientist"
+    )
     members = {"kty": "EC"}
     key = SigningKeyRow("kid", "ES256", members, "key.pem", NOW, None, NOW, "scientist")
     members["kty"] = "changed"
@@ -253,6 +263,8 @@ def test_stores_conform_to_their_ports_structurally_not_by_inheritance() -> None
     """Both composites expose every protocol member with the same parameter names and kinds."""
     for port, adapter in [
         (LakeStore, InMemoryLakeStore),
+        (RoleMappingReader, InMemoryLakeStore),
+        (SigningKeyReader, InMemoryLakeStore),
         (LakeTransaction, InMemoryLakeTransaction),
     ]:
         assert port not in adapter.__mro__
@@ -295,3 +307,56 @@ async def test_independent_keys_and_concurrent_commits_preserve_both_rows() -> N
         assert store.tables.ldap_groups == {first.name: first}
         commit.set()
     assert store.tables.ldap_groups == {first.name: first, second.name: second}
+
+
+@pytest.mark.parametrize(
+    "scenario", [role_mapping_scenario, invalid_role_scope_scenario, signing_key_scenario]
+)
+async def test_seeded_store_scenarios(
+    scenario: Callable[[LakeStore, LakeSeed], Awaitable[None]],
+) -> None:
+    """Read halves satisfy the shared role and signing-key contracts."""
+    store = InMemoryLakeStore()
+    await scenario(store, MemorySeed(store))
+
+
+@pytest.mark.parametrize(
+    ("role", "scope", "catalog"),
+    [
+        ("catalog_reader", "catalog", None),
+        ("catalog_contributor", "catalog", None),
+        ("catalog_owner", "catalog", None),
+        ("administrator", "organization", CatalogRef(UUID(int=1), "helio")),
+        ("catalog_reader", "organization", CatalogRef(UUID(int=1), "helio")),
+        ("administrator", "catalog", None),
+        ("reader", "organization", None),
+    ],
+)
+async def test_reader_refuses_corrupt_role_scopes(
+    role: str, scope: str, catalog: CatalogRef | None
+) -> None:
+    """Malformed persisted rows raise instead of becoming unrestricted grants."""
+    store = InMemoryLakeStore()
+    row = RoleMappingRow("broken", catalog, role, scope, NOW, "seed")
+    store.tables.group_role_map[("broken", catalog.id if catalog else None)] = row
+    with pytest.raises(ValueError):
+        await store.roles_for_groups(frozenset({"broken"}))
+    assert await store.roles_for_groups(frozenset()) == ()
+
+
+async def test_memory_seed_requires_registered_group() -> None:
+    """Missing directory groups cannot acquire mappings through the seeding seam."""
+    store = InMemoryLakeStore()
+    with pytest.raises(ValueError, match="registered"):
+        await MemorySeed(store).role_mapping("absent", None, Role.ADMINISTRATOR)
+    assert await store.roles_for_groups(frozenset({"absent"})) == ()
+
+
+def test_composed_halves_have_no_colliding_public_names() -> None:
+    """A new half cannot silently shadow another half's public method."""
+    names: set[str] = set()
+    for half in InMemoryLakeStore.__bases__:
+        public = {name for name in vars(half) if not name.startswith("_")}
+        assert not names & public
+        names.update(public)
+    assert {"roles_for_groups", "unexpired"} <= names
