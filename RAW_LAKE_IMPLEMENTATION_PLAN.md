@@ -2036,7 +2036,7 @@ added to `ApiStores` or `ApiRuntime` and nothing is wired into `create_app` (M8,
     claim is never read here); `rg -n "monkeypatch" tests/unit/test_lake_access.py` prints nothing.
   - `access.py` at 100 % line coverage in the unit run.
 - Dependencies: M4.2.
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ## Milestone 5 — Identity mocks and the token exchange
 
@@ -10952,3 +10952,22 @@ production files are 100% covered, with no prior coverage loss. Floor remains
 95.74; duplication remains 78 pairs/27 groups (G2 usage 1/4). Source hashes match,
 AC power and awake timing verified, owned processes stopped. Next baselines:
 `/tmp/huron-m43-before.json` and `/tmp/huron-m43-before-contract.json`.
+
+### M4.3 independent completion and authorized-scope handoff
+
+Implementation `/tmp/huron-m43-i1/report.md` and independent verification 1
+`/tmp/huron-m43-v1/report.md` passed. Fresh lint, 1180 unit, 15 contract,
+12 integration, 1195 combined and 197 focused tests passed. Unit 3438/3564 →
+3457/3583 (96.48%); combined 3561/3564 → 3580/3583 (99.92%). Touched production
+files are 100% covered with no prior coverage loss. Floor remains 95.74;
+duplication remains 78 pairs/27 groups (G2 usage 1/4). Source hashes match and
+all owned processes stopped. Tokens are verified before one current mapping read;
+revocation and downgrade affect the next authentication, and informational roles
+never grant authority. No application wiring or M5 work was added.
+
+All authorized M1–M4 tasks are complete. M1.4 retains its recorded owner-approved
+comment-only resolution following the verification cap; all subsequent completed
+tasks retain their independent verification evidence. Accepted N13/N14 hierarchy,
+naming, schema and recursive-namespace changes govern future work; namespace
+runtime and membership-administration endpoints remain planned. Unrelated local
+workflow, research and prototype changes are preserved and excluded from commits.

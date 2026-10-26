@@ -48,6 +48,10 @@ class LakeSeed(Protocol):
         """Seed one valid scoped mapping, refusing invalid role/scope combinations."""
         ...
 
+    async def remove_role_mapping(self, group: str, catalog: CatalogRef | None) -> None:
+        """Remove the mapping for one group and scope, if present."""
+        ...
+
     async def signing_key(self, record: SigningKeyRecord, created_by: str) -> None:
         """Seed the public registration and its creator."""
         ...
@@ -73,6 +77,10 @@ class MemorySeed:
         self._tables.group_role_map[key] = RoleMappingRow(
             group, catalog, role.code, scope, TEST_EPOCH, "seed"
         )
+
+    async def remove_role_mapping(self, group: str, catalog: CatalogRef | None) -> None:
+        """Remove only the named group's mapping in the requested scope."""
+        self._tables.group_role_map.pop((group, catalog.id if catalog is not None else None), None)
 
     async def signing_key(self, record: SigningKeyRecord, created_by: str) -> None:
         """Store each public-key member and interval without private material."""
@@ -122,6 +130,15 @@ async def role_mapping_scenario(store: LakeStore, seed: LakeSeed) -> None:
         Grant(Role.CATALOG_CONTRIBUTOR, first),
         Grant(Role.CATALOG_CONTRIBUTOR, second),
     }
+
+    await seed.remove_role_mapping("readers", first)
+    await seed.remove_role_mapping("readers", first)
+    assert set(await store.roles_for_groups(frozenset({"readers", "owners"}))) == {
+        Grant(Role.CATALOG_CONTRIBUTOR, second),
+        Grant(Role.CATALOG_OWNER, first),
+    }
+    await seed.remove_role_mapping("administrators", None)
+    assert await store.roles_for_groups(frozenset({"administrators"})) == ()
 
 
 async def invalid_role_scope_scenario(store: LakeStore, seed: LakeSeed) -> None:
