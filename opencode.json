@@ -5,23 +5,23 @@
       "description": "Runs the serial implement-markdown workflow with pollable child sessions.",
       "mode": "primary",
       "model": "openai/gpt-6-astra",
-      "variant": "low",
-      "options": { "reasoningEffort": "low" }
+      "variant": "medium",
+      "options": { "reasoningEffort": "medium" }
     },
     "markdown-implementer": {
       "description": "Implements or fixes exactly one assigned markdown-plan slice.",
       "mode": "subagent",
       "model": "openai/gpt-6-astra",
-      "variant": "low",
-      "options": { "reasoningEffort": "low" },
+      "variant": "medium",
+      "options": { "reasoningEffort": "medium" },
       "permission": { "task": "deny", "implementation_start": "deny" }
     },
     "markdown-reviewer": {
       "description": "Independently verifies one markdown-plan slice and runs its full gate.",
       "mode": "subagent",
       "model": "openai/gpt-6-astra",
-      "variant": "low",
-      "options": { "reasoningEffort": "low" },
+      "variant": "medium",
+      "options": { "reasoningEffort": "medium" },
       "permission": { "edit": "deny", "task": "deny", "implementation_start": "deny" }
     }
   }

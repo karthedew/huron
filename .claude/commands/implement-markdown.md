@@ -1,7 +1,8 @@
 ---
 description: Execute a markdown implementation plan for a Python project through serial implementation and verification agents with a strict validation gate, bounded fix loops, and configurable models
 agent: build
-model: claude-fable-5
+model: openai/gpt-6-astra
+variant: medium
 ---
 
 You are orchestrating a disciplined, senior-engineer implementation workflow for a Python project from the markdown implementation plan at:
@@ -11,19 +12,17 @@ You are orchestrating a disciplined, senior-engineer implementation workflow for
 ## Inputs
 
 - Implementation plan: `$1`
-- Claude Code implementation subagent model: `${2:-anthropic/claude-sonnet-5}`
-- Claude Code verification subagent model: `${3:-anthropic/claude-opus-5}`
-- OpenCode model: `openai/gpt-6-astra`, reasoning effort `low`, for every role.
-- Codex models and reasoning effort: inherit the current session by default; explicit `$2`/`$3` select implementation/verification models only when the native tool supports them.
+- Model for every role (orchestration, implementation, fixes and verification): `openai/gpt-6-astra`, reasoning effort `medium`.
+- `$2`/`$3` must be omitted or equal `openai/gpt-6-astra`; other models are refused.
 - Escalation review command: `${4:-/architectural-review}`
 
 ### Runtime selection
 
 Detect the host application from its runtime/tool context, not the model's name. If uncertain, ask before delegation. Record the host and resolved settings in the ledger.
 
-- **Claude Code:** retain the frontmatter's `claude-fable-5` orchestrator and the Claude implementation/verification defaults above, with optional `$2`/`$3` overrides. Use the host's supported model identifiers and background-agent/output-status tools. Do not impose OpenCode's `low` variant on Claude. Verify the requested models are available; never silently substitute.
-- **OpenCode:** enter through `.opencode/commands/implement-markdown.md`, which selects `markdown-orchestrator`. `opencode.json` configures that agent, `markdown-implementer` (implementation and fixes), and `markdown-reviewer` for Astra Low. The project plugin enforces low reasoning effort for these agents and refuses model substitution. `$2`/`$3` must be omitted or equal `openai/gpt-6-astra` in this runtime. The Claude frontmatter does not apply to the OpenCode wrapper.
-- **Codex:** read this file as workflow instructions when the user supplies its path and a plan, for example `./.claude/commands/implement-markdown.md P3_IMPLEMENTATION_PLAN.md`. This is a prompt invocation, not a shell executable or a registered Codex slash command. Ignore the Claude frontmatter and other hosts' model defaults. Use native subagent tools exposed in the current session. Invoking this workflow authorizes its serial delegation; proceed without requesting runtime substitution approval when these capabilities are available. Keep the current orchestrator settings and inherit them for children by default. Apply explicit model or reasoning overrides only through supported native parameters, with a self-contained assignment when inheritance is incompatible with overrides. Record inherited settings as inherited; do not guess an unexposed model or reasoning value. If an explicit override is unavailable, report it rather than substitute.
+- **Claude Code:** requires Astra with Medium reasoning for every role. Verify that the host supports this model and reasoning setting before delegation, using its native configuration rather than assuming OpenCode's `variant` field applies. If unavailable, stop and request a supported runtime; never substitute a Claude model.
+- **OpenCode:** enter through `.opencode/commands/implement-markdown.md`, which selects `markdown-orchestrator`. `opencode.json` configures that agent, `markdown-implementer` (implementation and fixes), and `markdown-reviewer` for Astra Medium. The project plugin enforces medium reasoning effort for these agents and refuses model substitution. `$2`/`$3` must be omitted or equal `openai/gpt-6-astra` in this runtime. The Claude frontmatter does not apply to the OpenCode wrapper.
+- **Codex:** read this file as workflow instructions when the user supplies its path and a plan, for example `./.claude/commands/implement-markdown.md P3_IMPLEMENTATION_PLAN.md`. This is a prompt invocation, not a shell executable or a registered Codex slash command. Use native subagent tools exposed in the current session. Invoking this workflow authorizes its serial delegation. Confirm the orchestrator and children use Astra with Medium reasoning through exposed runtime settings or supported native parameters before delegation. Inherit settings only when they are confirmed to match. If the required settings cannot be selected or confirmed, stop and request a correctly configured session; do not guess an unexposed value or substitute another model.
 
 #### Codex delegation
 

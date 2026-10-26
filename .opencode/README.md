@@ -1,9 +1,9 @@
 # Markdown implementation workflow
 
 OpenCode's `/implement-markdown PLAN.md` wrapper reads the shared workflow in
-`../.claude/commands/implement-markdown.md`. Claude Code uses that command directly
-with its original Fable/Sonnet/Opus defaults. OpenCode uses the three dedicated
-`markdown-*` agents in `../opencode.json`, all on `openai/gpt-6-astra` with low
+`../.claude/commands/implement-markdown.md`. The shared command requires Astra with
+Medium reasoning for every role. OpenCode uses the three dedicated
+`markdown-*` agents in `../opencode.json`, all on `openai/gpt-6-astra` with medium
 reasoning effort. Other agents and commands are not changed.
 
 ## Setup

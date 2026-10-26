@@ -1,8 +1,8 @@
 ---
-description: Execute a markdown plan serially with Astra Low and pollable subagents
+description: Execute a markdown plan serially with Astra Medium and pollable subagents
 agent: markdown-orchestrator
 model: openai/gpt-6-astra
-variant: low
+variant: medium
 ---
 
 Read `.claude/commands/implement-markdown.md` and execute its complete workflow for
