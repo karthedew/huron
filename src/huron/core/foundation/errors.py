@@ -49,6 +49,17 @@ class DomainError(Exception):
         }
 
 
+class DependencyUnavailable(DomainError):
+    """A readiness probe or remote dependency could not answer.
+
+    Remote failures name ``dependency`` and ``reason`` in context; readiness
+    probes retain their named ``checks``. Clients may retry after 30 seconds.
+    """
+
+    code, status_code = "DEPENDENCY_UNAVAILABLE", 503
+    retry_after = 30
+
+
 class IdempotencyKeyReused(DomainError):
     """The same retry key was replayed with a different request."""
 
@@ -105,6 +116,7 @@ class AuthError(Exception):
 
 ERROR_CODES = frozenset(
     {
+        "DEPENDENCY_UNAVAILABLE",
         "IDEMPOTENCY_KEY_REUSED",
         "PRECONDITION_FAILED",
         "NOT_FOUND",

@@ -30,7 +30,12 @@ if TYPE_CHECKING:
     from tests.fakes.ldap_groups import Identities
 
 Endpoint = Literal["discovery", "jwks", "authorize", "token", "device", "revoke"]
-IdpFailure = int | Literal["timeout", "unreachable", "malformed", "issuer_mismatch"]
+IdpFailure = (
+    int
+    | Literal["timeout", "unreachable", "malformed", "issuer_mismatch"]
+    | dict[str, object]
+    | list[object]
+)
 DeviceStep = Literal["authorization_pending", "slow_down", "access_denied", "expired_token"]
 SigningKey = rsa.RSAPrivateKey | ec.EllipticCurvePrivateKey
 
@@ -281,7 +286,7 @@ class FakeCompanyIdp:
 
         Args:
             endpoint: Endpoint whose subsequent requests are affected.
-            failure: Status, transport fault or malformed document to return.
+            failure: Status, transport fault or replacement JSON document to return.
 
         Raises:
             ValueError: Issuer mismatch was requested outside discovery.
@@ -385,6 +390,8 @@ class FakeCompanyIdp:
     def _failure(self, endpoint: Endpoint) -> Response | None:
         self._hits[endpoint] += 1
         failure = self._failures.get(endpoint)
+        if isinstance(failure, (dict, list)):
+            return JSONResponse(failure)
         if isinstance(failure, int):
             return JSONResponse({"error": "injected"}, status_code=failure)
         if failure == "timeout":

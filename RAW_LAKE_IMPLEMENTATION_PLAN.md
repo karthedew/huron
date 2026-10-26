@@ -2277,7 +2277,7 @@ throughout.
   - `exchange.py` and the modified `foundation/errors.py`, `applications/api/errors.py` and `app.py`
     at 100 % line coverage in the unit run.
 - Dependencies: M5.3; M3.4.
-- Status: pending
+- Status: complete (independent verification 2 passed)
 
 ### M5.5 The legacy company bearer over `CompanyTokenVerifier`
 
@@ -11064,3 +11064,29 @@ files and all measured fake support are 100% covered. Production coverage stays
 95.74 and duplication 78 pairs/27 groups (G2 usage 1/4) remain unchanged.
 Source freeze and scans passed; three legacy bypass sites remain scheduled for
 M5.5. Owned validation processes stopped. No production or stack changes.
+
+### M5.4 verification 1 and fix evidence (pending verification 2)
+
+Verification 1 found two boundary failures: token algorithm/key mismatch escaped
+as TypeError, and malformed discovered JWKS URLs escaped or became authentication
+errors. Fix pass 1 rejects mismatched key algorithms and validates usable HTTP URL
+authorities before accepting policy or caching discovery. Existing real-fake
+parametrized tests cover both directions and malformed constructor/discovery URLs.
+
+The fix gate passed: lint, 1416 unit, 15 contract, 12 integration, 1431 combined,
+271 focused tests and docs; required scans and source freeze passed. Unit coverage
+is 3576/3702 (96.60%), combined 3699/3702 (99.92%); every touched production file
+is 100%, and untouched per-file coverage matches m53-v1. Floor 95.74, duplication
+78 pairs/27 groups and G2 usage 1/4 remain unchanged. Exact logs and comparisons:
+`.local/implementation-evidence/m54-fix1/report.md`. Owned validation processes
+stopped; no owner stack was operated. M5.4 remains pending independent verification 2.
+
+### M5.4 completion — independent verification 2 PASS
+
+Independent review confirmed both boundary fixes and the complete verifier contract.
+Fresh lint, 1416 unit, 15 contract, 12 integration, 1431 combined and 271 focused
+tests, documentation and required scans passed. All touched production files are
+100% covered; untouched summaries match m53-v1. Unit coverage is 3576/3702
+(96.60%), combined 3699/3702 (99.92%). Floor 95.74, duplication 78 pairs/27 groups
+and G2 usage 1/4 remain unchanged. Source hashes matched and owned processes
+stopped. Evidence: `.local/implementation-evidence/m54-v2/report.md`.

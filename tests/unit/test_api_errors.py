@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from huron.applications.api.errors import DependencyUnavailable
-from huron.core.foundation.errors import DomainError, Forbidden
+from huron.core.foundation.errors import DependencyUnavailable, DomainError, Forbidden
 from huron.core.hierarchy.errors import SlugExists
 from huron.core.security.errors import (
     AttachmentExists,
@@ -69,5 +68,6 @@ def test_context_travels_into_as_problem() -> None:
 
 def test_signing_failures_distinguish_retryable_unavailability_from_refusal() -> None:
     """Unavailable signing requests may retry after 30 seconds; refusals promise no retry."""
+    assert DependencyUnavailable.retry_after == 30
     assert SigningKeyUnavailable.retry_after == 30
     assert RotationRefused.retry_after is None

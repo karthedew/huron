@@ -403,6 +403,7 @@ def test_readyz_refuses_once_the_raw_root_is_gone(tmp_path: Path) -> None:
         shutil.rmtree(tmp_path / "data")
         response = client.get("/readyz")
     assert response.status_code == 503
+    assert response.headers["Retry-After"] == "30"
     assert response.headers["content-type"] == "application/problem+json"
     body = response.json()
     assert body["code"] == "DEPENDENCY_UNAVAILABLE"
@@ -442,6 +443,7 @@ def test_readyz_reports_the_database_check_when_the_pool_does_not_answer(tmp_pat
         _with_database_pool(app, _FakePool(fails_with=OSError("connection refused")))
         response = client.get("/readyz")
     assert response.status_code == 503
+    assert response.headers["Retry-After"] == "30"
     assert response.headers["content-type"] == "application/problem+json"
     body = response.json()
     assert body["code"] == "DEPENDENCY_UNAVAILABLE"
@@ -466,6 +468,7 @@ def test_readyz_reports_the_database_check_when_the_pool_raises_a_postgres_error
         _with_database_pool(app, _FakePool(fails_with=asyncpg.PostgresError("connection lost")))
         response = client.get("/readyz")
     assert response.status_code == 503
+    assert response.headers["Retry-After"] == "30"
     assert response.headers["content-type"] == "application/problem+json"
     body = response.json()
     assert body["code"] == "DEPENDENCY_UNAVAILABLE"
@@ -496,6 +499,7 @@ def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_pool(
         _with_database_pool(app, _FakePool(hangs=True))
         response = client.get("/readyz")
     assert response.status_code == 503
+    assert response.headers["Retry-After"] == "30"
     assert response.headers["content-type"] == "application/problem+json"
     body = response.json()
     assert body["code"] == "DEPENDENCY_UNAVAILABLE"
@@ -539,6 +543,7 @@ def test_readyz_refuses_promptly_instead_of_hanging_on_a_wedged_generations(
         elapsed = time.monotonic() - started
     assert elapsed < 1.0
     assert response.status_code == 503
+    assert response.headers["Retry-After"] == "30"
     assert response.headers["content-type"] == "application/problem+json"
     body = response.json()
     assert body["code"] == "DEPENDENCY_UNAVAILABLE"

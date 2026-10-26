@@ -19,6 +19,7 @@ from asyncer import asyncify
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
+from huron.core.foundation.errors import DependencyUnavailable
 from huron.core.metastore import (
     PostgresApiKeyStore,
     PostgresHierarchyStore,
@@ -31,7 +32,6 @@ from huron.core.security import bootstrap_platform_owner
 from huron.core.security.oidc import JwksVerifier, OidcClient, OidcResolver
 from huron.core.security.rules import Classification, RoleBindingAuthorizer
 
-from .errors import DependencyUnavailable
 from .problems import Problem, install_error_handlers, problem_response
 from .routes import v1
 from .runtime import ApiRuntime, ApiStores, Runtime

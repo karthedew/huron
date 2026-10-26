@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
+from huron.core.security.broker import COMPANY_USERNAME as BROKER_USERNAME
+
 from tests.fakes.ldap_groups import COMPANY_USERNAME, DEFAULT_IDENTITIES, FakeUser, Identities
 from tests.lake_tokens import TEST_EPOCH
 
@@ -33,7 +35,7 @@ def test_shared_people_and_clock(identities: Identities, clock: FakeClock) -> No
         assert user.id == f"6f1c1a3e-0000-4000-8000-{index:012}"
         assert user.email == f"{user.username}@company.test"
     assert clock.now() == TEST_EPOCH
-    assert COMPANY_USERNAME.pattern == r"[A-Za-z0-9][A-Za-z0-9._@-]{0,127}"
+    assert COMPANY_USERNAME.pattern == BROKER_USERNAME.pattern
 
 
 @pytest.mark.parametrize(

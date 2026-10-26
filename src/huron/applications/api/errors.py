@@ -1,4 +1,4 @@
-"""Failures owned by HTTP parsing and deployment readiness."""
+"""Failures owned by HTTP parsing."""
 
 from huron.core.foundation.errors import DomainError
 
@@ -9,10 +9,4 @@ class InvalidCursor(DomainError):
     code, status_code = "INVALID_CURSOR", 400
 
 
-class DependencyUnavailable(DomainError):
-    """A dependency probed by readiness did not answer."""
-
-    code, status_code = "DEPENDENCY_UNAVAILABLE", 503
-
-
-ERROR_CODES = frozenset({"INVALID_CURSOR", "DEPENDENCY_UNAVAILABLE"})
+ERROR_CODES = frozenset({"INVALID_CURSOR"})
