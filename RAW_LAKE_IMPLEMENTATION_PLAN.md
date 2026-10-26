@@ -2216,7 +2216,7 @@ throughout.
     prints nothing).
 - Dependencies: M5.2.
 - Decisions: OQ-22.1 (settled, owner decision 12)
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M5.4 `DependencyUnavailable` in foundation and the company-token verifier
 
@@ -11035,3 +11035,32 @@ Changed executable files are 100% covered. Production coverage matches the prior
 per-file baseline exactly: 3457/3583 unit and 3580/3583 combined. Floor remains
 95.74; duplication remains 78 pairs/27 groups (G2 usage 1/4). Source hashes match
 and owned processes stopped. No production or stack configuration changed.
+
+
+### M5.3 implementation — pending independent verification
+
+Completed the fake issuer's authorization, token, device and revocation endpoints,
+validated Python controls, and extended its existing tests. Production, realm and
+stack configuration are unchanged. Full lint, unit (1,348), contract (15), integration
+(12), combined (1,363) and all-fakes (168) gates passed. Unit coverage remains
+3,457/3,583 (96.48%); combined remains 3,580/3,583 (99.92%); all measured fake/support
+statements are covered (1,100/1,100), including the issuer (323/323) and touched tests
+(373/373). Floor 95.74 and duplication 78 pairs/27 groups are unchanged.
+
+The required sleep scan and scoped no-bypass scan are empty. An additional global
+bypass scan reports three legacy sites unchanged from `9f07d5d`, owned by later
+consumer migration; evidence retains the diagnostic and baseline comparison.
+Source freeze, power assertions, command receipts and exact output are recorded in
+`.local/implementation-evidence/m53-i1/report.md`. No owner stack was operated.
+Independent verification is pending; M5.3 remains pending.
+
+### M5.3 independent completion
+
+Verification 1 passed with no findings:
+`.local/implementation-evidence/m53-v1/report.md`. Fresh lint, 1348 unit,
+15 contract, 12 integration, 1363 combined and 168 fake tests passed. Changed
+files and all measured fake support are 100% covered. Production coverage stays
+3457/3583 unit and 3580/3583 combined, with unchanged per-file counts. Floor
+95.74 and duplication 78 pairs/27 groups (G2 usage 1/4) remain unchanged.
+Source freeze and scans passed; three legacy bypass sites remain scheduled for
+M5.5. Owned validation processes stopped. No production or stack changes.
