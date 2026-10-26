@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import sys
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
@@ -204,3 +205,71 @@ def test_user_refuses_non_sequence_membership(identities: Identities) -> None:
     """Direct fixture construction cannot mistake a string for group membership."""
     with pytest.raises(ValueError, match="groups must be a list or tuple"):
         replace(identities.user("karl"), groups="readers")
+
+
+def test_company_realm_matches_people_and_public_client(identities: Identities) -> None:
+    """The development realm mirrors fixture identities without token-based groups or roles."""
+    realm = json.loads((ROOT / "scripts/keycloak/company-realm.json").read_text())
+    assert realm["realm"] == "company"
+    assert realm["displayName"] == "Company IdP (local mock)"
+    assert realm["sslRequired"] == "none"
+    assert realm["enabled"] is True
+    for flag in (
+        "registrationAllowed",
+        "resetPasswordAllowed",
+        "editUsernameAllowed",
+        "loginWithEmailAllowed",
+        "duplicateEmailsAllowed",
+    ):
+        assert realm[flag] is False, flag
+    assert realm["accessTokenLifespan"] == 300
+    assert realm["oauth2DeviceCodeLifespan"] == 600
+    assert realm["oauth2DevicePollingInterval"] == 5
+    assert realm["revokeRefreshToken"] is True
+    assert realm["refreshTokenMaxReuse"] == 0
+    assert not realm.get("roles", {}).get("realm")
+    assert "clientScopes" not in realm
+    assert len(realm["users"]) == len(identities.users)
+    assert {user["username"] for user in realm["users"]} == set(identities.users)
+    for entry in realm["users"]:
+        person = identities.user(entry["username"])
+        for field, expected in {
+            "id": person.id,
+            "firstName": person.given_name,
+            "lastName": person.family_name,
+            "email": person.email,
+        }.items():
+            assert entry[field] == expected, (person.username, field)
+        assert entry["enabled"] is True
+        assert entry["emailVerified"] is True
+        assert not entry.get("realmRoles")
+        assert entry["credentials"] == [
+            {"type": "password", "value": f"{person.username}-dev-password", "temporary": False}
+        ]
+    (client,) = realm["clients"]
+    assert client["clientId"] == "huron-cli"
+    assert client["protocol"] == "openid-connect"
+    for flag in ("enabled", "publicClient", "standardFlowEnabled"):
+        assert client[flag] is True, flag
+    for flag in (
+        "implicitFlowEnabled",
+        "directAccessGrantsEnabled",
+        "serviceAccountsEnabled",
+        "authorizationServicesEnabled",
+    ):
+        assert client[flag] is False, flag
+    assert "secret" not in client
+    assert client["attributes"]["oauth2.device.authorization.grant.enabled"] == "true"
+    assert client["attributes"]["pkce.code.challenge.method"] == "S256"
+    assert client["redirectUris"] == ["http://127.0.0.1/*"]
+    (mapper,) = client["protocolMappers"]
+    assert mapper["protocolMapper"] == "oidc-hardcoded-claim-mapper"
+    assert mapper["protocol"] == "openid-connect"
+    assert mapper["config"] == {
+        "claim.name": "organization",
+        "claim.value": identities.organization,
+        "jsonType.label": "String",
+        "id.token.claim": "true",
+        "access.token.claim": "false",
+        "userinfo.token.claim": "false",
+    }

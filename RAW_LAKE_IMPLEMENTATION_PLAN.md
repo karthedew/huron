@@ -2167,7 +2167,7 @@ throughout.
 - Dependencies: M5.1.
 - Decisions: OQ-20.3 (settled, owner decision 12)
 - Decisions: OQ-22.1 (settled, owner decision 12)
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M5.3 The fake company issuer: authorize, token, device and revocation
 
@@ -11006,3 +11006,32 @@ Both infrastructure failures are preserved in the report. One fresh awake recove
 passed the affected checks without code changes or timeout weakening. Owned
 validation processes stopped. The owner now authorizes all remaining implementation
 tasks, superseding the earlier stop before M9; accepted N13/N14 remain binding.
+
+### M5.2 implementation — pending independent verification
+
+The company issuer now serves discovery and public JWKS under its issuer path, signs the fixture's
+ID-token claims with the cached RSA key or rotated P-256 keys, and supports claim/signature corruption,
+key retirement, persistent endpoint failures and immutable request counts. Shared fixtures expose the
+issuer and its ASGI transport. The hand-written `company` realm matches the fixture and public CLI
+client, with PKCE/device settings and refresh rotation pinned by drift tests. Interactive endpoints are
+advertised only; their handlers remain M5.3. No production, compose, environment or stack tooling changed.
+
+Implementation checks passed: `make lint` (17 contracts; 78 clone pairs/27 groups, score 75), 1281 unit
+(+21), 15 contract, 12 integration and 1296 combined tests. Production coverage is unchanged from M5.1:
+3457/3583 unit statements (96.4833938%) and 3580/3583 combined (99.9162713%). The 101-test fake suite
+covers all 662 measured support/test statements, including every changed executable file, at 100%.
+Realm JSON, scope and whitespace checks passed. Floor stays 95.74; G2 cap use stays 1/4.
+
+Exact logs, JSON coverage, matching source-freeze hashes, process-scoped `caffeinate -dimsu` power
+receipts and matching wall/monotonic durations are retained in `.local/implementation-evidence/m52-i1/`.
+Independent verification is still required before marking M5.2 complete.
+
+### M5.2 independent completion
+
+Verification 1 passed with no findings:
+`.local/implementation-evidence/m52-v1/report.md`. Fresh lint (17 contracts),
+1281 unit, 15 contract, 12 integration, 1296 combined and 101 focused tests passed.
+Changed executable files are 100% covered. Production coverage matches the prior
+per-file baseline exactly: 3457/3583 unit and 3580/3583 combined. Floor remains
+95.74; duplication remains 78 pairs/27 groups (G2 usage 1/4). Source hashes match
+and owned processes stopped. No production or stack configuration changed.
