@@ -2104,7 +2104,7 @@ throughout.
     in every tier).
 - Dependencies: M4.3; M3.3 (`TEST_EPOCH`).
 - Decisions: OQ-6.1 (settled, owner decision 12)
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M5.2 The fake company issuer: discovery, keys and ID tokens; the `company` realm
 
@@ -10988,3 +10988,21 @@ All new executable files are 100% covered. Floor 95.74 and duplication 78 pairs/
 groups (G2 usage 1/4) are unchanged. Source hashes match; AC power, scoped
 caffeinate assertions and monotonic timings are recorded, and owned processes
 stopped. M5.1 remains pending until independent verification returns PASS.
+
+### M5.1 recovered independent completion
+
+The interrupted implementation was preserved in checkpoint `2fbfd3d`, already pushed
+to `origin/raw-storage`. Recovered verification attempt 1 passed with no findings:
+`.local/implementation-evidence/m51-v1-recovery/report.md` and adjacent exact logs.
+Lint (17 import contracts), 1260 unit, 15 contract, 12 integration, 1275 combined,
+80 focused tests, standalone import, AST guards and collection checks passed.
+Unit coverage remains 3457/3583; combined remains 3580/3583. New executable test
+support and tests are 356/356 covered. Source hashes match; floor 95.74 and
+duplication 78 pairs/27 groups (G2 usage 1/4) remain unchanged.
+
+Initial database checks encountered a stopped Docker Desktop runtime; after its
+restoration, one container startup overlapped a proven 459-second host sleep.
+Both infrastructure failures are preserved in the report. One fresh awake recovery
+passed the affected checks without code changes or timeout weakening. Owned
+validation processes stopped. The owner now authorizes all remaining implementation
+tasks, superseding the earlier stop before M9; accepted N13/N14 remain binding.
