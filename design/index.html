@@ -79,6 +79,24 @@ figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
   <a href="roadmap.html">Roadmap</a>
 </nav>
 <main>
+<section id="raw-hierarchy-authority">
+<h2>Raw hierarchy and access target</h2>
+<p><strong>Accepted target; implementation pending.</strong> Organization → Catalog → Namespace →
+nested Namespace(s) → Collection. Initially one Organization; namespace nesting has no fixed business-depth
+cap, subject to strict names and path safety. Empty namespaces persist; every collection belongs to a
+namespace, and directories within collections are not namespaces.</p>
+<p>Administrator (<code>administrator</code>) administers the Organization and all its catalogs.
+Catalog Owner (<code>catalog_owner</code>), Catalog Contributor (<code>catalog_contributor</code>) and
+Catalog Reader (<code>catalog_reader</code>) apply only to their assigned catalog and all its descendants.
+Group grants are additive. Administrators appoint owners; owners manage only Reader/Contributor
+membership on their own catalog. There are no namespace/collection grants or creator privileges.</p>
+<p>The server re-maps token groups on every request; the roles claim and CLI categories confer no authority.
+See <a href="../RAW_LAKE_DESIGN.md#n14-organization-hierarchy-and-catalog-authority">N14 contracts</a>
+and <a href="../RAW_LAKE_IMPLEMENTATION_PLAN.md#n14-task-replacements">the migration sequence</a>.
+Older five-role descriptions below apply to the legacy hierarchy or superseded Raw design, not this target.
+No new Raw history or versioning is introduced.</p>
+</section>
+
 <h1>Huron Design Record</h1>
 <p class="sub">A datalake for scientific projects — immutable raw evidence on NFS, analysis-ready
 Zarr&nbsp;+&nbsp;Icechunk layers on object storage, one catalog, one authorization model.

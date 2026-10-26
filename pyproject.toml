@@ -171,7 +171,7 @@ layers = ["huron.applications", "huron.core", "huron.schema"]
 name = "every core sibling has an explicit owner"
 type = "layers"
 containers = ["huron.core"]
-layers = ["foundation:security:hierarchy:metastore:rawstore"]
+layers = ["foundation:security:hierarchy:lake:metastore:rawstore"]
 exhaustive = true
 
 [[tool.importlinter.contracts]]
@@ -185,7 +185,7 @@ name = "foundation has no Huron dependencies"
 type = "forbidden"
 source_modules = ["huron.core.foundation"]
 forbidden_modules = [
-    "huron.core.security", "huron.core.hierarchy", "huron.core.metastore",
+    "huron.core.security", "huron.core.hierarchy", "huron.core.lake", "huron.core.metastore",
     "huron.core.rawstore", "huron.schema", "huron.applications",
 ]
 
@@ -195,7 +195,7 @@ type = "forbidden"
 allow_indirect_imports = true
 source_modules = ["huron.core.security"]
 forbidden_modules = [
-    "huron.core.hierarchy", "huron.core.metastore", "huron.core.rawstore",
+    "huron.core.hierarchy", "huron.core.lake", "huron.core.metastore", "huron.core.rawstore",
     "huron.schema",
 ]
 
@@ -205,11 +205,18 @@ type = "forbidden"
 allow_indirect_imports = true
 source_modules = ["huron.core.hierarchy"]
 forbidden_modules = [
-    "huron.core.metastore", "huron.core.rawstore", "huron.schema",
+    "huron.core.lake", "huron.core.metastore", "huron.core.rawstore", "huron.schema",
 ]
 
 [[tool.importlinter.contracts]]
-name = "metastore uses hierarchy security and foundation only"
+name = "lake uses security foundation and schema only"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["huron.core.lake"]
+forbidden_modules = ["huron.core.hierarchy", "huron.core.metastore", "huron.core.rawstore"]
+
+[[tool.importlinter.contracts]]
+name = "metastore uses hierarchy lake security and foundation only"
 type = "forbidden"
 allow_indirect_imports = true
 source_modules = ["huron.core.metastore"]
@@ -221,7 +228,7 @@ type = "forbidden"
 source_modules = ["huron.core.rawstore"]
 forbidden_modules = [
     "huron.core.foundation", "huron.core.security", "huron.core.hierarchy",
-    "huron.core.metastore",
+    "huron.core.lake", "huron.core.metastore",
 ]
 
 # Domain code uses injected capabilities; Security alone performs credential HTTP.
@@ -229,7 +236,7 @@ forbidden_modules = [
 name = "domains exclude frameworks and infrastructure libraries even indirectly"
 type = "forbidden"
 source_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy",
+    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy", "huron.core.lake",
 ]
 forbidden_modules = [
     "fastapi",
@@ -256,7 +263,7 @@ name = "only security performs credential HTTP and token cryptography directly"
 type = "forbidden"
 allow_indirect_imports = true
 source_modules = [
-    "huron.core.foundation", "huron.core.hierarchy", "huron.core.metastore",
+    "huron.core.foundation", "huron.core.hierarchy", "huron.core.lake", "huron.core.metastore",
     "huron.core.rawstore",
 ]
 forbidden_modules = ["httpx", "jwt", "cryptography"]
@@ -277,7 +284,7 @@ forbidden_modules = ["huron.applications.api.authorization.*"]
 name = "domains never depend on adapters even indirectly"
 type = "forbidden"
 source_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy",
+    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy", "huron.core.lake",
 ]
 forbidden_modules = ["huron.core.metastore", "huron.core.rawstore"]
 
@@ -292,6 +299,39 @@ name = "security implementations are private to their owner"
 type = "protected"
 protected_modules = ["huron.core.security._impl"]
 allowed_importers = ["huron.core.security"]
+
+[[tool.importlinter.contracts]]
+name = "lake adapters stay apart from the legacy hierarchy"
+type = "forbidden"
+source_modules = ["huron.core.metastore.lake"]
+forbidden_modules = [
+    "huron.core.hierarchy",
+    "huron.core.metastore.api_keys",
+    "huron.core.metastore.hierarchy",
+    "huron.core.metastore.memory_apikeys",
+    "huron.core.metastore.memory_principals",
+    "huron.core.metastore.principals",
+    "huron.core.metastore.queries",
+    "huron.core.metastore.rbac",
+    "huron.core.metastore.rows",
+    "huron.core.metastore.security_facts",
+]
+
+[[tool.importlinter.contracts]]
+name = "legacy metastore modules never import the lake adapters"
+type = "forbidden"
+source_modules = [
+    "huron.core.metastore.api_keys",
+    "huron.core.metastore.hierarchy",
+    "huron.core.metastore.memory_apikeys",
+    "huron.core.metastore.memory_principals",
+    "huron.core.metastore.principals",
+    "huron.core.metastore.queries",
+    "huron.core.metastore.rbac",
+    "huron.core.metastore.rows",
+    "huron.core.metastore.security_facts",
+]
+forbidden_modules = ["huron.core.metastore.lake"]
 
 [tool.ty.src]
 include = ["src"]

@@ -7,13 +7,13 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 
 ### Raw catalog
 
-**Catalog**: One science domain of the Raw lake, such as `heliophysics`, named by one segment that never changes; the scope of role mappings. _Avoid_: domain; write **Polaris catalog** for the analytical store's.
+**Catalog**: A grouping of related Raw data within an Organization, such as `heliophysics`, with access, storage configuration and metadata schema; named by one segment that never changes. _Avoid_: domain; write **Polaris catalog** for the analytical store's.
 **Catalog config**: A catalog's selection of one exact metadata schema version and its catalog policy, including snapshot class.
 **Config version**: One immutable version of a catalog config; the catalog's current version governs all its collections.
 **Segment**: One component of an identifier: a lowercase letter or digit followed by up to 63 of `a-z`, `0-9`, `_`, `-`.
 **Vocabulary**: The allowed values of a descriptive metadata field, expressed by its metadata schema.
-**Namespace**: An explicitly named intermediate path within a catalog, which may be empty and persists until explicitly deleted. _Avoid_: folder, Polaris namespace.
-**Collection**: The unit of ownership, metadata and permission, and the only thing that contains files. _Avoid_: dataset, revision.
+**Namespace**: An explicitly named grouping within a Catalog or another Namespace, recursively containing namespaces and collections; it may be empty and persists until explicitly deleted. _Avoid_: folder, Polaris namespace.
+**Collection**: Managed Raw files and descriptive metadata with a lifecycle, belonging to one Namespace and inheriting Catalog permissions; the only thing that contains files. _Avoid_: dataset, revision.
 **Draft**: A collection with a reserved namespace and name and potentially partial metadata, but no directory or files yet.
 **Settled**: An Active or Incomplete collection: it has an identity and a directory, may hold files, and never becomes a Draft again.
 **Active**: A settled collection whose metadata passes its validator.
@@ -25,7 +25,7 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 **Metadata schema**: An immutable, numbered set of metadata rules, selected by a catalog for all its collections; an org base schema or an extension of it. _Avoid_: schema alone.
 **Org base schema**: The metadata schema series `org`, which every catalog extension extends.
 **Label**: A top-level string member of a collection's metadata, matched by equality in a search.
-**Organization**: The single company deployment of the Raw lake, implicit and unrecorded; it owns the org base schema and scopes the Organization Admin role. _Avoid_: realm.
+**Organization**: The top-level ownership and administration scope containing Catalogs; initially there is one, administered by Administrators. _Avoid_: realm.
 
 ### Files and changes
 
@@ -67,9 +67,9 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 **Group directory**: The company endpoint that lists a user's LDAP groups; mocked locally by `fake-ldap-groups`.
 **Token exchange**: Trading a company token for a Huron JWT.
 **Huron JWT**: Huron's own short-lived signed token naming a user, their groups and their roles.
-**Role**: One rung of Reader, Developer, Project Admin, Organization Admin, Platform Owner; each includes the rungs below it.
-**Role mapping**: An LDAP group mapped to one role on one catalog or on all catalogs.
-**Roles claim**: The `PRINCIPAL_ROLE:<catalog>.<role>` and `PRINCIPAL_ROLE:<role>` strings in a Huron JWT, for display and other services; lake authority comes from the groups instead.
+**Role**: Administrator at Organization scope, or Catalog Owner, Catalog Contributor and Catalog Reader on an assigned Catalog; Owner includes Contributor and Reader, and Administrator includes all catalog permissions.
+**Role mapping**: An identity-provider group assigned Administrator on its Organization or a catalog role on one Catalog; grants combine additively.
+**Roles claim**: The `PRINCIPAL_ROLE:<catalog>.<catalog-role>` and `PRINCIPAL_ROLE:administrator` strings in a Huron JWT, for display and other services; lake authority comes from the groups instead.
 
 ### Operations
 
@@ -95,6 +95,8 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 
 ## Relationships
 
+- An **Organization** contains **Catalogs**; Administrator manages its access and appoints Catalog Owners.
+- A Catalog Owner manages Reader/Contributor **Role mappings** only on its own **Catalog**; creating a **Collection** confers no additional authority.
 - A **Catalog** selects one current **Config version** and **Metadata schema** for every **Collection**.
 - A **Catalog** contains **Namespaces**, which may contain other **Namespaces** or leaf **Collections**; only **Collections** contain **Files**.
 - A **Collection**'s **Identifier** follows from its explicit **Catalog**, **Namespace** and name; metadata never determines its location.
@@ -113,7 +115,7 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 - "catalog" means the Raw catalog in Raw text; `heliophysics` may exist both as a Catalog and as a Polaris catalog.
 - "schema" has four meanings: metadata schema, the schema map `migrations/schema.sql`, the package `huron.schema`, and the Postgres schema `lake`.
 - "snapshot" is always "ONTAP snapshot" in Raw text; Bronze and Icechunk snapshots are different.
-- "Project Admin" administers one Catalog; no project is involved.
+- "Project Admin" belongs to the legacy hierarchy vocabulary; Raw uses Catalog Owner.
 - The walkthrough's "organization" is an affiliation value in metadata, not the Organization.
 - "check": `huron check` reads findings and Incomplete collections; the Reconciler repairs; `check-stack.sh` and `check_schema_map` are tooling.
 - "publish" applies to descriptive metadata only; files are committed.

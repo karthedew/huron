@@ -51,7 +51,7 @@ def payload(**changes: object) -> dict[str, object]:
         "iat": int(AT.timestamp()),
         "exp": int(AT.timestamp()) + 3600,
         "groups": ["helio-scientists"],
-        "roles": ["PRINCIPAL_ROLE:heliophysics.developer"],
+        "roles": ["PRINCIPAL_ROLE:heliophysics.catalog_contributor"],
         **changes,
     }
 
@@ -71,7 +71,7 @@ async def test_golden_token() -> None:
         TEST_ISSUER,
         "karl",
         ("huron-api",),
-        (ClaimedRole(Role.DEVELOPER, "heliophysics"),),
+        (ClaimedRole(Role.CATALOG_CONTRIBUTOR, "heliophysics"),),
         ("helio-scientists",),
         AT,
         AT + timedelta(hours=1),
@@ -80,12 +80,11 @@ async def test_golden_token() -> None:
 
 
 @pytest.mark.parametrize("role", list(Role))
-@pytest.mark.parametrize("global_scope", [True, False])
-async def test_issuance_round_trip(role: Role, global_scope: bool) -> None:
+async def test_issuance_round_trip(role: Role) -> None:
     """Every valid role scope preserves grants order and sorted directory groups."""
     clock = FakeClock(AT + timedelta(microseconds=999999))
     keys = await refreshed_test_keys(clock)
-    catalog = None if global_scope or not role.catalog_scoped else CatalogRef(UUID(int=1), "helio")
+    catalog = None if not role.catalog_scoped else CatalogRef(UUID(int=1), "helio")
     grants = Grants("karl", [Grant(role, catalog)])
     issuer = HuronTokenIssuer(
         keys,
@@ -125,9 +124,23 @@ async def test_issuance_round_trip(role: Role, global_scope: bool) -> None:
         ("groups", "group"),
         ("groups", [""]),
         ("groups", [1]),
-        ("roles", "reader"),
-        ("roles", ["PRINCIPAL_ROLE:helio_developer"]),
+        ("roles", "catalog_reader"),
+        ("roles", ["PRINCIPAL_ROLE:helio_catalog_contributor"]),
         ("roles", [1]),
+        *(
+            ("roles", ["PRINCIPAL_ROLE:" + body])
+            for body in (
+                "reader",
+                "developer",
+                "project_admin",
+                "organization_admin",
+                "platform_owner",
+                "catalog_reader",
+                "catalog_contributor",
+                "catalog_owner",
+                "helio.administrator",
+            )
+        ),
         ("iat", int(AT.timestamp()) + 31),
         ("exp", int(AT.timestamp()) - 31),
         ("exp", int(AT.timestamp()) + 3601),
@@ -296,7 +309,7 @@ async def test_rsa_signer_and_ignored_extra_claims() -> None:
     )
 
 
-GOLDEN_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6InpYOWlIWWJQSzhpaE5fTUZmUVBRTUlFNjE4Q0xnWW1FRkF3ZVhqczF2Sm8iLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2h1cm9uLnRlc3QiLCJzdWIiOiJrYXJsIiwiYXVkIjpbImh1cm9uLWFwaSJdLCJpYXQiOjE3OTI3NTY4MDAsImV4cCI6MTc5Mjc2MDQwMCwiZ3JvdXBzIjpbImhlbGlvLXNjaWVudGlzdHMiXSwicm9sZXMiOlsiUFJJTkNJUEFMX1JPTEU6aGVsaW9waHlzaWNzLmRldmVsb3BlciJdfQ.7wSyxOMVWhKbITO6go7I6JMr3ZGiBedoi95Nz-Kk8CPrzpwt737pgI5rJQannIsw32P9FlBDKyiFY_waIr5vGQ"
+GOLDEN_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6InpYOWlIWWJQSzhpaE5fTUZmUVBRTUlFNjE4Q0xnWW1FRkF3ZVhqczF2Sm8iLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2h1cm9uLnRlc3QiLCJzdWIiOiJrYXJsIiwiYXVkIjpbImh1cm9uLWFwaSJdLCJpYXQiOjE3OTI3NTY4MDAsImV4cCI6MTc5Mjc2MDQwMCwiZ3JvdXBzIjpbImhlbGlvLXNjaWVudGlzdHMiXSwicm9sZXMiOlsiUFJJTkNJUEFMX1JPTEU6aGVsaW9waHlzaWNzLmNhdGFsb2dfY29udHJpYnV0b3IiXX0.CziXWvFYBKeLVV-3j2MGlBZg89mHsanERvjU6wkyRdc_l6zuryB0nCGwLCCtk6FWpDxne8zdRzdr1TTgYWNYbg"
 
 
 def test_shared_time_rules_reject_unrepresentable_dates() -> None:
@@ -308,7 +321,7 @@ def test_shared_time_rules_reject_unrepresentable_dates() -> None:
 
 
 async def test_combined_grants_and_store_free_operations() -> None:
-    """Normalized global and catalog claims are ordered without reading persistence."""
+    """Normalized organization and catalog claims are ordered without reading persistence."""
     clock = FakeClock(AT)
     reader = ScriptedSigningKeyReader([TEST_RECORD])
     keys = HuronKeys(reader, InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY}), clock)
@@ -319,18 +332,18 @@ async def test_combined_grants_and_store_free_operations() -> None:
     grants = Grants(
         "karl",
         [
-            Grant(Role.READER, helio),
-            Grant(Role.PROJECT_ADMIN, helio),
-            Grant(Role.DEVELOPER, astro),
-            Grant(Role.READER, None),
+            Grant(Role.CATALOG_READER, helio),
+            Grant(Role.CATALOG_OWNER, helio),
+            Grant(Role.CATALOG_CONTRIBUTOR, astro),
+            Grant(Role.ADMINISTRATOR, None),
         ],
     )
     token = mint(keys, clock, grants=grants)
     claims = HuronTokenVerifier(keys, issuer=TEST_ISSUER, clock=clock).verify(token)
     assert tuple(map(str, claims.roles)) == (
-        "PRINCIPAL_ROLE:reader",
-        "PRINCIPAL_ROLE:astro.developer",
-        "PRINCIPAL_ROLE:heliophysics.project_admin",
+        "PRINCIPAL_ROLE:administrator",
+        "PRINCIPAL_ROLE:astro.catalog_contributor",
+        "PRINCIPAL_ROLE:heliophysics.catalog_owner",
     )
     assert reader.calls == 1
 

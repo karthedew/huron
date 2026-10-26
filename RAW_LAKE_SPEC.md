@@ -1,5 +1,7 @@
 # Huron Raw Data Lake — CLI, Auth Broker & Catalog Spec
 
+> Owner decision 14 governs the Raw hierarchy and four-role scoped access model; see its section below. Earlier conflicting role examples are historical.
+
 Oct 25, 2026 · @Karl
 
 > Spec of record for the Raw data lake. The owner decisions at the end amend it; where they
@@ -69,7 +71,7 @@ Huron exchanges a company OIDC token for a short-lived Huron JWT that carries th
 | `iss` | `https://huron.example` | Huron as issuer |
 | `sub` | `karl` | Company username |
 | `aud` | `huron-api` | Leaves room to add other services later |
-| `roles` | `["PRINCIPAL_ROLE:helio_developer"]` | Role grants, in a format other services can reuse |
+| `roles` | `["PRINCIPAL_ROLE:heliophysics.catalog_contributor"]` | Informational role display; never lake authorization |
 | `groups` | `["helio-scientists"]` | Source groups, for audit and POSIX mapping |
 | `exp` / `iat` | 1 hour lifetime | Bounds how long a removed group keeps access |
 
@@ -81,17 +83,19 @@ Huron exchanges a company OIDC token for a short-lived Huron JWT that carries th
 
 **Roles**
 
-| Role | Can do |
+| Role | Scope and permissions |
 | --- | --- |
-| Reader | List, describe and search collections; read files |
-| Developer | Create collections, add and remove files, edit descriptive metadata |
-| Project Admin | Everything above plus namespace creation/deletion, `mv`, bulk metadata edits and role mappings for their catalog |
-| Organization Admin | Manage catalogs and their configs |
-| Platform Owner | Keys, global settings, all catalogs |
+| Administrator (`administrator`) | Organization: configure catalogs, appoint owners, manage access and perform all catalog operations |
+| Catalog Owner (`catalog_owner`) | Assigned catalog: manage namespaces, collections and Reader/Contributor mappings; includes Contributor/Reader |
+| Catalog Contributor (`catalog_contributor`) | Assigned catalog: read/create collections, update metadata, add/remove files and push changes |
+| Catalog Reader (`catalog_reader`) | Assigned catalog: browse, inspect collections and read files |
+
+Grants are group-based and additive. No independent namespace/collection grants or creator privileges.
+Administrators appoint Owners; Owners cannot grant or alter Owner/Administrator membership.
 
 **Enforcement on the volume**
 
-The same group mapping sets POSIX groups and ACLs when Huron creates catalog and collection directories: Readers get read, Developers get write. On NFS this is the only check that actually stops a direct file access, so the API and the filesystem must agree.
+The same group mapping sets POSIX groups and ACLs when Huron creates catalog and collection directories: Catalog Readers get read, Catalog Contributors and Owners get write, and Administrators have access across the Organization. On NFS this is the only check that actually stops a direct file access, so the API and the filesystem must agree.
 
 ## Catalog model
 
@@ -100,8 +104,9 @@ version for every collection in that catalog, plus catalog policy such as snapsh
 
 **Objects**
 
+- **Organization** — the top-level ownership and administration scope, initially one.
 - **Catalog** — the authorization and metadata-schema scope, such as `heliophysics`.
-- **Namespace** — an explicitly created path of one to six segments; empty namespaces persist.
+- **Namespace** — an explicitly created recursive path with no fixed business-depth cap; empty namespaces persist.
 - **Collection** — an explicitly named leaf inside an existing namespace; only collections contain files.
 - **File** — one row per file, current state only.
 
@@ -452,6 +457,31 @@ They are design choices, not additional owner quotations. N13 and the
 This records a target change, not an implemented feature or permission to execute later milestones.
 The evaluated throwaway prototype is awaiting capture on a separate branch; it is not production
 behavior and its dirty-checkout refusal was not adopted.
+
+## Owner decision 14 (2026-10-25): organization hierarchy and catalog roles
+
+The accepted target is Organization → Catalog → Namespace → nested Namespace(s) → Collection,
+initially within one logical Organization. Empty namespaces persist; collections always belong to a
+namespace, and directories inside collections are not namespaces. The owner also approved removing
+the six-level cap: nesting is recursive, subject to strict segment and filesystem/path safety limits. Catalogs define access, storage
+configuration and the exact metadata schema; collections hold managed files, metadata and lifecycle.
+
+The four roles are organization-scoped Administrator (`administrator`), and assigned-catalog
+Catalog Owner (`catalog_owner`), Catalog Contributor (`catalog_contributor`) and Catalog Reader
+(`catalog_reader`). Group grants are additive. Administrator has all catalog operations and appoints
+Owners; Owners manage namespaces, collections and only Reader/Contributor membership on their own
+Catalog. Contributors read/create collections, update metadata and add/remove/push files; Readers
+browse, inspect and read. No namespace/collection ACLs, custom roles, explicit deny rules, global
+lower-role grants or privileges conferred by collection creation exist in this target.
+
+Server authorization and current group mapping on every request remain mandatory. Informational JWT
+roles and CLI categories confer no authority. Any Polaris integration requires explicit group/privilege
+mapping. N13 naming, schema and lifecycle rules remain; “history” does not introduce Raw versioning.
+See [N14 contracts](RAW_LAKE_DESIGN.md#n14-organization-hierarchy-and-catalog-authority) for scope,
+claim, persistence, administration and recursive namespace-depth details, and
+[N14 migration tasks](RAW_LAKE_IMPLEMENTATION_PLAN.md#n14-task-replacements) for delivery.
+This supersedes the older Raw five-role model, not the still-live legacy hierarchy role model.
+The Pyxis mockup and backend must adopt this target; this decision alone implements neither.
 
 ## Design amendments (2026-10-23)
 

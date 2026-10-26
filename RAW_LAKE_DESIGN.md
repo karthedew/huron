@@ -1,7 +1,7 @@
 # Huron Raw data lake — design
 
 Spec of record: `RAW_LAKE_SPEC.md` (repository root), as amended by its section "Owner decisions
-(2026-10-23)", items 1–12, and owner decision 13 (2026-10-25). [N13](#n13-explicit-namespace-contracts)
+(2026-10-23)", items 1–12, and owner decisions 13–14 (2026-10-25). [N14](#n14-organization-hierarchy-and-catalog-authority) governs hierarchy and authority. [N13](#n13-explicit-namespace-contracts)
 is the binding replacement for explicit placement, catalog-selected schemas and CLI structure. In short: Raw only (the legacy Raw engine, `/api/raw-web`, the BFF delegation,
 the web upload wizard and the Raw explorer are deleted; the web's own login and sessions, API keys,
 service accounts and the Polaris org/project/dataset API stay, while the clientless Python password
@@ -12,13 +12,104 @@ asynchronous commit (202 + commit id, bounded re-hash worker, CLI polls); a plai
 behind Volume and DirectoryPermissions ports with a Linux-only real-NFS tier; mocked company IdP,
 LDAP-groups endpoint and ONTAP volume; Huron's own PostgreSQL as the only Raw catalog (option A, with a
 named seam for a later Polaris projection); per-request re-mapping of `groups` through the current
-`group_role_map`; audited administration routes and CLI verbs with a seeded global Platform Owner group;
+`group_role_map`; audited administration routes and CLI verbs with a seeded organization Administrator group;
 and this file plus `RAW_LAKE_IMPLEMENTATION_PLAN.md` superseding `RAW_STORAGE_DESIGN.md` and
 `RAW_STORAGE_IMPLEMENTATION_PLAN.md`. Every other register entry L-1..L-44 of the planning gap memo
 takes that memo's recommendation unless this design flags it.
 
 Grill performed 2026-10-23 on branch `raw-storage` at `fa51f46` (working tree: only `RAW_LAKE_SPEC.md`
 untracked). Receipts below are commands run in this session unless marked as read from a file.
+
+## N14 organization hierarchy and catalog authority
+
+Binding replacement for owner decision 14 (2026-10-25), accepted from the owner's Pyxis
+`hierarchy_and_rbac.md`. Implementation is pending. N14 supersedes conflicting DT-4, DT-5, DT-10,
+DT-17 and DT-18 role, scope, ceiling, bootstrap, schema and route-permission contracts, and every
+later handoff that consumes them. N13's permission labels are replaced below; its explicit placement,
+strict names, catalog-selected exact schema, draft reservation, lifecycle and recovery rules remain.
+Historical receipts describe the old implementation and are not evidence of N14 delivery.
+
+### Hierarchy and scope
+
+The ownership hierarchy is Organization → Catalog → Namespace → nested Namespace(s) → Collection.
+Initially there is one logical Organization. This does not require a new persisted organization table,
+organization selector or multi-organization runtime; persistence and future multi-organization isolation
+need a separate decision. Each Catalog belongs to that scope and selects storage configuration and one
+exact metadata schema version. Each Collection belongs to a Namespace, never directly to a Catalog.
+Namespaces may contain namespaces and collections; empty namespaces persist until explicitly deleted.
+Directories inside a Collection organize files and are not namespaces. A Collection is the managed
+unit of files, metadata and lifecycle, not an independently granted permission scope.
+
+The owner explicitly approved removing the six-level namespace cap. Namespace nesting is recursive,
+without a fixed business-depth limit. Strict segment validation, safe path traversal and existing
+filesystem/path-length bounds remain mandatory at every depth. M6 and M11 must test paths deeper
+than six segments as well as refusal at actual path-length and safety limits.
+
+### Roles and permitted mappings
+
+| Role title | Exact code | Permitted scope | Authority |
+| --- | --- | --- | --- |
+| Administrator | `administrator` | Organization only | Create/configure catalogs, appoint owners, manage access, all catalog operations and organization administration |
+| Catalog Owner | `catalog_owner` | One assigned Catalog | Manage namespaces and Reader/Contributor membership; create, update, move and delete collections; includes Contributor and Reader |
+| Catalog Contributor | `catalog_contributor` | One assigned Catalog | Read/create collections, update metadata, add/remove files and push changes; includes Reader |
+| Catalog Reader | `catalog_reader` | One assigned Catalog | Browse, inspect collections and read files |
+
+Group grants are additive, with no deny rules, custom roles, namespace/collection grants or creator
+privileges. Catalog authority covers all descendants of that Catalog only. Only Administrator appoints
+or removes Catalog Owners and Administrators. Catalog Owners manage only Reader/Contributor mappings
+on their own Catalog; they cannot alter an existing Owner mapping by overwriting it with a lesser role.
+Check both the old and proposed mapping in replacement operations. Collection creation confers no extra
+rights. Administrative catalog configuration, schema publication and signing-key management require
+Administrator; Owner membership authority does not imply those powers.
+
+The broker may retain rank values internally (`catalog_reader=10`, `catalog_contributor=20`,
+`catalog_owner=30`, `administrator=40`), but rank never substitutes for scope or membership rules.
+`Grant`/`Grants` reject a missing Catalog for all three catalog roles and reject a Catalog for Administrator.
+Normalize additive group grants by highest role per assigned Catalog. Only Administrator can make
+`ReadableCatalogs.every` true or satisfy an organization-level requirement. No global Reader, Contributor
+or Owner exists. The single-organization implementation may retain `catalog=None` as its organization
+scope representation; it must not mean an unrestricted lower-rank grant.
+
+### Token and persistence contracts
+
+Lake routes continue to accept only Huron JWTs. Verify identity first and map the signed `groups`
+through current persisted mappings on every request; never authorize from `roles` or cache grants
+across requests. The informational grammar is exactly `PRINCIPAL_ROLE:administrator` or
+`PRINCIPAL_ROLE:<catalog>.catalog_owner|catalog_contributor|catalog_reader` (the suffix alternatives
+are separate complete claims). Reject former Raw role codes and invalid scope combinations; no aliases.
+Keep signature, audience, expiry, key lifecycle and malformed-token checks unchanged. Polaris integration
+must explicitly map identity groups and privilege bundles; matching role names do not create grants.
+
+`lake.roles` seeds exactly four rows with scope `organization` or `catalog`. `group_role_map` keeps one
+row per group/scope (catalog id or NULL for the single Organization). Its role/scope foreign key and
+CHECK enforce `(scope='organization' AND catalog_id IS NULL)` for Administrator and
+`(scope='catalog' AND catalog_id IS NOT NULL)` for each catalog role. Replace DT-17's permissive
+NULL-catalog lower-role shape. The fake and PostgreSQL contracts must enforce the same combinations.
+Preserve atomic mapping audit plus durable access-reset enqueue, discovery filtering, last-administrator
+protection and serialized bootstrap/membership races. Rename new-lake bootstrap configuration to
+`AdministratorSeed` / `administrator_seed` / `HURON_ADMINISTRATOR_SEED__GROUP` and `__POSIX_GID`;
+use `huron-administrators` for the local seed group and preserve GID 70001. Rename the corresponding
+new-lake refusal to `last_administrator`. Do not rename still-live legacy hierarchy roles or bootstrap.
+
+### Permission and delivery handoffs
+
+Every former Raw Reader/Developer/Project Admin minimum becomes Catalog Reader/Contributor/Owner
+on the exact Catalog, with Administrator satisfying all. Former Raw Organization Admin/Platform Owner
+administration becomes Administrator. This is a scoped replacement, not permission to rewrite legacy
+`core.security.roles`, hierarchy `/api/v1`, web accounts or their bindings. N13 namespace create/delete
+and collection move/delete require Catalog Owner or Administrator; collection create, metadata and
+file changes require Catalog Contributor or above. Preserve operation-specific guards and inaccessible
+resource 404 behavior. No namespace ACL, creator shortcut or rank-based owner appointment is added.
+
+DT-11 directory permissions and access resets derive from these catalog-wide group grants, including
+Administrator, without creating independent namespace/collection grants. DT-18 route enums, DT-19/20
+CLI role choices and displayed claims, DT-22 mock identities, DT-25/26 documents and future tests all
+consume this four-role contract. CLI categories are presentation, never authority. Raw stores current
+file rows only; audit records and ONTAP snapshots remain the only history/undo mechanisms. The word
+“history” adds no file versions, collection revisions or new lifecycle states.
+
+The precise immediate broker/store migration and subsequent gates are recorded in
+[N14 task replacements](RAW_LAKE_IMPLEMENTATION_PLAN.md#n14-task-replacements).
 
 ## N13 explicit namespace contracts
 
@@ -44,15 +135,14 @@ simplifications are not adopted; the binding CLI and durability contracts below 
   `^[a-z0-9][a-z0-9_-]{0,63}$`. Reject invalid input; never sanitize it into another name. Reuse
   `NamingError` / foundation `PATH_RULE_VIOLATION` (400), keeping DT-18's invalid catalog lookup 404.
   Keep canonical/slash/mount identifier round trips and the separate scientific file `rel_path` rule.
-- Implementation policy: a namespace is a nonempty path of 1–6 segments within one catalog; a
-  collection requires a namespace, so the maximum total depth is eight. Empty namespaces are durable
+- A namespace is a nonempty recursive path within one catalog; there is no fixed business-depth cap (N14). A collection requires a namespace. Empty namespaces are durable
   rows, not inferred prefixes. Each non-top-level namespace has an existing parent in the same catalog.
-- `Namespaces.create(actor, catalog, path, parents, claim)` requires Project Admin on that catalog.
+- `Namespaces.create(actor, catalog, path, parents, claim)` requires Catalog Owner on that catalog.
   By default its immediate parent must exist; `parents=true` explicitly creates missing parents in the
   same transaction. A pre-existing namespace target is a conflict (409 `NAMESPACE_EXISTS`); an exact idempotent replay
   returns the original receipt. Each newly created row appends `create / namespace` audit detail with
   catalog and path. Add `namespace` to replay kinds and audit vocabulary when these operations land.
-- `Namespaces.delete(actor, namespace_id, reason)` requires Project Admin and refuses any descendant
+- `Namespaces.delete(actor, namespace_id, reason)` requires Catalog Owner and refuses any descendant
   namespace or collection, including drafts (409 `NAMESPACE_NOT_EMPTY`). It deletes only that row and
   appends `delete / namespace` with its former catalog/path. No namespace rename or move in first
   delivery. A repeated deletion of an absent row is 404; no ETag is required for immutable namespace
@@ -69,7 +159,7 @@ simplifications are not adopted; the binding CLI and durability contracts below 
 
 ### N13 draft reservation, persistence and concurrency
 
-- `Collections.create` requires Developer and explicit `catalog`, `namespace_id`, `name`, plus initial
+- `Collections.create` requires Catalog Contributor and explicit `catalog`, `namespace_id`, `name`, plus initial
   metadata. Unknown or wrong-catalog namespaces are refused, never auto-created. Persist non-null
   namespace, name and canonical identifier at draft creation and reserve uniqueness then. Partial
   metadata remains allowed. Names stay fixed during draft edits; delete/recreate to choose another.
@@ -79,7 +169,7 @@ simplifications are not adopted; the binding CLI and durability contracts below 
   pin with a per-collection schema selector.
 - Replace DT-17's `collections_settled` NULL-identity CHECK and nullable identity columns with non-null
   namespace/name/identifier for all states. Keep unique identifier and `(namespace_id, name)`, segment
-  and depth CHECKs, state CHECK, zero files for drafts, and same-catalog namespace foreign-key integrity.
+  and positive-depth/parent consistency CHECKs (no fixed upper depth), state CHECK, zero files for drafts, and same-catalog namespace foreign-key integrity.
   `namespaces` gains same-catalog parent FK (null only at depth one), creator attribution, unique
   `(catalog_id, path)` and parent/path consistency enforced by a trigger (cross-row checks are not SQL CHECKs). Add
   `UNIQUE (catalog_id, id)` for composite same-catalog FKs and an index on `parent_id` for child lookup;
@@ -101,7 +191,7 @@ simplifications are not adopted; the binding CLI and durability contracts below 
   not insert namespaces or allocate identity. Preserve activation retry, filesystem collision refusal,
   permission setting, transaction/audit and server `metadata.json` recovery. Draft `path` in HTTP remains
   null (no mounted directory), while its `identifier`, namespace and name expose its reservation to
-  authorized Developers. Readers still cannot discover drafts. Default listing remains settled; the
+  authorized Catalog Contributors. Catalog Readers still cannot discover drafts. Default listing remains settled; the
   explicit draft listing keeps UUID pagination despite identifiers now being present.
 - Stored states remain `draft`, `active`, `incomplete`. Resolved means validation succeeded, not a
   stored state. Settled rows never return to draft. No archived or closed state. Deletion still refuses
@@ -130,7 +220,7 @@ simplifications are not adopted; the binding CLI and durability contracts below 
   in the same transaction. Invalid settled metadata edits remain refused; draft partial-save behavior
   remains. Metadata publish/bulk publish never moves a directory.
 - `move` takes an explicit existing destination namespace and explicit name within the source catalog,
-  not metadata `--set` or a metadata-derived resolver. Preserve Project Admin, `If-Match`, pending-commit
+  not metadata `--set` or a metadata-derived resolver. Preserve Catalog Owner, `If-Match`, pending-commit
   refusal, collision checking, UUID/file preservation, staged directory recovery and audit of old/new
   identifiers. Retain the existing move requirement for valid metadata, now checked against the
   current catalog schema; repair an Incomplete collection before moving. Moving never edits metadata
@@ -144,10 +234,10 @@ retain the old 37-route count.
 
 | Method / route | Contract | Minimum role / result |
 | --- | --- | --- |
-| `POST /namespaces` | `{catalog, path, parents: false}` with `Idempotency-Key`; path is catalog-relative slash form | Project Admin; 201 namespace receipt (id, catalog, path, parent id, created attribution); replay per DT-18 |
-| `DELETE /namespaces/{id}` | Optional reason under existing delete convention; immutable target, no `If-Match` | Project Admin; 204; 404 absent/undiscoverable, 409 nonempty |
-| `POST /collections` (replace body) | `{catalog, namespace_id, name, metadata}` with `Idempotency-Key` | Developer; 201 reserved draft |
-| `POST /collections/{id}/move` (replace body) | `{namespace_id, name, reason}` with `If-Match` | Project Admin; existing move result/recovery |
+| `POST /namespaces` | `{catalog, path, parents: false}` with `Idempotency-Key`; path is catalog-relative slash form | Catalog Owner; 201 namespace receipt (id, catalog, path, parent id, created attribution); replay per DT-18 |
+| `DELETE /namespaces/{id}` | Optional reason under existing delete convention; immutable target, no `If-Match` | Catalog Owner; 204; 404 absent/undiscoverable, 409 nonempty |
+| `POST /collections` (replace body) | `{catalog, namespace_id, name, metadata}` with `Idempotency-Key` | Catalog Contributor; 201 reserved draft |
+| `POST /collections/{id}/move` (replace body) | `{namespace_id, name, reason}` with `If-Match` | Catalog Owner; existing move result/recovery |
 
 `GET /namespaces` includes persistent empty rows. Unknown namespace is 404 `NOT_FOUND`; a namespace
 outside the selected catalog is also 404. An occupied sibling is 409 `COLLECTION_EXISTS` when a
@@ -191,7 +281,7 @@ of strict rejection, explicit naming, empty namespace persistence, missing paren
 parent creation, draft reservation, wrong-catalog FK, sibling collision (including concurrent namespace
 and collection creation), delete-versus-draft/create races and no collection descendants. Real PostgreSQL
 contracts must exercise trigger/FK/backstop behavior as well as the shared fake's observable operations.
-Retain authorization/Reader draft hiding, idempotency, version races, secure schema validation, atomic
+Retain authorization/Catalog Reader draft hiding, idempotency, version races, secure schema validation, atomic
 adoption and metadata-repair transitions, activation/move crash recovery and all push storage tests.
 CLI tests prove command registration and absent switch/local commit, explicit creation/move and safe
 checkout across two staged collections. Documentation examples use these contracts as their source.
@@ -2908,6 +2998,8 @@ behind the label.
 
 ## DT-4 design: Roles, group_role_map and request-time authorization
 
+> **Owner decision 14:** [N14](#n14-organization-hierarchy-and-catalog-authority) supersedes this section’s Raw role names, scopes, grants and administration permissions. Historical receipts remain unchanged.
+
 Designed 2026-10-23 on `raw-storage` at `fa51f46`, consuming DT-1 (homes `security/broker/ladder.py` and
 `access.py`, the `Actor` and `LakeAuthentication` shapes, the `lake` Postgres schema, the Huron-JWT-only
 lake router). DT-4 fills the ladder, `Grants`, the `RoleMappingReader` port and the authorization rule
@@ -3318,6 +3410,8 @@ unmap of "Developer" would silently leave "Reader" behind.
   across scopes either way, so the request path does not depend on this choice.
 
 ## DT-5 design: Huron token issuer, signing keys, JWKS and discovery
+
+> **Owner decision 14:** [N14](#n14-organization-hierarchy-and-catalog-authority) supersedes this section’s Raw role names, scopes, grants and administration permissions. Historical receipts remain unchanged.
 
 Designed 2026-10-23 on `raw-storage` at `fa51f46`, consuming DT-1 (home `security/broker/`, contract 11
 admitting `jwt` and `cryptography` in `security` only, `routes/discovery.py` at the root, the `lake`
@@ -6157,6 +6251,8 @@ identity" (`spec:280`), and the deleted `metadata-v1.json` required `title`, `cr
   shows.
 
 ## DT-10 design: Administration surfaces and bootstrap
+
+> **Owner decision 14:** [N14](#n14-organization-hierarchy-and-catalog-authority) supersedes this section’s Raw role names, scopes, grants and administration permissions. Historical receipts remain unchanged.
 
 > **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
 > metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
@@ -10265,6 +10361,8 @@ reset's ACL comparison.
 
 ## DT-17 design: Lake persistence: schema, migrations 0015+, adapters and fakes
 
+> **Owner decision 14:** [N14](#n14-organization-hierarchy-and-catalog-authority) supersedes this section’s Raw role names, scopes, grants and administration permissions. Historical receipts remain unchanged.
+
 > **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
 > metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting
 > CLI contracts, including its future tests, diagrams and handoffs. Unaffected contracts still apply.
@@ -11134,6 +11232,8 @@ never pruned (it is replaced on conflict only).
 | DT-26 | `migrations/schema.sql` `lake` section prose and the operator note that the database owner must be able to `CREATE EXTENSION ltree` (trusted extension; no superuser). |
 
 ## DT-18 design: Lake API contract
+
+> **Owner decision 14:** [N14](#n14-organization-hierarchy-and-catalog-authority) supersedes this section’s Raw role names, scopes, grants and administration permissions. Historical receipts remain unchanged.
 
 > **Owner decision 13:** [N13](#n13-explicit-namespace-contracts) replaces this section’s
 > metadata-derived placement, pinned identity, automatic namespace attachment/pruning and conflicting

@@ -29,7 +29,9 @@ src/huron/
   core/foundation/    canonical JSON, identities/names, common errors, retry and clock contracts
   core/security/      authentication, identity, authorization and their complete workflows
   core/hierarchy/     legacy organization/project/dataset hierarchy, descriptions and discovery
+  core/lake/          the Raw lake domain
   core/metastore/     PostgreSQL and in-memory persistence adapters
+  core/metastore/lake/ the Raw lake persistence adapters and in-memory fakes
   core/rawstore/      the hierarchy's generation store and the POSIX primitives the Volume adapter adopts
   schema/             canonical JSON schemas, loaders and shared primitive contracts
 ```

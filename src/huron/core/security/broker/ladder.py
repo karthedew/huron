@@ -14,13 +14,12 @@ if TYPE_CHECKING:
 
 
 class Role(IntEnum):
-    """A ranked role whose authority includes every lower rank."""
+    """A scoped role whose catalog authority includes every lower rank."""
 
-    READER = 10
-    DEVELOPER = 20
-    PROJECT_ADMIN = 30
-    ORGANIZATION_ADMIN = 40
-    PLATFORM_OWNER = 50
+    CATALOG_READER = 10
+    CATALOG_CONTRIBUTOR = 20
+    CATALOG_OWNER = 30
+    ADMINISTRATOR = 40
 
     @property
     def code(self) -> str:
@@ -45,9 +44,9 @@ class Role(IntEnum):
         """Return whether this role may be granted on one catalog.
 
         Returns:
-            False for the two global-only administrative roles.
+            False for the organization-only Administrator.
         """
-        return self <= Role.PROJECT_ADMIN
+        return self <= Role.CATALOG_OWNER
 
     @classmethod
     def from_code(cls, code: str) -> Role:
@@ -78,10 +77,21 @@ class CatalogRef:
 
 @dataclass(frozen=True, slots=True)
 class Grant:
-    """One ranked role on a catalog, or on all catalogs when catalog is None."""
+    """One catalog role or organization Administrator when catalog is None."""
 
     role: Role
     catalog: CatalogRef | None
+
+    def __post_init__(self) -> None:
+        """Reject a role outside its permitted scope.
+
+        Raises:
+            ValueError: If a catalog role lacks a catalog or Administrator has one.
+        """
+        if self.role.catalog_scoped != (self.catalog is not None):
+            raise ValueError(
+                "catalog roles require a catalog; Administrator requires organization scope"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,19 +110,14 @@ class Grants:
     _grants: tuple[Grant, ...]
 
     def __init__(self, subject: str, grants: Iterable[Grant]) -> None:
-        """Capture the highest role per catalog identity and global scope.
+        """Capture the highest role per catalog identity and organization scope.
 
         Args:
             subject: The authenticated subject used in refusals.
             grants: Mapping rows in any order, possibly with repeated scopes.
-
-        Raises:
-            ValueError: If a global-only role is granted on a catalog.
         """
         scopes: dict[UUID | None, Grant] = {}
         for grant in grants:
-            if grant.catalog is not None and not grant.role.catalog_scoped:
-                raise ValueError("a global-only role cannot be granted on a catalog")
             key = grant.catalog.id if grant.catalog is not None else None
             previous = scopes.get(key)
             if previous is None or grant.role > previous.role:
@@ -153,14 +158,14 @@ class Grants:
 
         Args:
             minimum: The least role allowed to perform the operation.
-            catalog: The target catalog, or None to require global authority.
+            catalog: The target catalog, or None to require organization authority.
 
         Raises:
             Forbidden: If the effective role is absent or too low.
         """
         held = self._role(catalog.id if catalog else None)
         if held is None or held < minimum:
-            scope = f"catalog:{catalog.name}" if catalog else "global"
+            scope = f"catalog:{catalog.name}" if catalog else "organization"
             raise Forbidden(
                 f"{minimum.code} required on {scope} for {self._subject}",
                 context={
@@ -171,17 +176,17 @@ class Grants:
                 },
             )
 
-    def readable(self, minimum: Role = Role.READER) -> ReadableCatalogs:
+    def readable(self, minimum: Role = Role.CATALOG_READER) -> ReadableCatalogs:
         """Return the catalogs whose effective role reaches the minimum.
 
         Args:
             minimum: The minimum role required by the listing.
 
         Returns:
-            All catalogs for a sufficient global role, otherwise matching ids.
+            All catalogs for a sufficient organization role, otherwise matching ids.
         """
-        global_role = self._role(None)
-        if global_role is not None and global_role >= minimum:
+        organization_role = self._role(None)
+        if organization_role is not None and organization_role >= minimum:
             return ReadableCatalogs(True, frozenset())
         return ReadableCatalogs(
             False,
@@ -193,7 +198,7 @@ class Grants:
         )
 
     def __iter__(self) -> Iterator[Grant]:
-        """Iterate global authority first, then catalog grants ordered by name.
+        """Iterate organization authority first, then catalog grants ordered by name.
 
         Returns:
             An iterator over the normalized grants.
@@ -242,13 +247,15 @@ class ClaimedRole:
         Raises:
             ValueError: If the claim violates any grammar rule.
         """
+        if self.role.catalog_scoped != (self.catalog is not None):
+            raise ValueError(
+                "catalog roles require a catalog; Administrator requires organization scope"
+            )
         if self.catalog is not None:
             if not self.catalog:
                 raise ValueError("empty catalog is not allowed")
             if "." in self.catalog:
                 raise ValueError("catalog cannot contain a dot; at most one dot is allowed")
-            if not self.role.catalog_scoped:
-                raise ValueError("a global-only role cannot be claimed on a catalog")
         principal_role = self._principal_role()
         if not 1 <= len(principal_role) <= 256 or principal_role.lower().startswith("system$"):
             raise ValueError(

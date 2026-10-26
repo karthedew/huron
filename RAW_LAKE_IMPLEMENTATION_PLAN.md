@@ -4,7 +4,8 @@ Status: pending
 
 Branch `raw-storage`; baseline commit `fa51f46`. Milestones M1–M19 start from the commit that adds
 `RAW_LAKE_SPEC.md`, `RAW_LAKE_DESIGN.md` and this plan (task M0.1). Spec of record: `RAW_LAKE_SPEC.md`.
-Its "Owner decisions (2026-10-23)" items 1–12 and owner decision 13 (2026-10-25) bind every task.
+Its "Owner decisions (2026-10-23)" items 1–12 and owner decisions 13–14 (2026-10-25) bind every task.
+[N14 task replacements](#n14-task-replacements) govern scoped authority and the required M4.1 amendment migration.
 [N13 task replacements](#n13-task-replacements) supersede conflicting future task details and gates;
 [design N13](RAW_LAKE_DESIGN.md#n13-explicit-namespace-contracts) is their contract. Earlier decisions:
 
@@ -49,18 +50,83 @@ questions register" (OQ-1.1 … OQ-26.1, every entry settled by owner decision 1
 Milestones 0–1 shipped (`248f7bf` … `fa51f46`) and stay as history; nothing else in them is work. This plan
 borrows only their format.
 
+## N14 task replacements
+
+Owner decision 14 and [design N14](RAW_LAKE_DESIGN.md#n14-organization-hierarchy-and-catalog-authority)
+supersede all conflicting Raw role/scope and hierarchy requirements below, including examples, test
+names and future gates. Completed M3 receipts and the M4.1 implementation receipt remain historical:
+the five-role implementation passed its then-current gates; it has not passed the new target.
+Do not rewrite previous counts or label the new behavior delivered until independently verified.
+
+### M4.1 amendment: adopt the four-role broker and store seeds
+
+Required now, within the uncommitted M4.1 slice and before its independent verification or M4.2.
+Adapt the existing M4.1 work and completed broker code together, verify the full combined slice,
+and commit once as M4.1. Do not commit the known-superseded five-role M4.1 tree first.
+This revisits M3.1 role behavior without rewriting its completed historical verification.
+
+- Modify `src/huron/core/security/broker/ladder.py`: four exact Role codes/titles and internal ranks
+  10/20/30/40; catalog-only Reader/Contributor/Owner and organization-only Administrator. Validate
+  both directions of scope in grants and claim construction/parsing, retain immutable additive
+  normalization, catalog-id matching and deterministic ordering. Only Administrator yields
+  `readable().every` or satisfies organization authority. No legacy aliases or global catalog roles.
+- Inspect `src/huron/core/security/broker/tokens.py` issuance/verification against the changed parser;
+  preserve identity/crypto validation and informational role handling. Change only affected behavior.
+- Modify `src/huron/core/metastore/lake/memory.py`: `ROLE_ROWS` contains exactly four rows,
+  scope `organization` for Administrator and `catalog` for the others. Update affected row documentation;
+  retain transaction, locking and signing-key semantics. Mapping-row invariant enforcement belongs
+  with the seeder/read half and later writer/SQL constraints, with no permissive fallback.
+- Update existing tests in `tests/unit/test_lake_ladder.py`, `tests/unit/test_role_claims.py`,
+  `tests/unit/test_huron_tokens.py` and `tests/unit/test_lake_memory_store.py`. Inspect shared
+  `tests/lake_tokens.py` and `tests/lake_store_contract.py`; update only affected fixtures.
+  Re-sign the fixed `GOLDEN_TOKEN` in `test_huron_tokens.py` with the existing public test key and
+  fixed timestamps, replacing `heliophysics.developer` with `heliophysics.catalog_contributor`.
+  Remove the ladder test’s equality coupling/import to legacy `core.security.roles.ROLES`;
+  pin the four Raw titles explicitly while leaving the five legacy roles untouched.
+  Retain independent stored-signature verification; do not replace it with a token minted by the
+  code under test. Update payload helpers, normalization examples and invalid-claim matrices.
+- Acceptance: exact four codes/titles/scopes; reject all five former Raw codes, missing-catalog lower
+  roles and catalog-scoped Administrator; union across groups cannot leak into another Catalog;
+  Owner includes Contributor/Reader only on its catalog; Administrator reaches every Catalog;
+  unknown/unmapped groups grant nothing; deterministic normalization and immutable values remain.
+  Test both grant and claim scope combinations and the new golden token. Existing crypto/error tests
+  and transaction/lock cancellation tests continue unchanged in meaning. Legacy hierarchy tests retain
+  their separate role vocabulary.
+- Verification: full plan-wide implementation gate, then independent verification; touched Python
+  coverage and ratchet rules still apply. Focused feedback is the four unit files above. No new
+  namespace runtime, role-management endpoint, persisted Organization or later milestone work here.
+- Dependencies: M3.4 and M4.1 implementation; M4.1 independent verification must assess the adapted tree.
+- Status: complete (independent verification 1 PASS).
+
+### Remaining M4 and later handoffs
+
+| Task | Binding replacement and acceptance |
+| --- | --- |
+| M4.2 | Read only valid catalog-role mappings and organization Administrator rows; seed scope combinations faithfully. Replace “all-catalog row” with organization Administrator. Shared scenarios cover group union, unmapped groups, empty input, invalid role/scope refusal and cross-catalog isolation. Signing-key contracts are unchanged. Depends on independently verified amended M4.1. |
+| M4.3 | Re-map groups each authentication; stale `administrator` claim with no mapping grants nothing. Remove or downgrade mappings between calls using the same token and observe immediate loss/reduction of authority. Verify current catalog scope and unknown groups, unchanged invalid-token-before-store and store-failure propagation. |
+| M5 / M9 | Mock identities and bootstrap use `huron-administrators`, AdministratorSeed/administrator_seed and HURON_ADMINISTRATOR_SEED settings; no old Raw seed alias. Exchange displays four-role claims. Legacy IdP identity and hierarchy bindings remain independent. |
+| M6 / M11 | Organization → Catalog → recursive Namespace → Collection. Remove N13 six-segment/total-eight cap; accept deeper valid names subject to existing path-length/safety limits. Keep strict segments, parent existence, explicit creation/deletion, empty namespace persistence and collection leaf collision checks. |
+| M7 / M8 | Four role rows, organization/catalog scope CHECKs and matching foreign keys in fake and SQL; no NULL-catalog lower roles. Administrator-only owner/admin appointments and catalog/schema/key administration. Owner changes only Reader/Contributor mappings on its own catalog, checking old and new values. Preserve atomic audit/access-reset enqueue and test last-administrator/bootstrap races. |
+| M10–M18 | Apply N14 role minima to exact catalog operations, routes, directory permissions, workers and CLI enums/help/claims. No creator exception or descendant ACL. Membership tests must deny Owner self-promotion, owner replacement/demotion and cross-catalog edits, while allowing its Reader/Contributor changes. Preserve request-time grants, discovery 404 and current authorization at publication. |
+| M19 / DT-25 / DT-26 | Document the four-role target and actual delivery separately; update Raw permission matrices, bootstrap, examples and mockup alignment. Keep legacy hierarchy vocabulary explicit. Historical execution receipts remain unchanged. |
+
+The task descriptions below retain original design evidence; N14 replacements govern execution wherever
+they conflict. Old Raw global grants and rank-only administration tests are replaced, not retained as
+compatibility. The depth decision is accepted, not an open owner question. No multi-organization
+persistence or runtime delivery is implied.
+
 ## N13 task replacements
 
 Owner decision 13 (2026-10-25) and [design N13](RAW_LAKE_DESIGN.md#n13-explicit-namespace-contracts)
 replace the conflicting future work below, including its old symbols, test names, acceptance criteria,
 route counts, examples and handoffs. These replacements are mandatory inputs before executing each
 named task. Historical receipts and completed M1–M3.1 notes are unchanged; this amendment implements
-nothing. M3/M4 retain their security/store-foundation scope. Later milestones are not authorized by
+nothing. M3/M4 retain their security/store-foundation scope, with N14 requiring the explicit M4.1 amendment role migration. Later milestones are not authorized by
 this documentation change.
 
 | Future tasks | Replace | Required deliverable and acceptance |
 | --- | --- | --- |
-| M6.1, M6.3 | Slugify properties, placement resolver, identity-layout config and dependent vocabularies | Strict segment/name/namespace values and identifier round trips; config accepts exact schema/title/policy only. Invalid names are refused unchanged. Namespace depth 1–6, total depth ≤8. Remove obsolete config keys and placement methods. |
+| M6.1, M6.3 | Slugify properties, placement resolver, identity-layout config and dependent vocabularies | Strict segment/name/namespace values and identifier round trips; config accepts exact schema/title/policy only. Invalid names are refused unchanged. Recursive namespace depth, with no fixed business cap; preserve path-length/safety limits (N14). Remove obsolete config keys and placement methods. |
 | M6.4–M6.5, M7.2–M7.5 | Frozen identity fields and pinned/current composition, placement-specific errors/cache | Keep secure org-base + exact extension composition, ordinary enums and field diffs. Validation resolves current catalog schema only; publishing a schema alone never adopts it. Config apply retains immutable history and ETag. Remove identity pin and layout-compatibility validation. |
 | M7.1, M8.2, M8.5–M8.6 | Closed audit/replay vocabularies and catalog examples containing placement fields | Seed create/delete namespace audit pairs and namespace replay kind with their owning namespace work (M11); catalog/schema contracts use N13 config shape. Catalog policy/version and administration race guarantees remain. |
 | M9 route/wiring tasks | Old catalog config/schema response examples and fixed route counts | Catalog/schema operations expose selected current schema, no collection override. Keep auth roles, headers and bootstrap. Additional namespace routes arrive with M11, not placeholder registration. |
@@ -1775,6 +1841,8 @@ added to `ApiStores` or `ApiRuntime` and nothing is wired into `create_app` (M8,
 
 ### M4.1 The lake store root, the in-memory transaction and the import contracts
 
+> Apply [N14 task replacements](#n14-task-replacements); original five-role/scope examples below are superseded.
+
 - Intent: give the lake its owner package and its adapter package with the boundaries enforced from the
   first commit, and give the fake its transaction model (staged writes applied atomically on a clean
   exit, discarded on an exception, refused after exit or when nested) before any writer port exists.
@@ -1866,9 +1934,11 @@ added to `ApiStores` or `ApiRuntime` and nothing is wired into `create_app` (M8,
   - `src/huron/core/lake/{__init__,ports}.py` and `src/huron/core/metastore/lake/{__init__,memory}.py`
     at 100 % line coverage in the unit run.
 - Dependencies: M3.4; M2 (the renamed contracts this task edits).
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M4.2 Role-mapping and signing-key read halves
+
+> Apply [N14 task replacements](#n14-task-replacements); original five-role/scope examples below are superseded.
 
 - Intent: make the fake answer the two read ports the broker owns, with the same per-table half layout
   the Postgres adapter follows from M8, and give the scenario module a seeding seam so the same
@@ -1926,6 +1996,8 @@ added to `ApiStores` or `ApiRuntime` and nothing is wired into `create_app` (M8,
 - Status: pending
 
 ### M4.3 `Actor` and `LakeAuthentication`
+
+> Apply [N14 task replacements](#n14-task-replacements); original five-role/scope examples below are superseded.
 
 - Intent: turn a presented Huron JWT into the immutable, request-scoped `Actor` every lake operation
   receives, verifying the token before the store is touched and re-mapping the signed `groups` through
@@ -10781,3 +10853,69 @@ and all owned processes stopped. The successful contract run recorded 102.020
 wall seconds versus 32.936 monotonic seconds on battery power, consistent with
 host suspension; uninterrupted execution is not claimed. Milestone 3 is complete.
 Next baselines: `/tmp/huron-m41-before.json` and `/tmp/huron-m41-before-contract.json`.
+
+### M4.1 implementation — pending independent verification
+
+Added the lake persistence protocols and in-memory store with immutable logical rows,
+optional five-role seed, typed read-through buffers, synchronous cross-table commit,
+rollback on errors/cancellation, closed/nested guards, and transaction-owned exclusive
+and catalog readers-writer locks. Shared root scenarios and deterministic bounded
+concurrency tests cover compatibility, cancellation, independent keys and concurrent
+commits. Import contracts and their sandbox tests now enforce all 17 contracts;
+each new forbidden edge fails its intended named contract. The repository-layout
+page names the two new packages. No read halves, clock, future exceptions or
+application wiring were added.
+
+The final frozen-source gate passed: make lint, 1141 unit, 15 contract,
+12 integration, 1156 combined and 41 focused tests, make docs and git diff --check.
+Unit coverage moves from 3262/3388 to 3411/3537 (96.44%); combined from
+3385/3388 to 3534/3537 (99.92%). All four new production files are 100%
+(149/149 statements), and every untouched-file coverage summary is unchanged in
+both runs. The floor remains 95.74. Duplication remains 78 pairs/27 groups,
+native score 75; no baseline edit, G2 capped usage remains 1/4. Required import,
+no-wiring, support-module and suppression scans are empty.
+
+Exact outputs, command exit codes, coverage comparisons, source hashes, and
+wall/monotonic receipts are under `/tmp/huron-m41-i1/`, summarized in `report.md`.
+The final gate ran under a scoped caffeinate -is assertion with actual power and
+assertion receipts; no owner-stack command ran. Initial uv cache restrictions
+were resolved by escalation. Initial exploratory command wrappers used zsh's
+read-only `status` variable after successful commands; the complete final gate
+uses a Python receipt runner and every recorded command exits zero. Task status
+remains pending independent verification.
+
+### M4.1 N14 amendment implementation — pending independent verification
+
+Adapted the uncommitted store foundation and broker to the four scoped roles. Grant
+and informational claim construction reject both invalid scope directions; former
+Raw role codes have no aliases. Only organization Administrator spans catalogs;
+additive catalog grants retain identity isolation and immutable normalization. The
+store seeds four rows with organization/catalog scope. Re-signed the independent
+stored golden token with the existing public test key and fixed times. Legacy
+hierarchy vocabulary and existing buffer/lock/signing-key behavior remain unchanged.
+No namespace runtime or later milestone capability was added.
+
+Final frozen combined gate passes: make lint (17 contracts), 1157 unit, 15 contract,
+12 integration, 1172 combined, focused import/store/ladder/claims/token/key tests,
+make docs and diff check. Unit coverage remains 3411/3537 (96.44%), combined
+3534/3537 (99.92%); all touched production files are 100%, with every preexisting
+file's coverage summary unchanged against the official pre-M4.1 baselines.
+Floor 95.74 and duplication 78 pairs/27 groups remain unchanged; G2 usage remains 1/4.
+Six required scans are empty, and 28 N14 links resolve. Exact outputs, timings,
+coverage comparisons and matching before/after/current source hashes are in
+`/tmp/huron-m41-n14-i1/report.md` and adjacent receipts. Actual power was battery;
+scoped caffeinate -is assertions were recorded. No owner stack operation ran and
+owned processes stopped. Neither M4.1 nor its amendment is complete until the
+independent combined review passes; historical receipts above remain unchanged.
+
+### Amended M4.1 independent completion
+
+Verification 1 passed with no findings: `/tmp/huron-m41-v1/report.md`. The combined
+store foundation and accepted N14 role migration passed lint (17 import contracts),
+1157 unit, 15 contract, 12 integration, 1172 combined and 263 focused tests, docs,
+required scans and 28 design-link checks. Unit 3262/3388 → 3411/3537; combined
+3385/3388 → 3534/3537. All touched production files are 100% covered; no prior
+coverage loss. Floor stays 95.74, duplication stays 78 pairs/27 groups (G2 1/4).
+Frozen source hashes match and owned processes stopped. Four scoped roles are
+implemented; recursive namespace runtime and administration remain future tasks.
+Next baselines: `/tmp/huron-m42-before.json` and `/tmp/huron-m42-before-contract.json`.

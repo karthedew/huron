@@ -13,7 +13,18 @@ import pytest
 pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).parents[2]
-OWNERS = ("foundation", "security", "hierarchy", "metastore", "rawstore")
+OWNERS = ("foundation", "security", "hierarchy", "lake", "metastore", "rawstore")
+LEGACY_METASTORE = (
+    "api_keys",
+    "hierarchy",
+    "memory_apikeys",
+    "memory_principals",
+    "principals",
+    "queries",
+    "rbac",
+    "rows",
+    "security_facts",
+)
 PRIVATE_OWNERS = ("security", "hierarchy")
 
 
@@ -26,7 +37,7 @@ def test_foundation_import_does_not_initialize_domains_or_adapters() -> None:
             """
 import sys
 from huron.core.foundation import canonical, clock, errors, identifiers, names, paging, retry
-for owner in ('security', 'hierarchy', 'metastore', 'rawstore'):
+for owner in ('security', 'hierarchy', 'lake', 'metastore', 'rawstore'):
     assert 'huron.core.' + owner not in sys.modules, owner
 assert 'huron.applications.api' not in sys.modules
 """,
@@ -51,11 +62,15 @@ def _sandbox(tmp_path: Path) -> Path:
             "huron.applications.api.routes",
         ]
     )
+    packages.append("huron.core.metastore.lake")
     packages.extend(f"huron.core.{owner}._impl" for owner in PRIVATE_OWNERS)
     for name in packages:
         directory = tmp_path / name.replace(".", "/")
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "__init__.py").write_text("")
+    for module in LEGACY_METASTORE:
+        (tmp_path / f"huron/core/metastore/{module}.py").write_text("")
+    (tmp_path / "huron/core/metastore/lake/public.py").write_text("")
     for owner in OWNERS:
         (tmp_path / f"huron/core/{owner}/public.py").write_text("")
     for owner in PRIVATE_OWNERS:
@@ -93,6 +108,8 @@ def test_declared_edges_and_owner_root_reexports_are_allowed(tmp_path: Path) -> 
         "foundation": (),
         "security": ("core.foundation",),
         "hierarchy": ("core.security", "core.foundation"),
+        "lake": ("core.security", "core.foundation", "schema"),
+        "metastore/lake": ("core.lake", "core.security", "core.foundation"),
         "metastore": ("core.hierarchy", "core.security", "core.foundation"),
         "rawstore": ("schema",),
     }
@@ -108,8 +125,36 @@ def test_declared_edges_and_owner_root_reexports_are_allowed(tmp_path: Path) -> 
     ("edits", "contract"),
     [
         (
+            {"huron/core/lake/public.py": "import huron.core.hierarchy\n"},
+            "lake uses security foundation and schema only",
+        ),
+        (
+            {"huron/core/hierarchy/public.py": "import huron.core.lake\n"},
+            "hierarchy uses security and foundation only",
+        ),
+        (
+            {"huron/core/metastore/lake/public.py": "import huron.core.metastore.rbac\n"},
+            "lake adapters stay apart from the legacy hierarchy",
+        ),
+        (
+            {"huron/core/metastore/lake/public.py": "import huron.core.hierarchy\n"},
+            "lake adapters stay apart from the legacy hierarchy",
+        ),
+        (
+            {"huron/core/metastore/rbac.py": "import huron.core.metastore.lake\n"},
+            "legacy metastore modules never import the lake adapters",
+        ),
+        (
+            {"huron/core/foundation/public.py": "import huron.core.lake\n"},
+            "foundation has no Huron dependencies",
+        ),
+        (
+            {"huron/core/rawstore/public.py": "import huron.core.lake\n"},
+            "rawstore uses schema only",
+        ),
+        (
             {"huron/core/metastore/public.py": "import huron.schema\n"},
-            "metastore uses hierarchy security and foundation only",
+            "metastore uses hierarchy lake security and foundation only",
         ),
         (
             {
