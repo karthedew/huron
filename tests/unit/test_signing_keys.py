@@ -1,7 +1,9 @@
 """Signing keys preserve immutable identity, publication windows and rotation continuity."""
 
+import asyncio
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import jwt
 import pytest
@@ -16,16 +18,30 @@ from huron.core.security.broker import (
     RETENTION,
     TOKEN_TTL_MAX,
     VERIFY_LEEWAY,
+    FileSigningKeySource,
+    HuronKeys,
     KeyRing,
     KeyState,
     PrivateSigningKey,
     PublicSigningKey,
     SigningKeyRecord,
+    SigningKeySource,
     initial_record,
     jwk_thumbprint,
     plan_rotation,
 )
 from huron.core.security.errors import RotationRefused, SigningKeyUnavailable
+from tests.lake_tokens import (
+    TEST_EPOCH,
+    TEST_KEY,
+    TEST_KEY_REF,
+    TEST_KID,
+    TEST_RECORD,
+    InMemorySigningKeySource,
+    PausedSigningKeyReader,
+    ScriptedSigningKeyReader,
+)
+from tests.unit.support import FakeClock
 
 pytestmark = pytest.mark.unit
 
@@ -278,11 +294,312 @@ def test_empty_ring_has_no_public_keys_or_algorithms() -> None:
 
 def test_publication_and_retention_constants_cover_all_caches_and_tokens() -> None:
     """Publication precedes stale signers and cached JWKS; retention covers maximum token lifetime."""
-    assert TOKEN_TTL_MAX == timedelta(hours=1)
-    assert VERIFY_LEEWAY == timedelta(seconds=30)
+    assert timedelta(hours=1) == TOKEN_TTL_MAX
+    assert timedelta(seconds=30) == VERIFY_LEEWAY
     assert RETENTION == TOKEN_TTL_MAX + VERIFY_LEEWAY
-    assert REFRESH_INTERVAL == timedelta(seconds=60)
+    assert timedelta(seconds=60) == REFRESH_INTERVAL
     assert MAX_RING_AGE == JWKS_MAX_AGE == timedelta(minutes=5)
-    assert MIN_PUBLICATION_LEAD == timedelta(minutes=10)
+    assert timedelta(minutes=10) == MIN_PUBLICATION_LEAD
     assert MIN_PUBLICATION_LEAD > MAX_RING_AGE
     assert MIN_PUBLICATION_LEAD >= REFRESH_INTERVAL + JWKS_MAX_AGE
+
+
+def test_shared_key_identity_is_pinned() -> None:
+    """The fixed fixture thumbprint changes only with an intentional fixture identity change."""
+    assert PublicSigningKey.from_private(TEST_KEY).kid == TEST_KID
+    assert initial_record(TEST_RECORD.key, TEST_KEY_REF, TEST_EPOCH) == TEST_RECORD
+
+
+@pytest.mark.parametrize(
+    "format", [serialization.PrivateFormat.PKCS8, serialization.PrivateFormat.TraditionalOpenSSL]
+)
+@pytest.mark.parametrize("algorithm", ["ES256", "RS256"])
+def test_file_source_follows_secret_symlinks_without_caching(
+    tmp_path: Path, format: serialization.PrivateFormat, algorithm: str
+) -> None:
+    """Secret-volume symlinks load both PEM formats and each load observes the current file."""
+    directory = tmp_path / "keys"
+    data = directory / "..data"
+    data.mkdir(parents=True)
+    pem = data / TEST_KEY_REF
+    (directory / TEST_KEY_REF).symlink_to(Path("..data") / TEST_KEY_REF)
+    private = TEST_KEY if algorithm == "ES256" else rsa.generate_private_key(65537, 2048)
+    pem.write_bytes(
+        private.private_bytes(serialization.Encoding.PEM, format, serialization.NoEncryption())
+    )
+    pem.chmod(0o644)
+    source: SigningKeySource = FileSigningKeySource(directory)
+    assert PublicSigningKey.from_private(
+        source.load(TEST_KEY_REF)
+    ) == PublicSigningKey.from_private(private)
+    pem.write_bytes(b"changed")
+    with pytest.raises(SigningKeyUnavailable) as failure:
+        source.load(TEST_KEY_REF)
+    assert failure.value.context == {"private_ref": TEST_KEY_REF, "reason": "not_pem"}
+
+
+@pytest.mark.parametrize(
+    "ref", ["../x.pem", "", ".", "..", "/x.pem", "a/b", "a\\b", "a\n", "é.pem", "a b"]
+)
+def test_file_source_refuses_non_bare_references(tmp_path: Path, ref: str) -> None:
+    """Only the catalog's ASCII filename grammar is accepted."""
+    with pytest.raises(SigningKeyUnavailable) as failure:
+        FileSigningKeySource(tmp_path).load(ref)
+    assert failure.value.context == {"private_ref": ref, "reason": "bad_ref"}
+
+
+@pytest.mark.parametrize(
+    "case,reason",
+    [
+        ("escape", "outside_directory"),
+        ("missing", "missing"),
+        ("directory", "unreadable"),
+        ("cycle", "unreadable"),
+        ("nonpem", "not_pem"),
+        ("oversized", "not_pem"),
+        ("encrypted", "encrypted"),
+        ("p384", "unsupported_key"),
+        ("rsa1024", "unsupported_key"),
+        ("ed25519", "unsupported_key"),
+    ],
+)
+def test_file_source_reports_safe_failure_reasons(tmp_path: Path, case: str, reason: str) -> None:
+    """Read and key-validation failures disclose only the reference and stable reason."""
+    directory = tmp_path / "keys"
+    directory.mkdir()
+    path = directory / TEST_KEY_REF
+    if case == "escape":
+        path.symlink_to(tmp_path / "outside.pem")
+    elif case == "directory":
+        path.mkdir()
+    elif case == "cycle":
+        path.symlink_to(TEST_KEY_REF)
+    elif case in {"nonpem", "oversized"}:
+        path.write_bytes(b"x" * (16385 if case == "oversized" else 32))
+    elif case != "missing":
+        key = {
+            "encrypted": lambda: TEST_KEY,
+            "p384": lambda: ec.derive_private_key(1, ec.SECP384R1()),
+            "rsa1024": lambda: rsa.generate_private_key(65537, 1024),
+            "ed25519": ed25519.Ed25519PrivateKey.generate,
+        }[case]()
+        encryption = (
+            serialization.BestAvailableEncryption(b"test-password")
+            if case == "encrypted"
+            else serialization.NoEncryption()
+        )
+        path.write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, encryption
+            )
+        )
+    with pytest.raises(SigningKeyUnavailable) as failure:
+        FileSigningKeySource(directory).load(TEST_KEY_REF)
+    assert failure.value.context == {"private_ref": TEST_KEY_REF, "reason": reason}
+
+
+@pytest.mark.parametrize(
+    "case", ["store", "empty", "pending_missing", "active_missing", "thumbprint", "algorithm"]
+)
+async def test_startup_refuses_incomplete_or_invalid_key_sets(case: str) -> None:
+    """Startup never launches a loop with missing, unavailable or inconsistent signing material."""
+    records = [TEST_RECORD]
+    source = InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY})
+    error = RuntimeError("store unavailable") if case == "store" else None
+    if case == "empty":
+        records = []
+    elif case == "pending_missing":
+        records.append(initial_record(SUCCESSOR, "pending.pem", TEST_EPOCH + MIN_PUBLICATION_LEAD))
+    elif case == "active_missing":
+        source.keys.clear()
+    elif case == "thumbprint":
+        source.keys[TEST_KEY_REF] = PRIVATE
+    elif case == "algorithm":
+        records = [replace(TEST_RECORD, key=replace(TEST_RECORD.key, alg="RS256"))]
+    reader = ScriptedSigningKeyReader(records, error)
+    keys = HuronKeys(reader, source, FakeClock(TEST_EPOCH))
+    with pytest.raises(RuntimeError if error else SigningKeyUnavailable) as failure:
+        async with keys:
+            pytest.fail("Invalid startup entered the context")
+    assert keys.ring.records == ()
+    assert reader.calls == 1
+    if case in {"pending_missing", "active_missing", "thumbprint", "algorithm"}:
+        assert failure.value.context["kid"] == records[-1].key.kid
+        assert failure.value.context["private_ref"] == records[-1].private_ref
+    await keys.__aexit__()
+
+
+async def test_refresh_reuses_loaded_keys_and_withdraws_removed_records() -> None:
+    """Refreshing retains private identity while observing row updates, retirement and withdrawal."""
+    clock = FakeClock(TEST_EPOCH)
+    source = InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY, "pending.pem": SUCCESSOR_PRIVATE})
+    reader = ScriptedSigningKeyReader([TEST_RECORD])
+    keys = HuronKeys(reader, source, clock)
+    first = await keys.refresh()
+    source.keys.clear()
+    clock.advance(TICK)
+    assert (await keys.refresh()).signer(clock.now()) == (TEST_RECORD, TEST_KEY)
+    assert first.loaded_at == TEST_EPOCH
+    reader.records = [replace(TEST_RECORD, retired_at=clock.now())]
+    retiring = await keys.refresh()
+    assert retiring.private_keys == {}
+    assert retiring.verification_key(TEST_KID, clock.now()) == TEST_RECORD.key
+    reader.records.clear()
+    assert (await keys.refresh()).records == ()
+    assert first.records == (TEST_RECORD,)
+
+
+async def test_runtime_store_failure_preserves_snapshot_until_signing_becomes_stale() -> None:
+    """A failed store read leaves verification available but cannot extend signing freshness."""
+    clock = FakeClock(TEST_EPOCH)
+    reader = ScriptedSigningKeyReader([TEST_RECORD])
+    keys = HuronKeys(reader, InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY}), clock)
+    async with keys as running:
+        assert running is keys
+        ring = keys.ring
+        reader.exception = RuntimeError("store unavailable")
+        with pytest.raises(RuntimeError, match="store unavailable"):
+            await keys.refresh()
+        assert keys.ring is ring
+        clock.advance(MAX_RING_AGE + TICK)
+        with pytest.raises(SigningKeyUnavailable) as failure:
+            keys.ring.signer(clock.now())
+        assert failure.value.context == {"reason": "stale"}
+        assert keys.ring.verification_key(TEST_KID, clock.now()) == TEST_RECORD.key
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+async def test_pending_key_failure_is_logged_and_retried_without_blocking_current_signer(
+    caplog: pytest.LogCaptureFixture, mismatch: bool
+) -> None:
+    """A runtime pending failure keeps public discovery, and later successful loading repairs it."""
+    clock = FakeClock(TEST_EPOCH)
+    source = InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY})
+    reader = ScriptedSigningKeyReader([TEST_RECORD])
+    keys = HuronKeys(reader, source, clock)
+    async with keys:
+        switch = TEST_EPOCH + MIN_PUBLICATION_LEAD
+        reader.records = [
+            replace(TEST_RECORD, retired_at=switch),
+            initial_record(SUCCESSOR, "pending.pem", switch),
+        ]
+        if mismatch:
+            source.keys["pending.pem"] = TEST_KEY
+        ring = await keys.refresh()
+        assert ring.signer(TEST_EPOCH)[1] is TEST_KEY
+        assert ring.verification_key(SUCCESSOR.kid, TEST_EPOCH) == SUCCESSOR
+        assert SUCCESSOR.kid not in ring.private_keys
+        assert SUCCESSOR.kid in caplog.text and "pending.pem" in caplog.text
+        clock.set(switch)
+        with pytest.raises(SigningKeyUnavailable):
+            await keys.refresh()
+        assert keys.ring is ring
+        # A refresh shortly before switching makes unloaded-key refusal distinct from staleness.
+        clock.set(switch - TICK)
+        await keys.refresh()
+        with pytest.raises(SigningKeyUnavailable) as failure:
+            keys.ring.signer(switch)
+        assert failure.value.context["reason"] == "not_loaded"
+        source.keys["pending.pem"] = SUCCESSOR_PRIVATE
+        clock.set(switch)
+        assert (await keys.refresh()).signer(switch)[1] is SUCCESSOR_PRIVATE
+
+
+async def test_refresh_rechecks_reused_key_algorithm() -> None:
+    """Reusing cached private material does not bypass validation of changed registration metadata."""
+    reader = ScriptedSigningKeyReader([TEST_RECORD])
+    keys = HuronKeys(
+        reader, InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY}), FakeClock(TEST_EPOCH)
+    )
+    ring = await keys.refresh()
+    reader.records = [replace(TEST_RECORD, key=replace(TEST_RECORD.key, alg="RS256"))]
+    with pytest.raises(SigningKeyUnavailable) as failure:
+        await keys.refresh()
+    assert failure.value.context["reason"] == "key_mismatch"
+    assert keys.ring is ring
+
+
+async def test_refresh_loop_retries_failures_and_stops_on_context_exit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The millisecond test interval reaches the loop, logs failures and shuts it down fully."""
+    reader = ScriptedSigningKeyReader([TEST_RECORD])
+    keys = HuronKeys(
+        reader,
+        InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY}),
+        FakeClock(TEST_EPOCH),
+        refresh_interval=timedelta(milliseconds=1),
+    )
+    async with keys:
+        reader.exception = RuntimeError("scripted refresh failure")
+        async with asyncio.timeout(2):
+            while reader.calls < 2:
+                await asyncio.sleep(0.001)
+        assert "Signing key refresh failed" in caplog.text
+        reader.exception = None
+        async with asyncio.timeout(2):
+            while reader.calls < 3:
+                await asyncio.sleep(0.001)
+    calls = reader.calls
+    await asyncio.sleep(0.005)
+    assert reader.calls == calls
+
+
+async def test_concurrent_refreshes_publish_serial_snapshots() -> None:
+    """Concurrent refresh callers serialize persistence reads and publish detached snapshots."""
+    reader = PausedSigningKeyReader([TEST_RECORD])
+    keys = HuronKeys(
+        reader, InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY}), FakeClock(TEST_EPOCH)
+    )
+    first = asyncio.create_task(keys.refresh())
+    await reader.entered.wait()
+    second = asyncio.create_task(keys.refresh())
+    await asyncio.sleep(0)
+    assert keys.ring.records == ()
+    assert not first.done() and not second.done()
+    reader.release.set()
+    snapshots = await asyncio.gather(first, second)
+    assert reader.calls == 2
+    assert reader.max_inflight == 1
+    assert snapshots[0] is not snapshots[1]
+    assert keys.ring is snapshots[1]
+    assert all(ring.signer(TEST_EPOCH) == (TEST_RECORD, TEST_KEY) for ring in snapshots)
+
+
+async def test_context_exit_awaits_an_inflight_refresh_cancellation() -> None:
+    """Shutdown cancels an in-flight reader and waits for its cleanup before returning."""
+    reader = PausedSigningKeyReader([TEST_RECORD])
+    reader.release.set()
+    keys = HuronKeys(
+        reader,
+        InMemorySigningKeySource({TEST_KEY_REF: TEST_KEY}),
+        FakeClock(TEST_EPOCH),
+        refresh_interval=timedelta(milliseconds=1),
+    )
+    async with keys:
+        reader.release.clear()
+        reader.entered.clear()
+        reader.finished.clear()
+        async with asyncio.timeout(2):
+            await reader.entered.wait()
+        assert not reader.finished.is_set()
+    assert reader.finished.is_set()
+    assert reader.calls == 1
+
+
+@pytest.mark.parametrize("size", [16 * 1024, 16 * 1024 + 1])
+def test_file_source_enforces_the_exact_read_limit(tmp_path: Path, size: int) -> None:
+    """Otherwise valid PEM loads at the size limit and is refused one byte beyond it."""
+    pem = TEST_KEY.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    (tmp_path / TEST_KEY_REF).write_bytes(pem.ljust(size, b"\n"))
+    source = FileSigningKeySource(tmp_path)
+    if size == 16 * 1024:
+        assert PublicSigningKey.from_private(source.load(TEST_KEY_REF)) == TEST_RECORD.key
+    else:
+        with pytest.raises(SigningKeyUnavailable) as failure:
+            source.load(TEST_KEY_REF)
+        assert failure.value.context == {"private_ref": TEST_KEY_REF, "reason": "not_pem"}

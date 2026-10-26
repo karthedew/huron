@@ -1700,7 +1700,7 @@ with their raise sites and their `design/api.html` §7 rows (convention 1).
     reader, the clock and `refresh_interval`).
   - `keys.py` at 100 % line coverage in the unit run.
 - Dependencies: M3.2.
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M3.4 The Huron JWT: claims, issuer and verifier
 
@@ -10718,3 +10718,33 @@ Unit2944/3070→3059/3185; combined3067/3070→3182/3185; all touchedproduction1
 no surviving coverage loss. Floor stays95.74. Duplication unchanged78/27; G2capped
 usage1/4,G1zero. Next snapshots `/tmp/huron-m33-before.json` and
 `/tmp/huron-m33-before-contract.json`.
+
+### M3.3 implementation — pending independent verification
+
+Implemented the key source and reader ports, contained bounded PEM-file loading,
+refreshing `HuronKeys` lifecycle, and shared fixed-key test support. No token issuer,
+production wiring or store tables added. Implementation report and exact gate logs:
+`/tmp/huron-m33-i1/report.md`.
+
+Implementation gate passes: full `make lint` (14 import contracts), 1045 unit,
+15 contract, 12 integration, 1060 combined, and 72 focused signing-key tests.
+Unit coverage: 3059/3185 → 3167/3293 (96.17%); combined: 3182/3185 → 3290/3293
+(99.91%). Both touched production modules have 100% line coverage; unchanged files'
+coverage summaries are identical to baseline. Unit count grows from 1004 to 1045.
+The floor stays 95.74. Duplication remains 78 pairs/27 groups, with no baseline edit;
+G2 capped usage stays 1/4 and G1 zero. No documentation-site changes require a build.
+Frozen-source hashes, per-command wall/monotonic receipts and scoped `caffeinate -is`
+power assertions are under `/tmp/huron-m33-i1/`; all validation-owned processes stopped.
+The task status remains pending until independent verification passes.
+
+### M3.3 independent completion
+
+Verification attempt 1 passed with no findings: `/tmp/huron-m33-v1/report.md`.
+Fresh lint, 1045 unit, 15 contract, 12 integration, 1060 combined and 72 focused
+tests passed. Unit coverage is 3167/3293; combined coverage is 3290/3293;
+`keys.py` is 218/218, with no untouched-file coverage regression. The floor
+remains 95.74 and duplication remains 78 pairs/27 groups (G2 usage 1/4).
+Source hashes remained unchanged during checks. Battery power was recorded with
+the idle-sleep assertion held; wall/monotonic timing showed no sleep discrepancy.
+All owned processes stopped. Next-task coverage snapshots are
+`/tmp/huron-m34-before.json` and `/tmp/huron-m34-before-contract.json`.

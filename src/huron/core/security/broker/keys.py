@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
+import logging
+import re
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Final, Literal, Protocol, Self
 
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
@@ -18,6 +24,9 @@ from huron.core.security.errors import RotationRefused, SigningKeyUnavailable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
+
+    from huron.core.foundation.clock import Clock
 
 
 type SigningAlgorithm = Literal["ES256", "RS256"]
@@ -286,3 +295,259 @@ def initial_record(key: PublicSigningKey, private_ref: str, at: datetime) -> Sig
         An active, open-ended record.
     """
     return SigningKeyRecord(key, private_ref, at, None)
+
+
+class SigningKeySource(Protocol):
+    """Resolve a registered reference without exposing private material to callers."""
+
+    def load(self, private_ref: str) -> PrivateSigningKey:
+        """Load a supported private key.
+
+        Args:
+            private_ref: The registered private-key reference.
+
+        Returns:
+            The private signing key.
+        """
+        ...
+
+
+class FileSigningKeySource:
+    """Read bounded, unencrypted PEM keys within one Secret-volume directory."""
+
+    def __init__(self, directory: Path) -> None:
+        """Keep the configured key directory.
+
+        Args:
+            directory: The directory containing key files and Secret-volume symlinks.
+        """
+        self._directory = directory
+
+    def load(self, private_ref: str) -> PrivateSigningKey:
+        """Resolve and read one bare filename without caching private material.
+
+        Args:
+            private_ref: An ASCII filename containing letters, digits, dots, underscores or hyphens.
+
+        Returns:
+            A supported private signing key.
+
+        Raises:
+            SigningKeyUnavailable: If the reference, containment, read or PEM validation fails.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", private_ref) or private_ref in {".", ".."}:
+            raise SigningKeyUnavailable(context={"private_ref": private_ref, "reason": "bad_ref"})
+        try:
+            return self._decode(self._read(private_ref), private_ref)
+        except FileNotFoundError:
+            reason = "missing"
+        except (OSError, RuntimeError):
+            reason = "unreadable"
+        except (TypeError, ValueError, UnsupportedAlgorithm) as exc:
+            reasons: dict[type[Exception], str] = {
+                TypeError: "encrypted",
+                ValueError: "not_pem",
+                UnsupportedAlgorithm: "unsupported_key",
+            }
+            reason = reasons.get(type(exc), "not_pem")
+        raise SigningKeyUnavailable(context={"private_ref": private_ref, "reason": reason})
+
+    @staticmethod
+    def _decode(data: bytes, private_ref: str) -> PrivateSigningKey:
+        """Parse PEM material and enforce the supported signing-key policy.
+
+        Args:
+            data: The bounded file contents.
+            private_ref: The reference to report on refusal.
+
+        Returns:
+            A supported private key.
+
+        Raises:
+            SigningKeyUnavailable: If the parsed key is not supported for signing.
+        """
+        key = serialization.load_pem_private_key(data, password=None)
+        if isinstance(key, (ec.EllipticCurvePrivateKey, rsa.RSAPrivateKey)):
+            try:
+                PublicSigningKey.from_private(key)
+            except ValueError:
+                pass
+            else:
+                return key
+        raise SigningKeyUnavailable(
+            context={"private_ref": private_ref, "reason": "unsupported_key"}
+        )
+
+    def _read(self, private_ref: str) -> bytes:
+        """Read no more than the PEM size limit from a contained resolved path.
+
+        Args:
+            private_ref: A validated bare filename.
+
+        Returns:
+            The file's bounded contents.
+
+        Raises:
+            SigningKeyUnavailable: If the path escapes the directory or exceeds the limit.
+        """
+        directory = self._directory.resolve()
+        path = (directory / private_ref).resolve()
+        if not path.is_relative_to(directory):
+            raise SigningKeyUnavailable(
+                context={"private_ref": private_ref, "reason": "outside_directory"}
+            )
+        if path.stat().st_size > 16 * 1024:
+            raise SigningKeyUnavailable(context={"private_ref": private_ref, "reason": "not_pem"})
+        with path.open("rb") as pem:
+            return pem.read(16 * 1024)
+
+
+class SigningKeyReader(Protocol):
+    """Read registered keys whose verification retention has not ended."""
+
+    async def unexpired(self, retired_after: datetime) -> tuple[SigningKeyRecord, ...]:
+        """Read keys in activation order, propagating persistence failures.
+
+        Args:
+            retired_after: Exclusive lower bound for retirement, with open intervals included.
+
+        Returns:
+            The registered records in ascending activation order.
+        """
+        ...
+
+
+class HuronKeys:
+    """Own immutable request-path snapshots and the background refresh lifetime."""
+
+    def __init__(
+        self,
+        reader: SigningKeyReader,
+        source: SigningKeySource,
+        clock: Clock,
+        *,
+        refresh_interval: timedelta = REFRESH_INTERVAL,
+    ) -> None:
+        """Inject key persistence, private material and time.
+
+        Args:
+            reader: The registered-key reader.
+            source: The private-key loader.
+            clock: The source of snapshot time.
+            refresh_interval: Delay between background refreshes.
+        """
+        self._reader = reader
+        self._source = source
+        self._clock = clock
+        self._refresh_interval = refresh_interval
+        self._ring = KeyRing((), {}, clock.now())
+        self._lock = asyncio.Lock()
+        self._task: asyncio.Task[None] | None = None
+
+    @property
+    def ring(self) -> KeyRing:
+        """Return the current immutable snapshot without I/O.
+
+        Returns:
+            The last successfully refreshed ring.
+        """
+        return self._ring
+
+    async def refresh(self) -> KeyRing:
+        """Publish a fresh snapshot, reusing keys by their registered identity.
+
+        Returns:
+            The new ring, with unloadable pending keys omitted from private material.
+        """
+        return await self._refresh(strict=False)
+
+    def _private_key(self, record: SigningKeyRecord) -> PrivateSigningKey:
+        """Resolve and verify private material against the registered public identity.
+
+        Args:
+            record: The registration to load or reuse.
+
+        Returns:
+            A matching private key.
+
+        Raises:
+            SigningKeyUnavailable: If loading fails or the public identity differs.
+        """
+        context = {"kid": record.key.kid, "private_ref": record.private_ref}
+        try:
+            private = self._ring.private_keys.get(record.key.kid)
+            if private is None:
+                private = self._source.load(record.private_ref)
+            public = PublicSigningKey.from_private(private)
+            if public.kid != record.key.kid or public.alg != record.key.alg:
+                raise SigningKeyUnavailable(context={"reason": "key_mismatch"})
+        except SigningKeyUnavailable as exc:
+            raise SigningKeyUnavailable(context={**exc.context, **context}) from exc
+        return private
+
+    async def _refresh(self, *, strict: bool) -> KeyRing:
+        """Serialize snapshot construction and publish only a complete successful read.
+
+        Args:
+            strict: Whether every signing key must load, including pending keys.
+
+        Returns:
+            The newly published snapshot.
+
+        Raises:
+            SigningKeyUnavailable: If a required private key or startup signer is unavailable.
+        """
+        async with self._lock:
+            now = self._clock.now()
+            records = await self._reader.unexpired(now - RETENTION)
+            private_keys = {}
+            for record in records:
+                state = record.state(now)
+                if state not in {KeyState.PENDING, KeyState.ACTIVE}:
+                    continue
+                try:
+                    private_keys[record.key.kid] = self._private_key(record)
+                except SigningKeyUnavailable:
+                    if strict or state == KeyState.ACTIVE:
+                        raise
+                    logging.getLogger(__name__).warning(
+                        "Pending signing key unavailable: kid=%s private_ref=%s",
+                        record.key.kid,
+                        record.private_ref,
+                    )
+            ring = KeyRing(records, private_keys, now)
+            if strict:
+                ring.signer(now)
+            self._ring = ring
+            return ring
+
+    async def __aenter__(self) -> Self:
+        """Require all signing keys at startup, then start periodic refreshes.
+
+        Returns:
+            This running key-ring owner.
+        """
+        await self._refresh(strict=True)
+        self._task = asyncio.create_task(self._run())
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        """Cancel and await the refresh loop before releasing the owner.
+
+        Args:
+            *exc_info: The enclosing context's exception details.
+        """
+        if self._task is not None:
+            self._task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _run(self) -> None:
+        """Keep the last snapshot on failures and retry at the refresh interval."""
+        while True:
+            await asyncio.sleep(self._refresh_interval.total_seconds())
+            try:
+                await self.refresh()
+            except Exception:
+                logging.getLogger(__name__).exception("Signing key refresh failed")
