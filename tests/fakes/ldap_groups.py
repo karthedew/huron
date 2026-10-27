@@ -15,7 +15,7 @@ from uuid import UUID
 import httpx
 import yaml
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 DEFAULT_IDENTITIES: Final = Path(__file__).with_name("identities.yaml")
 COMPANY_USERNAME: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@-]{0,127}")
-GroupsFailure = int | Literal["timeout", "unreachable", "malformed"]
+GroupsFailure = bytes | int | Literal["timeout", "unreachable", "malformed"]
 _USER_KEYS = {"id", "username", "given_name", "family_name", "email", "groups"}
 
 
@@ -178,7 +178,7 @@ class FakeGroupDirectory:
         """Set or clear a user-specific fault, or the fallback global fault.
 
         Args:
-            failure: An HTTP status or transport/body fault; None clears this scope.
+            failure: An HTTP status, raw response bytes or transport/body fault; None clears this scope.
             username: The affected user, or None for the global fallback.
         """
         with self._lock:
@@ -193,12 +193,14 @@ class FakeGroupDirectory:
         with self._lock:
             return tuple(self._requests)
 
-    async def _groups(self, request: Request) -> JSONResponse:
+    async def _groups(self, request: Request) -> Response:
         username = request.path_params["username"]
         with self._lock:
             self._requests.append(username)
             failure = self._failures.get(username, self._failures.get(None))
             user = self._identities.users.get(username)
+        if isinstance(failure, bytes):
+            return Response(failure, media_type="application/json")
         if isinstance(failure, int):
             return JSONResponse({"error": "injected"}, status_code=failure)
         if failure == "timeout":

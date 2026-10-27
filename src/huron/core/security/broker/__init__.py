@@ -5,7 +5,16 @@ never from its modules.
 """
 
 from huron.core.security.broker.access import Actor, LakeAuthentication
-from huron.core.security.broker.exchange import COMPANY_USERNAME, CompanyTokenVerifier
+from huron.core.security.broker.exchange import (
+    COMPANY_USERNAME,
+    CompanyTokenVerifier,
+    TokenExchange,
+)
+from huron.core.security.broker.groups import (
+    GroupDirectory,
+    HttpGroupDirectory,
+    parse_groups_response,
+)
 from huron.core.security.broker.keys import (
     JWKS_MAX_AGE,
     MAX_RING_AGE,
@@ -65,6 +74,8 @@ __all__ = [
     "FileSigningKeySource",
     "Grant",
     "Grants",
+    "GroupDirectory",
+    "HttpGroupDirectory",
     "HuronClaims",
     "HuronKeys",
     "HuronTokenIssuer",
@@ -83,7 +94,9 @@ __all__ = [
     "SigningKeyReader",
     "SigningKeyRecord",
     "SigningKeySource",
+    "TokenExchange",
     "initial_record",
     "jwk_thumbprint",
+    "parse_groups_response",
     "plan_rotation",
 ]

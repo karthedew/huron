@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import timedelta
 from typing import TYPE_CHECKING, Final
-from urllib.parse import urlsplit
 
 import httpx
 import jwt
 
-from huron.core.foundation.errors import AuthError, DependencyUnavailable
+from huron.core.foundation.errors import AuthError, DependencyUnavailable, DomainError
+from huron.core.security.broker._http import absolute_url
+from huron.core.security.broker.ladder import Grants
 from huron.core.security.broker.tokens import _validate_times
 
 if TYPE_CHECKING:
@@ -19,28 +21,14 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from huron.core.foundation.clock import Clock
+    from huron.core.security.broker.groups import GroupDirectory
+    from huron.core.security.broker.ladder import RoleMappingReader
+    from huron.core.security.broker.tokens import HuronTokenIssuer, IssuedToken
 
 COMPANY_USERNAME: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@-]{0,127}")
 JWKS_TTL: Final = timedelta(minutes=5)
 JWKS_REFETCH_FLOOR: Final = timedelta(seconds=60)
 COMPANY_ALGORITHMS: Final = ("RS256", "ES256")
-
-
-def _absolute_url(value: object) -> bool:
-    if not isinstance(value, str):
-        return False
-    try:
-        parsed = urlsplit(value)
-        port = parsed.port
-        request_url = httpx.URL(value)
-    except (ValueError, httpx.InvalidURL):
-        return False
-    return (
-        parsed.scheme in {"https", "http"}
-        and bool(parsed.hostname)
-        and bool(request_url.host)
-        and (port is None or 0 < port <= 65535)
-    )
 
 
 def _unavailable(reason: str) -> DependencyUnavailable:
@@ -97,7 +85,7 @@ class CompanyTokenVerifier:
         Raises:
             ValueError: If the issuer or audiences are invalid.
         """
-        if not _absolute_url(issuer) or issuer.endswith("/") or "?" in issuer or "#" in issuer:
+        if not absolute_url(issuer) or issuer.endswith("/") or "?" in issuer or "#" in issuer:
             raise ValueError(
                 "issuer must be an absolute URL without trailing slash, query or fragment"
             )
@@ -169,7 +157,7 @@ class CompanyTokenVerifier:
     async def _discover(self) -> str:
         if self._jwks_uri is None:
             document = await self._document(self._issuer + "/.well-known/openid-configuration")
-            if "issuer" not in document or not _absolute_url(document.get("jwks_uri")):
+            if "issuer" not in document or not absolute_url(document.get("jwks_uri")):
                 raise _unavailable("malformed")
             if document["issuer"] != self._issuer:
                 raise _unavailable("issuer_mismatch")
@@ -203,3 +191,76 @@ class CompanyTokenVerifier:
         if self._expires is None and kid in keys:
             self._refetched = None
         self._keys, self._expires = keys, now + JWKS_TTL
+
+
+class TokenExchange:
+    """Exchange verified company identity for current directory-backed Huron claims."""
+
+    def __init__(
+        self,
+        verifier: CompanyTokenVerifier,
+        directory: GroupDirectory,
+        mappings: RoleMappingReader,
+        issuer: HuronTokenIssuer,
+        *,
+        subject_claim: str,
+    ) -> None:
+        """Compose identity verification, current authority and token issuance.
+
+        Args:
+            verifier: Company signature and claim verifier.
+            directory: Source of current directory membership.
+            mappings: Reader of current group-role mappings.
+            issuer: Huron signer with loaded key material.
+            subject_claim: Company claim containing the verbatim username.
+        """
+        self._verifier, self._directory = verifier, directory
+        self._mappings, self._issuer = mappings, issuer
+        self._subject_claim = subject_claim
+
+    async def exchange(self, company_token: str) -> IssuedToken:
+        """Resolve identity and current authority before signing, without writes.
+
+        Args:
+            company_token: Compact company token whose own groups are ignored.
+
+        Returns:
+            Huron token carrying every directory group and current roles.
+
+        Raises:
+            AuthError: If verification, username validation or user lookup fails.
+            DomainError: If a dependency or signing material is unavailable.
+        """
+        facts: dict[str, object] = {
+            "subject": None,
+            "outcome": "INTERNAL_ERROR",
+            "group_count": None,
+            "role_count": None,
+            "kid": None,
+        }
+        logger = logging.getLogger(__name__)
+        try:
+            claims = await self._verifier.verify(company_token)
+            subject = claims.get(self._subject_claim)
+            if not isinstance(subject, str) or COMPANY_USERNAME.fullmatch(subject) is None:
+                raise AuthError(f"company token has no usable {self._subject_claim}")
+            facts["subject"] = subject
+            groups = await self._directory.groups_for(subject)
+            if groups is None:
+                raise AuthError(f"{subject} is unknown to the group directory")
+            facts["group_count"] = len(groups)
+            if len(groups) > 100:
+                logger.warning(
+                    "auth.exchange.large_groups",
+                    extra={"subject": subject, "group_count": len(groups)},
+                )
+            grants = Grants(subject, await self._mappings.roles_for_groups(groups))
+            facts["role_count"] = len(tuple(grants))
+            issued = self._issuer.issue(subject, groups, grants)
+            facts.update(outcome="issued", kid=issued.claims.kid)
+            return issued
+        except (AuthError, DomainError) as exc:
+            facts["outcome"] = exc.code
+            raise
+        finally:
+            logger.info("auth.exchange", extra=facts)

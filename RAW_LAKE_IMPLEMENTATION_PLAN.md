@@ -2432,7 +2432,7 @@ throughout.
 - Dependencies: M5.5; M4.3 (`MemorySeed`, the in-memory `RoleMappingReader`).
 - Decisions: OQ-6.1 (settled, owner decision 12)
 - Decisions: OQ-6.2 (settled, owner decision 12)
-- Status: pending
+- Status: complete (independent verification 2 PASS)
 
 ## Milestone 6 — Shared rules in `huron.schema`
 
@@ -11130,3 +11130,45 @@ summaries are unchanged. Independent clone provenance confirms the deletion-driv
 regrouping: 79 cloned fragments, 77 pairs, 28 groups; G2 capped usage 2/4.
 Floor remains 95.74. Frozen hashes match and owned processes stopped. Evidence:
 `.local/implementation-evidence/m55-v1/report.md`.
+
+
+### M5.6 implementation — pending independent verification
+
+The directory adapter validates and encodes its configured HTTP endpoint, parses current
+membership, and distinguishes unknown users from dependency failures. The composed exchange
+verifies company identity, resolves the configured username, reads current directory groups
+and scoped mappings, and issues a Huron token without persistence writes. Structured outcome
+logs omit credentials; membership above 100 groups is retained with a warning. Shared URL
+validation preserves the company verifier's existing endpoint checks.
+
+The execution evidence is `.local/implementation-evidence/m56-i1/report.md`, including the
+full gate, coverage comparison against M5.5, duplication results, source hashes and power
+receipts. The M5.6 task status remains pending until independent verification.
+
+
+### M5.6 fix pass 1 — pending independent verification 2
+
+Verification 1 found one test-workflow issue: malformed wire bodies used an ad hoc
+transport. `FakeGroupDirectory.inject` now accepts raw bytes, with the shared
+fault matrix covering persistent global/per-user raw bodies and clearing. The same
+three adapter cases use `fake_groups_transport` and assert one request. Production
+code is unchanged. Full frozen gate passed: lint, 1499 unit, 15 contract, 12
+integration, 1514 combined and 155 focused tests, strict docs and required scans.
+Coverage is unchanged from verification 1: unit 3574/3693 (96.77768752%), combined
+3690/3693 (99.91876523%); all four touched production modules remain at 100%.
+Floor 95.74%, duplication 79 fragments/77 pairs/28 groups (native 75), and G2 cap
+usage 2/4 remain unchanged. Evidence and cleanup receipts are in
+`.local/implementation-evidence/m56-fix1/report.md`. M5.6 remains pending until
+independent verification 2.
+
+### M5.6 completion — independent verification 2 PASS
+
+Independent review confirmed the shared-fake correction and complete directory/exchange
+contract. Fresh lint, 1499 unit, 15 contract, 12 integration, 1514 combined,
+155 focused tests, docs and required scans passed. Unit coverage 3574/3693
+(96.78%); combined 3690/3693 (99.92%). All four touched production modules are
+100% covered; untouched summaries match M5.5 and production coverage is unchanged
+from verification 1. Floor 95.74 and duplication 79 fragments/77 pairs/28 groups
+remain unchanged; G2 capped usage finishes at 2/4. Source hashes match and owned
+processes stopped. Evidence: `.local/implementation-evidence/m56-v2/report.md`.
+Milestone 5 is complete; M6 begins planning group G3 with capped usage 0/4.

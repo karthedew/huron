@@ -65,7 +65,21 @@ def test_encoded_username_and_empty_membership(identities: Identities) -> None:
     assert directory.requests == ("karl@corp",)
 
 
-@pytest.mark.parametrize("failure", [404, 500, 401, "timeout", "unreachable", "malformed"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        404,
+        500,
+        401,
+        "timeout",
+        "unreachable",
+        "malformed",
+        b"not json",
+        b"\xff",
+        b'{"groups":[null]}',
+        b"",
+    ],
+)
 @pytest.mark.parametrize("username", [None, "karl"])
 async def test_faults_persist_until_cleared(
     fake_groups: FakeGroupDirectory,
@@ -86,9 +100,15 @@ async def test_faults_persist_until_cleared(
             else:
                 response = await client.get("/users/karl/groups")
                 assert response.status_code == (failure if isinstance(failure, int) else 200)
-                assert response.json() == (
-                    {"error": "injected"} if isinstance(failure, int) else {"groups": "not-a-list"}
-                )
+                if isinstance(failure, bytes):
+                    assert response.content == failure
+                    assert response.headers["content-type"] == "application/json"
+                else:
+                    assert response.json() == (
+                        {"error": "injected"}
+                        if isinstance(failure, int)
+                        else {"groups": "not-a-list"}
+                    )
         if username is not None:
             assert (await client.get("/users/sam/groups")).status_code == 200
         fake_groups.inject(None, username=username)

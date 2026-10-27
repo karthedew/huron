@@ -296,7 +296,7 @@ but no shipped route raises it yet.</p>
 <tr><td>PRINCIPAL_KIND_MISMATCH</td><td>409</td><td>live</td><td>the addressed principal is not a user</td></tr>
 <tr><td>REQUEST_INVALID</td><td>422</td><td>live</td><td>the request did not satisfy the declared schema</td></tr>
 <tr><td>INTERNAL_ERROR</td><td>500</td><td>live</td><td>an unhandled failure; nothing about it is on the wire</td></tr>
-<tr><td>DEPENDENCY_UNAVAILABLE</td><td>503</td><td>live</td><td><code>/readyz</code>: a probed dependency did not answer (<code>context.checks</code>); company token verification: the IdP failed (<code>context.dependency = company_idp</code>, <code>context.reason</code>). Retry after <code>Retry-After: 30</code></td></tr>
+<tr><td>DEPENDENCY_UNAVAILABLE</td><td>503</td><td>live</td><td><code>/readyz</code>: a probed dependency did not answer (<code>context.checks</code>); company token verification: the IdP failed (<code>context.dependency = company_idp</code>, <code>context.reason</code>). group lookup: the directory failed (<code>context.dependency = group_directory</code>, <code>context.reason</code>, and <code>context.status</code> for unexpected HTTP statuses). Retry after <code>Retry-After: 30</code></td></tr>
 <tr><td>INVALID_CREDENTIAL</td><td>401</td><td>live</td><td>no usable credential, deliberately non-specific</td></tr>
 <tr><td>APIKEY_EXPIRED</td><td>401</td><td>live</td><td>the API key passed its expiry</td></tr>
 <tr><td>APIKEY_REVOKED</td><td>401</td><td>live</td><td>the API key was revoked</td></tr>

@@ -275,3 +275,14 @@ def test_company_realm_matches_people_and_public_client(identities: Identities) 
         "access.token.claim": "false",
         "userinfo.token.claim": "false",
     }
+
+
+async def test_group_documents_match_the_production_parser(identities, fake_groups_transport):
+    """Every fixture user supplies a body accepted as exactly its declared groups."""
+    import httpx
+    from huron.core.security.broker import parse_groups_response
+
+    async with httpx.AsyncClient(transport=fake_groups_transport) as http:
+        for user in identities.users.values():
+            response = await http.get(f"https://groups.test/users/{user.username}/groups")
+            assert parse_groups_response(response.json()) == frozenset(user.groups)
