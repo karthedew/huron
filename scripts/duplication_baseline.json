@@ -1,5 +1,5 @@
 {
-  "clone_groups": 27,
+  "clone_groups": 28,
   "clone_threshold": 0.8,
   "groups": [
     {
@@ -116,10 +116,15 @@
     },
     {
       "files": [
-        "src/huron/core/metastore/hierarchy.py",
-        "src/huron/core/metastore/principals.py"
+        "src/huron/core/metastore/hierarchy.py"
       ],
-      "size": 4
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/hierarchy.py"
+      ],
+      "size": 3
     },
     {
       "files": [
@@ -181,5 +186,5 @@
     }
   ],
   "pyscn_version": "1.31.1",
-  "total_clones": 78
+  "total_clones": 79
 }

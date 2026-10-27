@@ -2364,7 +2364,7 @@ throughout.
     "unit or contract" run. The floor moves only by the re-baseline rule (deleted covered statements).
 - Skills: `writing-for-agents` (`AGENTS.md`).
 - Dependencies: M5.4; M1 (D2-4's state of `oidc.py`, `app.py` and the OIDC tests).
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M5.6 The group directory and the token exchange
 
@@ -11090,3 +11090,43 @@ tests, documentation and required scans passed. All touched production files are
 (96.60%), combined 3699/3702 (99.92%). Floor 95.74, duplication 78 pairs/27 groups
 and G2 usage 1/4 remain unchanged. Source hashes matched and owned processes
 stopped. Evidence: `.local/implementation-evidence/m54-v2/report.md`.
+
+
+### M5.5 implementation attempt 1 — awaiting independent verification
+
+Legacy company bearer verification now uses the asynchronous company verifier with lazy discovery,
+an injected transport and clock, and explicit validated `preferred_username` identity. Removed the
+obsolete discovery/verifier/user-upsert code and its bypass tests; the named `test_api_oidc.py` was
+absent on the current base and was created to supply this task's required route evidence. The settings
+class documentation also now describes lazy discovery. No future exchange or group-directory work
+was implemented.
+
+Implementation gates passed: `make lint` (17 import contracts), 1425 unit, 15 contract, 12 integration,
+1440 unit-or-contract, 83 focused tests, `make docs`, script compilation and the obsolete/no-bypass
+scans. Unit coverage moved from 3576/3702 (96.60%) to 3500/3619 (96.71%); combined coverage moved
+from 3699/3702 to 3616/3619 (99.92%). All modified production files are fully covered on their required
+tier, and untouched file summaries are unchanged. Floor 95.74 remains unchanged.
+
+The reviewed manual duplication baseline edit is traced to deleting the principal upsert: the old
+size-4 group (hierarchy methods at lines 691/723/758 and principal upsert at 56) split into a size-2
+hierarchy subset and a size-3 group of nested hierarchy fragments at 702/735/772. The hierarchy file
+is byte-identical to the base. The nested-fragment signature is counted conservatively as one capped
+signature, bringing G2 usage to 2/4; it is not claimed as a pure deletion subset. Detection now reports
+79 cloned fragments of 494, 77 pairs and 28 groups (native score 75, informational), versus the prior
+78-fragment/27-group baseline. No detector setting or threshold changed. Independent verification
+must review this classification. Exact group locations and hashes are in `clone-attribution.json`.
+
+Evidence: `.local/implementation-evidence/m55-i1/report.md`, with complete command logs, coverage
+JSON, source freeze hashes, wall/monotonic receipts and power/process cleanup records. All owned
+processes stopped; no owner stack operation was performed. Task status remains pending.
+
+### M5.5 completion — independent verification 1 PASS
+
+Independent review and the complete gate passed: lint, 1425 unit, 15 contract,
+12 integration, 1440 combined, 83 focused tests, docs, script compilation and
+closing scans. Unit coverage 3500/3619 (96.71%); combined 3616/3619 (99.92%).
+All modified production files are fully covered on their required tier; untouched
+summaries are unchanged. Independent clone provenance confirms the deletion-driven
+regrouping: 79 cloned fragments, 77 pairs, 28 groups; G2 capped usage 2/4.
+Floor remains 95.74. Frozen hashes match and owned processes stopped. Evidence:
+`.local/implementation-evidence/m55-v1/report.md`.

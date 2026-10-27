@@ -107,7 +107,7 @@ ATLASES: dict[str, dict[str, str]] = {
         "toplinks": "auth.html=Authentication design;rbac-uml.html=RBAC atlas",
         "nav_title": "Explore authentication",
         "hints": "Principal, Session, or ApiKey",
-        "placeholder": "e.g. Principal, OidcClient…",
+        "placeholder": "e.g. Principal, OidcResolver…",
     },
     "rbac": {
         "area": "RBAC",

@@ -263,7 +263,10 @@ that a command name runs all test categories.
 - Production code runs unchanged against the local mocks (company IdP, group
   directory, volume stand-in). They differ only behind existing seams: settings URLs
   and paths, injected transports and clients, and the signing-key source. Tests that
-  need missing mock behaviour extend the fake.
+  need missing mock behaviour extend the fake. `src/` never imports `tests`, and no
+  setting names a mock. Two checks enforce this:
+  `tests/unit/test_fake_identities.py::test_src_never_imports_tests`, and an `rg` for
+  `monkeypatch.setattr` on the verifiers, `jwt` or `httpx`, which must print nothing.
 
 ### Commands and gates
 

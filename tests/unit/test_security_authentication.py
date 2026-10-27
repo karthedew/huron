@@ -38,11 +38,13 @@ async def test_present_bearer_token_always_wins_over_development(bearer_token):
     stores, clock = memory_stores(), FakeClock(NOW)
     seen = []
 
-    def verify(token):
+    async def verify(token):
         seen.append(token)
         return {"sub": "bearer-user"}
 
-    resolved = await _credentials(stores, clock, oidc=OidcResolver(verify)).resolve(
+    resolved = await _credentials(
+        stores, clock, oidc=OidcResolver(verify, subject_claim="sub")
+    ).resolve(
         bearer_token=bearer_token,
         development_headers={"x-huron-subject": "dev-user"},
     )

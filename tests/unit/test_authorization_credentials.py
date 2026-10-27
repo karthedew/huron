@@ -116,7 +116,11 @@ async def test_current_principal_resolves_a_bearer_jwt_through_the_configured_ve
     """A bearer JWT resolves through the configured OIDC verifier to its principal."""
     stores = memory_stores()
     generations = _generations(tmp_path)
-    resolver = OidcResolver(lambda _token: {"sub": "carol", "groups": ["astro"]})
+
+    async def verify(_token):
+        return {"sub": "carol", "groups": ["astro"]}
+
+    resolver = OidcResolver(verify, subject_claim="sub")
     runtime = ApiRuntime(
         settings=_settings(env="production"),
         generations=generations,

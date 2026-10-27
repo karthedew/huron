@@ -14,8 +14,6 @@ from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
 from huron.core.security.apikeys import ApiKeyRecord
-from huron.core.security.oidc import OidcUser
-from huron.core.security.principals import PrincipalSubjectExists
 from huron.core.foundation.identifiers import uuid7
 from huron.core.metastore import (
     PostgresApiKeyStore,
@@ -47,8 +45,6 @@ async def _assert_against(dsn: str) -> None:
     pool = await asyncpg.create_pool(dsn)
     try:
         await _assert_api_key_revoke_all_for_ignores_owner_kind(pool)
-        await _assert_upsert_oidc_user_creates_then_updates_without_duplicating(pool)
-        await _assert_upsert_oidc_user_refuses_a_subject_another_identity_holds(pool)
         await _assert_disable_sets_disabled_at_and_returns_none_for_an_unknown_id(pool)
         await _assert_get_by_id_returns_every_kind_and_none_when_absent(pool)
     finally:
@@ -137,77 +133,7 @@ async def _assert_api_key_revoke_all_for_ignores_owner_kind(pool: asyncpg.Pool) 
     assert untouched is not None and untouched.revoked_at is None
 
 
-# -- principals: identity upsert, disablement, and lookup ------------
-
-
-async def _assert_upsert_oidc_user_creates_then_updates_without_duplicating(
-    pool: asyncpg.Pool,
-) -> None:
-    """``upsert_oidc_user`` updates the same row on a second login rather than duplicating it."""
-    store = PostgresPrincipalStore(pool)
-    first_login = OidcUser(
-        idp_subject="idp-contract-carol",
-        display_name="Carol",
-        email="carol@example.org",
-        groups=frozenset(),
-    )
-    created = await store.upsert_oidc_user(first_login)
-    assert created.subject == "idp-contract-carol"
-    assert created.display_name == "Carol"
-    assert created.kind == "user"
-
-    renamed_login = OidcUser(
-        idp_subject="idp-contract-carol",
-        display_name="Carol Renamed",
-        email="carol@example.org",
-        groups=frozenset(),
-    )
-    updated = await store.upsert_oidc_user(renamed_login)
-    assert updated.id == created.id
-    assert updated.display_name == "Carol Renamed"
-
-    count = await pool.fetchval(
-        "SELECT count(*) FROM principals WHERE idp_subject = $1", "idp-contract-carol"
-    )
-    assert count == 1
-
-
-async def _assert_upsert_oidc_user_refuses_a_subject_another_identity_holds(
-    pool: asyncpg.Pool,
-) -> None:
-    """A first-ever OIDC login is refused, not auto-linked, when its subject is a local username."""
-    store = PostgresPrincipalStore(pool)
-    await _insert_user_principal(pool, subject="contract-collide-s")
-
-    with pytest.raises(PrincipalSubjectExists):
-        await store.upsert_oidc_user(
-            OidcUser(
-                idp_subject="contract-collide-s",
-                display_name="Impostor",
-                email=None,
-                groups=frozenset(),
-            )
-        )
-
-    count = await pool.fetchval(
-        "SELECT count(*) FROM principals WHERE subject = $1", "contract-collide-s"
-    )
-    assert count == 1
-
-    existing_id = await _insert_user_principal(pool, subject="contract-existing-id")
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr("huron.core.metastore.principals.uuid7", lambda: existing_id)
-        with pytest.raises(asyncpg.UniqueViolationError) as refused:
-            await store.upsert_oidc_user(
-                OidcUser("contract-new-subject", "New User", None, frozenset())
-            )
-    assert refused.value.constraint_name == "principals_pkey"
-    assert (
-        await pool.fetchval(
-            "SELECT count(*) FROM principals WHERE subject = $1", "contract-new-subject"
-        )
-        == 0
-    )
+# -- principals: disablement, and lookup ------------
 
 
 async def _assert_disable_sets_disabled_at_and_returns_none_for_an_unknown_id(

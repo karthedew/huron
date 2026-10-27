@@ -29,7 +29,8 @@ from huron.core.metastore import (
 )
 from huron.core.rawstore import PosixGenerationStore
 from huron.core.security import bootstrap_platform_owner
-from huron.core.security.oidc import JwksVerifier, OidcClient, OidcResolver
+from huron.core.security.broker import CompanyTokenVerifier
+from huron.core.security.oidc import OidcResolver
 from huron.core.security.rules import Classification, RoleBindingAuthorizer
 
 from .problems import Problem, install_error_handlers, problem_response
@@ -38,7 +39,7 @@ from .runtime import ApiRuntime, ApiStores, Runtime
 from .settings import ApiSettings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Mapping
+    from collections.abc import AsyncIterator
 
     from huron.core.foundation.clock import Clock
     from huron.core.hierarchy.ports import GenerationStorage
@@ -112,48 +113,40 @@ def _build_runtime(
 
 async def _configure_oidc(
     settings: ApiSettings,
-    oidc_verify: Callable[[str], Mapping[str, object]] | None,
+    company_idp_transport: httpx.AsyncBaseTransport | None,
+    clock: Clock,
 ) -> tuple[OidcResolver | None, httpx.AsyncClient | None]:
-    """Wire the bearer-JWT resolver from an injected verifier or a real provider.
-
-    A test-injected verifier wins outright, otherwise a configured provider
-    is discovered for real. Neither branch - or an unconfigured deployment -
-    leaves the resolver unset; the caller always gets an explicit ``None``
-    rather than an absent attribute.
+    """Wire the company bearer resolver without contacting the issuer.
 
     Args:
-        settings: Read for ``oidc``, the configured identity provider, which
-            is ``None`` in a deployment that accepts no bearer JWTs.
-        oidc_verify: A verifier mapping a bearer token to its claims, or
-            None. When given it replaces provider discovery entirely, so a
-            test never needs a reachable issuer.
+        settings: Optional company identity-provider configuration.
+        company_idp_transport: Transport for company discovery and signing keys.
+        clock: Shared time source for token validation and cache expiry.
 
     Returns:
-        A resolver and discovery HTTP client, or None when unused. The caller
-        closes the HTTP client at shutdown.
+        The resolver and its caller-owned HTTP client, or two None values
+        when no company provider is configured.
 
     Raises:
-        Exception: Whatever provider discovery raised, re-raised unchanged
-            after the HTTP client has been closed, so a failed startup does
-            not leave an open connection pool behind.
+        ValueError: If issuer or audience policy is invalid; the client is closed.
     """
-    if oidc_verify is not None:
-        return OidcResolver(oidc_verify), None
     if settings.oidc is None:
         return None, None
     oidc = settings.oidc
-    http = httpx.AsyncClient()
+    http = httpx.AsyncClient(transport=company_idp_transport)
     try:
-        client = await OidcClient.discover(http, oidc.issuer)
-    except Exception:
+        verifier = CompanyTokenVerifier(
+            http,
+            issuer=oidc.issuer,
+            audiences=frozenset({oidc.audience or oidc.client_id}),
+            clock=clock,
+        )
+    except ValueError:
         await http.aclose()
         raise
-    verifier = JwksVerifier(
-        issuer=oidc.issuer,
-        audience=oidc.audience or oidc.client_id,
-        jwks_url=client.provider.jwks_uri,
-    )
-    return OidcResolver(verifier), http
+    return OidcResolver(
+        verifier.verify, groups_claim=oidc.groups_claim, subject_claim="preferred_username"
+    ), http
 
 
 class _HuronFastAPI(FastAPI):
@@ -190,7 +183,8 @@ def create_app(
     *,
     settings: ApiSettings,
     stores: ApiStores | None = None,
-    oidc_verify: Callable[[str], Mapping[str, object]] | None = None,
+    company_idp_transport: httpx.AsyncBaseTransport | None = None,
+    clock: Clock | None = None,
 ) -> FastAPI:
     """Build the application, deferring every connection to its lifespan.
 
@@ -214,9 +208,9 @@ def create_app(
         stores: The RBAC and authentication stores built by the caller,
             which skip opening a pool entirely. Tests inject a set built on
             the in-memory implementations.
-        oidc_verify: A verifier mapping a bearer token to its claims. When
-            given it replaces provider discovery, so bearer JWTs are
-            accepted without a reachable issuer.
+        company_idp_transport: HTTP transport for the company identity provider.
+            Discovery and signing keys are fetched lazily on token verification.
+        clock: Shared time source, or None to use the system clock.
 
     Returns:
         The application, ready for an ASGI server to run its lifespan.
@@ -230,14 +224,10 @@ def create_app(
         the lifespan opens a fresh pool from ``settings.database_url`` and
         wires every store to Postgres; the generation store is initialized and the
         authorizer is built fresh here, over the classification vocabulary
-        the settings declare. The bearer-JWT
-        resolver follows the same injected-first rule as the stores.
-        Opening the pool, discovering the OIDC provider, running the
-        bootstrap grant and suspending at
-        ``yield`` all happen inside one block whose ``finally`` closes the
-        pool and the HTTP client, so a failure at any point after the pool
-        opens still closes it before the error surfaces - including a
-        discovery failure that happens after the pool is already open.
+        the settings declare. Company discovery is deferred until a bearer token
+        needs verification. Runtime construction, bootstrap and serving all happen
+        inside one block whose finally closes the pool and company HTTP client,
+        including when startup fails after either resource opens.
 
         Args:
             app: The application whose ``state.runtime`` is set for the
@@ -246,20 +236,22 @@ def create_app(
         Yields:
             Nothing. The application serves while suspended here. Whether
             startup completed or raised, every resource it acquired - the
-            database pool, the OIDC discovery HTTP client - is closed
+            database pool, the company HTTP client - is closed
             before the lifespan exits.
         """
         pool: asyncpg.Pool | None = None
         http: httpx.AsyncClient | None = None
         try:
-            clock = SystemClock()
+            runtime_clock = clock if clock is not None else SystemClock()
             if stores is not None:
                 wired = stores
             else:
                 pool = await asyncpg.create_pool(settings.database_url)
-                wired = _postgres_stores(pool, clock)
-            oidc_resolver, http = await _configure_oidc(settings, oidc_verify)
-            runtime = _build_runtime(settings, wired, clock, pool, oidc_resolver)
+                wired = _postgres_stores(pool, runtime_clock)
+            oidc_resolver, http = await _configure_oidc(
+                settings, company_idp_transport, runtime_clock
+            )
+            runtime = _build_runtime(settings, wired, runtime_clock, pool, oidc_resolver)
             app.state.runtime = runtime
             await bootstrap_platform_owner(runtime.rbac, settings.bootstrap_platform_owner)
             yield

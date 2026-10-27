@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from uuid import uuid4
-
-from huron.core.security.principals import PrincipalRecord, PrincipalSubjectExists
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from datetime import datetime
     from uuid import UUID
 
-    from huron.core.security.oidc import OidcUser
+    from huron.core.security.principals import PrincipalRecord
 
 
 class MemoryPrincipalStore:
@@ -54,37 +51,3 @@ class MemoryPrincipalStore:
         updated = replace(record, disabled_at=disabled_at)
         self.records[principal_id] = updated
         return updated
-
-    async def upsert_oidc_user(self, user: OidcUser) -> PrincipalRecord:
-        """Refresh an OIDC identity without linking it to a local account.
-
-        Args:
-            user: Verified identity-provider claims.
-
-        Returns:
-            The created or refreshed principal, including disabled principals.
-
-        Raises:
-            PrincipalSubjectExists: If a new OIDC subject conflicts with another identity.
-        """
-        existing = next(
-            (record for record in self.records.values() if record.idp_subject == user.idp_subject),
-            None,
-        )
-        if existing is not None:
-            updated = replace(existing, display_name=user.display_name)
-            self.records[updated.id] = updated
-            return updated
-        if any(record.subject == user.idp_subject for record in self.records.values()):
-            raise PrincipalSubjectExists(user.idp_subject)
-        record = PrincipalRecord(
-            id=uuid4(),
-            kind="user",
-            subject=user.idp_subject,
-            display_name=user.display_name,
-            idp_subject=user.idp_subject,
-            disabled_at=None,
-            created_at=datetime.now(UTC),
-        )
-        self.records[record.id] = record
-        return record

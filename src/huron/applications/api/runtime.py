@@ -59,7 +59,7 @@ class ApiRuntime:
     ``settings`` is non-optional because a service with no configuration
     must not answer requests at all. The optional members record what the
     deployment lacks rather than defaulting it: ``oidc_resolver``
-    is ``None`` when no identity provider is configured,
+    is ``None`` only when no company identity provider is configured,
     so bearer JWTs are refused, and
     ``database_pool`` is ``None`` only when the stores were injected, so
     the readiness probe knows whether there is a database to check.

@@ -1,13 +1,4 @@
-"""Proves ``create_app``'s lifespan wiring and the ``/readyz`` route through a TestClient.
-
-Each test builds its own app with ``create_app`` and drives it with a
-``TestClient`` context manager, covering the Postgres pool that opens when
-no stores are injected, real OIDC discovery against a respx-mocked
-provider - the same seam ``test_auth_oidc.py`` uses, exercised here
-through the composition root rather than ``OidcClient`` directly - and an
-injected OIDC verifier that bypasses discovery. Also covers ``/readyz``,
-the one app-level route that isn't a lifespan concern.
-"""
+"""Application resource lifetimes, lazy company discovery and readiness probes."""
 
 from __future__ import annotations
 
@@ -20,14 +11,11 @@ from typing import Any, cast
 
 import asyncpg
 import httpx
-import respx
 from fastapi.testclient import TestClient
-from httpx import Response
 
 import huron.applications.api.app as app_module
 from huron.applications.api.app import create_app
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
-from huron.core.foundation.errors import AuthError
 from huron.core.metastore import (
     PostgresApiKeyStore,
     PostgresPrincipalStore,
@@ -89,86 +77,42 @@ def _oidc_settings(tmp_path: Path) -> ApiSettings:
     )
 
 
-def test_lifespan_discovers_the_configured_oidc_provider_and_closes_its_client(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("startup_failure", [None, "storage", "issuer"])
+def test_company_client_closes_without_discovering_at_startup(
+    tmp_path: Path, fake_issuer, clock, startup_failure: str | None
 ) -> None:
-    """Successful OIDC discovery wires the client/resolver and closes the client on shutdown."""
-    created: list[httpx.AsyncClient] = []
+    """Both normal shutdown and failed startup close the lazy issuer transport."""
 
-    class _TrackingAsyncClient(httpx.AsyncClient):
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(*args, **kwargs)
-            created.append(self)
+    class ClosingTransport(httpx.ASGITransport):
+        closed = False
 
-    monkeypatch.setattr(httpx, "AsyncClient", _TrackingAsyncClient)
-    with respx.mock:
-        respx.get(f"{ISSUER}/.well-known/openid-configuration").mock(
-            return_value=Response(
-                200,
-                json={
-                    "issuer": ISSUER,
-                    "authorization_endpoint": f"{ISSUER}/authorize",
-                    "token_endpoint": f"{ISSUER}/token",
-                    "jwks_uri": f"{ISSUER}/jwks",
-                },
-            )
-        )
-        app = create_app(settings=_oidc_settings(tmp_path), stores=memory_stores())
+        async def aclose(self) -> None:
+            self.closed = True
+            await super().aclose()
+
+    transport = ClosingTransport(app=fake_issuer.app)
+    settings = _oidc_settings(tmp_path).model_copy(
+        update={"oidc": OidcSettings(issuer=fake_issuer.issuer, client_id=fake_issuer.client_id)}
+    )
+    if startup_failure == "issuer":
+        settings.oidc = OidcSettings(issuer="invalid", client_id=fake_issuer.client_id)
+    if startup_failure == "storage":
+        (tmp_path / "data").write_text("blocks generation directory")
+    app = create_app(
+        settings=settings, stores=memory_stores(), company_idp_transport=transport, clock=clock
+    )
+    if startup_failure:
+        error = ValueError if startup_failure == "issuer" else NotADirectoryError
+        with pytest.raises(error), TestClient(app):
+            pass
+    else:
         with TestClient(app) as client:
             assert app.state.runtime.oidc_resolver is not None
+            assert app.state.runtime.clock is clock
             assert client.get("/healthz").status_code == 200
-    assert len(created) == 1
-    assert created[0].is_closed
-
-
-def test_lifespan_closes_the_http_client_when_oidc_discovery_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A discovery failure during startup still closes the ``AsyncClient`` used to attempt it."""
-    created: list[httpx.AsyncClient] = []
-
-    class _TrackingAsyncClient(httpx.AsyncClient):
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(*args, **kwargs)
-            created.append(self)
-
-    monkeypatch.setattr(httpx, "AsyncClient", _TrackingAsyncClient)
-    with respx.mock:
-        respx.get(f"{ISSUER}/.well-known/openid-configuration").mock(return_value=Response(500))
-        app = create_app(settings=_oidc_settings(tmp_path), stores=memory_stores())
-        with pytest.raises(AuthError), TestClient(app):
-            pass
-    assert len(created) == 1
-    assert created[0].is_closed
-
-
-def test_lifespan_closes_an_already_open_pool_when_oidc_discovery_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A discovery failure after the Postgres pool opens still closes that pool.
-
-    Opening the pool happens before OIDC is configured; a crash-looping
-    deployment that fails discovery on every restart must not leak the
-    pool's connections on every one of those restarts.
-    """
-    closed = 0
-
-    class _ClosingPool:
-        async def close(self) -> None:
-            nonlocal closed
-            closed += 1
-
-    async def _fake_create_pool(*args: object, **kwargs: object) -> _ClosingPool:
-        return _ClosingPool()
-
-    monkeypatch.setattr(asyncpg, "create_pool", _fake_create_pool)
-    settings = _oidc_settings(tmp_path)
-    with respx.mock:
-        respx.get(f"{ISSUER}/.well-known/openid-configuration").mock(return_value=Response(500))
-        app = create_app(settings=settings)
-        with pytest.raises(AuthError), TestClient(app):
-            pass
-    assert closed == 1
+            assert not transport.closed
+    assert transport.closed
+    assert all(count == 0 for count in fake_issuer.hits.values())
 
 
 def test_lifespan_closes_the_pool_when_generations_initialization_fails(
@@ -205,21 +149,6 @@ def test_lifespan_closes_the_pool_when_generations_initialization_fails(
     with pytest.raises(NotADirectoryError), TestClient(app):
         pass
     assert closed == 1
-
-
-def test_lifespan_prefers_an_injected_oidc_verifier_over_discovery(tmp_path: Path) -> None:
-    """Passing ``oidc_verify`` directly skips OIDC discovery entirely.
-
-    The bearer-JWT test-injection seam stays: when a verifier is passed
-    directly, no discovery call happens at all.
-    """
-    settings = _oidc_settings(tmp_path)
-    app = create_app(
-        settings=settings, stores=memory_stores(), oidc_verify=lambda _token: {"sub": "svc"}
-    )
-    with TestClient(app) as client:
-        assert app.state.runtime.oidc_resolver is not None
-        assert client.get("/healthz").status_code == 200
 
 
 def test_lifespan_leaves_the_oidc_resolver_unset_when_no_provider_is_configured(

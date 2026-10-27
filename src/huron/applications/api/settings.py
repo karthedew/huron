@@ -36,7 +36,7 @@ class OidcSettings(BaseModel):
     """One configured identity provider.
 
     ``HURON_OIDC__*`` env vars populate this (``env_nested_delimiter="__"``
-    on ``ApiSettings.model_config``). The issuer is discovered at startup;
+    on ``ApiSettings.model_config``). The issuer is discovered on the first bearer verification;
     client ID supplies the default audience bearer tokens must be issued for.
     """
 
