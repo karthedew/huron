@@ -2696,7 +2696,7 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
 - Dependencies: M6.3, M6.4.
 - Decisions: OQ-8.1 (settled, owner decision 12)
 - Decisions: OQ-9.2 (settled, owner decision 12)
-- Status: pending
+- Status: complete (independent verification 2 PASS)
 
 ## Milestone 7 — Audit, catalogs, schemas and administration
 
@@ -11315,3 +11315,52 @@ existing summaries and missing lines match M6.3. The fix adds five covered state
 relative to verification 1. Floor 95.74 and duplication 79 fragments/77 pairs/28 groups
 remain unchanged; G3 usage 0/4. Frozen hashes matched and owned processes stopped.
 Evidence: `.local/implementation-evidence/m64-v2/report.md`.
+
+
+### M6.5 implementation — pending independent verification
+
+Implemented secure exact org-base/extension composition and descriptive metadata validation.
+N13's pure contract is now explicit in `RAW_LAKE_DESIGN.md`: no config argument, identity
+field flags, placement output or pinning; exact schema/base provenance, required-then-optional
+field order. The org-base seed is packaged. Shared keyword-aware traversal preserves full
+reference-target validation and rewrites only schema references, never literals.
+
+Original implementation lint exited 0 but failed the explicit zero-C pass condition:
+`flatten` was Radon C(12). Tests passed: 1819 unit, 15 contract, 12 integration, 1834 combined,
+and related-schema focused tests. Unit coverage 4125/4244 (97.20%), combined 4241/4244 (99.93%);
+metadata.py 234/234 and _compose.py 62/62. Untouched-file summaries and missing lines match
+M6.4. Floor 95.74 unchanged; duplication 79 fragments/77 pairs/28 groups, native 75, G3 growth 0/4.
+No baseline/tooling changes. Frozen gate source hashes matched, wall/monotonic receipts and
+actual scoped power assertions were recorded, all owned processes stopped and testcontainer
+inventory restored. Exact evidence: `.local/implementation-evidence/m65-i1/report.md`.
+This post-gate execution note does not mark M6.5 complete; independent verification is pending.
+
+
+### M6.5 fix pass 1 — pending independent verification 2
+
+Verification 1 found `flatten` at Radon C(12), despite lint exit 0. The original implementation
+receipt above and its evidence report now explicitly record that failed pass condition and
+correct metadata.py coverage to 234/234; original raw logs are preserved.
+
+Property declaration intersection is now a cohesive aggregation separate from root assembly;
+required names use ordered deduplication. `flatten` is B(9), with no behavior change. The frozen
+full rerun passes lint with explicitly asserted empty Radon C/B outputs, 1819 unit, 15 contract,
+12 integration, 1834 combined and 333 focused tests; 163 semantic probes also pass. Unit coverage
+4126/4245 (97.20%), combined 4242/4245 (99.93%); metadata.py 234/234, _compose.py 63/63.
+Untouched summaries/missing lines remain unchanged against M6.4 and verification 1. Floor 95.74,
+duplication 79/552 fragments, 77 pairs, 28 groups, native 75 and G3 growth 0/4 unchanged. Freeze hashes match;
+actual scoped power/wall-monotonic receipts and cleanup are recorded. No tooling/baseline changes.
+Exact evidence: `.local/implementation-evidence/m65-fix1/report.md`. Independent verification 2
+is pending; this note does not mark M6.5 complete.
+
+### M6.5 completion — independent verification 2 PASS
+
+Independent review confirmed cohesive composition decomposition and corrected receipts.
+Radon CC C-or-worse and MI B-or-worse outputs were separately asserted empty, and
+the make-lint sections inspected. Fresh lint, 1819 unit, 15 contract, 12 integration,
+1834 combined, 333 focused tests and 163 semantic probes passed. Unit coverage
+4126/4245 (97.20%); combined 4242/4245 (99.93%). Metadata is 234/234 and composition
+63/63; untouched summaries and missing lines are preserved. Floor 95.74 and duplication
+79 fragments/77 pairs/28 groups remain unchanged; G3 usage 0/4. Frozen hashes matched
+and owned processes stopped. Evidence: `.local/implementation-evidence/m65-v2/report.md`.
+Milestone 6 is complete. Milestone 7 continues planning group G3.

@@ -184,6 +184,42 @@ simplifications are not adopted; the binding CLI and durability contracts below 
   parent chain suffices to rule out nested collections. Empty namespaces are not auto-pruned after
   collection deletion or move; remove attach/prune namespace helpers and their layout-derived races.
 
+### N13 pure metadata composition contract
+
+The shared public call is `compose(base, extension, *, schema: SchemaRef, base_version: int)`;
+`extension` is `(name, document)` or `None`. There is no config argument. The selected name must
+match the extension, which cannot be `org`; a base-only call selects `org` at `base_version`.
+Versions are positive integers, never booleans or floats. The registry supplies the selected
+extension's exact immutable base. Composition itself performs no catalog lookup or adoption.
+
+Keep DT-9's definition namespacing, schema-position-only local reference rewriting, property
+intersection with last-declared annotations, required-array order, root applicators and closed
+`unevaluatedProperties: false` result. The document's `$id` is
+`urn:huron:metadata-schema:<name>:<version>` and its `title` is the selected schema name.
+`x-huron` contains exactly `{schema: {name, version}, base_version}`. Catalog display title and
+config-version receipts belong to the catalog response; they do not affect validation bytes or
+caching. Do not emit catalog, config-version or identity-field members in this annotation.
+
+`ComposedSchema` owns and returns independent document snapshots. Its constructor and
+`from_document` validate the provenance, closed root and the existing safe publication rules
+(with only the composed root closure allowed). `fields()` returns declared root properties:
+required names in required-array order, then remaining names in code-point order. A required
+name declared only in an applicator is validated there but does not invent a root field schema.
+`FieldSpec(name, required, schema)` exposes `title`, `description`, `examples` and an owned schema
+snapshot (object or boolean); it has no identity attribute. All fields remain descriptive.
+`MetadataValidator` owns the same checked document, uses the shared offline RE2 validator and
+isolates each call's validator state. Problems sort by `(where, rule, message)`; partial mode
+filters only `required` errors at the root, including conditional root requirements, retaining
+nested requirements and every other failure. A non-object yields one root `type` problem.
+
+These signatures and annotations replace DT-9's old interfaces and every later registry,
+validation-cache, served-schema and CLI consumer example. M7 uses exact selected schema/base
+identity; M12/M18 use required-then-optional field ordering and ordinary schema enums. None may
+restore config arguments, identity flags, placement outputs or frozen collection pins. The
+worked-example org base remains verbatim. Its extension's `mission` and `instrument` are ordinary
+strings unless that extension itself declares enum constraints; old config vocabulary outcome
+rows no longer impose those constraints.
+
 ### N13 draft reservation, persistence and concurrency
 
 - `Collections.create` requires Catalog Contributor and explicit `catalog`, `namespace_id`, `name`, plus initial

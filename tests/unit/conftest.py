@@ -51,3 +51,29 @@ def catalog_config_document() -> dict[str, object]:
 def metadata_schema_document() -> dict[str, object]:
     """A minimal open metadata schema part using the required dialect."""
     return {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object"}
+
+
+@pytest.fixture
+def metadata_extension_document() -> dict[str, object]:
+    """The heliophysics metadata extension with exact local definitions and conditions."""
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["run_id", "start_time"],
+        "properties": {
+            "mission": {"type": "string", "description": "Spacecraft mission"},
+            "instrument": {"type": "string"},
+            "campaign": {
+                "type": "string",
+                "description": "Encounter, free text",
+                "examples": ["Enc 17"],
+            },
+            "run_id": {"type": "string", "pattern": "^run[0-9]{3}$"},
+            "start_time": {"$ref": "#/$defs/instant"},
+            "perihelion": {"type": "integer", "minimum": 1},
+            "title": {"maxLength": 80},
+        },
+        "$defs": {"instant": {"type": "string", "format": "date-time"}},
+        "if": {"properties": {"mission": {"const": "psp"}}, "required": ["mission"]},
+        "then": {"required": ["perihelion"]},
+    }

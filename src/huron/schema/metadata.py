@@ -6,13 +6,16 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Final, Literal, cast
 from urllib.parse import unquote
 
 from jsonschema import SchemaError
 
-from huron.schema._validator import HuronValidator, compile_regex
-from huron.schema.catalog_config import Problem
+from huron.schema._compose import _schema_nodes
+from huron.schema._compose import flatten as _flatten
+from huron.schema._compose import pointer as _pointer
+from huron.schema._validator import HuronValidator, build, compile_regex
+from huron.schema.catalog_config import Problem, SchemaRef
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping
@@ -95,10 +98,6 @@ class FieldChange:
         return result
 
 
-def _pointer(parent: str, token: str | int) -> str:
-    return parent + "/" + str(token).replace("~", "~0").replace("/", "~1")
-
-
 def _equal(left: JsonValue, right: JsonValue) -> bool:
     if isinstance(left, dict) and isinstance(right, dict):
         return left.keys() == right.keys() and all(_equal(v, right[k]) for k, v in left.items())
@@ -162,45 +161,7 @@ class SchemaDocumentError(ValueError):
         super().__init__("; ".join(f"{problem.where}: {problem.message}" for problem in ordered))
 
 
-_MAP_SCHEMAS: Final = frozenset({"properties", "patternProperties", "$defs", "dependentSchemas"})
-_LIST_SCHEMAS: Final = frozenset({"allOf", "anyOf", "oneOf", "prefixItems"})
-_SINGLE_SCHEMAS: Final = frozenset(
-    {
-        "not",
-        "if",
-        "then",
-        "else",
-        "items",
-        "contains",
-        "additionalProperties",
-        "unevaluatedItems",
-        "unevaluatedProperties",
-        "propertyNames",
-        "contentSchema",
-    }
-)
 _FORBIDDEN_REFS: Final = frozenset({"$dynamicRef", "$dynamicAnchor", "$anchor"})
-
-
-def _schema_children(schema: Mapping[str, JsonValue]) -> Iterator[tuple[str, JsonValue]]:
-    for keyword, value in schema.items():
-        if keyword in _MAP_SCHEMAS and isinstance(value, dict):
-            yield from ((_pointer("/" + keyword, key), child) for key, child in value.items())
-        elif keyword in _LIST_SCHEMAS and isinstance(value, list):
-            yield from ((_pointer("/" + keyword, i), child) for i, child in enumerate(value))
-        elif keyword in _SINGLE_SCHEMAS:
-            yield "/" + keyword, value
-
-
-def _schema_nodes(
-    schema: Mapping[str, JsonValue] | bool, where: str = ""
-) -> Iterator[tuple[str, Mapping[str, JsonValue] | bool]]:
-    yield where, schema
-    if isinstance(schema, bool):
-        return
-    for suffix, child in _schema_children(schema):
-        if isinstance(child, (dict, bool)):
-            yield from _schema_nodes(child, where + suffix)
 
 
 def _valid_ref(value: JsonValue, positions: Mapping[str, Mapping[str, JsonValue] | bool]) -> bool:
@@ -302,3 +263,239 @@ def check_schema_document(document: Mapping[str, JsonValue]) -> None:
             problems.extend(_node_problems(where, schema, positions))
     if problems:
         raise SchemaDocumentError(problems)
+
+
+class CompositionError(SchemaDocumentError):
+    """A nonempty collection of failures composing exact metadata schema parts."""
+
+
+def compose(
+    base: Mapping[str, JsonValue],
+    extension: tuple[str, Mapping[str, JsonValue]] | None,
+    *,
+    schema: SchemaRef,
+    base_version: int,
+) -> ComposedSchema:
+    """Intersect an org base and its selected extension into a closed document.
+
+    Args:
+        base: The open organization base schema.
+        extension: The selected extension's name and open schema, or no extension.
+        schema: The exact selected schema reference.
+        base_version: The exact organization base version.
+
+    Returns:
+        An owned, self-contained schema with exact version provenance.
+
+    Raises:
+        CompositionError: If parts, provenance or their composition are invalid.
+    """
+    try:
+        _check_selection(extension, schema, base_version)
+        parts = [(BASE_SCHEMA_NAME, base)] + ([extension] if extension else [])
+        for _, document in parts:
+            check_schema_document(document)
+        document = _flatten(parts)
+        document.update(
+            {
+                "$schema": DRAFT_2020_12,
+                "$id": f"urn:huron:metadata-schema:{schema.name}:{schema.version}",
+                "title": schema.name,
+                "type": "object",
+                "unevaluatedProperties": False,
+                "x-huron": {
+                    "schema": {"name": schema.name, "version": schema.version},
+                    "base_version": base_version,
+                },
+            }
+        )
+        return ComposedSchema.from_document(document)
+    except SchemaDocumentError as error:
+        raise CompositionError(error.problems) from error
+    except (ValueError, SchemaError) as error:
+        raise CompositionError([Problem("", "composition", str(error))]) from error
+
+
+def _check_selection(
+    extension: tuple[str, Mapping[str, JsonValue]] | None, schema: SchemaRef, base_version: int
+) -> None:
+    base_ref = SchemaRef(BASE_SCHEMA_NAME, base_version)
+    if extension is None:
+        if schema != base_ref:
+            raise ValueError("a base-only composition must select its exact org version")
+    elif extension[0] != schema.name or schema.name == BASE_SCHEMA_NAME:
+        raise ValueError("extension name must match the selected non-org schema")
+
+
+def _check_composed(document: Mapping[str, JsonValue]) -> None:
+    provenance = document.get("x-huron")
+    if not isinstance(provenance, dict) or set(provenance) != {"schema", "base_version"}:
+        raise ValueError("x-huron must contain schema and base_version")
+    reference = provenance["schema"]
+    if not isinstance(reference, dict) or set(reference) != {"name", "version"}:
+        raise ValueError("x-huron schema must contain name and version")
+    if not isinstance(reference["name"], str):
+        raise ValueError("schema name must be a string")
+    selected = SchemaRef(reference["name"], cast("int", reference["version"]))
+    base = SchemaRef(BASE_SCHEMA_NAME, cast("int", provenance["base_version"]))
+    if selected.name == BASE_SCHEMA_NAME and selected != base:
+        raise ValueError("org schema and base versions must match")
+    if document.get("unevaluatedProperties") is not False:
+        raise ValueError("composed schema must close unevaluated properties")
+    open_document = dict(document)
+    del open_document["unevaluatedProperties"]
+    check_schema_document(open_document)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class FieldSpec:
+    """A descriptive field and independent snapshots of its schema annotations."""
+
+    name: str
+    required: bool
+    _schema: JsonValue
+
+    def __init__(self, name: str, required: bool, schema: JsonValue) -> None:
+        """Own a field's complete subschema, including boolean schemas.
+
+        Args:
+            name: The metadata member name.
+            required: Whether the root requires this member.
+            schema: The composed member subschema.
+        """
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "required", required)
+        object.__setattr__(self, "_schema", deepcopy(schema))
+
+    @property
+    def schema(self) -> JsonValue:
+        """Return an independent copy of the complete member subschema.
+
+        Returns:
+            The member schema without resolving references or changing constraints.
+        """
+        return deepcopy(self._schema)
+
+    def _annotation(self, name: str) -> JsonValue:
+        return self._schema.get(name) if isinstance(self._schema, dict) else None
+
+    @property
+    def title(self) -> str | None:
+        """Return the field's own display title.
+
+        Returns:
+            The declared title, or no title.
+        """
+        return cast("str | None", self._annotation("title"))
+
+    @property
+    def description(self) -> str | None:
+        """Return the field's own description.
+
+        Returns:
+            The declared description, or no description.
+        """
+        return cast("str | None", self._annotation("description"))
+
+    @property
+    def examples(self) -> tuple[JsonValue, ...]:
+        """Return independently owned examples.
+
+        Returns:
+            The declared examples in their original order.
+        """
+        return tuple(deepcopy(cast("list[JsonValue]", self._annotation("examples") or [])))
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ComposedSchema:
+    """An owned closed schema with validated exact version provenance."""
+
+    _document: dict[str, JsonValue]
+
+    def __init__(self, document: Mapping[str, JsonValue]) -> None:
+        """Validate and snapshot a composed document.
+
+        Args:
+            document: A self-contained, closed schema carrying x-huron provenance.
+        """
+        owned = deepcopy(dict(document))
+        _check_composed(owned)
+        object.__setattr__(self, "_document", owned)
+
+    @property
+    def document(self) -> dict[str, JsonValue]:
+        """Return a separate document that callers may safely serialize or edit.
+
+        Returns:
+            An independent copy of the composed schema.
+        """
+        return deepcopy(self._document)
+
+    @classmethod
+    def from_document(cls, document: Mapping[str, JsonValue]) -> ComposedSchema:
+        """Validate a served schema before using its fields or validator.
+
+        Invalid provenance or schema raises ``ValueError``.
+
+        Args:
+            document: The served closed schema and its exact version provenance.
+
+        Returns:
+            An independently owned schema.
+        """
+        return cls(document)
+
+    def fields(self) -> tuple[FieldSpec, ...]:
+        """List declared fields in required order followed by sorted optional names.
+
+        Returns:
+            Owned fields with their own annotations and intersected constraints.
+        """
+        properties = cast("dict[str, JsonValue]", self._document.get("properties", {}))
+        required = cast("list[str]", self._document.get("required", []))
+        names = [name for name in required if name in properties]
+        names.extend(sorted(properties.keys() - set(names)))
+        return tuple(FieldSpec(name, name in required, properties[name]) for name in names)
+
+    def validator(self) -> MetadataValidator:
+        """Build a synchronous validator from this immutable schema snapshot.
+
+        Returns:
+            A validator safe to use concurrently.
+        """
+        return MetadataValidator(self._document)
+
+
+class MetadataValidator:
+    """Synchronous RE2 validation with stable pointers and partial-object support."""
+
+    def __init__(self, document: Mapping[str, JsonValue]) -> None:
+        """Own and check the schema used by each independent validation call.
+
+        Args:
+            document: A safe, self-contained composed schema.
+        """
+        self._document = ComposedSchema(document).document
+        self._validator = build(self._document)
+
+    def problems(self, metadata: object, *, partial: bool = False) -> tuple[Problem, ...]:
+        """Collect stable instance errors, optionally tolerating missing root members.
+
+        Args:
+            metadata: The JSON metadata object to validate.
+            partial: Omit root required errors while retaining nested requirements.
+
+        Returns:
+            All problems sorted by pointer, rule and message.
+        """
+        if not isinstance(metadata, dict):
+            return (Problem("", "type", "metadata must be an object"),)
+        failures = []
+        for error in self._validator.evolve().iter_errors(metadata):
+            where = ""
+            for token in error.absolute_path:
+                where = _pointer(where, token)
+            if not (partial and where == "" and error.validator == "required"):
+                failures.append(Problem(where, str(error.validator), error.message))
+        return tuple(sorted(failures, key=lambda p: (p.where, p.rule, p.message)))
