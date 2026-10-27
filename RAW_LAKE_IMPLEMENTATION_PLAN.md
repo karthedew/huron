@@ -2607,7 +2607,7 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
 - Dependencies: M6.1, M6.2.
 - Decisions: OQ-8.1 (settled, owner decision 12)
 - Decisions: OQ-8.3 (settled, owner decision 12)
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M6.4 `huron.schema.metadata`: the field diff and the schema publish rules
 
@@ -11232,3 +11232,34 @@ All 1296 independent applicator/closure validity comparisons matched stock Draft
 and missing-line lists are unchanged. Floor 95.74 and duplication 79 fragments/
 77 pairs/28 groups are unchanged; G3 usage 0/4. Frozen hashes matched and owned
 processes stopped. Evidence: `.local/implementation-evidence/m62-v1/report.md`.
+
+### M6.3 implementation 1 — 2026-10-27 (pending independent verification)
+
+The pure catalog config and packaged contract now retain catalog, exact schema selection,
+optional title/snapshot policy and the read-only config-version receipt. N13's clarification
+records absent optional values and strict integer versions. Obsolete placement keys are
+refused; no placement types, metadata-derived paths or administrative persistence were added.
+Frozen values own their inputs; configuration errors aggregate sorted instance pointers.
+
+The frozen implementation gate passes: make lint (17 contracts), 1,674 unit, 15 contract,
+12 integration, 1,689 combined and 188 focused schema tests, plus packaged-contract loading.
+Unit coverage is 3,829/3,948; combined is 3,945/3,948. New catalog_config.py is 59/59 and
+schema/__init__.py is 21/21; every preexisting file summary and missing-line list is unchanged.
+Floor stays 95.74; duplication stays 79 fragments / 77 pairs / 28 groups, native 75, G3 0/4.
+
+Evidence: `.local/implementation-evidence/m63-i1/report.md` and its complete command logs,
+coverage comparisons, matching source hashes, wall/monotonic timings, AC-power assertions
+and cleanup receipts. Scoped runner/caffeinate exited and Docker inventories match. No owner
+stack operations occurred. This execution note follows the frozen gate; status remains pending
+independent verification.
+
+### M6.3 completion — independent verification 1 PASS
+
+Independent review accepted the simplified N13 config, retained optional fields and
+strict exact-version values with no findings. Fresh lint, 1674 unit, 15 contract,
+12 integration, 1689 combined, 188 focused tests, packaged-schema smoke and boundary
+probes passed. Unit coverage 3829/3948 (96.99%); combined 3945/3948 (99.92%).
+Both touched production files are fully covered; all existing summaries and missing
+lines are unchanged. Floor 95.74 and duplication 79 fragments/77 pairs/28 groups
+remain unchanged; G3 usage 0/4. Frozen hashes matched and owned processes stopped.
+Evidence: `.local/implementation-evidence/m63-v1/report.md`.

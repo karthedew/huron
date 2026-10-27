@@ -149,6 +149,15 @@ simplifications are not adopted; the binding CLI and durability contracts below 
   `identity_fields`, `choices` for placement, `place` and slugify-as-placement. Reject those obsolete
   config keys rather than accepting two shapes. Ordinary metadata enums, secure JSON Schema validation
   and composition with the selected extension's exact org-base version remain.
+- The retained config document requires `catalog` and `schema: {name, version}`. Optional
+  `title` keeps DT-8's 1–200-character display rule; optional `snapshot_class` keeps its strict
+  segment policy label, with no Huron retention enforcement. Omitted title and policy are absent
+  values (`None`), not invented defaults; explicit null is invalid. `config_version` remains an
+  optional positive-integer read-only receipt field. Its publication refusal and catalog-match
+  checks belong to catalog administration, not this pure value. Schema and config versions are
+  positive integers, never booleans or floating-point values. The amended stored example is
+  `{catalog: heliophysics, config_version: 1, title: Heliophysics,
+  schema: {name: heliophysics, version: 1}, snapshot_class: standard}`; no placement keys remain.
 - Catalog names, namespace segments and collection names are distinct validated values sharing
   `^[a-z0-9][a-z0-9_-]{0,63}$`. Reject invalid input; never sanitize it into another name. Reuse
   `NamingError` / foundation `PATH_RULE_VIOLATION` (400), keeping DT-18's invalid catalog lookup 404.
