@@ -2,10 +2,11 @@
 
 The ``schema`` tier is the one thing every service and package may import,
 so it holds only contracts: the Draft 2020-12 documents packaged under
-``documents/`` and the three functions that load and apply them. A document
+``documents/``, the three functions that load and apply them, and pure rule modules shared by
+the server and CLI, beginning with ``naming``. A document
 is addressed by its file name, and the name carries the version
-(``generation-v1.json``), so a change of contract is a
-new file rather than an edit under an existing caller's feet.
+(``generation-v1.json``), so a reader always knows which contract a document
+follows; a breaking change replaces the file and every caller in one change.
 
 ``format: date-time`` is not a no-op here: ``rfc3339-validator``, pulled in
 by the ``jsonschema[format-nongpl]`` extra, backs the ``FormatChecker``

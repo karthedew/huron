@@ -45,6 +45,24 @@ without a fixed business-depth limit. Strict segment validation, safe path trave
 filesystem/path-length bounds remain mandatory at every depth. M6 and M11 must test paths deeper
 than six segments as well as refusal at actual path-length and safety limits.
 
+### Naming path-length clarification
+
+The shared naming rule bounds the catalog-inclusive slash identifier to 1,023 ASCII bytes,
+including separators (`IDENTIFIER_MAX_BYTES`), with no segment-count limit. A standalone
+namespace path uses the same bound; pairing it with a catalog must also pass `Identifier`.
+This conservative storage budget leaves room for a slash and the existing 1,024-byte scientific
+file `rel_path` inside the 2,048-byte reconciliation finding path (DT-16), whose definition explicitly
+includes the catalog first. It is an explicit logical-path budget, not a claim about universal OS `PATH_MAX`.
+The former eight-segment rule had bounded identities implicitly; removing it exposed this gap.
+
+Mount prefixes do not consume the logical identifier budget. Pure mount conversion validates an
+absolute prefix without parent traversal and retains the raw input's empty/dot-segment checks before
+constructing `PurePosixPath`. Configured prefixes are already lexical paths; normalization performed
+by their caller cannot be reconstructed here. Volume adapters must separately enforce the actual
+platform/filesystem limits on complete paths, including the prefix and file path, at the I/O boundary.
+The development macOS host reports `PC_PATH_MAX=1024`; Linux/NFS deployments must use their own
+limits rather than inherit that host value. No filesystem probing belongs in the shared pure rules.
+
 ### Roles and permitted mappings
 
 | Role title | Exact code | Permitted scope | Authority |

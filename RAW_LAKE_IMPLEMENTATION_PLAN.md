@@ -2498,7 +2498,7 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
   - `naming.py` and `schema/__init__.py` at 100 % line coverage in the unit run.
 - Dependencies: M2.
 - Decisions: OQ-8.3 (settled, owner decision 12)
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M6.2 RE2-backed validator for every schema `huron.schema` builds
 
@@ -11172,3 +11172,30 @@ from verification 1. Floor 95.74 and duplication 79 fragments/77 pairs/28 groups
 remain unchanged; G2 capped usage finishes at 2/4. Source hashes match and owned
 processes stopped. Evidence: `.local/implementation-evidence/m56-v2/report.md`.
 Milestone 5 is complete; M6 begins planning group G3 with capped usage 0/4.
+
+### M6.1 implementation — pending independent verification
+
+Strict unchanged segment and recursive namespace validation, reserved names and immutable
+four-form identifiers now share one pure schema module. Slugification and fixed depth limits
+are absent. The governing design clarifies the 1,023-byte catalog-inclusive logical budget:
+2,048-byte finding path minus slash and the existing 1,024-byte scientific file path. Mount
+prefixes do not consume that budget; actual filesystem path limits remain the volume adapter's
+responsibility. The schema package docstring is updated without loader behavior changes.
+
+Frozen implementation gate passed: lint, 1573 unit, 15 contract, 12 integration, 1588 combined
+and 74 focused tests. Unit coverage 3663/3782 (96.85%); combined 3779/3782 (99.92%). Both touched
+production modules are 100%; every existing file's summaries match M5.6 verification 2.
+Floor 95.74 and duplication 79 fragments/77 pairs/28 groups (native 75) remain unchanged;
+G3 capped usage is 0/4. Source hashes match and owned processes stopped. Evidence:
+`.local/implementation-evidence/m61-i1/report.md`. M6.1 status remains pending independent verification.
+
+### M6.1 completion — independent verification 1 PASS
+
+Independent review accepted strict recursive naming and the documented logical
+path budget, with no findings. Fresh lint, 1573 unit, 15 contract, 12 integration,
+1588 combined and 74 focused tests passed. Unit coverage 3663/3782 (96.85%);
+combined 3779/3782 (99.92%). Both touched production modules are fully covered;
+all existing summaries are unchanged. Floor 95.74 and duplication 79 fragments/
+77 pairs/28 groups remain unchanged; G3 usage 0/4. Source hashes matched and
+owned processes stopped. Root Markdown is outside documentation-site inputs.
+Evidence: `.local/implementation-evidence/m61-v1/report.md`.
