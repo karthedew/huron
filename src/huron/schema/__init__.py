@@ -19,9 +19,12 @@ from __future__ import annotations
 import json
 from functools import cache
 from importlib.resources import files
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from jsonschema import Draft202012Validator, FormatChecker
+from huron.schema._validator import build
+
+if TYPE_CHECKING:
+    from jsonschema.protocols import Validator
 
 
 @cache
@@ -58,7 +61,7 @@ def load_schema(name: str) -> dict[str, Any]:
 
 
 @cache
-def validator(name: str) -> Draft202012Validator:
+def validator(name: str) -> Validator:
     """Return the cached Draft 2020-12 validator for one packaged schema.
 
     The schema is checked against the Draft 2020-12 metaschema before the
@@ -67,7 +70,8 @@ def validator(name: str) -> Draft202012Validator:
     propagates from that check). The validator carries a ``FormatChecker``,
     so ``format`` assertions are checked for every format the installed
     checker supports instead of being ignored, as the specification allows
-    by default. One validator is built per name per process.
+    by default. Patterns use RE2 and references use a closed registry.
+    One validator is built per name per process.
 
     Args:
         name: The document's file name within ``documents/``, as
@@ -77,12 +81,10 @@ def validator(name: str) -> Draft202012Validator:
         A validator whose ``validate`` and ``iter_errors`` apply the named
         schema.
     """
-    schema = load_schema(name)
-    Draft202012Validator.check_schema(schema)
-    return Draft202012Validator(schema, format_checker=FormatChecker())
+    return build(load_schema(name))
 
 
-def validate(name: str, document: object) -> None:
+def validate(name: str, document: Any) -> None:
     """Assert that ``document`` conforms to the named packaged schema.
 
     Returns silently on success; the first violation propagates as

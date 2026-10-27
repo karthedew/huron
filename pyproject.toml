@@ -27,6 +27,7 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "greenlet>=3.5.5",
     "asyncer>=0.0.18",
+    "google-re2>=1.1",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -142,6 +143,11 @@ files = ["src"]
 # it, and each narrows every row to a typed record at its own boundary, so
 # the driver's own annotations buy nothing here.
 module = "asyncpg.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# re2 ships no py.typed marker; huron.schema._validator is its sole importer.
+module = "re2"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

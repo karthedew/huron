@@ -5881,6 +5881,14 @@ def build(document: Mapping[str, object]) -> jsonschema.protocols.Validator: ...
   becomes `jsonschema.protocols.Validator`; `.validate` and `.iter_errors` callers are unchanged.
 - The empty `Registry` is required: jsonschema 4.26 otherwise fetches remote `$ref` over HTTP (old design
   §16.6); with it, an unresolvable reference fails closed.
+- The extension also replaces `additionalProperties` matching and `unevaluatedProperties` annotation
+  accounting: jsonschema 4.26 evaluates `patternProperties` again in these paths using Python `re`.
+  Their messages, descend paths and successful-applicator annotations retain Draft 2020-12 semantics.
+- The generated class keeps its own class when evolving into a subschema, including one declaring
+  `$schema`, so local references and applicators cannot restore stock Python-regex validation.
+  Its format checker validates the `regex` format through `compile_regex`, including during the
+  factory's metaschema check. All other installed format checks remain active. These are local
+  extension hooks; the global jsonschema validator registry and format checkers are unchanged.
 - An RE2 match differs from ECMA-262 only in what it refuses (backreferences, lookaround), and publish
   refuses those, so every stored regex means the same in both engines.
 

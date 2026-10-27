@@ -2554,7 +2554,7 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
     `rg -n "Draft202012Validator" src` prints only `src/huron/schema/_validator.py`.
   - `_validator.py` and `schema/__init__.py` at 100 % line coverage.
 - Dependencies: M1 (D2-2 deletes the Raw documents and repoints `test_schema_loading.py`).
-- Status: pending
+- Status: complete (independent verification 1 PASS)
 
 ### M6.3 Catalog config value, `catalog-config-v1.json` and the path resolver
 
@@ -11199,3 +11199,36 @@ all existing summaries are unchanged. Floor 95.74 and duplication 79 fragments/
 77 pairs/28 groups remain unchanged; G3 usage 0/4. Source hashes matched and
 owned processes stopped. Root Markdown is outside documentation-site inputs.
 Evidence: `.local/implementation-evidence/m61-v1/report.md`.
+
+### M6.2 implementation 1 — 2026-10-26 (pending independent review)
+
+The cached packaged validator now builds the RE2 extended class with a closed reference
+registry. `google-re2` 1.1.20251105 is the only lock addition; the approved sole-importer mypy
+override is present and no ty override is needed. Installed jsonschema inspection found
+additional Python-regex paths in additional/unevaluated property accounting and `$schema`
+class switching during evolution. The implementation closes those paths and gives metaschema
+regex-format checks the same bounded silent compiler; the design records these corrections.
+
+The frozen implementation gate passes: make lint (17 contracts), 1,621 unit tests, 15 contract,
+12 integration, 1,636 combined and 61 focused validator/loading/provenance tests. Unit coverage
+is 3,770/3,889, combined 3,886/3,889; both touched production files are 100%, and every untouched
+file's coverage summary and missing-line list match M6.1. Floor remains 95.74. Duplication stays
+79 fragments / 77 pairs / 28 groups, native 75; G3 cap usage remains 0/4 with no baseline edit.
+
+Evidence: `.local/implementation-evidence/m62-i1/report.md`, exact command logs, coverage JSON,
+comparisons, source hashes, wall/monotonic timings, AC-power assertions and cleanup receipts.
+Scoped caffeinate and all validation processes exited; testcontainer inventories match; no
+owner stack operation occurred. This note follows the frozen gate. Status remains pending
+until independent review passes.
+
+### M6.2 completion — independent verification 1 PASS
+
+Independent review accepted the RE2 and closed-reference validator, including the
+additional property-closure and evolution hooks needed by the installed library.
+All 1296 independent applicator/closure validity comparisons matched stock Draft
+2020-12. Fresh lint, 1621 unit, 15 contract, 12 integration, 1636 combined and
+61 focused tests passed. Unit coverage 3770/3889 (96.94%); combined 3886/3889
+(99.92%). Both touched production files are fully covered; untouched summaries
+and missing-line lists are unchanged. Floor 95.74 and duplication 79 fragments/
+77 pairs/28 groups are unchanged; G3 usage 0/4. Frozen hashes matched and owned
+processes stopped. Evidence: `.local/implementation-evidence/m62-v1/report.md`.
