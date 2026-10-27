@@ -45,3 +45,9 @@ def client(tmp_path: Path, stores: ApiStores) -> Iterator[TestClient]:
 def catalog_config_document() -> dict[str, object]:
     """A minimal catalog config with an exact metadata schema reference."""
     return {"catalog": "heliophysics", "schema": {"name": "heliophysics", "version": 1}}
+
+
+@pytest.fixture
+def metadata_schema_document() -> dict[str, object]:
+    """A minimal open metadata schema part using the required dialect."""
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object"}

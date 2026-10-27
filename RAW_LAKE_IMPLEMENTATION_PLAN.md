@@ -2646,7 +2646,7 @@ M7 (server) and M10/M12 (CLI) build on one copy of each rule.
   - `rg -n "^(from|import) huron\.(core|applications)" src/huron/schema` prints nothing.
   - `metadata.py` at 100 % line coverage; `radon mi src --min B` prints nothing for it.
 - Dependencies: M6.2, M6.3.
-- Status: pending
+- Status: complete (independent verification 2 PASS)
 
 ### M6.5 Composition, `MetadataValidator` and the org base seed
 
@@ -11263,3 +11263,55 @@ Both touched production files are fully covered; all existing summaries and miss
 lines are unchanged. Floor 95.74 and duplication 79 fragments/77 pairs/28 groups
 remain unchanged; G3 usage 0/4. Frozen hashes matched and owned processes stopped.
 Evidence: `.local/implementation-evidence/m63-v1/report.md`.
+
+
+### M6.4 implementation 1 — 2026-10-27 (pending independent verification)
+
+Implemented owned field-change snapshots and deterministic JSON diffs in
+`huron.schema.metadata`, plus aggregated schema publication rules 2–8. Traversal
+is keyword-aware, preserves literal payloads, uses HuronValidator/RE2 and permits
+only root-definition references. N13 removes identity/layout restrictions; ordinary
+enums remain. No M6.5 composition or instance validator was introduced.
+
+Final frozen implementation gate passed: lint (17 contracts), 1,749 unit, 15 contract,
+12 integration, 1,764 combined and 263 focused schema tests. Added 75 metadata cases.
+Unit coverage 3,829/3,948 → 3,977/4,096; combined 3,945/3,948 → 4,093/4,096. Every old
+file summary/missing-line list is unchanged; metadata.py 148/148 and schema/__init__.py
+21/21 in both runs. Floor stays 95.74. Duplication stays 79 fragments / 77 pairs /
+28 groups, native score 75; G3 cap remains 0/4. No baseline/tooling weakening.
+
+Evidence: `.local/implementation-evidence/m64-i1/report.md`, exact logs, JSON comparisons,
+source-freeze hashes, wall/monotonic timings and actual scoped caffeinate assertions.
+Both owned processes stopped and container inventories match. An earlier complete
+passing run was retained before a one-line test-style correction and final full rerun.
+No owner stack operations, staging or commits. Status remains pending independent verification.
+
+### M6.4 fix 1 — 2026-10-27 (pending independent verification 2)
+
+Fixed verification 1's local-reference target hole. The keyword-aware schema walk
+now indexes object and boolean positions; every local reference resolves its full
+URI-fragment/RFC6901 pointer against that index. Dangling suffixes, scalar/container
+and literal/annotation targets refuse at the referring `/$ref`; valid nested,
+escaped and applicator-array targets remain accepted. Literal data stays untouched.
+Sixteen refusal regressions reproduced red; 28 public cases were added and the
+existing aggregate-failures case extended. No composition or unrelated scope.
+
+Frozen full gate passes: lint, 1,777 unit, 15 contract, 12 integration, 1,792 combined,
+291 focused. Unit coverage 3,982/4,101 (97.098269%), combined 4,098/4,101 (99.926847%);
+metadata.py 153/153 and schema/__init__.py 21/21 in both. Untouched file summaries
+and missing lines match official m63-v1 and failed m64-v1. Floor 95.74; duplication
+79 fragments, 77 pairs, 28 groups, native score 75; G3 remains 0/4. Frozen hashes
+match, scoped power assertions were active, owned processes stopped and container
+inventories match. Evidence: `.local/implementation-evidence/m64-fix1/report.md`.
+Independent verification 2 remains pending; M6.4 is not marked complete.
+
+### M6.4 completion — independent verification 2 PASS
+
+Independent review confirmed complete reference-target validation and all remaining
+field-diff/publication contracts. Fresh lint, 1777 unit, 15 contract, 12 integration,
+1792 combined and 291 focused tests passed. Unit coverage 3982/4101 (97.10%);
+combined 4098/4101 (99.93%). Both touched production files are fully covered;
+existing summaries and missing lines match M6.3. The fix adds five covered statements
+relative to verification 1. Floor 95.74 and duplication 79 fragments/77 pairs/28 groups
+remain unchanged; G3 usage 0/4. Frozen hashes matched and owned processes stopped.
+Evidence: `.local/implementation-evidence/m64-v2/report.md`.

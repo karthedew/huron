@@ -3,7 +3,7 @@
 The ``schema`` tier is the one thing every service and package may import,
 so it holds only contracts: the Draft 2020-12 documents packaged under
 ``documents/``, the three functions that load and apply them, and pure rule modules shared by
-the server and CLI, including ``naming`` and ``catalog_config``. A document
+the server and CLI, including ``naming``, ``catalog_config`` and ``metadata``. A document
 is addressed by its file name, and the name carries the version
 (``generation-v1.json``), so a reader always knows which contract a document
 follows; a breaking change replaces the file and every caller in one change.
