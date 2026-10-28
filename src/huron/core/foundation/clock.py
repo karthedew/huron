@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
-
-if TYPE_CHECKING:
-    from datetime import datetime
+from datetime import UTC, datetime
+from typing import Protocol
 
 
 class Clock(Protocol):
@@ -18,3 +16,15 @@ class Clock(Protocol):
             A timezone-aware UTC datetime.
         """
         ...
+
+
+class SystemClock:
+    """The default clock: the operating system's UTC time."""
+
+    def now(self) -> datetime:
+        """Return the current instant.
+
+        Returns:
+            The current time, timezone-aware in UTC.
+        """
+        return datetime.now(UTC)

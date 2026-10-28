@@ -57,3 +57,19 @@ def test_requests_that_differ_in_fields_or_operation_have_different_fingerprints
 ) -> None:
     """A moved field boundary, a reordering, an added empty field or another operation all count."""
     assert request_sha256(first[0], *first[1:]) != request_sha256(second[0], *second[1:])
+
+
+def test_replay_kinds_cover_the_lake_admin_creating_calls() -> None:
+    """Lake administration receipts coexist with supported hierarchy receipts."""
+    from typing import get_args, get_type_hints
+    from uuid import UUID
+    from huron.core.foundation.retry import Replay
+
+    assert set(get_args(get_type_hints(Replay, localns={"UUID": UUID})["kind"])) == {
+        "organization",
+        "project",
+        "dataset",
+        "catalog",
+        "metadata_schema",
+        "signing_key",
+    }

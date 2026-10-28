@@ -14,13 +14,14 @@ import bisect
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from itertools import chain
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 import asyncpg
 
+from huron.core.foundation.clock import SystemClock
 from huron.core.foundation.errors import (
     IdempotencyKeyReused,
     PreconditionFailed,
@@ -45,18 +46,6 @@ if TYPE_CHECKING:
 #: How long an idempotency claim stands before it may be taken over by a
 #: fresh request reusing the same ``(principal, key)``.
 _CLAIM_TTL = timedelta(hours=24)
-
-
-class SystemClock:
-    """The default clock: the operating system's UTC time."""
-
-    def now(self) -> datetime:
-        """Return the current instant.
-
-        Returns:
-            The current time, timezone-aware in UTC.
-        """
-        return datetime.now(UTC)
 
 
 @dataclass(slots=True)

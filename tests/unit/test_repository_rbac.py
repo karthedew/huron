@@ -12,6 +12,7 @@ are not worth faking here, and the SQL is the part a fake can't verify.
 
 from __future__ import annotations
 
+from huron.core.foundation.clock import SystemClock
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -537,7 +538,7 @@ async def test_touch_api_key_failure_does_not_break_authentication(
     """The touch is best-effort: a store that raises must not surface to the caller."""
     from huron.core.security import CredentialAuthentication
     from huron.core.security.apikeys import create_api_key
-    from huron.core.metastore import MemoryApiKeyStore, SystemClock
+    from huron.core.metastore import MemoryApiKeyStore
 
     class _ExplodingStore(MemoryApiKeyStore):
         """An API-key store whose ``touch_last_used`` always raises."""

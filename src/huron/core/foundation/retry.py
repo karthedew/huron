@@ -21,12 +21,15 @@ class IdempotencyClaim:
 
 @dataclass(frozen=True, slots=True)
 class Replay:
-    """A durable receipt for an accepted mutation."""
+    """A durable receipt for an accepted hierarchy or lake administration mutation."""
 
     kind: Literal[
         "organization",
         "project",
         "dataset",
+        "catalog",
+        "metadata_schema",
+        "signing_key",
     ]
     resource_id: UUID
 

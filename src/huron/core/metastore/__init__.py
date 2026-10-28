@@ -7,7 +7,7 @@ Applications construct adapters and own their resource lifetimes.
 """
 
 from .api_keys import PostgresApiKeyStore
-from .hierarchy import InMemoryHierarchyStore, PostgresHierarchyStore, SystemClock
+from .hierarchy import InMemoryHierarchyStore, PostgresHierarchyStore
 from .memory_apikeys import MemoryApiKeyStore
 from .memory_principals import MemoryPrincipalStore
 from .principals import PostgresPrincipalStore
@@ -22,5 +22,4 @@ __all__ = [
     "PostgresHierarchyStore",
     "PostgresPrincipalStore",
     "PostgresRbacStore",
-    "SystemClock",
 ]

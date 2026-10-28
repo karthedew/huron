@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from huron.core.foundation.clock import SystemClock
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -11,7 +12,7 @@ from huron.core.hierarchy.types import Organization, PlatformRoot
 from huron.core.foundation.errors import ResourceNotFound
 from huron.core.foundation.identifiers import uuid7
 from huron.core.foundation.retry import IdempotencyClaim, Replay
-from huron.core.metastore.hierarchy import InMemoryHierarchyStore, SystemClock
+from huron.core.metastore.hierarchy import InMemoryHierarchyStore
 from huron.core.security.rules import Visibility
 from tests.hierarchy_contract import (
     scenario_1_write_invisible_until_commit,

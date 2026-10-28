@@ -85,6 +85,7 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH", "RUF", "FAST", "D"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
+"src/huron/core/metastore/lake/memory.py" = ["N818"]
 # Tests document what they prove, not how they are called: every module,
 # class, test and fixture carries a summary line, but a test double's
 # __init__ and dunder methods add nothing a reader needs.

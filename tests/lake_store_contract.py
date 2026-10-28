@@ -7,6 +7,10 @@ from dataclasses import replace
 from datetime import timedelta
 from uuid import UUID
 
+from huron.core.foundation.errors import IdempotencyKeyReused
+from huron.core.foundation.retry import IdempotencyClaim, Replay
+from huron.core.lake.audit import AuditEntry, AuditRecord, CatalogCreated
+from tests.unit.support import FakeClock
 from huron.core.metastore.lake import InMemoryLakeStore
 from huron.core.metastore.lake.memory import LdapGroupRow, RoleMappingRow, SigningKeyRow
 from huron.core.security.broker import CatalogRef, Grant, Grants, Role, SigningKeyRecord
@@ -175,3 +179,119 @@ async def signing_key_scenario(store: LakeStore, seed: LakeSeed) -> None:
     assert await store.unexpired(TEST_EPOCH + step) == (later, open_record)
     assert await store.unexpired(TEST_EPOCH + 2 * step) == (open_record,)
     assert await store.unexpired(TEST_EPOCH + 4 * step) == (open_record,)
+
+
+class LakeAuditRows(Protocol):
+    """Read committed audit rows before the domain history reader is available."""
+
+    async def audit_rows(self) -> list[AuditRecord]:
+        """Return the complete log in ascending ID order."""
+        ...
+
+
+class MemoryAuditRows:
+    """Inspect committed fake audit rows for shared persistence scenarios."""
+
+    def __init__(self, store: InMemoryLakeStore) -> None:
+        self._store = store
+
+    async def audit_rows(self) -> list[AuditRecord]:
+        """Return rows in their assigned order."""
+        return sorted(self._store.tables.audit_log.values(), key=lambda row: row.id)
+
+
+def audit_entry(name: str = "helio") -> AuditEntry:
+    """Build a catalog creation fact for persistence scenarios."""
+    return AuditEntry(
+        TEST_EPOCH, "scientist", CatalogCreated(catalog=UUID(int=1), name=name, config_version=1)
+    )
+
+
+async def audit_transaction_scenario(store: LakeStore, rows: LakeAuditRows) -> None:
+    """Audit batches appear on commit, retain order and disappear on rollback."""
+    first, second, third = (audit_entry(name) for name in ("first", "second", "third"))
+    async with store.transaction() as tx:
+        await tx.append_audit([first, second])
+        await tx.append_audit([third])
+        assert await rows.audit_rows() == []
+    committed = await rows.audit_rows()
+    assert [r.detail["name"] for r in committed] == ["first", "second", "third"]
+    assert [r.id for r in committed] == sorted({r.id for r in committed})
+    for entry, row in zip((first, second, third), committed, strict=True):
+        assert (
+            row.at,
+            row.actor,
+            row.action,
+            row.object_type,
+            row.object_id,
+            row.catalog_id,
+            row.detail,
+            row.reason,
+        ) == (
+            entry.at,
+            entry.actor,
+            entry.event.ACTION,
+            entry.event.OBJECT,
+            entry.object_id,
+            entry.catalog_id,
+            entry.detail(),
+            entry.reason,
+        )
+    with pytest.raises(ValueError, match="abort"):
+        async with store.transaction() as tx:
+            await tx.append_audit([first])
+            raise ValueError("abort")
+    assert await rows.audit_rows() == committed
+    async with store.transaction() as tx:
+        with pytest.raises(ValueError):
+            await tx.append_audit([])
+
+
+async def audit_commit_order_scenario(store: LakeStore, rows: LakeAuditRows) -> None:
+    """IDs follow commit order even when transactions stage in the opposite order."""
+    import asyncio
+
+    staged, release = asyncio.Event(), asyncio.Event()
+
+    async def later_commit() -> None:
+        async with store.transaction() as tx:
+            await tx.append_audit([audit_entry("later")])
+            staged.set()
+            await release.wait()
+
+    async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+        tasks.create_task(later_commit())
+        await staged.wait()
+        async with store.transaction() as tx:
+            await tx.append_audit([audit_entry("earlier")])
+        release.set()
+    assert [r.detail["name"] for r in await rows.audit_rows()] == ["earlier", "later"]
+
+
+async def claims_scenario(store: LakeStore, clock: FakeClock, kind: str) -> None:
+    """Matching claims replay, mismatches fail, and every kind expires at exactly 24 hours."""
+    claim = IdempotencyClaim("scientist", "request", "a" * 64)
+    replay = Replay(kind, UUID(int=1))
+    other = replace(claim, request_sha256="b" * 64)
+    async with store.transaction() as tx:
+        assert await tx.claim(claim) is None
+        assert await tx.claim(claim) is None
+        await tx.remember(claim, replay)
+        assert await tx.claim(claim) == replay
+    clock.advance(timedelta(hours=24) - timedelta(microseconds=1))
+    async with store.transaction() as tx:
+        assert await tx.claim(claim) == replay
+        with pytest.raises(IdempotencyKeyReused):
+            await tx.claim(other)
+    clock.advance(timedelta(microseconds=1))
+    async with store.transaction() as tx:
+        assert await tx.claim(other) is None
+        await tx.remember(other, replay)
+    with pytest.raises(ValueError, match="abort"):
+        async with store.transaction() as tx:
+            await tx.claim(replace(claim, key="rolled-back"))
+            await tx.append_audit([audit_entry()])
+            raise ValueError("abort")
+    async with store.transaction() as tx:
+        assert await tx.claim(replace(other, key="rolled-back")) is None
+        assert await tx.claim(replace(other, principal="other")) is None

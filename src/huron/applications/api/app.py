@@ -19,13 +19,13 @@ from asyncer import asyncify
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
+from huron.core.foundation.clock import SystemClock
 from huron.core.foundation.errors import DependencyUnavailable
 from huron.core.metastore import (
     PostgresApiKeyStore,
     PostgresHierarchyStore,
     PostgresPrincipalStore,
     PostgresRbacStore,
-    SystemClock,
 )
 from huron.core.rawstore import PosixGenerationStore
 from huron.core.security import bootstrap_platform_owner

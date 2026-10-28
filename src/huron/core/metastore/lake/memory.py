@@ -8,6 +8,10 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from huron.core.foundation.clock import SystemClock
+from huron.core.lake.audit import AUDIT_VOCABULARY, AuditRecord
+from huron.core.metastore.lake.audit import InMemoryAudit
+from huron.core.metastore.lake.idempotency import InMemoryClaims
 from huron.core.metastore.lake.role_mappings import InMemoryRoleMappings
 from huron.core.metastore.lake.signing_keys import InMemorySigningKeys
 from huron.core.security.broker import Role
@@ -17,7 +21,23 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
+    from huron.core.foundation.clock import Clock
+    from huron.core.lake.audit import AuditAction, AuditEntry, AuditObject
+    from huron.core.metastore.lake.idempotency import ClaimRow
     from huron.core.security.broker import CatalogRef, SigningAlgorithm
+
+
+class IntegrityViolation(RuntimeError):
+    """A fake write violated the named PostgreSQL persistence constraint."""
+
+    def __init__(self, constraint: str) -> None:
+        """Retain the constraint name for adapter-independent failure assertions.
+
+        Args:
+            constraint: The PostgreSQL constraint that refused the row.
+        """
+        self.constraint = constraint
+        super().__init__(constraint)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +99,10 @@ class SigningKeyRow:
 class LakeTables:
     """Committed rows indexed by each table's primary or unique key."""
 
+    audit_actions: set[tuple[AuditAction, AuditObject]] = field(default_factory=set)
+    audit_log: dict[int, AuditRecord] = field(default_factory=dict)
+    next_audit_id: int = 1
+    idempotency_records: dict[tuple[str, str], ClaimRow] = field(default_factory=dict)
     roles: dict[str, RoleRow] = field(default_factory=dict)
     ldap_groups: dict[str, LdapGroupRow] = field(default_factory=dict)
     group_role_map: dict[tuple[str, UUID | None], RoleMappingRow] = field(default_factory=dict)
@@ -149,6 +173,9 @@ class LakeBuffer:
             tables: The store's committed tables.
         """
         self._open = True
+        self._tables = tables
+        self.audit_entries: list[AuditEntry] = []
+        self.idempotency_records = _TableBuffer(tables.idempotency_records, self.check_open)
         self.roles = _TableBuffer(tables.roles, self.check_open)
         self.ldap_groups = _TableBuffer(tables.ldap_groups, self.check_open)
         self.group_role_map = _TableBuffer(tables.group_role_map, self.check_open)
@@ -166,10 +193,27 @@ class LakeBuffer:
     def apply(self) -> None:
         """Commit every staged table synchronously, without yielding to other tasks."""
         self.check_open()
+        audit_rows = {
+            row_id: AuditRecord(
+                row_id,
+                entry.at,
+                entry.actor,
+                entry.event.ACTION,
+                entry.event.OBJECT,
+                entry.object_id,
+                entry.catalog_id,
+                entry.detail(),
+                entry.reason,
+            )
+            for row_id, entry in enumerate(self.audit_entries, self._tables.next_audit_id)
+        }
         self.roles._apply()
         self.ldap_groups._apply()
         self.group_role_map._apply()
         self.signing_keys._apply()
+        self.idempotency_records._apply()
+        self._tables.audit_log.update(audit_rows)
+        self._tables.next_audit_id += len(audit_rows)
 
     def close(self) -> None:
         """Invalidate all references to this transaction's buffered tables."""
@@ -220,17 +264,21 @@ class _LockRegistry:
     catalogs: dict[Hashable, _ReadWriteLock] = field(default_factory=dict)
 
 
-class InMemoryLakeTransaction:
+class InMemoryLakeTransaction(InMemoryAudit, InMemoryClaims):
     """One buffered transaction that releases all its locks when it closes."""
 
-    def __init__(self, tables: LakeTables, locks: _LockRegistry) -> None:
+    def __init__(self, tables: LakeTables, locks: _LockRegistry, clock: Clock) -> None:
         """Bind this transaction to the store's rows and lock registry.
 
         Args:
             tables: Committed state shared with the store root.
             locks: Locks shared by all the store's transactions.
+            clock: Source of claim expiry instants.
         """
         self.buffer = LakeBuffer(tables)
+        self._tables = tables
+        self._clock = clock
+        self._claimed: set[tuple[str, str]] = set()
         self._locks = locks
         self._releases: list[Callable[[], None]] = []
 
@@ -268,13 +316,18 @@ class InMemoryLakeTransaction:
 class InMemoryLakeStore(InMemoryRoleMappings, InMemorySigningKeys):
     """Independent committed lake state with atomic buffered transactions."""
 
-    def __init__(self, *, seed: bool = True) -> None:
+    def __init__(self, *, clock: Clock | None = None, seed: bool = True) -> None:
         """Create empty tables and optionally load the role vocabulary.
 
         Args:
-            seed: Whether to install the four built-in roles.
+            clock: Source of claim expiry instants, defaulting to UTC system time.
+            seed: Whether to install the built-in roles and audit vocabulary.
         """
-        self.tables = LakeTables(roles={row.code: row for row in ROLE_ROWS} if seed else {})
+        self._clock = clock if clock is not None else SystemClock()
+        self.tables = LakeTables(
+            roles={row.code: row for row in ROLE_ROWS} if seed else {},
+            audit_actions=set(AUDIT_VOCABULARY) if seed else set(),
+        )
         self._locks = _LockRegistry()
         self._active: set[asyncio.Task[object] | None] = set()
 
@@ -295,7 +348,7 @@ class InMemoryLakeStore(InMemoryRoleMappings, InMemorySigningKeys):
         if task in self._active:
             raise RuntimeError("Lake transactions cannot be nested")
         self._active.add(task)
-        transaction = InMemoryLakeTransaction(self.tables, self._locks)
+        transaction = InMemoryLakeTransaction(self.tables, self._locks, self._clock)
         try:
             yield transaction
             transaction.buffer.apply()
