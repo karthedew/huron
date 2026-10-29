@@ -1,4 +1,4 @@
-"""Request fingerprints: the persisted digest of an operation and its ordered fields.
+"""Request fingerprints and the receipt kinds that idempotency records may hold.
 
 Idempotency records keep these digests across restarts and deployments, so
 the encoding itself is the contract: the operation and its fields, joined
@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+from typing import get_args, get_type_hints
+from uuid import UUID
 
 import pytest
 
-from huron.core.foundation.retry import request_sha256
+from huron.core.foundation.retry import Replay, request_sha256
 
 pytestmark = pytest.mark.unit
 
@@ -60,12 +62,10 @@ def test_requests_that_differ_in_fields_or_operation_have_different_fingerprints
 
 
 def test_replay_kinds_cover_the_lake_admin_creating_calls() -> None:
-    """Lake administration receipts coexist with supported hierarchy receipts."""
-    from typing import get_args, get_type_hints
-    from uuid import UUID
-    from huron.core.foundation.retry import Replay
-
-    assert set(get_args(get_type_hints(Replay, localns={"UUID": UUID})["kind"])) == {
+    """Catalog, schema and key creation receipts join the legacy hierarchy kinds, and only those."""
+    # The receipt id type is imported for type checking only.
+    kinds = set(get_args(get_type_hints(Replay, localns={"UUID": UUID})["kind"]))
+    assert kinds == {
         "organization",
         "project",
         "dataset",

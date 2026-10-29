@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
-from huron.core.foundation.retry import IdempotencyClaim, Replay
-from huron.core.lake.audit import AUDIT_VOCABULARY, CollectionCreated, KeyWithdrawn
-from huron.core.metastore.lake.memory import IntegrityViolation
-
 import asyncio
 import inspect
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import pytest
 
+from huron.core.foundation.retry import IdempotencyClaim, Replay, request_sha256
+from huron.core.lake import AUDIT_VOCABULARY, AuditEntry, CatalogCreated, KeyWithdrawn
 from huron.core.lake.ports import LakeStore, LakeTransaction
 from huron.core.metastore.lake import InMemoryLakeStore
+from huron.core.metastore.lake.idempotency import ClaimRow
 from huron.core.metastore.lake.memory import (
     InMemoryLakeTransaction,
     LdapGroupRow,
@@ -26,15 +24,21 @@ from huron.core.metastore.lake.memory import (
 )
 from huron.core.security.broker import CatalogRef, Role, RoleMappingReader, SigningKeyReader
 from tests.lake_store_contract import (
+    CommittedAudit,
     LakeSeed,
-    MemoryAuditRows,
-    audit_entry,
-    audit_transaction_scenario,
-    audit_commit_order_scenario,
-    claims_scenario,
+    MemoryCommittedAudit,
     MemorySeed,
-    role_mapping_scenario,
+    audit_commit_order_scenario,
+    audit_commit_scenario,
+    audit_constraint_scenario,
+    audit_rollback_scenario,
+    catalog_created,
+    claim_expiry_scenario,
+    claim_replay_scenario,
+    claim_rollback_scenario,
     invalid_role_scope_scenario,
+    memory_refusal,
+    role_mapping_scenario,
     signing_key_scenario,
     store_root_scenario,
     transaction_error_scenario,
@@ -43,8 +47,12 @@ from tests.lake_store_contract import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from tests.unit.support import FakeClock
+
 pytestmark = pytest.mark.unit
 NOW = datetime(2026, 10, 23, 12, tzinfo=UTC)
+CLAIM = IdempotencyClaim("scientist", "create-helio", request_sha256("catalog", "helio"))
+CATALOG_RECEIPT = Replay("catalog", UUID(int=1))
 
 
 @pytest.mark.parametrize("scenario", [store_root_scenario, transaction_error_scenario])
@@ -54,8 +62,8 @@ async def test_public_store_scenarios(scenario: Callable[[LakeStore], Awaitable[
 
 
 @pytest.mark.parametrize("seed", [False, True])
-def test_role_seed_is_exact_and_store_state_is_independent(seed: bool) -> None:
-    """The optional seed has exactly the ladder rows and no mutable state is shared."""
+def test_seed_is_exact_and_store_state_is_independent(seed: bool) -> None:
+    """The optional seed holds the ladder rows and audit pairs, and no state is shared."""
     store = InMemoryLakeStore(seed=seed)
     expected = (
         {
@@ -67,11 +75,17 @@ def test_role_seed_is_exact_and_store_state_is_independent(seed: bool) -> None:
     )
     assert {(r.code, r.title, r.rank, r.scope) for r in store.tables.roles.values()} == expected
     assert set(store.tables.roles) == {row[0] for row in expected}
+    assert store.tables.audit_actions == (set(AUDIT_VOCABULARY) if seed else set())
     store.tables.roles.clear()
-    assert len(InMemoryLakeStore().tables.roles) == 4
+    store.tables.audit_actions.clear()
+    fresh = InMemoryLakeStore()
+    assert len(fresh.tables.roles) == 4
+    assert fresh.tables.audit_actions == set(AUDIT_VOCABULARY)
     assert not store.tables.ldap_groups
     assert not store.tables.group_role_map
     assert not store.tables.signing_keys
+    assert not store.tables.audit_log
+    assert not store.tables.idempotency_records
 
 
 @pytest.mark.parametrize("abort", [False, True])
@@ -144,6 +158,12 @@ async def test_closed_transaction_rejects_saved_buffers_and_lock_acquisition() -
         await transaction.lock("key")
     with pytest.raises(RuntimeError, match="closed"):
         await transaction.lock_catalog("catalog", shared=True)
+    with pytest.raises(RuntimeError, match="closed"):
+        await transaction.append_audit([catalog_created("late")])
+    with pytest.raises(RuntimeError, match="closed"):
+        await transaction.claim(CLAIM)
+    with pytest.raises(RuntimeError, match="closed"):
+        await transaction.remember(CLAIM, CATALOG_RECEIPT)
     transaction.close()
 
 
@@ -363,160 +383,212 @@ async def test_memory_seed_requires_registered_group() -> None:
     assert await store.roles_for_groups(frozenset({"absent"})) == ()
 
 
-def test_composed_halves_have_no_colliding_public_names() -> None:
+@pytest.mark.parametrize(
+    ("composite", "methods"),
+    [
+        (InMemoryLakeStore, {"roles_for_groups", "unexpired"}),
+        (InMemoryLakeTransaction, {"append_audit", "claim", "remember"}),
+    ],
+)
+def test_composed_halves_have_no_colliding_public_names(
+    composite: type[object], methods: set[str]
+) -> None:
     """A new half cannot silently shadow another half's public method."""
     names: set[str] = set()
-    for half in InMemoryLakeStore.__bases__:
-        public = {name for name in vars(half) if not name.startswith("_")}
+    for half in composite.__bases__:
+        public = {
+            name
+            for name, member in vars(half).items()
+            if callable(member) and not name.startswith("_")
+        }
         assert not names & public
         names.update(public)
-    assert {"roles_for_groups", "unexpired"} <= names
-
-
-@pytest.mark.parametrize("scenario", [audit_transaction_scenario, audit_commit_order_scenario])
-async def test_audit_store_scenarios(scenario):
-    """The fake preserves shared audit visibility and order contracts."""
-    store = InMemoryLakeStore()
-    await scenario(store, MemoryAuditRows(store))
-
-
-@pytest.mark.parametrize("kind", ["catalog", "metadata_schema", "signing_key"])
-async def test_claim_store_scenarios(clock, kind):
-    """Every currently consumed lake receipt uses the same strict lifetime."""
-    store = InMemoryLakeStore(clock=clock)
-    await claims_scenario(store, clock, kind)
-
-
-@pytest.mark.parametrize("seed", [False, True])
-def test_audit_seed_matches_the_domain_vocabulary(seed):
-    """Only seeded stores install the fourteen accepted pairs."""
-    assert InMemoryLakeStore(seed=seed).tables.audit_actions == (
-        set(AUDIT_VOCABULARY) if seed else set()
-    )
+    assert names == methods
 
 
 @pytest.mark.parametrize(
-    "constraint,changes",
+    "scenario", [audit_commit_scenario, audit_rollback_scenario, audit_commit_order_scenario]
+)
+async def test_audit_scenarios(
+    scenario: Callable[[LakeStore, CommittedAudit], Awaitable[None]],
+) -> None:
+    """The audit half satisfies the shared commit, rollback and ordering contracts."""
+    store = InMemoryLakeStore()
+    await scenario(store, MemoryCommittedAudit(store))
+
+
+async def test_audit_constraint_scenario() -> None:
+    """The fake refuses unseeded pairs and catalog-less collection entries by constraint name."""
+    store = InMemoryLakeStore()
+    await audit_constraint_scenario(store, MemoryCommittedAudit(store), memory_refusal)
+
+
+@pytest.mark.parametrize("scenario", [claim_replay_scenario, claim_rollback_scenario])
+async def test_claim_scenarios(scenario: Callable[[LakeStore], Awaitable[None]]) -> None:
+    """The claims half satisfies the shared replay and rollback contracts."""
+    await scenario(InMemoryLakeStore())
+
+
+@pytest.mark.parametrize(
+    "replay",
     [
-        ("audit_log_actor_check", {"actor": "system:" + "a" * 154}),
-        ("audit_log_object_id_check", {"event": KeyWithdrawn(kid="", active_from=NOW)}),
-        ("audit_log_object_id_check", {"event": KeyWithdrawn(kid="k" * 256, active_from=NOW)}),
-        (
-            "audit_log_collection_has_catalog",
-            {
-                "event": CollectionCreated(
-                    collection=UUID(int=1), catalog=None, version=1, config_version=1
-                )
-            },
-        ),
+        Replay("catalog", UUID(int=1)),
+        Replay("metadata_schema", UUID(int=2)),
+        Replay("signing_key", UUID(int=3)),
     ],
 )
-async def test_audit_table_constraints(constraint, changes):
-    """The fake enforces SQL backstops in addition to domain value validation."""
-    store = InMemoryLakeStore()
-    entry = replace(audit_entry(), **changes)
-    with pytest.raises(IntegrityViolation) as caught:
+async def test_claim_expiry_scenario(clock: FakeClock, replay: Replay) -> None:
+    """Every lake receipt kind expires with its claim under the injected clock."""
+    await claim_expiry_scenario(InMemoryLakeStore(clock=clock), clock, replay)
+
+
+async def test_an_unseeded_store_refuses_every_audit_pair() -> None:
+    """Without the vocabulary rows, even a defined event breaks the vocabulary reference."""
+    store = InMemoryLakeStore(seed=False)
+    with memory_refusal("audit_log_vocabulary"):
         async with store.transaction() as tx:
-            await tx.append_audit([audit_entry(), entry])
-    assert caught.value.constraint == constraint
+            await tx.append_audit([catalog_created("helio")])
     assert store.tables.audit_log == {}
 
 
-async def test_unseeded_audit_pair_is_refused():
-    """An absent vocabulary row refuses the entire batch with its FK name."""
-    store = InMemoryLakeStore(seed=False)
-    with pytest.raises(IntegrityViolation, match="audit_log_vocabulary"):
-        async with store.transaction() as tx:
-            await tx.append_audit([audit_entry()])
+def _overlong_reason() -> AuditEntry:
+    """Build an entry whose reason only a bypassed value check could carry."""
+    bypassed = catalog_created("helio")
+    object.__setattr__(bypassed, "reason", "x" * 1001)
+    return bypassed
 
 
 @pytest.mark.parametrize(
-    "field,value,constraint",
+    ("constraint", "invalid"),
     [
-        ("principal", "", "principal"),
-        ("principal", "x" * 161, "principal"),
-        ("key", "", "key"),
-        ("key", "x" * 256, "key"),
-        ("request_sha256", "A" * 64, "request_sha256"),
-        ("request_sha256", "a" * 63, "request_sha256"),
+        (
+            "audit_log_actor_check",
+            lambda: replace(catalog_created("helio"), actor="system:" + "a" * 154),
+        ),
+        (
+            "audit_log_object_id_check",
+            lambda: AuditEntry(NOW, "scientist", KeyWithdrawn(kid="", active_from=NOW)),
+        ),
+        (
+            "audit_log_object_id_check",
+            lambda: AuditEntry(NOW, "scientist", KeyWithdrawn(kid="k" * 256, active_from=NOW)),
+        ),
+        ("audit_log_reason_check", _overlong_reason),
     ],
 )
-async def test_claim_table_constraints(field, value, constraint):
-    """Malformed claim identities fail with the corresponding persisted CHECK name."""
+async def test_audit_column_checks_refuse_the_whole_batch(
+    constraint: str, invalid: Callable[[], AuditEntry]
+) -> None:
+    """A batch with one row breaking a column CHECK stages none of its entries."""
     store = InMemoryLakeStore()
-    with pytest.raises(IntegrityViolation, match=f"idempotency_records_{constraint}_check"):
+    async with store.transaction() as tx:
+        with memory_refusal(constraint):
+            await tx.append_audit([catalog_created("valid"), invalid()])
+    assert store.tables.audit_log == {}
+
+
+async def test_an_unencodable_entry_stages_none_of_its_batch() -> None:
+    """Detail encoding happens on append, so a failure leaves the batch unstaged."""
+    store = InMemoryLakeStore()
+    malformed = AuditEntry(
+        NOW, "scientist", CatalogCreated(catalog=UUID(int=1), name=1.5, config_version=1)
+    )
+    async with store.transaction() as tx:
+        with pytest.raises(TypeError):
+            await tx.append_audit([catalog_created("valid"), malformed])
+    assert store.tables.audit_log == {}
+    assert store.tables.next_audit_id == 1
+
+
+@pytest.mark.parametrize(
+    ("change", "constraint"),
+    [
+        ({"principal": ""}, "idempotency_records_principal_check"),
+        ({"principal": "p" * 161}, "idempotency_records_principal_check"),
+        ({"key": ""}, "idempotency_records_key_check"),
+        ({"key": "k" * 256}, "idempotency_records_key_check"),
+        ({"request_sha256": "A" * 64}, "idempotency_records_request_sha256_check"),
+        ({"request_sha256": "a" * 63}, "idempotency_records_request_sha256_check"),
+    ],
+)
+async def test_claim_checks_refuse_malformed_claims(
+    change: dict[str, Any], constraint: str
+) -> None:
+    """A claim that breaks a column CHECK is refused and leaves no row."""
+    store = InMemoryLakeStore()
+    with memory_refusal(constraint):
         async with store.transaction() as tx:
-            await tx.claim(
-                replace(IdempotencyClaim("scientist", "key", "a" * 64), **{field: value})
-            )
+            await tx.claim(replace(CLAIM, **change))
     assert store.tables.idempotency_records == {}
 
 
-async def test_receipt_requires_held_claim_and_valid_lake_kind():
-    """Remember cannot invent a claim, change its fingerprint or store a legacy receipt."""
+@pytest.mark.parametrize("kind", ["organization", "project", "dataset"])
+async def test_lake_receipts_refuse_hierarchy_kinds(kind: str) -> None:
+    """Only the five lake receipt kinds fit the lake's retry table."""
     store = InMemoryLakeStore()
-    claim = IdempotencyClaim("scientist", "key", "a" * 64)
-    replay = Replay("catalog", UUID(int=1))
     async with store.transaction() as tx:
-        with pytest.raises(RuntimeError, match="matching claim"):
-            await tx.remember(claim, replay)
-        await tx.claim(claim)
-        with pytest.raises(RuntimeError, match="matching claim"):
-            await tx.remember(replace(claim, request_sha256="b" * 64), replay)
-        with pytest.raises(IntegrityViolation, match="replay_kind_check"):
-            await tx.remember(claim, replace(replay, kind="organization"))
-        with pytest.raises(IntegrityViolation, match="records_receipt"):
-            await tx.remember(claim, replace(replay, resource_id=None))
-        await tx.remember(claim, replay)
-    with pytest.raises(RuntimeError, match="closed"):
-        await tx.claim(claim)
-    with pytest.raises(RuntimeError, match="closed"):
-        await tx.remember(claim, replay)
-    with pytest.raises(RuntimeError, match="closed"):
-        await tx.append_audit([audit_entry()])
+        await tx.claim(CLAIM)
+        with memory_refusal("idempotency_records_replay_kind_check"):
+            await tx.remember(CLAIM, Replay(kind, UUID(int=1)))
+        await tx.remember(CLAIM, CATALOG_RECEIPT)
+    assert store.tables.idempotency_records[("scientist", "create-helio")].replay == CATALOG_RECEIPT
 
 
-async def test_audit_constraint_checks_reject_corrupted_reason():
-    """The persistence backstop rejects a malformed reason even if value checks were bypassed."""
-    entry = audit_entry()
-    object.__setattr__(entry, "reason", "x" * 1001)
+async def test_claim_rows_must_outlive_their_creation() -> None:
+    """A row whose expiry does not follow its creation breaks the lifetime CHECK."""
     store = InMemoryLakeStore()
-    with pytest.raises(IntegrityViolation, match="audit_log_reason_check"):
-        async with store.transaction() as tx:
-            await tx.append_audit([entry])
+    async with store.transaction() as tx:
+        with memory_refusal("idempotency_records_lifetime"):
+            tx.buffer.idempotency_records.put(
+                ("scientist", "create-helio"), ClaimRow(CLAIM, None, NOW, NOW)
+            )
 
 
-async def test_failed_audit_encoding_discards_all_mutations():
-    """Serialization failure cannot leave another table or an earlier audit row committed."""
-    store = InMemoryLakeStore()
-    entry = audit_entry()
-    object.__setattr__(entry.event, "name", object())
-    with pytest.raises(TypeError):
-        async with store.transaction() as tx:
-            tx.buffer.ldap_groups.put("group", LdapGroupRow("group", 1, NOW))
-            await tx.append_audit([audit_entry(), entry])
-    assert store.tables.ldap_groups == {}
-    assert store.tables.audit_log == {}
-
-
-async def test_concurrent_claim_waits_and_replays_committed_receipt(clock):
-    """A competing transaction cannot acquire the same request before its holder commits."""
+async def test_remember_needs_the_exact_claim_this_transaction_holds(clock: FakeClock) -> None:
+    """No receipt without a held claim, for another fingerprint, or for another's claim."""
     store = InMemoryLakeStore(clock=clock)
-    claim = IdempotencyClaim("scientist", "key", "a" * 64)
-    replay = Replay("catalog", UUID(int=1))
+    async with store.transaction() as tx:
+        with pytest.raises(RuntimeError, match="holds"):
+            await tx.remember(CLAIM, CATALOG_RECEIPT)
+        await tx.claim(CLAIM)
+        other = replace(CLAIM, request_sha256=request_sha256("catalog", "geo"))
+        with pytest.raises(RuntimeError, match="holds"):
+            await tx.remember(other, CATALOG_RECEIPT)
+    async with store.transaction() as tx:
+        with pytest.raises(RuntimeError, match="holds"):
+            await tx.remember(CLAIM, CATALOG_RECEIPT)
+
+
+async def test_a_concurrent_claim_waits_and_replays_the_committed_receipt(
+    clock: FakeClock,
+) -> None:
+    """A competing transaction cannot take a held key until its holder commits."""
+    store = InMemoryLakeStore(clock=clock)
     attempted, acquired = asyncio.Event(), asyncio.Event()
 
-    async def contender():
+    async def contender() -> None:
         async with store.transaction() as tx:
             attempted.set()
-            assert await tx.claim(claim) == replay
+            assert await tx.claim(CLAIM) == CATALOG_RECEIPT
             acquired.set()
 
     async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
         async with store.transaction() as tx:
-            await tx.claim(claim)
-            await tx.remember(claim, replay)
+            await tx.claim(CLAIM)
             tasks.create_task(contender())
             await attempted.wait()
+            await asyncio.sleep(0)
             assert not acquired.is_set()
+            await tx.remember(CLAIM, CATALOG_RECEIPT)
         await acquired.wait()
+
+
+async def test_claims_default_to_the_system_clock() -> None:
+    """Without an injected clock a claim's lifetime starts at the current UTC time."""
+    store = InMemoryLakeStore()
+    before = datetime.now(UTC)
+    async with store.transaction() as tx:
+        await tx.claim(CLAIM)
+    row = store.tables.idempotency_records[("scientist", "create-helio")]
+    assert before <= row.created_at <= datetime.now(UTC)
+    assert row.expires_at - row.created_at == timedelta(hours=24)

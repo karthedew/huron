@@ -15,13 +15,20 @@ if TYPE_CHECKING:
 
 
 class AuditWriter(Protocol):
-    """Append entries in the transaction that records their change."""
+    """Appends audit entries in the transaction that makes their change.
+
+    Entries become visible when that transaction commits and vanish if it rolls back.
+    An operation appends after the write that locks the audited row, so one object's
+    entry ids ascend in commit order.
+    """
 
     async def append_audit(self, entries: Sequence[AuditEntry]) -> None:
-        """Stage a non-empty batch in call order.
+        """Append entries, with ids ascending in call order.
+
+        An empty sequence raises ValueError: an audited change always records an entry.
 
         Args:
-            entries: Facts about changes made by the same transaction.
+            entries: Entries describing changes made in this transaction.
         """
         ...
 

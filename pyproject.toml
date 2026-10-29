@@ -85,7 +85,6 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH", "RUF", "FAST", "D"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"src/huron/core/metastore/lake/memory.py" = ["N818"]
 # Tests document what they prove, not how they are called: every module,
 # class, test and fixture carries a summary line, but a test double's
 # __init__ and dunder methods add nothing a reader needs.
@@ -107,6 +106,8 @@ convention = "google"
 "src/huron/core/security/roles.py" = ["N818"]
 "src/huron/core/security/errors.py" = ["N818"]
 "src/huron/applications/api/errors.py" = ["N818"]
+# The lake fake names its constraint failure as the persistence design does.
+"src/huron/core/metastore/lake/memory.py" = ["N818"]
 # FastAPI resolves annotations at runtime; type-checking-only imports break
 # dependency injection in these modules.
 "src/huron/applications/api/**" = ["TC001", "TC002", "TC003"]

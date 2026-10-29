@@ -1,50 +1,59 @@
-"""Transactional staging of the lake's append-only audit rows."""
+"""The lake audit log's constraints and its in-memory transaction half."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from huron.core.lake.audit import AuditObject
+from huron.core.lake.audit import AUDIT_REASON_MAX, AuditObject
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
-    from huron.core.lake.audit import AuditEntry
-    from huron.core.metastore.lake.memory import LakeBuffer, LakeTables
+    from huron.core.lake.audit import AuditAction, AuditEntry
+    from huron.core.metastore.lake.memory import LakeBuffer
+
+_ACTOR_MAX: Final = 160
+_OBJECT_ID_MAX: Final = 255
+
+
+def audit_log_violation(
+    entry: AuditEntry, vocabulary: Collection[tuple[AuditAction, AuditObject]]
+) -> str | None:
+    """Name the first `lake.audit_log` constraint that the entry's row would violate.
+
+    Args:
+        entry: The entry about to be staged.
+        vocabulary: The seeded `(action, object_type)` pairs the row must reference.
+
+    Returns:
+        The PostgreSQL constraint name, or None when the row is acceptable.
+    """
+    holds = {
+        "audit_log_vocabulary": (entry.event.ACTION, entry.event.OBJECT) in vocabulary,
+        "audit_log_collection_has_catalog": entry.event.OBJECT is not AuditObject.COLLECTION
+        or entry.catalog_id is not None,
+        "audit_log_actor_check": 1 <= len(entry.actor) <= _ACTOR_MAX,
+        "audit_log_object_id_check": 1 <= len(entry.object_id) <= _OBJECT_ID_MAX,
+        "audit_log_reason_check": entry.reason is None
+        or 1 <= len(entry.reason) <= AUDIT_REASON_MAX,
+    }
+    return next((constraint for constraint, held in holds.items() if not held), None)
 
 
 class InMemoryAudit:
     """The audit writer half of an open in-memory transaction."""
 
     buffer: LakeBuffer
-    _tables: LakeTables
 
     async def append_audit(self, entries: Sequence[AuditEntry]) -> None:
-        """Validate and stage a complete batch in its supplied order.
+        """Stage entries in call order, to be numbered when the transaction commits.
 
         Args:
-            entries: Non-empty facts to commit with the transaction's changes.
+            entries: Facts about changes made in the same transaction.
 
         Raises:
-            ValueError: If the batch is empty.
-            IntegrityViolation: If a row violates a persisted constraint.
+            ValueError: If no entry is given.
         """
-        from huron.core.metastore.lake.memory import IntegrityViolation
-
-        self.buffer.check_open()
         if not entries:
-            raise ValueError("An audit batch must not be empty")
-        for entry in entries:
-            constraints = {
-                "audit_log_vocabulary": (entry.event.ACTION, entry.event.OBJECT)
-                in self._tables.audit_actions,
-                "audit_log_collection_has_catalog": entry.event.OBJECT != AuditObject.COLLECTION
-                or entry.catalog_id is not None,
-                "audit_log_actor_check": 1 <= len(entry.actor) <= 160,
-                "audit_log_object_id_check": 1 <= len(entry.object_id) <= 255,
-                "audit_log_reason_check": entry.reason is None or 1 <= len(entry.reason) <= 1000,
-            }
-            for constraint, valid in constraints.items():
-                if not valid:
-                    raise IntegrityViolation(constraint)
-        self.buffer.audit_entries.extend(entries)
+            raise ValueError("An audited change must append at least one entry")
+        self.buffer.audit_log.append(entries)

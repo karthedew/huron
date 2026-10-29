@@ -21,7 +21,12 @@ class IdempotencyClaim:
 
 @dataclass(frozen=True, slots=True)
 class Replay:
-    """A durable receipt for an accepted hierarchy or lake administration mutation."""
+    """A durable receipt for an accepted creating call.
+
+    Legacy hierarchy receipts name an organization, project or dataset; lake receipts
+    name a catalog, metadata schema or signing key. A receipt lives exactly as long as
+    its claim, whatever its kind.
+    """
 
     kind: Literal[
         "organization",
@@ -55,9 +60,9 @@ class RetryTransaction(Protocol):
     async def claim(self, claim: IdempotencyClaim) -> Replay | None:
         """Reserve a principal/key pair or return its identical prior receipt.
 
-        Conflicting fingerprints raise IdempotencyKeyReused. Expired claims may
-        be replaced. Rollback
-        discards the claim together with the mutation.
+        A live claim with another fingerprint raises IdempotencyKeyReused. Every
+        claim expires after the same lifetime, whatever its receipt kind, and an
+        expired claim is replaced. Rollback discards the claim with the mutation.
 
         Args:
             claim: The actor, global retry key and exact fingerprint.

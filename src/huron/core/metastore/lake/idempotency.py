@@ -1,113 +1,119 @@
-"""Transaction-scoped retry claims and their expiring receipts."""
+"""The lake's retry claims: their table row, constraints and in-memory transaction half."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from datetime import timedelta
+from typing import TYPE_CHECKING, Final
 
 from huron.core.foundation.errors import IdempotencyKeyReused
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Hashable
+    from datetime import datetime
 
     from huron.core.foundation.clock import Clock
     from huron.core.foundation.retry import IdempotencyClaim, Replay
     from huron.core.metastore.lake.memory import LakeBuffer
 
+CLAIM_LIFETIME: Final = timedelta(hours=24)
+LAKE_REPLAY_KINDS: Final = frozenset(
+    {"catalog", "metadata_schema", "signing_key", "collection", "commit"}
+)
+_PRINCIPAL_MAX: Final = 160
+_KEY_MAX: Final = 255
+_SHA256: Final = re.compile(r"[0-9a-f]{64}")
+
 
 @dataclass(frozen=True, slots=True)
 class ClaimRow:
-    """A request fingerprint and optional result within its fixed lifetime."""
+    """One `lake.idempotency_records` row: a claim, its receipt once remembered, its lifetime."""
 
-    request_sha256: str
+    claim: IdempotencyClaim
     replay: Replay | None
     created_at: datetime
     expires_at: datetime
 
+    def live_at(self, instant: datetime) -> bool:
+        """Whether the claim still binds its key at an instant.
+
+        Args:
+            instant: The time of the competing claim.
+
+        Returns:
+            True before the claim expires; every receipt kind expires alike.
+        """
+        return instant < self.expires_at
+
+    def violation(self) -> str | None:
+        """Name the first table constraint this row would violate.
+
+        Returns:
+            The PostgreSQL constraint name, or None when the row is acceptable.
+        """
+        claim = self.claim
+        holds = {
+            "idempotency_records_principal_check": 1 <= len(claim.principal) <= _PRINCIPAL_MAX,
+            "idempotency_records_key_check": 1 <= len(claim.key) <= _KEY_MAX,
+            "idempotency_records_request_sha256_check": bool(
+                _SHA256.fullmatch(claim.request_sha256)
+            ),
+            "idempotency_records_replay_kind_check": self.replay is None
+            or self.replay.kind in LAKE_REPLAY_KINDS,
+            "idempotency_records_lifetime": self.expires_at > self.created_at,
+        }
+        return next((constraint for constraint, held in holds.items() if not held), None)
+
 
 class InMemoryClaims:
-    """The retry writer half of an open in-memory transaction."""
+    """The retry half of an open in-memory transaction."""
 
     buffer: LakeBuffer
+    lock: Callable[[Hashable], Awaitable[None]]
     _clock: Clock
     _claimed: set[tuple[str, str]]
-    lock: Callable[[Hashable], Awaitable[None]]
 
     async def claim(self, claim: IdempotencyClaim) -> Replay | None:
-        """Reserve a key or replay the matching unexpired request.
+        """Reserve a principal's key, or replay the live claim with the same fingerprint.
+
+        The key stays locked until this transaction ends, so a concurrent claim of it
+        waits and then sees this transaction's outcome.
 
         Args:
             claim: The principal's key and request fingerprint.
 
         Returns:
-            A remembered receipt, or None for a claim without a receipt.
+            The live claim's receipt (None until one is remembered), or None for a new claim.
 
         Raises:
-            IdempotencyKeyReused: If a live claim has a different fingerprint.
+            IdempotencyKeyReused: If a live claim on the key has another fingerprint.
         """
-        self.buffer.check_open()
-        _check_claim(claim)
         key = (claim.principal, claim.key)
         if key not in self._claimed:
-            await self.lock(("claim", *key))
+            await self.lock(("idempotency_records", *key))
             self._claimed.add(key)
         now = self._clock.now()
         row = self.buffer.idempotency_records.get(key)
-        if row is not None and row.expires_at > now:
-            if row.request_sha256 != claim.request_sha256:
+        if row is not None and row.live_at(now):
+            if row.claim.request_sha256 != claim.request_sha256:
                 raise IdempotencyKeyReused("Idempotency key reused with a different request")
             return row.replay
-        self.buffer.idempotency_records.put(
-            key, ClaimRow(claim.request_sha256, None, now, now + timedelta(hours=24))
-        )
+        self.buffer.idempotency_records.put(key, ClaimRow(claim, None, now, now + CLAIM_LIFETIME))
         return None
 
     async def remember(self, claim: IdempotencyClaim, replay: Replay) -> None:
-        """Attach a receipt to the request held by this transaction.
+        """Attach the receipt to the claim this transaction holds.
 
         Args:
-            claim: The previously acquired request identity.
-            replay: Its durable lake result.
+            claim: The claim this transaction acquired.
+            replay: The created resource's receipt.
 
         Raises:
-            RuntimeError: If this transaction does not hold the matching claim.
-            IntegrityViolation: If the receipt violates the lake table contract.
+            RuntimeError: If this transaction does not hold exactly this claim.
         """
-        from huron.core.metastore.lake.memory import IntegrityViolation
-
-        self.buffer.check_open()
         key = (claim.principal, claim.key)
         row = self.buffer.idempotency_records.get(key)
-        if key not in self._claimed or row is None or row.request_sha256 != claim.request_sha256:
-            raise RuntimeError("A matching claim must be acquired before remembering its receipt")
-        if replay.kind not in {"catalog", "metadata_schema", "signing_key", "collection", "commit"}:
-            raise IntegrityViolation("idempotency_records_replay_kind_check")
-        if replay.resource_id is None:
-            raise IntegrityViolation("idempotency_records_receipt")
+        if key not in self._claimed or row is None or row.claim != claim:
+            raise RuntimeError("A receipt needs the claim this transaction holds")
         self.buffer.idempotency_records.put(key, replace(row, replay=replay))
-
-
-def _check_claim(claim: IdempotencyClaim) -> None:
-    """Apply the retry table's principal, key and fingerprint checks.
-
-    Args:
-        claim: Request identity to validate before staging.
-
-    Raises:
-        IntegrityViolation: If the claim violates a persisted CHECK.
-    """
-    from huron.core.metastore.lake.memory import IntegrityViolation
-
-    constraints = {
-        "idempotency_records_principal_check": 1 <= len(claim.principal) <= 160,
-        "idempotency_records_key_check": 1 <= len(claim.key) <= 255,
-        "idempotency_records_request_sha256_check": re.fullmatch(
-            r"[0-9a-f]{64}", claim.request_sha256
-        )
-        is not None,
-    }
-    for constraint, valid in constraints.items():
-        if not valid:
-            raise IntegrityViolation(constraint)

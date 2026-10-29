@@ -1,282 +1,405 @@
-"""Closed audit vocabulary, value invariants and canonical event details."""
+"""The closed audit vocabulary, entry invariants and the canonical `detail` encoding."""
 
-from dataclasses import FrozenInstanceError, replace
+from __future__ import annotations
+
+import re
+from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-import re
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import pytest
 
-from huron.core.lake import audit
-from huron.core.lake.types import CollectionState
+from huron.core.lake import (
+    AUDIT_REASON_MAX,
+    AUDIT_VOCABULARY,
+    SYSTEM_BOOTSTRAP,
+    AuditAction,
+    AuditEntry,
+    AuditObject,
+    CatalogConfigChanged,
+    CatalogCreated,
+    CollectionActivated,
+    CollectionCreated,
+    CollectionDeleted,
+    CollectionMoved,
+    CollectionState,
+    FileAdded,
+    FileOverwritten,
+    FileRemoved,
+    KeyRotated,
+    KeyWithdrawn,
+    MetadataPublished,
+    RoleMapped,
+    SchemaPublished,
+)
 from huron.core.security.broker import Role
 from huron.schema.metadata import FieldChange
 
+if TYPE_CHECKING:
+    from huron.core.lake import AuditEvent
+    from huron.schema.metadata import JsonValue
+
 pytestmark = pytest.mark.unit
-COLLECTION, CATALOG, COMMIT, SCHEMA = (UUID(int=i) for i in range(1, 5))
+
+COLLECTION, CATALOG, COMMIT, SCHEMA, BASE_SCHEMA = (UUID(int=i) for i in range(1, 6))
 AT = datetime(2026, 10, 23, 14, 2, 11, 250000, tzinfo=UTC)
-OFFSET = AT.astimezone(timezone(timedelta(hours=3)))
-BASE = dict(collection=COLLECTION, catalog=CATALOG, version=1)
-FILE = dict(
-    **BASE, commit_id=COMMIT, host="lab", rel_path="data/file", size_bytes=42, sha256="a" * 64
-)
-FILE_DETAIL = dict(
-    version=1,
-    commit_id=str(COMMIT),
-    host="lab",
-    rel_path="data/file",
-    size_bytes=42,
-    sha256="a" * 64,
-)
-CHANGES = (FieldChange("/z", old=1, new=None), FieldChange("/a", new="new"))
-CHANGE_DETAIL = [{"pointer": "/a", "new": "new"}, {"pointer": "/z", "old": 1, "new": None}]
-CASES = [
+AT_ELSEWHERE = AT.astimezone(timezone(timedelta(hours=3)))
+SHA_NEW, SHA_OLD = "a" * 64, "b" * 64
+IN_COLLECTION: dict[str, Any] = {"collection": COLLECTION, "catalog": CATALOG, "version": 3}
+FILE: dict[str, Any] = IN_COLLECTION | {
+    "commit_id": COMMIT,
+    "host": "lab-07",
+    "rel_path": "raw/run042.dat",
+    "size_bytes": 42,
+    "sha256": SHA_NEW,
+}
+FILE_DETAIL: dict[str, JsonValue] = {
+    "version": 3,
+    "commit_id": "00000000-0000-0000-0000-000000000003",
+    "host": "lab-07",
+    "rel_path": "raw/run042.dat",
+    "size_bytes": 42,
+    "sha256": SHA_NEW,
+}
+CHANGES = (FieldChange("/z", old=1, new=None), FieldChange("/a/~1b", new="added"))
+CHANGES_DETAIL: list[JsonValue] = [
+    {"pointer": "/a/~1b", "new": "added"},
+    {"pointer": "/z", "old": 1, "new": None},
+]
+COLLECTION_ID = "00000000-0000-0000-0000-000000000001"
+CATALOG_ID = "00000000-0000-0000-0000-000000000002"
+
+# event, action, object type, object id, catalog id, detail
+VOCABULARY_ROWS: list[tuple[AuditEvent, str, str, str, UUID | None, dict[str, JsonValue]]] = [
     (
-        audit.CollectionCreated(**BASE, config_version=1),
+        CollectionCreated(**IN_COLLECTION | {"version": 1}, config_version=2),
         "create",
         "collection",
-        COLLECTION,
+        COLLECTION_ID,
         CATALOG,
-        dict(version=1, config_version=1),
+        {"version": 1, "config_version": 2},
     ),
     (
-        audit.CollectionActivated(**BASE, identifier="helio.ns.data"),
+        CollectionActivated(**IN_COLLECTION, identifier="helio.psp.run042"),
         "activate",
         "collection",
-        COLLECTION,
+        COLLECTION_ID,
         CATALOG,
-        dict(version=1, identifier="helio.ns.data"),
+        {"version": 3, "identifier": "helio.psp.run042"},
     ),
-    (audit.FileAdded(**FILE), "add", "collection", COLLECTION, CATALOG, FILE_DETAIL),
+    (FileAdded(**FILE), "add", "collection", COLLECTION_ID, CATALOG, FILE_DETAIL),
     (
-        audit.FileOverwritten(
+        FileOverwritten(
             **FILE,
             old_size_bytes=21,
-            old_sha256="b" * 64,
-            old_uploaded_by="old",
-            old_uploaded_at=OFFSET,
+            old_sha256=SHA_OLD,
+            old_uploaded_by="alice",
+            old_uploaded_at=AT_ELSEWHERE,
         ),
         "overwrite",
         "collection",
-        COLLECTION,
+        COLLECTION_ID,
         CATALOG,
-        dict(
-            **FILE_DETAIL,
-            old_size_bytes=21,
-            old_sha256="b" * 64,
-            old_uploaded_by="old",
-            old_uploaded_at=AT.isoformat(),
-        ),
+        FILE_DETAIL
+        | {
+            "old_size_bytes": 21,
+            "old_sha256": SHA_OLD,
+            "old_uploaded_by": "alice",
+            "old_uploaded_at": "2026-10-23T14:02:11.250000+00:00",
+        },
     ),
     (
-        audit.FileRemoved(**FILE, uploaded_by="old", uploaded_at=OFFSET),
+        FileRemoved(**FILE, uploaded_by="alice", uploaded_at=AT_ELSEWHERE),
         "rm",
         "collection",
-        COLLECTION,
+        COLLECTION_ID,
         CATALOG,
-        dict(**FILE_DETAIL, uploaded_by="old", uploaded_at=AT.isoformat()),
+        FILE_DETAIL | {"uploaded_by": "alice", "uploaded_at": "2026-10-23T14:02:11.250000+00:00"},
     ),
     (
-        audit.MetadataPublished(**BASE, changes=CHANGES),
+        MetadataPublished(**IN_COLLECTION, changes=CHANGES),
         "meta_publish",
         "collection",
-        COLLECTION,
+        COLLECTION_ID,
         CATALOG,
-        dict(version=1, changes=CHANGE_DETAIL),
+        {"version": 3, "changes": CHANGES_DETAIL},
     ),
     (
-        audit.CollectionMoved(
-            **BASE, from_identifier="helio.ns.old", to_identifier="helio.ns.new", changes=CHANGES
+        CollectionMoved(
+            **IN_COLLECTION, from_identifier="helio.psp.run042", to_identifier="helio.psp.run043"
         ),
         "mv",
         "collection",
-        COLLECTION,
+        COLLECTION_ID,
         CATALOG,
-        dict(
-            version=1,
-            from_identifier="helio.ns.old",
-            to_identifier="helio.ns.new",
-            changes=CHANGE_DETAIL,
-        ),
+        {"version": 3, "from_identifier": "helio.psp.run042", "to_identifier": "helio.psp.run043"},
     ),
     (
-        audit.CollectionDeleted(**BASE, state=CollectionState.DRAFT, identifier=None),
+        CollectionDeleted(
+            **IN_COLLECTION, state=CollectionState.DRAFT, identifier="helio.psp.run042"
+        ),
         "delete",
         "collection",
-        COLLECTION,
+        COLLECTION_ID,
         CATALOG,
-        dict(version=1, state="draft", identifier=None),
+        {"version": 3, "state": "draft", "identifier": "helio.psp.run042"},
     ),
     (
-        audit.CatalogCreated(catalog=CATALOG, name="helio", config_version=1),
+        CatalogCreated(catalog=CATALOG, name="helio", config_version=1),
         "create",
         "catalog",
+        CATALOG_ID,
         CATALOG,
-        CATALOG,
-        dict(name="helio", config_version=1),
+        {"name": "helio", "config_version": 1},
     ),
     (
-        audit.CatalogConfigChanged(catalog=CATALOG, config_version=2, changes=CHANGES),
+        CatalogConfigChanged(catalog=CATALOG, config_version=2, changes=CHANGES),
         "catalog_config",
         "catalog",
+        CATALOG_ID,
         CATALOG,
-        CATALOG,
-        dict(config_version=2, changes=CHANGE_DETAIL),
+        {"config_version": 2, "changes": CHANGES_DETAIL},
     ),
     (
-        audit.SchemaPublished(schema=SCHEMA, name="base", version=1, extends_id=None),
+        SchemaPublished(schema=SCHEMA, name="helio", version=1, extends_id=BASE_SCHEMA),
         "schema_publish",
         "metadata_schema",
-        SCHEMA,
+        "00000000-0000-0000-0000-000000000004",
         None,
-        dict(name="base", version=1, extends_id=None),
+        {"name": "helio", "version": 1, "extends_id": "00000000-0000-0000-0000-000000000005"},
     ),
     (
-        audit.RoleMapped(
-            ldap_group="readers",
+        RoleMapped(
+            ldap_group="helio-readers",
             catalog=CATALOG,
             old_role=None,
             new_role=Role.CATALOG_READER,
-            posix_gid=12,
+            posix_gid=70100,
         ),
         "role_map",
         "ldap_group",
-        "readers",
+        "helio-readers",
         CATALOG,
-        dict(old_role=None, new_role="catalog_reader", posix_gid=12),
+        {"old_role": None, "new_role": "catalog_reader", "posix_gid": 70100},
     ),
     (
-        audit.KeyRotated(kid="kid", alg="ES256", active_from=OFFSET, retired_kid=None),
+        KeyRotated(kid="2026-10-23-a", alg="ES256", active_from=AT_ELSEWHERE, retired_kid=None),
         "key_rotate",
         "signing_key",
-        "kid",
+        "2026-10-23-a",
         None,
-        dict(alg="ES256", active_from=AT.isoformat(), retired_kid=None),
+        {
+            "alg": "ES256",
+            "active_from": "2026-10-23T14:02:11.250000+00:00",
+            "retired_kid": None,
+        },
     ),
     (
-        audit.KeyWithdrawn(kid="kid", active_from=OFFSET),
+        KeyWithdrawn(kid="2026-10-23-a", active_from=AT_ELSEWHERE),
         "key_withdraw",
         "signing_key",
-        "kid",
+        "2026-10-23-a",
         None,
-        dict(active_from=AT.isoformat()),
+        {"active_from": "2026-10-23T14:02:11.250000+00:00"},
     ),
+]
+COLLECTION_EVENTS = [row[0] for row in VOCABULARY_ROWS if row[2] == "collection"]
+CREATED = VOCABULARY_ROWS[0][0]
+NAIVE_EVENT_INSTANTS = [
+    pytest.param(
+        {"event": replace(event, **{field.name: AT.replace(tzinfo=None)})},
+        id=f"{type(event).__name__}.{field.name}",
+    )
+    for event, *_ in VOCABULARY_ROWS
+    for field in fields(event)
+    if isinstance(getattr(event, field.name), datetime)
 ]
 
 
-@pytest.mark.parametrize("event,action,object_type,object_id,catalog,detail", CASES)
-def test_every_event_has_exact_canonical_detail(
-    event, action, object_type, object_id, catalog, detail
-):
-    """Each pair encodes only its required detail fields, retaining nulls and UTC instants."""
-    entry = audit.AuditEntry(AT, "scientist", event)
-    assert entry.detail() == detail
-    assert entry.object_id == str(object_id)
-    assert entry.catalog_id == catalog
-    assert (event.ACTION, event.OBJECT) == (action, object_type)
-    assert isinstance(entry.detail(), dict)
-    with pytest.raises(FrozenInstanceError):
-        setattr(event, event.KEY, "changed")
-    with pytest.raises(TypeError):
-        type(event)("positional")
-
-
-def test_vocabulary_contains_exactly_the_fourteen_declared_pairs():
-    """Vocabulary derives from the full event set, including key withdrawal."""
-    assert audit.AUDIT_VOCABULARY == frozenset((case[1], case[2]) for case in CASES)
-    assert len(audit.AUDIT_VOCABULARY) == 14
+def entry(event: AuditEvent = CREATED, **envelope: Any) -> AuditEntry:
+    """Build an entry by a company user at a fixed instant, overriding any envelope field."""
+    return AuditEntry(**({"at": AT, "actor": "scientist", "event": event} | envelope))
 
 
 @pytest.mark.parametrize(
-    "changes",
+    ("event", "action", "object_type", "object_id", "catalog_id", "detail"), VOCABULARY_ROWS
+)
+def test_each_event_renders_its_vocabulary_row(
+    event: AuditEvent,
+    action: str,
+    object_type: str,
+    object_id: str,
+    catalog_id: UUID | None,
+    detail: dict[str, JsonValue],
+) -> None:
+    """Pair, object id, catalog and detail keys, with canonical UUIDs, UTC instants and nulls."""
+    recorded = entry(event)
+    assert (action, object_type) == (type(event).ACTION, type(event).OBJECT)
+    assert recorded.object_id == object_id
+    assert recorded.catalog_id == catalog_id
+    assert recorded.detail() == detail
+
+
+def test_vocabulary_is_exactly_the_fourteen_pairs_of_the_event_classes() -> None:
+    """The pair set derives from the events, key withdrawal included, and nothing else."""
+    pairs = {(row[1], row[2]) for row in VOCABULARY_ROWS}
+    assert len(VOCABULARY_ROWS) == len(pairs) == 14
+    assert pairs == AUDIT_VOCABULARY
+    assert ("key_withdraw", "signing_key") in AUDIT_VOCABULARY
+    assert all(
+        isinstance(a, AuditAction) and isinstance(o, AuditObject) for a, o in AUDIT_VOCABULARY
+    )
+    assert {action for action, _ in AUDIT_VOCABULARY} == set(AuditAction)
+    assert {object_type for _, object_type in AUDIT_VOCABULARY} == set(AuditObject)
+
+
+@pytest.mark.parametrize("event", [row[0] for row in VOCABULARY_ROWS])
+def test_events_are_frozen_and_keyword_only(event: AuditEvent) -> None:
+    """An event cannot change after construction or be built from positional values."""
+    with pytest.raises(FrozenInstanceError):
+        setattr(event, type(event).KEY, "changed")
+    with pytest.raises(TypeError):
+        type(event)(*(getattr(event, field.name) for field in fields(event)))
+
+
+@pytest.mark.parametrize("state", list(CollectionState))
+def test_deletion_records_the_exact_state_code(state: CollectionState) -> None:
+    """Every lifecycle state is recorded by its code, and only a draft is unsettled."""
+    deleted = replace(VOCABULARY_ROWS[7][0], state=state)
+    assert entry(deleted).detail()["state"] == state.value
+    assert type(entry(deleted).detail()["state"]) is str
+    assert state.settled is (state is not CollectionState.DRAFT)
+
+
+@pytest.mark.parametrize(
+    "envelope",
     [
-        dict(at=AT.replace(tzinfo=None)),
-        dict(actor=""),
-        dict(actor="wrong user"),
-        dict(reason=""),
-        dict(reason=" "),
-        dict(reason=" x"),
-        dict(reason="x "),
-        dict(reason="x" * 1001),
+        {"at": AT.replace(tzinfo=None)},
+        {"actor": ""},
+        {"actor": "two words"},
+        {"actor": "-leading-dash"},
+        {"actor": "slash/name"},
+        {"reason": ""},
+        {"reason": "   "},
+        {"reason": " padded"},
+        {"reason": "padded\n"},
+        {"reason": "x" * (AUDIT_REASON_MAX + 1)},
+        *NAIVE_EVENT_INSTANTS,
     ],
 )
-def test_entry_refuses_invalid_envelope(changes):
-    """Naive instants, invalid actors and unnormalized or excessive reasons are rejected."""
-    with pytest.raises(ValueError):
-        audit.AuditEntry(**(dict(at=AT, actor="scientist", event=CASES[0][0]) | changes))
+def test_entry_refuses_an_invalid_instant_actor_or_reason(envelope: dict[str, Any]) -> None:
+    """Naive entry or event instants, unknown actors and malformed reasons are bugs."""
+    with pytest.raises(ValueError, match="audit"):
+        entry(**envelope)
 
 
 @pytest.mark.parametrize(
-    "actor", ["scientist", "A.z_1@example.org", audit.SYSTEM_BOOTSTRAP, "system:maintenance"]
+    "actor", ["scientist", "A.z_1@example.org", "u" * 128, SYSTEM_BOOTSTRAP, "system:reconciler"]
 )
-@pytest.mark.parametrize("reason", [None, "x", "x" * 1000])
-def test_valid_actors_and_reason_boundaries(actor, reason):
-    """Company subjects and explicit system actors accept optional stripped explanations."""
-    assert audit.AuditEntry(AT, actor, CASES[0][0], reason).reason == reason
+@pytest.mark.parametrize("reason", [None, "x", "x" * AUDIT_REASON_MAX])
+def test_entry_accepts_company_and_system_actors_with_bounded_reasons(
+    actor: str, reason: str | None
+) -> None:
+    """A company username or `system:` actor and a 1 to 1,000 character reason are kept."""
+    accepted = entry(actor=actor, reason=reason)
+    assert (accepted.actor, accepted.reason) == (actor, reason)
 
 
 @pytest.mark.parametrize(
     "event",
     [
-        replace(CASES[0][0], version=0),
-        replace(CASES[10][0], version=-1),
-        replace(CASES[5][0], changes=()),
-        replace(CASES[6][0], changes=()),
-        replace(CASES[9][0], changes=()),
+        *(replace(event, version=0) for event in COLLECTION_EVENTS),
+        replace(VOCABULARY_ROWS[10][0], version=0),
+        replace(VOCABULARY_ROWS[10][0], version=-1),
     ],
 )
-def test_entry_refuses_nonpositive_versions_and_empty_changes(event):
-    """Invalid versions and no-op diffs cannot produce audit entries."""
-    with pytest.raises(ValueError):
-        audit.AuditEntry(AT, "scientist", event)
+def test_entry_refuses_a_version_below_one(event: AuditEvent) -> None:
+    """Collection versions and schema versions start at 1."""
+    with pytest.raises(ValueError, match="version"):
+        entry(event)
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        replace(VOCABULARY_ROWS[5][0], changes=()),
+        replace(VOCABULARY_ROWS[9][0], changes=()),
+    ],
+)
+def test_entry_refuses_an_empty_change_list(event: AuditEvent) -> None:
+    """A publish whose diff is empty is a no-op and records nothing."""
+    with pytest.raises(ValueError, match="change list"):
+        entry(event)
 
 
 @pytest.mark.parametrize("role", [None, *Role])
-def test_role_event_refuses_equal_or_absent_roles(role):
-    """A mapping event always describes an actual role transition."""
-    with pytest.raises(ValueError):
-        audit.RoleMapped(
-            ldap_group="group", catalog=None, old_role=role, new_role=role, posix_gid=1
+def test_role_change_refuses_equal_roles(role: Role | None) -> None:
+    """A mapping event always changes the role; both absent is no change."""
+    catalog = None if role is None or not role.catalog_scoped else CATALOG
+    with pytest.raises(ValueError, match="must change"):
+        RoleMapped(ldap_group="g", catalog=catalog, old_role=role, new_role=role, posix_gid=1)
+
+
+@pytest.mark.parametrize(
+    ("catalog", "old_role", "new_role"),
+    [
+        (None, None, Role.CATALOG_READER),
+        (None, Role.CATALOG_OWNER, None),
+        (None, Role.ADMINISTRATOR, Role.CATALOG_CONTRIBUTOR),
+        (CATALOG, None, Role.ADMINISTRATOR),
+        (CATALOG, Role.ADMINISTRATOR, Role.CATALOG_OWNER),
+    ],
+)
+def test_role_change_refuses_a_role_outside_its_scope(
+    catalog: UUID | None, old_role: Role | None, new_role: Role | None
+) -> None:
+    """Catalog roles need a catalog, and the organization Administrator role takes none."""
+    with pytest.raises(ValueError, match="scope"):
+        RoleMapped(
+            ldap_group="g", catalog=catalog, old_role=old_role, new_role=new_role, posix_gid=1
         )
 
 
-@pytest.mark.parametrize("role", list(Role))
-def test_role_removal_encodes_code_and_null(role):
-    """Every supported role serializes by code, including organization administration."""
-    event = audit.RoleMapped(
-        ldap_group="group",
-        catalog=CATALOG if role.catalog_scoped else None,
-        old_role=role,
-        new_role=None,
-        posix_gid=1,
+@pytest.mark.parametrize(
+    ("catalog", "old_role", "new_role"),
+    [
+        (CATALOG, Role.CATALOG_READER, Role.CATALOG_OWNER),
+        (CATALOG, Role.CATALOG_CONTRIBUTOR, None),
+        (None, None, Role.ADMINISTRATOR),
+        (None, Role.ADMINISTRATOR, None),
+    ],
+)
+def test_role_change_records_codes_and_nulls_in_its_scope(
+    catalog: UUID | None, old_role: Role | None, new_role: Role | None
+) -> None:
+    """Grants, changes and removals encode role codes and the organization scope has no catalog."""
+    event = RoleMapped(
+        ldap_group="g", catalog=catalog, old_role=old_role, new_role=new_role, posix_gid=70001
     )
-    assert audit.AuditEntry(AT, "scientist", event).detail() == dict(
-        old_role=role.code, new_role=None, posix_gid=1
-    )
+    recorded = entry(event)
+    assert recorded.catalog_id == catalog
+    assert recorded.detail() == {
+        "old_role": old_role.code if old_role else None,
+        "new_role": new_role.code if new_role else None,
+        "posix_gid": 70001,
+    }
 
 
-@pytest.mark.parametrize("state", list(CollectionState))
-def test_collection_state_settled_and_deletion_encoding(state):
-    """Draft is the only unsettled state and deletion preserves the exact state code."""
-    assert state.settled == (state is not CollectionState.DRAFT)
-    assert (
-        audit.AuditEntry(AT, "scientist", replace(CASES[7][0], state=state)).detail()["state"]
-        == state.value
-    )
+def test_detail_refuses_a_value_it_cannot_encode() -> None:
+    """A field outside the encoding rules raises rather than emitting non-JSON detail."""
+    malformed = replace(VOCABULARY_ROWS[8][0], name=1.5)
+    with pytest.raises(TypeError, match="float"):
+        entry(malformed).detail()
 
 
-def test_detail_refuses_unsupported_event_field_types():
-    """A malformed event cannot silently emit non-JSON data."""
-    with pytest.raises(TypeError, match="Unsupported"):
-        audit.AuditEntry(AT, "scientist", replace(CASES[8][0], name=object())).detail()
-
-
-def test_no_audit_mutation_in_src():
-    """Application source never updates, deletes or truncates persisted audit rows."""
-    forbidden = re.compile(
+def test_no_audit_mutation_in_src() -> None:
+    """No application source updates, deletes or truncates the append-only audit log."""
+    mutation = re.compile(
         r"UPDATE\s+lake\.audit_log|DELETE\s+FROM\s+lake\.audit_log|TRUNCATE\s+lake\.audit_log",
         re.IGNORECASE,
     )
-    for path in Path("src/huron").rglob("*.py"):
-        assert not forbidden.search(path.read_text()), path
+    sources = sorted((Path(__file__).parents[2] / "src" / "huron").rglob("*.py"))
+    assert sources
+    assert [path for path in sources if mutation.search(path.read_text(encoding="utf-8"))] == []

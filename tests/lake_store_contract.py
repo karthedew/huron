@@ -2,25 +2,38 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
-from dataclasses import replace
+import asyncio
+from dataclasses import dataclass, replace
 from datetime import timedelta
+from typing import TYPE_CHECKING, ClassVar, Protocol
 from uuid import UUID
-
-from huron.core.foundation.errors import IdempotencyKeyReused
-from huron.core.foundation.retry import IdempotencyClaim, Replay
-from huron.core.lake.audit import AuditEntry, AuditRecord, CatalogCreated
-from tests.unit.support import FakeClock
-from huron.core.metastore.lake import InMemoryLakeStore
-from huron.core.metastore.lake.memory import LdapGroupRow, RoleMappingRow, SigningKeyRow
-from huron.core.security.broker import CatalogRef, Grant, Grants, Role, SigningKeyRecord
-from tests.lake_tokens import TEST_EPOCH, TEST_RECORD
-
 
 import pytest
 
+from huron.core.foundation.errors import IdempotencyKeyReused
+from huron.core.foundation.retry import IdempotencyClaim, Replay, request_sha256
+from huron.core.lake.audit import (
+    AuditEntry,
+    AuditObject,
+    AuditRecord,
+    CatalogCreated,
+    CollectionCreated,
+)
+from huron.core.metastore.lake.memory import (
+    IntegrityViolation,
+    LdapGroupRow,
+    RoleMappingRow,
+    SigningKeyRow,
+)
+from huron.core.security.broker import CatalogRef, Grant, Grants, Role, SigningKeyRecord
+from tests.lake_tokens import TEST_EPOCH, TEST_RECORD
+
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from huron.core.lake.ports import LakeStore
+    from huron.core.metastore.lake import InMemoryLakeStore
+    from tests.unit.support import FakeClock
 
 
 async def store_root_scenario(store: LakeStore) -> None:
@@ -181,117 +194,175 @@ async def signing_key_scenario(store: LakeStore, seed: LakeSeed) -> None:
     assert await store.unexpired(TEST_EPOCH + 4 * step) == (open_record,)
 
 
-class LakeAuditRows(Protocol):
-    """Read committed audit rows before the domain history reader is available."""
+class CommittedAudit(Protocol):
+    """Read the committed audit log, which no lake port exposes whole."""
 
-    async def audit_rows(self) -> list[AuditRecord]:
-        """Return the complete log in ascending ID order."""
+    async def records(self) -> list[AuditRecord]:
+        """Return every committed entry in ascending id order."""
         ...
 
 
-class MemoryAuditRows:
-    """Inspect committed fake audit rows for shared persistence scenarios."""
+class MemoryCommittedAudit:
+    """Read the fake's committed audit rows."""
 
     def __init__(self, store: InMemoryLakeStore) -> None:
-        self._store = store
+        self._tables = store.tables
 
-    async def audit_rows(self) -> list[AuditRecord]:
-        """Return rows in their assigned order."""
-        return sorted(self._store.tables.audit_log.values(), key=lambda row: row.id)
+    async def records(self) -> list[AuditRecord]:
+        """Return the fake's rows in id order."""
+        return [self._tables.audit_log[row_id] for row_id in sorted(self._tables.audit_log)]
 
 
-def audit_entry(name: str = "helio") -> AuditEntry:
-    """Build a catalog creation fact for persistence scenarios."""
+class ConstraintRefusal(Protocol):
+    """Expect a write to be refused by the named PostgreSQL constraint."""
+
+    def __call__(self, constraint: str) -> AbstractContextManager[object]:
+        """Return a context that passes only when that constraint refuses its block."""
+        ...
+
+
+def memory_refusal(constraint: str) -> AbstractContextManager[object]:
+    """Expect the fake's backstop for the named constraint."""
+    return pytest.raises(IntegrityViolation, check=lambda error: error.constraint == constraint)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UnseededEvent:
+    """An event whose pair the audit vocabulary does not hold."""
+
+    ACTION: ClassVar = "frobnicate"
+    OBJECT: ClassVar = AuditObject.CATALOG
+    KEY: ClassVar = "catalog"
+
+    catalog: UUID
+
+
+def catalog_created(name: str) -> AuditEntry:
+    """Record the creation of a catalog with the given name."""
     return AuditEntry(
         TEST_EPOCH, "scientist", CatalogCreated(catalog=UUID(int=1), name=name, config_version=1)
     )
 
 
-async def audit_transaction_scenario(store: LakeStore, rows: LakeAuditRows) -> None:
-    """Audit batches appear on commit, retain order and disappear on rollback."""
-    first, second, third = (audit_entry(name) for name in ("first", "second", "third"))
+async def audit_commit_scenario(store: LakeStore, audit: CommittedAudit) -> None:
+    """Entries appear exactly as encoded when their transaction commits, in call order."""
+    first, second, third = (catalog_created(name) for name in ("first", "second", "third"))
     async with store.transaction() as tx:
         await tx.append_audit([first, second])
         await tx.append_audit([third])
-        assert await rows.audit_rows() == []
-    committed = await rows.audit_rows()
-    assert [r.detail["name"] for r in committed] == ["first", "second", "third"]
-    assert [r.id for r in committed] == sorted({r.id for r in committed})
-    for entry, row in zip((first, second, third), committed, strict=True):
-        assert (
-            row.at,
-            row.actor,
-            row.action,
-            row.object_type,
-            row.object_id,
-            row.catalog_id,
-            row.detail,
-            row.reason,
-        ) == (
-            entry.at,
-            entry.actor,
-            entry.event.ACTION,
-            entry.event.OBJECT,
-            entry.object_id,
-            entry.catalog_id,
-            entry.detail(),
-            entry.reason,
-        )
-    with pytest.raises(ValueError, match="abort"):
-        async with store.transaction() as tx:
-            await tx.append_audit([first])
-            raise ValueError("abort")
-    assert await rows.audit_rows() == committed
+        assert await audit.records() == []
+    records = await audit.records()
+    assert [(r.at, r.actor, r.action, r.object_type) for r in records] == [
+        (TEST_EPOCH, "scientist", "create", "catalog")
+    ] * 3
+    assert [(r.object_id, r.catalog_id, r.reason) for r in records] == [
+        (str(UUID(int=1)), UUID(int=1), None)
+    ] * 3
+    assert [r.detail for r in records] == [entry.detail() for entry in (first, second, third)]
+    assert records[0].id < records[1].id < records[2].id
     async with store.transaction() as tx:
-        with pytest.raises(ValueError):
+        await tx.append_audit([catalog_created("fourth")])
+    assert (await audit.records())[-1].id > records[-1].id
+
+
+async def audit_rollback_scenario(store: LakeStore, audit: CommittedAudit) -> None:
+    """A raising block discards its entries and an empty append is refused."""
+    failure = ValueError("abort")
+    with pytest.raises(ValueError) as caught:
+        async with store.transaction() as tx:
+            await tx.append_audit([catalog_created("discarded")])
+            raise failure
+    assert caught.value is failure
+    with pytest.raises(ValueError, match="at least one entry"):
+        async with store.transaction() as tx:
             await tx.append_audit([])
+    assert await audit.records() == []
 
 
-async def audit_commit_order_scenario(store: LakeStore, rows: LakeAuditRows) -> None:
-    """IDs follow commit order even when transactions stage in the opposite order."""
-    import asyncio
-
+async def audit_commit_order_scenario(store: LakeStore, audit: CommittedAudit) -> None:
+    """Ids follow commit order even when the later commit staged its entry first."""
     staged, release = asyncio.Event(), asyncio.Event()
 
-    async def later_commit() -> None:
+    async def later() -> None:
         async with store.transaction() as tx:
-            await tx.append_audit([audit_entry("later")])
+            await tx.append_audit([catalog_created("later")])
             staged.set()
             await release.wait()
 
     async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
-        tasks.create_task(later_commit())
+        tasks.create_task(later())
         await staged.wait()
         async with store.transaction() as tx:
-            await tx.append_audit([audit_entry("earlier")])
+            await tx.append_audit([catalog_created("earlier")])
         release.set()
-    assert [r.detail["name"] for r in await rows.audit_rows()] == ["earlier", "later"]
+    assert [r.detail["name"] for r in await audit.records()] == ["earlier", "later"]
 
 
-async def claims_scenario(store: LakeStore, clock: FakeClock, kind: str) -> None:
-    """Matching claims replay, mismatches fail, and every kind expires at exactly 24 hours."""
-    claim = IdempotencyClaim("scientist", "request", "a" * 64)
-    replay = Replay(kind, UUID(int=1))
-    other = replace(claim, request_sha256="b" * 64)
+async def audit_constraint_scenario(
+    store: LakeStore, audit: CommittedAudit, refused: ConstraintRefusal
+) -> None:
+    """An unseeded pair and a catalog-less collection entry are refused, writing nothing."""
+    unseeded = AuditEntry(TEST_EPOCH, "scientist", UnseededEvent(catalog=UUID(int=1)))
+    orphan = AuditEntry(
+        TEST_EPOCH,
+        "scientist",
+        CollectionCreated(collection=UUID(int=2), catalog=None, version=1, config_version=1),
+    )
+    for entry, constraint in [
+        (unseeded, "audit_log_vocabulary"),
+        (orphan, "audit_log_collection_has_catalog"),
+    ]:
+        with refused(constraint):
+            async with store.transaction() as tx:
+                await tx.append_audit([catalog_created("valid"), entry])
+    assert await audit.records() == []
+
+
+async def claim_replay_scenario(store: LakeStore) -> None:
+    """The same fingerprint replays the receipt; another fingerprint is refused."""
+    claim = IdempotencyClaim("scientist", "create-helio", request_sha256("catalog", "helio"))
+    replay = Replay("catalog", UUID(int=1))
     async with store.transaction() as tx:
         assert await tx.claim(claim) is None
         assert await tx.claim(claim) is None
         await tx.remember(claim, replay)
         assert await tx.claim(claim) == replay
-    clock.advance(timedelta(hours=24) - timedelta(microseconds=1))
     async with store.transaction() as tx:
         assert await tx.claim(claim) == replay
+        with pytest.raises(IdempotencyKeyReused):
+            await tx.claim(replace(claim, request_sha256=request_sha256("catalog", "geo")))
+    async with store.transaction() as tx:
+        assert await tx.claim(replace(claim, principal="colleague")) is None
+        assert await tx.claim(replace(claim, key="create-geo")) is None
+
+
+async def claim_expiry_scenario(store: LakeStore, clock: FakeClock, replay: Replay) -> None:
+    """A claim binds its key for 24 hours whatever its receipt, then another replaces it."""
+    claim = IdempotencyClaim("scientist", "retry", request_sha256(replay.kind, "first"))
+    other = replace(claim, request_sha256=request_sha256(replay.kind, "second"))
+    async with store.transaction() as tx:
+        await tx.claim(claim)
+        await tx.remember(claim, replay)
+    clock.advance(timedelta(hours=24) - timedelta(microseconds=1))
+    async with store.transaction() as tx:
         with pytest.raises(IdempotencyKeyReused):
             await tx.claim(other)
     clock.advance(timedelta(microseconds=1))
     async with store.transaction() as tx:
         assert await tx.claim(other) is None
-        await tx.remember(other, replay)
+    async with store.transaction() as tx:
+        with pytest.raises(IdempotencyKeyReused):
+            await tx.claim(claim)
+
+
+async def claim_rollback_scenario(store: LakeStore) -> None:
+    """A rolled-back claim leaves no row, so the key is free for another request."""
+    claim = IdempotencyClaim("scientist", "retry", request_sha256("catalog", "first"))
     with pytest.raises(ValueError, match="abort"):
         async with store.transaction() as tx:
-            await tx.claim(replace(claim, key="rolled-back"))
-            await tx.append_audit([audit_entry()])
+            await tx.claim(claim)
+            await tx.remember(claim, Replay("catalog", UUID(int=1)))
             raise ValueError("abort")
     async with store.transaction() as tx:
-        assert await tx.claim(replace(other, key="rolled-back")) is None
-        assert await tx.claim(replace(other, principal="other")) is None
+        other = replace(claim, request_sha256=request_sha256("catalog", "second"))
+        assert await tx.claim(other) is None

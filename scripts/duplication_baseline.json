@@ -1,5 +1,5 @@
 {
-  "clone_groups": 31,
+  "clone_groups": 28,
   "clone_threshold": 0.8,
   "groups": [
     {
@@ -103,24 +103,6 @@
     },
     {
       "files": [
-        "src/huron/core/lake/audit.py"
-      ],
-      "size": 3
-    },
-    {
-      "files": [
-        "src/huron/core/lake/audit.py"
-      ],
-      "size": 3
-    },
-    {
-      "files": [
-        "src/huron/core/lake/audit.py"
-      ],
-      "size": 6
-    },
-    {
-      "files": [
         "src/huron/core/metastore/api_keys.py",
         "src/huron/core/metastore/memory_principals.py"
       ],
@@ -204,5 +186,5 @@
     }
   ],
   "pyscn_version": "1.31.1",
-  "total_clones": 91
+  "total_clones": 79
 }

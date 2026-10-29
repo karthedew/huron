@@ -2814,7 +2814,7 @@ now and M8 runs on PostgreSQL. Out of this milestone: `require_on_collection`, `
 - Decisions: OQ-4.1 (settled, owner decision 12)
 - Decisions: OQ-5.2 (settled, owner decision 12)
 - Decisions: OQ-7.1 (settled, owner decision 12)
-- Status: pending
+- Status: complete (independent verification 2 PASS)
 
 ### M7.2 Metadata schema registry and the lake error vocabulary
 
@@ -11364,3 +11364,63 @@ the make-lint sections inspected. Fresh lint, 1819 unit, 15 contract, 12 integra
 79 fragments/77 pairs/28 groups remain unchanged; G3 usage 0/4. Frozen hashes matched
 and owned processes stopped. Evidence: `.local/implementation-evidence/m65-v2/report.md`.
 Milestone 6 is complete. Milestone 7 continues planning group G3.
+
+### M7.1 implementation — pending independent verification
+
+Completed and corrected the WIP checkpoint `225ebd3`. `huron.core.lake.audit` holds the fourteen
+frozen keyword-only event classes (private collection, file and signing-key bases carry the shared
+`OBJECT`/`KEY` and fields), `AUDIT_VOCABULARY` derived from them, `AuditEntry` (instant, actor,
+reason, version and change-list invariants; `object_id`, `catalog_id`, `detail()` with role codes,
+canonical UUIDs, UTC instants, state codes and explicit nulls) and `AuditRecord`. N13: `mv` records
+only `from_identifier`/`to_identifier` (the identity-field `changes` left), a deleted collection's
+`identifier` is never null (drafts reserve one); no namespace pair or replay kind (M11). N14:
+`RoleMapped` uses the four roles and also refuses a role outside its catalog/organization scope.
+The fake enforces `lake.audit_log` and `lake.idempotency_records` constraints when a write is staged
+(`IntegrityViolation` with the PostgreSQL name, batches staged whole, detail encoded on append, ids
+from one sequence on commit); the draft's in-function imports are gone. `InMemoryClaims`: 24 h
+lifetime by the injected clock for every kind, expired claims replaced, key lock held to transaction
+end, receipt kind CHECK, rollback discards. `SystemClock` lives only in `foundation/clock.py` (direct
+test added); N818 entry moved beside the error-name entries; `Replay` gains the three lake kinds.
+
+Gate: all 15 commands exit 0; radon CC/MI output empty; `lint-imports` 17 kept; M7.1 `rg` checks
+print nothing; `class SystemClock` only in `foundation/clock.py`. Tests: 1935 unit, 15 contract,
+12 integration, 1950 combined; focused M7.1 files 159 passed; structural conformance holds. Unit
+coverage 4440/4559 (97.39%), combined 4556/4559 (99.93%); every touched file 100% except legacy
+`metastore/hierarchy.py` line 650 (pre-existing "claim vanished" defensive raise, missed before this
+task too; only its `SystemClock` import changed). Floor 95.74 unchanged. Duplication 79 fragments,
+77 pairs, 28 groups, native 75: the draft's three capped audit.py signatures (3/3/6 clones) are
+gone, so its hand edit of `scripts/duplication_baseline.json` is reverted to the M6.5 baseline; no
+baseline edit remains and G3 stays at 0/4 capped signatures. Independent verification is pending;
+this note does not mark M7.1 complete.
+
+### M7.1 fix pass 1 — pending independent verification 2
+
+Verification 1 found that `_detail_value` converted a naive event instant from host-local time,
+so a wrong UTC instant could enter the append-only log. `AuditEntry.__post_init__` now refuses
+any naive instant, its own `at` and every `datetime` field of its event, in one check over the
+entry's instants (`ValueError`, no per-event-class checks); `detail()` only encodes aware values.
+`test_entry_refuses_an_invalid_instant_actor_or_reason` gains one case per event instant field,
+derived from the vocabulary rows (`FileOverwritten.old_uploaded_at`, `FileRemoved.uploaded_at`,
+`KeyRotated.active_from`, `KeyWithdrawn.active_from`). The `create` collection row now uses
+version 1 as the vocabulary table states.
+
+Gate: all 15 commands exit 0; radon CC/MI output empty; `lint-imports` 17 kept; pyscn no
+dead-code or complexity findings; M7.1 `rg` checks unchanged. Tests: 1939 unit, 15 contract,
+12 integration, 1954 combined; focused M7.1 files 163 passed. Unit coverage 4446/4565 (97.39%),
+combined 4562/4565 (99.93%); `lake/audit.py` 201/201 and every touched file 100% except the
+accepted `metastore/hierarchy.py` line 650. Floor 95.74 unchanged. Duplication 79 fragments,
+77 pairs, 28 groups, native 75; baseline unchanged from M6.5, G3 0/4. Independent verification 2
+is pending; this note does not mark M7.1 complete.
+
+### M7.1 completion — independent verification 2 PASS
+
+Independent review confirmed that naive instants are refused in one place: `AuditEntry` rejects a
+naive `at` or any naive event `datetime`; the Denver reproduction now raises and the aware value
+encodes in UTC. Its rulings stand: `metastore/hierarchy.py` line 650 is unreachable defensive code
+uncovered before this task; the receipt "both or neither" rule is structural in `ClaimRow.replay`;
+the `RoleMapped` scope rule follows N14; `CollectionCreated.config_version` remains DT-7 detail.
+Fresh gate: all 15 commands exit 0, radon CC/MI output empty, 17 contracts kept, M7.1 `rg`
+checks print nothing. Tests: 1939 unit, 15 contract, 12 integration, 1954 combined, 163 focused.
+Unit coverage 4446/4565 (97.39%); combined 4562/4565 (99.93%); every touched file 100% except the
+accepted line. Floor 95.74; duplication 79 fragments/77 pairs/28 groups, baseline unchanged from
+M6.5, G3 0/4. The task spans the pushed checkpoint `225ebd3` and the commit that completes it.

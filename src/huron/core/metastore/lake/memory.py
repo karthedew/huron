@@ -5,36 +5,40 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from huron.core.foundation.clock import SystemClock
 from huron.core.lake.audit import AUDIT_VOCABULARY, AuditRecord
-from huron.core.metastore.lake.audit import InMemoryAudit
-from huron.core.metastore.lake.idempotency import InMemoryClaims
+from huron.core.metastore.lake.audit import InMemoryAudit, audit_log_violation
+from huron.core.metastore.lake.idempotency import ClaimRow, InMemoryClaims
 from huron.core.metastore.lake.role_mappings import InMemoryRoleMappings
 from huron.core.metastore.lake.signing_keys import InMemorySigningKeys
 from huron.core.security.broker import Role
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Hashable, Mapping
+    from collections.abc import AsyncIterator, Callable, Hashable, Mapping, Sequence
     from datetime import datetime
     from uuid import UUID
 
     from huron.core.foundation.clock import Clock
     from huron.core.lake.audit import AuditAction, AuditEntry, AuditObject
-    from huron.core.metastore.lake.idempotency import ClaimRow
     from huron.core.security.broker import CatalogRef, SigningAlgorithm
 
 
 class IntegrityViolation(RuntimeError):
-    """A fake write violated the named PostgreSQL persistence constraint."""
+    """A staged write broke the PostgreSQL constraint of the same name.
+
+    The fake raises it where PostgreSQL would raise a constraint violation that the
+    domain never expects, so shared scenarios can assert the backstop on either adapter.
+    """
 
     def __init__(self, constraint: str) -> None:
-        """Retain the constraint name for adapter-independent failure assertions.
+        """Name the constraint that refused the row.
 
         Args:
-            constraint: The PostgreSQL constraint that refused the row.
+            constraint: The PostgreSQL constraint name.
         """
         self.constraint = constraint
         super().__init__(constraint)
@@ -99,28 +103,35 @@ class SigningKeyRow:
 class LakeTables:
     """Committed rows indexed by each table's primary or unique key."""
 
-    audit_actions: set[tuple[AuditAction, AuditObject]] = field(default_factory=set)
-    audit_log: dict[int, AuditRecord] = field(default_factory=dict)
-    next_audit_id: int = 1
-    idempotency_records: dict[tuple[str, str], ClaimRow] = field(default_factory=dict)
     roles: dict[str, RoleRow] = field(default_factory=dict)
     ldap_groups: dict[str, LdapGroupRow] = field(default_factory=dict)
     group_role_map: dict[tuple[str, UUID | None], RoleMappingRow] = field(default_factory=dict)
     signing_keys: dict[str, SigningKeyRow] = field(default_factory=dict)
+    audit_actions: set[tuple[AuditAction, AuditObject]] = field(default_factory=set)
+    audit_log: dict[int, AuditRecord] = field(default_factory=dict)
+    next_audit_id: int = 1
+    idempotency_records: dict[tuple[str, str], ClaimRow] = field(default_factory=dict)
 
 
 class _TableBuffer[K, V]:
     """One typed table's pending replacements and tombstones."""
 
-    def __init__(self, committed: dict[K, V], check_open: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        committed: dict[K, V],
+        check_open: Callable[[], None],
+        violation: Callable[[V], str | None] | None = None,
+    ) -> None:
         """Bind pending changes to their committed table and transaction lifetime.
 
         Args:
             committed: Live rows, shared by all transactions.
             check_open: Guard called before any read or write.
+            violation: The table's row constraints, naming the first one a row breaks.
         """
         self._committed = committed
         self._check_open = check_open
+        self._violation = violation
         self._changes: dict[K, V | None] = {}
 
     def get(self, key: K) -> V | None:
@@ -141,8 +152,13 @@ class _TableBuffer[K, V]:
         Args:
             key: The row's primary or unique key.
             row: The immutable replacement row.
+
+        Raises:
+            IntegrityViolation: If the row breaks one of the table's constraints.
         """
         self._check_open()
+        if self._violation is not None and (constraint := self._violation(row)) is not None:
+            raise IntegrityViolation(constraint)
         self._changes[key] = row
 
     def delete(self, key: K) -> None:
@@ -163,6 +179,58 @@ class _TableBuffer[K, V]:
                 self._committed[key] = row
 
 
+class _AuditLogBuffer:
+    """Entries appended by one transaction, numbered from the log's sequence only on commit."""
+
+    def __init__(self, tables: LakeTables, check_open: Callable[[], None]) -> None:
+        """Start with no pending entries.
+
+        Args:
+            tables: Committed state holding the vocabulary, the log and its sequence.
+            check_open: Guard called before any write.
+        """
+        self._tables = tables
+        self._check_open = check_open
+        self._pending: list[partial[AuditRecord]] = []
+
+    def append(self, entries: Sequence[AuditEntry]) -> None:
+        """Encode and stage a batch whole, or none of it.
+
+        Args:
+            entries: Entries in the order their ids must follow.
+
+        Raises:
+            IntegrityViolation: If an entry's row breaks an audit log constraint.
+        """
+        self._check_open()
+        for entry in entries:
+            constraint = audit_log_violation(entry, self._tables.audit_actions)
+            if constraint is not None:
+                raise IntegrityViolation(constraint)
+        encoded = [
+            partial(
+                AuditRecord,
+                at=entry.at,
+                actor=entry.actor,
+                action=entry.event.ACTION,
+                object_type=entry.event.OBJECT,
+                object_id=entry.object_id,
+                catalog_id=entry.catalog_id,
+                detail=entry.detail(),
+                reason=entry.reason,
+            )
+            for entry in entries
+        ]
+        self._pending.extend(encoded)
+
+    def _apply(self) -> None:
+        """Number pending entries in staging order without yielding execution."""
+        for record in self._pending:
+            row_id = self._tables.next_audit_id
+            self._tables.audit_log[row_id] = record(id=row_id)
+            self._tables.next_audit_id = row_id + 1
+
+
 class LakeBuffer:
     """An open transaction's typed read-through changes across every lake table."""
 
@@ -173,13 +241,14 @@ class LakeBuffer:
             tables: The store's committed tables.
         """
         self._open = True
-        self._tables = tables
-        self.audit_entries: list[AuditEntry] = []
-        self.idempotency_records = _TableBuffer(tables.idempotency_records, self.check_open)
         self.roles = _TableBuffer(tables.roles, self.check_open)
         self.ldap_groups = _TableBuffer(tables.ldap_groups, self.check_open)
         self.group_role_map = _TableBuffer(tables.group_role_map, self.check_open)
         self.signing_keys = _TableBuffer(tables.signing_keys, self.check_open)
+        self.audit_log = _AuditLogBuffer(tables, self.check_open)
+        self.idempotency_records = _TableBuffer(
+            tables.idempotency_records, self.check_open, ClaimRow.violation
+        )
 
     def check_open(self) -> None:
         """Refuse reads and writes after the transaction has exited.
@@ -193,27 +262,12 @@ class LakeBuffer:
     def apply(self) -> None:
         """Commit every staged table synchronously, without yielding to other tasks."""
         self.check_open()
-        audit_rows = {
-            row_id: AuditRecord(
-                row_id,
-                entry.at,
-                entry.actor,
-                entry.event.ACTION,
-                entry.event.OBJECT,
-                entry.object_id,
-                entry.catalog_id,
-                entry.detail(),
-                entry.reason,
-            )
-            for row_id, entry in enumerate(self.audit_entries, self._tables.next_audit_id)
-        }
         self.roles._apply()
         self.ldap_groups._apply()
         self.group_role_map._apply()
         self.signing_keys._apply()
+        self.audit_log._apply()
         self.idempotency_records._apply()
-        self._tables.audit_log.update(audit_rows)
-        self._tables.next_audit_id += len(audit_rows)
 
     def close(self) -> None:
         """Invalidate all references to this transaction's buffered tables."""
@@ -273,10 +327,9 @@ class InMemoryLakeTransaction(InMemoryAudit, InMemoryClaims):
         Args:
             tables: Committed state shared with the store root.
             locks: Locks shared by all the store's transactions.
-            clock: Source of claim expiry instants.
+            clock: The source of claim lifetimes.
         """
         self.buffer = LakeBuffer(tables)
-        self._tables = tables
         self._clock = clock
         self._claimed: set[tuple[str, str]] = set()
         self._locks = locks
@@ -317,11 +370,11 @@ class InMemoryLakeStore(InMemoryRoleMappings, InMemorySigningKeys):
     """Independent committed lake state with atomic buffered transactions."""
 
     def __init__(self, *, clock: Clock | None = None, seed: bool = True) -> None:
-        """Create empty tables and optionally load the role vocabulary.
+        """Create empty tables and optionally load the seeded vocabularies.
 
         Args:
-            clock: Source of claim expiry instants, defaulting to UTC system time.
-            seed: Whether to install the built-in roles and audit vocabulary.
+            clock: The source of claim lifetimes, the system's UTC clock when omitted.
+            seed: Whether to install the four roles and the audit vocabulary.
         """
         self._clock = clock if clock is not None else SystemClock()
         self.tables = LakeTables(

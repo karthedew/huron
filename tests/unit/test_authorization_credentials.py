@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from huron.core.foundation.clock import SystemClock
 from typing import TYPE_CHECKING
 
 import pytest
@@ -11,6 +10,7 @@ from starlette.requests import Request
 from huron.applications.api.authorization import current_principal
 from huron.applications.api.runtime import ApiRuntime
 from huron.applications.api.settings import ApiSettings, ClassificationValue, OidcSettings
+from huron.core.foundation.clock import SystemClock
 from huron.core.foundation.errors import AuthError
 from huron.core.rawstore import PosixGenerationStore
 from huron.core.security.oidc import OidcResolver

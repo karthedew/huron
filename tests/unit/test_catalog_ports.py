@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from huron.core.foundation.clock import SystemClock
 import pytest
 
-from huron.core.foundation.clock import Clock
+from huron.core.foundation.clock import Clock, SystemClock
 
 pytestmark = pytest.mark.unit
 

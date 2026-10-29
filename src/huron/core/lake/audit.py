@@ -11,7 +11,7 @@ from uuid import UUID
 from huron.core.security.broker import COMPANY_USERNAME, Role
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
 
     from huron.core.lake.types import CollectionState
     from huron.schema.metadata import FieldChange, JsonValue
@@ -36,7 +36,7 @@ class AuditAction(StrEnum):
 
 
 class AuditObject(StrEnum):
-    """The kinds of objects retained in audit history."""
+    """The kinds of objects whose history the audit log keeps."""
 
     COLLECTION = "collection"
     CATALOG = "catalog"
@@ -47,70 +47,76 @@ class AuditObject(StrEnum):
 
 SYSTEM_BOOTSTRAP: Final = "system:bootstrap"
 AUDIT_REASON_MAX: Final = 1000
+_SYSTEM_ACTOR_PREFIX: Final = "system:"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CollectionCreated:
-    """A newly reserved draft collection and its catalog configuration."""
+class _CollectionEvent:
+    """A change recorded in one collection's log, with the version it produced."""
 
-    ACTION: ClassVar = AuditAction.CREATE
+    ACTION: ClassVar[AuditAction]
     OBJECT: ClassVar = AuditObject.COLLECTION
     KEY: ClassVar = "collection"
 
     collection: UUID
     catalog: UUID
     version: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _FileEvent(_CollectionEvent):
+    """A file change applied by one verified commit."""
+
+    commit_id: UUID
+    host: str
+    rel_path: str
+    size_bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _SigningKeyEvent:
+    """A signing-key lifecycle change, keyed by the key's identifier."""
+
+    ACTION: ClassVar[AuditAction]
+    OBJECT: ClassVar = AuditObject.SIGNING_KEY
+    KEY: ClassVar = "kid"
+
+    kid: str
+    active_from: datetime
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CollectionCreated(_CollectionEvent):
+    """A draft collection reserved under the catalog configuration current at creation."""
+
+    ACTION: ClassVar = AuditAction.CREATE
+
     config_version: int
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CollectionActivated:
-    """A collection settled at its canonical identifier."""
+class CollectionActivated(_CollectionEvent):
+    """A draft settled at its reserved identifier."""
 
     ACTION: ClassVar = AuditAction.ACTIVATE
-    OBJECT: ClassVar = AuditObject.COLLECTION
-    KEY: ClassVar = "collection"
 
-    collection: UUID
-    catalog: UUID
-    version: int
     identifier: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class FileAdded:
-    """A newly committed file and the commit that verified its bytes."""
+class FileAdded(_FileEvent):
+    """A newly committed file."""
 
     ACTION: ClassVar = AuditAction.ADD
-    OBJECT: ClassVar = AuditObject.COLLECTION
-    KEY: ClassVar = "collection"
-
-    collection: UUID
-    catalog: UUID
-    version: int
-    commit_id: UUID
-    host: str
-    rel_path: str
-    size_bytes: int
-    sha256: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class FileOverwritten:
-    """A replacement file together with the displaced file provenance."""
+class FileOverwritten(_FileEvent):
+    """A replaced file, with the provenance of the bytes it displaced."""
 
     ACTION: ClassVar = AuditAction.OVERWRITE
-    OBJECT: ClassVar = AuditObject.COLLECTION
-    KEY: ClassVar = "collection"
 
-    collection: UUID
-    catalog: UUID
-    version: int
-    commit_id: UUID
-    host: str
-    rel_path: str
-    size_bytes: int
-    sha256: str
     old_size_bytes: int
     old_sha256: str
     old_uploaded_by: str
@@ -118,73 +124,47 @@ class FileOverwritten:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class FileRemoved:
-    """A removed file and the provenance needed to locate its retained bytes."""
+class FileRemoved(_FileEvent):
+    """A removed file, with the provenance needed to find its bytes in a snapshot."""
 
     ACTION: ClassVar = AuditAction.RM
-    OBJECT: ClassVar = AuditObject.COLLECTION
-    KEY: ClassVar = "collection"
 
-    collection: UUID
-    catalog: UUID
-    version: int
-    commit_id: UUID
-    host: str
-    rel_path: str
-    size_bytes: int
-    sha256: str
     uploaded_by: str
     uploaded_at: datetime
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class MetadataPublished:
-    """Published collection metadata and its non-empty field diff."""
+class MetadataPublished(_CollectionEvent):
+    """Published collection metadata and its field diff."""
 
     ACTION: ClassVar = AuditAction.META_PUBLISH
-    OBJECT: ClassVar = AuditObject.COLLECTION
-    KEY: ClassVar = "collection"
 
-    collection: UUID
-    catalog: UUID
-    version: int
     changes: tuple[FieldChange, ...]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CollectionMoved:
-    """A collection relocation and the metadata changes accompanying it."""
+class CollectionMoved(_CollectionEvent):
+    """A collection relocated within its catalog."""
 
     ACTION: ClassVar = AuditAction.MV
-    OBJECT: ClassVar = AuditObject.COLLECTION
-    KEY: ClassVar = "collection"
 
-    collection: UUID
-    catalog: UUID
-    version: int
     from_identifier: str
     to_identifier: str
-    changes: tuple[FieldChange, ...]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CollectionDeleted:
-    """The last state and placement of a deleted collection."""
+class CollectionDeleted(_CollectionEvent):
+    """The last state and identifier of a deleted collection."""
 
     ACTION: ClassVar = AuditAction.DELETE
-    OBJECT: ClassVar = AuditObject.COLLECTION
-    KEY: ClassVar = "collection"
 
-    collection: UUID
-    catalog: UUID
-    version: int
     state: CollectionState
-    identifier: str | None
+    identifier: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogCreated:
-    """A new catalog and its initial configuration version."""
+    """A new catalog and its first configuration version."""
 
     ACTION: ClassVar = AuditAction.CREATE
     OBJECT: ClassVar = AuditObject.CATALOG
@@ -197,7 +177,7 @@ class CatalogCreated:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogConfigChanged:
-    """A catalog configuration publication and its field diff."""
+    """A published catalog configuration version and its field diff."""
 
     ACTION: ClassVar = AuditAction.CATALOG_CONFIG
     OBJECT: ClassVar = AuditObject.CATALOG
@@ -210,7 +190,7 @@ class CatalogConfigChanged:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SchemaPublished:
-    """A published schema version and its optional parent schema."""
+    """A published metadata schema version and the base it extends, if any."""
 
     ACTION: ClassVar = AuditAction.SCHEMA_PUBLISH
     OBJECT: ClassVar = AuditObject.METADATA_SCHEMA
@@ -224,7 +204,7 @@ class SchemaPublished:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RoleMapped:
-    """A directory group role transition in its catalog or organization scope."""
+    """A directory group's role change on one catalog or across the organization."""
 
     ACTION: ClassVar = AuditAction.ROLE_MAP
     OBJECT: ClassVar = AuditObject.LDAP_GROUP
@@ -237,39 +217,35 @@ class RoleMapped:
     posix_gid: int
 
     def __post_init__(self) -> None:
-        """Refuse a mapping event that records no change.
+        """Refuse a change that changes nothing or a role outside its scope.
 
         Raises:
-            ValueError: If the old and new roles are equal, including both absent.
+            ValueError: If the roles are equal (both absent included), or a catalog role
+                lacks a catalog, or the organization role names one.
         """
         if self.old_role == self.new_role:
-            raise ValueError("A role mapping must change its role")
+            raise ValueError("A role mapping change must change the role")
+        catalog_scope = self.catalog is not None
+        for role in (self.old_role, self.new_role):
+            if role is not None and role.catalog_scoped != catalog_scope:
+                raise ValueError(f"Role {role.code} does not apply to this mapping scope")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class KeyRotated:
-    """A signing key activation and the key it retires, if any."""
+class KeyRotated(_SigningKeyEvent):
+    """A key that became the signer, and the key it retired, if any."""
 
     ACTION: ClassVar = AuditAction.KEY_ROTATE
-    OBJECT: ClassVar = AuditObject.SIGNING_KEY
-    KEY: ClassVar = "kid"
 
-    kid: str
     alg: str
-    active_from: datetime
     retired_kid: str | None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class KeyWithdrawn:
-    """A withdrawn key and its intended signing start time."""
+class KeyWithdrawn(_SigningKeyEvent):
+    """A pending key withdrawn before the instant it would have started signing."""
 
     ACTION: ClassVar = AuditAction.KEY_WITHDRAW
-    OBJECT: ClassVar = AuditObject.SIGNING_KEY
-    KEY: ClassVar = "kid"
-
-    kid: str
-    active_from: datetime
 
 
 type AuditEvent = (
@@ -289,54 +265,59 @@ type AuditEvent = (
     | KeyWithdrawn
 )
 
-_EVENT_TYPES = (
-    CollectionCreated,
-    CollectionActivated,
-    FileAdded,
-    FileOverwritten,
-    FileRemoved,
-    MetadataPublished,
-    CollectionMoved,
-    CollectionDeleted,
-    CatalogCreated,
-    CatalogConfigChanged,
-    SchemaPublished,
-    RoleMapped,
-    KeyRotated,
-    KeyWithdrawn,
+AUDIT_VOCABULARY: Final = frozenset(
+    (event.ACTION, event.OBJECT)
+    for event in (
+        CollectionCreated,
+        CollectionActivated,
+        FileAdded,
+        FileOverwritten,
+        FileRemoved,
+        MetadataPublished,
+        CollectionMoved,
+        CollectionDeleted,
+        CatalogCreated,
+        CatalogConfigChanged,
+        SchemaPublished,
+        RoleMapped,
+        KeyRotated,
+        KeyWithdrawn,
+    )
 )
-
-AUDIT_VOCABULARY: Final = frozenset((event.ACTION, event.OBJECT) for event in _EVENT_TYPES)
 
 
 def _detail_value(value: object) -> JsonValue:
-    """Encode the scalar and change-list types declared by audit events.
+    """Encode one event field by the audit detail rules.
 
     Args:
-        value: One declared event field.
+        value: A declared event field.
 
     Returns:
-        Its canonical JSON representation.
+        Role codes, canonical UUID strings, UTC instants, pointer-sorted field changes,
+        or the value itself for strings, integers and null.
 
     Raises:
-        TypeError: If a field has an unsupported runtime type.
+        TypeError: If the field holds a type the detail encoding does not define.
     """
-    if isinstance(value, Role):
-        return value.code
-    if isinstance(value, UUID):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).isoformat()
-    if isinstance(value, tuple):
-        return [change.as_json() for change in sorted(value, key=lambda change: change.pointer)]
-    if value is None or isinstance(value, (str, int)):
-        return value
-    raise TypeError(f"Unsupported audit detail value: {type(value).__name__}")
+    match value:
+        case Role():
+            return value.code
+        case UUID():
+            return str(value)
+        case datetime():
+            return value.astimezone(UTC).isoformat()
+        case StrEnum():
+            return value.value
+        case tuple():
+            return [change.as_json() for change in sorted(value, key=lambda c: c.pointer)]
+        case str() | int() | None:
+            return value
+    raise TypeError(f"Audit detail cannot encode {type(value).__name__}")
 
 
 @dataclass(frozen=True, slots=True)
 class AuditEntry:
-    """One actor's accepted change, ready for transactional persistence."""
+    """One actor's accepted change, ready to be appended in the transaction that made it."""
 
     at: datetime
     actor: str
@@ -344,52 +325,76 @@ class AuditEntry:
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        """Refuse invalid timestamps, actors, explanations and no-op changes.
+        """Refuse an entry that the audit log must never hold.
 
         Raises:
-            ValueError: If an entry violates the audit value contract.
+            ValueError: If `at` or an instant the event records is naive, the actor is
+                neither a company username nor a system actor, the reason is blank,
+                unstripped or too long, a version is below one, or a change list is empty.
         """
-        if self.at.utcoffset() is None:
-            raise ValueError("Audit time must be timezone-aware")
-        if not (COMPANY_USERNAME.fullmatch(self.actor) or self.actor.startswith("system:")):
-            raise ValueError("Audit actor must be a company username or system actor")
+        if any(instant.utcoffset() is None for instant in self._instants()):
+            raise ValueError("An audit instant must be timezone-aware")
+        if not (
+            COMPANY_USERNAME.fullmatch(self.actor) or self.actor.startswith(_SYSTEM_ACTOR_PREFIX)
+        ):
+            raise ValueError("An audit actor must be a company username or a system actor")
         if self.reason is not None and (
             not 1 <= len(self.reason) <= AUDIT_REASON_MAX or self.reason != self.reason.strip()
         ):
-            raise ValueError("Audit reason must be stripped and contain 1..1000 characters")
-        if getattr(self.event, "version", 1) < 1:
-            raise ValueError("Audit version must be positive")
-        if getattr(self.event, "changes", None) == ():
-            raise ValueError("Audit changes must not be empty")
+            raise ValueError(
+                f"An audit reason must be stripped and 1 to {AUDIT_REASON_MAX} characters"
+            )
+        match self.event:
+            case _CollectionEvent(version=version) | SchemaPublished(version=version) if (
+                version < 1
+            ):
+                raise ValueError("An audited version must be at least 1")
+            case MetadataPublished(changes=()) | CatalogConfigChanged(changes=()):
+                raise ValueError("An audited change list must not be empty")
+
+    def _instants(self) -> Iterator[datetime]:
+        """Yield the entry's own instant, then every instant its event records.
+
+        An append-only log cannot correct an instant later, so none may be left to
+        the host's local time zone.
+
+        Yields:
+            Each instant the entry stores.
+        """
+        yield self.at
+        for field in fields(self.event):
+            value = getattr(self.event, field.name)
+            if isinstance(value, datetime):
+                yield value
 
     @property
     def object_id(self) -> str:
-        """The canonical identifier of the object described by this entry."""
+        """The described object's identifier, with UUIDs in canonical form."""
         return str(getattr(self.event, self.event.KEY))
 
     @property
     def catalog_id(self) -> UUID | None:
-        """The affected catalog, absent for organization-wide objects."""
-        if isinstance(self.event, (SchemaPublished, KeyRotated, KeyWithdrawn)):
+        """The catalog whose Readers may read this entry, or None for an organization entry."""
+        if isinstance(self.event, SchemaPublished | _SigningKeyEvent):
             return None
         return self.event.catalog
 
     def detail(self) -> dict[str, JsonValue]:
-        """Encode every declared detail field, preserving explicit null values.
+        """Encode every event field except the object key and the catalog.
 
         Returns:
-            The event's JSON object, with sorted field changes and UTC instants.
+            The entry's `detail` object, with nullable values present as null.
         """
         return {
             field.name: _detail_value(getattr(self.event, field.name))
             for field in fields(self.event)
-            if field.name not in (self.event.KEY, "catalog")
+            if field.name not in {self.event.KEY, "catalog"}
         }
 
 
 @dataclass(frozen=True, slots=True)
 class AuditRecord:
-    """A persisted audit entry with its store-assigned monotonic identifier."""
+    """A stored audit entry with its store-assigned, monotonically increasing id."""
 
     id: int
     at: datetime

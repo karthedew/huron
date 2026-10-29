@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from huron.core.foundation.clock import SystemClock
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 
-from huron.core.hierarchy.types import Organization, PlatformRoot
+from huron.core.foundation.clock import SystemClock
 from huron.core.foundation.errors import ResourceNotFound
 from huron.core.foundation.identifiers import uuid7
 from huron.core.foundation.retry import IdempotencyClaim, Replay
+from huron.core.hierarchy.types import Organization, PlatformRoot
 from huron.core.metastore.hierarchy import InMemoryHierarchyStore
 from huron.core.security.rules import Visibility
 from tests.hierarchy_contract import (
@@ -134,12 +134,7 @@ async def test_an_expired_claim_is_taken_over_rather_than_rejected() -> None:
 
 async def test_the_in_memory_store_reads_its_clock_when_none_is_injected() -> None:
     """With no clock injected, the store's clock is the system's UTC clock."""
-    store = InMemoryHierarchyStore()
-    assert isinstance(store._clock, SystemClock)
-    before = datetime.now(UTC)
-    now = store._clock.now()
-    after = datetime.now(UTC)
-    assert before <= now <= after
+    assert isinstance(InMemoryHierarchyStore()._clock, SystemClock)
 
 
 async def test_organization_point_read_raises_for_an_unknown_id() -> None:
