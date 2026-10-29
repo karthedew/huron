@@ -1,0 +1,14 @@
+{
+  "command": "git diff --check",
+  "argv": [
+    "git",
+    "diff",
+    "--check"
+  ],
+  "cwd": "/home/karl/repo/huron",
+  "exit": 0,
+  "pid": 1813558,
+  "seconds": 0.026,
+  "stdout": "",
+  "stderr": ""
+}

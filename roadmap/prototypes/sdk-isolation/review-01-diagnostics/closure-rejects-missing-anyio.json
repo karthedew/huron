@@ -1,0 +1,32 @@
+{
+  "label": "closure-rejects-missing-anyio",
+  "argv": [
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/build-tools/bin/python",
+    "-I",
+    "-B",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/closure_check.py",
+    "--root",
+    "huron-sdk",
+    "--wheel",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/wheels/sdk/huron_sdk-0.0.0-py3-none-any.whl",
+    "--wheel",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/downloads/runtime/certifi-2026.7.22-py3-none-any.whl",
+    "--wheel",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/downloads/runtime/h11-0.16.0-py3-none-any.whl",
+    "--wheel",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/downloads/runtime/httpcore-1.0.9-py3-none-any.whl",
+    "--wheel",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/downloads/runtime/httpx-0.28.1-py3-none-any.whl",
+    "--wheel",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/downloads/runtime/idna-3.18-py3-none-any.whl",
+    "--wheel",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/downloads/runtime/typing_extensions-4.16.0-py3-none-any.whl"
+  ],
+  "cwd": "/tmp/opencode",
+  "exit": 1,
+  "expected_exit": 1,
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/closure_check.py\", line 56, in <module>\n    main()\n  File \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/closure_check.py\", line 47, in main\n    assert dependency in available, f\"unlocked dependency: {text}\"\n           ^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: unlocked dependency: anyio\n",
+  "seconds": 0.088,
+  "pid": 1811877
+}

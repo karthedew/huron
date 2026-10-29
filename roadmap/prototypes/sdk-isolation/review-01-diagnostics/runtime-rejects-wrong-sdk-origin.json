@@ -1,0 +1,21 @@
+{
+  "label": "runtime-rejects-wrong-sdk-origin",
+  "argv": [
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/bin/python",
+    "-I",
+    "-B",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py",
+    "sdk",
+    "--repo",
+    "/home/karl/repo/huron",
+    "--sdk-root",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/build-inputs/sdk/src"
+  ],
+  "cwd": "/tmp/opencode",
+  "exit": 1,
+  "expected_exit": 1,
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py\", line 329, in <module>\n    main()\n  File \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py\", line 308, in main\n    result = exercise_sdk(args.sdk_root)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py\", line 84, in exercise_sdk\n    assert Path(module.__file__).is_relative_to(sdk_root / \"huron\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "seconds": 0.124,
+  "pid": 1811879
+}

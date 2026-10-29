@@ -90,9 +90,8 @@ class InMemoryClaims:
             IdempotencyKeyReused: If a live claim on the key has another fingerprint.
         """
         key = (claim.principal, claim.key)
-        if key not in self._claimed:
-            await self.lock(("idempotency_records", *key))
-            self._claimed.add(key)
+        await self.lock(("idempotency_records", *key))
+        self._claimed.add(key)
         now = self._clock.now()
         row = self.buffer.idempotency_records.get(key)
         if row is not None and row.live_at(now):

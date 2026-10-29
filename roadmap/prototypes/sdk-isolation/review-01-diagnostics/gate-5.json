@@ -1,0 +1,15 @@
+{
+  "command": "git check-ignore -v roadmap/prototypes/sdk-isolation/evidence.md",
+  "argv": [
+    "git",
+    "check-ignore",
+    "-v",
+    "roadmap/prototypes/sdk-isolation/evidence.md"
+  ],
+  "cwd": "/home/karl/repo/huron",
+  "exit": 0,
+  "pid": 1813560,
+  "seconds": 0.001,
+  "stdout": ".gitignore:40:/roadmap/\troadmap/prototypes/sdk-isolation/evidence.md\n",
+  "stderr": ""
+}

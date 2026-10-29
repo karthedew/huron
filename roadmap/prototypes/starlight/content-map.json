@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "pages": [
+    { "source": "docs/index.md", "route": "", "title": "Huron developer documentation" },
+    { "source": "docs/getting-started/local-development.md", "route": "getting-started/local-development", "title": "Local development", "excerpt": [1, 77] },
+    { "source": "docs/getting-started/testing.md", "route": "getting-started/testing", "title": "Testing" },
+    { "source": "docs/adr/0001-controller-generation-is-the-verification-epoch.md", "route": "adr/0001-controller-generation-is-the-verification-epoch", "title": "Controller generation is the verification epoch" },
+    { "source": "docs/adr/0002-domain-owned-core-workflows.md", "route": "adr/0002-domain-owned-core-workflows", "title": "Domain modules own their workflows" },
+    { "source": "docs/history.md", "route": "history", "title": "Implementation history" },
+    { "source": "docs/agents/domain.md", "route": "agents/domain", "title": "Domain evidence and decisions" },
+    { "source": "design/raw-first.md", "route": "reference/raw-first", "title": "Raw-first datastore target" },
+    { "source": "CONTEXT.md", "route": "reference/vocabulary", "title": "Huron" },
+    { "source": "docs/getting-started/conventions.md", "route": "getting-started/conventions", "title": "Conventions" },
+    { "source": "docs/getting-started/repository-layout.md", "route": "getting-started/repository-layout", "title": "Repository layout" },
+    { "source": "docs/getting-started/docstrings.md", "route": "getting-started/docstrings", "title": "Docstrings" },
+    { "source": "docs/operations/controlled-cutover.md", "route": "operations/controlled-cutover", "title": "Controlled legacy verification" },
+    { "source": "docs/probe.md", "route": "probe", "title": "Rendering probe", "synthetic": true }
+  ],
+  "assets": [ { "source": "docs/diagram.svg", "output": "_assets/diagram.svg" } ],
+  "externalSources": {
+    "design/architecture.html": "https://github.com/karthedew/huron/blob/2b2e9c0c9d6b9beafef2e11b840f28535502aa6b/design/architecture.html",
+    "design/layer-raw.html": "https://github.com/karthedew/huron/blob/2b2e9c0c9d6b9beafef2e11b840f28535502aa6b/design/layer-raw.html"
+  }
+}

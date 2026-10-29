@@ -1,0 +1,21 @@
+{
+  "label": "positive-sdk-check-rejects-current-editable",
+  "argv": [
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-server-sdk/bin/python",
+    "-I",
+    "-B",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py",
+    "sdk",
+    "--repo",
+    "/home/karl/repo/huron",
+    "--sdk-root",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-server-sdk/lib/python3.12/site-packages"
+  ],
+  "cwd": "/tmp/opencode",
+  "exit": 1,
+  "expected_exit": 1,
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py\", line 329, in <module>\n    main()\n  File \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py\", line 308, in main\n    result = exercise_sdk(args.sdk_root)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py\", line 79, in exercise_sdk\n    from huron.client import Client\nModuleNotFoundError: No module named 'huron.client'\n",
+  "seconds": 0.122,
+  "pid": 1811880
+}

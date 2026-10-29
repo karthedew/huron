@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "huron-sdk"
+version = "0.0.0"
+description = "NON-PRODUCTION isolated Huron packaging experiment"
+requires-python = ">=3.12"
+dependencies = ["httpx==0.28.1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/huron"]

@@ -1,0 +1,570 @@
+{
+  "checker_diagnostic_counts": {
+    "report": 260,
+    "vendor": 2070
+  },
+  "coverage_floor": 96.01,
+  "declared_accepted": 19,
+  "declared_cases": [
+    {
+      "expected_errors": [],
+      "name": "legacy heading"
+    },
+    {
+      "expected_errors": [],
+      "name": "canonical heading"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "missing task heading"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 2"
+      ],
+      "name": "duplicate ## Per-subject serial task slices / ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 2"
+      ],
+      "name": "duplicate ## Per-subject serial task slices / ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 2"
+      ],
+      "name": "duplicate ## Serial task slices / ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 2"
+      ],
+      "name": "duplicate ## Serial task slices / ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "inline prose: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "deeper level: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "suffix: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "missing separator: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "wrong case: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "inline code: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "indented code: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "closing hashes: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "split line: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "lookalike letter: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "fenced-only ```: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [],
+      "name": "heading plus fenced example ```: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "unclosed fence ```: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "fenced-only ~~~: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [],
+      "name": "heading plus fenced example ~~~: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "unclosed fence ~~~: ## Per-subject serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "inline prose: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "deeper level: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "suffix: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "missing separator: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "wrong case: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "inline code: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "indented code: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "closing hashes: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "split line: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "lookalike letter: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "fenced-only ```: ## Serial task slices"
+    },
+    {
+      "expected_errors": [],
+      "name": "heading plus fenced example ```: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "unclosed fence ```: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "fenced-only ~~~: ## Serial task slices"
+    },
+    {
+      "expected_errors": [],
+      "name": "heading plus fenced example ~~~: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "unclosed fence ~~~: ## Serial task slices"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "short inner fence stays literal"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected exactly one phase task heading (## Per-subject serial task slices or ## Serial task slices), found 0"
+      ],
+      "name": "other fence marker stays literal"
+    },
+    {
+      "expected_errors": [],
+      "name": "longer closing fence"
+    },
+    {
+      "expected_errors": [],
+      "name": "indented fences"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle draft"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle blocked"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle ready"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle implementing"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle verified"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle DRAFT"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle BLOCKED"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle READY"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle IMPLEMENTING"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle VERIFIED"
+    },
+    {
+      "expected_errors": [],
+      "name": "lifecycle ready \u2014 independently reviewed"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected one explicit lifecycle Status: draft/blocked/ready/implementing/verified"
+      ],
+      "name": "invalid lifecycle 'PASS'"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected one explicit lifecycle Status: draft/blocked/ready/implementing/verified"
+      ],
+      "name": "invalid lifecycle 'ready/blocked'"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected one explicit lifecycle Status: draft/blocked/ready/implementing/verified"
+      ],
+      "name": "invalid lifecycle 'readyish'"
+    },
+    {
+      "expected_errors": [
+        "{path}:3: trailing whitespace",
+        "{name}: expected one explicit lifecycle Status: draft/blocked/ready/implementing/verified"
+      ],
+      "name": "invalid lifecycle ''"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected one explicit lifecycle Status: draft/blocked/ready/implementing/verified"
+      ],
+      "name": "invalid lifecycle 'ready\\nStatus: blocked'"
+    },
+    {
+      "expected_errors": [
+        "{name}: expected one explicit lifecycle Status: draft/blocked/ready/implementing/verified"
+      ],
+      "name": "missing status"
+    },
+    {
+      "expected_errors": [
+        "{name}: missing phase section Skills"
+      ],
+      "name": "missing non-task section"
+    },
+    {
+      "expected_errors": [
+        "{name}: missing readiness/gate marker make docs"
+      ],
+      "name": "missing gate marker"
+    },
+    {
+      "expected_errors": [
+        "{path}: missing local skill .agents/skills/nonexistent/SKILL.md",
+        "{name}: missing local skill .agents/skills/nonexistent/SKILL.md"
+      ],
+      "name": "missing local skill"
+    }
+  ],
+  "declared_rejected": 44,
+  "diagnostics_not_in_verified_exact_sets": [],
+  "errors": [],
+  "examples": [
+    {
+      "executed": false,
+      "language": "json",
+      "path": "roadmap/checker-input-boundary-plan.md",
+      "syntax_valid": true
+    },
+    {
+      "executed": false,
+      "language": "python",
+      "path": "roadmap/checker-input-boundary-plan.md",
+      "syntax_valid": true
+    },
+    {
+      "executed": false,
+      "language": "python",
+      "path": "roadmap/plans/001-decisions-prototypes.md",
+      "syntax_valid": true
+    },
+    {
+      "executed": false,
+      "language": "python",
+      "path": "roadmap/plans/002-environment-interfaces.md",
+      "syntax_valid": true
+    },
+    {
+      "executed": false,
+      "language": "python",
+      "path": "roadmap/plans/003-identity-directory-access.md",
+      "syntax_valid": true
+    },
+    {
+      "executed": false,
+      "language": "python",
+      "path": "roadmap/plans/004-collection-metadata.md",
+      "syntax_valid": true
+    },
+    {
+      "executed": false,
+      "language": "python",
+      "path": "roadmap/plans/005-tus-transfer.md",
+      "syntax_valid": true
+    },
+    {
+      "executed": false,
+      "language": "python",
+      "path": "roadmap/plans/006-release-publication.md",
+      "syntax_valid": true
+    },
+    {
+      "executed": false,
+      "language": "python",
+      "path": "roadmap/plans/007-search-export.md",
+      "syntax_valid": true
+    },
+    {
+      "executed": false,
+      "language": "python",
+      "path": "roadmap/plans/008-production-sdk.md",
+      "syntax_valid": true
+    }
+  ],
+  "executed_cli_matrix_cases": 0,
+  "local_links": [
+    {
+      "destination": "../planning-pause-2026-10-06.md",
+      "source": "roadmap/plans/001-decisions-prototypes.md",
+      "valid": true
+    },
+    {
+      "destination": "../prerequisite-review-2026-10-06.md",
+      "source": "roadmap/plans/001-decisions-prototypes.md",
+      "valid": true
+    },
+    {
+      "destination": "../prerequisite-review-2026-10-06.md",
+      "source": "roadmap/plans/008-production-sdk.md",
+      "valid": true
+    },
+    {
+      "destination": "planning-pause-2026-10-06.md",
+      "source": "roadmap/mvp-planning-checkpoint.md",
+      "valid": true
+    },
+    {
+      "destination": "raw-cutover-inventory-receipt.md",
+      "source": "roadmap/mvp-planning-checkpoint.md",
+      "valid": true
+    },
+    {
+      "destination": "sdk-isolation-dispatch-receipt.md",
+      "source": "roadmap/mvp-planning-checkpoint.md",
+      "valid": true
+    },
+    {
+      "destination": "../design/raw-first.md",
+      "source": "roadmap/mvp-planning-checkpoint.md",
+      "valid": true
+    },
+    {
+      "destination": "../CONTEXT.md",
+      "source": "roadmap/mvp-planning-checkpoint.md",
+      "valid": true
+    }
+  ],
+  "omitted_existing_markdown_links": [],
+  "ordinary_remaining_markdown": 3375,
+  "ordinary_remaining_whitespace_errors": [],
+  "original63_byte_identical": true,
+  "original63_case_declarations": 63,
+  "original63_sha256": "4cb36369770aee10d54d8a49edd00e68f21641359a68281d48e45f13335eb149",
+  "policy_documents": 11,
+  "policy_lines": 2084,
+  "python": "3.14.0 (main, Sep 18 2026, 15:43:22) [GCC 13.3.0]",
+  "required_phase_headings": 100,
+  "sdk_markdown_still_in_whitespace_population": 151,
+  "subjects": [
+    {
+      "lines": 460,
+      "path": "roadmap/checker-input-boundary-plan.md",
+      "sha256": "d2f71de5f1909322ff994e49124432f9cbad3239f3b583c40454adf89d27927d",
+      "status": [
+        "Status: blocked \u2014 review1 FAIL; planning fix awaits maximum review2 and exact enrollment authorization."
+      ]
+    },
+    {
+      "lines": 231,
+      "path": "roadmap/plans/001-decisions-prototypes.md",
+      "sha256": "3759743956835eec9039376d1bc73ceb6b0344acfc0eb306965696b7c8de4794",
+      "status": [
+        "Status: blocked \u2014 schema prototype independently qualified; remaining decisions, probes and downstream reconciliation pending"
+      ]
+    },
+    {
+      "lines": 180,
+      "path": "roadmap/plans/002-environment-interfaces.md",
+      "sha256": "062ba9d8170df874ee9c0d3e1dc5b54f2ccef0af71c8f6e85facb32ee5c80402",
+      "status": [
+        "Status: BLOCKED \u2014 phase 001 evidence, exact move inventory and runner/topology closure unresolved."
+      ]
+    },
+    {
+      "lines": 149,
+      "path": "roadmap/plans/003-identity-directory-access.md",
+      "sha256": "bb2f76e5d9d85c808dce720b35e61315addfdb3cbbd2f1b98ef5e3738abaaec3",
+      "status": [
+        "Status: BLOCKED \u2014 credential/broker decision, authority prototype and phase 002."
+      ]
+    },
+    {
+      "lines": 173,
+      "path": "roadmap/plans/004-collection-metadata.md",
+      "sha256": "2bafe6e4df958c5114249f2a3671e76e99e75dec826493b46c8d0a5be8b4c78a",
+      "status": [
+        "Status: BLOCKED \u2014 schema product-profile decision, bootstrap evidence and 002/003 prerequisites."
+      ]
+    },
+    {
+      "lines": 155,
+      "path": "roadmap/plans/005-tus-transfer.md",
+      "sha256": "d066da248810631ddd57d4ff2f6d3fd017c7e30fa95916d40e27b5b479c3348b",
+      "status": [
+        "Status: BLOCKED \u2014 durable-offset/fencing prototype and 002\u2013004 prerequisites."
+      ]
+    },
+    {
+      "lines": 193,
+      "path": "roadmap/plans/006-release-publication.md",
+      "sha256": "b18b1ed5f843a8aa482bbd63ad68d27abf45528e6480833b6170cdda978cd47b",
+      "status": [
+        "Status: BLOCKED \u2014 atomic serialization/crash prototype, bootstrap and 003\u2013005 results."
+      ]
+    },
+    {
+      "lines": 134,
+      "path": "roadmap/plans/007-search-export.md",
+      "sha256": "92b5734de131d56c363b662fd5dc3f55b9cbd33abf0d15756c65481613c729fc",
+      "status": [
+        "Status: BLOCKED \u2014 query/export prototype, 004 metadata and 006 publication."
+      ]
+    },
+    {
+      "lines": 178,
+      "path": "roadmap/plans/008-production-sdk.md",
+      "sha256": "d9853a387229e613b063a6f1dd109fc60804e772f9e9330b2f1f396c0f9c6a65",
+      "status": [
+        "Status: BLOCKED \u2014 credential-provider decision, isolated packaging and backend phases."
+      ]
+    },
+    {
+      "lines": 204,
+      "path": "roadmap/plans/009-integrated-frontend.md",
+      "sha256": "d52cc8fdbcf80fce7a5e6dc7729ca28630504b687c55cf809fe84f0578dff606",
+      "status": [
+        "Status: BLOCKED \u2014 001 fixture probe and 002\u2013008 backend/SDK prerequisites; integrated acceptance unrun."
+      ]
+    },
+    {
+      "lines": 200,
+      "path": "roadmap/plans/010-performance-operations.md",
+      "sha256": "d6ebc0575d90b276fb62c877656c42f3bf2cd90abbb518274f973da6671215eb",
+      "status": [
+        "Status: BLOCKED \u2014 nominated hardware/capacity, 001 early probes and implemented 002\u2013009 prerequisites."
+      ]
+    },
+    {
+      "lines": 287,
+      "path": "roadmap/mvp-planning-checkpoint.md",
+      "sha256": "1384dcba0089e9fadf3240f6dbc7e30c4f838fd58901c770bf8184384a0ae380",
+      "status": [
+        "Status: **planning backlog; NOT READY, not revised executable phases or completion evidence**."
+      ]
+    }
+  ],
+  "uv": "uv 0.12.19 (x86_64-unknown-linux-gnu)"
+}

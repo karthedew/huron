@@ -1,0 +1,13 @@
+{
+  "at": "2026-10-06T03:08:18.109331+00:00",
+  "process_observation_at": "2026-10-06T03:07:15.089144+00:00",
+  "residual_relevant_processes": [],
+  "correction": "The earlier blanket no-builds field is inaccurate: the required strict root docs build ran. No npm/SDK builds, new prototypes, services or browsers ran. Retain the earlier record; this receipt corrects only that scope label.",
+  "required_docs_build_ran": true,
+  "npm_or_sdk_builds_ran": false,
+  "new_prototypes_services_or_browsers_started": false,
+  "docs_environment_python": "Python 3.12.4",
+  "all_review_output_paths_ignored": true,
+  "output_paths": 22,
+  "ignore_exit": 0
+}

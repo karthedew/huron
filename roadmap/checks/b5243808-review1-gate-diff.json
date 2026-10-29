@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "git",
+    "diff",
+    "--check"
+  ],
+  "cwd": "/home/karl/repo/huron",
+  "exit": 0,
+  "seconds": 0.034,
+  "stdout": "",
+  "stderr": ""
+}

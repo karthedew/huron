@@ -1,0 +1,78 @@
+{
+  "operation": "read-only cached tarball comparison; no extraction, fetch or install",
+  "eligible_packages": 431,
+  "checked_archives": 431,
+  "matched_markdown_files": 557,
+  "digest_algorithms": {
+    "sha512": 431
+  },
+  "missing_cached_archives": [],
+  "mismatches": [
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/debug/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/estree/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/estree-jsx/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/hast/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/js-yaml/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/mdast/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/mdx/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/ms/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/nlcst/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/node/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/sax/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/@types/unist/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ],
+    [
+      "roadmap/prototypes/starlight/node_modules/parse-entities/node_modules/@types/unist/README.md",
+      "no regular archive member",
+      "package/README.md"
+    ]
+  ],
+  "limit": "Proves equality to retained lock-integrity-matched package archives, not independent registry authenticity or authenticated installation provenance."
+}

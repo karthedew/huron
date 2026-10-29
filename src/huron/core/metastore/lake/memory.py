@@ -12,6 +12,11 @@ from typing import TYPE_CHECKING
 from huron.core.foundation.clock import SystemClock
 from huron.core.lake.audit import AUDIT_VOCABULARY, AuditRecord
 from huron.core.metastore.lake.audit import InMemoryAudit, audit_log_violation
+from huron.core.metastore.lake.catalogs import (
+    InMemoryMetadataSchemas,
+    InMemoryMetadataSchemaWriter,
+    metadata_schema_violation,
+)
 from huron.core.metastore.lake.idempotency import ClaimRow, InMemoryClaims
 from huron.core.metastore.lake.role_mappings import InMemoryRoleMappings
 from huron.core.metastore.lake.signing_keys import InMemorySigningKeys
@@ -24,6 +29,7 @@ if TYPE_CHECKING:
 
     from huron.core.foundation.clock import Clock
     from huron.core.lake.audit import AuditAction, AuditEntry, AuditObject
+    from huron.core.lake.types import MetadataSchemaRecord
     from huron.core.security.broker import CatalogRef, SigningAlgorithm
 
 
@@ -111,6 +117,8 @@ class LakeTables:
     audit_log: dict[int, AuditRecord] = field(default_factory=dict)
     next_audit_id: int = 1
     idempotency_records: dict[tuple[str, str], ClaimRow] = field(default_factory=dict)
+    metadata_schemas: dict[UUID, MetadataSchemaRecord] = field(default_factory=dict)
+    metadata_schema_refs: dict[tuple[str, int], UUID] = field(default_factory=dict)
 
 
 class _TableBuffer[K, V]:
@@ -231,6 +239,86 @@ class _AuditLogBuffer:
             self._tables.next_audit_id = row_id + 1
 
 
+class MetadataSchemaBuffer:
+    """Versions one transaction inserts, visible to it beside the committed ones.
+
+    The table is append-only, so the buffer stages inserts and nothing else.
+    """
+
+    def __init__(self, tables: LakeTables, check_open: Callable[[], None]) -> None:
+        """Start with no pending versions.
+
+        Args:
+            tables: Committed versions and their `(name, version)` key.
+            check_open: Guard called before any read or write.
+        """
+        self._tables = tables
+        self._check_open = check_open
+        self._pending: dict[UUID, MetadataSchemaRecord] = {}
+        self._pending_refs: dict[tuple[str, int], UUID] = {}
+
+    def get(self, schema_id: UUID) -> MetadataSchemaRecord | None:
+        """Read a visible version by id.
+
+        Args:
+            schema_id: The version's id.
+
+        Returns:
+            The pending or committed version, or None for an unknown id.
+        """
+        self._check_open()
+        pending = self._pending.get(schema_id)
+        return pending if pending is not None else self._tables.metadata_schemas.get(schema_id)
+
+    def taken(self, name: str, version: int) -> bool:
+        """Whether a visible version already holds a `(name, version)` key.
+
+        Args:
+            name: The schema series.
+            version: The version number.
+
+        Returns:
+            True when a pending or committed version has that key.
+        """
+        self._check_open()
+        key = (name, version)
+        return key in self._pending_refs or key in self._tables.metadata_schema_refs
+
+    def latest_version(self, name: str) -> int:
+        """Return a series' highest visible version.
+
+        Args:
+            name: The schema series.
+
+        Returns:
+            The highest version number, or 0 when the series has none.
+        """
+        self._check_open()
+        keys = self._tables.metadata_schema_refs.keys() | self._pending_refs.keys()
+        return max((version for series, version in keys if series == name), default=0)
+
+    def insert(self, record: MetadataSchemaRecord) -> None:
+        """Stage a version under its id and its `(name, version)` key.
+
+        Args:
+            record: The new version.
+
+        Raises:
+            IntegrityViolation: If the row breaks a table constraint or its trigger.
+        """
+        self._check_open()
+        constraint = metadata_schema_violation(record, self)
+        if constraint is not None:
+            raise IntegrityViolation(constraint)
+        self._pending[record.id] = record
+        self._pending_refs[(record.name, record.version)] = record.id
+
+    def _apply(self) -> None:
+        """Add pending versions and their keys without yielding execution."""
+        self._tables.metadata_schemas.update(self._pending)
+        self._tables.metadata_schema_refs.update(self._pending_refs)
+
+
 class LakeBuffer:
     """An open transaction's typed read-through changes across every lake table."""
 
@@ -249,6 +337,7 @@ class LakeBuffer:
         self.idempotency_records = _TableBuffer(
             tables.idempotency_records, self.check_open, ClaimRow.violation
         )
+        self.metadata_schemas = MetadataSchemaBuffer(tables, self.check_open)
 
     def check_open(self) -> None:
         """Refuse reads and writes after the transaction has exited.
@@ -268,6 +357,7 @@ class LakeBuffer:
         self.signing_keys._apply()
         self.audit_log._apply()
         self.idempotency_records._apply()
+        self.metadata_schemas._apply()
 
     def close(self) -> None:
         """Invalidate all references to this transaction's buffered tables."""
@@ -318,7 +408,7 @@ class _LockRegistry:
     catalogs: dict[Hashable, _ReadWriteLock] = field(default_factory=dict)
 
 
-class InMemoryLakeTransaction(InMemoryAudit, InMemoryClaims):
+class InMemoryLakeTransaction(InMemoryAudit, InMemoryClaims, InMemoryMetadataSchemaWriter):
     """One buffered transaction that releases all its locks when it closes."""
 
     def __init__(self, tables: LakeTables, locks: _LockRegistry, clock: Clock) -> None:
@@ -333,17 +423,21 @@ class InMemoryLakeTransaction(InMemoryAudit, InMemoryClaims):
         self._clock = clock
         self._claimed: set[tuple[str, str]] = set()
         self._locks = locks
+        self._held: set[Hashable] = set()
         self._releases: list[Callable[[], None]] = []
 
     async def lock(self, key: Hashable) -> None:
-        """Hold one exclusive key until this transaction exits.
+        """Hold one exclusive key until this transaction exits; a held key is kept as it is.
 
         Args:
             key: A resource identity, including its lock category.
         """
         self.buffer.check_open()
+        if key in self._held:
+            return
         lock = self._locks.exclusive.setdefault(key, asyncio.Lock())
         await lock.acquire()
+        self._held.add(key)
         self._releases.append(lock.release)
 
     async def lock_catalog(self, key: Hashable, *, shared: bool) -> None:
@@ -366,7 +460,7 @@ class InMemoryLakeTransaction(InMemoryAudit, InMemoryClaims):
         self._releases.clear()
 
 
-class InMemoryLakeStore(InMemoryRoleMappings, InMemorySigningKeys):
+class InMemoryLakeStore(InMemoryMetadataSchemas, InMemoryRoleMappings, InMemorySigningKeys):
     """Independent committed lake state with atomic buffered transactions."""
 
     def __init__(self, *, clock: Clock | None = None, seed: bool = True) -> None:

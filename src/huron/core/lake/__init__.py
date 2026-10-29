@@ -24,7 +24,8 @@ from .audit import (
     RoleMapped,
     SchemaPublished,
 )
-from .types import CollectionState
+from .schemas import MetadataSchemas, Published
+from .types import CollectionState, MetadataSchemaRecord, SchemaParts
 
 __all__ = [
     "AUDIT_REASON_MAX",
@@ -48,6 +49,10 @@ __all__ = [
     "KeyRotated",
     "KeyWithdrawn",
     "MetadataPublished",
+    "MetadataSchemaRecord",
+    "MetadataSchemas",
+    "Published",
     "RoleMapped",
+    "SchemaParts",
     "SchemaPublished",
 ]

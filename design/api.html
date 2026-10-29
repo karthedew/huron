@@ -305,7 +305,12 @@ but no shipped route raises it yet.</p>
 <tr><td>PRINCIPAL_KIND_NOT_ALLOWED</td><td>422</td><td>live</td><td>that kind of principal may not hold that role</td></tr>
 <tr><td>ROTATION_REFUSED</td><td>409</td><td>live</td><td>a signing-key rotation or withdrawal is refused (context: reason, kid)</td></tr>
 <tr><td>SIGNING_KEY_UNAVAILABLE</td><td>503</td><td>live</td><td>no signing key can sign a Huron token; retry after Retry-After (context: reason)</td></tr>
+<tr><td>SCHEMA_INVALID</td><td>422</td><td>live</td><td>a metadata schema version is not a valid, composable JSON Schema (context: problems, total)</td></tr>
+<tr><td>SCHEMA_VERSION_EXISTS</td><td>409</td><td>live</td><td>this schema name and version is published with different content (context: name, version, latest_version)</td></tr>
 </table>
+
+<p>The Raw lake's own codes, declared by <code>huron.core.lake.errors</code>, are live only on lake
+routes: the legacy organization, project and dataset routes never answer with them.</p>
 
 <p class="note">Every code in this table has exactly one exception class, and every exception class
 the service can raise has exactly one row here. <code>tests/unit/test_error_contract.py</code>

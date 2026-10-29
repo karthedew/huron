@@ -13,7 +13,12 @@ import pytest
 
 from huron.core.foundation.retry import IdempotencyClaim, Replay, request_sha256
 from huron.core.lake import AUDIT_VOCABULARY, AuditEntry, CatalogCreated, KeyWithdrawn
-from huron.core.lake.ports import LakeStore, LakeTransaction
+from huron.core.lake.ports import (
+    LakeStore,
+    LakeTransaction,
+    MetadataSchemaStore,
+    MetadataSchemaWriter,
+)
 from huron.core.metastore.lake import InMemoryLakeStore
 from huron.core.metastore.lake.idempotency import ClaimRow
 from huron.core.metastore.lake.memory import (
@@ -39,6 +44,12 @@ from tests.lake_store_contract import (
     invalid_role_scope_scenario,
     memory_refusal,
     role_mapping_scenario,
+    schema_constraint_scenario,
+    schema_page_scenario,
+    schema_race_scenario,
+    schema_read_scenario,
+    schema_record,
+    schema_version_scenario,
     signing_key_scenario,
     store_root_scenario,
     transaction_error_scenario,
@@ -86,6 +97,8 @@ def test_seed_is_exact_and_store_state_is_independent(seed: bool) -> None:
     assert not store.tables.signing_keys
     assert not store.tables.audit_log
     assert not store.tables.idempotency_records
+    assert not store.tables.metadata_schemas
+    assert not store.tables.metadata_schema_refs
 
 
 @pytest.mark.parametrize("abort", [False, True])
@@ -100,6 +113,7 @@ async def test_buffer_reads_own_changes_and_commits_or_discards_all_tables(abort
     mapping = RoleMappingRow(
         new.name, CatalogRef(catalog, "heliophysics"), role.code, role.scope, NOW, "scientist"
     )
+    base = schema_record()
     members = {"kty": "EC"}
     key = SigningKeyRow("kid", "ES256", members, "key.pem", NOW, None, NOW, "scientist")
     members["kty"] = "changed"
@@ -122,6 +136,12 @@ async def test_buffer_reads_own_changes_and_commits_or_discards_all_tables(abort
             buffer.roles.put(role.code, role)
             buffer.group_role_map.put((new.name, catalog), mapping)
             buffer.signing_keys.put(key.kid, key)
+            assert not buffer.metadata_schemas.taken("org", 1)
+            buffer.metadata_schemas.insert(base)
+            assert buffer.metadata_schemas.get(base.id) == base
+            assert buffer.metadata_schemas.taken("org", 1)
+            assert buffer.metadata_schemas.latest_version("org") == 1
+            assert buffer.metadata_schemas.latest_version("heliophysics") == 0
             assert buffer.ldap_groups.get(new.name) == new
             assert buffer.ldap_groups.get(old.name) is None
             assert buffer.ldap_groups.get("temporary") is None
@@ -130,6 +150,7 @@ async def test_buffer_reads_own_changes_and_commits_or_discards_all_tables(abort
             assert store.tables.ldap_groups == {old.name: old}
             assert store.tables.group_role_map == {}
             assert store.tables.signing_keys == {}
+            assert store.tables.metadata_schemas == {}
             if abort:
                 raise ValueError("discard")
     except ValueError:
@@ -137,6 +158,8 @@ async def test_buffer_reads_own_changes_and_commits_or_discards_all_tables(abort
     assert store.tables.ldap_groups == ({old.name: old} if abort else {new.name: new})
     assert store.tables.group_role_map == ({} if abort else {(new.name, catalog): mapping})
     assert store.tables.signing_keys == ({} if abort else {key.kid: key})
+    assert store.tables.metadata_schemas == ({} if abort else {base.id: base})
+    assert store.tables.metadata_schema_refs == ({} if abort else {("org", 1): base.id})
     assert store.tables.roles[role.code] == role
 
 
@@ -145,10 +168,15 @@ async def test_closed_transaction_rejects_saved_buffers_and_lock_acquisition() -
     store = InMemoryLakeStore()
     async with store.transaction() as transaction:
         rows = transaction.buffer.ldap_groups
+        schemas = transaction.buffer.metadata_schemas
     actions = [
         lambda: rows.get("group"),
         lambda: rows.put("group", LdapGroupRow("group", 101, NOW)),
         lambda: rows.delete("group"),
+        lambda: schemas.get(UUID(int=1)),
+        lambda: schemas.taken("org", 1),
+        lambda: schemas.latest_version("org"),
+        lambda: schemas.insert(schema_record()),
         transaction.buffer.apply,
     ]
     for action in actions:
@@ -164,6 +192,8 @@ async def test_closed_transaction_rejects_saved_buffers_and_lock_acquisition() -
         await transaction.claim(CLAIM)
     with pytest.raises(RuntimeError, match="closed"):
         await transaction.remember(CLAIM, CATALOG_RECEIPT)
+    with pytest.raises(RuntimeError, match="closed"):
+        await transaction.insert_schema(schema_record())
     transaction.close()
 
 
@@ -294,9 +324,11 @@ def test_stores_conform_to_their_ports_structurally_not_by_inheritance() -> None
     """Both composites expose every protocol member with the same parameter names and kinds."""
     for port, adapter in [
         (LakeStore, InMemoryLakeStore),
+        (MetadataSchemaStore, InMemoryLakeStore),
         (RoleMappingReader, InMemoryLakeStore),
         (SigningKeyReader, InMemoryLakeStore),
         (LakeTransaction, InMemoryLakeTransaction),
+        (MetadataSchemaWriter, InMemoryLakeTransaction),
     ]:
         assert port not in adapter.__mro__
         for name, member in inspect.getmembers(port, inspect.isfunction):
@@ -386,8 +418,11 @@ async def test_memory_seed_requires_registered_group() -> None:
 @pytest.mark.parametrize(
     ("composite", "methods"),
     [
-        (InMemoryLakeStore, {"roles_for_groups", "unexpired"}),
-        (InMemoryLakeTransaction, {"append_audit", "claim", "remember"}),
+        (
+            InMemoryLakeStore,
+            {"by_ref", "by_id", "latest", "schemas", "roles_for_groups", "unexpired"},
+        ),
+        (InMemoryLakeTransaction, {"append_audit", "claim", "remember", "insert_schema"}),
     ],
 )
 def test_composed_halves_have_no_colliding_public_names(
@@ -592,3 +627,62 @@ async def test_claims_default_to_the_system_clock() -> None:
     row = store.tables.idempotency_records[("scientist", "create-helio")]
     assert before <= row.created_at <= datetime.now(UTC)
     assert row.expires_at - row.created_at == timedelta(hours=24)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [schema_read_scenario, schema_page_scenario, schema_version_scenario, schema_race_scenario],
+)
+async def test_schema_scenarios(scenario: Callable[[LakeStore], Awaitable[None]]) -> None:
+    """The schema halves satisfy the shared read, paging, version and race contracts."""
+    await scenario(InMemoryLakeStore())
+
+
+async def test_schema_constraint_scenario() -> None:
+    """The fake refuses schema rows by the name of the PostgreSQL constraint or trigger."""
+    await schema_constraint_scenario(InMemoryLakeStore(), memory_refusal)
+
+
+@pytest.mark.parametrize(
+    ("duplicate", "constraint"),
+    [
+        (
+            lambda base: schema_record("heliophysics", id=base.id, extends=base),
+            "metadata_schemas_pkey",
+        ),
+        (lambda base: schema_record(title="again"), "metadata_schemas_name_version_key"),
+    ],
+)
+async def test_schema_keys_back_up_the_version_decision(
+    duplicate: Callable[[Any], Any], constraint: str
+) -> None:
+    """A row bypassing the insert's version decision still cannot reuse an id or a version."""
+    store = InMemoryLakeStore()
+    base = schema_record()
+    async with store.transaction() as tx:
+        await tx.insert_schema(base)
+        with memory_refusal(constraint):
+            tx.buffer.metadata_schemas.insert(duplicate(base))
+    assert store.tables.metadata_schemas == {base.id: base}
+
+
+async def test_a_transaction_may_lock_a_key_it_already_holds() -> None:
+    """Locking a held key again neither waits nor lets a competing transaction in early."""
+    store = InMemoryLakeStore()
+    attempted, acquired = asyncio.Event(), asyncio.Event()
+
+    async def contender() -> None:
+        async with store.transaction() as transaction:
+            attempted.set()
+            await transaction.lock("same")
+            acquired.set()
+
+    async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+        async with store.transaction() as transaction:
+            await transaction.lock("same")
+            await transaction.lock("same")
+            tasks.create_task(contender())
+            await attempted.wait()
+            await asyncio.sleep(0)
+            assert not acquired.is_set()
+        await acquired.wait()

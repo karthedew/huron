@@ -16,6 +16,7 @@ from huron.core.metastore import (
     MemoryApiKeyStore,
     MemoryPrincipalStore,
 )
+from huron.core.security.broker import Actor, Grants
 
 if TYPE_CHECKING:
     from datetime import timedelta
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     import pytest
 
     from huron.core.foundation.clock import Clock
+    from huron.core.security.broker import Grant
 
 
 @dataclass(slots=True)
@@ -58,6 +60,19 @@ class FakeClock:
             instant: The instant the clock should read from now on.
         """
         self._now = instant
+
+
+def lake_actor(*grants: Grant, subject: str = "alice") -> Actor:
+    """Build an authenticated lake actor holding exactly the given grants.
+
+    Args:
+        *grants: The actor's current scoped roles; none for a bare identity.
+        subject: The actor's company username.
+
+    Returns:
+        An actor as lake authentication would resolve it.
+    """
+    return Actor(subject=subject, groups=frozenset(), grants=Grants(subject, grants))
 
 
 def memory_stores(*, clock: Clock | None = None) -> ApiStores:

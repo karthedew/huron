@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, replace
 from datetime import timedelta
-from typing import TYPE_CHECKING, ClassVar, Protocol
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from uuid import UUID, uuid5
 
 import pytest
 
+from huron.core.foundation.canonical import content_identity
 from huron.core.foundation.errors import IdempotencyKeyReused
+from huron.core.foundation.paging import Window
 from huron.core.foundation.retry import IdempotencyClaim, Replay, request_sha256
 from huron.core.lake.audit import (
     AuditEntry,
@@ -19,6 +21,8 @@ from huron.core.lake.audit import (
     CatalogCreated,
     CollectionCreated,
 )
+from huron.core.lake.errors import SchemaInvalid, SchemaVersionExists
+from huron.core.lake.types import MetadataSchemaRecord
 from huron.core.metastore.lake.memory import (
     IntegrityViolation,
     LdapGroupRow,
@@ -26,6 +30,7 @@ from huron.core.metastore.lake.memory import (
     SigningKeyRow,
 )
 from huron.core.security.broker import CatalogRef, Grant, Grants, Role, SigningKeyRecord
+from huron.schema.metadata import DRAFT_2020_12
 from tests.lake_tokens import TEST_EPOCH, TEST_RECORD
 
 if TYPE_CHECKING:
@@ -366,3 +371,163 @@ async def claim_rollback_scenario(store: LakeStore) -> None:
     async with store.transaction() as tx:
         other = replace(claim, request_sha256=request_sha256("catalog", "second"))
         assert await tx.claim(other) is None
+
+
+SCHEMA_IDS = UUID("0195f3a2-0000-7000-8000-000000000000")
+
+
+def schema_record(
+    name: str = "org",
+    version: int = 1,
+    *,
+    extends: MetadataSchemaRecord | None = None,
+    title: str | None = None,
+    **changes: Any,
+) -> MetadataSchemaRecord:
+    """Build a valid version row with a deterministic id; `changes` override its columns."""
+    title = title or f"{name} {version}"
+    document = {"$schema": DRAFT_2020_12, "type": "object", "title": title}
+    values: dict[str, Any] = {
+        "id": uuid5(SCHEMA_IDS, f"{name}/{version}/{title}"),
+        "name": name,
+        "version": version,
+        "extends_id": None if extends is None else extends.id,
+        "document": document,
+        "sha256": content_identity(document),
+        "created_at": TEST_EPOCH,
+        "created_by": "administrator",
+    }
+    return MetadataSchemaRecord(**(values | changes))
+
+
+async def insert_schemas(store: LakeStore, *records: MetadataSchemaRecord) -> None:
+    """Insert versions in one committed transaction."""
+    async with store.transaction() as tx:
+        for record in records:
+            await tx.insert_schema(record)
+
+
+async def schema_read_scenario(store: LakeStore) -> None:
+    """Committed versions read back by reference, id and series; pending ones stay private."""
+    base = schema_record()
+    assert await store.by_ref("org", 1) is None
+    assert await store.latest("org") is None
+    async with store.transaction() as tx:
+        await tx.insert_schema(base)
+        await tx.insert_schema(newer := schema_record(version=2))
+        assert await store.by_id(base.id) is None
+    extension = schema_record("heliophysics", extends=base)
+    await insert_schemas(store, extension)
+    assert await store.by_ref("org", 1) == base
+    assert await store.by_ref("org", 3) is None
+    assert await store.by_ref("geology", 1) is None
+    assert await store.by_id(extension.id) == extension
+    assert await store.by_id(UUID(int=0)) is None
+    assert await store.latest("org") == newer
+    assert await store.latest("heliophysics") == extension
+    assert await store.latest("geology") is None
+    with pytest.raises(ValueError, match="abort"):
+        async with store.transaction() as tx:
+            await tx.insert_schema(schema_record(version=3))
+            raise ValueError("abort")
+    assert await store.latest("org") == newer
+
+
+async def schema_page_scenario(store: LakeStore) -> None:
+    """Versions page by `(name, version)`: names in code-point order, versions numerically."""
+    bases = [schema_record(version=version) for version in range(1, 11)]
+    await insert_schemas(store, *bases)
+    names = ["helio_x", "heliophysics", "helio", "helio-x"]
+    await insert_schemas(store, *(schema_record(name, extends=bases[0]) for name in names))
+    expected = [(name, 1) for name in ("helio", "helio-x", "helio_x", "heliophysics")]
+    expected += [("org", version) for version in range(1, 11)]
+    seen: list[tuple[str, int]] = []
+    after = None
+    while True:
+        window = await store.schemas(after, 4)
+        seen += [(record.name, record.version) for record in window.items]
+        if not window.has_more:
+            break
+        after = seen[-1]
+    assert seen == expected
+    assert len(window.items) == 2
+    last = await store.schemas(expected[-5], 4)
+    assert [(r.name, r.version) for r in last.items] == expected[-4:]
+    assert not last.has_more
+    assert await store.schemas(expected[-1], 4) == Window([], has_more=False)
+
+
+async def schema_version_scenario(store: LakeStore) -> None:
+    """The insert refuses a taken or later-held version and a skipped one, writing nothing."""
+    base = schema_record()
+    await insert_schemas(store, base, schema_record(version=2))
+    for version in (1, 2):
+        with pytest.raises(SchemaVersionExists) as taken:
+            await insert_schemas(store, schema_record(version=version, title="changed"))
+        assert taken.value.context == {"name": "org", "version": version, "latest_version": 2}
+    for record, latest in [
+        (schema_record(version=4), 2),
+        (schema_record("heliophysics", 2, extends=base), 0),
+    ]:
+        with pytest.raises(SchemaInvalid) as gap:
+            await insert_schemas(store, record)
+        assert gap.value.context == {
+            "problems": [
+                {
+                    "where": "/version",
+                    "rule": "version_gap",
+                    "message": f"expected version {latest + 1}, not {record.version}",
+                }
+            ],
+            "total": 1,
+        }
+    assert await store.latest("org") == schema_record(version=2)
+    assert await store.latest("heliophysics") is None
+
+
+async def schema_race_scenario(store: LakeStore) -> None:
+    """A racing insert of the same version waits for the first and then finds it taken."""
+    base = schema_record()
+    await insert_schemas(store, base)
+    attempted, settled = asyncio.Event(), asyncio.Event()
+
+    async def racer() -> None:
+        attempted.set()
+        with pytest.raises(SchemaVersionExists):
+            await insert_schemas(store, schema_record(version=2, title="racer"))
+        settled.set()
+
+    async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+        async with store.transaction() as tx:
+            await tx.insert_schema(winner := schema_record(version=2))
+            tasks.create_task(racer())
+            await attempted.wait()
+            await asyncio.sleep(0)
+            assert not settled.is_set()
+        await settled.wait()
+    assert await store.latest("org") == winner
+
+
+async def schema_constraint_scenario(store: LakeStore, refused: ConstraintRefusal) -> None:
+    """One level of extension, org as the only base, strict names and digests are enforced."""
+    base = schema_record()
+    extension = schema_record("heliophysics", extends=base)
+    await insert_schemas(store, base, extension)
+    for record, constraint in [
+        (schema_record("nested", extends=extension), "metadata_schemas_one_level"),
+        (schema_record("Ext", extends=base), "metadata_schemas_name_check"),
+        (schema_record("geology", extends=base, sha256="0" * 63), "metadata_schemas_sha256_check"),
+        (schema_record(version=2, extends=base), "metadata_schemas_org_is_the_base"),
+        (schema_record("geology"), "metadata_schemas_org_is_the_base"),
+        (
+            schema_record("geology", extends_id=UUID(int=7)),
+            "metadata_schemas_extends_id_fkey",
+        ),
+    ]:
+        with refused(constraint):
+            await insert_schemas(store, record)
+        assert await store.by_id(record.id) is None
+    assert [(r.name, r.version) for r in (await store.schemas(None, 10)).items] == [
+        ("heliophysics", 1),
+        ("org", 1),
+    ]

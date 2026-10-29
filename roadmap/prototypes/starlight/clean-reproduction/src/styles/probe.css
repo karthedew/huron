@@ -1,0 +1,4 @@
+/* Long scientific identifiers must not widen the document viewport. */
+.sl-markdown-content :is(p, li, td, th, a) {
+  overflow-wrap: anywhere;
+}

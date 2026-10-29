@@ -11424,3 +11424,43 @@ checks print nothing. Tests: 1939 unit, 15 contract, 12 integration, 1954 combin
 Unit coverage 4446/4565 (97.39%); combined 4562/4565 (99.93%); every touched file 100% except the
 accepted line. Floor 95.74; duplication 79 fragments/77 pairs/28 groups, baseline unchanged from
 M6.5, G3 0/4. The task spans the pushed checkpoint `225ebd3` and the commit that completes it.
+
+### M7.2 implementation — pending independent verification
+
+`huron.core.lake.errors` opens the lake vocabulary: `SchemaInvalid` (422; problems sorted by
+`(where, rule, message)`, the first 50 plus `total`; `version_gap` constructor) and
+`SchemaVersionExists` (409; `name`, `version`, `latest_version`), wired into `wire_error_codes()` as
+`LAKE_ERROR_CODES`, N818 ignore beside the errors modules. `huron.core.lake.schemas.MetadataSchemas`:
+`publish` refuses below Administrator (N14) and a claim owned by another principal (`FORBIDDEN`),
+collects rows 3–5 together (name/version, `extends`, rule 1 `size` through `canonical_bytes`, rules
+2–8 through `check_schema_document`, under `/json_schema`), then rule 9 through `compose` as one
+`composition` problem; one transaction claims (a replay answers the created version), treats an
+identical latest republish as `created=False` with no row, entry or receipt, lets `insert_schema`
+decide rows 7–8, appends `SchemaPublished` and remembers `Replay("metadata_schema", id)`. N13:
+publishing never adopts; no identity pin, layout validation or placement error. `get`/`list` take any
+actor; `resolve` always reads `by_ref`; `parts` and base lookups use an LRU id cache (`row_cache`, 0
+disables). `lake.types`: `MetadataSchemaRecord` (owns its document, `ref`), `SchemaParts` (pairing
+invariants, `referenced`), `is_segment`. Ports: `MetadataSchemaStore` (`by_ref`, `by_id`, `latest`,
+`schemas`), `MetadataSchemaWriter.insert_schema`, `SchemaResolver`; `LakeStore`/`LakeTransaction`
+compose them. Fake (`metastore/lake/catalogs.py`): plan reading — the half is split by port into
+`InMemoryMetadataSchemas` (root reads) and `InMemoryMetadataSchemaWriter` (transaction insert), so
+the root exposes no write; `LakeTables.metadata_schemas` plus its `metadata_schema_refs`
+`(name, version)` key; `MetadataSchemaBuffer` stages append-only inserts and raises
+`IntegrityViolation` for `metadata_schemas_one_level`, `_pkey`, `_name_check` (via `is_segment`),
+`_sha256_check`, `_org_is_the_base`, `_name_version_key` and `_extends_id_fkey`; the insert locks
+the series to transaction end. `InMemoryLakeTransaction.lock` is now reentrant within a transaction
+(PostgreSQL lock semantics; the claims half's re-lock guard is removed). Docs: DT-18's two §7 rows
+and the lake-routes sentence; `catalog-search.html` §2 registry replaced by `lake.metadata_schemas`
+(ADR 0003, `[db RL]` markers), `revision_amendments` DDL, the LanceDB `revisions` row and the
+dropped `ingest_sessions_revision_guard` property row removed (count "Five rows"), "Raw pins" in
+the provenance comment and lineage text, the search paragraph no longer projects Raw.
+
+Gate: all 15 commands exit 0; radon CC/MI output empty; `lint-imports` 17 kept; pyscn no findings;
+`test_error_contract.py` 14 passed; `make docs` clean; the three M7.2 `rg` checks as required
+(only `schema/naming.py` holds the segment pattern). Tests: 1994 unit (+55), 15 contract,
+12 integration, 2009 combined; focused M7.2 files 120 passed. Unit coverage 4713/4832 (97.54%),
+combined 4829/4832 (99.94%; misses `foundation/identifiers.py` 32, 52 and the accepted
+`metastore/hierarchy.py` 650); every created or modified file 100%. Floor 95.74 unchanged.
+Duplication 79 cloned fragments/623, 77 pairs, 28 groups, native 80: the first draft's three new
+groups (lookup-or-404 and LRU silhouettes in `schemas.py`) were removed by design, so no baseline
+edit; G3 stays 0/4. Independent verification is pending; this note does not mark M7.2 complete.

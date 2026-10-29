@@ -1,0 +1,9 @@
+{
+  "cwd": "/home/karl/repo/huron",
+  "command": "git diff --check",
+  "exit": 0,
+  "seconds": 0.025,
+  "stdout_lines": 0,
+  "stderr_lines": 0,
+  "log": "roadmap/checks/3818200d-review-diff.log"
+}

@@ -213,7 +213,7 @@ def test_problem_model_defaults_context_to_none() -> None:
 
 
 def test_wire_error_codes_includes_every_family_and_the_framework_statuses() -> None:
-    """wire_error_codes lists the framework, domain, auth and role error codes together."""
+    """wire_error_codes lists the framework, domain, lake, auth and role error codes together."""
     codes = wire_error_codes()
     assert {"BAD_REQUEST", "NOT_FOUND", "METHOD_NOT_ALLOWED"} <= codes
     assert {"REQUEST_INVALID", "INTERNAL_ERROR"} <= codes
@@ -222,6 +222,7 @@ def test_wire_error_codes_includes_every_family_and_the_framework_statuses() -> 
     assert Forbidden("x").code in codes
     assert "INVALID_CREDENTIAL" in codes
     assert "UNKNOWN_ROLE" in codes
+    assert {"SCHEMA_INVALID", "SCHEMA_VERSION_EXISTS"} <= codes
 
 
 def test_wire_error_codes_excludes_the_retired_dispatch_codes() -> None:

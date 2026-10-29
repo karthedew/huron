@@ -1,0 +1,21 @@
+{
+  "label": "pythonpath-cannot-import-live-checkout",
+  "argv": [
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/bin/python",
+    "-I",
+    "-B",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py",
+    "sdk",
+    "--repo",
+    "/home/karl/repo/huron",
+    "--sdk-root",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/lib/python3.12/site-packages"
+  ],
+  "cwd": "/tmp/opencode",
+  "exit": 0,
+  "expected_exit": 0,
+  "stdout": "{\"case_count\": 17, \"cases\": [\"default-construction-no-network-or-credential-effects\", \"http-success-sdk-owned-immutable-value\", \"http-404-cleanup\", \"http-500-cleanup\", \"invalid-json\", \"json-null\", \"json-array\", \"missing-title\", \"extra-field\", \"nonstring-id\", \"invalid-uuid\", \"wrong-identity\", \"nonstring-title\", \"empty-title\", \"transport-exception-cleanup\", \"caller-exception-cleanup\", \"invalid-request-identity-before-http\"], \"client_module\": \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/lib/python3.12/site-packages/huron/client/interface/client.py\", \"dataset_module\": \"/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/lib/python3.12/site-packages/huron/catalog/interface/values.py\", \"external_io_attempts\": [], \"forbidden_import_attempts\": [], \"guard_selftests\": 22}\n",
+  "stderr": "",
+  "seconds": 0.268,
+  "pid": 1811881
+}

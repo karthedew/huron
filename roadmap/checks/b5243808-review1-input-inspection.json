@@ -1,0 +1,2450 @@
+{
+  "markdown_total": 4559,
+  "reports": [
+    {
+      "attachments": 6,
+      "configFile": "/home/karl/repo/huron/roadmap/prototypes/starlight/playwright.config.ts",
+      "duplicate_attachments": 0,
+      "invalid": [],
+      "on_disk": 6,
+      "projectOutputDirs": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-final"
+      ],
+      "report": "roadmap/prototypes/starlight/evidence/e2e-root-final.json",
+      "rootDir": "/home/karl/repo/huron/roadmap/prototypes/starlight/e2e",
+      "sample": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-final/docs-An-aborted-search-ind-34387-s-after-network-restoration-mobile-light/error-context.md"
+      ],
+      "set_equal": true,
+      "sha256": "baa8446d5a4632051f2761fad67f35a3f663db5c3c57c966d0b40dbca8ffcd6b",
+      "stats": {
+        "duration": 68047.856,
+        "expected": 24,
+        "flaky": 0,
+        "skipped": 0,
+        "startTime": "2026-10-06T01:22:45.395Z",
+        "unexpected": 6
+      }
+    },
+    {
+      "attachments": 8,
+      "configFile": "/home/karl/repo/huron/roadmap/prototypes/starlight/playwright.config.ts",
+      "duplicate_attachments": 0,
+      "invalid": [],
+      "on_disk": 8,
+      "projectOutputDirs": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-full-corrected"
+      ],
+      "report": "roadmap/prototypes/starlight/evidence/e2e-root-full-corrected.json",
+      "rootDir": "/home/karl/repo/huron/roadmap/prototypes/starlight/e2e",
+      "sample": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-full-corrected/docs-Theme-skip-link-navig-67fda-e-without-viewport-overflow-mobile-light/error-context.md"
+      ],
+      "set_equal": true,
+      "sha256": "35f0261e86cd2de3f3b6a9d0a85bbf9a6397d565f76b9daf4e462ae32141e9ca",
+      "stats": {
+        "duration": 76103.115,
+        "expected": 22,
+        "flaky": 0,
+        "skipped": 0,
+        "startTime": "2026-10-06T01:18:22.274Z",
+        "unexpected": 8
+      }
+    },
+    {
+      "attachments": 12,
+      "configFile": "/home/karl/repo/huron/roadmap/prototypes/starlight/playwright.config.ts",
+      "duplicate_attachments": 0,
+      "invalid": [],
+      "on_disk": 12,
+      "projectOutputDirs": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-full"
+      ],
+      "report": "roadmap/prototypes/starlight/evidence/e2e-root-full.json",
+      "rootDir": "/home/karl/repo/huron/roadmap/prototypes/starlight/e2e",
+      "sample": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-full/docs-Theme-skip-link-navig-67fda-e-without-viewport-overflow-mobile-light/error-context.md"
+      ],
+      "set_equal": true,
+      "sha256": "7dddec8a4474311adc9d33cc36d400ea16da11b0b8d3d5c6a52f138f09e547e4",
+      "stats": {
+        "duration": 78237.736,
+        "expected": 18,
+        "flaky": 0,
+        "skipped": 0,
+        "startTime": "2026-10-06T01:16:27.249Z",
+        "unexpected": 12
+      }
+    },
+    {
+      "attachments": 8,
+      "configFile": "/home/karl/repo/huron/roadmap/prototypes/starlight/playwright.config.ts",
+      "duplicate_attachments": 0,
+      "invalid": [],
+      "on_disk": 8,
+      "projectOutputDirs": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-qualified-matrix"
+      ],
+      "report": "roadmap/prototypes/starlight/evidence/e2e-root-qualified-matrix.json",
+      "rootDir": "/home/karl/repo/huron/roadmap/prototypes/starlight/e2e",
+      "sample": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-qualified-matrix/docs-Theme-skip-link-navig-67fda-e-without-viewport-overflow-mobile-light/error-context.md"
+      ],
+      "set_equal": true,
+      "sha256": "2fcec0b3544a3853188445180db29230bde0e3c0c2321e24f58eb42daab6743e",
+      "stats": {
+        "duration": 79349.43599999999,
+        "expected": 22,
+        "flaky": 0,
+        "skipped": 0,
+        "startTime": "2026-10-06T01:20:38.920Z",
+        "unexpected": 8
+      }
+    },
+    {
+      "attachments": 1,
+      "configFile": "/home/karl/repo/huron/roadmap/prototypes/starlight/playwright.config.ts",
+      "duplicate_attachments": 0,
+      "invalid": [],
+      "on_disk": 1,
+      "projectOutputDirs": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-wide-corrected"
+      ],
+      "report": "roadmap/prototypes/starlight/evidence/e2e-root-wide-corrected.json",
+      "rootDir": "/home/karl/repo/huron/roadmap/prototypes/starlight/e2e",
+      "sample": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root-wide-corrected/docs-An-aborted-search-ind-34387-s-after-network-restoration-wide-light/error-context.md"
+      ],
+      "set_equal": true,
+      "sha256": "c8a16ff77b7647f699420ef41d185d43d2d963a147ebe187f4a130bb70071947",
+      "stats": {
+        "duration": 10820.571,
+        "expected": 4,
+        "flaky": 0,
+        "skipped": 0,
+        "startTime": "2026-10-06T01:15:36.780Z",
+        "unexpected": 1
+      }
+    },
+    {
+      "attachments": 3,
+      "configFile": "/home/karl/repo/huron/roadmap/prototypes/starlight/playwright.config.ts",
+      "duplicate_attachments": 0,
+      "invalid": [],
+      "on_disk": 3,
+      "projectOutputDirs": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root"
+      ],
+      "report": "roadmap/prototypes/starlight/evidence/e2e-root.json",
+      "rootDir": "/home/karl/repo/huron/roadmap/prototypes/starlight/e2e",
+      "sample": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-root/docs-Built-local-search-su-b192e-on-and-honest-empty-results-wide-light/error-context.md"
+      ],
+      "set_equal": true,
+      "sha256": "320394b56e7406e628e546c2aa4537eefae966d97fe1da005c58393d943b051f",
+      "stats": {
+        "duration": 45755.726,
+        "expected": 2,
+        "flaky": 0,
+        "skipped": 0,
+        "startTime": "2026-10-06T01:13:48.747Z",
+        "unexpected": 3
+      }
+    },
+    {
+      "attachments": 6,
+      "configFile": "/home/karl/repo/huron/roadmap/prototypes/starlight/playwright.config.ts",
+      "duplicate_attachments": 0,
+      "invalid": [],
+      "on_disk": 6,
+      "projectOutputDirs": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-subbase-final"
+      ],
+      "report": "roadmap/prototypes/starlight/evidence/e2e-subbase-final.json",
+      "rootDir": "/home/karl/repo/huron/roadmap/prototypes/starlight/e2e",
+      "sample": [
+        "/home/karl/repo/huron/roadmap/prototypes/starlight/evidence/e2e-subbase-final/docs-An-aborted-search-ind-34387-s-after-network-restoration-mobile-light/error-context.md"
+      ],
+      "set_equal": true,
+      "sha256": "634b9b78aeeb59935dc88125496a94330788169a5763bd67484fe99fbaf023d8",
+      "stats": {
+        "duration": 69452.581,
+        "expected": 24,
+        "flaky": 0,
+        "skipped": 0,
+        "startTime": "2026-10-06T01:27:31.401Z",
+        "unexpected": 6
+      }
+    }
+  ],
+  "starlight_counts": {
+    ".test-work": 3048,
+    ".work": 70,
+    "clean-reproduction": 612,
+    "evidence": 46,
+    "evidence.md": 1,
+    "fixtures": 14,
+    "node_modules": 570,
+    "src": 14
+  },
+  "subject_counts": {
+    "SDK": 151,
+    "Starlight": 4375,
+    "other": 33
+  },
+  "symlink_count": 446,
+  "symlink_kinds": {
+    "dir": 198,
+    "file": 248
+  },
+  "symlinks": [
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/starlight/.test-work/content-OkRxnT/src/content/docs/escape",
+      "target": "/home/karl/repo/huron/roadmap/prototypes/starlight/.test-work/content-OkRxnT/fixtures"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/.test-work/content-Ihxpfv/fixtures/docs/history.md",
+      "target": "/home/karl/repo/huron/roadmap/prototypes/starlight/fixtures/docs/history.md"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/.test-work/content-1WmJBD/fixtures/docs/history.md",
+      "target": "/home/karl/repo/huron/roadmap/prototypes/starlight/fixtures/docs/history.md"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/starlight/.test-work/content-jYvxl9/src/content/docs/escape",
+      "target": "/home/karl/repo/huron/roadmap/prototypes/starlight/.test-work/content-jYvxl9/fixtures"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/starlight/.test-work/content-nbDit2/src/content/docs/escape",
+      "target": "/home/karl/repo/huron/roadmap/prototypes/starlight/.test-work/content-nbDit2/fixtures"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/.test-work/content-lTOd9L/fixtures/docs/history.md",
+      "target": "/home/karl/repo/huron/roadmap/prototypes/starlight/fixtures/docs/history.md"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/.test-work/content-5fdD3a/fixtures/docs/history.md",
+      "target": "/home/karl/repo/huron/roadmap/prototypes/starlight/fixtures/docs/history.md"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/starlight/.test-work/content-peNCbi/src/content/docs/escape",
+      "target": "/home/karl/repo/huron/roadmap/prototypes/starlight/.test-work/content-peNCbi/fixtures"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/yaml-language-server/node_modules/.bin/yaml",
+      "target": "../yaml/bin.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/rolldown",
+      "target": "../rolldown/bin/cli.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/esbuild",
+      "target": "../esbuild/bin/esbuild"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/yaml",
+      "target": "../yaml/bin.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/sitemap",
+      "target": "../sitemap/dist/esm/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/astro-check",
+      "target": "../@astrojs/check/bin/astro-check.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/playwright",
+      "target": "../@playwright/test/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/js-yaml",
+      "target": "../js-yaml/bin/js-yaml.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/am-i-vibing",
+      "target": "../am-i-vibing/dist/cli.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/tsserver",
+      "target": "../typescript/bin/tsserver"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/astro",
+      "target": "../astro/bin/astro.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/yaml-language-server",
+      "target": "../yaml-language-server/bin/yaml-language-server"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/parser",
+      "target": "../@babel/parser/bin/babel-parser.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/cssesc",
+      "target": "../cssesc/bin/cssesc"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/semver",
+      "target": "../semver/bin/semver.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/installServerIntoExtension",
+      "target": "../vscode-languageserver/bin/installServerIntoExtension"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/vite",
+      "target": "../vite/bin/vite.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/tsc",
+      "target": "../typescript/bin/tsc"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/nanoid",
+      "target": "../nanoid/bin/nanoid.cjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/astring",
+      "target": "../astring/bin/astring"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/is-docker",
+      "target": "../is-docker/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/acorn",
+      "target": "../acorn/bin/acorn"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/prettier",
+      "target": "../prettier/bin/prettier.cjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/pagefind",
+      "target": "../pagefind/lib/runner/bin.cjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/astro-ls",
+      "target": "../@astrojs/language-server/bin/nodeServer.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/playwright-core",
+      "target": "../playwright-core/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/svgo",
+      "target": "../svgo/bin/svgo.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/.bin/direction",
+      "target": "../direction/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/node_modules/@astrojs/yaml2ts/node_modules/.bin/yaml",
+      "target": "../yaml/bin.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/yaml-language-server/node_modules/.bin/yaml",
+      "target": "../yaml/bin.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/rolldown",
+      "target": "../rolldown/bin/cli.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/esbuild",
+      "target": "../esbuild/bin/esbuild"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/yaml",
+      "target": "../yaml/bin.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/sitemap",
+      "target": "../sitemap/dist/esm/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/astro-check",
+      "target": "../@astrojs/check/bin/astro-check.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/playwright",
+      "target": "../@playwright/test/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/js-yaml",
+      "target": "../js-yaml/bin/js-yaml.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/am-i-vibing",
+      "target": "../am-i-vibing/dist/cli.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/tsserver",
+      "target": "../typescript/bin/tsserver"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/astro",
+      "target": "../astro/bin/astro.mjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/yaml-language-server",
+      "target": "../yaml-language-server/bin/yaml-language-server"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/parser",
+      "target": "../@babel/parser/bin/babel-parser.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/cssesc",
+      "target": "../cssesc/bin/cssesc"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/semver",
+      "target": "../semver/bin/semver.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/installServerIntoExtension",
+      "target": "../vscode-languageserver/bin/installServerIntoExtension"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/vite",
+      "target": "../vite/bin/vite.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/tsc",
+      "target": "../typescript/bin/tsc"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/nanoid",
+      "target": "../nanoid/bin/nanoid.cjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/astring",
+      "target": "../astring/bin/astring"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/is-docker",
+      "target": "../is-docker/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/acorn",
+      "target": "../acorn/bin/acorn"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/prettier",
+      "target": "../prettier/bin/prettier.cjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/pagefind",
+      "target": "../pagefind/lib/runner/bin.cjs"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/astro-ls",
+      "target": "../@astrojs/language-server/bin/nodeServer.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/playwright-core",
+      "target": "../playwright-core/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/svgo",
+      "target": "../svgo/bin/svgo.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/.bin/direction",
+      "target": "../direction/cli.js"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/starlight/clean-reproduction/node_modules/@astrojs/yaml2ts/node_modules/.bin/yaml",
+      "target": "../yaml/bin.mjs"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/7874d7c981898249/ljoRj0Qjl7mtly2C/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/T8mGTYjfTLV4qq-U"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/7874d7c981898249/GyXfpoRN3gUX0AP4/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/5NyJW5LFk7Jo7Ywn"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/7874d7c981898249/mg-JaN8D2dRdgnoX/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/CJvGR_76mbaiY-v_"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/7874d7c981898249/I4es51BqSJFhuaep/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/ELXt2SV31XA_6yXm"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/7874d7c981898249/evwH73kuNPRYaB50/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/HvUeYrEoqTlwzeVP"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/7874d7c981898249/oCIMU93rxm7c0j4J/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/JoExuMy3_sbqZrj-"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/a4a9e8053609c001/JHtBMjXdMsR_tBuP/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/tvL1iwm4FFP0ugfR"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/a4a9e8053609c001/cCMZE4tsnC3KO8gw/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/ikfTZBKtFFKjtYvF"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/a4a9e8053609c001/_FAN_84tvKi9in-S/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/3VRA2FHPqjXvjmQa"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/a4a9e8053609c001/C6aecNFeNEPmtSM8/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/hQbxDHs8-8lB1yM1"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/a4a9e8053609c001/Ad85y4lTR1zglO2d/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/teG-_yAJvBhiBBaF"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/sdists-v9/editable/a4a9e8053609c001/pf4pPQr2niFr41_W/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/ydTg0p123cCBryZj"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/url/85651cd81ab670fb/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/lYFme1zdUsqkrVZE"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/url/24091418677610c9/huron-sdk/0.0.0-py3-none-any",
+      "target": "../../../../archive-v0/_JzX5IOJQNp3ZDhX"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/url/ec86184bb439c7d6/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/njaXYX4Bu67BDaj6"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/b51e6d6bd18a5274/packaging/26.3-py3-none-any",
+      "target": "../../../../archive-v0/Tca-Wdi_l_R2qFCi"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/b51e6d6bd18a5274/pluggy/1.6.0-py3-none-any",
+      "target": "../../../../archive-v0/LE0FWE1FnrKmX2Xm"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/b51e6d6bd18a5274/editables/0.5-py3-none-any",
+      "target": "../../../../archive-v0/woioHMhr21KYYgeY"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/b51e6d6bd18a5274/trove-classifiers/2026.9.21.13-py3-none-any",
+      "target": "../../../../archive-v0/y8JXOpjJUTwNvfnI"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/b51e6d6bd18a5274/pathspec/1.1.1-py3-none-any",
+      "target": "../../../../archive-v0/xJ93Ff_351IFr1Td"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/b51e6d6bd18a5274/tomlkit/0.15.1-py3-none-any",
+      "target": "../../../../archive-v0/52dGNx3chNxN6LSk"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/b51e6d6bd18a5274/hatchling/1.32.4-py3-none-any",
+      "target": "../../../../archive-v0/Y3gwwp_lNRioUGHN"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/c229071798cee8dc/certifi/2026.7.22-py3-none-any",
+      "target": "../../../../archive-v0/vG4LuuXijEY2OQcv"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/c229071798cee8dc/anyio/4.14.2-py3-none-any",
+      "target": "../../../../archive-v0/dogW2NRdsGM-khQP"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/c229071798cee8dc/idna/3.18-py3-none-any",
+      "target": "../../../../archive-v0/8UyVDoQ20vZYAr6t"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/c229071798cee8dc/h11/0.16.0-py3-none-any",
+      "target": "../../../../archive-v0/OsehJcHOmECS2F8h"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/c229071798cee8dc/typing-extensions/4.16.0-py3-none-any",
+      "target": "../../../../archive-v0/zloZPvkiiQ83n2VD"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/c229071798cee8dc/httpcore/1.0.9-py3-none-any",
+      "target": "../../../../archive-v0/m7L5UJe2m8o4c0mr"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/cache/uv/wheels-v6/index/c229071798cee8dc/httpx/0.28.1-py3-none-any",
+      "target": "../../../../archive-v0/VbjixiHJflmk6zPy"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-current-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-current-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-current-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-current-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-native-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-native-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-native-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-native-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-current/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-current/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-current/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-current/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-native-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-native-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-native-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-native-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/build-tools/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/build-tools/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/build-tools/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/build-tools/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-native-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-native-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-native-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/wheel-native-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-path-interpreter/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-path-interpreter/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-path-interpreter/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-path-interpreter/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/sdk-only/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/sdk-only/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/sdk-only/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/sdk-only/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-native-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-native-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-native-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-native-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-current-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-current-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-current-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-current-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/editable-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-native/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-native/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-native/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-02/envs/split-native/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/ad6dcdaac6a293e4/dE7LfzUXti_GQAu8/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/CvV-N0ntxvroI6sr"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/ad6dcdaac6a293e4/_xfOg9XrxwVHIl-R/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/Of1i7hydU2XhqbW0"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/ad6dcdaac6a293e4/xAJuikSXdKJN8wHB/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/vsdWSbPeLqmoXbcV"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/ad6dcdaac6a293e4/qT1xXDbgNLHGjgMU/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/IMdM4CZHWlV3_Bdt"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/ad6dcdaac6a293e4/j_R7XSxP6Gfkt3gd/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/jywi6EHBNhSR2lnx"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/ad6dcdaac6a293e4/ziK0rv3TizOza9WK/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/Qm57X61jhUgNS1Lt"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/6d069faf9a097b50/jUI4ZqQ4OiaLViM9/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/s2pI2oW7uIKZ86Y9"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/6d069faf9a097b50/wJMxm1Xjd3mlyMg6/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/TP9WdT1jwf3_u42o"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/6d069faf9a097b50/g_JsqgtV9XiLkYiR/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/P3AKUHo8vlGt_k-Y"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/6d069faf9a097b50/3DdXJ5xqLABAM1EE/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/zQs11-AnRjLbwBco"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/6d069faf9a097b50/wyMAsUBw0gsasi1N/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/ztnGhSHqzjhfjnMP"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/sdists-v9/editable/6d069faf9a097b50/yqAzhi_EOHJjcU3O/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/fDlUXoU4Lp-X3Sum"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/url/797dafc1e9ab4323/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/tR6w_Iivq0uq3TGY"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/url/0b3bdee005ba26cc/huron-sdk/0.0.0-py3-none-any",
+      "target": "../../../../archive-v0/cCa1EcRr1qtN_oGU"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/url/c0225a1bea7b949b/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/lctlh28KMRO30S7R"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/5910b7ab7f74c479/certifi/2026.7.22-py3-none-any",
+      "target": "../../../../archive-v0/2UjlVp7XYKtFibLQ"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/5910b7ab7f74c479/anyio/4.14.2-py3-none-any",
+      "target": "../../../../archive-v0/AgUJSt6j4sOFlMkY"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/5910b7ab7f74c479/idna/3.18-py3-none-any",
+      "target": "../../../../archive-v0/7hwN6UjoSSJq6vob"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/5910b7ab7f74c479/h11/0.16.0-py3-none-any",
+      "target": "../../../../archive-v0/g2tc1my-RwFJV-Lb"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/5910b7ab7f74c479/typing-extensions/4.16.0-py3-none-any",
+      "target": "../../../../archive-v0/wDTUSu9T-C0QKoqE"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/5910b7ab7f74c479/httpcore/1.0.9-py3-none-any",
+      "target": "../../../../archive-v0/QYnWcdhI-flMfnM7"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/5910b7ab7f74c479/httpx/0.28.1-py3-none-any",
+      "target": "../../../../archive-v0/vrZLOWZ7MFfCus4r"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/8b6e1872ec6959c5/packaging/26.3-py3-none-any",
+      "target": "../../../../archive-v0/kxzocCp6ROtxt0Yw"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/8b6e1872ec6959c5/pluggy/1.6.0-py3-none-any",
+      "target": "../../../../archive-v0/CS0MmraUeCQp7fAb"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/8b6e1872ec6959c5/editables/0.5-py3-none-any",
+      "target": "../../../../archive-v0/4XSStI2sc4CSC5J7"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/8b6e1872ec6959c5/trove-classifiers/2026.9.21.13-py3-none-any",
+      "target": "../../../../archive-v0/hL5S6gzqfJE-u2Q9"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/8b6e1872ec6959c5/pathspec/1.1.1-py3-none-any",
+      "target": "../../../../archive-v0/2B6yn6V7wj1e7_qx"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/8b6e1872ec6959c5/tomlkit/0.15.1-py3-none-any",
+      "target": "../../../../archive-v0/m7FXOgAVHs7cMtuX"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/cache/uv/wheels-v6/index/8b6e1872ec6959c5/hatchling/1.32.4-py3-none-any",
+      "target": "../../../../archive-v0/ZVfXk4_nOMRmsNq4"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-current-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-current-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-current-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-current-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-native-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-native-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-native-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-native-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-current/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-current/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-current/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-current/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-native-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-native-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-native-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-native-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/build-tools/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/build-tools/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/build-tools/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/build-tools/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-native-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-native-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-native-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/wheel-native-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-path-interpreter/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-path-interpreter/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-path-interpreter/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-path-interpreter/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/sdk-only/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/sdk-only/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/sdk-only/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/sdk-only/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-native-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-native-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-native-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-native-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-current-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-current-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-current-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-current-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/editable-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-native/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-native/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-native/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-03/envs/split-native/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/405d58848d57a19b/sqq8HXxpe3XIuJ0R/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/rDYf5-fjrlUZ1xjh"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/405d58848d57a19b/RrEuvith-1W4zSan/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/CsySGzePQPhiFsQ2"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/405d58848d57a19b/l88AOb9q7mhZ5JJQ/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/BOxqZjObrYG2t7hb"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/405d58848d57a19b/Nb0DbeWpEa7MSNX2/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/-E5kcutaALZYYHSu"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/405d58848d57a19b/HFJaf2a838qrSqXJ/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/gPPMeXHSiSi5TqJu"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/405d58848d57a19b/38S1SEUc3UF3LVcD/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/RF7-aZeD-ivIng53"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/6230790f558e826c/eqqVytVeTCxOOU1N/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/5x5C_fPCuGJRwtSi"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/6230790f558e826c/mz-PaU47Qs50ngsN/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/JWviPM2cFmGZR2Sf"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/6230790f558e826c/A72-CxN-bl07y5vC/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/K-Jm-Vt_F3STq0Ct"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/6230790f558e826c/wazwy-HP4r131csb/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/_ZkeDzTV2UEJclFj"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/6230790f558e826c/F22wXZHzJYS7QgQQ/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/D74pXIuN4wTNJUeg"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/sdists-v9/editable/6230790f558e826c/R0c51ok-OZtEljLy/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/TGpX81sFZhed_NpR"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/url/9173b210dbe42d2e/huron-sdk/0.0.0-py3-none-any",
+      "target": "../../../../archive-v0/1emd9g68o_4-Svgh"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/url/8067239f718a6dfd/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/KDnHaL0I7KOyWhB4"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/url/dedf93950b44ea8e/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/x8gpKGZteH_rzdKG"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/b8a781d6da67641e/certifi/2026.7.22-py3-none-any",
+      "target": "../../../../archive-v0/CzEN1_2e0HLFaCY6"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/b8a781d6da67641e/anyio/4.14.2-py3-none-any",
+      "target": "../../../../archive-v0/l3J_Ihz-cQn5D_E0"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/b8a781d6da67641e/idna/3.18-py3-none-any",
+      "target": "../../../../archive-v0/nUkwYxXGTyZ2iGjP"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/b8a781d6da67641e/h11/0.16.0-py3-none-any",
+      "target": "../../../../archive-v0/-ZXn6mLAAHwu9Xnm"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/b8a781d6da67641e/typing-extensions/4.16.0-py3-none-any",
+      "target": "../../../../archive-v0/AbBmBE_lTMG7jgtN"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/b8a781d6da67641e/httpcore/1.0.9-py3-none-any",
+      "target": "../../../../archive-v0/7pQ8gS_1Swskh3rF"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/b8a781d6da67641e/httpx/0.28.1-py3-none-any",
+      "target": "../../../../archive-v0/Wbyp4Q1mJMfYUHwf"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/51f0d2c4bc6a364e/packaging/26.3-py3-none-any",
+      "target": "../../../../archive-v0/fE_xmCwdNNR5QSB0"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/51f0d2c4bc6a364e/pluggy/1.6.0-py3-none-any",
+      "target": "../../../../archive-v0/IYwlG4N9zpDdkadW"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/51f0d2c4bc6a364e/editables/0.5-py3-none-any",
+      "target": "../../../../archive-v0/F6UeRIZtT-6DuA26"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/51f0d2c4bc6a364e/trove-classifiers/2026.9.21.13-py3-none-any",
+      "target": "../../../../archive-v0/O-Dm7Yp8tiz3Z68Q"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/51f0d2c4bc6a364e/pathspec/1.1.1-py3-none-any",
+      "target": "../../../../archive-v0/KoKvgtFeWuollwJY"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/51f0d2c4bc6a364e/tomlkit/0.15.1-py3-none-any",
+      "target": "../../../../archive-v0/_eUs1c_Q6YBMpbnv"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/cache/uv/wheels-v6/index/51f0d2c4bc6a364e/hatchling/1.32.4-py3-none-any",
+      "target": "../../../../archive-v0/PtxDD1x6i5mHiZ8A"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-current-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-current-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-current-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-current-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-native-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-native-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-native-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-native-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-current/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-current/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-current/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-current/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-native-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-native-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-native-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-native-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/build-tools/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/build-tools/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/build-tools/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/build-tools/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-native-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-native-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-native-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/wheel-native-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-path-interpreter/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-path-interpreter/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-path-interpreter/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-path-interpreter/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/sdk-only/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/sdk-only/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/sdk-only/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/sdk-only/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-native-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-native-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-native-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-native-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-current-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-current-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-current-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-current-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/editable-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-native/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-native/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-native/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-b/envs/split-native/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/url/37c000d69a720ca3/huron-sdk/0.0.0-py3-none-any",
+      "target": "../../../../archive-v0/tTPzZd8oAhbJNG_S"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/url/3c6dbe0c1cb2447b/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/JbUD8NYfkYchfzB1"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/url/edef329a46de953c/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/_nJcoR0TTE3w6HVq"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/fa856607ec4a9041/certifi/2026.7.22-py3-none-any",
+      "target": "../../../../archive-v0/XpfDGSrtNfyCbUta"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/fa856607ec4a9041/anyio/4.14.2-py3-none-any",
+      "target": "../../../../archive-v0/5UbomHHBd2S8tK1B"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/fa856607ec4a9041/idna/3.18-py3-none-any",
+      "target": "../../../../archive-v0/6q0c5dzdy8sqo4eu"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/fa856607ec4a9041/h11/0.16.0-py3-none-any",
+      "target": "../../../../archive-v0/TUN2NhIxU99tpYJ2"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/fa856607ec4a9041/typing-extensions/4.16.0-py3-none-any",
+      "target": "../../../../archive-v0/qdxIvLHTGf6RvyLU"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/fa856607ec4a9041/httpcore/1.0.9-py3-none-any",
+      "target": "../../../../archive-v0/qO_ZI_KS72cHk6oL"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/fa856607ec4a9041/httpx/0.28.1-py3-none-any",
+      "target": "../../../../archive-v0/cjZqMOwoxwuos4yb"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/4b07aa1c0a51d5cb/packaging/26.3-py3-none-any",
+      "target": "../../../../archive-v0/WK9hv4noL5l95DA0"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/4b07aa1c0a51d5cb/pluggy/1.6.0-py3-none-any",
+      "target": "../../../../archive-v0/h97lyB-wbasAYl0a"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/4b07aa1c0a51d5cb/trove-classifiers/2026.9.21.13-py3-none-any",
+      "target": "../../../../archive-v0/PqlGPOi0uKBnzWvx"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/4b07aa1c0a51d5cb/pathspec/1.1.1-py3-none-any",
+      "target": "../../../../archive-v0/DCAdvi466SanGGH5"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/4b07aa1c0a51d5cb/tomlkit/0.15.1-py3-none-any",
+      "target": "../../../../archive-v0/CeFzUa8gXAdPgGAr"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/cache/uv/wheels-v6/index/4b07aa1c0a51d5cb/hatchling/1.32.4-py3-none-any",
+      "target": "../../../../archive-v0/yvAlKT9C-4HTCw_a"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-current-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-current-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-current-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-current-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-current/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-current/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-current/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-current/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-native-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-native-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-native-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-native-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/build-tools/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/build-tools/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/build-tools/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/build-tools/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-native-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-native-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-native-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/wheel-native-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-path-interpreter/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-path-interpreter/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-path-interpreter/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-path-interpreter/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/sdk-only/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/sdk-only/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/sdk-only/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/sdk-only/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/editable-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/editable-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/editable-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/editable-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-native/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-native/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-native/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/qualification-01/envs/split-native/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/3e8c15724ff8eb0d/kgEosQEYHL30J0RV/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/6yxwSAjk0O-804oC"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/3e8c15724ff8eb0d/F-hkvkqojX5we2Eb/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/iQ7MKyYl8J1HW6Nt"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/3e8c15724ff8eb0d/wo-HnOKy6Gr0k4gD/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/u33_B3yRru4n7HEN"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/3e8c15724ff8eb0d/KCZG6K5c_huGJ5xE/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/lcRmjDqaayyANRqe"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/3e8c15724ff8eb0d/tedYQdp3r8gi7PSu/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/VCTsLZ3crUouL34U"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/3e8c15724ff8eb0d/2y9Vyjt8DRnzqVMp/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/w_gTGv4TVIbBgqoy"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/8f9b26247b3b2888/WHLPI4ZAy7ZcNFUG/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/C7ARmIWm8maZ_jz9"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/8f9b26247b3b2888/bwVC5psYof28C8iQ/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/xOm8xJNNf9N5x3cP"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/8f9b26247b3b2888/ug9tHT5ItoWpjklE/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/ynf8QJcYIdr8JXYK"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/8f9b26247b3b2888/5UjJZRqxANDQkF7c/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/p43ItXvpR0B05cxj"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/8f9b26247b3b2888/CYbqRArlwNG-XJ1x/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/e1umVebtpqqO8wKF"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/sdists-v9/editable/8f9b26247b3b2888/fMw9t9ipChSh_JYu/huron-0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/xqpo9CWqgI6b6exX"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/url/2c21fc4734ec5aae/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/v2NJfPI9l8IvK1lJ"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/url/cd921249536ec0ac/huron-sdk/0.0.0-py3-none-any",
+      "target": "../../../../archive-v0/t1r4YSjRKTheX_69"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/url/7a665d35151e6d82/huron/0.1.0-py3-none-any",
+      "target": "../../../../archive-v0/RmGt4SnxLYtuG0yF"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/87213ab4a4508d86/certifi/2026.7.22-py3-none-any",
+      "target": "../../../../archive-v0/zbRm9XZXUlHKKZWm"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/87213ab4a4508d86/anyio/4.14.2-py3-none-any",
+      "target": "../../../../archive-v0/nacuHTTAX493xAo9"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/87213ab4a4508d86/idna/3.18-py3-none-any",
+      "target": "../../../../archive-v0/Suut6tF2d90i3KcE"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/87213ab4a4508d86/h11/0.16.0-py3-none-any",
+      "target": "../../../../archive-v0/JzQEwByBq8bC9xNY"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/87213ab4a4508d86/typing-extensions/4.16.0-py3-none-any",
+      "target": "../../../../archive-v0/p7X8UuvcA0INcAN-"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/87213ab4a4508d86/httpcore/1.0.9-py3-none-any",
+      "target": "../../../../archive-v0/Z6wG1MpoH5O0ql7o"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/87213ab4a4508d86/httpx/0.28.1-py3-none-any",
+      "target": "../../../../archive-v0/kAVAhSj07BER1SY2"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/21e163c1c92f7078/packaging/26.3-py3-none-any",
+      "target": "../../../../archive-v0/KTfAunRbxKVwTzTu"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/21e163c1c92f7078/pluggy/1.6.0-py3-none-any",
+      "target": "../../../../archive-v0/TGTN6kANIWj6bLDg"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/21e163c1c92f7078/editables/0.5-py3-none-any",
+      "target": "../../../../archive-v0/hPOcdR4cT654VfLL"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/21e163c1c92f7078/trove-classifiers/2026.9.21.13-py3-none-any",
+      "target": "../../../../archive-v0/lEvxjYIwjmuEivhd"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/21e163c1c92f7078/pathspec/1.1.1-py3-none-any",
+      "target": "../../../../archive-v0/t5cFjUnZUTpDCHfv"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/21e163c1c92f7078/tomlkit/0.15.1-py3-none-any",
+      "target": "../../../../archive-v0/jcdRn9OPcbtuJFVG"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/cache/uv/wheels-v6/index/21e163c1c92f7078/hatchling/1.32.4-py3-none-any",
+      "target": "../../../../archive-v0/1VrD7vn4lGYwIV-I"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-current-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-current-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-current-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-current-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-native-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-native-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-native-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-native-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-current/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-current/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-current/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-current/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-native-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-native-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-native-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-native-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/build-tools/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/build-tools/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/build-tools/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/build-tools/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-native-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-native-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-native-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/wheel-native-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-path-interpreter/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-path-interpreter/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-path-interpreter/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-path-interpreter/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-native-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-native-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-native-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-native-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-sdk-server/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-sdk-server/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-sdk-server/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-sdk-server/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-server-sdk/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-server-sdk/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-server-sdk/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/editable-current-server-sdk/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    },
+    {
+      "kind": "dir",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-native/lib64",
+      "target": "lib"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-native/bin/python3.12",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-native/bin/python3",
+      "target": "python"
+    },
+    {
+      "kind": "file",
+      "path": "roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/split-native/bin/python",
+      "target": "/usr/local/bin/python3.12"
+    }
+  ],
+  "vendor_mismatch_paths": [],
+  "vendor_sets_equal": true,
+  "vendors": [
+    {
+      "errors": [],
+      "lock_sha256": "5857165d1169f134499883b793799a084fd9b64ca6f173bef48201943e91fd70",
+      "markdown": 570,
+      "owners": 431,
+      "root": "roadmap/prototypes/starlight/node_modules"
+    },
+    {
+      "errors": [],
+      "lock_sha256": "5857165d1169f134499883b793799a084fd9b64ca6f173bef48201943e91fd70",
+      "markdown": 570,
+      "owners": 431,
+      "root": "roadmap/prototypes/starlight/clean-reproduction/node_modules"
+    }
+  ]
+}

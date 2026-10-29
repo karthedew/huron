@@ -1,0 +1,12 @@
+{
+  "command": "UV_CACHE_DIR=/tmp/opencode/huron-effort-uv-cache make docs",
+  "argv": [
+    "make",
+    "docs"
+  ],
+  "cwd": "/home/karl/repo/huron",
+  "exit": 0,
+  "seconds": 0.353,
+  "stdout": "uv run --group docs zensical build --strict\nBuild started\nBuild finished in 0.21s\n",
+  "stderr": "No issues found\n"
+}

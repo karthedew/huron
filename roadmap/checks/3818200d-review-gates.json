@@ -1,0 +1,65 @@
+[
+  {
+    "cwd": "/home/karl/repo/huron",
+    "command": "git status --short --untracked-files=all",
+    "exit": 0,
+    "seconds": 0.007,
+    "stdout_lines": 55,
+    "stderr_lines": 0,
+    "log": "roadmap/checks/3818200d-review-status.log"
+  },
+  {
+    "cwd": "/home/karl/repo/huron",
+    "command": "git diff --check",
+    "exit": 0,
+    "seconds": 0.025,
+    "stdout_lines": 0,
+    "stderr_lines": 0,
+    "log": "roadmap/checks/3818200d-review-diff.log"
+  },
+  {
+    "cwd": "/home/karl/repo/huron",
+    "command": "UV_CACHE_DIR=/tmp/opencode/huron-effort-uv-cache make docs",
+    "exit": 0,
+    "seconds": 0.366,
+    "stdout_lines": 3,
+    "stderr_lines": 1,
+    "log": "roadmap/checks/3818200d-review-docs.log"
+  },
+  {
+    "cwd": "/home/karl/repo/huron",
+    "command": "python roadmap/check_docs.py",
+    "exit": 1,
+    "seconds": 2.528,
+    "stdout_lines": 2330,
+    "stderr_lines": 0,
+    "log": "roadmap/checks/3818200d-review-checker.log"
+  },
+  {
+    "cwd": "/home/karl/repo/huron",
+    "command": "python roadmap/checks/test_check_docs.py",
+    "exit": 1,
+    "seconds": 2.711,
+    "stdout_lines": 5,
+    "stderr_lines": 8,
+    "log": "roadmap/checks/3818200d-review-original63.log"
+  },
+  {
+    "cwd": "/home/karl/repo/huron",
+    "command": "git check-ignore -v roadmap/checker-input-boundary-plan.md roadmap/plans/001-decisions-prototypes.md roadmap/plans/002-environment-interfaces.md roadmap/plans/003-identity-directory-access.md roadmap/plans/004-collection-metadata.md roadmap/plans/005-tus-transfer.md roadmap/plans/006-release-publication.md roadmap/plans/007-search-export.md roadmap/plans/008-production-sdk.md roadmap/plans/009-integrated-frontend.md roadmap/plans/010-performance-operations.md roadmap/mvp-planning-checkpoint.md",
+    "exit": 0,
+    "seconds": 0.003,
+    "stdout_lines": 12,
+    "stderr_lines": 0,
+    "log": "roadmap/checks/3818200d-review-ignore.log"
+  },
+  {
+    "cwd": "/home/karl/repo/huron",
+    "command": "git ls-files roadmap",
+    "exit": 0,
+    "seconds": 0.002,
+    "stdout_lines": 0,
+    "stderr_lines": 0,
+    "log": "roadmap/checks/3818200d-review-roadmap.log"
+  }
+]

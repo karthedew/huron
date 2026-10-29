@@ -102,6 +102,7 @@ convention = "google"
 "src/huron/core/foundation/errors.py" = ["N818"]
 "src/huron/core/hierarchy/errors.py" = ["N818"]
 "src/huron/core/hierarchy/layers.py" = ["N818"]
+"src/huron/core/lake/errors.py" = ["N818"]
 # The role/rbac error names intentionally mirror their stable API codes.
 "src/huron/core/security/roles.py" = ["N818"]
 "src/huron/core/security/errors.py" = ["N818"]

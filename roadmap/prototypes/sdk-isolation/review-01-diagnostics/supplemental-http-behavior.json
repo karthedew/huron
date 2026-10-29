@@ -1,0 +1,18 @@
+{
+  "label": "supplemental-http-behavior",
+  "argv": [
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/envs/sdk-only/bin/python",
+    "-I",
+    "-B",
+    "-c",
+    "import json,runpy,sys\nfrom uuid import UUID\nm=runpy.run_path(sys.argv[1]); guard,denied=m[\"install_guards\"]()\nimport httpx\nfrom huron.client import Client\nfrom huron.catalog import Dataset,DatasetNotFoundError,InvalidResponseError\nidentity=UUID(int=1); cases=[]\nclass Body(httpx.SyncByteStream):\n    def __init__(self,data,broken=False): self.data=data; self.broken=broken; self.closed=False\n    def __iter__(self):\n        yield self.data\n        if self.broken: raise httpx.ReadError(\"fixture partial stream\")\n    def close(self): self.closed=True\nclass Transport(httpx.MockTransport):\n    def __init__(self,handler): super().__init__(handler); self.closed=0\n    def close(self): self.closed+=1\nfor status in (301,307,401,403,409,429,503):\n    requests=[]; body=Body(b\"{}\"); transport=Transport(lambda request: (requests.append(request),httpx.Response(status,stream=body,headers={\"location\":\"https://unexpected.invalid/\"}))[1]); client=Client(transport=transport)\n    try:\n        with client: client.datasets.get(identity)\n    except httpx.HTTPStatusError as error: assert error.response.status_code==status\n    else: raise AssertionError(status)\n    assert len(requests)==1 and body.closed and client.is_closed and transport.closed==1\n    cases.append(\"status-\"+str(status))\nbody=Body(b\"{\",broken=True); transport=Transport(lambda request: httpx.Response(200,stream=body)); client=Client(transport=transport)\ntry:\n    with client: client.datasets.get(identity)\nexcept httpx.ReadError: pass\nelse: raise AssertionError(\"read error suppressed\")\nassert body.closed and client.is_closed and transport.closed==1; cases.append(\"midbody-read-error-cleanup\")\nrequests=[]; response_values=[(404,{}),(200,{\"id\":str(identity),\"title\":\"fixture recovery\"})]\ndef exchange(request):\n    requests.append(request); status,value=response_values.pop(0); return httpx.Response(status,json=value)\ntransport=Transport(exchange)\nwith Client(transport=transport) as client:\n    try: client.datasets.get(identity)\n    except DatasetNotFoundError: pass\n    else: raise AssertionError(\"404 suppressed\")\n    assert not client.is_closed\n    assert client.datasets.get(identity)==Dataset(identity,\"fixture recovery\")\nassert client.is_closed and transport.closed==1 and len(requests)==2; cases.append(\"same-client-error-then-success\")\nassert guard.attempts==[] and denied==[]\nprint(json.dumps({\"cases\":cases,\"case_count\":len(cases),\"forbidden_import_attempts\":guard.attempts,\"external_io_attempts\":denied}))\n",
+    "/home/karl/repo/huron/roadmap/prototypes/sdk-isolation/runs/review-01-a/driver-inputs/runtime_check.py"
+  ],
+  "cwd": "/tmp/opencode",
+  "exit": 0,
+  "expected_exit": 0,
+  "stdout": "{\"cases\": [\"status-301\", \"status-307\", \"status-401\", \"status-403\", \"status-409\", \"status-429\", \"status-503\", \"midbody-read-error-cleanup\", \"same-client-error-then-success\"], \"case_count\": 9, \"forbidden_import_attempts\": [], \"external_io_attempts\": []}\n",
+  "stderr": "",
+  "pid": 1812683,
+  "seconds": 0.111
+}

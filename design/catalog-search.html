@@ -120,11 +120,11 @@ returns <code>503 PROJECTION_UNAVAILABLE</code>, browse keeps working. Lineage t
 structural query and therefore PostgreSQL — asking "similar products" is matching and therefore
 LanceDB. Classify every new query before writing it; never serve one question from two stores.</p>
 
-<h3>One index, all four layers</h3>
+<h3>One index, every projected layer</h3>
 <p>Layer is a <strong>facet, not a system boundary</strong>. A scientist searching "absorbed dose"
-does not know whether the answer is a raw revision or a published Gold product, and must not have
+does not know whether the answer is a Bronze snapshot or a published Gold product, and must not have
 to. Splitting the index by layer would mean two rankings, two authorization models, two consistency
-stories, and a merge step that can never be justified. One LanceDB projection covers raw, Bronze,
+stories, and a merge step that can never be justified. One LanceDB projection covers Bronze,
 Silver and Gold, with <code>layer</code> as a filterable column.</p>
 
 <p class="warn"><span class="k">OpenMetadata: considered, rejected.</span> It was evaluated as the
@@ -164,8 +164,6 @@ dataset_revisions(id PK, dataset_id FK, revision_number,
          manifest_sha256, metadata_sha256, revision_path, file_count, total_bytes,
          committed_by, committed_at, …,
          UNIQUE (dataset_id, revision_number)) -- distinct revisions may repeat content
-revision_amendments(id PK, revision_id FK, sequence, changed_keys text[], reclassified bool,
-         issued_by, issued_at, UNIQUE (revision_id, sequence))
 
 -- ingest
 ingest_sessions(…, dataset_id FK, …)         -- [db] one_open_ingest_per_dataset:
@@ -179,7 +177,7 @@ ingest_files(ingest_id FK, file_id PK, path, size, expected_sha256,
 -- Bronze and Silver are both per-dataset. Gold is per product, attached to its
 -- source dataset when single-source and to the project when it fuses several.
 -- There is no repository registry table: a snapshot names its repository inline in
--- repo_uri, and the raw revision, contract version and building job it came from are
+-- repo_uri, and the Raw pins, contract version and building job it came from are
 -- fields of the provenance document rather than columns.
 snapshots(id PK, dataset_id FK NULL, layer CHECK IN ('bronze','silver','gold'),   -- [db]
           repo_uri, snapshot_id, UNIQUE (repo_uri, snapshot_id),
@@ -246,28 +244,21 @@ outbox_events(… [db] outbox_unprocessed: partial index on (created_at, id)
          WHERE processed_at IS NULL; [spec] claimed FOR UPDATE SKIP LOCKED by a
          projection worker that does not exist yet)
 purge_records(… [db] approved_by <> requested_by, purge_records_check)
--- science profiles, until the registry below absorbs them
+-- science profiles
 science_profiles(name, version, document jsonb, document_sha256, published_by,
          published_at, PK (name, version))
          -- [db 0008] science_profiles_document_sha256_format: hex-64 (S5)
 
--- schema registry (see below)
-schema_registry(id PK, scope CHECK IN ('PLATFORM','ORGANIZATION','PROJECT'),  -- [db P5]
-         organization_id FK NULL, project_id FK NULL,
-         kind CHECK IN ('envelope','extension','manifest','provenance',   -- [db P5]
-                        'science_profile','contract'),
-         namespace, name, semver,
-         extends_id FK NULL REFERENCES schema_registry(id),   -- project enrichment over org base
-         document jsonb NOT NULL,               -- JSON Schema (or profile/contract YAML-as-JSON)
-         state CHECK IN ('DRAFT','PUBLISHED','DEPRECATED','WITHDRAWN'),   -- [db P5]
-         published_by, published_at NULL,
-         UNIQUE (namespace, name, semver),
-         -- the three scope CHECKs below are [db P5]
-         CHECK ((scope='PLATFORM')      = (organization_id IS NULL AND project_id IS NULL)),
-         CHECK ((scope='ORGANIZATION')  = (organization_id IS NOT NULL AND project_id IS NULL)),
-         CHECK ((scope='PROJECT')       = (project_id IS NOT NULL)))
-         -- [db P5] PUBLISHED rows are immutable: fixes are new semvers; a trigger refuses
-         -- UPDATE of document/namespace/name/semver once state='PUBLISHED'
+-- Raw lake metadata schemas (see below), in schema lake; revision 0015_lake_catalog
+lake.metadata_schemas(id PK, name COLLATE "C",   -- [db RL] CHECK: name is a naming segment
+         version CHECK (version >= 1),         -- [db RL]
+         extends_id FK NULL REFERENCES lake.metadata_schemas(id),   -- an extension's org base
+         json_schema jsonb NOT NULL, sha256,   -- [db RL] CHECK: sha256 ~ '^[0-9a-f]{64}$'
+         created_at, created_by,
+         UNIQUE (name, version),               -- [db RL] metadata_schemas_name_version_key
+         CHECK ((extends_id IS NULL) = (name = 'org')))   -- [db RL] metadata_schemas_org_is_the_base
+         -- [db RL] metadata_schemas_one_level: a trigger refuses an extends_id naming an extension
+         -- [db RL] metadata_schemas_append_only: a trigger refuses UPDATE and DELETE
 </pre>
 
 <h3 id="enforcement">What the database enforces</h3>
@@ -371,12 +362,6 @@ transaction. The reconciler is a detection path, not a guard.</td></tr>
 <span class="inv">[db 0008]</span> <code>product_versions_derivation_record_is_an_object</code></td>
 <td><code>0008</code> checks the column holds a jsonb object. Nothing checks that the object names
 its inputs.</td></tr>
-<tr><td>An ingest session that reaches <code>COMMITTED</code> claims the revision that was
-created</td>
-<td><a href="https://github.com/karthedew/huron/blob/7846d67a4c404a00830a6bb7d9255978ee5cfe32/schema_audit.md">Archived schema audit</a> F8</td>
-<td><span class="inv">[db 0008]</span> <code>ingest_sessions_revision_guard</code></td>
-<td>The pre-0008 audit admitted a committed session with a dangling UUID; a plain foreign key is not representable
-because <code>revision_id</code> is minted hours earlier, in <code>PREPARING</code>.</td></tr>
 <tr><td>Every role is user-only, and no role carries <code>data.write</code> at silver or gold</td>
 <td><a href="rbac.html#roles">RBAC §2</a>, <a href="rbac.html#authn">§6</a></td>
 <td><span class="inv">[app: <a href="../src/huron/core/security/roles.py"><code>core.security.roles</code></a>]</span></td>
@@ -385,45 +370,38 @@ refuses <code>sa:</code> principals, but the seed's own shape is held by the mod
 <code>tests/contract/test_rbac_store.py</code>.</td></tr>
 </table>
 
-<p>Seven rows, bounded by provenance: each is a property some artifact in the design record or the
+<p>Five rows, bounded by provenance: each is a property some artifact in the design record or the
 schema audit already asserts. This is not a sweep of every property the system has.</p>
 
-<h3 id="schema-registry">The schema registry</h3>
+<h3 id="metadata-schemas">Raw lake metadata schemas</h3>
 
-<p>Every structured document Huron writes or accepts — the metadata envelope, the manifest, the
-snapshot provenance block, extension metadata, science profiles, canonical contracts — is
-validated against a schema, and <strong>every one of those schemas is a row in one registry</strong>.
-One table, one lifecycle, one recovery story, rather than a core schema "versioned in the
-repository" plus a separate extension registry plus profile rows: the repository copy of the core
-schemas becomes the <em>seed</em> the platform registers at bootstrap, not a second authority.</p>
+<p>Raw collection metadata is validated against versions published in one table,
+<code>lake.metadata_schemas</code>, related by <code>extends_id</code>
+(<a href="../docs/adr/0003-metadata-schemas-compose-by-extends.md">ADR 0003</a>). It replaces the
+planned registry with <code>PLATFORM</code>, <code>ORGANIZATION</code> and <code>PROJECT</code>
+scopes, schema subjects and a deprecation state.</p>
 
 <ul>
-<li><strong>Three scopes, layered.</strong> <code>PLATFORM</code> rows are the envelope, manifest,
-and provenance schemas every deployment shares. <code>ORGANIZATION</code> rows are an org's
-metadata standards — the fields every dataset in the org must carry
-(<code>org.example.core/2.0</code>). <code>PROJECT</code> rows enrich an org schema for one
-programme of work: a project schema names the org schema it builds on via <code>extends_id</code>,
-and the <em>effective</em> schema at ingest is the composition
-(<code>allOf: [org base, project enrichment]</code>) resolved by walking the
-<code>extends</code> chain. A project schema may only extend a schema of its own organization
-(enforced by a composite FK), and chains are short by construction — platform schemas extend
-nothing, org schemas extend nothing, a project schema extends at most one org schema.</li>
-<li><strong>Published rows are immutable</strong> per <code>(namespace, name, semver)</code> —
-fixes are new versions, exactly the science-profile rule generalized. A revision's envelope
-records the schema references it validated against, so re-validation years later resolves the
-identical documents.</li>
-<li><strong>Deprecation, not deletion.</strong> <code>DEPRECATED</code> stops new ingests from
-declaring the version; existing documents keep resolving it forever. <code>WITHDRAWN</code> is
-the audited tombstone for a schema published in error.</li>
-<li><strong>Governance:</strong> organization admins publish organization schemas (and science
-profiles); project admins publish project enrichments; platform schemas ship with releases and
-are registered by migration. All writes go through the admin API and are audited.</li>
-<li><strong>Mirrored to storage.</strong> Rows are mirrored to
-<code>_platform/schemas/{namespace}/{name}/{semver}.json</code> on object storage (the
-science-profile mirroring rule, applied uniformly), so document validation is reconstructible
-without a PostgreSQL restore. Unknown extension namespaces remain stored-not-rejected
-(<a href="layer-raw.html#contracts">Raw §3</a>); the registry governs what is <em>validated</em>,
-never what is <em>preserved</em>.</li>
+<li><strong>Two kinds, one level.</strong> The org base series <code>org</code> extends nothing.
+Every other series is a catalog extension whose <code>extends_id</code> names exactly one
+<code>org</code> version, and extensions never extend extensions. The server composes an extension
+and its exact base into one closed Draft 2020-12 document, which validates metadata on the server
+and offline in the CLI.</li>
+<li><strong>Immutable, gap-free versions.</strong> A version is an integer from 1 per name, stated
+by the publisher. Republishing the latest version's exact document and base answers that version
+and writes nothing. A taken version is <code>409 SCHEMA_VERSION_EXISTS</code> and a skipped one
+<code>422 SCHEMA_INVALID</code> (rule <code>version_gap</code>); the insert decides both, so racing
+publishes neither collide nor leave a gap.</li>
+<li><strong>Publishing is not adoption.</strong> A catalog config names one exact version for all
+its collections. A correction is a new version, adopted only by publishing a config that names
+it.</li>
+<li><strong>Governance.</strong> Only an Administrator publishes, and each publish appends its
+<code>schema_publish</code> audit entry in the transaction that inserts the row.</li>
+<li><strong>Publish rules.</strong> Canonical (RFC 8785) bytes at most 262,144; the Draft 2020-12
+dialect; a root of type <code>object</code> that is not closed; the metaschema; references only
+into the root <code>$defs</code>; patterns that compile under RE2; root field names that are
+metadata field names; and a part that composes with its base. Every failure is reported together,
+the first fifty with the total.</li>
 </ul>
 
 <p class="note">Conventions pinned now because they are contracts: UUIDv7 is generated in the
@@ -443,7 +421,7 @@ the workhorses, both plain recursive CTEs at the scale Huron targets:</p>
 
 <ul>
 <li><strong>Provenance (upstream):</strong> product version → every input snapshot → bronze →
-raw revisions, rendered as the lineage panel and exported as a JSON provenance document with the
+Raw pins, rendered as the lineage panel and exported as a JSON provenance document with the
 product.</li>
 <li><strong>Impact (downstream):</strong> superseded snapshot → affected silver regions → dependent
 gold versions, driving staleness marking and recompute scheduling.</li>
@@ -466,10 +444,6 @@ with the <code>embedding</code> column reserved and null.</p>
 contract version, owner, layer availability flags (has_bronze/has_silver), latest silver snapshot,
 latest revision number, extension_text (FTS), created/updated,
 embedding (null)</td></tr>
-<tr><td class="k">revisions</td><td>raw revision</td>
-<td>ids + slugs up the chain, revision number, title, purpose,
-campaign (FTS), extracted-parameter text (e.g. <code>shield_thickness=30 material=concrete-b
-mcnp=6.3.1</code>), quality state, state (COMMITTED/EXPIRED/PURGED), file count, total bytes</td></tr>
 <tr><td class="k">snapshots</td><td>published Bronze/Silver snapshot</td>
 <td>ids + slugs up the chain, layer, contract version, variable names (FTS), dimension names,
 source revision, validation summary, published_at</td></tr>
