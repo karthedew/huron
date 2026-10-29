@@ -1,9 +1,0 @@
-{
-  "cwd": "/home/karl/repo/huron",
-  "command": "UV_CACHE_DIR=/tmp/opencode/huron-effort-uv-cache make docs",
-  "exit": 0,
-  "seconds": 0.366,
-  "stdout_lines": 3,
-  "stderr_lines": 1,
-  "log": "roadmap/checks/3818200d-review-docs.log"
-}

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: huron
+data:
+  HURON_STORE: postgres
+  HURON_INSTANCE_ID: "replace-with-the-uuid-written-into-the-share-marker"
+  HURON_ISSUER: https://huron.apps.example.org
+  HURON_AUDIENCE: huron
+  HURON_COMPANY_ISSUER: https://login.example.org/realms/company
+  HURON_COMPANY_AUDIENCE: huron-cli
+  HURON_GROUP_DIRECTORY_URL: https://groups.example.org
+  HURON_PLATFORM_ADMIN_GROUP: huron-platform-admins
+  HURON_POOL_SIZE: "10"
+  HURON_LOG_LEVEL: INFO

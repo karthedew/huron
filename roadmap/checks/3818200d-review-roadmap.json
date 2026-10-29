@@ -1,9 +1,0 @@
-{
-  "cwd": "/home/karl/repo/huron",
-  "command": "git ls-files roadmap",
-  "exit": 0,
-  "seconds": 0.002,
-  "stdout_lines": 0,
-  "stderr_lines": 0,
-  "log": "roadmap/checks/3818200d-review-roadmap.log"
-}

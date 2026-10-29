@@ -1,30 +1,20 @@
-# Multi-stage build: resolve the locked venv with uv, then copy just the venv
-# and application code into a slim runtime image with no build tooling and no
-# root user. The runtime invokes uvicorn directly rather than the `fastapi`
-# CLI: the CLI is a Typer/Rich terminal application whose only job here would
-# be to call uvicorn, and its documented install (`fastapi[standard]`) pulls
-# fastapi-cloud-cli and sentry-sdk into an image that must not carry an
-# outbound telemetry client. Development-only convenience (reload) lives on
-# the host via `make api`.
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
+# The Huron API image. Runs as a non-root user; migrations run from the same image.
+FROM python:3.12-slim AS build
+COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
 WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/app/.venv
 COPY pyproject.toml uv.lock README.md ./
-# --no-dev excludes the whole [dependency-groups].dev group (ruff, mypy,
-# ty, radon, complexipy, pyscn, the test toolchain, ...) - none of it is
-# needed to run the service, and pyscn's environment marker never affects
-# a --no-dev resolve since the entire group is skipped.
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 COPY migrations ./migrations
 COPY alembic.ini ./
 RUN uv sync --frozen --no-dev
 
-FROM python:3.12-slim-bookworm
-RUN useradd --system --uid 1001 huron
+FROM python:3.12-slim
 WORKDIR /app
-COPY --from=build --chown=huron:huron /app /app
-ENV PATH="/app/.venv/bin:$PATH"
-USER huron
+COPY --from=build /app /app
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+RUN useradd --uid 10001 --no-create-home huron
+USER 10001
 EXPOSE 8080
-CMD ["uvicorn", "huron.applications.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "huron.applications.api.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers"]

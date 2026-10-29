@@ -1,209 +1,168 @@
-"""Strict catalog names, namespace paths and lexical identifier conversions."""
+"""Naming rules for segments, identifiers and file paths inside a collection."""
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
-from pathlib import PurePosixPath
-from typing import Final
 
-SEGMENT_PATTERN: Final = "[a-z0-9][a-z0-9_-]{0,63}"
-IDENTIFIER_MAX_BYTES: Final = 1023
+from huron.pkg.errors import HuronError, Invalid, register
+
+__all__ = [
+    "IDENTIFIER_MAX_BYTES",
+    "METADATA_FILE",
+    "PART_SUFFIX",
+    "REL_PATH_MAX_BYTES",
+    "REL_PATH_SEGMENT_MAX_BYTES",
+    "RESERVED_SEGMENTS",
+    "SEGMENT_MAX_BYTES",
+    "Identifier",
+    "NamingError",
+    "RelPathError",
+    "check_rel_path",
+    "check_segment",
+    "collection_identifier",
+    "namespace_identifier",
+    "parse_identifier",
+    "part_name",
+    "rel_path_key",
+]
+
+SEGMENT_MAX_BYTES = 63
+IDENTIFIER_MAX_BYTES = 255
+REL_PATH_MAX_BYTES = 1024
+REL_PATH_SEGMENT_MAX_BYTES = 255
+RESERVED_SEGMENTS = frozenset({"huron", "metadata"})
+METADATA_FILE = "metadata.json"
+PART_SUFFIX = ".huron-part"
+
+NAME_INVALID = register("NAME_INVALID", 422, "Name invalid")
+
+_SEGMENT = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
-class NamingError(ValueError):
-    """A naming refusal preserving the rule and the caller's offending value."""
+class NamingError(HuronError):
+    """A name or identifier breaks a naming rule; ``rule`` names which one."""
 
-    def __init__(self, rule: str, value: str, detail: str) -> None:
-        """Describe a refused name without rewriting it.
+    error_code = NAME_INVALID
 
-        Args:
-            rule: The violated naming rule.
-            value: The offending input verbatim.
-            detail: Human-readable explanation.
-        """
+    def __init__(self, rule: str, value: str) -> None:
+        super().__init__(f"{value!r} breaks the naming rule {rule}", {"rule": rule, "value": value})
         self.rule = rule
         self.value = value
-        super().__init__(f"{detail}: {value!r}")
+
+
+class RelPathError(Invalid):
+    """A file path inside a collection breaks a path rule; ``rule`` names which one."""
+
+    def __init__(self, rule: str, value: str) -> None:
+        super().__init__(f"{value!r} breaks the path rule {rule}", {"rule": rule, "value": value})
+        self.rule = rule
+        self.value = value
+
+
+@dataclass(frozen=True, slots=True)
+class Identifier:
+    """A dotted identifier: the catalog, the namespace path and, for a collection, its name."""
+
+    catalog: str
+    namespace_path: tuple[str, ...] = ()
+    name: str | None = None
+
+    @property
+    def segments(self) -> tuple[str, ...]:
+        """Every segment in order."""
+        tail = () if self.name is None else (self.name,)
+        return (self.catalog, *self.namespace_path, *tail)
+
+    @property
+    def namespace(self) -> str:
+        """The dotted namespace path without the catalog (empty for a catalog)."""
+        return ".".join(self.namespace_path)
+
+    @property
+    def parent(self) -> Identifier | None:
+        """The enclosing identifier, or ``None`` for a catalog."""
+        if self.name is not None:
+            return Identifier(self.catalog, self.namespace_path)
+        if self.namespace_path:
+            return Identifier(self.catalog, self.namespace_path[:-1])
+        return None
+
+    def __str__(self) -> str:
+        return ".".join(self.segments)
 
 
 def check_segment(value: str) -> str:
-    """Validate one catalog, namespace or collection name unchanged.
-
-    Args:
-        value: The explicit name.
-
-    Returns:
-        The supplied name unchanged.
-
-    Raises:
-        NamingError: If the name violates the strict ASCII segment rule.
-    """
-    if re.fullmatch(SEGMENT_PATTERN, value) is None:
-        raise NamingError("segment", value, "expected a lowercase ASCII name of 1-64 characters")
+    """Return ``value`` when it is a valid segment; raises :class:`NamingError`."""
+    if unicodedata.normalize("NFC", value) != value:
+        raise NamingError("segment_nfc", value)
+    if len(value.encode()) > SEGMENT_MAX_BYTES:
+        raise NamingError("segment_length", value)
+    if not _SEGMENT.fullmatch(value):
+        raise NamingError("segment_chars", value)
+    if value in RESERVED_SEGMENTS:
+        raise NamingError("segment_reserved", value)
     return value
 
 
-def is_reserved(name: str) -> bool:
-    """Identify server-reserved file names.
-
-    Args:
-        name: One file name.
-
-    Returns:
-        Whether the name begins with a dot or ends with the partial suffix.
-    """
-    return name.startswith(".") or name.endswith(".part")
+def parse_identifier(text: str) -> tuple[str, ...]:
+    """Split a dotted identifier into checked segments."""
+    if len(text.encode()) > IDENTIFIER_MAX_BYTES:
+        raise NamingError("identifier_length", text)
+    if not text:
+        raise NamingError("identifier_empty", text)
+    return tuple(check_segment(segment) for segment in text.split("."))
 
 
-def _check_length(value: str) -> None:
-    if len(value.encode("utf-8", errors="surrogatepass")) > IDENTIFIER_MAX_BYTES:
-        raise NamingError("path_length", value, f"path exceeds {IDENTIFIER_MAX_BYTES} UTF-8 bytes")
+def namespace_identifier(text: str) -> Identifier:
+    """Parse ``catalog.ns1.ns2``; at least the catalog and one namespace segment."""
+    segments = parse_identifier(text)
+    if len(segments) < 2:
+        raise NamingError("identifier_depth", text)
+    return Identifier(segments[0], segments[1:])
 
 
-def _segments(text: str, separator: str) -> tuple[str, ...]:
-    parts = tuple(text.split(separator))
-    if "" in parts:
-        raise NamingError("empty_segment", text, "empty path segment")
-    return parts
+def collection_identifier(text: str) -> Identifier:
+    """Parse ``catalog.ns1.name``; at least a catalog, one namespace and the name."""
+    segments = parse_identifier(text)
+    if len(segments) < 3:
+        raise NamingError("identifier_depth", text)
+    return Identifier(segments[0], segments[1:-1], segments[-1])
 
 
-def check_namespace(path: tuple[str, ...]) -> tuple[str, ...]:
-    """Validate a nonempty recursive namespace path without limiting its depth.
-
-    Args:
-        path: Explicit namespace segments within a catalog.
-
-    Returns:
-        The immutable validated path.
-
-    Raises:
-        NamingError: If the namespace is empty or contains an unsafe or overlong name.
-    """
-    path = tuple(path)
-    if not path:
-        raise NamingError("empty_segment", "", "a namespace requires at least one segment")
-    _check_length("/".join(path))
-    for segment in path:
-        check_segment(segment)
-    return path
+def check_rel_path(value: str) -> str:
+    """Return ``value`` when it is a valid path in a collection; raises :class:`RelPathError`."""
+    if unicodedata.normalize("NFC", value) != value:
+        raise RelPathError("rel_path_nfc", value)
+    if not value or len(value.encode()) > REL_PATH_MAX_BYTES:
+        raise RelPathError("rel_path_length", value)
+    if _CONTROL.search(value) or "\\" in value:
+        raise RelPathError("rel_path_control", value)
+    if value.startswith("/") or value.endswith("/"):
+        raise RelPathError("rel_path_separator", value)
+    for segment in value.split("/"):
+        _check_path_segment(segment, value)
+    if value == METADATA_FILE:
+        raise RelPathError("rel_path_reserved", value)
+    return value
 
 
-def _check_prefix(prefix: PurePosixPath) -> str:
-    if prefix.anchor != "/" or ".." in prefix.parts or "\x00" in str(prefix):
-        raise NamingError(
-            "outside_prefix", str(prefix), "mount prefix must be an absolute safe path"
-        )
-    return str(prefix).rstrip("/")
+def rel_path_key(value: str) -> str:
+    """The case-folded key that decides whether two paths collide."""
+    return unicodedata.normalize("NFC", value.casefold())
 
 
-def _mount_relative(text: str, mount_prefix: PurePosixPath) -> str | None:
-    prefix = _check_prefix(mount_prefix)
-    if text.removesuffix("/") == prefix:
-        raise NamingError("outside_prefix", text, "mount path must be below its prefix")
-    if text.startswith(prefix + "/"):
-        return text[len(prefix) + 1 :]
-    return None
+def part_name(rel_path: str) -> str:
+    """The temporary name a file is written under before it is renamed into place."""
+    return rel_path + PART_SUFFIX
 
 
-@dataclass(frozen=True, slots=True, order=True)
-class Identifier:
-    """An immutable catalog and optional descendant namespace or collection path."""
-
-    catalog: str
-    path: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        """Validate and freeze every supplied segment."""
-        object.__setattr__(self, "path", tuple(self.path))
-        _check_length(self.fully_qualified())
-        check_segment(self.catalog)
-        for segment in self.path:
-            check_segment(segment)
-
-    @classmethod
-    def parse(
-        cls, text: str, *, catalog: str | None = None, mount_prefix: PurePosixPath | None = None
-    ) -> Identifier:
-        """Parse mount, catalog-rooted, fully qualified or canonical form in that order.
-
-        Args:
-            text: The identifier, with at most one optional trailing slash.
-            catalog: Current catalog for a catalog-rooted input.
-            mount_prefix: Absolute lexical mount prefix, if configured.
-
-        Returns:
-            The validated identifier.
-
-        Raises:
-            NamingError: If the spelling is unsafe, overlong or lacks required catalog context.
-        """
-        if text.startswith("/") and mount_prefix is not None:
-            relative = _mount_relative(text, mount_prefix)
-            if relative is not None:
-                return cls._from_slashes(relative)
-        if text.startswith("/"):
-            if catalog is None:
-                raise NamingError("no_catalog", text, "catalog-rooted input requires a catalog")
-            if text == "/":
-                return cls(catalog)
-            return cls._from_slashes(catalog + text)
-        if "/" in text:
-            return cls._from_slashes(text)
-        return cls.from_canonical(text)
-
-    @classmethod
-    def _from_slashes(cls, text: str) -> Identifier:
-        parts = _segments(text.removesuffix("/"), "/")
-        return cls(parts[0], parts[1:])
-
-    @classmethod
-    def from_canonical(cls, text: str) -> Identifier:
-        """Parse only the canonical dotted form accepted by the server.
-
-        Args:
-            text: A dotted catalog and descendant path.
-
-        Returns:
-            The validated identifier.
-        """
-        _check_length(text)
-        parts = _segments(text, ".")
-        return cls(parts[0], parts[1:])
-
-    def canonical(self) -> str:
-        """Return the dotted identifier.
-
-        Returns:
-            The catalog and path joined by dots.
-        """
-        return ".".join((self.catalog, *self.path))
-
-    def fully_qualified(self) -> str:
-        """Return the slash-separated identifier including its catalog.
-
-        Returns:
-            The relative catalog and descendant path.
-        """
-        return "/".join((self.catalog, *self.path))
-
-    def catalog_rooted(self) -> str:
-        """Return the slash-separated path within the catalog.
-
-        Returns:
-            A leading slash followed by descendants, or just a slash for the catalog.
-        """
-        return "/" + "/".join(self.path)
-
-    def mount_path(self, prefix: PurePosixPath) -> PurePosixPath:
-        """Place the identifier below an absolute lexical mount prefix.
-
-        Args:
-            prefix: The configured absolute mount path.
-
-        Returns:
-            The absolute mount path without filesystem access.
-        """
-        base = _check_prefix(prefix)
-        text = base + "/" + self.fully_qualified()
-        return PurePosixPath(text)
+def _check_path_segment(segment: str, value: str) -> None:
+    if segment in {"", ".", ".."}:
+        raise RelPathError("rel_path_separator", value)
+    if len(segment.encode()) > REL_PATH_SEGMENT_MAX_BYTES:
+        raise RelPathError("rel_path_segment", value)
+    if segment.startswith(".huron") or segment.endswith(PART_SUFFIX):
+        raise RelPathError("rel_path_reserved", value)

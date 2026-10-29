@@ -1,165 +1,136 @@
-"""What the composition root wired, and how a request reaches it.
-
-``create_app`` builds an :class:`ApiRuntime` once, in the lifespan, and
-publishes it as the application's only piece of mutable state. Path
-operations and guards declare ``Runtime`` rather than a
-``Request``: ``api_runtime`` below is the one function in the tier that
-reaches through the request to read what the app was wired with.
-"""
+"""Everything the service builds once at startup and shares across requests."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Annotated
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Protocol
 
-import asyncpg
-from fastapi import Depends, Request
+import httpx
 
-from huron.core.foundation.clock import Clock
-from huron.core.hierarchy.ports import GenerationStorage
-from huron.core.security import CredentialAuthentication
-from huron.core.security.dev import DevHeaderResolver
-from huron.core.security.facts import BindingFacts, CatalogFacts
-from huron.core.security.oidc import OidcResolver
-from huron.core.security.ports import ApiKeyWriter, RbacStore
-from huron.core.security.principals import PrincipalStore
-from huron.core.security.rules import RoleBindingAuthorizer
+from huron import __version__
+from huron.applications.api.settings import Settings
+from huron.core.lake.bootstrap import Lake, LakeSettings, bootstrap, build_lake
+from huron.core.lake.transaction import UnitOfWork
+from huron.core.metastore.postgres import PostgresStore
+from huron.core.metastore.store import MemoryStore
+from huron.core.security.broker import (
+    CompanyTokenVerifier,
+    GroupDirectory,
+    HttpGroupDirectory,
+    KeyRing,
+    TokenExchange,
+    TokenIssuer,
+    TokenVerifier,
+)
+from huron.pkg.clock import Clock, SystemClock
 
-from .capabilities import HierarchyStore
-from .settings import ApiSettings
+__all__ = ["VERSION", "ClosableStore", "Runtime", "build_runtime"]
 
-
-@dataclass(frozen=True, slots=True)
-class ApiStores:
-    """The hierarchy, RBAC and authentication stores a deployment wires as one unit.
-
-    Bundling all four together gives the composition root one shape to
-    build - Postgres in production, process memory in a test - and gives a
-    test exactly one object to inject in place of that wiring.
-
-    Attributes:
-        hierarchy: Durable storage for the organization/project/dataset
-            hierarchy and its idempotency claims.
-        rbac: Persistence for role bindings, service accounts and policies.
-        api_keys: Persistence for API keys.
-        principals: Persistence for user and service-account identities.
-    """
-
-    hierarchy: HierarchyStore
-    rbac: RbacStore
-    api_keys: ApiKeyWriter
-    principals: PrincipalStore
+VERSION = __version__
 
 
-@dataclass(frozen=True, slots=True)
-class ApiRuntime:
-    """Everything a request may need that outlives the request.
+class ClosableStore(UnitOfWork, Protocol):
+    """A unit of work the runtime can close."""
 
-    Frozen because a handler must never re-wire the service, and
-    ``settings`` is non-optional because a service with no configuration
-    must not answer requests at all. The optional members record what the
-    deployment lacks rather than defaulting it: ``oidc_resolver``
-    is ``None`` only when no company identity provider is configured,
-    so bearer JWTs are refused, and
-    ``database_pool`` is ``None`` only when the stores were injected, so
-    the readiness probe knows whether there is a database to check.
-    """
+    async def close(self) -> None:
+        """Release connections."""
+        ...
 
-    settings: ApiSettings
-    generations: GenerationStorage
-    hierarchy: HierarchyStore
-    rbac: RbacStore
-    authorizer: RoleBindingAuthorizer
-    api_keys: ApiKeyWriter
-    principals: PrincipalStore
-    oidc_resolver: OidcResolver | None
-    database_pool: asyncpg.Pool | None
+
+@dataclass
+class Runtime:
+    """The service's shared objects."""
+
+    settings: Settings
+    store: ClosableStore
     clock: Clock
+    lake: Lake
+    http: httpx.AsyncClient
+    company: CompanyTokenVerifier
+    groups: GroupDirectory
+    owns_http: bool = False
+    _ring: KeyRing | None = field(default=None, repr=False)
+    _ring_loaded_at: datetime | None = field(default=None, repr=False)
+
+    async def ring(self, *, refresh: bool = False) -> KeyRing:
+        """The key ring, reloaded at most every ``key_cache_seconds`` unless ``refresh``."""
+        now = self.clock.now()
+        stale = self._ring_loaded_at is None or now - self._ring_loaded_at >= timedelta(
+            seconds=self.settings.key_cache_seconds
+        )
+        if self._ring is None or stale or refresh:
+            self._ring = await self.lake.keys.ring()
+            self._ring_loaded_at = now
+        return self._ring
+
+    async def verifier(self) -> TokenVerifier:
+        """A verifier over the current key ring."""
+        return TokenVerifier(
+            await self.ring(), self.settings.issuer, self.settings.audience, self.clock
+        )
+
+    async def exchange(self) -> TokenExchange:
+        """The token exchange over the current key ring."""
+        issuer = TokenIssuer(
+            await self.ring(),
+            self.clock,
+            self.settings.issuer,
+            self.settings.audience,
+            self.settings.token_ttl,
+        )
+        return TokenExchange(self.company, self.groups, issuer)
+
+    async def ready(self) -> dict[str, bool]:
+        """Readiness of each dependency."""
+        ping = getattr(self.store, "ping", None)
+        database = True if ping is None else bool(await ping())
+        try:
+            keys = bool((await self.ring()).current.kid)
+        except LookupError:
+            keys = False
+        return {"database": database, "signing_keys": keys}
+
+    async def close(self) -> None:
+        """Release the store and the HTTP client the runtime created."""
+        await self.store.close()
+        if self.owns_http:
+            await self.http.aclose()
 
 
-async def api_runtime(request: Request) -> ApiRuntime:
-    """Return the wiring the lifespan published, or refuse to serve.
-
-    An application whose lifespan never started has no runtime, and every
-    injected route fails here rather than falling through to a default:
-    the cost of guessing at wiring is an unauthenticated request answered
-    as though it were authenticated. The failure is a ``RuntimeError``, not
-    a domain error, because it is a deployment bug and its honest answer is
-    the 500 the unhandled-exception path produces.
-
-    Args:
-        request: The request being served; only its application's state is
-            read.
-
-    Returns:
-        The runtime ``create_app``'s lifespan stored on ``app.state``.
-
-    Raises:
-        RuntimeError: If ``app.state.runtime`` is unset because the lifespan
-            has not run.
-    """
-    runtime: ApiRuntime | None = getattr(request.app.state, "runtime", None)
-    if runtime is None:
-        raise RuntimeError("the application lifespan has not started: app.state.runtime is unset")
-    return runtime
-
-
-Runtime = Annotated[ApiRuntime, Depends(api_runtime)]
-
-
-def credential_authentication(runtime: Runtime) -> CredentialAuthentication:
-    """Wire credential resolution from plain deployment choices and persistence ports.
-
-    Args:
-        runtime: The published wiring, resolved by ``api_runtime``.
-
-    Returns:
-        The reusable credential resolution operation.
-    """
-    return CredentialAuthentication(
-        runtime.api_keys,
-        clock=runtime.clock,
-        oidc=runtime.oidc_resolver,
-        development=(
-            DevHeaderResolver("development")
-            if runtime.settings.auth_mode == "dev-headers"
-            else None
+async def build_runtime(
+    settings: Settings,
+    *,
+    store: ClosableStore | None = None,
+    http: httpx.AsyncClient | None = None,
+    groups: GroupDirectory | None = None,
+    clock: Clock | None = None,
+) -> Runtime:
+    """Connect the store, bootstrap the lake and assemble the runtime."""
+    clock = clock or SystemClock()
+    if store is None:
+        store = await _store(settings)
+    lake_settings = LakeSettings(settings.platform_admin_group, settings.key_overlap)
+    await bootstrap(store, clock, lake_settings)
+    owns_http = http is None
+    client = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    return Runtime(
+        settings=settings,
+        store=store,
+        clock=clock,
+        lake=build_lake(store, clock, lake_settings),
+        http=client,
+        company=CompanyTokenVerifier(
+            client, settings.company_issuer, settings.company_audience, clock
         ),
+        groups=groups or HttpGroupDirectory(client, settings.group_directory_url),
+        owns_http=owns_http,
     )
 
 
-__all__ = [
-    "ApiRuntime",
-    "ApiStores",
-    "Runtime",
-    "api_runtime",
-    "credential_authentication",
-]
-
-
-async def api_hierarchy(runtime: Runtime) -> CatalogFacts:
-    """Return committed catalog facts and typed readers.
-
-    Args:
-        runtime: The process wiring.
-
-    Returns:
-        The actual hierarchy adapter.
-    """
-    return runtime.hierarchy
-
-
-async def api_binding_facts(runtime: Runtime) -> BindingFacts:
-    """Return current binding and service-account facts.
-
-    Args:
-        runtime: The process wiring.
-
-    Returns:
-        The actual RBAC adapter.
-    """
-    return runtime.rbac
-
-
-Hierarchy = Annotated[CatalogFacts, Depends(api_hierarchy)]
-Bindings = Annotated[BindingFacts, Depends(api_binding_facts)]
+async def _store(settings: Settings) -> ClosableStore:
+    if settings.store == "memory":
+        return MemoryStore()
+    store = PostgresStore(settings.database_url, settings.pool_size)
+    await store.connect()
+    return store

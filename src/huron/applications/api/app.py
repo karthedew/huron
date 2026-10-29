@@ -1,408 +1,53 @@
-"""FastAPI composition root for the Huron control plane.
-
-This module only wires: settings, the generation store and its adapters, the optional
-OIDC verifier, exception mapping, and the versioned routers. Authorization policy lives in
-``core/security`` (the pure engine, role model and reusable workflows), request guards in
-``huron.applications.api.authorization``, and route handlers under ``routes/v1``.
-"""
+"""The FastAPI application."""
 
 from __future__ import annotations
 
-import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import TYPE_CHECKING
 
-import asyncpg
-import httpx
-from asyncer import asyncify
 from fastapi import FastAPI
-from fastapi.openapi.utils import get_openapi
 
-from huron.core.foundation.clock import SystemClock
-from huron.core.foundation.errors import DependencyUnavailable
-from huron.core.metastore import (
-    PostgresApiKeyStore,
-    PostgresHierarchyStore,
-    PostgresPrincipalStore,
-    PostgresRbacStore,
-)
-from huron.core.rawstore import PosixGenerationStore
-from huron.core.security import bootstrap_platform_owner
-from huron.core.security.broker import CompanyTokenVerifier
-from huron.core.security.oidc import OidcResolver
-from huron.core.security.rules import Classification, RoleBindingAuthorizer
+from huron.applications.api.problems import install_problem_handlers
+from huron.applications.api.routes import discovery, health
+from huron.applications.api.routes.v1.router import router as v1
+from huron.applications.api.runtime import VERSION, Runtime, build_runtime
+from huron.applications.api.settings import Settings
 
-from .problems import Problem, install_error_handlers, problem_response
-from .routes import v1
-from .runtime import ApiRuntime, ApiStores, Runtime
-from .settings import ApiSettings
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
-    from huron.core.foundation.clock import Clock
-    from huron.core.hierarchy.ports import GenerationStorage
+__all__ = ["create_app"]
 
 
-def _postgres_stores(pool: asyncpg.Pool, clock: Clock) -> ApiStores:
-    """Wire the Postgres-backed RBAC and authentication stores over one shared pool.
+def create_app(settings: Settings | None = None, runtime: Runtime | None = None) -> FastAPI:
+    """Build the application.
 
-    Args:
-        pool: The already-open pool every store shares. The caller owns
-            the pool and closes it at shutdown; the stores never do.
-        clock: The source of the current time for the hierarchy store's
-            idempotency and lease arithmetic.
-
-    Returns:
-        The four stores, each a thin wrapper around the pool.
-    """
-    return ApiStores(
-        hierarchy=PostgresHierarchyStore(pool, clock=clock),
-        rbac=PostgresRbacStore(pool),
-        api_keys=PostgresApiKeyStore(pool),
-        principals=PostgresPrincipalStore(pool),
-    )
-
-
-def _build_runtime(
-    settings: ApiSettings,
-    wired: ApiStores,
-    clock: Clock,
-    pool: asyncpg.Pool | None,
-    oidc: OidcResolver | None,
-) -> ApiRuntime:
-    """Compose the generation store, the facades and the authorizer into one published runtime.
-
-    Args:
-        settings: The validated configuration; read for ``data_root`` and
-            the classification vocabulary every facade shares.
-        wired: The RBAC and authentication stores, injected or freshly
-            wired to Postgres.
-        clock: The source of the current time for credential workflows; the
-            hierarchy store's own clock was already set when ``wired`` was
-            built.
-        pool: The database pool this instance opened, or None when
-            ``wired`` was injected; published unchanged for ``/readyz``.
-        oidc: The resolver ``_configure_oidc`` produced.
-
-    Returns:
-        The runtime every injected route reads through
-        ``huron.applications.api.runtime``.
-    """
-    generations = PosixGenerationStore(Path(settings.data_root))
-    generations.initialize()
-    return ApiRuntime(
-        settings=settings,
-        generations=generations,
-        hierarchy=wired.hierarchy,
-        rbac=wired.rbac,
-        authorizer=RoleBindingAuthorizer(
-            classifications=tuple(
-                Classification(value.code, value.order, value.discoverable)
-                for value in settings.classification_vocabulary
-            )
-        ),
-        api_keys=wired.api_keys,
-        principals=wired.principals,
-        oidc_resolver=oidc,
-        database_pool=pool,
-        clock=clock,
-    )
-
-
-async def _configure_oidc(
-    settings: ApiSettings,
-    company_idp_transport: httpx.AsyncBaseTransport | None,
-    clock: Clock,
-) -> tuple[OidcResolver | None, httpx.AsyncClient | None]:
-    """Wire the company bearer resolver without contacting the issuer.
-
-    Args:
-        settings: Optional company identity-provider configuration.
-        company_idp_transport: Transport for company discovery and signing keys.
-        clock: Shared time source for token validation and cache expiry.
-
-    Returns:
-        The resolver and its caller-owned HTTP client, or two None values
-        when no company provider is configured.
-
-    Raises:
-        ValueError: If issuer or audience policy is invalid; the client is closed.
-    """
-    if settings.oidc is None:
-        return None, None
-    oidc = settings.oidc
-    http = httpx.AsyncClient(transport=company_idp_transport)
-    try:
-        verifier = CompanyTokenVerifier(
-            http,
-            issuer=oidc.issuer,
-            audiences=frozenset({oidc.audience or oidc.client_id}),
-            clock=clock,
-        )
-    except ValueError:
-        await http.aclose()
-        raise
-    return OidcResolver(
-        verifier.verify, groups_claim=oidc.groups_claim, subject_claim="preferred_username"
-    ), http
-
-
-class _HuronFastAPI(FastAPI):
-    """Injects the ``Problem`` schema FastAPI never derives on its own.
-
-    No operation returns ``Problem`` as a 2xx body, so nothing in the route
-    table gives ``get_openapi`` a reason to generate it, yet every
-    ``responses=`` entry ``$ref``s it. FastAPI's own docs cover this by
-    assigning a replacement function to ``app.openapi`` directly, but that
-    assignment is unsound against ``FastAPI.openapi``'s real signature - a
-    bound ``(self) -> dict[str, Any]`` method - so neither type checker
-    accepts it. Overriding the method on a subclass is the type-checkable
-    form of the same fix: it still computes and caches the schema on
-    ``app.openapi_schema`` the first time anything calls ``app.openapi()``,
-    so the docs UI and every other caller keep reading from one schema.
-    """
-
-    def openapi(self) -> dict[str, object]:
-        """Return the OpenAPI document, computing and caching it on first use.
-
-        Returns:
-            The document FastAPI derives from the route table, with the
-            ``Problem`` schema added under ``components.schemas`` so every
-            error response's ``$ref`` resolves.
-        """
-        if self.openapi_schema is None:
-            schema = get_openapi(title=self.title, version=self.version, routes=self.routes)
-            schema["components"]["schemas"]["Problem"] = Problem.model_json_schema()
-            self.openapi_schema = schema
-        return self.openapi_schema
-
-
-def create_app(
-    *,
-    settings: ApiSettings,
-    stores: ApiStores | None = None,
-    company_idp_transport: httpx.AsyncBaseTransport | None = None,
-    clock: Clock | None = None,
-) -> FastAPI:
-    """Build the application, deferring every connection to its lifespan.
-
-    Nothing is connected when this returns. The lifespan builds one
-    :class:`ApiRuntime` - the initialized generation store, the authorizer, the RBAC
-    and authentication stores, the optional OIDC resolver, the
-    optional database pool - and publishes it on ``app.state.runtime`` as
-    the application's only piece of mutable state; every injected route
-    reads it through ``huron.applications.api.runtime``. An application whose
-    lifespan never started therefore refuses to serve rather than falling
-    through to defaults, because the cost of guessing at wiring is an
-    unauthenticated request answered as though it were authenticated.
-
-    The unversioned ``/healthz`` and ``/readyz`` probes, the error handlers
-    that keep every failure in the problem+json shape, and the
-    ``/api/v1`` router are all mounted here and nowhere else.
-
-    Args:
-        settings: The validated configuration; ``database_url`` is where
-            the lifespan opens its pool when no stores are injected.
-        stores: The RBAC and authentication stores built by the caller,
-            which skip opening a pool entirely. Tests inject a set built on
-            the in-memory implementations.
-        company_idp_transport: HTTP transport for the company identity provider.
-            Discovery and signing keys are fetched lazily on token verification.
-        clock: Shared time source, or None to use the system clock.
-
-    Returns:
-        The application, ready for an ASGI server to run its lifespan.
+    With ``runtime`` the caller owns startup and shutdown; otherwise the lifespan builds the
+    runtime from ``settings`` and closes it on shutdown.
     """
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        """Wire the runtime for the server's lifetime, then release it.
-
-        The RBAC and authentication stores come from the injected set, else
-        the lifespan opens a fresh pool from ``settings.database_url`` and
-        wires every store to Postgres; the generation store is initialized and the
-        authorizer is built fresh here, over the classification vocabulary
-        the settings declare. Company discovery is deferred until a bearer token
-        needs verification. Runtime construction, bootstrap and serving all happen
-        inside one block whose finally closes the pool and company HTTP client,
-        including when startup fails after either resource opens.
-
-        Args:
-            app: The application whose ``state.runtime`` is set for the
-                duration of the lifespan.
-
-        Yields:
-            Nothing. The application serves while suspended here. Whether
-            startup completed or raised, every resource it acquired - the
-            database pool, the company HTTP client - is closed
-            before the lifespan exits.
-        """
-        pool: asyncpg.Pool | None = None
-        http: httpx.AsyncClient | None = None
-        try:
-            runtime_clock = clock if clock is not None else SystemClock()
-            if stores is not None:
-                wired = stores
-            else:
-                pool = await asyncpg.create_pool(settings.database_url)
-                wired = _postgres_stores(pool, runtime_clock)
-            oidc_resolver, http = await _configure_oidc(
-                settings, company_idp_transport, runtime_clock
-            )
-            runtime = _build_runtime(settings, wired, runtime_clock, pool, oidc_resolver)
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        if runtime is not None:
             app.state.runtime = runtime
-            await bootstrap_platform_owner(runtime.rbac, settings.bootstrap_platform_owner)
+            yield
+            return
+        if settings is None:
+            raise RuntimeError("create_app needs settings or a runtime")
+        built = await build_runtime(settings)
+        app.state.runtime = built
+        try:
             yield
         finally:
-            if pool is not None:
-                await pool.close()
-            if http is not None:
-                await http.aclose()
+            await built.close()
 
-    app = _HuronFastAPI(title="Huron API", version="1.0.0", lifespan=lifespan)
-    install_error_handlers(app)
-
-    @app.get("/healthz")
-    async def healthz() -> dict[str, str]:
-        """Report that the process is up and answering requests.
-
-        Liveness only: nothing beyond the process itself is consulted, so
-        an instance whose dependencies are gone still answers 200 here and
-        relies on the readiness probe to be taken out of rotation.
-        \f
-        Returns:
-            ``{"status": "ok"}``, unconditionally.
-        """
-        return {"status": "ok"}
-
-    @app.get("/readyz", responses={503: problem_response("a dependency is unavailable")})
-    async def readyz(runtime: Runtime) -> dict[str, str]:
-        """Refuse traffic unless every dependency this instance needs answers.
-
-        A readiness probe that reports the process rather than its
-        dependencies sends traffic to an instance whose first authenticated
-        request will fail, so the failure is a 503 - the status an
-        orchestrator is configured to act on - and never a 4xx. The generation
-        store's root is always probed; the database is probed only when
-        this instance was wired with a pool.
-        \f
-        Args:
-            runtime: The wiring the lifespan published, naming the
-                dependencies to probe.
-
-        Returns:
-            ``{"status": "ready"}`` once every probe passed.
-
-        Raises:
-            DependencyUnavailable: If any probe failed; its ``context``
-                carries ``checks``, a mapping from each failed dependency's
-                name to the reason it gave.
-        """
-        failed = {name: reason for name, reason in await _dependency_checks(runtime) if reason}
-        if failed:
-            raise DependencyUnavailable("a dependency is unavailable", context={"checks": failed})
-        return {"status": "ready"}
-
-    app.include_router(v1.router)
+    app = FastAPI(
+        title="Huron",
+        version=VERSION,
+        summary="Catalog and access control for raw scientific data on NFS.",
+        lifespan=lifespan,
+    )
+    if runtime is not None:
+        app.state.runtime = runtime
+    install_problem_handlers(app)
+    app.include_router(health.router)
+    app.include_router(discovery.router)
+    app.include_router(v1)
     return app
-
-
-async def _dependency_checks(runtime: ApiRuntime) -> list[tuple[str, str | None]]:
-    """Probe each dependency this instance was wired with.
-
-    The generation store's stat runs on a worker thread so a hung mount never
-    stalls the event loop the other requests share, and the database
-    round-trip runs on the loop directly; both are bounded by the same
-    ``READINESS_TIMEOUT_SECONDS`` so neither can hang the probe past it.
-
-    Args:
-        runtime: The wiring the lifespan published; a ``None`` pool means
-            there is no database to probe.
-
-    Returns:
-        One ``(name, failure)`` pair per probed dependency, in probe order,
-        where ``failure`` is ``None`` for a dependency that answered and
-        the reason it did not otherwise.
-    """
-    checks = [("generations", await _generation_store_probe(runtime.generations))]
-    if runtime.database_pool is not None:
-        checks.append(("database", await _database_failure(runtime.database_pool)))
-    return checks
-
-
-async def _generation_store_probe(generations: GenerationStorage) -> str | None:
-    """Stat the generation root on a worker thread, within the readiness timeout.
-
-    A mount that never answers ``stat`` must not hang the probe forever, so
-    the wait is bounded the same way the database round-trip is. Timing out
-    abandons the worker thread rather than cancelling it: threads have no
-    interrupt point to cancel into, so the thread stays blocked in ``stat``
-    and exits on its own whenever the mount eventually answers or the
-    process shuts down. It never blocks a later probe, which starts a fresh
-    thread of its own, but under a mount that stays wedged and is polled
-    repeatedly, each abandoned thread stays alive until the mount answers,
-    so blocked threads accumulate for as long as the hang persists.
-
-    Args:
-        generations: The wired store, whose root names the directory the
-            data plane writes under.
-
-    Returns:
-        ``None`` while the root exists, ``"root is unavailable"`` while it
-        does not, and the readiness-timeout message once the bound above
-        is reached.
-    """
-    try:
-        async with asyncio.timeout(READINESS_TIMEOUT_SECONDS):
-            return await asyncify(_generation_store_failure)(generations)
-    except TimeoutError:
-        return f"did not answer within {READINESS_TIMEOUT_SECONDS}s"
-
-
-def _generation_store_failure(generations: GenerationStorage) -> str | None:
-    """Stat the generation root; a hung mount must never stall the event loop.
-
-    Deliberately synchronous: the ``stat`` behind ``exists()`` can block on
-    a network filesystem, so the caller runs this on a worker thread rather
-    than from a coroutine.
-
-    Args:
-        generations: The wired store, whose root names the directory the
-            data plane writes under.
-
-    Returns:
-        ``None`` while the root exists, otherwise the reason the probe
-        reports for it.
-    """
-    return None if generations.root.exists() else "root is unavailable"
-
-
-async def _database_failure(pool: asyncpg.Pool) -> str | None:
-    """Round-trip the pool once, within the readiness timeout.
-
-    A pool that cannot answer ``SELECT 1`` promptly is reported rather than
-    waited for: the connection-level, server-level and timeout failures are
-    all caught, so a wedged database turns into a 503 instead of a stalled
-    probe.
-
-    Args:
-        pool: The pool the lifespan opened for the Postgres-backed stores.
-
-    Returns:
-        ``None`` when the query answered in time, otherwise the failure's
-        class name and message, which is what ``/readyz`` reports for the
-        ``database`` check.
-    """
-    try:
-        async with asyncio.timeout(READINESS_TIMEOUT_SECONDS):
-            await pool.fetchval("SELECT 1")
-    except (OSError, asyncpg.PostgresError, TimeoutError) as exc:
-        return f"{type(exc).__name__}: {exc}"
-    return None
-
-
-#: A readiness probe that waits longer than the orchestrator's own probe
-#: timeout reports nothing; two seconds is well inside the usual five.
-READINESS_TIMEOUT_SECONDS = 2.0

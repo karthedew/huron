@@ -1,48 +1,31 @@
 {
   "realm": "company",
-  "displayName": "Company IdP (local mock)",
   "enabled": true,
   "sslRequired": "none",
-  "registrationAllowed": false,
-  "resetPasswordAllowed": false,
-  "editUsernameAllowed": false,
-  "loginWithEmailAllowed": false,
-  "duplicateEmailsAllowed": false,
-  "accessTokenLifespan": 300,
-  "oauth2DeviceCodeLifespan": 600,
-  "oauth2DevicePollingInterval": 5,
-  "revokeRefreshToken": true,
-  "refreshTokenMaxReuse": 0,
   "clients": [
     {
       "clientId": "huron-cli",
-      "name": "Huron CLI",
-      "enabled": true,
-      "protocol": "openid-connect",
       "publicClient": true,
+      "enabled": true,
       "standardFlowEnabled": true,
-      "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
-      "authorizationServicesEnabled": false,
-      "redirectUris": ["http://127.0.0.1/*"],
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "http://127.0.0.1:*/callback",
+        "http://127.0.0.1/*"
+      ],
       "attributes": {
-        "pkce.code.challenge.method": "S256",
-        "oauth2.device.authorization.grant.enabled": "true"
+        "oauth2.device.authorization.grant.enabled": "true",
+        "pkce.code.challenge.method": "S256"
       },
       "protocolMappers": [
         {
-          "name": "organization",
+          "name": "audience",
           "protocol": "openid-connect",
-          "protocolMapper": "oidc-hardcoded-claim-mapper",
-          "consentRequired": false,
+          "protocolMapper": "oidc-audience-mapper",
           "config": {
-            "claim.name": "organization",
-            "claim.value": "Huron Development",
-            "jsonType.label": "String",
+            "included.client.audience": "huron-cli",
             "id.token.claim": "true",
-            "access.token.claim": "false",
-            "userinfo.token.claim": "false"
+            "access.token.claim": "true"
           }
         }
       ]
@@ -50,34 +33,79 @@
   ],
   "users": [
     {
-      "id": "6f1c1a3e-0000-4000-8000-000000000001",
-      "username": "karl",
+      "username": "alice",
       "enabled": true,
       "emailVerified": true,
-      "firstName": "Karl",
-      "lastName": "Owner",
-      "email": "karl@company.test",
-      "credentials": [{"type": "password", "value": "karl-dev-password", "temporary": false}]
+      "firstName": "Alice",
+      "lastName": "Admin",
+      "email": "alice@example.org",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ]
     },
     {
-      "id": "6f1c1a3e-0000-4000-8000-000000000002",
-      "username": "sam",
+      "username": "bob",
       "enabled": true,
       "emailVerified": true,
-      "firstName": "Sam",
-      "lastName": "Developer",
-      "email": "sam@company.test",
-      "credentials": [{"type": "password", "value": "sam-dev-password", "temporary": false}]
+      "firstName": "Bob",
+      "lastName": "Org",
+      "email": "bob@example.org",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ]
     },
     {
-      "id": "6f1c1a3e-0000-4000-8000-000000000003",
-      "username": "rita",
+      "username": "carol",
       "enabled": true,
       "emailVerified": true,
-      "firstName": "Rita",
+      "firstName": "Carol",
+      "lastName": "Catalog",
+      "email": "carol@example.org",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "dave",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Dave",
+      "lastName": "Contributor",
+      "email": "dave@example.org",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "erin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Erin",
       "lastName": "Reader",
-      "email": "rita@company.test",
-      "credentials": [{"type": "password", "value": "rita-dev-password", "temporary": false}]
+      "email": "erin@example.org",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ]
     }
   ]
 }

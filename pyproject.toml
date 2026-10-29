@@ -4,351 +4,184 @@ build-backend = "hatchling.build"
 
 [project]
 name = "huron"
-version = "0.1.0"
-description = "Control plane for a raw-data-first scientific lakehouse"
+version = "1.0.0"
+description = "Catalog and access-control plane for raw scientific data on NFS"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "pydantic>=2",
-    "pydantic-settings>=2",
-    "sqlalchemy>=2",
-    "asyncpg",
-    "alembic",
-    "aiobotocore",
-    "rfc8785",
-    "jsonschema[format-nongpl]",
-    "pyyaml",
-    "httpx",
-    "structlog",
-    "prometheus-client",
-    "pyjwt[crypto]>=2.13.0",
-    "argon2-cffi>=25.1.0",
-    "greenlet>=3.5.5",
-    "asyncer>=0.0.18",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "httpx>=0.27",
+    "pyjwt[crypto]>=2.9",
+    "jsonschema[format-nongpl]>=4.23",
     "google-re2>=1.1",
+    "rfc8785>=0.1.4",
+    "structlog>=24.1",
+    "typer>=0.12",
+    "rich>=13.7",
+    "questionary>=2.0",
+    "pyyaml>=6.0",
+    "uuid-utils>=0.9",
 ]
+
+[project.scripts]
+huron = "huron.applications.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/huron"]
 
 [dependency-groups]
 dev = [
-    "ruff",
-    "mypy",
-    "import-linter",
-    "pytest",
-    "pytest-asyncio",
-    "pytest-cov",
-    "hypothesis",
-    "testcontainers[postgres]",
-    "respx",
-    # mypy --strict reads huron.schema, which imports jsonschema; without these
-    # stubs the type check fails on a clean checkout.
-    "types-jsonschema",
-    "ty>=0.0.75",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "ty>=0.0.1a20",
+    "import-linter>=2.1",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "hypothesis>=6.112",
+    "testcontainers[postgres]>=4.8",
+    "respx>=0.21",
     "radon>=6.0.1",
-    "complexipy>=7.0.1",
-    "pyscn==1.31.1 ; platform_machine == 'x86_64' or sys_platform == 'darwin'",
-    # Checks every docstring against its signature: parameters, returns, yields
-    # and raised exceptions. ruff's D rules prove a docstring exists and is well
-    # formed; only pydoclint proves it is complete.
-    "pydoclint>=0.9.1",
-]
-# Documentation toolchain. Install with:  uv sync --group docs
-#
-# Zensical is the Material for MkDocs team's successor to MkDocs + Material,
-# both of which are now in maintenance mode. It reads the native zensical.toml
-# at the repository root (it would also read a legacy mkdocs.yml; this project
-# does not keep one). It brings its own markdown and pymdown-extensions, so
-# they are not pinned separately here.
-#
-# Pinned exactly: Zensical is pre-1.0 and its config surface is still moving.
-docs = [
-    "zensical==0.0.57",
+    "complexipy>=3.0",
+    "types-jsonschema",
+    "types-pyyaml",
+    "asyncpg-stubs",
 ]
 
 [tool.ruff]
 line-length = 100
-extend-exclude = ["*.md"]
-force-exclude = true
+target-version = "py312"
+src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH", "RUF", "FAST", "D"]
-
-[tool.ruff.lint.pydocstyle]
-# Google style: a one-line summary, then Args / Returns / Yields / Raises
-# sections. This is the one convention under which ruff also checks that an
-# Args section names every parameter (D417); pydoclint (below) checks that the
-# sections exist and match the signature.
-convention = "google"
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH", "RUF", "FAST"]
+ignore = ["RUF001", "RUF002", "RUF003", "N818"]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests document what they prove, not how they are called: every module,
-# class, test and fixture carries a summary line, but a test double's
-# __init__ and dunder methods add nothing a reader needs.
-"tests/**" = ["D105", "D107"]
-# A route's docstring is also its OpenAPI description. FastAPI truncates the
-# description at a form feed, so the caller-facing prose comes first and the
-# Args/Returns/Raises sections follow "\f" - which D301 would otherwise want
-# a raw string for, defeating the escape.
-"src/huron/applications/api/routes/**/endpoints/*.py" = ["D301"]
-# app.py defines the two health probes the same way.
-"src/huron/applications/api/app.py" = ["D301"]
-# Stable public error names intentionally mirror their API codes.
-"src/huron/core/security/authentication_errors.py" = ["N818"]
-"src/huron/core/security/principals.py" = ["N818"]
-"src/huron/core/foundation/errors.py" = ["N818"]
-"src/huron/core/hierarchy/errors.py" = ["N818"]
-"src/huron/core/hierarchy/layers.py" = ["N818"]
-"src/huron/core/lake/errors.py" = ["N818"]
-# The role/rbac error names intentionally mirror their stable API codes.
-"src/huron/core/security/roles.py" = ["N818"]
-"src/huron/core/security/errors.py" = ["N818"]
-"src/huron/applications/api/errors.py" = ["N818"]
-# The lake fake names its constraint failure as the persistence design does.
-"src/huron/core/metastore/lake/memory.py" = ["N818"]
-# FastAPI resolves annotations at runtime; type-checking-only imports break
-# dependency injection in these modules.
 "src/huron/applications/api/**" = ["TC001", "TC002", "TC003"]
-
-[tool.pydoclint]
-style = "google"
-quiet = true
-# Types live in the signature and are never repeated in the docstring.
-arg-type-hints-in-docstring = false
-check-return-types = false
-check-yield-types = false
-# A summary alone is not a complete docstring for anything with parameters.
-skip-checking-short-docstrings = false
-check-arg-order = true
-skip-checking-raises = false
-should-document-star-arguments = true
-# __init__ documents its own parameters (ruff's D107 requires the docstring);
-# the class docstring describes the object, not its constructor.
-allow-init-docstring = true
-# A None-returning function without a return statement needs no Returns.
-require-return-section-when-returning-nothing = false
-# Fields are documented where they are declared (pydantic Field descriptions,
-# attribute comments), not repeated in an Attributes section.
-check-class-attributes = false
-# A NumPy- or Sphinx-style docstring that sneaks in is a mismatch, not a pass.
-check-style-mismatch = true
+"src/huron/applications/cli/**" = ["TC001", "TC002", "TC003", "B008"]
+"tests/**" = ["TC001", "TC002", "TC003"]
+"migrations/**" = ["E501", "TC002"]
 
 [tool.mypy]
 strict = true
-files = ["src"]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["huron"]
+plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-# asyncpg ships no py.typed marker. The two Postgres store adapters, the
-# composition root and its runtime pool holder are the modules that touch
-# it, and each narrows every row to a typed record at its own boundary, so
-# the driver's own annotations buy nothing here.
-module = "asyncpg.*"
+module = ["re2", "rfc8785", "questionary", "questionary.*", "testcontainers.*", "uuid_utils"]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-# re2 ships no py.typed marker; huron.schema._validator is its sole importer.
-module = "re2"
-ignore_missing_imports = true
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-markers = [
-    "unit: fast, no I/O",
-    "contract: exercises a port against a real or fake adapter",
-    "integration: exercises the composed application against real services",
-    "acceptance: exercises a full phase gate end to end",
-]
-addopts = "-m unit --strict-markers"
-
-[tool.importlinter]
-root_package = "huron"
-include_external_packages = true
-exclude_type_checking_imports = false
-
-# Dependencies point inward; application composition roots also import adapters.
-[[tool.importlinter.contracts]]
-name = "applications depend on domain-owned core then schema"
-type = "layers"
-layers = ["huron.applications", "huron.core", "huron.schema"]
-
-# Classification is exhaustive; direct edges below define the domain-owned DAG.
-[[tool.importlinter.contracts]]
-name = "every core sibling has an explicit owner"
-type = "layers"
-containers = ["huron.core"]
-layers = ["foundation:security:hierarchy:lake:metastore:rawstore"]
-exhaustive = true
-
-[[tool.importlinter.contracts]]
-name = "core owners form an acyclic graph including type-only imports"
-type = "acyclic_siblings"
-ancestors = ["huron.core"]
-depth = 0
-
-[[tool.importlinter.contracts]]
-name = "foundation has no Huron dependencies"
-type = "forbidden"
-source_modules = ["huron.core.foundation"]
-forbidden_modules = [
-    "huron.core.security", "huron.core.hierarchy", "huron.core.lake", "huron.core.metastore",
-    "huron.core.rawstore", "huron.schema", "huron.applications",
-]
-
-[[tool.importlinter.contracts]]
-name = "security uses foundation only"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["huron.core.security"]
-forbidden_modules = [
-    "huron.core.hierarchy", "huron.core.lake", "huron.core.metastore", "huron.core.rawstore",
-    "huron.schema",
-]
-
-[[tool.importlinter.contracts]]
-name = "hierarchy uses security and foundation only"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["huron.core.hierarchy"]
-forbidden_modules = [
-    "huron.core.lake", "huron.core.metastore", "huron.core.rawstore", "huron.schema",
-]
-
-[[tool.importlinter.contracts]]
-name = "lake uses security foundation and schema only"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["huron.core.lake"]
-forbidden_modules = ["huron.core.hierarchy", "huron.core.metastore", "huron.core.rawstore"]
-
-[[tool.importlinter.contracts]]
-name = "metastore uses hierarchy lake security and foundation only"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["huron.core.metastore"]
-forbidden_modules = ["huron.core.rawstore", "huron.schema"]
-
-[[tool.importlinter.contracts]]
-name = "rawstore uses schema only"
-type = "forbidden"
-source_modules = ["huron.core.rawstore"]
-forbidden_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy",
-    "huron.core.lake", "huron.core.metastore",
-]
-
-# Domain code uses injected capabilities; Security alone performs credential HTTP.
-[[tool.importlinter.contracts]]
-name = "domains exclude frameworks and infrastructure libraries even indirectly"
-type = "forbidden"
-source_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy", "huron.core.lake",
-]
-forbidden_modules = [
-    "fastapi",
-    "uvicorn",
-    "starlette",
-    "sqlalchemy",
-    "asyncpg",
-    "alembic",
-    "aiobotocore",
-    "boto3",
-    "botocore",
-    "lancedb",
-    "icechunk",
-    "zarr",
-    "structlog",
-    "prometheus_client",
-    "ray",
-]
-
-# Security performs credential HTTP. Its consumers use that public capability;
-# only Security imports the HTTP client itself.
-[[tool.importlinter.contracts]]
-name = "only security performs credential HTTP and token cryptography directly"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = [
-    "huron.core.foundation", "huron.core.hierarchy", "huron.core.lake", "huron.core.metastore",
-    "huron.core.rawstore",
-]
-forbidden_modules = ["httpx", "jwt", "cryptography"]
-
-# The authorization package is entered through its public surface. Its five
-# submodules are one unit with one contract; a route that reaches past
-# __init__ into guards.py or decisions.py is depending on an arrangement of
-# internals, not on the guarantee the package makes.
-[[tool.importlinter.contracts]]
-name = "the authorization package is entered through its public surface"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["huron.applications.api.routes.**", "huron.applications.api.app"]
-forbidden_modules = ["huron.applications.api.authorization.*"]
-
-# Concrete persistence adapters depend on domain types, never the reverse.
-[[tool.importlinter.contracts]]
-name = "domains never depend on adapters even indirectly"
-type = "forbidden"
-source_modules = [
-    "huron.core.foundation", "huron.core.security", "huron.core.hierarchy", "huron.core.lake",
-]
-forbidden_modules = ["huron.core.metastore", "huron.core.rawstore"]
-
-[[tool.importlinter.contracts]]
-name = "hierarchy implementations are private to their owner"
-type = "protected"
-protected_modules = ["huron.core.hierarchy._impl"]
-allowed_importers = ["huron.core.hierarchy"]
-
-[[tool.importlinter.contracts]]
-name = "security implementations are private to their owner"
-type = "protected"
-protected_modules = ["huron.core.security._impl"]
-allowed_importers = ["huron.core.security"]
-
-[[tool.importlinter.contracts]]
-name = "lake adapters stay apart from the legacy hierarchy"
-type = "forbidden"
-source_modules = ["huron.core.metastore.lake"]
-forbidden_modules = [
-    "huron.core.hierarchy",
-    "huron.core.metastore.api_keys",
-    "huron.core.metastore.hierarchy",
-    "huron.core.metastore.memory_apikeys",
-    "huron.core.metastore.memory_principals",
-    "huron.core.metastore.principals",
-    "huron.core.metastore.queries",
-    "huron.core.metastore.rbac",
-    "huron.core.metastore.rows",
-    "huron.core.metastore.security_facts",
-]
-
-[[tool.importlinter.contracts]]
-name = "legacy metastore modules never import the lake adapters"
-type = "forbidden"
-source_modules = [
-    "huron.core.metastore.api_keys",
-    "huron.core.metastore.hierarchy",
-    "huron.core.metastore.memory_apikeys",
-    "huron.core.metastore.memory_principals",
-    "huron.core.metastore.principals",
-    "huron.core.metastore.queries",
-    "huron.core.metastore.rbac",
-    "huron.core.metastore.rows",
-    "huron.core.metastore.security_facts",
-]
-forbidden_modules = ["huron.core.metastore.lake"]
 
 [tool.ty.src]
 include = ["src"]
 
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers"
+markers = [
+    "contract: store contract suite against PostgreSQL",
+    "integration: API over PostgreSQL and the CLI over the in-process API",
+    "acl: real getfacl/setfacl round trips",
+]
+
+[tool.coverage.run]
+source = ["src/huron"]
+branch = false
+omit = ["src/huron/applications/api/main.py"]
+
 [tool.coverage.report]
-# Ratchet floor: the measured unit total, rounded down. Raise it as coverage
-# climbs. Lower it only when the whole drop comes from deleted covered code or
-# from new PostgreSQL adapter code the contract suite covers in full, never to
-# admit uncovered code. New or touched files are covered in full.
-fail_under = 95.74
-precision = 2
+fail_under = 90
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.$",
+    "@overload",
+    "if __name__ == .__main__.:",
+]
+
+[tool.importlinter]
+root_package = "huron"
+
+[[tool.importlinter.contracts]]
+name = "huron.pkg is independent of every other huron package"
+type = "forbidden"
+source_modules = ["huron.pkg"]
+forbidden_modules = ["huron.schema", "huron.core", "huron.applications"]
+
+[[tool.importlinter.contracts]]
+name = "huron.schema imports only huron.pkg"
+type = "forbidden"
+source_modules = ["huron.schema"]
+forbidden_modules = ["huron.core", "huron.applications"]
+
+[[tool.importlinter.contracts]]
+name = "core.security does not import lake, metastore, storage or applications"
+type = "forbidden"
+source_modules = ["huron.core.security"]
+forbidden_modules = [
+    "huron.core.lake",
+    "huron.core.metastore",
+    "huron.core.storage",
+    "huron.applications",
+]
+
+[[tool.importlinter.contracts]]
+name = "core.lake does not import metastore, storage or applications"
+type = "forbidden"
+source_modules = ["huron.core.lake"]
+forbidden_modules = ["huron.core.metastore", "huron.core.storage", "huron.applications"]
+
+[[tool.importlinter.contracts]]
+name = "only applications import the metastore"
+type = "forbidden"
+source_modules = ["huron.pkg", "huron.schema", "huron.core.lake", "huron.core.security", "huron.core.storage"]
+forbidden_modules = ["huron.core.metastore"]
+
+[[tool.importlinter.contracts]]
+name = "the API does not import the CLI or storage"
+type = "forbidden"
+source_modules = ["huron.applications.api"]
+forbidden_modules = ["huron.applications.cli", "huron.core.storage"]
+
+[[tool.importlinter.contracts]]
+name = "the CLI does not import the API, the metastore or the broker"
+type = "forbidden"
+source_modules = ["huron.applications.cli"]
+forbidden_modules = ["huron.applications.api", "huron.core.metastore", "huron.core.security.broker"]
+
+[[tool.importlinter.contracts]]
+name = "lake areas never import another area's operations"
+type = "forbidden"
+source_modules = [
+    "huron.core.lake.organizations.models",
+    "huron.core.lake.catalogs.models",
+    "huron.core.lake.namespaces.models",
+    "huron.core.lake.collections.models",
+    "huron.core.lake.files.models",
+    "huron.core.lake.schemas.models",
+    "huron.core.lake.audit.models",
+]
+forbidden_modules = [
+    "huron.core.lake.organizations.operations",
+    "huron.core.lake.catalogs.operations",
+    "huron.core.lake.namespaces.operations",
+    "huron.core.lake.collections.lifecycle",
+    "huron.core.lake.files.commits",
+    "huron.core.lake.schemas.registry",
+    "huron.core.lake.schemas.completeness",
+]

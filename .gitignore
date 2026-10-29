@@ -38,3 +38,12 @@ learning/
 
 # Persistent local Polaris catalog, Icechunk repositories, credentials and logs.
 /.local/
+
+# Dependency installs, package caches, build caches, tool scratch and logs.
+node_modules/
+.npm-cache/
+.astro/
+.test-work/
+.work/
+.playwright-cli/
+*.log

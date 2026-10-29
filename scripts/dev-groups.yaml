@@ -1,0 +1,6 @@
+# LDAP groups of the development realm's users, served by scripts/devgroups.py.
+alice: [huron-platform-admins]
+bob: [helio-org-admins]
+carol: [helio-catalog-admins]
+dave: [helio-contributors]
+erin: [helio-readers]

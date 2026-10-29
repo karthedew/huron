@@ -1,172 +1,27 @@
-"""Bind transport-independent workflows to the authenticated request actor."""
+"""Dependencies that hand the shared runtime and its lake to path operations."""
+
+from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
 
-from huron.core.hierarchy import (
-    DatasetListing,
-    HierarchyCreation,
-    OrganizationListing,
-    ProjectListing,
-)
-from huron.core.security import AccessPolicy, Bindings, IdentityService, Policies, ServiceAccounts
+from huron.applications.api.runtime import Runtime
+from huron.core.lake.bootstrap import Lake
 
-from .authorization.credentials import CurrentPrincipal
-from .runtime import Runtime
+__all__ = ["LakeDep", "RuntimeDep", "get_lake", "get_runtime"]
 
 
-def _access_policy(runtime: Runtime, actor: CurrentPrincipal) -> AccessPolicy:
-    """Build the actor-bound authorization policy every workflow factory below shares.
-
-    Args:
-        runtime: The process's configured capabilities.
-        actor: The authenticated request principal.
-
-    Returns:
-        Fresh authorization facts bound to this actor and this runtime's
-        hierarchy, RBAC and classification capabilities.
-    """
-    return AccessPolicy(actor, runtime.hierarchy, runtime.rbac, runtime.authorizer)
+def get_runtime(request: Request) -> Runtime:
+    """The runtime built at startup."""
+    runtime: Runtime = request.app.state.runtime
+    return runtime
 
 
-def organization_collection(runtime: Runtime, actor: CurrentPrincipal) -> OrganizationListing:
-    """Bind organization discovery and descriptions to the authenticated actor.
-
-    Args:
-        runtime: The process's configured capabilities.
-        actor: The authenticated request principal.
-
-    Returns:
-        Authorized organization reads and descriptive updates.
-    """
-    return OrganizationListing(
-        _access_policy(runtime, actor), runtime.hierarchy, runtime.generations
-    )
+def get_lake(runtime: Annotated[Runtime, Depends(get_runtime)]) -> Lake:
+    """The lake's operations."""
+    return runtime.lake
 
 
-Organizations = Annotated[OrganizationListing, Depends(organization_collection)]
-
-
-def project_collection(runtime: Runtime, actor: CurrentPrincipal) -> ProjectListing:
-    """Bind project discovery and descriptions to the authenticated actor.
-
-    Args:
-        runtime: The process's configured capabilities.
-        actor: The authenticated request principal.
-
-    Returns:
-        Authorized project reads and descriptive updates.
-    """
-    return ProjectListing(_access_policy(runtime, actor), runtime.hierarchy, runtime.generations)
-
-
-Projects = Annotated[ProjectListing, Depends(project_collection)]
-
-
-def dataset_collection(runtime: Runtime, actor: CurrentPrincipal) -> DatasetListing:
-    """Bind dataset discovery, descriptions and layer views to the authenticated actor.
-
-    Args:
-        runtime: The process's configured capabilities.
-        actor: The authenticated request principal.
-
-    Returns:
-        Authorized dataset reads, descriptive updates and layer descriptions.
-    """
-    return DatasetListing(_access_policy(runtime, actor), runtime.hierarchy, runtime.generations)
-
-
-Datasets = Annotated[DatasetListing, Depends(dataset_collection)]
-
-
-def catalog_creation(runtime: Runtime, actor: CurrentPrincipal) -> HierarchyCreation:
-    """Bind explicit identity creation to the authenticated actor.
-
-    Args:
-        runtime: The process's initialized capabilities and classification settings.
-        actor: The authenticated caller.
-
-    Returns:
-        Authorized creation with transaction-scoped retry and durable publication.
-    """
-    return HierarchyCreation(
-        _access_policy(runtime, actor),
-        runtime.hierarchy,
-        runtime.generations,
-        classification_vocabulary=tuple(
-            value.code for value in runtime.settings.classification_vocabulary
-        ),
-    )
-
-
-Creation = Annotated[HierarchyCreation, Depends(catalog_creation)]
-
-
-def role_bindings(runtime: Runtime, actor: CurrentPrincipal) -> Bindings:
-    """Bind role-binding administration to the authenticated actor.
-
-    Args:
-        runtime: The process's configured capabilities.
-        actor: The authenticated caller.
-
-    Returns:
-        Authorized binding grant, list and revoke operations.
-    """
-    return Bindings(_access_policy(runtime, actor), runtime.hierarchy, runtime.rbac)
-
-
-RoleBindings = Annotated[Bindings, Depends(role_bindings)]
-
-
-def policy_administration(runtime: Runtime, actor: CurrentPrincipal) -> Policies:
-    """Bind policy definition and attachment to the authenticated actor.
-
-    Args:
-        runtime: The process's configured capabilities.
-        actor: The authenticated caller.
-
-    Returns:
-        Authorized policy create, list and attach operations.
-    """
-    return Policies(_access_policy(runtime, actor), runtime.hierarchy, runtime.rbac)
-
-
-PolicyAdministration = Annotated[Policies, Depends(policy_administration)]
-
-
-def service_account_administration(runtime: Runtime, actor: CurrentPrincipal) -> ServiceAccounts:
-    """Bind service-account administration to the authenticated actor.
-
-    Args:
-        runtime: The process's configured capabilities.
-        actor: The authenticated caller.
-
-    Returns:
-        Authorized service-account create, read, list and disable operations.
-    """
-    return ServiceAccounts(_access_policy(runtime, actor), runtime.hierarchy, runtime.rbac)
-
-
-ServiceAccountAdministration = Annotated[ServiceAccounts, Depends(service_account_administration)]
-
-
-def identity_service(runtime: Runtime, actor: CurrentPrincipal) -> IdentityService:
-    """Bind identity management to the authenticated actor.
-
-    Args:
-        runtime: The process's configured capabilities.
-        actor: The authenticated caller.
-
-    Returns:
-        Authorized identity operations.
-    """
-    return IdentityService(
-        _access_policy(runtime, actor),
-        runtime.principals,
-        runtime.api_keys,
-        service_account_administration(runtime, actor),
-    )
-
-
-Identity = Annotated[IdentityService, Depends(identity_service)]
+RuntimeDep = Annotated[Runtime, Depends(get_runtime)]
+LakeDep = Annotated[Lake, Depends(get_lake)]

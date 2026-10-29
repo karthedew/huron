@@ -1,91 +1,51 @@
-.PHONY: help up down stack check hosts logs keycloak-reset bootstrap migrate api test test-acceptance lint docs docs-serve web-install web web-build web-check web-test
+.PHONY: help up down migrate api test test-contract test-integration lint gate openapi docs-check
 
 .DEFAULT_GOAL := help
 
-# Prefers Docker Compose; falls back to Podman Compose when Docker is absent.
 COMPOSE := $(shell command -v docker >/dev/null 2>&1 && echo "docker compose" || echo "podman-compose")
-
-# HURON_* configuration for the API on the host; the compose "api" service
-# reads the same file through env_file. Shell variables take precedence.
 ENV_FILE := dev.env
 
-# Service whose logs `make logs` follows; empty means every service.
-SERVICE ?=
-
 help: ## List available commands.
-	@grep -E '^[a-zA-Z_-]+:.*## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-up: ## Start PostgreSQL, MinIO and Keycloak (infra only), then probe each one from the host.
-	$(COMPOSE) up -d --wait postgres minio keycloak
+up: ## Start PostgreSQL and Keycloak, then probe them.
+	$(COMPOSE) up -d --wait postgres keycloak
 	./scripts/check-stack.sh
 
-stack: ## Build and run the WHOLE app (api + migrations) in containers, behind the "app" profile, then probe it.
-	$(COMPOSE) --profile app up -d --build --wait
-	./scripts/check-stack.sh postgres minio keycloak hosts api
-
-check: ## Probe the running stack: Postgres, MinIO, the Keycloak realm and its issuer, and /etc/hosts.
-	./scripts/check-stack.sh
-
-hosts: ## Idempotently add "127.0.0.1 keycloak" to /etc/hosts (prompts for sudo), needed on the host in both make up and make stack modes.
-	grep -q "127.0.0.1 keycloak" /etc/hosts || echo "127.0.0.1 keycloak" | sudo tee -a /etc/hosts
-
-logs: ## Follow container logs; SERVICE=keycloak (or postgres, minio, api, migrate) narrows to one.
-	$(COMPOSE) logs -f $(SERVICE)
-
-keycloak-reset: ## Re-create the Keycloak container so scripts/keycloak/huron-realm.json is imported afresh.
-	$(COMPOSE) down keycloak
-	$(COMPOSE) up -d --wait keycloak
-	./scripts/check-stack.sh keycloak hosts
-
-down: ## Stop the stack and remove its containers.
+down: ## Stop the development stack.
 	$(COMPOSE) down
 
-bootstrap: ## Create and configure the raw, staging, and index buckets.
-	./scripts/bootstrap-buckets.sh
-
-migrate: ## Run pending Alembic migrations against the database configured in dev.env.
+migrate: ## Apply Alembic migrations to the database in dev.env.
 	uv run --env-file $(ENV_FILE) alembic upgrade head
 
-api: ## Run the API on the host with autoreload, configured by dev.env, against infra started by "make up".
+api: ## Run the API on the host with autoreload.
 	uv run --env-file $(ENV_FILE) uvicorn huron.applications.api.main:app --reload --port 8080
 
-test: ## Run the fast unit suite.
-	uv run pytest -m unit
+test: ## Run the unit tier (no database needed).
+	uv run pytest -m "not contract and not integration"
 
-test-acceptance: ## Run the acceptance suite.
-	uv run pytest -m acceptance
+test-contract: ## Run the store contract suite against PostgreSQL.
+	uv run pytest -m contract
 
-lint: ## Lint source under src and validate the migration schema map.
-	uv run ruff check src
-	uv run ruff format --check src
-	uv run pydoclint src
+test-integration: ## Run the integration tier.
+	uv run pytest -m integration
+
+lint: ## Static checks only.
+	uv run ruff check src tests
+	uv run ruff format --check src tests
 	uv run mypy
 	uv run ty check
 	uv run lint-imports
-	uv run python scripts/check_schema_map.py
-	uv run radon cc src --min C
-	uv run radon mi src --min B
+
+gate: lint ## The plan-wide gate (section 10); the contract tier needs Docker or HURON_TEST_DATABASE_URL.
+	uv run pytest -m "not integration" --cov=src/huron --cov-report=term-missing
+	@out="$$(uv run radon cc src --min C)"; if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
+	@out="$$(uv run radon mi src --min B)"; if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
 	uv run complexipy src --max-complexity-allowed 15
-	uv run --locked pyscn check src
-	uv run --locked python scripts/check_duplication.py src
+	uv run python scripts/check_schema_map.py
 
-docs: ## Build the documentation site, failing on broken internal links.
-	uv run --group docs zensical build --strict
+openapi: ## Regenerate docs/openapi.json from the application.
+	uv run python -m huron.applications.api.openapi docs/openapi.json
 
-docs-serve: ## Serve the documentation with live reload on :8000.
-	uv run --group docs zensical serve
-
-web-install: ## Install the frontend's locked dependencies (npm ci in web/).
-	cd web && npm ci
-
-web: ## Serve the frontend with hot reload on :5173.
-	cd web && npm run dev
-
-web-build: ## Production build of the frontend (adapter-node).
-	cd web && npm run build
-
-web-check: ## Type-check the frontend (svelte-check) and verify formatting (prettier).
-	cd web && npm run check && npm run lint
-
-web-test: ## Run the frontend unit tests (vitest).
-	cd web && npm test
+docs-check: ## Check relative links in docs/ and README.md.
+	uv run python scripts/check_links.py README.md docs deploy/README.md

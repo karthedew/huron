@@ -1,9 +1,0 @@
-{
-  "cwd": "/home/karl/repo/huron",
-  "command": "git status --short --untracked-files=all",
-  "exit": 0,
-  "seconds": 0.007,
-  "stdout_lines": 55,
-  "stderr_lines": 0,
-  "log": "roadmap/checks/3818200d-review-status.log"
-}

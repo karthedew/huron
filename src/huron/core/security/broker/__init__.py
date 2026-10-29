@@ -1,102 +1,36 @@
-"""Public lake identity and authority vocabulary.
+"""The authentication broker: company token exchange and Huron tokens."""
 
-``lake``, ``metastore`` and ``applications.api`` import from this surface,
-never from its modules.
-"""
-
-from huron.core.security.broker.access import Actor, LakeAuthentication
-from huron.core.security.broker.exchange import (
-    COMPANY_USERNAME,
-    CompanyTokenVerifier,
-    TokenExchange,
-)
+from huron.core.security.broker.company import CompanyIdentity, CompanyTokenVerifier
+from huron.core.security.broker.discovery import discovery_document
+from huron.core.security.broker.exchange import ExchangeResult, TokenExchange
 from huron.core.security.broker.groups import (
     GroupDirectory,
+    GroupDirectoryUnavailable,
     HttpGroupDirectory,
-    parse_groups_response,
 )
-from huron.core.security.broker.keys import (
-    JWKS_MAX_AGE,
-    MAX_RING_AGE,
-    MIN_PUBLICATION_LEAD,
-    REFRESH_INTERVAL,
-    RETENTION,
-    TOKEN_TTL_MAX,
-    VERIFY_LEEWAY,
-    FileSigningKeySource,
-    HuronKeys,
-    KeyRing,
-    KeyState,
-    PrivateSigningKey,
-    PublicSigningKey,
-    Rotation,
-    SigningAlgorithm,
-    SigningKeyReader,
-    SigningKeyRecord,
-    SigningKeySource,
-    initial_record,
-    jwk_thumbprint,
-    plan_rotation,
-)
-from huron.core.security.broker.ladder import (
-    ROLE_CLAIM_PREFIX,
-    CatalogRef,
-    ClaimedRole,
-    Grant,
-    Grants,
-    ReadableCatalogs,
-    Role,
-    RoleMappingReader,
-)
+from huron.core.security.broker.keys import KeyRing, KeyStore, SigningKey, generate_key
 from huron.core.security.broker.tokens import (
-    HURON_API_AUDIENCE,
     HuronClaims,
-    HuronTokenIssuer,
-    HuronTokenVerifier,
-    IssuedToken,
+    TokenInvalid,
+    TokenIssuer,
+    TokenVerifier,
 )
 
 __all__ = [
-    "COMPANY_USERNAME",
-    "HURON_API_AUDIENCE",
-    "JWKS_MAX_AGE",
-    "MAX_RING_AGE",
-    "MIN_PUBLICATION_LEAD",
-    "REFRESH_INTERVAL",
-    "RETENTION",
-    "ROLE_CLAIM_PREFIX",
-    "TOKEN_TTL_MAX",
-    "VERIFY_LEEWAY",
-    "Actor",
-    "CatalogRef",
-    "ClaimedRole",
+    "CompanyIdentity",
     "CompanyTokenVerifier",
-    "FileSigningKeySource",
-    "Grant",
-    "Grants",
+    "ExchangeResult",
     "GroupDirectory",
+    "GroupDirectoryUnavailable",
     "HttpGroupDirectory",
     "HuronClaims",
-    "HuronKeys",
-    "HuronTokenIssuer",
-    "HuronTokenVerifier",
-    "IssuedToken",
     "KeyRing",
-    "KeyState",
-    "LakeAuthentication",
-    "PrivateSigningKey",
-    "PublicSigningKey",
-    "ReadableCatalogs",
-    "Role",
-    "RoleMappingReader",
-    "Rotation",
-    "SigningAlgorithm",
-    "SigningKeyReader",
-    "SigningKeyRecord",
-    "SigningKeySource",
+    "KeyStore",
+    "SigningKey",
     "TokenExchange",
-    "initial_record",
-    "jwk_thumbprint",
-    "parse_groups_response",
-    "plan_rotation",
+    "TokenInvalid",
+    "TokenIssuer",
+    "TokenVerifier",
+    "discovery_document",
+    "generate_key",
 ]

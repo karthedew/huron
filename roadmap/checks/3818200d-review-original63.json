@@ -1,9 +1,0 @@
-{
-  "cwd": "/home/karl/repo/huron",
-  "command": "python roadmap/checks/test_check_docs.py",
-  "exit": 1,
-  "seconds": 2.711,
-  "stdout_lines": 5,
-  "stderr_lines": 8,
-  "log": "roadmap/checks/3818200d-review-original63.log"
-}
