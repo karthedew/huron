@@ -1,6 +1,10 @@
-# LDAP groups of the development realm's users, served by scripts/devgroups.py.
+# LDAP groups of the development realm's users, served by scripts/devgroups.py. alice to erin hold
+# the groups of the same users in the web's e2e fixture (web/e2e/support/fixture.mjs), so the seeded
+# demo data grants them the same roles.
+admin: [huron-platform-admins]
+user: [helio-contributors, geo-readers]
 alice: [huron-platform-admins]
 bob: [helio-org-admins]
 carol: [helio-catalog-admins]
-dave: [helio-contributors]
+dave: [helio-contributors, geo-readers]
 erin: [helio-readers]

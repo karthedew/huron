@@ -88,9 +88,8 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 
 **Hierarchy**: The legacy organization, project and dataset model behind the legacy `/api/v1` routes.
 **Dataset**: A hierarchy and Bronze, Silver and Gold term; never a Raw collection.
-**Polaris catalog**: A native Polaris catalog, as the web's browse pages show; outside the Raw lake, which never registers in Polaris. _Avoid_: catalog alone.
-**Polaris realm**: Polaris's isolation boundary; a web and analytical-store term the Raw lake does not use.
-**Web organization**: The web application's membership root, bound to one Polaris realm.
+**Polaris catalog**: A native Polaris catalog; outside the Raw lake, which never registers in Polaris. _Avoid_: catalog alone.
+**Polaris realm**: Polaris's isolation boundary; an analytical-store term the Raw lake does not use.
 **Revision**: An Alembic migration revision, and nothing else.
 
 ## Relationships
@@ -120,5 +119,4 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 - "check": `huron check` reads findings and Incomplete collections; the Reconciler repairs; `check-stack.sh` and `check_schema_map` are tooling.
 - "publish" applies to descriptive metadata only; files are committed.
 - `metadata.json` beside the data is written by the server from the committed row, never by the CLI.
-- "raw" in the web's Polaris pages means a Polaris generic table.
 - "Incomplete" covers both "a newly required field is missing" and "a field no longer conforms".

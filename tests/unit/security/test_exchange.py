@@ -1,10 +1,13 @@
 """Company token verification, the group directory and the exchange."""
 
+import json
 from datetime import timedelta
 
 import httpx
 import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
 
 from huron.core.security.broker import (
     CompanyTokenVerifier,
@@ -67,6 +70,22 @@ async def test_bad_company_tokens_are_refused(issuer: FakeIssuer, case: str) -> 
     }
     with pytest.raises(TokenInvalid):
         await verifier_for(issuer).verify(tokens[case]())
+
+
+async def test_encryption_and_unusable_keys_in_the_jwks_are_ignored(issuer: FakeIssuer) -> None:
+    issuer.extra_jwks = [
+        _public_jwk(kid="kc-enc", alg="RSA-OAEP", use="enc"),
+        _public_jwk(kid="enc-rs256", alg="RS256", use="enc"),
+        _public_jwk(kid="unknown-alg", alg="RSA-NOPE"),
+        {"kid": "broken", "kty": "RSA"},
+        _public_jwk(alg="RS256", use="sig"),
+    ]
+    verifier = verifier_for(issuer)
+    identity = await verifier.verify(issuer.sign("dave", now=NOW))
+    assert identity.username == "dave"
+    for kid in ("kc-enc", "enc-rs256", "unknown-alg", "broken"):
+        with pytest.raises(TokenInvalid, match="unknown key"):
+            await verifier.verify(FakeIssuer(kid=kid).sign("dave", now=NOW))
 
 
 async def test_unknown_kid_refreshes_at_most_once_a_minute(issuer: FakeIssuer) -> None:
@@ -154,3 +173,11 @@ async def test_exchange_fails_without_a_token_when_groups_are_unavailable(
     exchange = TokenExchange(verifier_for(issuer, clock), directory, huron)
     with pytest.raises(GroupDirectoryUnavailable):
         await exchange.exchange(issuer.sign("dave", now=NOW))
+
+
+def _public_jwk(**fields: str) -> dict[str, str]:
+    jwk: dict[str, str] = json.loads(
+        RSAAlgorithm.to_jwk(rsa.generate_private_key(65537, 2048).public_key())
+    )
+    jwk.update(fields)
+    return jwk

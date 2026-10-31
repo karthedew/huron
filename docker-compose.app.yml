@@ -1,0 +1,163 @@
+# The whole application in Docker, for development: `make app`. See "Run everything in Docker"
+# in README.md. `make up` (docker-compose.yml) is the other stack, for running the API on the host;
+# both use the same ports, so run one at a time.
+#
+# Every container joins the network namespace of `net`, so 127.0.0.1 is the same place in each
+# container and on the host. Keycloak stamps http://127.0.0.1:8081/realms/company into every
+# token as its issuer, and the API, the web, the seed, the CLI on the host and the browser all
+# reach it, and each other, at those same URLs. `net` publishes the ports, on 127.0.0.1 only.
+#
+# The health checks probe every second or two while a service starts and every 30 s after it is
+# up: the API and the group directory log each probe.
+name: huron-app
+
+services:
+  net:
+    image: registry.k8s.io/pause:3.10.1
+    ports:
+      - "127.0.0.1:3000:3000" # web
+      - "127.0.0.1:8080:8080" # API
+      - "127.0.0.1:8081:8081" # Keycloak
+      - "127.0.0.1:8082:8082" # group directory
+      - "127.0.0.1:5432:5432" # PostgreSQL
+
+  postgres:
+    image: postgres:16
+    network_mode: service:net
+    environment:
+      POSTGRES_DB: huron
+      POSTGRES_USER: huron
+      POSTGRES_PASSWORD: huron
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      # Over TCP: on the first start the socket already answers while the image initializes.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U huron -d huron"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
+
+  migrate:
+    image: ${HURON_API_IMAGE:-huron-app-api:dev}
+    # The api service builds this image; no registry has it.
+    pull_policy: never
+    network_mode: service:net
+    command: ["alembic", "upgrade", "head"]
+    env_file: dev.env
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    network_mode: service:net
+    # The realm lives in memory (dev-mem) and is imported from the file at every start, so it is
+    # never older than the file: --import-realm skips a realm that already exists.
+    command: ["start-dev", "--import-realm", "--http-port=8081", "--db=dev-mem"]
+    environment:
+      # The issuer must not depend on the Host header a request happens to carry.
+      KC_HOSTNAME: http://127.0.0.1:8081
+      # H2 drops an in-memory database when its last connection closes, which the connection pool
+      # does a few minutes after the last request: the realm would vanish and every sign-in fail
+      # until a restart. With this the database lasts as long as Keycloak runs.
+      KC_DB_URL_PROPERTIES: ";DB_CLOSE_DELAY=-1"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./scripts/keycloak/company-realm.json:/opt/keycloak/data/import/company-realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+      start_interval: 2s
+
+  groups:
+    image: ${HURON_API_IMAGE:-huron-app-api:dev}
+    pull_policy: never
+    network_mode: service:net
+    command: ["python", "/opt/devgroups/devgroups.py", "/opt/devgroups/dev-groups.yaml", "8082"]
+    # Python as PID 1 ignores SIGTERM; tini passes it on.
+    init: true
+    volumes:
+      - ./scripts/devgroups.py:/opt/devgroups/devgroups.py:ro
+      - ./scripts/dev-groups.yaml:/opt/devgroups/dev-groups.yaml:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/users/admin/groups', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  api:
+    build: {context: ., dockerfile: Containerfile}
+    # scripts/e2e.sh sets HURON_API_IMAGE to an image of its own: Compose labels each image it
+    # builds with the project, so a shared tag would flip between two images and strand one.
+    image: ${HURON_API_IMAGE:-huron-app-api:dev}
+    network_mode: service:net
+    env_file: dev.env
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      groups: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
+
+  seed:
+    image: node:26.13.0-trixie-slim
+    network_mode: service:net
+    user: node
+    command: ["node", "/opt/huron/seed/run.mjs"]
+    environment:
+      HURON_SEED_API_URL: http://127.0.0.1:8080
+      HURON_SEED_ISSUER: http://127.0.0.1:8081/realms/company
+      HURON_SEED_CLIENT_ID: huron-cli
+      HURON_SEED_FIXTURE_DIR: /opt/huron/fixture
+    volumes:
+      - ./docker/seed:/opt/huron/seed:ro
+      - ./web/e2e/support:/opt/huron/fixture:ro
+    depends_on:
+      api: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+
+  web:
+    build: {context: ./web, dockerfile: Containerfile}
+    image: huron-app-web:dev
+    network_mode: service:net
+    environment:
+      ORIGIN: http://localhost:3000
+      HOST: 0.0.0.0
+      PORT: "3000"
+      HURON_API_URL: http://127.0.0.1:8080
+      HURON_WEB_OIDC_ISSUER: http://127.0.0.1:8081/realms/company
+      HURON_WEB_OIDC_CLIENT_ID: huron-web
+      # The development secret of huron-web in scripts/keycloak/company-realm.json.
+      HURON_WEB_OIDC_CLIENT_SECRET: huron-web-dev-only-secret
+      HURON_WEB_OIDC_SCOPES: openid profile email
+      HURON_WEB_OIDC_LOGOUT: "true"
+      # Share paths show as <prefix>/<path>. Set it to the CLI's mount_prefix to see your share's.
+      HURON_WEB_MOUNT_PREFIX: ${HURON_WEB_MOUNT_PREFIX:-/projects/huron}
+      HURON_WEB_API_TIMEOUT_MS: "10000"
+    depends_on:
+      # After the seed: `make app` then returns with data to browse, and fails when the seed does.
+      seed: {condition: service_completed_successfully}
+      api: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
+
+volumes:
+  postgres-data:

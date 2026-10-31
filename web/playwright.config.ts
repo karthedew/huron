@@ -1,80 +1,79 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
+import {
+	FAULTS_PROJECT,
+	LOOPBACK,
+	apiCommand,
+	apiEnvironment,
+	e2eStack,
+	idpEnvironment,
+	webEnvironment
+} from './e2e/support/stack.mjs';
 
-const accountDirectory = mkdtempSync(join(tmpdir(), 'huron-e2e-'));
-const storageRoot = join(accountDirectory, 'storage');
-const realmConnections = [
-	'E2E_EMPTY',
-	'E2E_ALPHA',
-	'E2E_BETA',
-	'E2E_ORGADMIN',
-	'E2E_TOOLBAR',
-	'E2E_RETRY'
-].map((realm) => ({
-	realm,
-	url: 'http://127.0.0.1:8189',
-	clientId: `${realm}-admin`,
-	clientSecret: `${realm}-secret`
-}));
-const webDirectory = dirname(fileURLToPath(import.meta.url));
-const inspectorPython = resolve(
-	webDirectory,
-	process.env.HURON_ICECHUNK_PYTHON || '../.local/polaris/icechunk-venv/bin/python'
-);
-try {
-	execFileSync(
-		inspectorPython,
-		[
-			'-I',
-			resolve(webDirectory, '../scripts/seed_icechunk_ui_fixture.py'),
-			join(storageRoot, 'huron-local/science/temperature')
-		],
-		{
-			timeout: 15_000,
-			maxBuffer: 1_000_000,
-			env: { PATH: process.env.PATH || '/usr/bin:/bin', RUST_LOG: 'off' },
-			stdio: ['ignore', 'pipe', 'pipe']
-		}
-	);
-} catch {
-	throw new Error(
-		'Icechunk browser tests require the SDK runtime. Run scripts/polaris-dev.sh start from the repository root or configure HURON_ICECHUNK_PYTHON.'
-	);
-}
+const stack = e2eStack(process.env);
+const browser = { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } };
 
+/**
+ * The fake IdP with its fault proxy, the API on the memory store and the built web server start
+ * in that order, each with every setting explicit; the `setup` project seeds the fixture once
+ * and every test project depends on it.
+ */
 export default defineConfig({
-	webServer: [
+	testDir: 'e2e',
+	forbidOnly: Boolean(process.env.CI),
+	retries: 0,
+	workers: 4,
+	reporter: [['list']],
+	use: {
+		baseURL: stack.webOrigin,
+		locale: 'en-US',
+		timezoneId: 'UTC',
+		trace: 'retain-on-failure'
+	},
+	projects: [
+		{ name: 'setup', testMatch: /seed\.setup\.ts$/, retries: 0 },
 		{
-			command: 'node e2e/polaris-mock.mjs',
-			url: 'http://127.0.0.1:8189/health',
-			env: { HURON_E2E_STORAGE_ROOT: storageRoot },
-			reuseExistingServer: false
+			name: 'chromium',
+			testMatch: /\.test\.ts$/,
+			testIgnore: /\/faults\//,
+			dependencies: ['setup'],
+			use: browser
 		},
 		{
-			command: 'npm run start',
-			port: 4173,
-			env: {
-				HOST: '127.0.0.1',
-				PORT: '4173',
-				ORIGIN: 'http://localhost:4173',
-				HURON_ACCOUNT_STORE: join(accountDirectory, 'accounts.json'),
-				HURON_ADMIN_PASSWORD: 'browser-admin-password',
-				HURON_ALLOW_SIGNUP: 'false',
-				HURON_ICECHUNK_PYTHON: inspectorPython,
-				HURON_ICECHUNK_READ_ROOTS: storageRoot,
-				POLARIS_BOOTSTRAP_CLIENT_ID: 'browser-admin',
-				POLARIS_BOOTSTRAP_CLIENT_SECRET: 'browser-secret',
-				POLARIS_URL: 'http://127.0.0.1:8189',
-				POLARIS_REALM: 'POLARIS',
-				POLARIS_CONNECTIONS_JSON: JSON.stringify(realmConnections)
-			},
-			reuseExistingServer: false
+			// Injected faults follow a user, not a test: these tests never overlap, not even
+			// copies of one test under --repeat-each.
+			name: FAULTS_PROJECT,
+			testMatch: /\/faults\/.*\.test\.ts$/,
+			dependencies: ['setup'],
+			workers: 1,
+			use: browser
 		}
 	],
-	testDir: 'e2e',
-	use: { baseURL: 'http://localhost:4173' }
+	webServer: [
+		{
+			name: 'idp',
+			command: 'node e2e/support/fake-idp.mjs',
+			url: `${stack.issuer}/.well-known/openid-configuration`,
+			env: idpEnvironment(stack),
+			reuseExistingServer: false,
+			timeout: 30_000
+		},
+		{
+			name: 'api',
+			command: apiCommand(stack).join(' '),
+			cwd: '..',
+			url: `${stack.apiUrl}/readyz`,
+			env: apiEnvironment(stack),
+			reuseExistingServer: false,
+			timeout: 120_000
+		},
+		{
+			name: 'web',
+			// Not `npm run start`, which would read web/.env.
+			command: 'node build/index.js',
+			url: `http://${LOOPBACK}:${stack.ports.web}/healthz`,
+			env: webEnvironment(stack),
+			reuseExistingServer: false,
+			timeout: 30_000
+		}
+	]
 });

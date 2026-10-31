@@ -1,206 +1,170 @@
-# Huron web beta
+# Huron web
 
-SvelteKit frontend for the Polaris checkout’s native Icechunk extension. The main
-Catalog and Browse views use live Polaris catalogs, namespaces and repositories.
-Each organization binds one distinct Polaris realm and owns all catalogs under that realm’s root. Catalogs group programs or data domains; Iceberg tables, Icechunk arrays and generic tables are dataset types that can share a namespace. Huron supplies persistent local
-username/password accounts and manual catalog onboarding; Polaris owns grants.
-The web has no Raw surface: Raw data is reached through the `huron` CLI.
-See [design](../design/polaris.html) and the [API seam](src/lib/api/README.md).
+A read-only SvelteKit client of the Huron API. People sign in with the company OIDC provider,
+switch between the organizations they can see, browse catalogs, namespaces and collections, and
+search a catalog or a whole organization. Nothing is changed through the web: where the
+signed-in user could change something, the page shows the `huron` command to run on a machine
+that mounts the share.
 
-## Local stack
+The SvelteKit server is a backend for the browser. It runs the sign-in (code flow with PKCE),
+exchanges the ID token at `POST /api/v1/auth/exchange` for a Huron token, and keeps that token in
+an in-memory session behind an opaque `huron_session` cookie. The browser never sees a token;
+pages are rendered from the server's own API calls. The design, binding with its dated
+amendments, is [docs/web-design.md](../docs/web-design.md); the rules for changing this code are
+in the [root AGENTS.md](../AGENTS.md#frontend-web).
 
-From the repository root:
+## Setup
 
-```sh
-scripts/polaris-dev.sh start
-scripts/polaris-dev.sh samples
-scripts/polaris-dev.sh status
+The web is built and tested with Node 26, the version `web/Containerfile` uses. Once after
+cloning, with network access, run in `web/`:
+
+```bash
+npm ci                            # the packages pinned in package-lock.json
+npx playwright install chromium   # the browser of npm run test:e2e
 ```
 
-Open http://127.0.0.1:5173/login. Sign in as `admin` with the generated password
-in `.local/huron/initial-admin.json` (created on the first login-page request).
-Admin creates organizations, catalogs and people; catalog settings assign Reader, Writer or
-Catalog administrator. New users have no catalog access until assigned. Users
-can change their own password in Account; admin can reset passwords or disable
-accounts. Self-registration is disabled unless explicitly configured. This local workspace also has
-`geoscience_reader`, `heliophysics_reader` and `iss_writer`, each assigned only to its topic catalog.
-Their generated passwords are in `.local/huron/topic-demo-accounts.json`; earlier example accounts remain unchanged.
-Only the three topic catalogs remain in this local workspace. Legacy example catalog
-registrations were retired; their repository files and a private recovery manifest
-remain under `.local/polaris/`.
+On a Linux machine that lacks Chromium's system libraries, add `--with-deps` to the second
+command. Recent npm versions skip esbuild's install script and warn about it; the build and the
+tests do not need it. The demo and the end-to-end tests also run the API from the project's Python
+environment: run `uv sync` once in the repository root.
 
-The science importers commit real, bounded datasets to three topic catalogs:
-
-- `geoscience.earth.ocean.mur_sst_sample`: NASA JPL sea-surface temperature and error,
-  two daily observations on a 128×128 North Atlantic grid.
-- `geoscience.earth.energy.power_solar_sample`: NASA POWER solar and thermal
-  irradiance, twelve monthly observations on a 16×16 North America grid.
-- `heliophysics.solar_wind.ace.ace_magnetic_field`: NASA ACE Level 2 magnetic-field
-  measurements, including GSE/GSM vectors and exact native timestamps.
-- `international_space_station.instruments.tsis_1.total_solar_irradiance`: TSIS-1
-  measurements from the ISS, with uncertainty and quality fields.
-
-Sources: [NASA JPL MUR](https://podaac.jpl.nasa.gov/dataset/MUR-JPL-L4-GLOB-v4.1),
-[MUR public Zarr distribution](https://registry.opendata.aws/mur/),
-[NASA POWER Zarr tutorial](https://power.larc.nasa.gov/docs/tutorials/service-data-request/aws/),
-[NASA CDAWeb](https://cdaweb.gsfc.nasa.gov/),
-[TSIS data guide](https://docserver.gesdisc.eosdis.nasa.gov/public/project/TSIS/159520RevA_TSIS_Data_User_Guide.pdf).
-Geoscience is imported from public Zarr. ACE and TSIS scientific CSV measurements
-are converted into Zarr arrays; values, coordinates, units, quality fields and
-original source checksums are preserved. TSIS native zero-valued missing observations are retained, with scientific missing-value metadata; its provisional flag is preserved separately from validity. Original mission downloads and metadata
-live in `.local/polaris/source-files/`. Import retries verify and reuse snapshots.
-Receipts live in `.local/polaris/`.
-
-To show Iceberg observations alongside Icechunk arrays, first run `samples` above to retain the
-original ACE downloads, then run these commands from the repository root:
-
-```sh
-uv pip install --python .local/polaris/icechunk-venv/bin/python \
-  'pyiceberg[pyarrow,sql-sqlite]==0.11.1' 'pyarrow==26.0.0'
-.local/polaris/icechunk-venv/bin/python scripts/seed_catalog_types.py
-.local/polaris/icechunk-venv/bin/python scripts/seed_catalog_types.py --verify-only
-```
-
-The dependencies stay in the ignored local science environment; the SQLite extra
-supports the seed's temporary SDK tests. The seed checks pinned source hashes and
-creates an Iceberg table in the existing heliophysics catalog's allowed FILE root:
-
-- `heliophysics.solar_wind.ace.ace_observations`: a native Iceberg table containing
-  all 5,401 observations as nine columns, retaining exact UTC nanoseconds, vector
-  components, units and missing-value sentinels without resampling.
-- `heliophysics.solar_wind.ace.ace_magnetic_field`: the existing Icechunk dataset,
-  preserved by this seed.
-
-Retries verify every Iceberg value and reuse its snapshot; conflicting existing
-data is never replaced. `--verify-only` checks existing registrations and values
-without writing dataset storage or catalog metadata. Receipts are saved to
-`.local/polaris/catalog-types-samples.json`. This operator seed creates a genuine
-Iceberg snapshot.
-
-The header selects only the organization. Browse opens its realm root and lists accessible catalogs at the top of Explorer with database icons. The filesystem-style Explorer
-shows nested namespace folders and repository leaves; expanding a folder loads
-that branch with the user’s own Polaris authority. The organization switcher lists Huron memberships; each catalog list intersects those memberships with the current user’s Polaris grants. The default administrator manages all organizations and catalogs.
-The compact explorer sits alongside dataset tabs: Overview, Schema, History,
-Permissions, Policies and Lineage. Icechunk schema, branches, tags and snapshots
-are read from the actual repository. Source lineage shows recorded import
-provenance. Permissions show applicable Polaris grants; ordinary users see their
-own role assignments. Polaris policy bindings currently support Iceberg tables,
-so the Icechunk Policies tab explains that capability limit.
-
-Local PostgreSQL, copied Polaris packages and FILE-backed storage live in ignored
-`.local/polaris/`. Huron accounts, their private encryption key and the organization sidecar live in
-`.local/huron/`. The organization store defaults to `${HURON_ACCOUNT_STORE}.organizations.json` and can be overridden with `HURON_ORGANIZATION_STORE`; persist it alongside the account store. `stop` preserves data; `refresh` rebuilds the sibling Polaris
-checkout and restarts. Requirements: Java 21, native PostgreSQL tools, `uv`, Node
-22.9+ and installed web dependencies. Polaris runs its own native PostgreSQL instance. Override `POLARIS_PROJECT` and
-`POLARIS_JAVA_HOME` for checkout/runtime paths. Restarting does not recreate synthetic repositories or reset grants.
-
-## Endpoint configuration and deployment
-
-Copy `.env.example` to `.env` in `web/`, then configure the server-only Polaris
-origin/realm and a private bootstrap credentials file (or environment credentials).
-The local launcher respects these settings. Use one persistent `HURON_ACCOUNT_STORE` for this Huron deployment. Accounts share one login and retain encrypted credentials separately for each configured endpoint/realm; organization bindings are immutable and endpoint mismatches fail closed. The bootstrap identity needs
-Polaris realm administration and must be the realm root/service_admin identity.
-
-The main toolbar selects only organizations. Browse opens an organization root and
-lists its catalogs at the top level, followed by namespace folders and datasets. Generated
-URLs include `organization` so bookmarks and concurrent tabs keep their realm.
-
-To add an organization, provision its realm with the Polaris admin tool using the
-same database configuration as the server (`bootstrap --realm=RESEARCH`), and include
-it in the server’s `polaris.realm-context.realms` allowlist. Save that realm’s root
-credentials in the private `POLARIS_CONNECTIONS_JSON` environment setting:
-
-```dotenv
-POLARIS_CONNECTIONS_JSON='[{"realm":"RESEARCH","url":"http://127.0.0.1:8181","clientId":"research-root","clientSecret":"replace-with-private-secret"}]'
-```
-
-Restart Huron, then choose the unused realm in Admin → Organizations. Huron verifies
-the connection before saving the organization. Polaris’s management API does not
-provision realms; the admin form binds a provisioned root. Catalogs are created in
-the chosen organization’s realm and are not reassigned across organizations.
-Adding a person to an organization provisions their separate Polaris identity,
-without catalog grants; assign Reader, Writer or Catalog administrator afterward.
-
-The existing single NASA Science organization migrates to the existing `POLARIS`
-realm without moving data or changing grants. A legacy store with
-multiple Huron organizations sharing one realm requires an explicit operator migration;
-Huron refuses to guess or merge those organizations. Back up the private account and
-organization files before upgrading. Native realm isolation does not replace storage
-permissions; configure separate allowed locations and storage credentials as needed.
-
-```sh
-npm install
-npm run dev
-# adapter-node deployment:
-npm run build
-npm start
-```
-
-`npm start` loads `web/.env`. Set `ORIGIN` to the browser’s public HTTPS origin,
-configure `HOST`/`PORT`, and persist the account file, its `.key`, Polaris database
-and repository objects. Protect bootstrap credentials and account storage with
-private filesystem permissions. `HURON_ADMIN_PASSWORD` seeds only a fresh store;
-later changes use Huron account/admin settings. Changing the admin password removes
-the initial-password file. Sessions are opaque HttpOnly/SameSite cookies, held
-server-side and terminated on restart or password/disable changes. This account
-store supports a single deployment host; replicated sessions/identity storage and
-OIDC integration remain future deployment work.
-
-The web supports catalog/namespace administration, Icechunk registration/load/drop,
-credential checks, catalog membership and advanced external service principals,
-roles, assignments and grants. Huron-managed identities and fixed membership
-presets are protected from destructive advanced controls. Upstream secrets remain
-server-only; newly created/rotated external principal secrets display once.
-
-FILE catalogs vend no cloud credentials. Direct local SDK access follows OS
-permissions and supports one writer. Use a supported object store with Polaris’s
-storage isolation/STS configuration for enforced data access and concurrent writes.
-Registering a table does not initialize Icechunk; dropping it leaves storage intact.
-Polaris has no Icechunk commit, rename, snapshot, branch or tag endpoints.
-The server therefore uses the fixed `scripts/inspect_icechunk.py` helper for
-metadata inspection after checking the signed-in user's data-read authority.
-Configure `HURON_ICECHUNK_PYTHON` and `HURON_ICECHUNK_READ_ROOTS` for the SDK runtime
-and approved repository mounts. Roots accept a JSON array or a POSIX colon-separated
-list, with paths relative to `web/`. Local defaults cover the existing example and
-NASA storage. When packaging the Node application, preserve the repository layout
-with `scripts/inspect_icechunk.py`, `web/package.json` and `web/build/`, and provide
-the Icechunk/Zarr environment. The inspector does not read array chunks or write data;
-unsupported storage or unavailable inspection is shown explicitly.
-
-The web calls no Huron Python service: its server talks only to Polaris, the
-Icechunk inspector and its own account and organization stores.
-
-Scientific transformation lineage, compute and the generated Huron scientific
-client remain planned. Legacy fixture routes redirect to Browse; unsupported
-controls are absent from the beta navigation.
-
-## Organizations and dataset types
-
-The first organization migration puts the three existing NASA topic catalogs in
-**NASA Science**, preserving their namespaces, datasets and Polaris grants. Other
-existing catalogs enter **Huron workspace**. Only existing catalog assignees gain
-ordinary organization membership. Organization admins manage people and descriptions;
-Polaris catalog privileges remain separately required. Remove catalog roles before
-removing organization membership. A global admin assigns or moves catalogs; moving
-does not transfer memberships or grants. New upstream catalogs need explicit assignment.
-
-`/settings/organization?organization=nasa-science` manages the organization.
-`/settings/catalog?catalog=geoscience` manages the Polaris catalog. The home page
-lists the selected organization's accessible catalogs. Dataset lists filter by
-name, type and processing layer within the loaded folder page. Layers use
-`huron.layer` and bronze/silver/gold namespace placement; conflicts are explicit.
-
-Namespace operations can register existing Iceberg metadata or Icechunk
-repositories. Every Polaris generic table is labeled Generic, whatever its storage
-format or properties, and shows its registration properties only; generic-table
-APIs do not supply file manifests or version history. Iceberg registration uses
-`overwrite: false`. No registration operation uploads or converts scientific data.
-
-## Checks
+## Commands
 
 Run from `web/`:
 
-```sh
+| Command                | What it does                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| `npm run dev`          | Development server on http://localhost:5173 with the settings in `.env`.            |
+| `npm run demo`         | `vite dev` against a fake company IdP and the API, with demo data.                  |
+| `npm run check`        | `svelte-kit sync`, `svelte-check`, and `tsc` for `e2e/`, `scripts/` and Playwright. |
+| `npm test`             | Unit and component tests (Vitest).                                                  |
+| `npm run lint`         | Prettier check.                                                                     |
+| `npm run build`        | Production build into `build/` (adapter-node).                                      |
+| `npm run test:e2e`     | Build, then the Playwright tests against the fake IdP, the API and the build.       |
+| `npm run start`        | Serve the build with the settings in `.env`.                                        |
+| `npm run generate:api` | Regenerate `src/lib/api/openapi.ts` from `docs/openapi.json`.                       |
+
+## Try it: `npm run demo`
+
+The demo runs `vite dev` against a stand-in for the company IdP and the API on its memory store,
+seeded with the end-to-end fixture. After the [setup](#setup) it needs nothing more: the API runs
+with `uv run --offline --no-sync`, so nothing is downloaded. From `web/`:
+
+```bash
+npm run demo
+```
+
+It prints the addresses and the users once everything is up. Open http://localhost:5173 (or
+http://127.0.0.1:5173), choose **Sign in with your company account**, and pick a user on the fake
+IdP's page; there are no passwords. Ctrl+C stops everything.
+
+| User      | Groups                              | For                                                               |
+| --------- | ----------------------------------- | ----------------------------------------------------------------- |
+| `alice`   | `huron-platform-admins`             | Platform admin: sees everything.                                  |
+| `paula`   | `huron-platform-admins`             | Platform admin of the e2e layout walks, which no other test uses. |
+| `bob`     | `helio-org-admins`                  | Org admin of `helio`.                                             |
+| `carol`   | `helio-catalog-admins`              | Catalog admin of `heliophysics` and `space-weather`.              |
+| `dave`    | `helio-contributors`, `geo-readers` | Contributor in `helio`, reader of `geoscience`.                   |
+| `erin`    | `helio-readers`                     | Reader in `helio`.                                                |
+| `oscar`   | `helio-readers`                     | Reader in `helio`, for fault injection.                           |
+| `mallory` | none                                | No groups: the page for users without access.                     |
+| `noaud`   | `helio-readers`                     | An ID token without the API's audience: the exchange refuses it.  |
+| `idpfail` | `helio-readers`                     | The IdP's token endpoint fails.                                   |
+
+The fake IdP serves the web only; the CLI cannot sign in to it. For the CLI and the web against a
+real Keycloak, run [`make app`](#everything-in-docker-make-app).
+
+The web calls the API through a fault proxy that makes one user's API calls fail on demand. A
+fault follows the subject of the request's Huron token, the username:
+
+```bash
+curl -X POST http://127.0.0.1:8197/__test/faults -H 'content-type: application/json' \
+  -d '{"subject":"oscar","mode":"unavailable"}'
+```
+
+`mode` is `unavailable` (503), `unauthorized` (401: the web ends the session), `error500` (500,
+with a request id the error page shows), `reset` (the connection drops), `hang` (no answer comes,
+until the web's timeout) or `null` (clear). An optional `path`, such as
+`"/api/v1/catalogs/heliophysics/search"`, limits a fault to requests whose path starts with it. A
+subject holds one fault per path, the longest matching path applies, and `"mode": null` with a
+`path` clears that one alone. `GET /__test/faults` lists the faults in force.
+
+The demo listens on 8199 (the fake IdP and its group directory: the issuer), 8197 (the fault
+proxy, the web's API URL), 8198 (the API) and 5173 (the web). Move them with
+`HURON_E2E_IDP_PORT`, `HURON_E2E_PROXY_PORT`, `HURON_E2E_API_PORT` and `HURON_DEMO_WEB_PORT`. The
+demo starts nothing while another process holds one of its ports; it names the port and its
+variable instead.
+
+## Against the development stack: `make up`
+
+This is the real sign-in: PostgreSQL and Keycloak's `company` realm in Docker, the API and the
+web on the host. Unlike `make app`, which binds 127.0.0.1 only, this stack's PostgreSQL (user
+and password `huron`), Keycloak (admin console `admin` / `admin`) and group directory listen on
+every network interface: run it on a machine and network you trust. In the repository root, in
+two terminals:
+
+```bash
+# Terminal 1: PostgreSQL and Keycloak, the migrations, then the group directory (keep it running)
+make up
+make migrate
+uv run python scripts/devgroups.py scripts/dev-groups.yaml 8082
+
+# Terminal 2: the API on http://127.0.0.1:8080 (keep it running)
+make api
+```
+
+Then, in a third terminal in `web/`, after the [setup](#setup):
+
+```bash
+cp .env.example .env
+npm run build
+npm run start
+```
+
+Open exactly http://localhost:3000, the `ORIGIN` in `.env`: every sign-in comes back to
+`http://localhost:3000/auth/callback`, and one started on another address ends with "That sign-in
+expired or was already used". Choose **Sign in with your company account** and sign in on
+Keycloak's form as `user` / `user`, `admin` / `admin`, or one of the accounts in the root
+[README](../README.md#accounts). `npm run dev` reads the same `.env` and serves on
+http://localhost:5173 with live reload.
+
+`.env.example` holds the settings for this stack, among them the development secret of the
+realm's confidential `huron-web` client, `HURON_WEB_OIDC_CLIENT_SECRET=huron-web-dev-only-secret`.
+Without it Keycloak refuses the web's token request, and sign-in ends with "The company sign-in
+didn't complete." (`/login?error=idp_error`). The issuer is `http://127.0.0.1:8081/realms/company`
+in `.env` and in `dev.env` alike; use `127.0.0.1` for Keycloak, never `localhost`.
+
+The stack's database starts empty, so the web has no organization to show. To browse the demo
+data of `make app` instead, load it once, with the API running, from the repository root:
+
+```bash
+HURON_SEED_API_URL=http://127.0.0.1:8080 HURON_SEED_ISSUER=http://127.0.0.1:8081/realms/company \
+  HURON_SEED_CLIENT_ID=huron-cli HURON_SEED_FIXTURE_DIR=web/e2e/support node docker/seed/run.mjs
+```
+
+The data stays in the volume `huron_postgres-data`, and running the seed again changes nothing.
+
+A `make up` Keycloak whose volume predates the `huron-web` client answers the sign-in with "Client
+not found"; recreate only its volume, as the root README's
+[troubleshooting](../README.md#troubleshooting) describes. `make down` stops PostgreSQL and
+Keycloak.
+
+## Everything in Docker: `make app`
+
+`make app`, in the repository root, builds and starts the whole application in Docker:
+PostgreSQL, the API, the group directory, Keycloak, this web app on http://localhost:3000 and the
+demo data. The CLI on the host signs in to the same Keycloak, with the device or the loopback
+flow, and writes through the same API, so what it creates shows here at once.
+[Run everything in Docker](../README.md#run-everything-in-docker) in the root README lists the
+accounts and covers the CLI's setup, stopping, resetting and troubleshooting. `make up` and
+`make app` use the same ports, so run one at a time.
+
+## The gate and the end-to-end tests
+
+Run from `web/`, after the [setup](#setup); each must pass, and `npm run check` must report 0
+errors and 0 warnings:
+
+```bash
 npm run check
 npm test
 npm run lint
@@ -208,18 +172,71 @@ npm run build
 npm run test:e2e
 ```
 
-Run these checks sequentially. Pause the Vite development server during production
-builds and browser tests: simultaneous SvelteKit generators can produce mismatched
-server/client bootstrap versions. Restart the local launcher afterward.
+The end-to-end tests run the whole stack on this machine, as the demo does. `npm run test:e2e`
+builds, then starts the fake IdP and the fault proxy (8199, 8197), the API on the memory store
+(8198) and the built web server (`node build/index.js` at http://localhost:4173, which reads no
+`.env`), seeds the fixture once, and runs the tests in Chromium. Every process gets every setting
+explicitly, so nothing leaks in from `.env` or the shell. The ports are the demo's, so the two
+cannot run at the same time; move them with the variables above and `HURON_E2E_WEB_PORT`. The
+pieces live in `e2e/support/`:
 
-Playwright uses an isolated stateful Polaris protocol double and temporary Huron
-account storage. Schema/history browser tests use actual temporary Icechunk
-repositories seeded through the SDK, rather than fixture inspection responses.
-The local launcher installs the required SDK runtime. For tests without the full
-stack, create `.local/polaris/icechunk-venv` with `uv venv`, then install
-`icechunk==2.3.0 zarr==3.4.1 numpy==2.5.4` using `uv pip install --python` against
-that environment, or set `HURON_ICECHUNK_PYTHON` to an existing compatible runtime.
-Missing SDK dependencies fail browser-test setup explicitly. Live Polaris/NASA
-import checks complement those browser tests.
-Root-level routes remain synchronized with `src/lib/reserved-slugs.ts` and the
-backend organization-name reservations for the retained scientific core.
+- `fake-idp.mjs`: the stand-in company IdP and group directory, one sign-in button per fixture
+  user, and the fault proxy.
+- `fixture.mjs`: the users, groups, organizations, catalogs, namespaces, collections and schema
+  the tests assert on; `seed.mjs` creates them through the real API, and `make app` seeds the
+  same fixture. One collection, `space-weather.alerts.storm-count-2024`, has a schema override
+  that no longer fits its catalog's schema, so it stays incomplete: the case of an incompatible
+  override.
+- `stack.mjs`: the ports and the environment of every process.
+- `harness.ts`: what tests use, such as `signIn(page, user)`, `faults('oscar', mode)` and
+  `ApiSession`.
+
+Every test imports `test` from `e2e/support/harness.ts`. Its automatic fixture signs out each
+session the test signed in to: a user holds at most 10 web sessions, and the 11th sign-in ends the
+oldest, so a test that outlived 10 later sign-ins of its user lost its session halfway. Faults
+follow a user, not a test, so only tests in `e2e/faults/` inject them, always for `oscar`, and that
+Playwright project runs one test at a time. `paula` signs in only for the long walks of
+`e2e/layout.test.ts`.
+
+## In production
+
+- **`ORIGIN`** must be the exact public origin browsers use, such as
+  `https://huron-web.apps.example.org`. Sign-in returns to `<ORIGIN>/auth/callback` and sign-out
+  to `<ORIGIN>/login?status=signed-out`, so the IdP client lists exactly those; on https every
+  cookie is `Secure` and carries the `__Host-` prefix. adapter-node listens on `HOST` and `PORT`
+  (`web/Containerfile`: 0.0.0.0 and 3000).
+- **Secrets.** `HURON_WEB_OIDC_CLIENT_SECRET` is the only one: keep it in a secret store, never in
+  the image or a config map. The web has no other key to configure; it seals sign-ins in progress
+  with a random key it makes for itself.
+- **One replica, or sticky sessions.** Sessions live in the server's memory: a restart signs
+  everyone out, and a replica that did not create a session treats it as expired. Sign-ins in
+  progress fail the same way.
+- A session ends with its Huron token (30 seconds before it expires); there is no refresh.
+- `POST /logout` answers 403 unless the request's `Origin` is the web's own origin (`ORIGIN`):
+  SvelteKit checks the origin of form bodies only, and a bodiless POST from another origin of the
+  same site carries the session cookie too. A proxy in front of the web must pass `Origin`
+  through.
+- **Compression.** adapter-node compresses only the prebuilt static assets; pages and
+  `__data.json` leave uncompressed. Compress `text/html` and `application/json` at the route,
+  ingress or reverse proxy. No page holds a secret for a compression attack to extract.
+- **Memory.** One process holds every session and reads API answers of up to 64 MiB each
+  (`MAX_ANSWER_BYTES`), and list answers carry each collection's metadata whole. Leave the
+  container room above its working set: an out-of-memory kill signs everyone out.
+- **Content Security Policy.** Every page carries the policy of `kit.csp` in `svelte.config.js`:
+  `default-src 'self'`, scripts from the web's own origin and inline scripts only with SvelteKit's
+  nonce, inline styles, `data:` images, no plugins and no framing. It sets no `form-action`,
+  because Chromium would apply it to the sign-out's redirect to the IdP. A proxy that injects
+  scripts breaks the pages.
+- **Logs** go to stderr: `huron-web API call failed` with its reference (the API's request id when
+  the API sent one; the 500 page shows it), status, code, title and path;
+  `huron-web request failed` for other server errors, with their reference;
+  `huron-web sign-in failed: <code>: <reason>`, a warning, or an error for a configuration
+  problem; and `huron-web configuration: <variable> …`. They hold no tokens, authorization codes,
+  cookies, secrets, query strings or the API's free text (`detail`, `context`). One line is the
+  exception: an error sign-in does not expect, such as a bug, logs
+  `huron-web sign-in failed unexpectedly` with the error as Node prints it, its message and
+  stack, which are free text and may quote anything; the warning
+  `huron-web sign-in failed: service_unavailable: unexpected failure` comes next. SvelteKit's own
+  4xx answers, such as a 404 for a path no route matches, are neither logged nor given a
+  reference.
+- `/healthz` answers `{"status":"ok"}` without a session, for probes.

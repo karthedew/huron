@@ -31,4 +31,4 @@ def test_answers_groups_unknown_users_and_bad_paths(tmp_path: Path) -> None:
 def test_the_shipped_mapping_covers_the_realm_users() -> None:
     devgroups = load_module()
     groups = devgroups.load(SCRIPT.parent / "dev-groups.yaml")
-    assert set(groups) == {"alice", "bob", "carol", "dave", "erin"}
+    assert set(groups) == {"admin", "user", "alice", "bob", "carol", "dave", "erin"}

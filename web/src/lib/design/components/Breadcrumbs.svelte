@@ -1,52 +1,36 @@
 <script lang="ts">
+	import { ChevronRight } from '@lucide/svelte';
+
 	interface Crumb {
 		label: string;
 		href: string;
+		/** The page itself; at most one crumb is. */
+		current?: boolean;
 	}
+
 	interface Props {
-		crumbs: Crumb[];
+		crumbs: readonly Crumb[];
 	}
+
 	let { crumbs }: Props = $props();
 </script>
 
-<nav aria-label="Breadcrumb" class="crumbs">
-	<ol>
-		{#each crumbs as crumb, i}
-			<li>
-				{#if i === crumbs.length - 1}
-					<span aria-current="page">{crumb.label}</span>
-				{:else}
-					<a href={crumb.href}>{crumb.label}</a>
-					<span class="sep" aria-hidden="true">/</span>
+<nav aria-label="Breadcrumb">
+	<ol class="m-0 flex list-none flex-wrap items-center gap-x-1 gap-y-1 p-0 text-sm text-app-muted">
+		{#each crumbs as crumb, index (crumb.href)}
+			<li class="flex min-w-0 items-center gap-1">
+				{#if index > 0}
+					<ChevronRight size={14} class="shrink-0" aria-hidden="true" />
 				{/if}
+				<a
+					href={crumb.href}
+					aria-current={crumb.current ? 'page' : undefined}
+					class={[
+						'min-w-0 wrap-anywhere no-underline hover:underline',
+						crumb.current ? 'font-semibold text-app-fg' : 'text-app-muted hover:text-app-fg'
+					]}>{crumb.label}</a
+				>
 			</li>
 		{/each}
 	</ol>
 </nav>
-
-<style>
-	.crumbs ol {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.3rem;
-		list-style: none;
-		margin: 0 0 0.4rem;
-		padding: 0;
-		font-size: 0.85rem;
-		color: var(--muted);
-	}
-	.crumbs li {
-		display: flex;
-		gap: 0.3rem;
-	}
-	.sep {
-		color: var(--line);
-	}
-	a {
-		color: var(--muted);
-		text-decoration: none;
-	}
-	a:hover {
-		color: var(--accent);
-	}
-</style>

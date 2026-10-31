@@ -26,6 +26,16 @@ huron files solar-wind.run7
 Readers read files straight from the share, for example
 `/projects/huron/helio/heliophysics/solar-wind/run7/`.
 
+## In a browser
+
+The Huron web app shows the same catalog, read-only. Open its address (your operator has it),
+choose **Sign in with your company account** and sign in as you do for the CLI. You can switch
+between the organizations you can see, browse catalogs, namespaces and collections with their
+metadata, files, commits, activity and schema, and search a catalog or a whole organization.
+Changes are made with the CLI: where you could make one, the page shows the `huron` command to
+run. Your groups are read when you sign in, so after a change to your groups, sign out and sign in
+again.
+
 ## Creating a collection
 
 ```bash

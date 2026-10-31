@@ -14,8 +14,7 @@
         "http://127.0.0.1/*"
       ],
       "attributes": {
-        "oauth2.device.authorization.grant.enabled": "true",
-        "pkce.code.challenge.method": "S256"
+        "oauth2.device.authorization.grant.enabled": "true"
       },
       "protocolMappers": [
         {
@@ -29,9 +28,80 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "huron-web",
+      "name": "Huron web (development)",
+      "description": "The web app's confidential client. Its secret is a development value, never a real one.",
+      "publicClient": false,
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "huron-web-dev-only-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/auth/callback",
+        "http://127.0.0.1:3000/auth/callback",
+        "http://localhost:5173/auth/callback",
+        "http://127.0.0.1:5173/auth/callback",
+        "http://localhost:4173/auth/callback",
+        "http://127.0.0.1:4173/auth/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "false",
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/login?status=signed-out##http://127.0.0.1:3000/login?status=signed-out##http://localhost:5173/login?status=signed-out##http://127.0.0.1:5173/login?status=signed-out##http://localhost:4173/login?status=signed-out##http://127.0.0.1:4173/login?status=signed-out"
+      },
+      "protocolMappers": [
+        {
+          "name": "huron-cli audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "huron-cli",
+            "id.token.claim": "true",
+            "access.token.claim": "false"
+          }
+        }
+      ]
     }
   ],
   "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Ada",
+      "lastName": "Admin",
+      "email": "admin@example.org",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "user",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Sam",
+      "lastName": "Scientist",
+      "email": "user@example.org",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "user",
+          "temporary": false
+        }
+      ]
+    },
     {
       "username": "alice",
       "enabled": true,
@@ -39,6 +109,7 @@
       "firstName": "Alice",
       "lastName": "Admin",
       "email": "alice@example.org",
+      "requiredActions": [],
       "credentials": [
         {
           "type": "password",
@@ -54,6 +125,7 @@
       "firstName": "Bob",
       "lastName": "Org",
       "email": "bob@example.org",
+      "requiredActions": [],
       "credentials": [
         {
           "type": "password",
@@ -69,6 +141,7 @@
       "firstName": "Carol",
       "lastName": "Catalog",
       "email": "carol@example.org",
+      "requiredActions": [],
       "credentials": [
         {
           "type": "password",
@@ -84,6 +157,7 @@
       "firstName": "Dave",
       "lastName": "Contributor",
       "email": "dave@example.org",
+      "requiredActions": [],
       "credentials": [
         {
           "type": "password",
@@ -99,6 +173,7 @@
       "firstName": "Erin",
       "lastName": "Reader",
       "email": "erin@example.org",
+      "requiredActions": [],
       "credentials": [
         {
           "type": "password",

@@ -1,45 +1,22 @@
-import { fail, redirect } from '@sveltejs/kit';
-import { createHuronSession, safeReturnTo } from '$lib/server/auth';
-import { accountStore, registrationAllowed } from '$lib/server/huron-accounts';
-import { PolarisApiError } from '$lib/server/polaris-client';
-import type { Actions, PageServerLoad } from './$types';
+import { redirect } from '@sveltejs/kit';
+import { getConfig, publicOrigin } from '$lib/server/config';
+import { SIGN_IN_ERROR_CODES } from '$lib/server/oidc';
+import { safeReturnTo } from '$lib/server/return-to';
+import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ url }) => {
-	await accountStore().initialize();
+const STATUSES = ['signed-out', 'expired'] as const;
+
+export const load = (({ locals, url }) => {
+	const returnTo = safeReturnTo(url.searchParams.get('returnTo'), publicOrigin(getConfig(), url));
+	if (locals.user !== null) redirect(303, returnTo);
 	return {
-		returnTo: safeReturnTo(url.searchParams.get('returnTo')),
-		signedOut: url.searchParams.get('status') === 'signed-out',
-		passwordChanged: url.searchParams.get('status') === 'password-changed',
-		registrationAllowed: registrationAllowed()
+		returnTo,
+		status: known(STATUSES, url.searchParams.get('status')),
+		error: known(SIGN_IN_ERROR_CODES, url.searchParams.get('error'))
 	};
-};
+}) satisfies PageServerLoad;
 
-export const actions: Actions = {
-	default: async ({ cookies, request, url }) => {
-		const data = await request.formData();
-		const username = String(data.get('username') ?? '').trim();
-		const password = String(data.get('password') ?? '');
-		const returnTo = safeReturnTo(String(data.get('returnTo') ?? '/'));
-		if (!username || !password)
-			return fail(400, { username, message: 'Enter your username and password.' });
-		let account;
-		try {
-			account = await accountStore().authenticate(username, password);
-		} catch (error) {
-			if (error instanceof PolarisApiError)
-				return fail(503, {
-					username,
-					message:
-						'Polaris is unavailable or this account’s connection needs administrator attention.'
-				});
-			throw error;
-		}
-		if (!account)
-			return fail(401, {
-				username,
-				message: 'The username or password is incorrect, or the account is disabled.'
-			});
-		createHuronSession(cookies, account, url.protocol === 'https:');
-		redirect(303, returnTo);
-	}
-};
+/** The value when it is one of `codes`; query text is never echoed otherwise. */
+function known<T extends string>(codes: readonly T[], value: string | null): T | null {
+	return codes.find((code) => code === value) ?? null;
+}

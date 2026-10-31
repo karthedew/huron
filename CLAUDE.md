@@ -9,6 +9,7 @@ Load skills from `.claude/skills/<name>/SKILL.md` by area:
 - `oop-design` for `src/huron/core/`.
 - `fastapi` for `src/huron/applications/api/` only.
 - `postgresql-table-design` for `src/huron/core/metastore/` and `migrations/`.
+- `svelte-core-bestpractices`, `svelte-code-writer` and `tailwind-design-system` for `web/`.
 
 Plans are executed with `/implement-markdown` (`.claude/commands/implement-markdown.md`): one task at
 a time, the full gate per task, an independent verification pass before a task is marked complete.

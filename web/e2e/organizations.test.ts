@@ -1,308 +1,239 @@
-import { randomUUID } from 'node:crypto';
-import { expect, test, type Page } from '@playwright/test';
-import { createUser, openPage, signIn, USER_PASSWORD } from './helpers';
+import { expect } from '@playwright/test';
+import { CATALOGS, NAMESPACES, ORGANIZATIONS, visibleOrganizations } from './support/fixture.mjs';
+import { ApiSession, VIEWPORTS, horizontalOverflow, signIn, test } from './support/harness.ts';
 
-function actionForm(page: Page, name: string) {
-	return page.locator('form').filter({ has: page.getByRole('button', { name, exact: true }) });
+/** The `next_cursor` of an API page answer. */
+function nextCursor(body: unknown): string {
+	const cursor =
+		typeof body === 'object' && body !== null && 'next_cursor' in body ? body.next_cursor : null;
+	if (typeof cursor !== 'string') throw new Error('the page has no next cursor');
+	return cursor;
 }
 
-async function createOrganization(page: Page, realm: string) {
-	const slug = `research-${randomUUID().slice(0, 8)}`;
-	const name = `Research division ${slug}`;
-	await openPage(page, '/admin?tab=organizations');
-	const form = actionForm(page, 'Create organization');
-	await form.getByLabel('Organization name', { exact: true }).fill(name);
-	await form.getByLabel('Organization identifier', { exact: true }).fill(slug);
-	await form.getByRole('combobox', { name: 'Polaris realm', exact: true }).selectOption(realm);
-	await form.getByRole('button', { name: 'Create organization', exact: true }).click();
-	await expect(
-		page.getByRole('status').filter({ hasText: `Organization ${name} created.` })
-	).toBeVisible();
-	return { slug, name };
+/** "N namespaces in total" as the fixture creates them. */
+function namespaceCount(catalog: string): string {
+	const count = NAMESPACES.filter((namespace) => namespace.catalog === catalog).length;
+	return `${count} ${count === 1 ? 'namespace' : 'namespaces'} in total`;
 }
 
-async function createCatalog(
-	page: Page,
-	organization: string,
-	name = `science-${randomUUID().slice(0, 8)}`
-) {
-	await openPage(page, '/admin?tab=catalogs');
-	const form = actionForm(page, 'Create catalog');
-	if (organization)
-		await form
-			.getByRole('combobox', { name: 'Organization', exact: true })
-			.selectOption(organization);
-	await form.getByLabel('Catalog name', { exact: true }).fill(name);
-	await form
-		.getByLabel('Default repository base URI')
-		.fill(`file:///tmp/huron-browser-test/${organization}/${name}/`);
-	await form
-		.getByLabel('Storage configuration · JSON')
-		.fill(
-			JSON.stringify({ storageType: 'FILE', allowedLocations: ['file:///tmp/huron-browser-test/'] })
-		);
-	await form.getByRole('button', { name: 'Create catalog', exact: true }).click();
-	await expect(
-		page.getByRole('status').filter({ hasText: `Catalog ${name} is ready in Polaris` })
-	).toBeVisible();
-	return name;
-}
-
-async function addOrganizationMember(
-	page: Page,
-	organization: string,
-	username: string,
-	role = 'member'
-) {
-	await openPage(page, `/settings/organization?organization=${organization}`);
-	const form = actionForm(page, 'Add organization member');
-	await form.getByLabel('Username', { exact: true }).fill(username);
-	await form.getByRole('combobox', { name: 'Organization role', exact: true }).selectOption(role);
-	const submitted = page.waitForResponse((response) => {
-		const url = new URL(response.url());
-		return (
-			response.request().method() === 'POST' &&
-			url.pathname === '/settings/organization' &&
-			url.searchParams.has('/setOrganizationMembership')
-		);
-	});
-	await form.getByRole('button', { name: 'Add organization member', exact: true }).click();
-	expect((await submitted).status()).toBe(200);
-	await expect(
-		page.getByRole('status').filter({ hasText: 'Organization membership saved.' })
-	).toBeVisible();
-}
-
-test('catalog settings keep an empty organization empty instead of selecting another catalog', async ({
-	page
-}) => {
-	await signIn(page);
-	const organization = await createOrganization(page, 'E2E_EMPTY');
-	const response = await openPage(page, `/settings/catalog?organization=${organization.slug}`);
-	expect(response?.status()).toBe(200);
-	await expect(
-		page.getByRole('heading', { name: 'No catalogs available', exact: true })
-	).toBeVisible();
-	await expect(page.locator('main')).not.toContainText('huron-local');
-	await expect(page.locator('main')).not.toContainText('ocean-data');
-	await expect(
-		page.getByRole('button', { name: 'Save catalog configuration', exact: true })
-	).toHaveCount(0);
-	await expect(page.getByRole('banner').getByLabel('Switch catalog')).toHaveCount(0);
-	await page.getByRole('banner').getByLabel('Switch organization', { exact: true }).click();
-	await page
-		.getByRole('banner')
-		.getByRole('link', { name: new RegExp(organization.name) })
-		.click();
-	await expect(page).toHaveURL(`/browse?organization=${organization.slug}`);
-	await expect(page.getByText('No catalogs available', { exact: true })).toBeVisible();
-	await expect(page.locator('main')).not.toContainText('huron-local');
-	await expect(page.locator('main')).not.toContainText('ocean-data');
-});
-
-async function grantCatalog(
-	page: Page,
-	organization: string,
-	catalog: string,
-	username: string,
-	role = 'reader'
-) {
-	await openPage(page, `/settings/catalog?organization=${organization}&catalog=${catalog}`);
-	await page.getByLabel('Find a user').fill(username);
-	const form = actionForm(page, `Save access for ${username}`);
-	await form.getByLabel('Catalog role').selectOption(role);
-	await form.getByRole('button', { name: `Save access for ${username}`, exact: true }).click();
-	await expect(
-		page.getByRole('status').filter({ hasText: 'Catalog membership saved in Polaris.' })
-	).toBeVisible();
-}
-
-async function createNamespace(page: Page, organization: string, catalog: string, name: string) {
-	const response = await page.request.post(
-		`/browse?organization=${organization}&catalog=${catalog}&/createNamespace`,
-		{
-			headers: { Origin: 'http://localhost:4173', Accept: 'text/html' },
-			form: { organization, catalog, namespace: JSON.stringify([name]), properties: '{}' }
+test.describe('all organizations', () => {
+	test('shows a card per visible organization', async ({ page }) => {
+		await signIn(page, 'alice');
+		await page.goto('/orgs');
+		await expect(page).toHaveTitle('All organizations · Huron');
+		const main = page.getByRole('main');
+		await expect(main.getByRole('heading', { name: 'All organizations', level: 1 })).toBeVisible();
+		const cards = main.getByRole('list').getByRole('link');
+		await expect(cards).toHaveCount(visibleOrganizations('alice').length);
+		for (const organization of ORGANIZATIONS) {
+			const card = main.getByRole('link', { name: new RegExp(`^${organization.displayName}`) });
+			await expect(card).toHaveAttribute('href', `/orgs/${organization.name}`);
+			await expect(card).toContainText(organization.name);
+			if (organization.description !== '')
+				await expect(card).toContainText(organization.description);
+			const catalogs = CATALOGS.filter(({ organization: owner }) => owner === organization.name);
+			await expect(card).toContainText(
+				`${catalogs.length} ${catalogs.length === 1 ? 'catalog' : 'catalogs'}`
+			);
 		}
-	);
-	expect(response.status()).toBe(200);
-}
-
-test('separate organization roots isolate equal catalog names and require independent membership and grants', async ({
-	page,
-	browser
-}) => {
-	await signIn(page);
-	const alpha = await createOrganization(page, 'E2E_ALPHA');
-	const beta = await createOrganization(page, 'E2E_BETA');
-	const catalog = `shared-${randomUUID().slice(0, 8)}`;
-	await createCatalog(page, alpha.slug, catalog);
-	await createCatalog(page, beta.slug, catalog);
-	await createNamespace(page, alpha.slug, catalog, 'alpha_only');
-	await createNamespace(page, beta.slug, catalog, 'beta_only');
-	const username = await createUser(page);
-	await addOrganizationMember(page, alpha.slug, username);
-	await grantCatalog(page, alpha.slug, catalog, username);
-	const scientistContext = await browser.newContext({ baseURL: 'http://localhost:4173' });
-	try {
-		const scientist = await scientistContext.newPage();
-		await signIn(scientist, username, USER_PASSWORD, `/?organization=${alpha.slug}`);
-		await expect(scientist.getByRole('heading', { name: catalog, exact: true })).toBeVisible();
-		expect(
-			(await openPage(scientist, `/browse?organization=${alpha.slug}&catalog=${catalog}`))?.status()
-		).toBe(200);
-		await expect(scientist.getByRole('navigation', { name: 'Namespace path' })).toContainText(
-			catalog
-		);
-		await expect(scientist.locator('main')).toContainText('alpha_only');
-		await expect(scientist.locator('main')).not.toContainText('beta_only');
-		expect(
-			(await openPage(scientist, `/browse?organization=${beta.slug}&catalog=${catalog}`))?.status()
-		).toBe(404);
-		expect((await openPage(scientist, '/browse?organization=unknown-organization'))?.status()).toBe(
-			404
-		);
-		expect(
-			(await openPage(scientist, `/settings/organization?organization=${beta.slug}`))?.status()
-		).toBe(404);
-
-		await addOrganizationMember(page, beta.slug, username);
-		await openPage(scientist, `/browse?organization=${beta.slug}`);
-		await expect(scientist.getByText('No catalogs available', { exact: true })).toBeVisible();
-		expect(
-			(await openPage(scientist, `/browse?organization=${beta.slug}&catalog=${catalog}`))?.status()
-		).toBe(404);
-		await grantCatalog(page, beta.slug, catalog, username);
-		await openPage(scientist, `/browse?organization=${alpha.slug}&catalog=${catalog}`);
-		await expect(scientist.locator('main')).toContainText('alpha_only');
-		expect(
-			(await openPage(scientist, `/browse?organization=${beta.slug}&catalog=${catalog}`))?.status()
-		).toBe(200);
-		await expect(scientist.locator('main')).toContainText('beta_only');
-		await expect(scientist.locator('main')).not.toContainText('alpha_only');
-		await openPage(scientist, `/settings/organization?organization=${beta.slug}`);
-		await expect(
-			scientist.getByRole('button', { name: 'Save organization', exact: true })
-		).toHaveCount(0);
-		await expect(
-			scientist.getByRole('button', { name: 'Add organization member', exact: true })
-		).toHaveCount(0);
-		const forbidden = await scientist.request.post(
-			`/settings/organization?organization=${beta.slug}&/updateOrganization`,
-			{
-				headers: { Origin: 'http://localhost:4173', Accept: 'text/html' },
-				form: { organization: beta.slug, name: 'Unauthorized rename', description: '' }
-			}
-		);
-		expect(forbidden.status()).toBe(403);
-		await scientist.reload();
-		await expect(scientist.getByRole('heading', { name: beta.name, exact: true })).toBeVisible();
-	} finally {
-		await scientistContext.close();
-	}
-});
-
-test('retrying catalog creation preserves its identity and namespaces within the selected realm', async ({
-	page
-}) => {
-	await signIn(page);
-	const owner = await createOrganization(page, 'E2E_RETRY');
-	const catalog = await createCatalog(page, owner.slug);
-	await createNamespace(page, owner.slug, catalog, 'retained');
-	const form = {
-		organization: owner.slug,
-		name: catalog,
-		defaultBaseLocation: `file:///tmp/huron-browser-test/${owner.slug}/${catalog}/`,
-		storageConfigInfo: JSON.stringify({
-			storageType: 'FILE',
-			allowedLocations: ['file:///tmp/huron-browser-test/']
-		}),
-		properties: '{}'
-	};
-	const retry = await page.request.post(`/admin?organization=${owner.slug}&/createCatalog`, {
-		headers: { Origin: 'http://localhost:4173', Accept: 'text/html' },
-		form
+		await expect(main.getByRole('navigation', { name: 'Organization pages' })).toHaveCount(0);
 	});
-	expect(retry.status()).toBe(200);
-	expect(await retry.text()).toContain(`Catalog ${catalog} is ready in Polaris`);
-	expect(
-		(await openPage(page, `/browse?organization=${owner.slug}&catalog=${catalog}`))?.status()
-	).toBe(200);
-	await expect(page.locator('main')).toContainText('retained');
-	expect(
-		(await openPage(page, `/browse?organization=workspace&catalog=${catalog}`))?.status()
-	).toBe(404);
-	const conflicting = await page.request.post(`/admin?organization=${owner.slug}&/createCatalog`, {
-		headers: { Origin: 'http://localhost:4173', Accept: 'text/html' },
-		form: { ...form, defaultBaseLocation: `file:///tmp/huron-browser-test/different/${catalog}/` }
+
+	test('pages by cursor and leads back to the first page', async ({ page }) => {
+		const alice = await ApiSession.as('alice');
+		const cursor = nextCursor((await alice.get('organizations?limit=1')).body);
+		await signIn(page, 'alice');
+		await page.goto(`/orgs?cursor=${encodeURIComponent(cursor)}`);
+		const main = page.getByRole('main');
+		const rest = visibleOrganizations('alice').slice(1);
+		await expect(main.getByRole('list').getByRole('link')).toHaveCount(rest.length);
+		await expect(main.getByRole('link', { name: /^Astrophysics/ })).toHaveCount(0);
+
+		const pages = main.getByRole('navigation', { name: 'Organization pages' });
+		await expect(pages.getByRole('link', { name: 'Next page' })).toHaveCount(0);
+		await pages.getByRole('link', { name: 'First page' }).click();
+		await expect(page).toHaveURL('/orgs');
+		await expect(main.getByRole('link', { name: /^Astrophysics/ })).toBeVisible();
 	});
-	expect(conflicting.status()).toBe(409);
-});
 
-test('organization administrators manage people without receiving implicit Polaris catalog grants', async ({
-	page
-}) => {
-	await signIn(page);
-	const organization = await createOrganization(page, 'E2E_ORGADMIN');
-	const catalog = await createCatalog(page, organization.slug);
-	const username = await createUser(page);
-	await addOrganizationMember(page, organization.slug, username, 'admin');
-	await signIn(
-		page,
-		username,
-		USER_PASSWORD,
-		`/settings/organization?organization=${organization.slug}`
-	);
-	await expect(page.getByRole('button', { name: 'Save organization', exact: true })).toBeVisible();
-	await expect(
-		page.getByRole('button', { name: 'Add organization member', exact: true })
-	).toBeVisible();
-	await expect(
-		page.locator('main').getByText('No accessible catalogs in this organization.', { exact: true })
-	).toBeVisible();
-	expect(
-		(await openPage(page, `/browse?organization=${organization.slug}&catalog=${catalog}`))?.status()
-	).toBe(404);
-	expect(
-		(
-			await openPage(page, `/settings/catalog?organization=${organization.slug}&catalog=${catalog}`)
-		)?.status()
-	).toBe(404);
-	expect((await openPage(page, '/admin'))?.status()).toBe(403);
-});
-
-for (const width of [390, 816, 1440]) {
-	test(`organization and catalog navigation stay accessible at ${width}px in both themes`, async ({
+	test('a user without organizations learns why there too and can sign in again', async ({
 		page
 	}) => {
-		await page.setViewportSize({ width, height: 900 });
-		const errors: string[] = [];
-		page.on('pageerror', (error) => errors.push(error.message));
-		await signIn(page);
-		for (const dark of [false, true]) {
-			await page.evaluate(
-				(enabled) => localStorage.setItem('huron-theme', enabled ? 'dark' : 'light'),
-				dark
-			);
-			await openPage(page, '/browse?catalog=huron-local');
-			await expect(page.getByRole('banner').getByLabel('Switch catalog')).toHaveCount(0);
-			const trigger = page.getByRole('banner').getByLabel('Switch organization', { exact: true });
-			await trigger.press('Enter');
-			const menu = trigger.locator('..').locator(':scope > div');
-			await expect(menu).toBeVisible();
-			const bounds = await menu.boundingBox();
-			expect(bounds).not.toBeNull();
-			if (bounds) {
-				expect(bounds.x).toBeGreaterThanOrEqual(0);
-				expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-			}
-			await page.keyboard.press('Escape');
-			await expect(menu).toBeHidden();
-			await expect(trigger).toBeFocused();
-			expect(
-				await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
-			).toBe(true);
-		}
-		expect(errors).toEqual([]);
+		await signIn(page, 'mallory');
+		await page
+			.getByRole('complementary', { name: 'Sidebar' })
+			.getByRole('link', { name: 'Catalogs' })
+			.click();
+		await expect(page).toHaveURL('/orgs');
+		const main = page.getByRole('main');
+		await expect(main.getByRole('heading', { name: 'All organizations', level: 1 })).toBeVisible();
+		await expect(main.getByText("You don't have access to any organization yet.")).toBeVisible();
+		await expect(main.getByText('Huron received no groups for your account.')).toBeVisible();
+		await expect(
+			main.getByText(
+				'Groups are read when you sign in; if you were just added to a group, sign out and sign in again.'
+			)
+		).toBeVisible();
+		await main.getByRole('button', { name: 'Sign out', exact: true }).click();
+		await expect(page).toHaveURL('/login?status=signed-out');
 	});
-}
+
+	test('an expired page link starts over and says so', async ({ page }) => {
+		await signIn(page, 'alice');
+		await page.goto('/orgs?cursor=not-a-cursor');
+		await expect(page).toHaveURL('/orgs?notice=page_expired');
+		await expect(page.getByRole('note')).toHaveText(
+			'That page link expired; showing the first page.'
+		);
+		await expect(page.getByRole('main').getByRole('link', { name: /^Astrophysics/ })).toBeVisible();
+	});
+});
+
+test.describe('an organization', () => {
+	test('heads its pages and lists its catalogs', async ({ page }) => {
+		await signIn(page, 'dave');
+		await page.goto('/orgs/helio');
+		const main = page.getByRole('main');
+		await expect(
+			main.getByRole('heading', { name: 'Heliophysics Division', level: 1 })
+		).toBeVisible();
+		await expect(
+			main.getByText('The Sun, the solar wind and the space environment.')
+		).toBeVisible();
+		const sections = main.getByRole('navigation', { name: 'Organization' });
+		await expect(sections.getByRole('link')).toHaveText(['Catalogs2', 'Search']);
+		await expect(sections.getByRole('link', { name: 'Catalogs' })).toHaveAttribute(
+			'aria-current',
+			'page'
+		);
+
+		const catalogs = main.getByRole('list', { name: 'Catalogs' }).getByRole('listitem');
+		const helio = CATALOGS.filter(({ organization }) => organization === 'helio');
+		await expect(catalogs).toHaveCount(helio.length);
+		for (const [index, catalog] of helio.entries()) {
+			const row = catalogs.nth(index);
+			await expect(row.getByRole('link', { name: catalog.displayName })).toHaveAttribute(
+				'href',
+				`/catalogs/${catalog.name}`
+			);
+			await expect(row).toContainText(catalog.name);
+			await expect(row).toContainText(catalog.description);
+			await expect(row).toContainText(namespaceCount(catalog.name));
+		}
+		await expect(catalogs.nth(0).getByRole('link', { name: 'huron-base v1' })).toHaveAttribute(
+			'href',
+			'/catalogs/heliophysics/schema'
+		);
+		await expect(catalogs.nth(1).getByRole('link', { name: 'space-weather v1' })).toHaveAttribute(
+			'href',
+			'/catalogs/space-weather/schema'
+		);
+		await expect(main.getByRole('region')).toHaveCount(0);
+	});
+
+	test('without catalogs, shows administrators how to create one', async ({ page, context }) => {
+		await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+		await signIn(page, 'alice');
+		await page.goto('/orgs/planetary');
+		const main = page.getByRole('main');
+		await expect(main.getByRole('heading', { name: 'Planetary Science', level: 1 })).toBeVisible();
+		await expect(main.getByText('No catalogs you can see in this organization.')).toBeVisible();
+		const hint = main.getByRole('region', { name: 'Create a catalog in this organization' });
+		await expect(hint.getByText('huron catalog create planetary <name>')).toBeVisible();
+		await expect(
+			hint.getByText(
+				'This website is read-only; changes are made with the huron CLI on a machine that mounts the share.'
+			)
+		).toBeVisible();
+		await hint.getByRole('button', { name: 'Copy: Create a catalog in this organization' }).click();
+		await expect(hint.getByRole('status')).toHaveText('Copied');
+		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+			'huron catalog create planetary <name>'
+		);
+	});
+
+	test('without a clipboard, the hint shows the whole command on a phone, and a field with room', async ({
+		browser
+	}) => {
+		const context = await browser.newContext({ viewport: VIEWPORTS.phone });
+		try {
+			// As on an insecure origin, where browsers offer no clipboard API.
+			await context.addInitScript(() => {
+				Object.defineProperty(Navigator.prototype, 'clipboard', { get: () => undefined });
+			});
+			const page = await context.newPage();
+			await signIn(page, 'alice');
+			await page.goto('/orgs/planetary');
+			const hint = page.getByRole('region', { name: 'Create a catalog in this organization' });
+			await expect(hint.locator('pre')).toHaveText('huron catalog create planetary <name>');
+			await expect(hint.getByRole('textbox')).toHaveCount(0);
+			await expect(hint.getByRole('button')).toHaveCount(0);
+			expect(await horizontalOverflow(page)).toBe(0);
+
+			await page.setViewportSize(VIEWPORTS.desktop);
+			const field = hint.getByRole('textbox', { name: 'Create a catalog in this organization' });
+			await expect(field).toHaveValue('huron catalog create planetary <name>');
+			await expect(hint.locator('pre')).toBeHidden();
+			// A command keeps its one row: none is hidden.
+			expect(await field.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(
+				0
+			);
+			expect(await horizontalOverflow(page)).toBe(0);
+		} finally {
+			await context.close();
+		}
+	});
+
+	test('the command reads alike with and without a clipboard, in the text color', async ({
+		browser
+	}) => {
+		const looks: { color: string; size: string; text: string }[] = [];
+		for (const clipboard of [true, false]) {
+			const context = await browser.newContext();
+			try {
+				if (!clipboard) {
+					await context.addInitScript(() => {
+						Object.defineProperty(Navigator.prototype, 'clipboard', { get: () => undefined });
+					});
+				}
+				const page = await context.newPage();
+				await signIn(page, 'alice');
+				await page.goto('/orgs/planetary');
+				const hint = page.getByRole('region', { name: 'Create a catalog in this organization' });
+				const command = clipboard ? hint.locator('pre') : hint.getByRole('textbox');
+				await expect(command).toBeVisible();
+				looks.push(
+					await command.evaluate((element) => ({
+						color: getComputedStyle(element).color,
+						size: getComputedStyle(element).fontSize,
+						text: getComputedStyle(document.body).color
+					}))
+				);
+			} finally {
+				await context.close();
+			}
+		}
+		const [code, field] = looks;
+		// Not in the muted color of the empty state around it.
+		expect(code.color).toBe(code.text);
+		expect(field).toEqual(code);
+	});
+
+	test('the hint is plain text that a browser without scripts can select', async ({ browser }) => {
+		const context = await browser.newContext({ javaScriptEnabled: false });
+		try {
+			const page = await context.newPage();
+			await signIn(page, 'alice');
+			await page.goto('/orgs/planetary');
+			const hint = page.getByRole('region', { name: 'Create a catalog in this organization' });
+			await expect(hint.locator('code')).toHaveText('huron catalog create planetary <name>');
+			await expect(hint.getByRole('button')).toHaveCount(0);
+			// The server's links are relative to the page, and Catalogs still says it leads here.
+			await expect(
+				page.getByRole('complementary', { name: 'Sidebar' }).getByRole('link', { name: 'Catalogs' })
+			).toHaveAttribute('aria-current', 'page');
+		} finally {
+			await context.close();
+		}
+	});
+});

@@ -5,7 +5,11 @@
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="color-scheme" content="light dark" />
-		<script>
+		<meta name="theme-color" content="#00c7ad" />
+		<meta name="description" content="Huron catalog of raw scientific data." />
+		<script nonce="%sveltekit.nonce%">
+			// Scripts run: controls that need them may show (the `no-js` variant hides them).
+			document.documentElement.classList.add('js');
 			try {
 				const saved = localStorage.getItem('huron-theme');
 				const dark =
@@ -15,7 +19,7 @@
 		</script>
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover">
+	<body data-sveltekit-preload-data="tap">
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

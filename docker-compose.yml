@@ -1,3 +1,6 @@
+# PostgreSQL and Keycloak for running the API on the host (`make up`, then `make migrate` and
+# `make api`). The whole application in Docker is docker-compose.app.yml (`make app`); both use the
+# same ports, so run one at a time.
 name: huron
 
 services:
@@ -25,42 +28,14 @@ services:
     ports: ["8081:8081"]
     volumes:
       - ./scripts/keycloak/company-realm.json:/opt/keycloak/data/import/company-realm.json:ro
+      # Keeps the realm across restarts, so --import-realm skips the file once the realm exists:
+      # after the file changes, recreate this volume (README.md, troubleshooting).
       - keycloak-data:/opt/keycloak/data
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
       interval: 5s
       timeout: 5s
       retries: 60
-
-  migrate:
-    profiles: [app]
-    build: {context: ., dockerfile: Containerfile}
-    command: ["alembic", "upgrade", "head"]
-    env_file: dev.env
-    environment:
-      HURON_DATABASE_URL: postgresql://huron:huron@postgres:5432/huron
-    depends_on:
-      postgres: {condition: service_healthy}
-
-  groups:
-    profiles: [app]
-    image: python:3.12-slim
-    command: ["sh", "-c", "pip install --quiet pyyaml && python /scripts/devgroups.py /scripts/dev-groups.yaml 8082"]
-    volumes: ["./scripts:/scripts:ro"]
-    ports: ["8082:8082"]
-
-  api:
-    profiles: [app]
-    build: {context: ., dockerfile: Containerfile}
-    env_file: dev.env
-    environment:
-      HURON_DATABASE_URL: postgresql://huron:huron@postgres:5432/huron
-      HURON_GROUP_DIRECTORY_URL: http://groups:8082
-    ports: ["8080:8080"]
-    depends_on:
-      migrate: {condition: service_completed_successfully}
-      groups: {condition: service_started}
-      keycloak: {condition: service_healthy}
 
 volumes:
   postgres-data:

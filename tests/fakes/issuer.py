@@ -29,6 +29,7 @@ class FakeIssuer:
         self.device_error: str | None = None
         self.codes: dict[str, str] = {}
         self.refresh_ok = True
+        self.extra_jwks: list[dict[str, Any]] = []
 
     @property
     def private_pem(self) -> bytes:
@@ -50,7 +51,7 @@ class FakeIssuer:
     def jwks(self) -> dict[str, Any]:
         jwk = json.loads(RSAAlgorithm.to_jwk(self._key.public_key()))
         jwk.update({"kid": self.kid, "alg": "RS256", "use": "sig"})
-        return {"keys": [jwk]}
+        return {"keys": [*self.extra_jwks, jwk]}
 
     def sign(
         self,

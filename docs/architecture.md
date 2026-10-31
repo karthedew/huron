@@ -1,13 +1,14 @@
 # Architecture
 
 Huron catalogs raw scientific data that lives on an NFS share and enforces who may read and write
-it. It has three parts:
+it. It has four parts:
 
 | Part | Runs on | Does |
 | --- | --- | --- |
 | `huron-api` (FastAPI) | OpenShift | Exchanges company logins for Huron tokens; holds organizations, catalogs, namespaces, collections, recorded files, the schema registry, role grants and the audit log; never touches file bytes. |
 | PostgreSQL | OpenShift or managed | Schema `huron`, one Alembic revision (`migrations/versions/0001_huron.py`). |
 | `huron` CLI | Machines that mount the share | Logs in, browses, walks users through metadata, creates directories with ACLs, copies files over the mount, commits them, reports drift. |
+| `huron-web` (SvelteKit) | A Node.js server, one replica | Signs people in with the company IdP and shows the catalog in a browser: organizations, catalogs, namespaces, collections and search. Read-only; keeps its sessions in memory. |
 
 ## The model
 
@@ -57,7 +58,27 @@ failures become `incomplete`, passes `active`.
 huron CLI ──HTTPS──▶ Route ──▶ huron-api ──▶ Authorizer(grants) ──▶ lake operation ──▶ PostgreSQL
     │                           ▲
     └─ company OIDC login ──────┘ POST /api/v1/auth/exchange → Huron ES256 token (groups inside)
+
+browser ──session cookie──▶ huron-web ──Bearer Huron token, GET only──▶ huron-api ──▶ …
+   │                           ▲  │
+   │                           │  └─ POST /api/v1/auth/exchange: company ID token → Huron token
+   └─ company OIDC login ──────┘ code flow with PKCE
 ```
+
+## The web
+
+`huron-web` (`web/`) is a backend for the browser. Its server runs the company OIDC sign-in,
+exchanges the ID token for a Huron token and keeps that token in a session in its own memory,
+behind an opaque HttpOnly cookie, so the token never reaches the browser. Every page is rendered
+from the server's own API calls with the user's token, so the API's grants, and its 404 for what
+the user cannot see, apply unchanged. The web only reads: where the user could change something,
+the page shows the `huron` command to run on a machine that mounts the share. Its sessions live in
+one process, so it runs as one replica or behind sticky sessions, and a restart signs everyone
+out. Its design is [web-design.md](web-design.md).
+
+For development, `make up` runs PostgreSQL and Keycloak for an API on the host, and `make app` runs
+PostgreSQL, the API, Keycloak, the group directory and the web in Docker
+([docker-compose.app.yml](../docker-compose.app.yml)), for the CLI on the host.
 
 ## Push path
 
@@ -90,4 +111,4 @@ finds the drift. See the [ADRs](adr/) for why.
 ## Code layout
 
 `src/huron/{pkg,schema,core,applications}`; dependencies only point inward and are enforced by
-import-linter. See [AGENTS.md](../AGENTS.md).
+import-linter. The web app is `web/`. See [AGENTS.md](../AGENTS.md).

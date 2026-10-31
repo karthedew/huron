@@ -1,9 +1,10 @@
-.PHONY: help up down migrate api test test-contract test-integration lint gate openapi docs-check
+.PHONY: help up down migrate api app app-down app-logs app-reset test test-contract test-integration lint gate openapi docs-check
 
 .DEFAULT_GOAL := help
 
 COMPOSE := $(shell command -v docker >/dev/null 2>&1 && echo "docker compose" || echo "podman-compose")
 ENV_FILE := dev.env
+APP := $(COMPOSE) -f docker-compose.app.yml
 
 help: ## List available commands.
 	@grep -E '^[a-zA-Z_-]+:.*## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -20,6 +21,19 @@ migrate: ## Apply Alembic migrations to the database in dev.env.
 
 api: ## Run the API on the host with autoreload.
 	uv run --env-file $(ENV_FILE) uvicorn huron.applications.api.main:app --reload --port 8080
+
+app: ## Build and start the whole application in Docker; the web is http://localhost:3000.
+	$(APP) up -d --build --wait
+	@echo "web: http://localhost:3000   API: http://127.0.0.1:8080   Keycloak: http://127.0.0.1:8081/realms/company"
+
+app-down: ## Stop the Docker application; its data stays.
+	$(APP) down
+
+app-logs: ## Follow the logs of the Docker application.
+	$(APP) logs -f
+
+app-reset: ## Stop the Docker application and delete its data.
+	$(APP) down -v
 
 test: ## Run the unit tier (no database needed).
 	uv run pytest -m "not contract and not integration"

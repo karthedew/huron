@@ -1,177 +1,110 @@
 /**
- * Legacy scientific-view types remain hand-written against the design record.
- * Live Polaris and organization contracts are re-exported below.
- * See ./README.md for each API seam's delivery status.
+ * Domain types for routes and components. Routes and components import API types only from here;
+ * `openapi.ts` is generated from the contract and may change shape with it.
  */
+import type {
+	AuditOut,
+	CatalogOut,
+	CollectionOut,
+	CommitOut,
+	EffectiveGroupsOut,
+	FileOut,
+	NamespaceOut,
+	OrganizationOut,
+	Page as ApiPage,
+	ProblemOut,
+	RoleOut,
+	SchemaOut,
+	SchemaRefOut,
+	State,
+	WhoAmI as ApiWhoAmI
+} from './openapi';
 
-export type Lifecycle = 'ACTIVE' | 'RETIRED';
+export type Organization = OrganizationOut;
+export type Catalog = CatalogOut;
+export type Namespace = NamespaceOut;
+export type Collection = CollectionOut;
+export type CollectionState = State;
+export type CollectionProblem = ProblemOut;
+export type FileRecord = FileOut;
+export type Commit = CommitOut;
+export type AuditEntry = AuditOut;
+export type SchemaEntry = SchemaOut;
+export type SchemaRef = SchemaRefOut;
+export type EffectiveGroups = EffectiveGroupsOut;
+export type WhoAmI = ApiWhoAmI;
+export type RoleGrant = RoleOut;
+export type Page<T> = ApiPage<T>;
 
-export type Layer = 'raw' | 'bronze' | 'silver' | 'gold';
-
-export type LayerState =
-	| { state: 'present'; detail?: string }
-	| { state: 'building'; detail?: string }
-	| { state: 'absent'; detail?: string };
-
-export type LayerAvailability = Record<Layer, LayerState>;
-
-export type Watermark =
-	{ state: 'healthy'; lagSeconds: number } | { state: 'unavailable'; lagSeconds?: undefined };
-
-/** Opaque, versioned keyset cursor. The UI never parses or constructs one. */
-export type Cursor = string;
-
-export interface Page<T> {
-	items: T[];
-	nextCursor: Cursor | null;
-	prevCursor: Cursor | null;
-}
-
-export interface Organization {
-	slug: string;
-	name: string;
-	description: string;
-	projectCount: number;
-}
-
-export interface Project {
-	slug: string;
-	orgSlug: string;
-	name: string;
-	description: string;
-	datasetCount: number;
-	/** Bytes. Raw lives on NFS; derived layers on object storage — reported separately. */
-	quota: { rawUsed: number; rawLimit: number; objectUsed: number; objectLimit: number };
-}
-
-export interface Dataset {
-	slug: string;
-	orgSlug: string;
-	projectSlug: string;
-	name: string;
-	description: string;
-	lifecycle: Lifecycle;
-	classification: string;
-	profile: string;
-	tags: string[];
-	layers: LayerAvailability;
-}
-
-export interface SearchHit {
-	kind: 'dataset' | 'release' | 'product';
-	slugPath: string;
+/**
+ * An RFC 9457 problem document, the body of every API error. It is not part of the OpenAPI
+ * components, so it is written by hand from `src/huron/applications/api/problems.py`.
+ */
+export interface Problem {
+	type: string;
 	title: string;
-	snippet: string;
-	layers: LayerAvailability;
-	classification: string;
-	stale?: { reason: string };
+	status: number;
+	detail: string;
+	code: string;
+	context: Record<string, unknown>;
+	instance?: string;
 }
 
-export interface SearchResults {
-	hits: SearchHit[];
-	watermark: Watermark;
-	facets: Record<string, { value: string; count: number }[]>;
-	nextCursor: Cursor | null;
-	prevCursor: Cursor | null;
+/** Any value `JSON.parse` can produce. */
+export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
+
+export interface JsonObject {
+	[key: string]: JsonValue;
 }
 
-export interface ApiKey {
-	id: string;
-	name: string;
-	scopes: string[];
-	projectRestriction: string | null;
-	createdAt: string;
-	lastUsedAt: string | null;
-	expiresAt: string | null;
+/** A resolved JSON Schema document as the API returns it; keywords are read by narrowing. */
+export type JsonSchemaDocument = JsonObject;
+
+export const ROLE_SCOPES = ['platform', 'organization', 'catalog'] as const;
+export type RoleScope = (typeof ROLE_SCOPES)[number];
+
+export const ROLES = [
+	'platform_admin',
+	'org_admin',
+	'catalog_admin',
+	'contributor',
+	'reader'
+] as const;
+export type Role = (typeof ROLES)[number];
+
+/** The closed audit vocabulary of `src/huron/core/lake/audit/models.py`. */
+export const AUDIT_ACTIONS = [
+	'platform.grant',
+	'platform.revoke',
+	'organization.create',
+	'organization.delete',
+	'organization.grant',
+	'organization.revoke',
+	'catalog.create',
+	'catalog.delete',
+	'catalog.grant',
+	'catalog.revoke',
+	'catalog.assign_schema',
+	'namespace.create',
+	'namespace.delete',
+	'namespace.configure',
+	'schema.publish',
+	'collection.create',
+	'collection.update_metadata',
+	'collection.set_schema_override',
+	'collection.activate',
+	'collection.mark_incomplete',
+	'collection.mark_active',
+	'collection.commit',
+	'collection.delete',
+	'signing_key.rotate'
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+export function isRole(value: string): value is Role {
+	return ROLES.some((role) => role === value);
 }
 
-export interface RoleBinding {
-	principal: string;
-	role: string;
-	scope: string;
+export function isAuditAction(value: string): value is AuditAction {
+	return AUDIT_ACTIONS.some((action) => action === value);
 }
-
-export interface OrganizationMember {
-	id: string;
-	displayName: string;
-	email: string;
-	kind: 'user' | 'group' | 'service_account';
-	status: 'active' | 'invited';
-	lastActiveAt: string | null;
-}
-
-export interface PermissionGrant {
-	id: string;
-	principal: string;
-	displayName: string;
-	principalKind: 'user' | 'group';
-	role: 'reader' | 'developer' | 'project_admin' | 'organization_admin' | 'platform_owner';
-	scope: string;
-	inherited: boolean;
-	inheritedFrom?: string;
-}
-
-export interface WhoAmI {
-	subject: string;
-	displayName: string;
-	bindings: RoleBinding[];
-}
-
-/** The API renders 404 for resources the principal cannot discover — never 403. */
-export class NotFound extends Error {
-	constructor(what: string) {
-		super(`${what} not found`);
-		this.name = 'NotFound';
-	}
-}
-export type {
-	PolarisProperties,
-	PolarisNamedEntity,
-	PolarisStorageConfig,
-	PolarisCatalog,
-	PolarisPrincipal,
-	PolarisRole,
-	PolarisIcechunkTable,
-	PolarisGrant,
-	PolarisCredentialSummary,
-	PolarisWorkspaceData,
-	PolarisActionResult
-} from './polaris-types';
-export type { HuronUser } from './huron-types';
-export type {
-	HuronOrganization,
-	HuronOrganizationRole,
-	HuronOrganizationSummary,
-	HuronOrganizationMember,
-	HuronOrganizationDirectory
-} from './organization-types';
-export type {
-	IcechunkInspection,
-	IcechunkReference,
-	IcechunkSnapshot,
-	IcechunkArraySchema
-} from './icechunk-types';
-export type { PolarisDatasetTab } from './polaris-dataset-view-types';
-export type { PolarisGenericTableIdentifier, PolarisGenericTable } from './polaris-generic-types';
-export type { PolarisBrowseBranch, PolarisBrowseData } from './polaris-browse-types';
-export type {
-	HuronCatalogMembershipRole,
-	HuronCatalogMember,
-	HuronCatalogUserSummary
-} from './huron-admin-types';
-export type {
-	PolarisTableFormat,
-	PolarisCatalogTable,
-	PolarisIcebergField,
-	PolarisIcebergFieldType,
-	PolarisIcebergSchema,
-	PolarisIcebergSnapshot,
-	PolarisIcebergRef,
-	PolarisIcebergTable,
-	PolarisDatasetTarget,
-	PolarisDatasetGrant,
-	PolarisDatasetPermissions,
-	PolarisApplicablePolicy,
-	PolarisDatasetPolicies,
-	PolarisDatasetGovernance
-} from './polaris-governance-types';

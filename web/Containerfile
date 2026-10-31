@@ -1,0 +1,20 @@
+# The Huron web image: the SvelteKit build (adapter-node), served by Node as a non-root user.
+# Configuration is entirely environment variables; see .env.example and docker-compose.app.yml.
+FROM node:26.13.0-trixie-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY . .
+# tsconfig.json extends .svelte-kit/tsconfig.json, which .dockerignore keeps out: generate it
+# before vite reads tsconfig.json.
+RUN npx svelte-kit sync && npm run build && npm prune --omit=dev --no-audit --no-fund
+
+FROM node:26.13.0-trixie-slim
+WORKDIR /app
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+COPY --from=build /app/package.json /app/package-lock.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/build ./build
+USER node
+EXPOSE 3000
+CMD ["node", "build/index.js"]

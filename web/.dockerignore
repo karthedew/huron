@@ -1,0 +1,11 @@
+# Kept out of the web image's build context: installs, build output, test output and local
+# settings, which may hold secrets.
+node_modules
+build
+.svelte-kit
+test-results
+playwright-report
+.playwright-cli
+coverage
+.env
+.env.*

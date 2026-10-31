@@ -4,6 +4,7 @@ build/
 .vercel/
 test-results/
 playwright-report/
+.playwright-cli/
 
 .env
 .env.*

@@ -35,7 +35,8 @@ class CompanyTokenVerifier:
     """Verifies company ID tokens against the issuer's published keys.
 
     The discovery document and the JWKS are fetched on first use and cached; an unknown ``kid``
-    refreshes the JWKS at most once a minute.
+    refreshes the JWKS at most once a minute. Only signing keys are kept: encryption keys and
+    entries that cannot be loaded are ignored.
     """
 
     def __init__(self, http: httpx.AsyncClient, issuer: str, audience: str, clock: Clock) -> None:
@@ -88,11 +89,7 @@ class CompanyTokenVerifier:
             )
             self._jwks_uri = str(discovery["jwks_uri"])
         jwks = await self._get_json(self._jwks_uri)
-        self._keys = {
-            str(entry["kid"]): jwt.PyJWK(entry).key
-            for entry in jwks.get("keys", [])
-            if "kid" in entry
-        }
+        self._keys = _signing_keys(jwks)
         self._fetched_at = self._clock.now()
 
     async def _get_json(self, url: str) -> dict[str, Any]:
@@ -105,6 +102,20 @@ class CompanyTokenVerifier:
                 "the company identity provider is unreachable", {"url": url}
             ) from error
         return document
+
+
+def _signing_keys(jwks: dict[str, Any]) -> dict[str, Any]:
+    # Providers such as Keycloak also publish encryption keys (``use: enc``, ``alg: RSA-OAEP``),
+    # which PyJWT cannot load as verification keys; skip those and anything else unusable.
+    keys: dict[str, Any] = {}
+    for entry in jwks.get("keys", []):
+        if "kid" not in entry or entry.get("use", "sig") != "sig":
+            continue
+        try:
+            keys[str(entry["kid"])] = jwt.PyJWK(entry).key
+        except jwt.PyJWTError:
+            continue
+    return keys
 
 
 def _identity(payload: dict[str, Any]) -> CompanyIdentity:

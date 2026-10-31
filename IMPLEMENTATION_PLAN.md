@@ -168,6 +168,50 @@ Numbered so tasks can cite them. All are settled.
 - D-27 Every store has an in-memory fake and a PostgreSQL adapter that pass the same contract test suite.
   Unit tests use the fakes; contract and integration tests use PostgreSQL in a container.
 
+### Amendment (2026-10-31): the web client and the development stack
+
+- **Section 2's "web UI" non-goal is narrowed.** A read-only web client of the API is in scope:
+  `web/`, a SvelteKit server that signs people in with the company OIDC provider, exchanges the ID
+  token at `POST /api/v1/auth/exchange` for a Huron token that only the server holds, and lets
+  people switch between the organizations they can see, browse catalogs, namespaces and
+  collections, and search a catalog or an organization. It writes nothing: changes stay with the
+  CLI, the only part that touches the share (D-18, D-19), and the pages show the `huron` command
+  where the signed-in user could act. A web UI that writes, and every other item of that bullet,
+  stays out of scope. The design is [docs/web-design.md](docs/web-design.md). Section 2's text is
+  unchanged.
+- **Company JWKS.** `CompanyTokenVerifier` (`src/huron/core/security/broker/company.py`) keeps only
+  usable signing keys: besides entries without a `kid`, as before, it now skips entries whose `use`
+  is something other than `sig` (an entry without `use` stays) and entries PyJWT cannot load.
+  Keycloak publishes an `RSA-OAEP` encryption key next to its `RS256` signing key, and loading that
+  key failed every exchange with a 500. `tests/unit/security/test_exchange.py` covers it.
+- **The whole application in Docker.** `docker-compose.app.yml` (`make app`, compose project
+  `huron-app`) runs PostgreSQL, the migrations, the API, the group directory, Keycloak 26.0, the web
+  and a one-shot seed of the web's e2e fixture. The containers share one network namespace and
+  publish their ports on 127.0.0.1 only, and Keycloak runs with `KC_HOSTNAME`, so the issuer is
+  `http://127.0.0.1:8081/realms/company` in the containers and on the host alike. It replaces the
+  `app` profile of `docker-compose.yml` (M5.5), whose containers could not reach the issuer the
+  tokens carry; `scripts/e2e.sh` (M10.3) runs on it as its own project, `huron-e2e`. `make up`
+  still starts PostgreSQL and Keycloak alone, for `make api` on the host.
+- **`dev.env`'s issuer.** `HURON_COMPANY_ISSUER` is `http://127.0.0.1:8081/realms/company`, the
+  issuer Keycloak writes into its tokens. It was `http://keycloak:8081/realms/company`, which the
+  host cannot resolve and no token carries, so `make api` refused every login.
+- **The development realm.** `scripts/keycloak/company-realm.json` gains `huron-web`, the web's
+  confidential client (code flow only, PKCE S256, exact callback and post-logout URIs on ports
+  3000, 5173 and 4173, and an audience mapper that adds `huron-cli` to its ID tokens only), and
+  the accounts `admin` (platform admin) and `user` (contributor and reader);
+  `tests/unit/test_dev_realm.py` checks them. `huron-cli` loses its `pkce.code.challenge.method`
+  attribute: with it, Keycloak 26 demands PKCE at the device endpoint too, and the CLI's device
+  flow sends none, so `huron login --device` failed. The loopback flow still sends S256.
+- **CLI follow-up.** `Oidc.device_flow` (`src/huron/applications/cli/login.py`) should send PKCE
+  S256: a `code_challenge` with the device authorization request and the `code_verifier` with the
+  device token request. `huron-cli` can then require PKCE again.
+- **Compose follow-up.** `docker-compose.yml` (`make up`) publishes PostgreSQL (5432) and Keycloak
+  (8081) on every network interface, with their development credentials; it should bind both to
+  127.0.0.1, as `docker-compose.app.yml` does. `scripts/devgroups.py`, which the host stack runs
+  beside them, listens on 0.0.0.0 too; on the host it could bind 127.0.0.1, while in `make app` it
+  must stay reachable through the published port. Until then `web/README.md` and `README.md` say to
+  run the host stack on a trusted machine and network.
+
 ## 4. Architecture
 
 ### 4.1 Components

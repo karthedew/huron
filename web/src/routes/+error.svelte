@@ -1,18 +1,35 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { resolve } from '$app/paths';
+	import { errorCopy } from '$lib/error-copy';
+	import { pageTitle } from '$lib/title';
+
+	const copy = $derived(errorCopy(page.status, page.error?.code));
 </script>
 
-<!--
-	404-not-403 (design/frontend.html §1): a resource the principal cannot discover is
-	rendered as nonexistent. The UI must never disclose that something exists but is
-	forbidden — no "request access" affordance, no distinct wording.
--->
-<h1>{page.status === 404 ? 'Not found' : 'Something went wrong'}</h1>
-<p class="muted">
-	{#if page.status === 404}
-		No such resource at <code>{page.url.pathname}</code>.
-	{:else}
-		{page.error?.message ?? 'Unexpected error.'}
-	{/if}
-</p>
-<p><a href="/">Back to search</a></p>
+<svelte:head><title>{pageTitle(copy.title)}</title></svelte:head>
+
+<main class="grid min-h-dvh place-items-center bg-app-bg px-4 py-10 text-app-fg">
+	<div class="w-full max-w-md rounded-card border border-app-line bg-app-card p-6">
+		<p class="flex items-center gap-2.5 font-semibold">
+			<span
+				class="grid size-8 place-items-center rounded-md bg-brand text-sm font-black text-brand-ink"
+				aria-hidden="true">H</span
+			>
+			Huron
+		</p>
+		<h1 class="mt-5 text-xl">{copy.heading}</h1>
+		{#if copy.detail}<p class="mt-2 text-app-muted">{copy.detail}</p>{/if}
+		{#if page.error?.id}
+			<p class="mt-2 text-sm text-app-muted">
+				Reference <code class="break-all">{page.error.id}</code>
+			</p>
+		{/if}
+		<p class="mt-5 flex flex-wrap gap-4 text-sm font-semibold">
+			{#if copy.retry}<a href={page.url.pathname + page.url.search} data-sveltekit-reload
+					>Try again</a
+				>{/if}
+			<a href={resolve('/')}>Back to Huron</a>
+		</p>
+	</div>
+</main>
