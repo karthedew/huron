@@ -13,6 +13,7 @@ const PAGES = [
 	{ path: '/', heading: 'Organizations' },
 	{ path: '/orgs', heading: 'All organizations' },
 	{ path: '/orgs/helio', heading: 'Heliophysics Division' },
+	{ path: '/orgs/helio/access', heading: 'Heliophysics Division' },
 	{ path: '/orgs/planetary', heading: 'Planetary Science' },
 	{ path: '/orgs/astro', heading: 'Astrophysics' },
 	{ path: '/account', heading: 'Account' },
@@ -274,10 +275,11 @@ for (const viewport of [VIEWPORTS.phone, { width: 1440, height: 500 }]) {
 		await page.goto('/account');
 		const main = page.getByRole('main');
 		const signOut = main.getByRole('button', { name: 'Sign out', exact: true });
-		// Focus starts on the element after the button.
+		// Focus starts on the element after the button: the first role's link, to an organization
+		// that grants dave's groups in all its catalogs.
 		await main
 			.getByRole('region', { name: 'Roles' })
-			.getByRole('link', { name: 'Geoscience' })
+			.getByRole('link', { name: 'Earth Science' })
 			.focus();
 		// Scrolled until the button is inside the viewport but partly under the 64px header:
 		// browsers scroll a focused element only when it leaves the viewport less its scroll

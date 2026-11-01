@@ -40,6 +40,17 @@ class PostgresOrganizations:
             o.name,
         )
 
+    async def update(self, organization: Organization) -> None:
+        """Replace the display name, description and version of a stored organization."""
+        await self._db.execute(
+            "update huron.organizations set display_name = $2, description = $3, version = $4"
+            " where id = $1",
+            organization.id,
+            organization.display_name,
+            organization.description,
+            organization.version,
+        )
+
     async def get(self, organization_id: uuid.UUID) -> Organization | None:
         """The organization with ``organization_id``."""
         row = await self._db.fetchrow(

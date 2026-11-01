@@ -1,4 +1,4 @@
-"""What the service records about a catalog, gathered for ``check`` and ``acl apply``."""
+"""What the service records about a catalog, for ``adm check``, ``adm apply-acl`` and ``tree``."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from huron.applications.cli.client import ApiClient
 from huron.applications.cli.sync import recorded_files
 from huron.core.storage import DirectoryKind, EffectiveGroups
 
-__all__ = ["CatalogInventory", "take_inventory"]
+__all__ = ["CatalogInventory", "take_inventory", "walk_namespaces"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +47,7 @@ def take_inventory(api: ApiClient, catalog: str, *, files: bool) -> CatalogInven
     """Walk the catalog's namespace tree and collections; with ``files``, their recorded files."""
     found = api.get(f"/api/v1/catalogs/{catalog}")
     groups = EffectiveGroups.from_mapping(api.get(f"/api/v1/catalogs/{catalog}/grants"))
-    namespaces = list(_walk(api, catalog, ""))
+    namespaces = list(walk_namespaces(api, catalog, ""))
     collections: list[dict[str, Any]] = []
     for namespace in namespaces:
         path = f"/api/v1/catalogs/{catalog}/namespaces/{namespace['path']}/collections"
@@ -63,8 +63,9 @@ def take_inventory(api: ApiClient, catalog: str, *, files: bool) -> CatalogInven
     return CatalogInventory(found, groups, namespaces, collections)
 
 
-def _walk(api: ApiClient, catalog: str, parent: str) -> Iterator[dict[str, Any]]:
+def walk_namespaces(api: ApiClient, catalog: str, parent: str) -> Iterator[dict[str, Any]]:
+    """Every namespace below ``parent`` (a path; empty for the top), each before its children."""
     for namespace in api.pages(f"/api/v1/catalogs/{catalog}/namespaces", {"parent": parent}):
         yield namespace
         if namespace["namespace_count"]:
-            yield from _walk(api, catalog, namespace["path"])
+            yield from walk_namespaces(api, catalog, namespace["path"])

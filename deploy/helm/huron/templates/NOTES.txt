@@ -1,0 +1,31 @@
+Huron {{ .Chart.AppVersion }} is installed as {{ include "huron.fullname" . }} in {{ .Release.Namespace }}.
+
+{{- if .Values.migrate.enabled }}
+The migration ran as the hook Job {{ include "huron.fullname" . }}-migrate before the pods started.
+{{- end }}
+
+Check the API:
+{{- if .Values.route.enabled }}
+  oc get route {{ include "huron.fullname" . }}     # then GET https://<host>/readyz
+{{- else if .Values.ingress.enabled }}
+  curl https://{{ .Values.ingress.host }}/readyz
+{{- else }}
+  kubectl port-forward svc/{{ include "huron.fullname" . }} 8080:{{ .Values.service.port }} && curl http://127.0.0.1:8080/readyz
+{{- end }}
+
+The service mounts no share. {{- if hasKey .Values.config "organizations" }}
+{{- if .Values.config.organizations }}
+It manages the declared organizations{{ range $i, $o := .Values.config.organizations }}{{ if $i }},{{ end }} {{ $o.name }}{{ end }}.
+{{- else }}
+It is in managed mode with no organization declared: none can be created until config.organizations lists them.
+{{- end }}
+Prepare their directories after every change to config.organizations: on a machine that mounts each
+organization's root, as the storage administrator, run
+
+  huron adm provision-orgs --dry-run   # what it would do
+  huron adm provision-orgs             # or --emit-script for roots only root may write
+  huron adm verify-mounts              # every organization must be ok
+{{- else }}
+No organizations are declared (unmanaged mode): platform admins create them with `huron create org`,
+under the CLI's mount_prefix, which scripts/init-root.sh prepares.
+{{- end }}

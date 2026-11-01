@@ -15,12 +15,12 @@ __all__ = ["register"]
 config_app = typer.Typer(help="Show or change the CLI configuration.", no_args_is_help=True)
 
 
-def register(app: typer.Typer) -> None:
-    """Add the session verbs."""
-    app.command()(login)
-    app.command()(logout)
-    app.command()(whoami)
-    app.add_typer(config_app, name="config")
+def register(app: typer.Typer, panel: str) -> None:
+    """Add the session verbs under the help panel ``panel``."""
+    app.command(rich_help_panel=panel)(login)
+    app.command(rich_help_panel=panel)(logout)
+    app.command(rich_help_panel=panel)(whoami)
+    app.add_typer(config_app, name="config", rich_help_panel=panel)
 
 
 def login(

@@ -9,10 +9,10 @@ from enum import StrEnum
 from typing import Any
 
 import yaml
-from rich.console import Console
+from rich.console import Console, OverflowMethod
 from rich.table import Table
 
-__all__ = ["Column", "OutputFormat", "render", "render_one"]
+__all__ = ["Column", "OutputFormat", "human_size", "render", "render_one"]
 
 
 class OutputFormat(StrEnum):
@@ -25,10 +25,14 @@ class OutputFormat(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Column:
-    """A table column: its header and how to read the value from a row."""
+    """A table column: its header, how to read the value from a row, and how a long value wraps.
+
+    ``overflow`` is Rich's: ``ellipsis`` cuts the end off, ``fold`` wraps it onto further lines.
+    """
 
     header: str
     value: Callable[[Mapping[str, Any]], Any]
+    overflow: OverflowMethod = "ellipsis"
 
 
 def render(
@@ -47,7 +51,7 @@ def render(
         return
     table = Table(box=None, pad_edge=False, header_style="bold")
     for column in columns:
-        table.add_column(column.header)
+        table.add_column(column.header, overflow=column.overflow)
     for item in items:
         table.add_row(*(_text(column.value(item)) for column in columns))
     console.print(table)
@@ -64,6 +68,21 @@ def render_one(console: Console, item: Mapping[str, Any], fmt: OutputFormat) -> 
     width = max((len(key) for key in item), default=0)
     for key, value in item.items():
         console.print(f"{key.ljust(width)}  {_text(value)}", markup=False, highlight=False)
+
+
+def human_size(size: int) -> str:
+    """``size`` bytes for people: ``512 B``, ``1.5 KiB``, ``2.0 GiB`` (binary units)."""
+    if size < 1024:
+        return f"{size} B"
+    value = float(size)
+    for unit in _UNITS:
+        value /= 1024
+        if round(value, 1) < 1024 or unit == _UNITS[-1]:
+            break
+    return f"{value:.1f} {unit}"
+
+
+_UNITS = ("KiB", "MiB", "GiB", "TiB", "PiB")
 
 
 def _text(value: Any) -> str:

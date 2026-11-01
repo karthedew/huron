@@ -1,7 +1,14 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AUDIT_ACTIONS, ROLES, ROLE_SCOPES, isAuditAction, isRole } from './types';
+import {
+	AUDIT_ACTIONS,
+	ORGANIZATION_ROLES,
+	ROLES,
+	ROLE_SCOPES,
+	isAuditAction,
+	isRole
+} from './types';
 
 const SOURCE = new URL('../../../../src/huron/', import.meta.url);
 
@@ -24,6 +31,17 @@ describe('UI unions', () => {
 	it('list the roles and scopes of the API', () => {
 		expect([...ROLES]).toEqual(enumValues('core/security/rbac/roles.py', 'Role'));
 		expect([...ROLE_SCOPES]).toEqual(enumValues('core/security/rbac/roles.py', 'ScopeType'));
+	});
+
+	it('list the roles granted on an organization, the keys of its grants', () => {
+		const contract = JSON.parse(
+			readFileSync(new URL('../../../../docs/openapi.json', import.meta.url), 'utf8')
+		);
+		const keys: unknown = contract.components.schemas.OrganizationGroupsOut.required;
+		expect(Array.isArray(keys) ? [...keys].sort() : keys).toEqual([...ORGANIZATION_ROLES].sort());
+		expect(ROLES.filter((role) => ORGANIZATION_ROLES.some((wide) => wide === role))).toEqual([
+			...ORGANIZATION_ROLES
+		]);
 	});
 
 	it('narrow strings to the unions', () => {

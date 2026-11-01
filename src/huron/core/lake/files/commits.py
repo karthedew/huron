@@ -35,8 +35,12 @@ __all__ = ["MAX_COMMIT_ENTRIES", "Commits", "parse_commit_request"]
 MAX_COMMIT_ENTRIES = 10_000
 
 
-def parse_commit_request(body: Any) -> CommitRequest:
-    """Validate a commit body against ``commit-request-v1`` and the path rules."""
+def parse_commit_request(body: Any, *, dry_run: bool = False) -> CommitRequest:
+    """Validate a commit body against ``commit-request-v1`` and the path rules.
+
+    A ``dry_run`` body is checked the same way except that its adds may leave out ``sha256``:
+    the CLI asks before it copies, and a file's hash is only known once it is copied.
+    """
     if isinstance(body, dict):
         entries = len(body.get("adds") or []) + len(body.get("removes") or [])
         if entries > MAX_COMMIT_ENTRIES:
@@ -44,10 +48,10 @@ def parse_commit_request(body: Any) -> CommitRequest:
                 f"a commit holds at most {MAX_COMMIT_ENTRIES} entries",
                 {"entries": entries, "maximum": MAX_COMMIT_ENTRIES},
             )
-    problems = _VALIDATOR.validate(body)
+    problems = (_DRY_RUN_VALIDATOR if dry_run else _VALIDATOR).validate(body)
     if problems:
         raise CommitInvalid("commit request is malformed", problems_context(problems))
-    adds = tuple(FileAdd(a["rel_path"], a["size"], a["sha256"]) for a in body["adds"])
+    adds = tuple(FileAdd(a["rel_path"], a["size"], a.get("sha256")) for a in body["adds"])
     removes = tuple(body["removes"])
     _check_paths([add.rel_path for add in adds], list(removes))
     return CommitRequest(
@@ -67,9 +71,20 @@ class Commits:
         self._clock = clock
 
     async def commit(
-        self, actor: Actor, collection_id: uuid.UUID, request: CommitRequest
+        self,
+        actor: Actor,
+        collection_id: uuid.UUID,
+        request: CommitRequest,
+        *,
+        dry_run: bool = False,
     ) -> CommitResult:
-        """Apply ``request`` whole or refuse it whole."""
+        """Apply ``request`` whole or refuse it whole.
+
+        With ``dry_run`` every check of a real commit runs (the caller's right, the collection's
+        state, the removed files, the base version and the file tree) and the answer is the
+        version and file count the commit would make, but nothing is written or audited: the CLI
+        learns a push will be refused before it copies any byte onto the share.
+        """
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
             collection, catalog = await find_collection(
@@ -91,6 +106,8 @@ class Commits:
             if request.base_version != collection.version:
                 raise BaseVersionConflict(collection.version, request.base_version)
             await _check_tree(tx, collection.id, request, set(remove_keys))
+            if dry_run:
+                return await _preview(tx, collection, request, remove_keys)
             return await self._apply(tx, actor, collection, request, remove_keys)
 
     async def list_files(
@@ -151,7 +168,7 @@ class Commits:
                 rel_path=add.rel_path,
                 rel_path_key=rel_path_key(add.rel_path),
                 size=add.size,
-                sha256=add.sha256,
+                sha256=_hash_of(add),
                 recorded_at=now,
                 recorded_by=actor.subject,
                 commit_id=commit_id,
@@ -193,6 +210,25 @@ class Commits:
             },
         )
         return CommitResult(updated.version, file_count, commit_id)
+
+
+async def _preview(
+    tx: Transaction, collection: Collection, request: CommitRequest, remove_keys: list[str]
+) -> CommitResult:
+    add_keys = [rel_path_key(add.rel_path) for add in request.adds]
+    replaced = await tx.files.existing(collection.id, add_keys)
+    recorded = await tx.files.count(collection.id)
+    file_count = recorded - len(remove_keys) + len(add_keys) - len(replaced)
+    return CommitResult(collection.version + 1, file_count, None)
+
+
+def _hash_of(add: FileAdd) -> str:
+    if add.sha256 is None:
+        raise CommitInvalid(
+            f"{add.rel_path!r} has no sha256; only a dry run may leave it out",
+            {"rel_path": add.rel_path},
+        )
+    return add.sha256
 
 
 def _check_paths(adds: list[str], removes: list[str]) -> None:
@@ -253,4 +289,11 @@ def _check_each(adds: list[str], removes: list[str]) -> None:
         seen[key] = path
 
 
+def _hash_optional(document: dict[str, Any]) -> dict[str, Any]:
+    items = document["properties"]["adds"]["items"]
+    items["required"] = [name for name in items["required"] if name != "sha256"]
+    return document
+
+
 _VALIDATOR = Validator(load_document("commit-request-v1"))
+_DRY_RUN_VALIDATOR = Validator(_hash_optional(load_document("commit-request-v1")))

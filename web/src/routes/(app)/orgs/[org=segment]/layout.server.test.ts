@@ -47,9 +47,23 @@ describe('/orgs/[org] layout load', () => {
 		vi.stubGlobal('fetch', api.fetch);
 		expect(await load(organizationEvent('helio'))).toEqual({
 			organization: 'helio',
-			organizationDetails: helio
+			organizationDetails: helio,
+			organizationPath: '/projects/huron/helio'
 		});
 		expect(api.calls).toHaveLength(1);
+	});
+
+	it("places a declared organization's directory under its configured root", async () => {
+		const geo = organizationFixture({
+			name: 'geo',
+			declared: true,
+			root: '/data2/huron',
+			path: '/data2/huron/geo'
+		});
+		vi.stubGlobal('fetch', fakeApi({ '/organizations/geo': jsonResponse(geo) }).fetch);
+		expect(await load(organizationEvent('geo'))).toMatchObject({
+			organizationPath: '/data2/huron/geo'
+		});
 	});
 
 	it('conceals an organization the user cannot see as not found', async () => {

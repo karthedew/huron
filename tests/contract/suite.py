@@ -22,6 +22,7 @@ from huron.core.lake.schemas.models import SchemaEntry
 from huron.core.lake.transaction import UnitOfWork
 from huron.core.security.broker.keys import generate_key
 from huron.core.security.rbac import PLATFORM, Role, Scope
+from huron.pkg.canonical import canonical_bytes
 from huron.pkg.identifiers import new_id
 from tests.support.clock import START, frozen
 
@@ -128,9 +129,24 @@ async def test_organizations(uow: UnitOfWork) -> None:
     with pytest.raises(NameTaken):
         async with uow.transaction() as tx:
             await tx.organizations.insert(organization("alpha"))
+    changed = replace(a, name="ignored", display_name="Alpha!", description="new", version=2)
+    async with uow.transaction() as tx:
+        await tx.organizations.update(changed)
+        await tx.organizations.update(organization("ghost"))
+    async with uow.transaction() as tx:
+        assert await tx.organizations.get(a.id) == replace(
+            a, display_name="Alpha!", description="new", version=2
+        )
+        assert await tx.organizations.get_by_name("ghost") is None
     async with uow.transaction() as tx:
         await tx.organizations.delete(a.id)
         assert await tx.organizations.get(a.id) is None
+
+
+async def test_the_bootstrap_lock_can_be_taken_twice_in_one_transaction(uow: UnitOfWork) -> None:
+    async with uow.transaction() as tx:
+        await tx.lock_bootstrap()
+        await tx.lock_bootstrap()
 
 
 async def test_catalogs(uow: UnitOfWork) -> None:
@@ -260,6 +276,26 @@ async def test_collections(uow: UnitOfWork) -> None:
         assert await tx.collections.get(draft.id) is None
 
 
+async def test_collections_keep_integers_of_any_size(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    huge = {"title": "Huge", "epoch": 2**63, "fill": -(10**31), "values": [2**53 + 1]}
+    override = {"type": "object", "properties": {"epoch": {"type": "integer", "maximum": 2**64}}}
+    exact = replace(collection(cat, ns, "exact", metadata=huge), schema_override=override)
+    floating = collection(cat, ns, "floating", metadata={"title": "Float", "fill": -1e31})
+    async with uow.transaction() as tx:
+        await tx.collections.insert(exact)
+        await tx.collections.insert(floating)
+    async with uow.transaction() as tx:
+        assert await tx.collections.get(exact.id) == exact
+        found = await tx.collections.get(floating.id)
+    assert found is not None
+    # PostgreSQL's jsonb answers -1e31 as the integer -10000000000000000000000000000000.
+    assert canonical_bytes(found.metadata) in (
+        b'{"fill":-1e+31,"title":"Float"}',
+        b'{"fill":-10000000000000000000000000000000,"title":"Float"}',
+    )
+
+
 async def test_files_and_commits(uow: UnitOfWork) -> None:
     _, cat, ns = await tree(uow)
     owner = collection(cat, ns, "run7")
@@ -343,6 +379,35 @@ async def test_grants(uow: UnitOfWork) -> None:
         assert await tx.grants.enclosing(stray) == [stray, PLATFORM]
         await tx.grants.delete_scope(cat_scope)
         assert dict(await tx.grants.groups_for_scope(cat_scope)) == {}
+
+
+async def test_catalog_roles_are_granted_at_organization_scope(uow: UnitOfWork) -> None:
+    org, cat, _ = await tree(uow)
+    org_scope, cat_scope = Scope.organization(org.id), Scope.catalog(cat.id)
+    async with uow.transaction() as tx:
+        await tx.grants.replace(org_scope, Role.ORG_ADMIN, ["admins"], "t")
+        for role in (Role.CATALOG_ADMIN, Role.CONTRIBUTOR, Role.READER):
+            added, _ = await tx.grants.replace(org_scope, role, [f"org-{role}", "shared"], "t")
+            assert added == sorted([f"org-{role}", "shared"])
+        await tx.grants.replace(cat_scope, Role.READER, ["shared"], "t")
+    async with uow.transaction() as tx:
+        assert dict(await tx.grants.groups_for_scope(org_scope)) == {
+            Role.ORG_ADMIN: ["admins"],
+            Role.CATALOG_ADMIN: ["org-catalog_admin", "shared"],
+            Role.CONTRIBUTOR: ["org-contributor", "shared"],
+            Role.READER: ["org-reader", "shared"],
+        }
+        assert set(await tx.grants.roles_for_groups(["shared"])) == {
+            (org_scope, Role.CATALOG_ADMIN),
+            (org_scope, Role.CONTRIBUTOR),
+            (org_scope, Role.READER),
+            (cat_scope, Role.READER),
+        }
+        added, removed = await tx.grants.replace(org_scope, Role.READER, [], "t")
+        assert (added, removed) == ([], ["org-reader", "shared"])
+        assert dict(await tx.grants.groups_for_scope(cat_scope)) == {Role.READER: ["shared"]}
+        await tx.grants.delete_scope(org_scope)
+        assert dict(await tx.grants.groups_for_scope(org_scope)) == {}
 
 
 async def test_audit(uow: UnitOfWork) -> None:

@@ -59,10 +59,33 @@ describe('capabilities', () => {
 		expect(capabilities(roles, { catalogId: 'other' })).toEqual(NONE);
 	});
 
+	it('lets a catalog admin of an organization administer every catalog of it', () => {
+		const roles = [grant('catalog_admin', 'organization', ORGANIZATION)];
+		const expected = { ...NONE, contribute: true, administerCatalog: true };
+		expect(capabilities(roles, { catalogId: CATALOG, organizationId: ORGANIZATION })).toEqual(
+			expected
+		);
+		expect(capabilities(roles, { catalogId: 'other', organizationId: ORGANIZATION })).toEqual(
+			expected
+		);
+		expect(capabilities(roles, { catalogId: CATALOG, organizationId: 'other' })).toEqual(NONE);
+		expect(capabilities(roles, { catalogId: CATALOG })).toEqual(NONE);
+	});
+
+	it('lets a contributor of an organization contribute to every catalog of it', () => {
+		const roles = [grant('contributor', 'organization', ORGANIZATION)];
+		expect(capabilities(roles, { catalogId: CATALOG, organizationId: ORGANIZATION })).toEqual({
+			...NONE,
+			contribute: true
+		});
+		expect(capabilities(roles, { catalogId: CATALOG, organizationId: 'other' })).toEqual(NONE);
+	});
+
 	it('grants nothing for reading or for roles at the wrong scope', () => {
 		const roles = [
 			grant('reader', 'catalog', CATALOG),
-			grant('contributor', 'organization', ORGANIZATION),
+			grant('reader', 'organization', ORGANIZATION),
+			grant('contributor', 'catalog', 'other'),
 			grant('org_admin', 'catalog', CATALOG),
 			grant('platform_admin', 'organization', ORGANIZATION)
 		];

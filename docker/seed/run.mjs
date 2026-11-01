@@ -1,6 +1,20 @@
 /**
  * The one-shot seed of the Docker stack (docker-compose.app.yml): loads the web's e2e demo
- * fixture into the API by running `web/e2e/support/seed.mjs` unchanged.
+ * fixture (`web/e2e/support/fixture.mjs`) into the API, each call as the fixture user whose role
+ * it takes, with the token exchange of `web/e2e/support/seed.mjs`.
+ *
+ * It works in both modes of the service configuration (huron.dev.yaml):
+ * - Managed (an `organizations:` block): the service creates the declared organizations and their
+ *   organization-scope role groups (`groups`) at startup, so the seed creates no organization and
+ *   no organization-scope grant. The
+ *   fixture's organizations the configuration does not declare are skipped with their catalogs
+ *   (`POST /organizations` answers 409 ORGANIZATIONS_MANAGED).
+ * - Unmanaged: it creates the fixture's missing organizations with their org_admin grants and
+ *   their organization-wide catalog-role grants, which every catalog of the organization inherits.
+ * Then, for every organization that exists, it creates each fixture catalog that does not exist
+ * yet, with its grants, namespaces and collections, and publishes and assigns the schemas of the
+ * catalogs it created. A catalog that exists is left alone, so every start of the stack may run
+ * this again, and declaring an organization later seeds its catalogs on the next start.
  *
  * seed.mjs asks its issuer for ID tokens at `POST /test/id-token {"username": …}`. The shim below
  * answers with an ID token from Keycloak's password grant on the huron-cli client, for the
@@ -8,9 +22,6 @@
  * assignedBy, each a user of scripts/keycloak/company-realm.json with the password "password".
  * It listens on 127.0.0.1 on a port the system picks, inside the stack's network namespace,
  * where no port of it is published, and closes when the seed is done.
- *
- * seed.mjs creates nothing when the fixture's first organization exists, so every start of the
- * stack may run this again.
  *
  * Settings, all required: HURON_SEED_API_URL (the API origin), HURON_SEED_ISSUER (Keycloak's
  * realm), HURON_SEED_CLIENT_ID (a client with the password grant) and HURON_SEED_FIXTURE_DIR
@@ -29,41 +40,336 @@ const FIXTURE_DIR = setting('HURON_SEED_FIXTURE_DIR');
 const PASSWORD = 'password';
 const WAIT_SECONDS = 180;
 
-try {
-	const creators = creatorsOf(await import(pathToFileURL(join(FIXTURE_DIR, 'fixture.mjs')).href));
-	await waitFor(`${API_URL}/readyz`, 'the API');
-	const discovery = await (
-		await waitFor(`${ISSUER}/.well-known/openid-configuration`, 'Keycloak')
-	).json();
-	const shim = await startShim(String(discovery.token_endpoint), creators);
-	console.log(
-		`seed: ID token shim on ${shim.url} (inside the stack only) for ${[...creators].sort().join(', ')}`
-	);
+/** Seed, then exit: the shim's server would keep the process alive. */
+async function main() {
 	try {
-		const { seed } = await import(pathToFileURL(join(FIXTURE_DIR, 'seed.mjs')).href);
-		const { created } = await seed({ apiUrl: API_URL, issuer: shim.url });
+		const fixture = await import(pathToFileURL(join(FIXTURE_DIR, 'fixture.mjs')).href);
+		const creators = creatorsOf(fixture);
+		await waitFor(`${API_URL}/readyz`, 'the API');
+		const discovery = await (
+			await waitFor(`${ISSUER}/.well-known/openid-configuration`, 'Keycloak')
+		).json();
+		const shim = await startShim(String(discovery.token_endpoint), creators);
 		console.log(
-			created
-				? 'seed: the demo fixture was created'
-				: 'seed: the demo fixture is already there; nothing changed'
+			`seed: ID token shim on ${shim.url} (inside the stack only) for ${[...creators].sort().join(', ')}`
 		);
-	} finally {
-		await shim.close();
+		try {
+			const { huronToken } = await import(pathToFileURL(join(FIXTURE_DIR, 'seed.mjs')).href);
+			const api = new SeedApi(API_URL, (username) =>
+				huronToken({ apiUrl: API_URL, issuer: shim.url }, username)
+			);
+			const created = await seedFixture(api, fixture);
+			console.log(
+				created.length > 0
+					? `seed: created the catalogs ${created.join(', ')}`
+					: 'seed: every catalog of the demo fixture is already there; nothing changed'
+			);
+		} finally {
+			await shim.close();
+		}
+	} catch (failure) {
+		console.error(`seed: ${failure instanceof Error ? failure.message : String(failure)}`);
+		process.exitCode = 1;
 	}
-} catch (failure) {
-	console.error(`seed: ${failure instanceof Error ? failure.message : String(failure)}`);
-	process.exitCode = 1;
+	process.exit();
 }
-process.exit();
 
 /**
- * The users seed.mjs calls the API as: who creates, grants, publishes and assigns each record.
+ * Seed what is missing and return the names of the catalogs created.
+ * @param {SeedApi} api
+ * @param {Record<string, any>} fixture The exports of fixture.mjs.
+ * @returns {Promise<string[]>}
+ */
+async function seedFixture(api, fixture) {
+	const { ORGANIZATIONS, CATALOGS, NAMESPACES, COLLECTIONS, SCHEMAS } = fixture;
+	const organizations = new Set();
+	for (const organization of ORGANIZATIONS) {
+		if (await ensureOrganization(api, organization)) organizations.add(organization.name);
+	}
+	const created = [];
+	for (const catalog of CATALOGS) {
+		if (!organizations.has(catalog.organization)) continue;
+		if (await api.exists(catalog.createdBy, ['catalogs', catalog.name])) continue;
+		await api.call(catalog.createdBy, 'POST', ['organizations', catalog.organization, 'catalogs'], {
+			name: catalog.name,
+			display_name: catalog.displayName,
+			description: catalog.description
+		});
+		for (const grant of catalog.grants) {
+			await api.call(grant.grantedBy, 'PUT', ['catalogs', catalog.name, 'grants', grant.role], {
+				ldap_groups: grant.groups
+			});
+		}
+		created.push(catalog.name);
+	}
+	const fresh = new Set(created);
+	for (const namespace of NAMESPACES.filter((entry) => fresh.has(entry.catalog))) {
+		const segments = namespace.path.split('.');
+		await api.call(namespace.createdBy, 'POST', ['catalogs', namespace.catalog, 'namespaces'], {
+			parent: segments.slice(0, -1).join('.'),
+			name: segments[segments.length - 1],
+			collections_allowed: namespace.collectionsAllowed
+		});
+	}
+	for (const collection of COLLECTIONS.filter((entry) => fresh.has(entry.catalog))) {
+		await createCollection(api, fixture, collection);
+	}
+	for (const schema of SCHEMAS) {
+		const catalogs = schema.assignedTo.filter((/** @type {string} */ name) => fresh.has(name));
+		if (catalogs.length > 0) await publishAndAssign(api, schema, catalogs);
+	}
+	return created;
+}
+
+/**
+ * Whether the organization exists after this call. One that exists is left alone (in managed
+ * mode the service owns its organization-scope grants). A missing one is created with its
+ * org_admin grant and its organization-wide catalog-role grants, unless the service answers that
+ * organizations are managed: then it is not declared.
+ * @param {SeedApi} api
+ * @param {Record<string, any>} organization A fixture organization.
+ * @returns {Promise<boolean>}
+ */
+async function ensureOrganization(api, organization) {
+	const actor = organization.createdBy;
+	if (await api.exists(actor, ['organizations', organization.name])) return true;
+	const response = await api.send(actor, 'POST', ['organizations'], {
+		name: organization.name,
+		display_name: organization.displayName,
+		description: organization.description
+	});
+	if (response.status === 409) {
+		const problem = await response.json().catch(() => ({}));
+		if (problem.code === 'ORGANIZATIONS_MANAGED') {
+			console.log(
+				`seed: ${organization.name} is not declared in the service configuration; its catalogs are skipped`
+			);
+			return false;
+		}
+		throw new Error(`POST /api/v1/organizations answered 409 ${problem.code ?? ''}`);
+	}
+	await api.check(response, 'POST', ['organizations'], actor);
+	if (organization.orgAdmins.length > 0) {
+		await api.call(actor, 'PUT', ['organizations', organization.name, 'grants', 'org_admin'], {
+			ldap_groups: organization.orgAdmins
+		});
+	}
+	for (const grant of organization.grants) {
+		await api.call(
+			grant.grantedBy,
+			'PUT',
+			['organizations', organization.name, 'grants', grant.role],
+			{ ldap_groups: grant.groups }
+		);
+	}
+	return true;
+}
+
+/**
+ * A draft with its metadata and schema override, activated unless it stays a draft, then its
+ * commits in order.
+ * @param {SeedApi} api
+ * @param {Record<string, any>} fixture
+ * @param {Record<string, any>} collection A fixture collection.
+ */
+async function createCollection(api, { collectionIdentifier, fileSha256 }, collection) {
+	const identifier = collectionIdentifier(collection);
+	const actor = collection.createdBy;
+	let draft = await api.call(
+		actor,
+		'POST',
+		['catalogs', collection.catalog, 'namespaces', collection.namespace, 'collections'],
+		{ name: collection.name, metadata: collection.metadata }
+	);
+	if (collection.schemaOverride !== undefined) {
+		draft = await api.call(
+			actor,
+			'PATCH',
+			['collections', draft.id],
+			{ schema_override: collection.schemaOverride },
+			{ 'if-match': `"${draft.version}"` }
+		);
+	}
+	if (collection.state === 'draft') return;
+	const active = await api.call(actor, 'POST', ['collections', draft.id, 'activate'], undefined, {
+		'if-match': `"${draft.version}"`
+	});
+	let version = active.version;
+	for (const commit of collection.commits) {
+		const result = await api.call(actor, 'POST', ['collections', draft.id, 'commits'], {
+			base_version: version,
+			adds: commit.adds.map((/** @type {{ relPath: string, size: number }} */ add) => ({
+				rel_path: add.relPath,
+				size: add.size,
+				sha256: fileSha256(identifier, add.relPath)
+			})),
+			removes: commit.removes,
+			host: commit.host,
+			...(commit.message === null ? {} : { message: commit.message })
+		});
+		version = result.version;
+	}
+}
+
+/**
+ * Assign an organization schema to catalogs, publishing it first on top of the latest version of
+ * the platform schema it extends unless the organization already has it.
+ * @param {SeedApi} api
+ * @param {Record<string, any>} schema A fixture schema.
+ * @param {string[]} catalogs The catalogs this run created that use it.
+ */
+async function publishAndAssign(api, schema, catalogs) {
+	const query = { limit: '500' };
+	const own = await api.call(
+		schema.publishedBy,
+		'GET',
+		['organizations', schema.organization, 'schemas'],
+		undefined,
+		{},
+		query
+	);
+	let entry = newest(own.items, schema.name);
+	if (entry === undefined) {
+		const platform = await api.call(
+			schema.publishedBy,
+			'GET',
+			['platform', 'schemas'],
+			undefined,
+			{},
+			query
+		);
+		const parent = newest(platform.items, schema.extends);
+		if (parent === undefined) throw new Error(`the API has no platform schema ${schema.extends}`);
+		entry = await api.call(
+			schema.publishedBy,
+			'POST',
+			['organizations', schema.organization, 'schemas'],
+			{ name: schema.name, extends_id: parent.id, document: schema.document }
+		);
+	}
+	for (const catalog of catalogs) {
+		await api.call(schema.assignedBy, 'PUT', ['catalogs', catalog, 'schema'], {
+			schema_id: entry.id
+		});
+	}
+}
+
+/**
+ * The newest version of the named schema in a registry listing.
+ * @param {Array<{ name: string, version: number, id: string }>} items
+ * @param {string} name
+ */
+function newest(items, name) {
+	return items.filter((item) => item.name === name).sort((a, b) => b.version - a.version)[0];
+}
+
+/** Calls the API as fixture users, exchanging an ID token once per user. */
+class SeedApi {
+	/** @type {string} */
+	#apiUrl;
+	/** @type {(username: string) => Promise<string>} */
+	#exchange;
+	/** @type {Map<string, Promise<string>>} */
+	#tokens = new Map();
+
+	/**
+	 * @param {string} apiUrl
+	 * @param {(username: string) => Promise<string>} exchange A Huron token for a user.
+	 */
+	constructor(apiUrl, exchange) {
+		this.#apiUrl = apiUrl;
+		this.#exchange = exchange;
+	}
+
+	/**
+	 * Whether a GET answers 200 (404: no).
+	 * @param {string} username
+	 * @param {readonly string[]} segments
+	 */
+	async exists(username, segments) {
+		const response = await this.send(username, 'GET', segments);
+		if (response.status === 404) return false;
+		await this.check(response, 'GET', segments, username);
+		return true;
+	}
+
+	/**
+	 * The parsed answer of a call that must succeed.
+	 * @param {string} username
+	 * @param {string} method
+	 * @param {readonly string[]} segments Path segments below `/api/v1`, encoded here.
+	 * @param {unknown} [body]
+	 * @param {Record<string, string>} [headers]
+	 * @param {Record<string, string>} [query]
+	 * @returns {Promise<any>}
+	 */
+	async call(username, method, segments, body, headers = {}, query = {}) {
+		const response = await this.send(username, method, segments, body, headers, query);
+		await this.check(response, method, segments, username);
+		const answer = await response.text();
+		return answer === '' ? null : JSON.parse(answer);
+	}
+
+	/**
+	 * Throw unless the response succeeded.
+	 * @param {Response} response
+	 * @param {string} method
+	 * @param {readonly string[]} segments
+	 * @param {string} username
+	 */
+	async check(response, method, segments, username) {
+		if (response.ok) return;
+		const body = (await response.text()).slice(0, 600);
+		const call = `${method} /api/v1/${segments.join('/')} as ${username}`;
+		throw new Error(`${call} answered ${response.status}: ${body}`);
+	}
+
+	/**
+	 * @param {string} username
+	 * @param {string} method
+	 * @param {readonly string[]} segments
+	 * @param {unknown} [body]
+	 * @param {Record<string, string>} [headers]
+	 * @param {Record<string, string>} [query]
+	 */
+	async send(username, method, segments, body, headers = {}, query = {}) {
+		const url = new URL(`${this.#apiUrl}/api/v1/${segments.map(encodeURIComponent).join('/')}`);
+		for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+		return fetch(url, {
+			method,
+			headers: {
+				accept: 'application/json',
+				authorization: `Bearer ${await this.#token(username)}`,
+				...(body === undefined ? {} : { 'content-type': 'application/json' }),
+				...headers
+			},
+			body: body === undefined ? undefined : JSON.stringify(body),
+			signal: AbortSignal.timeout(30_000)
+		});
+	}
+
+	/** @param {string} username */
+	#token(username) {
+		let token = this.#tokens.get(username);
+		if (token === undefined) {
+			token = this.#exchange(username);
+			this.#tokens.set(username, token);
+		}
+		return token;
+	}
+}
+
+/**
+ * The users the seed calls the API as: who creates, grants, publishes and assigns each record.
  * @param {Record<string, any>} fixture The exports of fixture.mjs.
  * @returns {Set<string>}
  */
 function creatorsOf({ ORGANIZATIONS, CATALOGS, NAMESPACES, COLLECTIONS, SCHEMAS }) {
 	return new Set([
-		...ORGANIZATIONS.map((organization) => organization.createdBy),
+		...ORGANIZATIONS.flatMap((organization) => [
+			organization.createdBy,
+			...organization.grants.map((grant) => grant.grantedBy)
+		]),
 		...CATALOGS.flatMap((catalog) => [
 			catalog.createdBy,
 			...catalog.grants.map((grant) => grant.grantedBy)
@@ -200,3 +506,6 @@ function setting(name) {
 	if (!value) throw new Error(`seed: ${name} is required`);
 	return value.replace(/\/+$/, '');
 }
+
+// Last, once the class above is initialized.
+await main();

@@ -28,3 +28,7 @@ class OrganizationOut(BaseModel):
     created_at: datetime
     created_by: str
     catalog_count: int
+    declared: bool = Field(description="Whether the service configuration declares it.")
+    root: str | None = Field(description="The configured parent of the organization's directory.")
+    path: str | None = Field(description="The organization's directory, root/name.")
+    export: str | None = Field(description="The NFS export the configuration names, if any.")

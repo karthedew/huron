@@ -104,6 +104,8 @@ _EXACT = {
     "STORAGE_FAILED": ExitCode.STORAGE,
     "ACL_FAILED": ExitCode.STORAGE,
     "NAME_TAKEN": ExitCode.CONFLICT,
+    "ORGANIZATIONS_MANAGED": ExitCode.CONFLICT,
+    "ORGANIZATION_DECLARED": ExitCode.CONFLICT,
     "COLLECTIONS_NOT_ALLOWED": ExitCode.CONFLICT,
     "PRECONDITION_REQUIRED": ExitCode.CONFLICT,
     "FILE_NOT_RECORDED": ExitCode.VALIDATION,
@@ -114,4 +116,12 @@ _HINTS = {
     "VERSION_CONFLICT": "run: huron pull",
     "UNAUTHENTICATED": "run: huron login",
     "TOKEN_INVALID": "run: huron login",
+    "ORGANIZATIONS_MANAGED": (
+        "organizations are declared in the service configuration;"
+        " prepare their directories with: huron adm provision-orgs"
+    ),
+    "ORGANIZATION_DECLARED": (
+        "the organization and its role groups (groups.<role>) are declared in the service"
+        " configuration; change them there"
+    ),
 }

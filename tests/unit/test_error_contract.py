@@ -25,7 +25,9 @@ def test_each_code_is_registered_exactly_once_in_source() -> None:
     assert set(codes) == {entry.code for entry in error_codes().all()}
 
 
-def test_every_code_is_documented() -> None:
+def test_every_code_is_documented_exactly_once() -> None:
     document = (ROOT / "docs" / "api-errors.md").read_text()
-    for entry in error_codes().all():
-        assert f"| `{entry.code}` | {entry.status} |" in document
+    rows = re.findall(r"^\| `([A-Z_]+)` \| (\d+) \|", document, flags=re.MULTILINE)
+    assert len(rows) == len({code for code, _ in rows}), "a code has two rows"
+    documented = {code: int(status) for code, status in rows}
+    assert documented == {entry.code: entry.status for entry in error_codes().all()}

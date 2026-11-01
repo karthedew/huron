@@ -212,3 +212,30 @@ async def test_search(seeded_api: Service) -> None:
     assert [x["name"] for x in drafts.json()["items"]] == ["beta"]
     bad = await c.get("/api/v1/catalogs/heliophysics/search?label=nolabel", headers=erin)
     assert bad.status_code == 422
+
+
+async def test_the_sidecar_writes_integers_of_any_size_exactly(seeded_api: Service) -> None:
+    created = (await draft(seeded_api, "huge", {**META, "fill": -(10**31)})).json()
+    activated = await seeded_api.client.post(
+        f"/api/v1/collections/{created['id']}/activate",
+        headers=await seeded_api.headers("dave", **{"If-Match": '"1"'}),
+    )
+    assert activated.status_code == 200, activated.text
+    sidecar = await seeded_api.client.get(
+        f"/api/v1/collections/{created['id']}/metadata.json",
+        headers=await seeded_api.headers("erin"),
+    )
+    assert sidecar.status_code == 200, sidecar.text
+    assert b'"fill":-10000000000000000000000000000000' in sidecar.content
+    assert sidecar.json()["metadata"]["fill"] == -(10**31)
+
+
+async def test_metadata_json_cannot_hold_is_refused(seeded_api: Service) -> None:
+    refused = await seeded_api.client.post(
+        "/api/v1/catalogs/heliophysics/namespaces/solar-wind/collections",
+        content=b'{"name": "nan", "metadata": {"title": "t", "x": NaN}}',
+        headers={**(await seeded_api.headers("dave")), "content-type": "application/json"},
+    )
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "METADATA_INVALID"
+    assert refused.json()["context"]["problems"][0]["rule"] == "json"

@@ -55,5 +55,9 @@ class CollectionOut(BaseModel):
     activated_at: datetime | None
     path: str | None
     problems: list[ProblemOut]
+    share_root: str | None = Field(
+        description="The configured root of the organization's directory; clients join it with"
+        " the relative path, or use their own mount prefix when it is null."
+    )
 
     model_config = {"populate_by_name": True}

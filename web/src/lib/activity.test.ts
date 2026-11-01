@@ -50,6 +50,13 @@ const CASES: ReadonlyArray<readonly [string, string, JsonObject, string, string]
 		'Platform administrator from old-admins'
 	],
 	['organization.create', 'organization', { name: 'helio' }, 'Created the organization', 'helio'],
+	[
+		'organization.update',
+		'organization',
+		{ name: 'helio', fields: ['display_name', 'description'] },
+		'Updated the organization',
+		'helio (display name, description)'
+	],
 	['organization.delete', 'organization', { name: 'old' }, 'Deleted the organization', 'old'],
 	[
 		'organization.grant',
@@ -273,6 +280,11 @@ describe('activityRows', () => {
 			'Key k3'
 		);
 		expect(row('schema.publish', 'schema', { name: 'x' }).summary).toBe('x');
+		expect(row('organization.update', 'organization', { name: 'geo' }).summary).toBe('geo');
+		expect(
+			row('organization.update', 'organization', { name: 'geo', fields: [3, '', 'motto'] }).summary
+		).toBe('geo (motto)');
+		expect(row('organization.update', 'organization', { fields: 'display_name' }).summary).toBe('');
 	});
 
 	it('shows an action outside the vocabulary by its name', () => {

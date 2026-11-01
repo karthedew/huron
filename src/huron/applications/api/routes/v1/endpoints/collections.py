@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query, Response, status
 
 from huron.applications.api.authorization import ActorDep
-from huron.applications.api.dependencies import LakeDep
+from huron.applications.api.dependencies import DeclarationsDep, LakeDep, with_share_root
 from huron.applications.api.routes.pagination import Cursor, Limit
 from huron.applications.api.routes.preconditions import IfMatch, expected_version, set_etag
 from huron.applications.api.routes.v1.schema.admin import AuditOut
@@ -19,6 +19,7 @@ from huron.applications.api.routes.v1.schema.collections import (
 )
 from huron.applications.api.routes.v1.schema.common import Page, page_of
 from huron.core.lake.collections.models import UNSET, CollectionView, Search, State, Update
+from huron.core.lake.organizations.declarations import Declarations
 from huron.pkg.errors import Invalid
 
 __all__ = ["router"]
@@ -32,12 +33,14 @@ async def list_collections(
     path: str,
     actor: ActorDep,
     lake: LakeDep,
+    declarations: DeclarationsDep,
     cursor: Cursor = None,
     limit: Limit = None,
 ) -> Page[CollectionOut]:
     """Collections directly in a namespace; drafts only for those who may create them."""
     page = await lake.collections.list(actor, catalog, path, cursor, limit)
-    return page_of(CollectionOut, [v.as_dict() for v in page.items], page.next_cursor)
+    rows = [with_share_root(v.as_dict(), declarations) for v in page.items]
+    return page_of(CollectionOut, rows, page.next_cursor)
 
 
 @router.post(
@@ -49,20 +52,26 @@ async def create_collection(
     body: CollectionIn,
     actor: ActorDep,
     lake: LakeDep,
+    declarations: DeclarationsDep,
     response: Response,
 ) -> CollectionOut:
     """Reserve a draft collection in a namespace that allows collections."""
     view = await lake.collections.create(actor, catalog, path, body.name, body.metadata)
-    return _out(view, response)
+    return _out(view, response, declarations)
 
 
 @router.get("/catalogs/{catalog}/collections/{name}")
 async def get_collection_by_identifier(
-    catalog: str, name: str, actor: ActorDep, lake: LakeDep, response: Response
+    catalog: str,
+    name: str,
+    actor: ActorDep,
+    lake: LakeDep,
+    declarations: DeclarationsDep,
+    response: Response,
 ) -> CollectionOut:
     """A collection by its identifier inside the catalog (``namespace.path.name``)."""
     view = await lake.collections.get(actor, identifier=f"{catalog}.{name}")
-    return _out(view, response)
+    return _out(view, response, declarations)
 
 
 @router.get("/catalogs/{catalog}/search")
@@ -70,6 +79,7 @@ async def search_collections(
     catalog: str,
     actor: ActorDep,
     lake: LakeDep,
+    declarations: DeclarationsDep,
     q: Annotated[str | None, Query(max_length=200)] = None,
     label: Annotated[list[str] | None, Query(description="Repeatable key=value.")] = None,
     state: Annotated[list[State] | None, Query()] = None,
@@ -83,15 +93,20 @@ async def search_collections(
         states=frozenset(state) if state else frozenset({State.ACTIVE, State.INCOMPLETE}),
     )
     page = await lake.collections.search(actor, catalog, query, cursor, limit)
-    return page_of(CollectionOut, [v.as_dict() for v in page.items], page.next_cursor)
+    rows = [with_share_root(v.as_dict(), declarations) for v in page.items]
+    return page_of(CollectionOut, rows, page.next_cursor)
 
 
 @router.get("/collections/{collection_id}")
 async def get_collection(
-    collection_id: uuid.UUID, actor: ActorDep, lake: LakeDep, response: Response
+    collection_id: uuid.UUID,
+    actor: ActorDep,
+    lake: LakeDep,
+    declarations: DeclarationsDep,
+    response: Response,
 ) -> CollectionOut:
     """One collection."""
-    return _out(await lake.collections.get(actor, collection_id), response)
+    return _out(await lake.collections.get(actor, collection_id), response, declarations)
 
 
 @router.patch("/collections/{collection_id}")
@@ -100,6 +115,7 @@ async def update_collection(
     body: CollectionPatch,
     actor: ActorDep,
     lake: LakeDep,
+    declarations: DeclarationsDep,
     response: Response,
     if_match: IfMatch = None,
 ) -> CollectionOut:
@@ -110,7 +126,7 @@ async def update_collection(
         schema_override=body.schema_override if "schema_override" in sent else UNSET,
     )
     view = await lake.collections.update(actor, collection_id, expected_version(if_match), update)
-    return _out(view, response)
+    return _out(view, response, declarations)
 
 
 @router.post("/collections/{collection_id}/activate")
@@ -118,12 +134,13 @@ async def activate_collection(
     collection_id: uuid.UUID,
     actor: ActorDep,
     lake: LakeDep,
+    declarations: DeclarationsDep,
     response: Response,
     if_match: IfMatch = None,
 ) -> CollectionOut:
     """Turn a valid draft into an active collection."""
     view = await lake.collections.activate(actor, collection_id, expected_version(if_match))
-    return _out(view, response)
+    return _out(view, response, declarations)
 
 
 @router.delete("/collections/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -168,9 +185,9 @@ async def collection_log(
     return page_of(AuditOut, [e.as_dict() for e in page.items], page.next_cursor)
 
 
-def _out(view: CollectionView, response: Response) -> CollectionOut:
+def _out(view: CollectionView, response: Response, declarations: Declarations) -> CollectionOut:
     set_etag(response, view.collection.version)
-    return CollectionOut.model_validate(view.as_dict())
+    return CollectionOut.model_validate(with_share_root(view.as_dict(), declarations))
 
 
 def _label(text: str) -> tuple[str, str]:

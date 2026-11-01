@@ -143,16 +143,18 @@ def stack(database_url: str, tmp_path: Path) -> Iterator[Stack]:
 
 def test_every_role_end_to_end(stack: Stack, tmp_path: Path) -> None:
     stack.login("alice")
-    stack.huron("platform", "verify-root")
-    stack.huron("org", "create", "helio")
-    stack.huron("org", "grant", "helio", "helio-org-admins")
+    stack.huron("adm", "verify-mounts")
+    stack.huron("create", "org", "helio")
+    stack.huron("adm", "grant", "org_admin", "helio-org-admins", "--org", "helio")
     stack.login("bob")
-    stack.huron("catalog", "create", "helio", "heliophysics")
-    stack.huron("catalog", "grant", "heliophysics", "catalog_admin", "helio-catalog-admins")
+    stack.huron("create", "catalog", "heliophysics", "--org", "helio")
+    stack.huron(
+        "adm", "grant", "catalog_admin", "helio-catalog-admins", "--catalog", "heliophysics"
+    )
     stack.login("carol")
     for role, group in (("contributor", "helio-contributors"), ("reader", "helio-readers")):
-        stack.huron("catalog", "grant", "heliophysics", role, group)
-    stack.huron("namespace", "create", "heliophysics.solar-wind", "--allow-collections")
+        stack.huron("adm", "grant", role, group, "--catalog", "heliophysics")
+    stack.huron("create", "namespace", "heliophysics.solar-wind", "--allow-collections")
     schema = tmp_path / "helio.json"
     schema.write_text(
         json.dumps(
@@ -164,16 +166,16 @@ def test_every_role_end_to_end(stack: Stack, tmp_path: Path) -> None:
         )
     )
     stack.login("bob")
-    base = json.loads(stack.huron("-o", "json", "schema", "list"))[0]["id"]
-    stack.huron("schema", "publish", "helio", "helio", str(schema), "--extends", base)
-    helio = json.loads(stack.huron("-o", "json", "schema", "list", "helio"))[0]["id"]
+    base = json.loads(stack.huron("-o", "json", "get", "schemas"))[0]["id"]
+    stack.huron("adm", "publish", "schema", "helio", "helio", str(schema), "--extends", base)
+    helio = json.loads(stack.huron("-o", "json", "get", "schemas", "helio"))[0]["id"]
     stack.login("carol")
-    stack.huron("schema", "assign", "heliophysics", helio)
+    stack.huron("adm", "assign", "schema", helio, "--catalog", "heliophysics")
 
     stack.login("dave")
-    stack.huron("catalog", "use", "heliophysics")
+    stack.huron("catalog", "heliophysics")
     stack.prompter.answers.extend(["Run 7", "Solar wind", "parker", *([False] * 7)])
-    stack.huron("collection", "create", "solar-wind.run7")
+    stack.huron("create", "collection", "solar-wind.run7")
     directory = stack.share / "helio" / "heliophysics" / "solar-wind" / "run7"
     assert json.loads((directory / "metadata.json").read_text())["metadata"]["mission"] == "parker"
     data = tmp_path / "data"
@@ -191,8 +193,8 @@ def test_every_role_end_to_end(stack: Stack, tmp_path: Path) -> None:
     stack.prompter.answers.extend(
         [None, None, None, False, False, False, False, True, "wind, sun", False, False]
     )
-    stack.huron("meta", "edit")
-    stack.huron("meta", "publish")
+    stack.huron("edit", "meta")
+    stack.huron("publish", "meta")
     (data / "d.txt").write_text("d")
     stack.huron("add", str(data / "d.txt"))
     copy = stack.state.read_copy(Config.load(stack.config_path, {}).current_collection or "")
@@ -203,8 +205,8 @@ def test_every_role_end_to_end(stack: Stack, tmp_path: Path) -> None:
     stack.huron("push")
 
     stack.login("erin")
-    assert "run7" in stack.huron("search", "heliophysics", "-q", "run")
-    listed = json.loads(stack.huron("-o", "json", "files", "solar-wind.run7"))
+    assert "run7" in stack.huron("--catalog", "heliophysics", "search", "-q", "run")
+    listed = json.loads(stack.huron("-o", "json", "get", "files", "solar-wind.run7"))
     assert [f["rel_path"] for f in listed] == ["a.txt", "b.txt", "c.txt", "d.txt"]
     stack.huron("checkout", "solar-wind.run7")
     stack.huron("add", str(data / "a.txt"), "--as", "e.txt")

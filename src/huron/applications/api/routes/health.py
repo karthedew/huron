@@ -17,7 +17,13 @@ router = APIRouter(tags=["health"])
 @router.get("/healthz")
 async def healthz(runtime: RuntimeDep) -> Health:
     """The service is up; reports the instance the share marker must name."""
-    return Health(status="ok", instance_id=str(runtime.settings.instance_id), version=VERSION)
+    settings = runtime.settings
+    return Health(
+        status="ok",
+        instance_id=str(settings.instance_id),
+        version=VERSION,
+        organizations_managed=settings.declarations.managed,
+    )
 
 
 @router.get("/readyz")

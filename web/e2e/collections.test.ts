@@ -376,7 +376,7 @@ test.describe('a draft', () => {
 			await expect(definition(details(page), 'Files')).toHaveCount(0);
 			const activate = main(page).getByRole('region', { name: 'Activate this draft' });
 			await expect(activate.locator('pre')).toHaveText(
-				`huron --catalog heliophysics collection activate ${DRAFT}`
+				`huron --catalog heliophysics activate collection ${DRAFT}`
 			);
 			await expect(
 				main(page).getByRole('region', { name: 'Add files to this collection' })
@@ -417,8 +417,8 @@ test.describe('an incomplete collection', () => {
 		await page.goto(collectionPath(FLARES));
 		const hint = main(page).getByRole('region', { name: 'Complete the metadata, then publish it' });
 		await expect(hint.locator('pre')).toHaveText(
-			`huron --catalog space-weather meta edit ${FLARES}\n` +
-				`huron --catalog space-weather meta publish ${FLARES}`
+			`huron --catalog space-weather edit meta ${FLARES}\n` +
+				`huron --catalog space-weather publish meta ${FLARES}`
 		);
 		await expect(
 			main(page).getByRole('region', { name: 'Add files to this collection' })
@@ -465,10 +465,10 @@ test.describe('a collection whose schema override no longer fits', () => {
 			main(page)
 				.getByRole('region', { name: 'Replace the schema override with one that fits' })
 				.locator('pre')
-		).toHaveText(`huron --catalog space-weather meta override set <override.json> ${STORMS}`);
+		).toHaveText(`huron --catalog space-weather set override <override.json> ${STORMS}`);
 		await expect(
 			main(page).getByRole('region', { name: 'Remove the schema override' }).locator('pre')
-		).toHaveText(`huron --catalog space-weather meta override clear ${STORMS}`);
+		).toHaveText(`huron --catalog space-weather unset override ${STORMS}`);
 		await expect(
 			main(page).getByRole('region', { name: 'Complete the metadata, then publish it' })
 		).toHaveCount(0);

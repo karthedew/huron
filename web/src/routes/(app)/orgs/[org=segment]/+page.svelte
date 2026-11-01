@@ -73,7 +73,7 @@
 			<div class="mx-auto mt-4 max-w-2xl">
 				<CliHint
 					title="Create a catalog in this organization"
-					command={cliCommand({ verb: 'catalog create', organization: organization.name })}
+					command={cliCommand({ verb: 'create catalog', organization: organization.name })}
 				/>
 			</div>
 		{/if}

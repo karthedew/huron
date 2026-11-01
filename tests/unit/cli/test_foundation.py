@@ -20,7 +20,7 @@ from tests.support.cli import Cli
 def test_help_and_usage_errors(cli: Cli) -> None:
     assert cli.run("--help").exit_code == 0
     assert cli.run("no-such-command").exit_code == 2
-    assert cli.run("org", "describe").exit_code == 2
+    assert cli.run("describe", "org").exit_code == 2
 
 
 def test_unexpected_failures_are_reported_or_raised_in_debug(cli: Cli, monkeypatch) -> None:  # type: ignore[no-untyped-def]

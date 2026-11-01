@@ -147,7 +147,8 @@ The data stays in the volume `huron_postgres-data`, and running the seed again c
 A `make up` Keycloak whose volume predates the `huron-web` client answers the sign-in with "Client
 not found"; recreate only its volume, as the root README's
 [troubleshooting](../README.md#troubleshooting) describes. `make down` stops PostgreSQL and
-Keycloak.
+Keycloak, and the `make app` stack too when it runs; the data of both stays. The two stacks share
+their ports, so `make up` stops the `make app` stack first, and `make app` stops this one.
 
 ## Everything in Docker: `make app`
 

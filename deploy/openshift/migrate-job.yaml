@@ -12,8 +12,8 @@ spec:
         - name: migrate
           image: huron
           command: ["alembic", "upgrade", "head"]
+          # Migrations need only HURON_DATABASE_URL (migrations/env.py).
           envFrom:
-            - configMapRef: {name: huron}
             - secretRef: {name: huron}
           securityContext:
             allowPrivilegeEscalation: false

@@ -110,6 +110,17 @@ class StateDir:
         """The directory of one working copy."""
         return self.ensure() / "collections" / collection_id
 
+    def working_copies(self) -> list[WorkingCopy]:
+        """Every working copy recorded here, by identifier; creates nothing.
+
+        A collection directory without ``copy.json`` (a lock left by a refused push) is skipped.
+        """
+        base = self.root / "collections"
+        if not base.is_dir():
+            return []
+        found = [self.read_copy(entry.name) for entry in sorted(base.iterdir()) if entry.is_dir()]
+        return sorted((copy for copy in found if copy is not None), key=lambda c: c.identifier)
+
     def read_copy(self, collection_id: str) -> WorkingCopy | None:
         """A working copy, if checked out."""
         data = self._read(self.collection_dir(collection_id) / "copy.json")

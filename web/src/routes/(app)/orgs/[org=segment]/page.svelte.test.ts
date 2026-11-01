@@ -31,6 +31,7 @@ async function show(
 				rememberedOrganization: null,
 				organization: 'helio',
 				organizationDetails: HELIO,
+				organizationPath: '/projects/huron/helio',
 				catalogs,
 				nextCursor
 			},
@@ -82,7 +83,9 @@ describe('/orgs/[org] page', () => {
 		await show([], { roles: [{ scope: 'organization', scope_id: HELIO.id, role: 'org_admin' }] });
 		expect(screen.getByText('No catalogs you can see in this organization.')).toBeInTheDocument();
 		const hint = screen.getByRole('region', { name: 'Create a catalog in this organization' });
-		expect(within(hint).getByRole('textbox')).toHaveValue('huron catalog create helio <name>');
+		expect(within(hint).getByRole('textbox')).toHaveValue(
+			'huron create catalog <name> --org helio'
+		);
 	});
 
 	it('shows the hint to platform administrators too, but not to anyone else', async () => {

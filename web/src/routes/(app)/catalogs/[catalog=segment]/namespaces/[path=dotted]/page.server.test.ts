@@ -200,6 +200,18 @@ describe('/catalogs/[catalog]/namespaces/[path] load', () => {
 		);
 	});
 
+	it("puts the directory under the organization's root when the API names one", async () => {
+		deepRoutes({
+			'/catalogs/heliophysics/namespaces/deep.a': jsonResponse({
+				...DEEP,
+				share_root: '/data1/huron'
+			})
+		});
+		expect((await load(namespaceEvent('deep.a'))).sharePath).toBe(
+			'/data1/huron/helio/heliophysics/deep/a'
+		);
+	});
+
 	it('restarts the lists when a cursor is no longer accepted', async () => {
 		deepRoutes({
 			'/catalogs/heliophysics/namespaces?parent=deep.a&cursor=stale&limit=50': problemResponse(

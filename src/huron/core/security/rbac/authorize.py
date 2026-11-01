@@ -16,15 +16,16 @@ if TYPE_CHECKING:
     from huron.core.security.rbac.ports import GrantReader
     from huron.core.security.rbac.privileges import Privilege
 
-__all__ = ["Authorizer", "EffectiveGroups", "Visibility"]
+__all__ = ["Authorizer", "EffectiveGroups", "GrantSource", "Visibility"]
 
 
 @dataclass(frozen=True, slots=True)
 class Visibility:
     """What an actor may see: everything, or these organizations and catalogs.
 
-    ``managed_organization_ids`` are the organizations where the actor holds an organization
-    role, so every catalog in them is visible; ``organization_ids`` adds the organizations of
+    ``managed_organization_ids`` are the organizations where the actor holds any role at
+    organization scope (Org Admin, or a catalog role granted organization-wide), so every catalog
+    in them is visible; ``organization_ids`` adds the organizations of
     individually granted catalogs.
     """
 
@@ -47,6 +48,19 @@ class EffectiveGroups:
     def as_dict(self) -> dict[str, list[str]]:
         """Render as the API body of ``GET /catalogs/{catalog}/grants``."""
         return {role.value: list(getattr(self, role.value)) for role in Role}
+
+
+@dataclass(frozen=True, slots=True)
+class GrantSource:
+    """One group holding one role on a catalog, and the scope the grant was made at.
+
+    A catalog inherits the grants of its organization and of the platform, so the same group and
+    role can come from more than one scope.
+    """
+
+    role: Role
+    ldap_group: str
+    scope: Scope
 
 
 class Authorizer:
@@ -119,11 +133,21 @@ class Authorizer:
     async def effective_groups(self, scope: Scope) -> EffectiveGroups:
         """Groups per role at ``scope``, including those inherited from enclosing scopes."""
         collected: dict[Role, set[str]] = {role: set() for role in Role}
+        for source in await self.grant_sources(scope):
+            collected[source.role].add(source.ldap_group)
+        return EffectiveGroups(**{role.value: tuple(sorted(collected[role])) for role in Role})
+
+    async def grant_sources(self, scope: Scope) -> list[GrantSource]:
+        """Every grant that holds at ``scope``, with the scope it was made at.
+
+        Sorted by role (Platform Admin first), then group, then scope (platform first).
+        """
+        found: set[GrantSource] = set()
         for enclosing in await self._grants.enclosing(scope):
             granted = await self._grants.groups_for_scope(enclosing)
             for role, groups in granted.items():
-                collected[role].update(groups)
-        return EffectiveGroups(**{role.value: tuple(sorted(collected[role])) for role in Role})
+                found.update(GrantSource(role, group, enclosing) for group in groups)
+        return sorted(found, key=_source_order)
 
     async def _organization_of(self, scope: Scope) -> set[uuid.UUID]:
         return {
@@ -131,3 +155,11 @@ class Authorizer:
             for enclosing in await self._grants.enclosing(scope)
             if enclosing.type is ScopeType.ORGANIZATION and enclosing.id is not None
         }
+
+
+_ROLE_RANK = {role: rank for rank, role in enumerate(Role)}
+_SCOPE_RANK = {scope_type: rank for rank, scope_type in enumerate(ScopeType)}
+
+
+def _source_order(source: GrantSource) -> tuple[int, str, int]:
+    return (_ROLE_RANK[source.role], source.ldap_group, _SCOPE_RANK[source.scope.type])

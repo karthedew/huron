@@ -21,6 +21,10 @@ export function organizationFixture(overrides: Partial<Organization> = {}): Orga
 		created_at: '2026-10-01T09:00:00+00:00',
 		created_by: 'sub-alice',
 		catalog_count: 2,
+		declared: false,
+		root: null,
+		path: null,
+		export: null,
 		...overrides
 	};
 }
@@ -37,6 +41,7 @@ export function catalogFixture(overrides: Partial<Catalog> = {}): Catalog {
 		created_at: '2026-10-01T09:00:00+00:00',
 		created_by: 'sub-bob',
 		namespace_count: 4,
+		share_root: null,
 		...overrides
 	};
 }
@@ -57,6 +62,7 @@ export function namespaceFixture(overrides: Partial<Namespace> = {}): Namespace 
 		namespace_count: 2,
 		collection_count: 0,
 		disk_path: 'helio/heliophysics/solar-wind',
+		share_root: null,
 		...overrides
 	};
 }
@@ -81,6 +87,7 @@ export function collectionFixture(overrides: Partial<Collection> = {}): Collecti
 		activated_at: '2026-10-02T09:05:00+00:00',
 		path: 'helio/heliophysics/solar-wind/ace/mag-l2-2024',
 		problems: [],
+		share_root: null,
 		...overrides
 	};
 }

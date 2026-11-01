@@ -84,10 +84,22 @@ describe('HuronApi URLs', () => {
 			{ type: 'object' }
 		],
 		[
-			'catalogGrants',
-			(api) => api.catalogGrants('heliophysics'),
-			'/api/v1/catalogs/heliophysics/grants',
-			{ platform_admin: [], org_admin: [], catalog_admin: [], contributor: [], reader: ['r'] }
+			'organizationGrants',
+			(api) => api.organizationGrants('helio'),
+			'/api/v1/organizations/helio/grants',
+			{ org_admin: ['a'], catalog_admin: [], contributor: [], reader: ['r'] }
+		],
+		[
+			'catalogGrantSources',
+			(api) => api.catalogGrantSources('heliophysics').then((items) => ({ items })),
+			'/api/v1/catalogs/heliophysics/grants/sources',
+			{
+				items: [
+					{ role: 'platform_admin', group: 'p', scope: 'platform' },
+					{ role: 'reader', group: 'r', scope: 'organization' },
+					{ role: 'reader', group: 'r', scope: 'catalog' }
+				]
+			}
 		],
 		[
 			'catalogLog',
@@ -370,6 +382,17 @@ describe('HuronApi failures', () => {
 	])('treats %s as a malformed answer', async (_, response) => {
 		const { api } = client([response]);
 		expect(await failure(api.whoami())).toMatchObject({ status: 502, code: 'HTTP' });
+	});
+
+	it.each([
+		['an unknown role', { role: 'owner', group: 'g', scope: 'catalog' }],
+		['an unknown scope', { role: 'reader', group: 'g', scope: 'namespace' }]
+	])('treats a grant source with %s as a malformed answer', async (_, item) => {
+		const { api } = client([jsonResponse({ items: [item] })]);
+		expect(await failure(api.catalogGrantSources('heliophysics'))).toMatchObject({
+			status: 502,
+			code: 'HTTP'
+		});
 	});
 
 	it('reports network failures as an unreachable API', async () => {

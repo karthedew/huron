@@ -14,6 +14,7 @@ export const ACTION_LABELS: Readonly<Record<AuditAction, string>> = {
 	'platform.grant': 'Granted a platform role',
 	'platform.revoke': 'Revoked a platform role',
 	'organization.create': 'Created the organization',
+	'organization.update': 'Updated the organization',
 	'organization.delete': 'Deleted the organization',
 	'organization.grant': 'Granted an organization role',
 	'organization.revoke': 'Revoked an organization role',
@@ -134,6 +135,8 @@ function summary(entry: AuditEntry, schemas: Readonly<Record<string, SchemaName>
 		case 'organization.delete':
 		case 'catalog.delete':
 			return stringField(detail, 'name') ?? '';
+		case 'organization.update':
+			return join(' ', [stringField(detail, 'name'), aside([changedFields(detail)])]);
 		case 'catalog.create': {
 			const created = schema('schema_id');
 			return join(' ', [
@@ -222,6 +225,21 @@ function schemaName(name: string | null, version: number | null): string | null 
 }
 
 /** The collection's record revision after the change; not a version of its data. */
+/** The fields an organization update changed (`fields`), in words; `null` when it names none. */
+const FIELD_NAMES: Readonly<Record<string, string>> = {
+	display_name: 'display name',
+	description: 'description'
+};
+
+function changedFields(detail: Detail): string | null {
+	const fields = ownValue(detail, 'fields');
+	if (!Array.isArray(fields)) return null;
+	const names = fields
+		.filter((field): field is string => typeof field === 'string' && field !== '')
+		.map((field) => ownValue(FIELD_NAMES, field) ?? field);
+	return names.length === 0 ? null : names.join(', ');
+}
+
 function revision(detail: Detail): string | null {
 	const version = numberField(detail, 'version');
 	return version === null ? null : `revision ${formatCount(version)}`;

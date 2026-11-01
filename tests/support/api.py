@@ -83,13 +83,15 @@ class Service:
 
 
 @asynccontextmanager
-async def service(**overrides: object) -> AsyncIterator[Service]:
-    """Start an in-process service over a fresh in-memory store."""
+async def service(
+    *, store: MemoryStore | None = None, **overrides: object
+) -> AsyncIterator[Service]:
+    """Start an in-process service over ``store``, by default a fresh in-memory one."""
     issuer = FakeIssuer()
     clock = frozen()
     runtime = await build_runtime(
         settings(**overrides),
-        store=MemoryStore(),
+        store=store or MemoryStore(),
         http=httpx.AsyncClient(transport=issuer.transport()),
         groups=FakeGroups(USERS),
         clock=clock,

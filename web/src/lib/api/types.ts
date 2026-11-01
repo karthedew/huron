@@ -7,9 +7,10 @@ import type {
 	CatalogOut,
 	CollectionOut,
 	CommitOut,
-	EffectiveGroupsOut,
 	FileOut,
+	GrantSourceOut,
 	NamespaceOut,
+	OrganizationGroupsOut,
 	OrganizationOut,
 	Page as ApiPage,
 	ProblemOut,
@@ -31,7 +32,8 @@ export type Commit = CommitOut;
 export type AuditEntry = AuditOut;
 export type SchemaEntry = SchemaOut;
 export type SchemaRef = SchemaRefOut;
-export type EffectiveGroups = EffectiveGroupsOut;
+export type GrantSource = GrantSourceOut;
+export type OrganizationGroups = OrganizationGroupsOut;
 export type WhoAmI = ApiWhoAmI;
 export type RoleGrant = RoleOut;
 export type Page<T> = ApiPage<T>;
@@ -72,11 +74,20 @@ export const ROLES = [
 ] as const;
 export type Role = (typeof ROLES)[number];
 
+/**
+ * The roles granted on an organization: `org_admin`, and the three catalog roles, which then hold
+ * in every catalog of the organization (`ORGANIZATION_ROLES` of
+ * `src/huron/core/security/rbac/roles.py`).
+ */
+export const ORGANIZATION_ROLES = ['org_admin', 'catalog_admin', 'contributor', 'reader'] as const;
+export type OrganizationRole = (typeof ORGANIZATION_ROLES)[number];
+
 /** The closed audit vocabulary of `src/huron/core/lake/audit/models.py`. */
 export const AUDIT_ACTIONS = [
 	'platform.grant',
 	'platform.revoke',
 	'organization.create',
+	'organization.update',
 	'organization.delete',
 	'organization.grant',
 	'organization.revoke',

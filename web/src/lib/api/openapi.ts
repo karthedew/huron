@@ -48,6 +48,8 @@ export interface CatalogOut {
 	namespace_count: number;
 	organization: string;
 	schema: SchemaRefOut;
+	/** The configured root of the organization's directory; clients join it with the relative path, or use their own mount prefix when it is null. */
+	share_root: string | null;
 	version: number;
 }
 
@@ -76,6 +78,8 @@ export interface CollectionOut {
 	problems: ProblemOut[];
 	schema: SchemaRefOut;
 	schema_override: Record<string, unknown> | null;
+	/** The configured root of the organization's directory; clients join it with the relative path, or use their own mount prefix when it is null. */
+	share_root: string | null;
 	state: string;
 	/** Format: date-time. */
 	updated_at: string;
@@ -102,9 +106,10 @@ export interface CommitOut {
 	removes: number;
 }
 
-/** What a successful commit answers. */
+/** What a successful commit answers; a dry run answers what the commit would make. */
 export interface CommitResultOut {
-	commit_id: string;
+	/** The commit's id; null for a dry run. */
+	commit_id: string | null;
 	file_count: number;
 	version: number;
 }
@@ -153,6 +158,18 @@ export interface GrantChangeOut {
 	role: string;
 }
 
+/** One group holding one role on a catalog, and the scope the grant was made at. */
+export interface GrantSourceOut {
+	group: string;
+	role: 'platform_admin' | 'org_admin' | 'catalog_admin' | 'contributor' | 'reader';
+	scope: 'platform' | 'organization' | 'catalog';
+}
+
+/** Every grant holding on a catalog, sorted by role (Platform Admin first), group, scope. */
+export interface GrantSourcesOut {
+	items: GrantSourceOut[];
+}
+
 /** The complete set of LDAP groups for one role. */
 export interface GroupsIn {
 	ldap_groups: string[];
@@ -168,9 +185,15 @@ export interface HTTPValidationError {
 	detail?: ValidationError[];
 }
 
-/** The liveness answer. */
+/**
+ * The liveness answer.
+ * 
+ * ``organizations_managed`` is whether the service configuration declares the organizations:
+ * the CLI then looks for an organization's directory only where its declaration puts it.
+ */
 export interface Health {
 	instance_id: string;
+	organizations_managed: boolean;
 	status: string;
 	version: string;
 }
@@ -203,7 +226,22 @@ export interface NamespaceOut {
 	organization: string;
 	parent: string;
 	path: string;
+	/** The configured root of the organization's directory; clients join it with the relative path, or use their own mount prefix when it is null. */
+	share_root: string | null;
 	version: number;
+}
+
+/**
+ * Groups per organization-scope role.
+ * 
+ * ``catalog_admin``, ``contributor`` and ``reader`` hold their role in every catalog of the
+ * organization.
+ */
+export interface OrganizationGroupsOut {
+	catalog_admin: string[];
+	contributor: string[];
+	org_admin: string[];
+	reader: string[];
 }
 
 /** A new organization. */
@@ -219,10 +257,18 @@ export interface OrganizationOut {
 	/** Format: date-time. */
 	created_at: string;
 	created_by: string;
+	/** Whether the service configuration declares it. */
+	declared: boolean;
 	description: string;
 	display_name: string;
+	/** The NFS export the configuration names, if any. */
+	export: string | null;
 	id: string;
 	name: string;
+	/** The organization's directory, root/name. */
+	path: string | null;
+	/** The configured parent of the organization's directory. */
+	root: string | null;
 	version: number;
 }
 

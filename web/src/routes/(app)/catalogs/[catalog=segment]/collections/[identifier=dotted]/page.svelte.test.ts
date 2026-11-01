@@ -267,10 +267,10 @@ describe("a collection's overview", () => {
 			'Add files to this collection'
 		]);
 		expect(command('Replace the schema override with one that fits')).toBe(
-			'huron --catalog heliophysics meta override set <override.json> heliophysics.solar-wind.ace.mag-l2-2024'
+			'huron --catalog heliophysics set override <override.json> heliophysics.solar-wind.ace.mag-l2-2024'
 		);
 		expect(command('Remove the schema override')).toBe(
-			'huron --catalog heliophysics meta override clear heliophysics.solar-wind.ace.mag-l2-2024'
+			'huron --catalog heliophysics unset override heliophysics.solar-wind.ace.mag-l2-2024'
 		);
 		expect(
 			screen.queryByRole('region', { name: 'Complete the metadata, then publish it' })
@@ -326,7 +326,7 @@ describe("a collection's overview", () => {
 			'Activate this draft'
 		]);
 		expect(command('Activate this draft')).toBe(
-			'huron --catalog heliophysics collection activate heliophysics.solar-wind.ace.mag-l2-2024'
+			'huron --catalog heliophysics activate collection heliophysics.solar-wind.ace.mag-l2-2024'
 		);
 		expect(screen.getByRole('region', { name: '1 problem in the metadata' })).toHaveTextContent(
 			'The draft can be activated once its metadata is fixed.'
@@ -340,8 +340,8 @@ describe("a collection's overview", () => {
 			problems: [{ field: null, message: "'mission' is a required property" }]
 		});
 		expect(command('Complete the metadata, then publish it')).toBe(
-			'huron --catalog heliophysics meta edit heliophysics.solar-wind.ace.mag-l2-2024\n' +
-				'huron --catalog heliophysics meta publish heliophysics.solar-wind.ace.mag-l2-2024'
+			'huron --catalog heliophysics edit meta heliophysics.solar-wind.ace.mag-l2-2024\n' +
+				'huron --catalog heliophysics publish meta heliophysics.solar-wind.ace.mag-l2-2024'
 		);
 	});
 });

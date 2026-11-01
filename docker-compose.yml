@@ -1,6 +1,7 @@
 # PostgreSQL and Keycloak for running the API on the host (`make up`, then `make migrate` and
 # `make api`). The whole application in Docker is docker-compose.app.yml (`make app`); both use the
-# same ports, so run one at a time.
+# same ports, so run one at a time. The API on the host reads the service configuration,
+# huron.dev.yaml, through HURON_CONFIG_FILE in dev.env, and `make api` restarts when it changes.
 name: huron
 
 services:

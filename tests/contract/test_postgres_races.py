@@ -167,3 +167,24 @@ async def test_a_collection_deleted_between_listing_and_recompute_is_skipped(
     assert view.collection.state is State.INCOMPLETE
     with pytest.raises(NotFound):
         await lake.collections.get(CONTRIBUTOR, cid)  # type: ignore[arg-type]
+
+
+async def test_a_dry_run_commit_writes_nothing_to_postgresql(lake: Lake) -> None:
+    cid = await active_collection(lake)
+    added = CommitRequest(2, (FileAdd("a.txt", 1, SHA),), (), "h")
+    await lake.commits.commit(CONTRIBUTOR, cid, added)  # type: ignore[arg-type]
+    log = await lake.audit.for_collection(CATALOG_ADMIN, cid)  # type: ignore[arg-type]
+    request = CommitRequest(3, (FileAdd("b.txt", 2, None),), ("a.txt",), "h")
+    preview = await lake.commits.commit(CONTRIBUTOR, cid, request, dry_run=True)  # type: ignore[arg-type]
+    assert preview.as_dict() == {"version": 4, "file_count": 1, "commit_id": None}
+    view = await lake.collections.get(READER, cid)  # type: ignore[arg-type]
+    assert (view.collection.version, view.collection.file_count) == (3, 1)
+    commits = await lake.commits.list_commits(READER, cid)  # type: ignore[arg-type]
+    assert len(commits.items) == 1
+    files = await lake.commits.list_files(READER, cid)  # type: ignore[arg-type]
+    assert [f.rel_path for f in files.items] == ["a.txt"]
+    after = await lake.audit.for_collection(CATALOG_ADMIN, cid)  # type: ignore[arg-type]
+    assert len(after.items) == len(log.items)
+    hashed = CommitRequest(3, (FileAdd("b.txt", 2, SHA),), ("a.txt",), "h")
+    result = await lake.commits.commit(CONTRIBUTOR, cid, hashed)  # type: ignore[arg-type]
+    assert (result.version, result.file_count) == (preview.version, preview.file_count)

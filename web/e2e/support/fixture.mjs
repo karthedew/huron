@@ -117,6 +117,9 @@ export function isUsername(value) {
  * @property {string} displayName
  * @property {string} description
  * @property {readonly string[]} orgAdmins
+ * @property {readonly FixtureGrant[]} grants Catalog roles granted on the organization, which hold
+ *   in every catalog of it, like the service configuration's `groups` of a declared organization
+ *   in `huron.dev.yaml`; its catalogs' own grants overlap them and add to them.
  * @property {Username} createdBy
  */
 
@@ -127,6 +130,11 @@ export const ORGANIZATIONS = [
 		displayName: 'Heliophysics Division',
 		description: 'The Sun, the solar wind and the space environment.',
 		orgAdmins: ['helio-org-admins'],
+		grants: [
+			{ role: 'catalog_admin', groups: ['helio-catalog-admins'], grantedBy: 'bob' },
+			{ role: 'contributor', groups: ['helio-contributors'], grantedBy: 'bob' },
+			{ role: 'reader', groups: ['helio-readers'], grantedBy: 'bob' }
+		],
 		createdBy: 'alice'
 	},
 	{
@@ -134,6 +142,7 @@ export const ORGANIZATIONS = [
 		displayName: 'Earth Science',
 		description: 'Earth observation and ocean data.',
 		orgAdmins: ['geo-org-admins'],
+		grants: [{ role: 'reader', groups: ['geo-readers'], grantedBy: 'alice' }],
 		createdBy: 'alice'
 	},
 	{
@@ -141,6 +150,7 @@ export const ORGANIZATIONS = [
 		displayName: 'Astrophysics',
 		description: '',
 		orgAdmins: [],
+		grants: [],
 		createdBy: 'alice'
 	},
 	{
@@ -151,6 +161,7 @@ export const ORGANIZATIONS = [
 		description:
 			'Planetary missions, before their first catalog: https://archive.example.org/planetary/mars_reconnaissance_orbiter_high_resolution_imaging_science_experiment/',
 		orgAdmins: ['planetary-org-admins'],
+		grants: [],
 		createdBy: 'alice'
 	}
 ];
@@ -692,12 +703,24 @@ function textOf(value) {
 	return typeof value === 'string' ? value : '';
 }
 
+/**
+ * Whether a user holds a role on an organization itself: org_admin, or a catalog role granted on
+ * it, which shows them the organization and every catalog of it.
+ * @param {FixtureOrganization} organization
+ * @param {readonly string[]} groups
+ */
+function holdsOrganizationRole(organization, groups) {
+	return [...organization.orgAdmins, ...organization.grants.flatMap((grant) => grant.groups)].some(
+		(group) => groups.includes(group)
+	);
+}
+
 /** The organizations a user may see, by name in the API's order (sorted by name). */
 export function visibleOrganizations(/** @type {Username} */ username) {
 	const { groups } = USERS[username];
 	if (groups.includes(PLATFORM_ADMIN_GROUP)) return ORGANIZATIONS.map(({ name }) => name).sort();
 	const names = new Set(
-		ORGANIZATIONS.filter(({ orgAdmins }) => orgAdmins.some((group) => groups.includes(group))).map(
+		ORGANIZATIONS.filter((organization) => holdsOrganizationRole(organization, groups)).map(
 			({ name }) => name
 		)
 	);
@@ -712,12 +735,12 @@ export function visibleOrganizations(/** @type {Username} */ username) {
 export function visibleCatalogs(/** @type {Username} */ username) {
 	const { groups } = USERS[username];
 	if (groups.includes(PLATFORM_ADMIN_GROUP)) return CATALOGS.map(({ name }) => name).sort();
-	const managed = ORGANIZATIONS.filter(({ orgAdmins }) =>
-		orgAdmins.some((group) => groups.includes(group))
+	const wide = ORGANIZATIONS.filter((organization) =>
+		holdsOrganizationRole(organization, groups)
 	).map(({ name }) => name);
 	return CATALOGS.filter(
 		(catalog) =>
-			managed.includes(catalog.organization) ||
+			wide.includes(catalog.organization) ||
 			catalog.grants.some((grant) => grant.groups.some((group) => groups.includes(group)))
 	)
 		.map(({ name }) => name)

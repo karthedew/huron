@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -10,7 +11,8 @@ import httpx
 
 from huron import __version__
 from huron.applications.api.settings import Settings
-from huron.core.lake.bootstrap import Lake, LakeSettings, bootstrap, build_lake
+from huron.core.lake.bootstrap import BootstrapResult, Lake, LakeSettings, bootstrap, build_lake
+from huron.core.lake.organizations.declarations import UNMANAGED, Declarations
 from huron.core.lake.transaction import UnitOfWork
 from huron.core.metastore.postgres import PostgresStore
 from huron.core.metastore.store import MemoryStore
@@ -50,6 +52,7 @@ class Runtime:
     company: CompanyTokenVerifier
     groups: GroupDirectory
     owns_http: bool = False
+    declarations: Declarations = UNMANAGED
     _ring: KeyRing | None = field(default=None, repr=False)
     _ring_loaded_at: datetime | None = field(default=None, repr=False)
 
@@ -110,8 +113,9 @@ async def build_runtime(
     clock = clock or SystemClock()
     if store is None:
         store = await _store(settings)
-    lake_settings = LakeSettings(settings.platform_admin_group, settings.key_overlap)
-    await bootstrap(store, clock, lake_settings)
+    declarations = settings.declarations
+    lake_settings = LakeSettings(settings.platform_admin_group, settings.key_overlap, declarations)
+    _report(await bootstrap(store, clock, lake_settings))
     owns_http = http is None
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
     return Runtime(
@@ -125,7 +129,25 @@ async def build_runtime(
         ),
         groups=groups or HttpGroupDirectory(client, settings.group_directory_url),
         owns_http=owns_http,
+        declarations=declarations,
     )
+
+
+def _report(result: BootstrapResult) -> None:
+    log = logging.getLogger("huron.api.bootstrap")
+    reconciled = result.organizations
+    for name in reconciled.created:
+        log.info("created declared organization %s", name)
+    for name in reconciled.updated:
+        log.info("updated declared organization %s", name)
+    for name in reconciled.regranted:
+        log.info("replaced the role groups of declared organization %s", name)
+    for organization in reconciled.undeclared:
+        log.warning(
+            "organization %s (%d catalogs) is not declared in the configuration; it is kept",
+            organization.name,
+            organization.catalog_count,
+        )
 
 
 async def _store(settings: Settings) -> ClosableStore:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from huron.core.security.rbac.roles import Role, ScopeType, scope_type_of
+from huron.core.security.rbac.roles import Role, ScopeType, scope_types_of
 from huron.pkg.errors import Invalid
 
 if TYPE_CHECKING:
@@ -50,10 +50,11 @@ class Grant:
 
 def check_grant(grant: Grant) -> Grant:
     """Return ``grant`` when its role fits its scope; raises :class:`GrantInvalid`."""
-    expected = scope_type_of(grant.role)
-    if grant.scope.type is not expected:
+    allowed = scope_types_of(grant.role)
+    if grant.scope.type not in allowed:
+        where = " or ".join(str(t) for t in ScopeType if t in allowed)
         raise GrantInvalid(
-            f"role {grant.role} is granted at {expected} scope",
+            f"role {grant.role} is granted at {where} scope",
             {"role": str(grant.role), "scope": str(grant.scope.type)},
         )
     if (grant.scope.type is ScopeType.PLATFORM) != (grant.scope.id is None):

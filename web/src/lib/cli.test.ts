@@ -15,68 +15,72 @@ describe('cliCommand', () => {
 		[{ verb: 'push', catalog: 'heliophysics' }, 'huron --catalog heliophysics push -m "<message>"'],
 		[
 			{
-				verb: 'collection activate',
+				verb: 'activate collection',
 				catalog: 'heliophysics',
 				collection: 'heliophysics.solar-wind.ace.mag-l1-draft'
 			},
-			'huron --catalog heliophysics collection activate heliophysics.solar-wind.ace.mag-l1-draft'
+			'huron --catalog heliophysics activate collection heliophysics.solar-wind.ace.mag-l1-draft'
 		],
 		[
 			{
-				verb: 'meta edit',
+				verb: 'edit meta',
 				catalog: 'space-weather',
 				collection: 'space-weather.alerts.flare-list-2024'
 			},
-			'huron --catalog space-weather meta edit space-weather.alerts.flare-list-2024'
+			'huron --catalog space-weather edit meta space-weather.alerts.flare-list-2024'
 		],
 		[
 			{
-				verb: 'meta publish',
+				verb: 'publish meta',
 				catalog: 'space-weather',
 				collection: 'space-weather.alerts.flare-list-2024'
 			},
-			'huron --catalog space-weather meta publish space-weather.alerts.flare-list-2024'
+			'huron --catalog space-weather publish meta space-weather.alerts.flare-list-2024'
 		],
 		[
-			{ verb: 'meta override set', catalog: 'adv-cat', collection: 'adv-cat.box.clash' },
-			'huron --catalog adv-cat meta override set <override.json> adv-cat.box.clash'
+			{ verb: 'set override', catalog: 'adv-cat', collection: 'adv-cat.box.clash' },
+			'huron --catalog adv-cat set override <override.json> adv-cat.box.clash'
 		],
 		[
-			{ verb: 'meta override clear', catalog: 'adv-cat', collection: 'adv-cat.box.clash' },
-			'huron --catalog adv-cat meta override clear adv-cat.box.clash'
+			{ verb: 'unset override', catalog: 'adv-cat', collection: 'adv-cat.box.clash' },
+			'huron --catalog adv-cat unset override adv-cat.box.clash'
 		],
 		[
-			{ verb: 'collection create', catalog: 'heliophysics', namespace: 'heliophysics.fields' },
-			'huron --catalog heliophysics collection create heliophysics.fields.<name>'
+			{ verb: 'create collection', catalog: 'heliophysics', namespace: 'heliophysics.fields' },
+			'huron --catalog heliophysics create collection heliophysics.fields.<name>'
 		],
 		[
 			{
-				verb: 'namespace create',
+				verb: 'create namespace',
 				catalog: 'heliophysics',
 				parent: 'heliophysics',
 				allowCollections: false
 			},
-			'huron --catalog heliophysics namespace create heliophysics.<name>'
+			'huron --catalog heliophysics create namespace heliophysics.<name>'
 		],
 		[
 			{
-				verb: 'namespace create',
+				verb: 'create namespace',
 				catalog: 'heliophysics',
 				parent: 'heliophysics.solar-wind',
 				allowCollections: true
 			},
-			'huron --catalog heliophysics namespace create heliophysics.solar-wind.<name> --allow-collections'
+			'huron --catalog heliophysics create namespace heliophysics.solar-wind.<name> --allow-collections'
 		],
 		[
-			{ verb: 'catalog grant', catalog: 'heliophysics' },
-			'huron --catalog heliophysics catalog grant heliophysics <role> <ldap-group>'
+			{ verb: 'adm grant', catalog: 'heliophysics' },
+			'huron --catalog heliophysics adm grant <role> <ldap-group>'
 		],
 		[
-			{ verb: 'acl apply', catalog: 'heliophysics' },
-			'huron --catalog heliophysics acl apply heliophysics --recursive'
+			{ verb: 'adm grant', organization: 'helio' },
+			'huron adm grant <role> <ldap-group> --org helio'
 		],
-		[{ verb: 'catalog create', organization: 'helio' }, 'huron catalog create helio <name>'],
-		[{ verb: 'search', catalog: 'heliophysics' }, 'huron search heliophysics'],
+		[
+			{ verb: 'adm apply-acl', catalog: 'heliophysics' },
+			'huron --catalog heliophysics adm apply-acl heliophysics --recursive'
+		],
+		[{ verb: 'create catalog', organization: 'helio' }, 'huron create catalog <name> --org helio'],
+		[{ verb: 'search', catalog: 'heliophysics' }, 'huron --catalog heliophysics search'],
 		[
 			{
 				verb: 'search',
@@ -85,7 +89,7 @@ describe('cliCommand', () => {
 				labels: ['mission=ace', 'note=a b'],
 				states: ['active', 'draft']
 			},
-			`huron search heliophysics -q 'solar wind'\\''s' -l mission=ace -l 'note=a b' --state active --state draft`
+			`huron --catalog heliophysics search -q 'solar wind'\\''s' -l mission=ace -l 'note=a b' --state active --state draft`
 		]
 	])('writes %o as %s', (command, line) => {
 		expect(cliCommand(command)).toBe(line);
@@ -99,12 +103,12 @@ describe('cliCommand', () => {
 		});
 		expect(line).toBe('huron --catalog heliophysics checkout heliophysics.heliophysics.run-1');
 		const create = cliCommand({
-			verb: 'collection create',
+			verb: 'create collection',
 			catalog: 'heliophysics',
 			namespace: 'heliophysics.heliophysics'
 		});
 		expect(create).toBe(
-			'huron --catalog heliophysics collection create heliophysics.heliophysics.<name>'
+			'huron --catalog heliophysics create collection heliophysics.heliophysics.<name>'
 		);
 	});
 });
@@ -124,7 +128,7 @@ describe('quote', () => {
 		expect(quote('=ls')).toBe("'=ls'");
 		expect(quote('=')).toBe("'='");
 		expect(cliCommand({ verb: 'search', catalog: 'heliophysics', q: '=wind' })).toBe(
-			"huron search heliophysics -q '=wind'"
+			"huron --catalog heliophysics search -q '=wind'"
 		);
 	});
 
@@ -156,7 +160,7 @@ describe('quote', () => {
 			labels: ['note=\u202eevil', 'line=a\nb']
 		});
 		expect(command).toBe(
-			"huron search heliophysics -q $'x\\025rm -rf ~ #\\ry' -l $'note=\\342\\200\\256evil' -l $'line=a\\nb'"
+			"huron --catalog heliophysics search -q $'x\\025rm -rf ~ #\\ry' -l $'note=\\342\\200\\256evil' -l $'line=a\\nb'"
 		);
 		expect(command).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
 	});
@@ -211,8 +215,8 @@ describe('collectionHints', () => {
 			'Add files to this collection'
 		]);
 		expect(hints[1].command).toBe(
-			'huron --catalog space-weather meta edit space-weather.alerts.flare-list-2024\n' +
-				'huron --catalog space-weather meta publish space-weather.alerts.flare-list-2024'
+			'huron --catalog space-weather edit meta space-weather.alerts.flare-list-2024\n' +
+				'huron --catalog space-weather publish meta space-weather.alerts.flare-list-2024'
 		);
 	});
 
@@ -233,7 +237,7 @@ describe('collectionHints', () => {
 			'Activate this draft'
 		]);
 		expect(lacking[2].command).toBe(
-			'huron --catalog heliophysics collection activate heliophysics.solar-wind.ace.mag-l1-draft'
+			'huron --catalog heliophysics activate collection heliophysics.solar-wind.ace.mag-l1-draft'
 		);
 	});
 
@@ -246,7 +250,7 @@ describe('collectionHints', () => {
 			overrideIncompatible: true
 		};
 		const hints = collectionHints(clash, true);
-		// `meta edit` needs the resolved schema, which the API refuses while the override clashes.
+		// `edit meta` needs the resolved schema, which the API refuses while the override clashes.
 		expect(hints).toEqual([
 			{
 				title: 'Check out this collection',
@@ -254,11 +258,11 @@ describe('collectionHints', () => {
 			},
 			{
 				title: 'Replace the schema override with one that fits',
-				command: 'huron --catalog adv-cat meta override set <override.json> adv-cat.box.clash'
+				command: 'huron --catalog adv-cat set override <override.json> adv-cat.box.clash'
 			},
 			{
 				title: 'Remove the schema override',
-				command: 'huron --catalog adv-cat meta override clear adv-cat.box.clash'
+				command: 'huron --catalog adv-cat unset override adv-cat.box.clash'
 			},
 			addFilesHint(clash)
 		]);

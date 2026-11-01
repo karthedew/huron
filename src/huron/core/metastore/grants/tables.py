@@ -34,7 +34,8 @@ grants = Table(
     CheckConstraint(
         "(role = 'platform_admin' and scope_type = 'platform')"
         " or (role = 'org_admin' and scope_type = 'organization')"
-        " or (role in ('catalog_admin', 'contributor', 'reader') and scope_type = 'catalog')",
+        " or (role in ('catalog_admin', 'contributor', 'reader')"
+        " and scope_type in ('organization', 'catalog'))",
         name="role_scope",
     ),
     Index(None, "ldap_group"),

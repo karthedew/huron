@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 __all__ = ["CommitOut", "CommitResultOut", "FileOut"]
 
@@ -35,8 +35,8 @@ class CommitOut(BaseModel):
 
 
 class CommitResultOut(BaseModel):
-    """What a successful commit answers."""
+    """What a successful commit answers; a dry run answers what the commit would make."""
 
     version: int
     file_count: int
-    commit_id: str
+    commit_id: str | None = Field(description="The commit's id; null for a dry run.")

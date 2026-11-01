@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Sequence
-from typing import Protocol
+from typing import Protocol, TextIO
 
 import questionary
 
@@ -16,6 +17,11 @@ type Validate = Callable[[str], str | None]
 
 class Prompter(Protocol):
     """Asks the user questions. ``validate`` returns an error message or ``None``."""
+
+    @property
+    def interactive(self) -> bool:
+        """Whether a person can answer (standard input is a terminal)."""
+        ...
 
     def text(self, message: str, default: str = "", validate: Validate | None = None) -> str:
         """A line of text."""
@@ -32,6 +38,15 @@ class Prompter(Protocol):
 
 class QuestionaryPrompter:
     """Prompts in the terminal with questionary."""
+
+    def __init__(self, stdin: TextIO | None = None) -> None:
+        self._stdin = stdin
+
+    @property
+    def interactive(self) -> bool:
+        """Whether standard input is a terminal."""
+        stream = self._stdin if self._stdin is not None else sys.stdin
+        return stream.isatty()
 
     def text(self, message: str, default: str = "", validate: Validate | None = None) -> str:
         """A line of text, re-asked until ``validate`` accepts it."""

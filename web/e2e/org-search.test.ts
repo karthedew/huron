@@ -292,6 +292,8 @@ test.describe('the organization search', () => {
 			    - /url: /orgs/helio
 			  - link "Search":
 			    - /url: /orgs/helio/search
+			  - link "Access":
+			    - /url: /orgs/helio/access
 		`);
 		await sections.getByRole('link', { name: 'Search' }).click();
 		await expect(page).toHaveURL(HELIO);

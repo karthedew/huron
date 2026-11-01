@@ -32,6 +32,7 @@ class Config:
     client_id: str = "huron-cli"
     mount_prefix: str = "/projects/huron"
     acl_backend: Literal["posix", "none"] = "posix"
+    current_organization: str | None = None
     current_catalog: str | None = None
     current_collection: str | None = None
 

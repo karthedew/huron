@@ -42,7 +42,7 @@ When the plan is complete:
   the mount.
 - Every directory the CLI creates carries POSIX ACLs derived from the catalog's role-to-LDAP-group
   mappings, so the filesystem enforces the same reader, contributor and administrator boundaries as the
-  service. `huron check` reports where disk and catalog disagree.
+  service. `huron adm check` reports where disk and catalog disagree.
 - Every change is audited, every list is paged, every error is a `problem+json` document with a stable
   code, and the service is deployable from the manifests in `deploy/`.
 
@@ -62,7 +62,7 @@ These are out of scope for this plan. The design must not block them, and no tas
 - Grants on namespaces or collections. Version 1 grants roles at platform, organization and catalog scope.
   The privilege model allows finer scopes later.
 - Custom roles. Version 1 has five fixed roles with fixed privilege sets.
-- Automatic repair of disk drift. `huron check` reports; `huron acl apply` re-applies ACLs on directories
+- Automatic repair of disk drift. `huron adm check` reports; `huron adm apply-acl` re-applies ACLs on directories
   the caller owns; nothing deletes user files.
 - A Windows CLI. The CLI refuses to run on Windows with one message.
 - Service-side group lookups per request. Groups are captured at login into the Huron token and re-mapped
@@ -101,10 +101,13 @@ Numbered so tasks can cite them. All are settled.
 - D-9 Five roles, modeled on Polaris: Platform Admin (platform scope), Org Admin (organization scope),
   Catalog Admin, Contributor and Reader (catalog scope). Each role is a fixed set of named privileges
   (section 5.2); authorization checks privileges, never role names, so finer scopes and custom roles can
-  come later.
+  come later. (Extended 2026-10-31: the three catalog roles may also be granted at organization scope,
+  where every catalog of the organization inherits them; see the amendment at the end of this section.)
 - D-10 Roles are granted to LDAP groups, never to individual users. The Huron token carries the user's
   groups; each request maps groups to roles through the current grants table. The platform admin group
-  comes from configuration and is seeded as a grant at startup.
+  comes from configuration and is seeded as a grant at startup. (Extended 2026-10-31: declared
+  organizations and their org admin groups are reconciled at startup too; see the amendment at the end
+  of this section.)
 - D-11 A contributor may delete a collection they created (`created_by` matches the actor); a catalog
   administrator may delete any collection. This mirrors the sticky bit on namespace directories, where
   only the directory's owner can remove it.
@@ -130,7 +133,7 @@ Numbered so tasks can cite them. All are settled.
   entry. A collection's own metadata and override change in one request and must validate together.
 - D-17 Metadata is stored in PostgreSQL as JSONB and is the source of truth. The CLI writes a
   `metadata.json` sidecar into the collection directory after activation and after every metadata
-  publish, so the information survives apart from the service. `huron check` reports a stale sidecar.
+  publish, so the information survives apart from the service. `huron adm check` reports a stale sidecar.
 
 **Storage and enforcement**
 
@@ -138,7 +141,9 @@ Numbered so tasks can cite them. All are settled.
   machines. The service on OpenShift mounts nothing; only the CLI touches the filesystem.
 - D-19 Directories are created by the CLI as the user running it, after the service has authorized and
   recorded the change. The root directory is prepared once by the storage administrator with the script
-  in `scripts/init-root.sh`.
+  in `scripts/init-root.sh`. (Amended 2026-10-31: the storage administrator prepares each declared or
+  rooted organization's directory with `huron adm provision-orgs`; see the amendment at the end of
+  this section.)
 - D-20 Every directory the CLI creates has setgid set and carries POSIX ACLs derived from the catalog's
   effective role groups (section 6.2). Structural directories (organization, catalog, namespace) are
   writable only by their administrators. A namespace with `collections_allowed` additionally gives the
@@ -149,8 +154,8 @@ Numbered so tasks can cite them. All are settled.
   organization.
 - D-22 Enforcement is contain-and-detect. Accepted: a scientist can write into their own collection
   directory without the CLI; the service trusts reported hashes; only a directory's owner can change its
-  ACLs, so a changed group mapping is re-applied by owners running `huron acl apply`, and the rest is
-  reported by `huron check`. The upgrade path, if ever needed, is HTTP ingest to a service that mounts the
+  ACLs, so a changed group mapping is re-applied by owners running `huron adm apply-acl`, and the rest is
+  reported by `huron adm check`. The upgrade path, if ever needed, is HTTP ingest to a service that mounts the
   share, behind the same `Storage` interface the CLI uses now.
 - D-23 The push write path: copy each file to `<rel_path>.huron-part` in the collection directory while
   hashing, `fsync`, rename into place, then commit. Removals are committed first and unlinked after. A
@@ -212,6 +217,109 @@ Numbered so tasks can cite them. All are settled.
   must stay reachable through the published port. Until then `web/README.md` and `README.md` say to
   run the host stack on a trusted machine and network.
 
+### Amendment (2026-10-31): declared organizations, per-organization roots and the configuration file
+
+Decided with the user on 2026-10-31; the record is
+[docs/adr/0007-declared-organizations.md](docs/adr/0007-declared-organizations.md). Each organization
+has a root, on its own export or a shared one, such as `helio` at `/data1/huron/helio` and `geo` at
+`/data1/huron/geo`, and the organizations, their administrators and their roots are declared in the
+service configuration. Sections 4, 5.2, 5.6, 6.1, 6.2, 6.4, 7, 8, 9 and 11 carry the consequences; the
+text of D-1 to D-27 is unchanged apart from the pointers on D-9, D-10 and D-19.
+
+- **The configuration file.** `HURON_CONFIG_FILE` names a YAML file whose top-level keys are the
+  field names of `Settings` (`src/huron/applications/api/settings.py`) plus `organizations`.
+  Precedence: `HURON_*` environment variables, then the file, then the defaults. Unknown top-level
+  keys and two entries with the same organization name fail startup, so a typo such as
+  `organisations:` cannot silently mean unmanaged mode. Secrets (`database_url`) are documented as
+  environment only; the file accepts them but the deployments never put them there. `HURON_ORGANIZATIONS`,
+  a JSON list, replaces the file's list, for tests and emergencies. The file is read with
+  pydantic-settings' YAML source in a strict subclass (`pyyaml` and `pydantic-settings` are already
+  dependencies).
+- **Organization entries.** `name` (the segment rules of D-4, `huron.schema.naming`), `display_name`
+  (default `""`), `description` (`""`), `groups` (the LDAP groups of the organization-wide roles,
+  below), `root` (optional;
+  an absolute, normalized path without `..`) and `export` (`""`; an informational NFS source such as
+  `nfs1:/export/data1`, shown in mount hints). The organization's directory is always
+  `<root>/<name>`; no other path can be configured. Below it the layout is unchanged,
+  `<org dir>/<catalog>/<namespace…>/<collection>`, so the relative paths the API returns
+  (`helio/sun/…`) are unchanged too: the absolute path is the root of the organization named by the
+  first segment, `/`, and the relative path. An organization without `root` stays at
+  `<mount_prefix>/<name>`, the CLI's configured prefix.
+- **Managed and unmanaged mode.** An `organizations` key that is present, even as `[]`, is managed
+  mode. Without it the service is unmanaged and behaves as before: `POST /organizations` and
+  `huron create org` work, and every organization lives under the mount prefix.
+- **D-10 extended.** Declared organizations are reconciled at startup, as the platform admin group is
+  seeded. `bootstrap()` (`src/huron/core/lake/bootstrap.py`) takes them through `LakeSettings` and
+  reconciles in its transaction under a new advisory lock port, `tx.lock_bootstrap()`
+  (`pg_advisory_xact_lock` on PostgreSQL, an `asyncio` lock or no-op in the memory fake), so two
+  replicas starting together do not race; the lock guards the existing `huron-base` and signing-key
+  seeds too. A missing organization is created (`created_by` `huron-bootstrap`, audit
+  `organization.create`). A different `display_name` or `description` is updated through the new
+  `OrganizationStore.update` port (`version` + 1, new audit action `organization.update`). The
+  organization-scope grant set of each of the four roles of `groups` (`org_admin`, `catalog_admin`,
+  `contributor`, `reader`) is replaced to equal the declared groups exactly, with the
+  `organization.grant` and `organization.revoke` entries any grant change writes. An organization in the database that the
+  configuration does not declare is logged as a warning with its `catalog_count`, stays usable through
+  the API and is never deleted; its directory does not follow it, since its root came from the
+  configuration (D-28). A run that finds nothing to change writes nothing, not even an audit entry. Only
+  invalid configuration fails startup.
+- **D-28 (new) Managed organizations.** In managed mode the configuration decides which
+  organizations exist and who administers them. `POST /organizations` answers 409
+  `ORGANIZATIONS_MANAGED`. `DELETE /organizations/{org}` of a declared organization and
+  `PUT /organizations/{org}/grants/{role}` on one, for any of the four organization-scope roles,
+  answer 409 `ORGANIZATION_DECLARED`. An
+  undeclared organization (one removed from the configuration) may still be deleted once it is empty.
+  The name is the key: a rename is the removal of one entry and the addition of another, and the old
+  organization stays, undeclared, until it is emptied and deleted. Per-catalog grants inside a
+  declared organization stay API-managed. An undeclared organization has no root (roots are configuration, not
+  rows), so the CLI looks for its directory under the mount prefix only: removing a rooted
+  organization strands its directory until it is declared again with the same root, which restores
+  it, so an organization is emptied while declared and removed afterwards. The CLI learns managed
+  mode from `organizations_managed` of `GET /healthz`; `adm verify-mounts` reports an undeclared
+  organization as `undeclared` without failing, `adm check` as the warning `org_undeclared` when the
+  mount prefix is not a marked share, and `delete org` skips its directory then, with a hint.
+- **Organization-wide role groups (decided with the user on 2026-10-31).** Each entry's `groups`
+  maps `org_admin`, `catalog_admin`, `contributor` and `reader` to LDAP groups, declared once for
+  the organization; every key is optional (default `[]`), the groups are de-duplicated and sorted,
+  and any other key fails startup. `admin_groups` is removed without an alias (pre-release): a
+  configuration that still uses it fails startup with a message naming `groups.org_admin`. The
+  three catalog roles may be granted at organization scope (section 5.2), and every catalog of the
+  organization, existing and future, inherits them through the authorizer's enclosing-scope rule;
+  per-catalog grants are unchanged and add to the inherited groups, never remove one. In unmanaged
+  mode the organization-scope sets are API-managed: `org_admin` needs `ORGANIZATION_GRANT`
+  (Platform Admin), and `catalog_admin`, `contributor` and `reader` need `CATALOG_GRANT_ADMIN` at the
+  organization (Org Admin or Platform Admin): an organization-scope Catalog Admin, although it holds
+  `CATALOG_GRANT_MEMBER` in every catalog of the organization and so edits each catalog's member
+  grants, does not grant organization-wide members. A catalog's effective groups (section 6.2) merge the organization-scope catalog-role
+  groups in, so its ACL plans name them; `GET /catalogs/{catalog}/grants/sources` reports each
+  group's source. Migration `0002_organization_catalog_roles` widens `ck_grants_role_scope`
+  (section 7). The record is ADR 0007, section "Organization-wide role groups".
+- **D-18 restated.** The service still mounts nothing. `root`, `export` and the `path` derived from
+  them are configuration the API reports, never paths it opens.
+- **D-19 amended.** The storage administrator prepares each organization directory, not
+  `huron create org`: `huron adm provision-orgs` requires the root to exist (it never creates a root),
+  creates `<root>/<org>`, applies the organization ACL plan of section 6.2 and writes the
+  per-organization marker of section 6.1; `--emit-script` prints the same steps as a shell script for
+  roots that only `root` can write. Catalog, namespace and collection directories are created by the
+  CLI as the user, as before. `scripts/init-root.sh` stays, for the mount prefix of organizations
+  that are neither declared nor rooted.
+- **Deployment.** The kustomize base `deploy/openshift` (M10.1) gains a `configMapGenerator` for
+  `huron.yaml` with `HURON_CONFIG_FILE` and its volume, and a Helm chart, `deploy/helm/huron`, is
+  added (M10.6). Both are supported. The API pod mounts no share in either.
+- **Development.** `huron.dev.yaml` at the repository root declares `helio` (display name
+  `Heliophysics Division`, root `/data1/huron`, `groups` `org_admin` `helio-org-admins`,
+  `catalog_admin` `helio-catalog-admins`, `contributor` `helio-contributors`, `reader`
+  `helio-readers`), `geo` (`Earth Science`, `/data1/huron`, `org_admin` `geo-org-admins`, `reader`
+  `geo-readers`) and `noaa` (`NOAA`, `/data1/huron`, `org_admin` `noaa-org-admins`, `reader`
+  `noaa-readers`), the names and groups of the web's demo fixture and `scripts/dev-groups.yaml`.
+  The seed's per-catalog grants from the fixture stay; they overlap the inherited groups and add to
+  them. `make app` mounts it read-only into the API as
+  `/etc/huron/huron.yaml` and recreates the API when the file changes; `make api` reads it through
+  `HURON_CONFIG_FILE` in `dev.env`. Editing that one file and re-running `make app` (or restarting
+  `make api`) applies a new configuration. In managed mode the seed (`docker/seed/run.mjs`) creates
+  no organization and no `org_admin` grant; it loads the catalogs, namespaces and collections of the
+  declared organizations and skips the fixture's undeclared ones (`astro`, `planetary`).
+
 ## 4. Architecture
 
 ### 4.1 Components
@@ -223,7 +331,7 @@ Numbered so tasks can cite them. All are settled.
 | `huron` CLI | Designated machines with the NFS mount | Login, browsing, administration verbs, the metadata walkthrough, staging and push, directory creation and ACLs, drift checks. Talks to the API over HTTPS and to the share through the local mount. |
 | Institutional OIDC provider | External | Issues the company token the CLI exchanges. |
 | Group directory | External | `GET …/users/{username}/groups` → `{"groups": [...]}`; mocked in development. |
-| NFS share | External | `/projects/huron`, prepared once by `scripts/init-root.sh`. |
+| NFS share | External | `/projects/huron`, prepared once by `scripts/init-root.sh`. Since the 2026-10-31 amendment, one or more exports: a declared or rooted organization's directory is `<root>/<org>`, prepared by `huron adm provision-orgs`; the others stay under the mount prefix. |
 
 ### 4.2 Package tree
 
@@ -236,7 +344,7 @@ src/huron/
   pkg/                      Generic code with no Huron knowledge. Importable by everything. (M1)
     errors.py               HuronError base, ErrorCode registry, problem document rendering
     paging.py               Cursor encoding, Page[T], page-size bounds
-    canonical.py            RFC 8785 canonical JSON bytes, stable hashing of documents
+    canonical.py            RFC 8785 canonical JSON bytes (integers of any size exact), stable hashing
     identifiers.py          UUIDv7 generation, parsing
     clock.py                Clock protocol, SystemClock, FrozenClock
     hashing.py              Streaming sha256 over a file or a byte iterator
@@ -259,7 +367,8 @@ src/huron/
       files/                models.py  commits.py  errors.py  ports.py
       schemas/              models.py  registry.py  completeness.py  errors.py  ports.py
       audit/                models.py  ports.py  writer.py
-      bootstrap.py          Lake composition; seeds: huron-base schema, platform grant, first signing key
+      bootstrap.py          Lake composition; seeds: huron-base schema, platform grant, first signing key;
+                            reconciles declared organizations under the bootstrap lock (amendment 2026-10-31)
     security/               Imports pkg, schema. Never imports core.lake. (M2)
       broker/               discovery.py  company.py  groups.py  keys.py  tokens.py  exchange.py
       rbac/                 roles.py  privileges.py  grants.py  actor.py  authorize.py  ports.py
@@ -283,13 +392,14 @@ src/huron/
       aclplan.py            Effective groups by role → ACL entries per directory kind (section 6.2)
       posix.py              PosixStorage over pkg.fs
       memory.py             MemoryStorage fake with the same contract
-      marker.py             Root marker file (.huron) read and verify
+      marker.py             Root and per-organization marker file (.huron) read and verify
       check.py              Drift findings: compare the API's view with the storage's walk (M9)
   applications/
     api/                    (M5)
       main.py               uvicorn entry: `huron.applications.api.main:app`
       app.py                create_app(settings, store, …): routers, middleware, error handlers
-      settings.py           pydantic-settings, HURON_* environment
+      settings.py           pydantic-settings: HURON_* environment over HURON_CONFIG_FILE (YAML) and
+                            the declared organizations
       lifespan.py           Pool, key ring, bootstrap, readiness
       problems.py           problem+json responses from HuronError
       dependencies.py       Store, clock, settings providers
@@ -316,16 +426,23 @@ src/huron/
       client.py             httpx client: problem+json → CliError, paging, ETags
       login.py              Device grant and loopback PKCE flows, token exchange, refresh
       identifiers.py        Relative identifiers against the current catalog
-      mount.py              Mount prefix and marker checks before any disk operation
+      mount.py              Absolute paths per organization (its root, else the mount prefix) and the
+                            marker checks before any disk operation
       sync.py               Stage, pull and push logic shared by the stage verbs
       output.py             -o table|json|yaml rendering
       prompts.py            Prompter protocol and the questionary implementation
       walkthrough.py        JSON Schema → prompt plan → metadata document
-      commands/             session.py organizations.py catalogs.py schemas.py namespaces.py
-                            collections.py stage.py meta.py check.py acl.py platform.py
+      inventory.py          What the service records about a catalog (check, apply-acl, tree)
+      tree.py               The namespace tree with collections as leaves, for `huron tree`
+      picker.py             The level-by-level collection picker of `huron checkout`
+      commands/             One module per verb group (section 9): session.py context.py get.py
+                            describe.py explore.py (tree, search) create.py delete.py change.py
+                            stage.py adm.py, with shared helpers in common.py
 migrations/
   env.py                    Alembic environment bound to the SQLAlchemy Core tables
   versions/0001_huron.py    The whole version-1 schema (M4)
+  versions/0002_organization_catalog_roles.py
+                            Catalog roles at organization scope (D-28)
 alembic.ini
 tests/
   unit/                     Fakes only; the default `make test`
@@ -334,7 +451,10 @@ tests/
   acl/                      Real getfacl/setfacl round trips; skipped where the filesystem lacks ACLs
   fakes/                    Company OIDC issuer, group directory, scripted prompter
   support/                  Shared fixtures and builders
-deploy/openshift/           Kustomize base: Deployment, Service, Route, ConfigMap, Secret, migration Job (M10)
+deploy/openshift/           Kustomize base: Deployment, Service, Route, ConfigMap, Secret, migration Job (M10);
+                            huron.yaml from a configMapGenerator (amendment 2026-10-31)
+deploy/helm/huron/          Helm chart: the API, its huron.yaml ConfigMap, the migration hook, an optional web (M10.6)
+huron.dev.yaml              The development service configuration: the declared organizations (M10.6)
 scripts/                    init-root.sh, check-stack.sh, check_schema_map.py, devgroups.py, dev-groups.yaml,
                             e2e.sh, keycloak/company-realm.json
 docs/                       architecture.md, operator.md, user-guide.md, api-errors.md, openapi.json, adr/
@@ -438,7 +558,16 @@ Scopes: `platform`, `organization` (by organization id), `catalog` (by catalog i
 | `CATALOG_READ`, `COLLECTION_READ`, `AUDIT_READ` | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 - A grant is `(scope_type, scope_id, role, ldap_group)`. Platform Admin grants have `scope_id = NULL`.
-  Org Admin grants are scoped to an organization; the three catalog roles to a catalog.
+  Org Admin grants are scoped to an organization; the three catalog roles to a catalog or (amendment
+  2026-10-31) to an organization, where they hold in every catalog of that organization, existing and
+  future, through the enclosing-scope rule below. A catalog's grants add groups to the ones it
+  inherits and cannot remove one.
+- Granting at organization scope (amendment 2026-10-31): `org_admin` needs `ORGANIZATION_GRANT`;
+  all three catalog roles, `contributor` and `reader` included, need `CATALOG_GRANT_ADMIN` at the
+  organization, which only Org Admin and Platform Admin carry. Requiring `CATALOG_GRANT_MEMBER` there
+  would let an organization-scope Catalog Admin, which holds it at the organization, grant
+  organization-wide members; deliberately it does not: it edits each catalog's member grants only. A declared organization's four organization-scope
+  sets come from the configuration's `groups` and are not editable (section 3, D-28).
 - An `Actor` is `(subject, display_name, groups)`. `Authorizer.roles_for(actor)` returns the set of
   `(scope, role)` pairs from grants whose group is in `actor.groups`. `Authorizer.require(actor,
   privilege, scope)` passes when any role the actor holds at that scope or an enclosing scope carries the
@@ -446,7 +575,8 @@ Scopes: `platform`, `organization` (by organization id), `catalog` (by catalog i
   everything; an organization encloses its catalogs.
 - Visibility: an actor sees an organization if they hold any role at platform scope, at that
   organization, or at any catalog in it. An actor sees a catalog if they hold any role at platform
-  scope, at its organization, or at the catalog. Hidden objects answer 404 `NOT_FOUND`, so existence
+  scope, at its organization, or at the catalog. Any role at the organization counts, so an
+  organization-scope Reader sees the organization and every one of its catalogs. Hidden objects answer 404 `NOT_FOUND`, so existence
   leaks nothing.
 - The platform admin group `settings.platform_admin_group` is seeded as a Platform Admin grant at
   startup and cannot be removed through the API.
@@ -464,7 +594,8 @@ Scopes: `platform`, `organization` (by organization id), `catalog` (by catalog i
 
 - `create(actor, catalog, namespace_path, name, metadata?)`: requires `COLLECTION_CREATE` on the catalog
   and a namespace with `collections_allowed`; reserves the name among its siblings; stores metadata
-  without validating it; state `draft`, `version` 1; audit `collection.create`.
+  without validating it against the schema (only the 1 MiB canonical size and JSON representability are
+  checked, 422 `METADATA_INVALID`); state `draft`, `version` 1; audit `collection.create`.
 - `update(actor, id, expected_version, metadata_patch?, schema_override?)`: JSON merge patch (RFC 7396)
   on the metadata; when either field is present the result is validated against
   resolve(catalog assignment, new override). A draft may hold invalid metadata (validation problems are
@@ -497,6 +628,14 @@ Scopes: `platform`, `organization` (by organization id), `catalog` (by catalog i
   4. Apply rows, set `file_count`, bump `version`, insert the commit row, write audit `collection.commit`
      with `{adds, removes, host, message}`.
   5. Return `{version, file_count, commit_id}`.
+- **Dry run** (amendment 2026-10-31, the push preflight). `commit(..., dry_run=True)` runs steps 1–3
+  and the file-tree checks in the same locked transaction, then returns the would-be
+  `{version, file_count, commit_id: null}` without applying rows, bumping `version`, inserting the
+  commit or writing audit, as `DELETE /collections/{id}?dry_run=true` does for collections. A dry-run
+  body may leave out an add's `sha256` (the CLI asks before it copies, and a hash is known only once
+  the file is copied); one that is present must still match the pattern. A real commit still requires
+  every hash: the schema refuses a missing one, and `Commits` raises `COMMIT_INVALID` with
+  `{rel_path}` should an unhashed add reach the apply step.
 - `list_files(actor, id, cursor)` pages by `rel_path_key`.
 
 ### 5.5 Metadata schemas
@@ -528,7 +667,8 @@ Scopes: `platform`, `organization` (by organization id), `catalog` (by catalog i
 
 Append-only table `audit`. Entry: `(id, at, actor_subject, action, object_type, object_id, catalog_id |
 NULL, organization_id | NULL, detail jsonb)`. Actions are a closed vocabulary in
-`core.lake.audit.models.Action`: `organization.create|delete|grant|revoke`,
+`core.lake.audit.models.Action`: `organization.create|update|delete|grant|revoke` (`update` since the
+2026-10-31 amendment, written by the startup reconciliation),
 `catalog.create|delete|grant|revoke|assign_schema`, `namespace.create|delete|configure`,
 `schema.publish`, `collection.create|update_metadata|set_schema_override|activate|mark_incomplete|
 mark_active|commit|delete`, `signing_key.rotate`. Every write operation writes its entry in the same
@@ -537,23 +677,55 @@ newest first.
 
 ## 6. Storage layout and ACLs
 
-### 6.1 Root and marker
+### 6.1 Roots and markers
 
-- The storage administrator runs `scripts/init-root.sh <prefix> <platform-admin-group> <api-url>
-  <instance-id>` once, as a user that owns the prefix (or as root): `chgrp`, `chmod 2771`, access ACL `g:<platform>:rwx`, default ACL
-  `g:<platform>:rwx`, and writes `<prefix>/.huron` containing `{"huron": 1, "api_url": "<url>",
-  "instance_id": "<uuid>"}` (`0644`). The `instance_id` matches `settings.instance_id` of the service the
-  share belongs to.
-- The CLI refuses any disk operation unless the marker exists and its `instance_id` equals the one the
-  API reports in `GET /healthz`. This keeps a CLI pointed at a staging API from writing into production
-  directories.
-- `others` have traverse-only (`--x`) on the root and on organization directories, so readers can reach a
-  catalog they are granted without listing what else exists.
+- **Where an organization lives.** An organization's directory is `<root>/<org>`. `root` is the
+  organization's configured root (the 2026-10-31 amendment in section 3), reported as `root` by
+  `GET /organizations/{org}`; an organization without one uses the CLI's `mount_prefix` (default
+  `/projects/huron`). Below it the layout is `<org dir>/<catalog>/<namespace…>/<collection>`. The API
+  reports paths relative to the root, starting with the organization's name (`helio/sun/…`); the
+  catalog, namespace and collection views carry `share_root`, the owning organization's root or
+  `null`. A client's absolute path is `share_root + "/" + path` (a namespace's `disk_path`), or its own
+  mount prefix in place of a `null` `share_root`. The CLI's `Mount` resolves every path this way, looking the organization up by
+  the first segment and caching the answer for the command; no path derivation (directory verbs,
+  inventory, `activate`, `apply-acl`, `check`, `tree`, `push`) bypasses it.
+- **Per-organization marker.** For an organization that has a root, or that is declared, the storage
+  administrator runs `huron adm provision-orgs [--org O] [--dry-run] [--emit-script]` as a user who
+  can write the root (or, with `--emit-script`, hands the printed script to `root`). For each declared
+  organization it requires `<root>` to exist (the root's own mode, owner and ACL belong to the storage
+  administrator; Huron needs only that `others` may traverse it), creates `<root>/<org>` when missing,
+  applies the organization plan of section 6.2 (modes only with `acl_backend: none`) and writes
+  `<root>/<org>/.huron` containing `{"huron": 1, "api_url": "<url>", "instance_id": "<uuid>",
+  "organization": "<org>"}` (`0644`). It refuses to overwrite a marker that names another instance or
+  another organization, and is idempotent. `--dry-run` prints what it would do. A declared organization
+  without a root is provisioned at `<mount_prefix>/<org>` the same way.
+- **Root marker.** An organization that is neither declared nor rooted (every organization in
+  unmanaged mode) keeps the root marker: the storage administrator runs `scripts/init-root.sh
+  <prefix> <platform-admin-group> <api-url> <instance-id>` once, as a user that owns the prefix (or as
+  root): `chgrp`, `chmod 2771`, access ACL `g:<platform>:rwx`, default ACL `g:<platform>:rwx`, and
+  writes `<prefix>/.huron` containing `{"huron": 1, "api_url": "<url>", "instance_id": "<uuid>"}`
+  (`0644`, no `organization`).
+- **The check.** The CLI refuses any disk operation below an organization unless its marker (the
+  per-organization one, or the root marker for an organization that is neither declared nor rooted)
+  exists, its `instance_id` equals the one the API reports in `GET /healthz`, and a per-organization
+  marker's `organization` equals the organization's name. `Marker` gains the optional `organization`.
+  The check happens inside `Mount.path`, `Mount.ensure`, `Mount.apply` and `Mount.remove`, so no
+  command can skip it. It keeps a CLI pointed at a staging API from writing into production
+  directories, and an export mounted at another organization's root from being written as that
+  organization.
+- `others` have traverse-only (`--x`) on the mount prefix, on every root and on organization
+  directories, so readers can reach a catalog they are granted without listing what else exists.
+- **Amendment (2026-10-31).** This subsection replaces "6.1 Root and marker", which had one root at
+  the mount prefix, one marker there, and organization directories created by `huron create org`.
+  That text holds unchanged for organizations that are neither declared nor rooted.
 
 ### 6.2 Directory kinds and ACL plans
 
 Groups come from the effective grants of the catalog, returned by `GET /catalogs/{catalog}/grants` as
 `{platform_admin: [...], org_admin: [...], catalog_admin: [...], contributor: [...], reader: [...]}`.
+Since the 2026-10-31 amendment the catalog roles' lists merge the organization-scope groups of those
+roles with the catalog's own, so the plans below name the inherited groups unchanged; a change to an
+organization's `groups` changes the plans of all its catalogs.
 `core.storage.aclplan.plan(kind, groups) -> AclPlan(mode, access, default)` produces:
 
 | Kind | Mode | Access ACL (group entries) | Default ACL (inherited by children) | Others |
@@ -571,7 +743,7 @@ Groups come from the effective grants of the catalog, returned by `GET /catalogs
   the parsed entries, ignoring order and the mask line.
 - `PosixStorage.apply(path, plan)` is idempotent: applying the same plan twice changes nothing and
   reports `changed=False`.
-- Who applies: the CLI, as the user who created the directory. `huron acl apply <identifier>
+- Who applies: the CLI, as the user who created the directory. `huron adm apply-acl <identifier>
   [--recursive]` re-applies plans for every directory under the identifier that the caller owns and
   prints the ones it could not change.
 - The CLI computes plans locally from `GET /catalogs/{catalog}/grants`; the API never returns ACL
@@ -592,15 +764,21 @@ See D-23. `PosixStorage.copy_in(source, dest_dir, rel_path) -> FileStamp(size, s
 4. On any failure remove the part file and re-raise `StorageError`.
 
 Removals: after the commit succeeds, `unlink` each removed path; a missing file is not an error.
-`huron check` reports `.huron-part` files older than one hour as `stale_part`.
+`huron adm check` reports `.huron-part` files older than one hour as `stale_part`.
 
-### 6.4 What `huron check` reports
+### 6.4 What `huron adm check` reports
 
-For every catalog the caller can read (or the one named), with the mount available:
+For every catalog the caller can read (or the one named), with the mount available, and for the
+organizations of those catalogs (the `org_*` findings, since the 2026-10-31 amendment):
 
 | Finding | Severity | Meaning |
 | --- | --- | --- |
-| `namespace_dir_missing` | error | A namespace row with no directory. `huron namespace create` is idempotent on disk and recreates it. |
+| `org_dir_missing` | error | The directory `<root>/<org>` of a checked catalog's organization does not exist. `huron adm provision-orgs` creates it (`huron create org` for an organization that is neither declared nor rooted). |
+| `org_marker_missing` | error | The organization directory has no `.huron` marker. `huron adm provision-orgs` writes it. |
+| `org_marker_mismatch` | error | The organization's marker names another instance or another organization. |
+| `org_acl_drift` | warning | The organization directory's ACL differs from the organization plan (`acl_backend: posix` only). |
+| `org_undeclared` | warning | Managed mode only: the configuration does not declare the organization and the mount prefix is not a share of this service, so its directory cannot be located; its catalogs are not checked. |
+| `namespace_dir_missing` | error | A namespace row with no directory. `huron create namespace` is idempotent on disk and recreates it. |
 | `collection_dir_missing` | error | An active collection with no directory. |
 | `file_missing` | error | A recorded file absent from disk. |
 | `file_changed` | warning | Size differs from the recorded stamp; with `--hash`, sha256 differs. |
@@ -616,7 +794,8 @@ Exit code 0 with no findings, 1 with findings, 2 on an error running the check.
 
 ## 7. Persistence
 
-PostgreSQL 16, schema `huron`, one Alembic revision `0001_huron` for version 1. Table definitions are
+PostgreSQL 16, schema `huron`. Alembic revision `0001_huron` is the version-1 schema; `0002_organization_catalog_roles`
+(D-28) lets the three catalog roles be granted at organization scope. Table definitions are
 SQLAlchemy Core objects in `core/metastore/<area>/tables.py`; `migrations/env.py` imports them so
 `alembic revision --autogenerate` detects drift, and `scripts/check_schema_map.py` fails the gate when
 the live schema after `upgrade head` differs from the Core metadata.
@@ -644,7 +823,16 @@ two tables.
 
 Locking: writes to a collection take `SELECT … FOR UPDATE` on its row. Catalog-wide changes (schema
 assignment and recompute, namespace creation and deletion) take `pg_advisory_xact_lock(hashtext('catalog:'
-|| catalog_id))`. Lock order is always catalog, then collection, then files.
+|| catalog_id))`. Lock order is always catalog, then collection, then files. Startup's `bootstrap()`
+takes `tx.lock_bootstrap()`, a transaction-scoped advisory lock of its own key, before it seeds or
+reconciles anything (the 2026-10-31 amendment in section 3), so concurrent replicas run it one after
+the other.
+
+Declared organizations add no table and no column: `declared`, `root`, `path`, `export` and
+`share_root` in the API's views come from the configuration. The organization-wide role groups do
+need one migration, `0002_organization_catalog_roles`: it widens the `grants` check
+`ck_grants_role_scope` so `catalog_admin`, `contributor` and `reader` are allowed at `organization`
+as well as `catalog` scope (its downgrade deletes those rows and restores the version-1 rule).
 
 `core.metastore.store.Store` exposes one attribute per area, each a reader-and-writer object implementing
 that area's port, and `Store.transaction()` yields a `Transaction` whose area objects share one connection.
@@ -662,43 +850,45 @@ health and the exchange. Errors are `application/problem+json` with `type`, `tit
 | Method and path | Minimum privilege | Notes |
 | --- | --- | --- |
 | `GET /.well-known/openid-configuration`, `GET /jwks.json` | none | Huron issuer discovery. |
-| `GET /healthz`, `GET /readyz` | none | `healthz` returns `{status, instance_id, version}`; `readyz` checks the pool and the key ring. |
+| `GET /healthz`, `GET /readyz` | none | `healthz` returns `{status, instance_id, version, organizations_managed}` (the last since the 2026-10-31 amendment: whether the configuration declares the organizations); `readyz` checks the pool and the key ring. |
 | `POST /auth/exchange` | none | `{company_token}` → `{huron_token, expires_at, subject, groups, roles}`. 401 `TOKEN_INVALID`, 503 `GROUP_DIRECTORY_UNAVAILABLE`. |
 | `GET /auth/whoami` | authenticated | Subject, groups, effective `(scope, role)` list. |
 | `GET /organizations` | visibility | Organizations the actor can see. |
-| `POST /organizations` | `ORGANIZATION_CREATE` | `{name, display_name, description}`. 409 `NAME_TAKEN`. |
-| `GET /organizations/{org}` | `ORGANIZATION_READ` | Body includes `catalog_count`. |
-| `DELETE /organizations/{org}` | `ORGANIZATION_DELETE` | 409 `ORGANIZATION_NOT_EMPTY` while catalogs exist. |
-| `GET /organizations/{org}/grants`, `PUT /organizations/{org}/grants/{role}` | `ORGANIZATION_GRANT` | `role` is `org_admin`; body `{ldap_groups: [...]}` replaces the set. |
+| `POST /organizations` | `ORGANIZATION_CREATE` | `{name, display_name, description}`. 409 `NAME_TAKEN`; 409 `ORGANIZATIONS_MANAGED` in managed mode (D-28). |
+| `GET /organizations/{org}` | `ORGANIZATION_READ` | Body includes `catalog_count`, and `declared` (bool), `root` (the configured root or `null`), `path` (`root/name`, `null` without a root) and `export` (or `null`); the list rows carry the same four. |
+| `DELETE /organizations/{org}` | `ORGANIZATION_DELETE` | 409 `ORGANIZATION_NOT_EMPTY` while catalogs exist; 409 `ORGANIZATION_DECLARED` for a declared organization. |
+| `GET /organizations/{org}/grants` | `ORGANIZATION_READ` | `{org_admin: [...], catalog_admin: [...], contributor: [...], reader: [...]}`: the organization-scope groups of each role. |
+| `PUT /organizations/{org}/grants/{role}` | `ORGANIZATION_GRANT` for `org_admin`; `CATALOG_GRANT_ADMIN` at the organization (Org Admin or Platform Admin) for `catalog_admin`, `contributor` and `reader` (section 5.2) | `role` is `org_admin`, `catalog_admin`, `contributor` or `reader`; body `{ldap_groups: [...]}` replaces the organization-scope set, with the same change response as the catalog `PUT`. 409 `ORGANIZATION_DECLARED` for a declared organization, whose four sets are its configured `groups`. |
 | `GET /organizations/{org}/schemas` | `ORGANIZATION_READ` | Registry entries of the organization, newest version first. |
 | `POST /organizations/{org}/schemas` | `SCHEMA_PUBLISH` | `{name, extends_id, document}` → new version. 422 `SCHEMA_INVALID`, `SCHEMA_INCOMPATIBLE`, `SCHEMA_SCOPE`. |
 | `GET /schemas/{id}`, `GET /schemas/{id}/resolved` | visibility of its scope | Platform entries are visible to every authenticated actor. |
 | `POST /platform/schemas` | `PLATFORM_SCHEMA_PUBLISH` | New version of a platform-scoped entry. |
 | `GET /platform/grants`, `PUT /platform/grants/platform_admin` | `ORGANIZATION_GRANT` | The configured group is always present and cannot be removed. |
-| `GET /catalogs` | visibility | `?organization=` filter. Iceberg-shaped: `{items: [{name, organization, …}]}`. |
+| `GET /catalogs` | visibility | `?organization=` filter. Iceberg-shaped: `{items: [{name, organization, share_root, …}]}`. |
 | `POST /organizations/{org}/catalogs` | `CATALOG_CREATE` | `{name, display_name, description, schema_id?}`; default schema is `huron-base` latest. |
-| `GET /catalogs/{catalog}` | `CATALOG_READ` | Includes `schema` (id, name, version) and counts. |
+| `GET /catalogs/{catalog}` | `CATALOG_READ` | Includes `schema` (id, name, version), counts and `share_root` (section 6.1). |
 | `DELETE /catalogs/{catalog}` | `CATALOG_DELETE` | 409 `CATALOG_NOT_EMPTY` while namespaces exist. |
-| `GET /catalogs/{catalog}/grants` | `CATALOG_READ` | Effective groups by role, including inherited org and platform groups (section 6.2). |
+| `GET /catalogs/{catalog}/grants` | `CATALOG_READ` | Effective groups by role, including inherited platform groups, the organization's `org_admin` groups and its organization-scope catalog-role groups (section 6.2). The shape is unchanged by the 2026-10-31 amendment. |
+| `GET /catalogs/{catalog}/grants/sources` | `CATALOG_READ` | `{items: [{role, group, scope}]}`, `scope` one of `platform`, `organization`, `catalog`: one row per (role, group, scope), sorted by role then group, so a group held both through the organization and on the catalog has two rows (amendment 2026-10-31). |
 | `PUT /catalogs/{catalog}/grants/{role}` | `CATALOG_GRANT_ADMIN` for `catalog_admin`, `CATALOG_GRANT_MEMBER` for `contributor` and `reader` | `{ldap_groups}` replaces the set. Audit `catalog.grant`/`revoke` per change. |
 | `PUT /catalogs/{catalog}/schema` | `SCHEMA_ASSIGN` | `{schema_id}`; triggers recompute; answers `{assigned, recompute: {incomplete, active}}`. |
 | `GET /catalogs/{catalog}/schema` | `CATALOG_READ` | The resolved document. |
 | `GET /catalogs/{catalog}/namespaces?parent=` | `CATALOG_READ` | Children of `parent` (dotted path, empty for the root). |
 | `POST /catalogs/{catalog}/namespaces` | `NAMESPACE_CREATE` | `{parent, name, collections_allowed}`. 404 for a missing parent; 409 `NAME_TAKEN`; 422 `NAME_INVALID`. |
-| `GET /catalogs/{catalog}/namespaces/{path}` | `CATALOG_READ` | Includes `collections_allowed`, child counts and `path` (relative to the prefix). |
+| `GET /catalogs/{catalog}/namespaces/{path}` | `CATALOG_READ` | Includes `collections_allowed`, child counts, `path` (the dotted path), `disk_path` (relative to the root) and `share_root`. |
 | `PATCH /catalogs/{catalog}/namespaces/{path}` | `NAMESPACE_CONFIGURE` | `{collections_allowed}`; refuses `false` while collections exist (409 `NAMESPACE_NOT_EMPTY`). |
 | `DELETE /catalogs/{catalog}/namespaces/{path}` | `NAMESPACE_DELETE` | 409 `NAMESPACE_NOT_EMPTY` while children or collections (including drafts) exist. |
 | `GET /catalogs/{catalog}/namespaces/{path}/collections` | `CATALOG_READ` | Drafts are shown only to actors holding `COLLECTION_CREATE`. |
 | `POST /catalogs/{catalog}/namespaces/{path}/collections` | `COLLECTION_CREATE` | `{name, metadata?}` → draft. 409 `COLLECTIONS_NOT_ALLOWED`, `NAME_TAKEN`. |
 | `GET /catalogs/{catalog}/collections/{identifier}` | `COLLECTION_READ` | Resolve by identifier; answers the same body as `GET /collections/{id}`. |
-| `GET /collections/{id}` | `COLLECTION_READ` | Body: identifier, organization, catalog, state, version, metadata, schema_override, schema (the resolved `SchemaRef`), file_count, created_by, timestamps, `path` (relative to the prefix, `null` for drafts), validation `problems` (for drafts and incomplete). |
+| `GET /collections/{id}` | `COLLECTION_READ` | Body: identifier, organization, catalog, state, version, metadata, schema_override, schema (the resolved `SchemaRef`), file_count, created_by, timestamps, `path` (relative to the root, `null` for drafts), `share_root` (the owning organization's root or `null`; section 6.1), validation `problems` (for drafts and incomplete). |
 | `PATCH /collections/{id}` | `COLLECTION_WRITE_METADATA` | `If-Match`; `{metadata?, schema_override?}` (merge patch; `null` override clears). 422 `METADATA_INVALID`. |
 | `POST /collections/{id}/activate` | `COLLECTION_WRITE_METADATA` | `If-Match`. 409 `STATE_CONFLICT` unless draft; 422 `METADATA_INVALID`. |
 | `DELETE /collections/{id}` | `COLLECTION_DELETE_OWN` or `COLLECTION_DELETE_ANY` | `If-Match`. 409 `COLLECTION_NOT_EMPTY`. |
 | `GET /collections/{id}/schema` | `COLLECTION_READ` | Resolved schema for this collection. |
 | `GET /collections/{id}/metadata.json` | `COLLECTION_READ` | The canonical sidecar rendering (section 5.3, D-17). |
 | `GET /collections/{id}/files` | `COLLECTION_READ` | Paged by `rel_path_key`. |
-| `POST /collections/{id}/commits` | `COLLECTION_WRITE_FILES` | Section 5.4. 409 `BASE_VERSION_CONFLICT` carries `current_version`. |
+| `POST /collections/{id}/commits[?dry_run=true]` | `COLLECTION_WRITE_FILES` | Section 5.4. 409 `BASE_VERSION_CONFLICT` carries `current_version`. With `dry_run=true` (amendment 2026-10-31) every check runs and the answer is the would-be result with `commit_id: null`; nothing is written or audited, no `ETag` is set, and adds may leave out `sha256`. |
 | `GET /collections/{id}/commits` | `COLLECTION_READ` | Paged, newest first. |
 | `GET /collections/{id}/log`, `GET /catalogs/{catalog}/log` | `AUDIT_READ` | Audit entries, newest first. |
 | `GET /catalogs/{catalog}/search?q=&label=k:v&state=` | `CATALOG_READ` | `q` matches `title`/`description`/identifier case-insensitively; `label` repeats and matches `metadata.labels`; results are collection summaries. |
@@ -707,51 +897,176 @@ health and the exchange. Errors are `application/problem+json` with `type`, `tit
 Error codes (`huron.pkg.errors.ErrorCode`, HTTP status): `UNAUTHENTICATED` 401, `TOKEN_INVALID` 401,
 `FORBIDDEN` 403, `NOT_FOUND` 404, `NAME_INVALID` 422, `NAME_TAKEN` 409, `STATE_CONFLICT` 409,
 `VERSION_CONFLICT` 412 (`If-Match`), `BASE_VERSION_CONFLICT` 409 (commit), `PRECONDITION_REQUIRED` 428, `ORGANIZATION_NOT_EMPTY`
-409, `CATALOG_NOT_EMPTY` 409, `NAMESPACE_NOT_EMPTY` 409, `COLLECTION_NOT_EMPTY` 409,
+409, `ORGANIZATIONS_MANAGED` 409, `ORGANIZATION_DECLARED` 409, `CATALOG_NOT_EMPTY` 409, `NAMESPACE_NOT_EMPTY` 409, `COLLECTION_NOT_EMPTY` 409,
 `COLLECTIONS_NOT_ALLOWED` 409, `METADATA_INVALID` 422, `SCHEMA_INVALID` 422, `SCHEMA_INCOMPATIBLE` 422,
 `SCHEMA_SCOPE` 422, `COMMIT_INVALID` 422, `FILE_NOT_RECORDED` 422, `COMMIT_TOO_LARGE` 413,
 `REQUEST_INVALID` 422 (body or query shape), `INVALID_CURSOR` 400, `GROUP_DIRECTORY_UNAVAILABLE` 503,
 `DEPENDENCY_UNAVAILABLE` 503. `tests/unit/test_error_contract.py` asserts that every raised code is
 registered exactly once and that `docs/api-errors.md` lists each one.
 
+**Amendment (2026-10-31).** Declared organizations (section 3) add `declared`, `root`, `path` and
+`export` to the organization views, `share_root` to the catalog, namespace and collection views,
+and the codes `ORGANIZATIONS_MANAGED` and `ORGANIZATION_DECLARED` (both `HuronError` subclasses
+registered as `ErrorCode`s). In unmanaged mode every organization has `declared: false` and the new
+fields are `null`, so `share_root` is `null` and clients use their mount prefix as before. In managed
+mode an undeclared organization reports `declared: false` and `null` roots. The organization-wide
+role groups of the same date make `GET /organizations/{org}/grants` answer all four
+organization-scope roles (it answered `{ldap_groups}` for `org_admin` alone), let
+`PUT /organizations/{org}/grants/{role}` take the three catalog roles, merge the organization-scope
+catalog-role groups into `GET /catalogs/{catalog}/grants` without changing its shape, and add
+`GET /catalogs/{catalog}/grants/sources`. `make openapi` regenerates `docs/openapi.json`, and
+`web/src/lib/api/openapi.ts` is regenerated from it.
+
 ## 9. CLI surface
 
-Executable `huron`. Global options: `-o table|json|yaml`, `--api-url`, `--catalog` (overrides the current
-catalog), `-v`. Exit codes: 0 success; 1 generic failure; 2 usage; 3 not logged in; 4 forbidden; 5 not
-found; 6 conflict (version, state, not empty); 7 validation (metadata, schema, names); 8 storage (mount or
-ACL); 130 interrupted.
+Executable `huron`. The surface is oc-style, `huron <verb> <noun>` (see the amendment below). Global
+options, given before the verb: `-o table|json|yaml`, `--api-url`, `--catalog` (overrides the
+current catalog). Exit
+codes: 0 success; 1 generic failure; 2 usage; 3 not logged in; 4 forbidden; 5 not found; 6 conflict
+(version, state, not empty); 7 validation (metadata, schema, names); 8 storage (mount or ACL); 130
+interrupted.
 
-| Verb | Needs API | Needs mount | Minimum role | Behavior |
-| --- | --- | --- | --- | --- |
-| `huron login [--device\|--browser]`, `logout`, `whoami` | ✓ | | any | Device grant by default; loopback PKCE with `--browser`; exchange; tokens at `$XDG_STATE_HOME/huron/tokens.json` mode 0600. |
-| `huron config show\|set <key> <value>` | | | any | `api_url`, `issuer`, `client_id`, `mount_prefix`, `acl_backend` (`posix` in production; `none` applies modes only, for machines whose filesystem lacks ACL support). |
-| `huron catalog list\|use <name>\|describe [name]\|grants [name]` | ✓ | | Reader | `use` records the current catalog in config. |
-| `huron org list\|create <name>\|delete <name>\|grants <name>` | ✓ | create: ✓ | Platform Admin (`create`/`delete`), Reader to list | `create` records the organization, then creates `<prefix>/<org>` with its ACL plan. `delete` removes the empty directory after the API accepts. |
-| `huron org grant\|revoke <org> org_admin <group>` | ✓ | | Platform Admin | Edits the group set. |
-| `huron catalog create <org> <name> [--schema id]\|delete <name>` | ✓ | ✓ | Org Admin | Row first, then directory and ACLs. Idempotent on disk. |
-| `huron catalog grant\|revoke <catalog> <role> <group>` | ✓ | | Org Admin for `catalog_admin`, Catalog Admin for members | Prints a reminder to run `huron acl apply` where plans changed. |
-| `huron namespace list [parent]\|create <identifier> [--allow-collections] [--parents]\|delete <identifier>\|configure <identifier> --allow-collections/--no-allow-collections` | ✓ | create, delete, configure: ✓ | Catalog Admin | `--parents` creates missing ancestors one by one. `configure` re-applies the directory's ACL plan. Directory creation is idempotent. |
-| `huron schema list [org]\|show <id> [--resolved]\|publish <org> <name> <file> [--extends id]\|assign <catalog> <id>` | ✓ | | see section 8 | `assign` prints the recompute counts. |
-| `huron collection create <identifier> [--metadata file] [--draft]` | ✓ | ✓ unless `--draft` | Contributor | Reserves the draft, runs the walkthrough unless `--metadata`, then activates: directory, ACLs, `activate`, sidecar. `--draft` stops after the walkthrough. |
-| `huron collection activate [identifier]` | ✓ | ✓ | Contributor | For drafts created with `--draft`. |
-| `huron collection list [namespace]\|describe [identifier]\|delete <identifier> [--yes]` | ✓ | delete: ✓ | Reader; delete per D-11 | `delete` commits the removal of every file, unlinks them, deletes the row, removes the directory. |
-| `huron checkout <identifier>` | ✓ | | Reader | Records a working copy (collection id, identifier, version, path) and makes it current. Several working copies may exist; `checkout` switches. |
-| `huron add <path>... [--as rel_path] [--recursive]` | | | Contributor | Stages local files or directories for the current collection; a directory is staged with its relative layout. |
-| `huron rm <rel_path>...` | ✓ | | Contributor | Stages removals; refuses paths not recorded. |
-| `huron status` | ✓ | optional | Reader | Staged adds and removes, base vs current version, and unrecorded files when the mount is present. |
-| `huron pull` | ✓ | | Reader | Refreshes version and file list; drops staged removes of files no longer recorded with a warning. |
-| `huron push [-m message]` | ✓ | ✓ | Contributor | D-23. Progress per file; summary of the commit; exit 6 on `BASE_VERSION_CONFLICT` with the hint `run huron pull`. |
-| `huron meta show\|edit\|validate\|publish [identifier]` | ✓ | publish: ✓ | Contributor to edit, Reader to show | `edit` loads the current metadata, walks the resolved schema's fields, saves a local draft; `publish` sends the patch with `If-Match` and writes the sidecar. |
-| `huron meta override set <file>\|clear [identifier]` | ✓ | | Contributor | Sets or clears the collection's schema override together with the current metadata draft. |
-| `huron log [identifier]`, `huron files [identifier]`, `huron search <catalog> [-q] [-l k=v] [--state]` | ✓ | | Reader | Paged output. |
-| `huron check [--catalog name] [--hash]` | ✓ | ✓ | Reader | Section 6.4. |
-| `huron acl apply <identifier> [--recursive]` | ✓ | ✓ | owner of the directories | Section 6.2. |
-| `huron platform verify-root` | ✓ | ✓ | any | Checks the marker, the root ACL and the instance id. |
+`huron --help` keeps Typer's rich help and groups the commands into boxed panels with
+`rich_help_panel=`, titled exactly, in this order (amended 2026-10-31): **Catalog** (`org`, `catalog`,
+`get`, `describe`, `tree`, `search`, `checkout`: find, navigate, search, check out), **Collection**
+(`status`, `add`, `rm`, `pull`, `push`, `edit`, `validate`, `publish`, `activate`: work on the
+checked-out collection), **Manage** (`create`, `delete`, `set`, `unset`), **Administration** (`adm`)
+and **Settings** (`login`, `logout`, `whoami`, `config`). The order lives in one place, `LAYOUT` in
+`src/huron/applications/cli/commands/__init__.py`, from which `PANELS`, `VERBS` and each verb's panel
+are derived. The table follows the same grouping.
+Identifiers are relative to the current catalog (section 5.1); "current collection" is the checked-out
+one. A command that looks up an existing namespace or collection tries the identifier relative to the
+current catalog first and, when that is not found, as written, so a full identifier printed for
+another catalog (`huron --catalog other tree`) works too; a not-found error names every identifier
+tried. A verb typed without its noun prints its help and exits 2 with no error line.
+
+| Panel | Command | Needs API | Needs mount | Minimum role | Behavior |
+| --- | --- | --- | --- | --- | --- |
+| Catalog | `huron org [name]` | ✓ | | Reader | Like `oc projects` and `oc project` for organizations. Without a name: the organizations the caller can see, with a leading `CURRENT` column (`*` on the current one) and the columns of `get orgs` (`PATH` included), then `Using organization <o> on <api_url>`, or, with none set, `No organization is selected on <api_url>.` and the hint `switch with: huron org <name>`, or, when the saved one is not among those listed (deleted or hidden), a line saying so and the same hint; with none visible it says so (json and yaml: `{organization, api_url, organizations}` with the API rows). With a name: verifies the organization through the API (not found is exit 5), records it in config and prints `Now using organization <name> on <api_url>`; a current catalog of another organization (or one that can no longer be found) is cleared with a line naming it and the hint `huron catalog`. The checked-out collection is left alone. json and yaml print the same mapping as without a name. |
+| Catalog | `huron catalog [name]` | ✓ | | Reader | Like `oc projects` and `oc project`. Without a name: the catalogs of the current organization (every catalog when none is set; with `--catalog C`, the organization of `C`) with a leading `CURRENT` column (`*` on the current catalog) and the columns of `get catalogs`, then `Using catalog <c> in organization <o> on <api_url>` (the organization part only when the catalog is in the listing), or, with no catalog set, `No catalog is selected on <api_url>.` and the hint `switch with: huron catalog <name>`; then the checked-out collection, and exit 0. An organization with no visible catalogs says so and hints `huron get catalogs -A`; a saved organization the API no longer finds is exit 5 with the hint `huron org <name>`. json and yaml: `{organization, catalog, api_url, collection, catalogs}` with the API rows. With a name: verifies the catalog through the API, records it and its organization in config, prints `Now using catalog <name>` (and `Switched organization to <o>` when the organization changed), and mentions a checked-out collection that belongs to another catalog. |
+| Catalog | `huron get orgs` | ✓ | | Reader | Organizations the caller can see. The table has a `PATH` column: the organization's `path`, or `<mount_prefix>/<org>` marked `(prefix)` when it has no root. json and yaml print the API rows unchanged. |
+| Catalog | `huron get catalogs [--org O \| -A\|--all-orgs]` | ✓ | | Reader | The catalogs of the current organization when one is set, else of every organization; `--org` names another, `-A` lists every organization's, and `--org` with `-A` is a usage error. Table has a leading `CURRENT` column with `*` on the current catalog, like `oc get projects`; an empty listing scoped by the current organization adds a line naming it and `-A`; a saved organization the API no longer finds is exit 5 with the hint `huron org <name>`. json and yaml print the API rows unchanged. |
+| Catalog | `huron get namespaces [parent]` | ✓ | | Reader | Children of `parent`, or the top level of the current catalog. The table ends with a hint naming `huron get collections <namespace>` and `huron tree`; an empty one hints `huron create namespace <identifier>` instead. |
+| Catalog | `huron get collections [namespace]` | ✓ | | Reader | With a namespace, the collections directly in it; without one, every collection in the current catalog (search over every state). The table ends with the hint `check out one with: huron checkout <COLLECTION>`; an empty one hints `huron tree` and `huron create collection <identifier>` instead. |
+| Catalog | `huron get files [identifier]`, `huron get log [identifier]` | ✓ | | Reader | Recorded files and audit entries of the collection (default the current one). Paged output. |
+| Catalog | `huron get schemas [org]` | ✓ | | see section 8 | Registry entries, newest version first. |
+| Catalog | `huron get grants [--org O \| --catalog C]` | ✓ | | Reader for a catalog; `--org`: see section 8 | `--org`: the organization's groups for each of `org_admin`, `catalog_admin`, `contributor` and `reader`. A catalog (default the current one; the sub-option wins over the global `--catalog`): `ROLE`, `GROUP`, `SOURCE` from `GET /catalogs/{catalog}/grants/sources`, the source `platform`, `organization <o>` or `catalog`; json and yaml print the `items` (amendment 2026-10-31). |
+| Catalog | `huron get meta [identifier]` | ✓ | | Reader | The collection's metadata, its schema override and the local draft when one exists. |
+| Catalog | `huron describe org <name>`, `describe catalog [name]`, `describe namespace <identifier>`, `describe collection [identifier]`, `describe schema <id> [--resolved]` | ✓ | | Reader; schemas per section 8 | One object in detail. `catalog` defaults to the current catalog, `collection` to the current collection. |
+| Catalog | `huron tree [namespace]` | ✓ | | Reader | The namespace tree of the current catalog (or the subtree under `namespace`, hung from one branch named by its path), rooted at the catalog's name, with collections as leaves: a namespace shows whether it allows collections, a collection shows its full identifier, ready for `huron checkout`, and its state. A rich tree in table mode, a nested structure in json and yaml. Fetches no files. |
+| Catalog | `huron search [-q] [-l k=v]... [--state]...` | ✓ | | Reader | Searches the current catalog (the global `--catalog` overrides). Paged output. |
+| Catalog | `huron checkout [identifier]` | ✓ | | Reader | Records a working copy (collection id, identifier, version, path) and makes it current. Several working copies may exist; `checkout` switches. Without an identifier, an interactive picker walks the current catalog: child namespaces (shown as `name/`), the collections directly in the namespace, and `..` below the top, until a collection is chosen. Without a terminal, or with `-o json\|yaml`, the picker refuses with a usage error naming `huron tree` and `huron checkout <identifier>`. |
+| Collection | `huron status [--all]` | ✓ | optional | Reader | Always works. Without a checked-out collection: the organization, the catalog, the API url, `collection: null` and the hint `huron checkout` (with no catalog selected, the hint `huron catalog` to list them, then `huron catalog <name>`), exit 0. With one, in table mode: the line `On collection <identifier> (version N, up to date \| behind the service's version M) in catalog <c>[, organization <o>]`; a table of staged changes, `STAGED` (`add`\|`remove`), `PATH`, `SIZE` (binary units, `-` for removes), `FROM` (the local source, `-` for removes); `Unrecorded on the share: a, b` when the mount is present and there are any, or `share not mounted here; unrecorded files are not checked`; then the next step: `nothing staged; stage files with: huron add <file>`, or `push with: huron push -m "<message>" · unstage with: huron rm <path>`, and `behind: run huron pull` when behind. json and yaml keep every key they had and add `staged: [{action, rel_path, size, source}]`. `--all` reads every working copy under `$XDG_STATE_HOME/huron/collections/*` (`StateDir.working_copies()`, from `copy.json` and `stage.json`), one section each with `*` on the checked-out one, only those with something staged unless none are, then `nothing staged in any working copy`; only the checked-out copy is compared with the service and the share, so the others show `(version N)` and the hint `check it out to push or unstage: huron checkout <identifier>`. With `-o json\|yaml`, `--all` is a list of reports, each with `current`, and `null` for the fields that need the API on the others. |
+| Collection | `huron add <path>... [--as rel_path] [--recursive]` | | | Contributor | Stages local files or directories for the current collection; a directory is staged with its relative layout. |
+| Collection | `huron rm <rel_path>...` | ✓ | | Contributor | Stages removals; refuses paths not recorded. |
+| Collection | `huron pull` | ✓ | | Reader | Refreshes version and file list; drops staged removes of files no longer recorded with a warning. |
+| Collection | `huron push [-m message]` | ✓ | ✓ | Contributor | D-23. Before it mounts the share or copies a byte, a preflight `POST /collections/{id}/commits?dry_run=true` with the staged sizes (and a `sha256` only where a resumed push already knows it) lets the service refuse the push (`FORBIDDEN` exit 4, `BASE_VERSION_CONFLICT` exit 6, `FILE_NOT_RECORDED`, …), leaving the share and the stage untouched. Then progress per file; summary of the commit; exit 6 on `BASE_VERSION_CONFLICT` with the hint `run: huron pull`. |
+| Collection | `huron edit meta [identifier] [--from-scratch \| --file <doc.json>]` | ✓ | | Contributor | Starts from the local draft or the published metadata (with `--from-scratch`, from an empty document), walks the resolved schema's fields and saves a local draft. With `--file` nothing is asked: the JSON document becomes the local draft as it is, and the same validation summary is printed (`draft saved (N problems); publish with: huron publish meta`); `--file` with `--from-scratch` is a usage error. |
+| Collection | `huron validate meta [identifier]` | ✓ | | Contributor | Validates the draft against the resolved schema. |
+| Collection | `huron publish meta [identifier]` | ✓ | ✓ | Contributor | Sends the patch with `If-Match` and writes the sidecar. |
+| Collection | `huron activate collection [identifier]` | ✓ | ✓ | Contributor | For drafts created with `--draft`; re-running it repairs a missing directory. |
+| Manage | `huron create org <name> [--display-name] [--description]` | ✓ | ✓ | Platform Admin | Unmanaged mode only: records the organization, then creates `<prefix>/<org>` with its ACL plan. In managed mode the API's 409 `ORGANIZATIONS_MANAGED` is exit 6 with the hint `organizations are declared in the service configuration; prepare their directories with: huron adm provision-orgs`. |
+| Manage | `huron create catalog <name> [--org <org>] [--schema id] [--display-name] [--description]` | ✓ | ✓ | Org Admin | `--org` defaults to the current organization; with neither, a usage error hints `--org <org>` or `huron org <name>`; a saved organization the API no longer finds is exit 5 with the hint `huron org <name>`. Row first, then directory and ACLs. Idempotent on disk. |
+| Manage | `huron create namespace <identifier> [--allow-collections] [--parents]` | ✓ | ✓ | Catalog Admin | `--parents` creates missing ancestors one by one. Directory creation is idempotent, so re-running it repairs a missing directory. |
+| Manage | `huron create collection <identifier> [--metadata file] [--draft]` | ✓ | ✓ unless `--draft` | Contributor | Reserves the draft, runs the walkthrough unless `--metadata`, then activates: directory, ACLs, `activate`, sidecar. `--draft` stops after the walkthrough. |
+| Manage | `huron delete org <name>`, `delete catalog <name>`, `delete namespace <identifier>` | ✓ | ✓ | Platform Admin (org), Org Admin (catalog), Catalog Admin (namespace) | Removes the empty directory after the API accepts. Deleting the current organization clears it from config. A declared organization's 409 `ORGANIZATION_DECLARED` is exit 6 with a hint in the same style (remove it from the service configuration first). For an organization with a root, `delete org` never removes `<root>/<org>`, which belongs to the storage administrator; it prints a hint naming the directory instead. |
+| Manage | `huron delete collection <identifier> [--yes]` | ✓ | ✓ | per D-11 | Commits the removal of every file, unlinks them, deletes the row, removes the directory. |
+| Manage | `huron set override <file> [identifier]`, `huron unset override [identifier]` | ✓ | | Contributor | Sets or clears the collection's schema override together with the current metadata draft. |
+| Manage | `huron set namespace <identifier> --allow-collections/--no-allow-collections` | ✓ | ✓ | Catalog Admin | Changes `collections_allowed` and re-applies the directory's ACL plan. |
+| Administration | `huron adm grant <role> <group> [--org O \| --catalog C]`, `huron adm revoke <role> <group> [...]` | ✓ | | Platform Admin for `org_admin`; Org Admin for `catalog_admin`, and for every catalog role with `--org`; Catalog Admin for `contributor` and `reader` with `--catalog` | `--org O` takes `org_admin`, `catalog_admin`, `contributor` or `reader` (the catalog roles then hold in every catalog of `O`); `org_admin` needs `--org`; otherwise the catalog roles use `--catalog`, else the global or current catalog; any other role is a usage error. For a declared organization every `--org` change is refused with 409 `ORGANIZATION_DECLARED`, and the hint says to edit `groups.<role>` in the service configuration. Edits the group set and, for a catalog or an organization-scope catalog role (all catalogs of the organization), prints a reminder to run `huron adm apply-acl <catalog> --recursive` where plans changed. |
+| Administration | `huron adm check [--catalog name] [--hash]` | ✓ | ✓ | Reader | Section 6.4, including the organization findings `org_dir_missing`, `org_marker_missing`, `org_marker_mismatch`, `org_acl_drift` (`posix` backend only) and, in managed mode, `org_undeclared` (a warning instead of a refusal when an undeclared organization's directory cannot be located). |
+| Administration | `huron adm apply-acl <identifier> [--recursive\|-R]` | ✓ | ✓ | owner of the directories | Section 6.2. |
+| Administration | `huron adm verify-mounts` | ✓ | ✓ | any | One row per organization the caller can see: `ORG`, `PATH`, `STATE` (`ok`, `missing`, `no marker`, `wrong instance`, `wrong org`, `undeclared`); checks the per-organization marker, or the root marker for an organization that is neither declared nor rooted, against `GET /healthz`. In managed mode an organization the configuration does not declare is `undeclared` (path marked `(undeclared)`) and does not count. Exit 1 when any other row is not `ok`; the hint names `provision-orgs` for organization markers and `scripts/init-root.sh` for the root marker. Replaces `adm verify-root`. |
+| Administration | `huron adm provision-orgs [--org O] [--dry-run] [--emit-script]` | ✓ | ✓ | Platform Admin, run by the storage administrator | Section 6.1: for each declared organization (or only `O`), requires its root, creates `<root>/<org>`, applies the organization ACL plan (modes only with `acl_backend: none`) and writes the per-organization marker; refuses a marker naming another instance or organization; idempotent. `--dry-run` prints the steps; `--emit-script` prints an equivalent shell script (`mkdir`, `chmod`, `chgrp`, `setfacl`, the marker write) for roots only `root` can write, and touches nothing. In the **Share** group of `huron adm --help`, beside `check` and `verify-mounts`. |
+| Administration | `huron adm publish schema <org\|platform> <name> <file> [--extends id]` | ✓ | | see section 8 | Publishes a new version of an organization or platform entry. |
+| Administration | `huron adm assign schema <schema_id> [--catalog C]` | ✓ | | see section 8 | Assigns the entry to the catalog (default the current one) and prints the recompute counts. |
+| Settings | `huron login [--device\|--browser]`, `logout`, `whoami` | ✓ | | any | Device grant by default; loopback PKCE with `--browser`; exchange; tokens at `$XDG_STATE_HOME/huron/tokens.json` mode 0600. |
+| Settings | `huron config show\|set <key> <value>` | | | any | `api_url`, `issuer`, `client_id`, `mount_prefix` (where organizations without a root live, and the root marker), `acl_backend` (`posix` in production; `none` applies modes only, for machines whose filesystem lacks ACL support). |
 
 Working-copy state lives in `$XDG_STATE_HOME/huron/collections/<uuid>/`: `copy.json` (identifier, version,
 path, checked_out_at), `stage.json` (adds as `{rel_path, source, size}`, removes), `metadata.draft.json`.
-The current collection and catalog are in `$XDG_CONFIG_HOME/huron/config.yaml`. The CLI never writes
+The current organization, catalog and collection are in `$XDG_CONFIG_HOME/huron/config.yaml`
+(`current_organization`, `current_catalog`, `current_collection`; none is a `config set` key). The CLI never writes
 anything but `metadata.json`, data files and `.huron-part` files into the share.
+
+### Amendment (2026-10-31): the oc-style CLI surface
+
+- **The table above replaces the CLI surface the plan first specified**, decided with the user on
+  2026-10-31. It supersedes every older verb spelling elsewhere in this plan: the milestone text in
+  section 11 is history and keeps the spellings it was built with.
+- **Shape.** Commands read `huron <verb> <noun>`, after `oc`: `get`, `describe`, `create`, `delete`,
+  `activate`, `edit`, `validate`, `publish`, `set` and `unset` take a noun; administration lives under
+  one sub-command, `huron adm`. Under `get`, the nouns are plural (`get catalogs`), with the singular
+  registered as a hidden alias; under `describe`, they are singular.
+- **The old spellings are removed, with no aliases**, because Huron is pre-release. The mapping:
+  `org list` → `get orgs`; `catalog list` → `get catalogs`; `catalog use <name>` → `catalog <name>`;
+  `catalog describe` → `describe catalog`; `org grants`, `catalog grants` → `get grants`;
+  `org create`, `catalog create <org> <name>` → `create org`, `create catalog <name> --org <org>`;
+  `org delete`, `catalog delete` → `delete org`, `delete catalog`;
+  `org grant|revoke <org> org_admin <group>` → `adm grant|revoke org_admin <group> --org <org>`;
+  `catalog grant|revoke <catalog> <role> <group>` → `adm grant|revoke <role> <group> --catalog <catalog>`;
+  `namespace list` → `get namespaces`; `namespace create|delete` → `create|delete namespace`;
+  `namespace configure` → `set namespace`; `schema list|show` → `get schemas`, `describe schema`;
+  `schema publish|assign` → `adm publish schema`, `adm assign schema <id> [--catalog C]`;
+  `collection list` → `get collections`; `collection describe` → `describe collection`;
+  `collection create|delete` → `create|delete collection`; `collection activate` →
+  `activate collection`; `meta show` → `get meta`; `meta edit` → `edit meta`; `meta init` →
+  `edit meta --from-scratch`; `meta validate|publish` → `validate|publish meta`;
+  `meta override set|clear` → `set|unset override`; `files`, `log` → `get files`, `get log`;
+  `search <catalog>` → `search` over the current catalog; `check` → `adm check`; `acl apply` →
+  `adm apply-acl`; `platform verify-root` → `adm verify-root`.
+- **New commands.** `huron org` and `huron catalog` work as `oc projects` and `oc project` do:
+  without a name they list the organizations, or the current organization's catalogs, with `*` on
+  the current one; with a name they switch. The current organization is new config
+  (`current_organization`): `huron org <name>` sets it, and clears a current catalog of another
+  organization; `huron catalog <name>` sets it to the catalog's organization. It scopes
+  `huron catalog` and `huron get catalogs` (`--org` names another, `-A` lists every one) and is the
+  default `--org` of `huron create catalog`; `get grants --org` and `get schemas [org]` stay explicit.
+  `huron delete org` clears it when it deletes the current one, a saved organization that is gone
+  or hidden draws the hint `huron org <name>`, and `--catalog C` shows `C`'s organization in
+  `huron catalog` and `huron status` without changing the saved one;
+  `huron tree` shows the namespace tree with collections as leaves; `huron describe namespace`
+  reads `GET /catalogs/{catalog}/namespaces/{path}`; `huron get collections` without a namespace
+  lists the whole current catalog; `huron checkout` without an identifier opens a picker
+  (`Prompter` gains a way to tell whether it can prompt, and the scripted fake follows); and
+  `huron status` works without a checked-out collection.
+- **Help.** Grouping uses Typer's own boxed panels (`rich_help_panel=`), not a hand-written help
+  screen; the panel titles are those in the table. Regrouped later on 2026-10-31 into five panels,
+  **Catalog**, **Collection**, **Manage**, **Administration** and **Settings** (section 9's
+  introduction lists their verbs); the panels **Basic Commands**, **Context**, **Working Copy** and
+  **Create and Change** are gone. No command spelling changed.
+- **`huron status [--all]`** (decided later the same day). With a checked-out collection the table
+  mode prints a header line, a `STAGED`/`PATH`/`SIZE`/`FROM` table, the unrecorded files and the next
+  step, as the table row says; json and yaml add `staged`. `--all` lists every working copy on the
+  machine from its state files and asks the API about the checked-out one only. `StateDir` gains a
+  public `working_copies()`.
+- **`huron edit meta --file <doc.json>`** stores a JSON document as the local draft without the
+  walkthrough, then `huron publish meta` publishes it.
+- **Push preflight** (a defect found by the NOAA verifier: a Reader's `huron push` copied files onto
+  the share and left them unrecorded before the service refused the commit with 403). `huron push`
+  now sends the commit as a dry run (section 5.4, section 8) before it copies anything, so a refused
+  push leaves the share untouched.
+- **Hints.** Every hint the CLI prints, and every command the web shows (`web/src/lib/cli.ts`),
+  uses the new spellings.
+
+### Amendment (2026-10-31): organizations declared in the service configuration
+
+- **Decided with the user on 2026-10-31**, with the section 3 amendment of the same date. The rows
+  of `get orgs`, `huron org`, `create org`, `delete org`, `adm grant`, `adm check`,
+  `adm verify-mounts`, `adm provision-orgs` and `config` above carry it.
+- **Paths per organization.** The CLI resolves every absolute path through `Mount`, by the
+  organization of the first segment: its `root` from `GET /api/v1/organizations/{org}`, cached for
+  the command, or `mount_prefix` when the root is `null` (section 6.1). The marker check lives inside
+  `Mount`, so no command can skip it.
+- **Renamed, without an alias**: `adm verify-root` → `adm verify-mounts`, which reports every
+  organization instead of the one root. The old amendment's mapping `platform verify-root` →
+  `adm verify-root` now ends at `adm verify-mounts`.
+- **New**: `adm provision-orgs`, the storage administrator's verb, in the `Share` group of
+  `huron adm --help`.
+- **Hints.** In managed mode `create org` and the refusals of `delete org` and `adm grant … --org`
+  name the service configuration (for a grant, the `groups.<role>` key to edit) and
+  `huron adm provision-orgs`; storage errors below a rooted
+  organization name its path and, when configured, its `export`.
 
 ## 10. Plan-wide rules
 
@@ -812,7 +1127,7 @@ anything but `metadata.json`, data files and `.huron-part` files into the share.
 | M7 Storage | `core.storage`, root marker, directory creation and ACLs from the CLI | M6 |
 | M8 Collections in the CLI | Walkthrough, create and activate, checkout, stage, push, metadata publish, delete | M7 |
 | M9 Check and ACL repair | `huron check`, `huron acl apply` | M8 |
-| M10 Release | Deployment manifests, operator and user docs, end-to-end test, merge | M9 |
+| M10 Release | Deployment manifests, operator and user docs, end-to-end test, merge; declared organizations with per-organization roots, the configuration file and the Helm chart (amendment 2026-10-31) | M9 |
 
 ### Milestone 0 — Repository
 
@@ -910,7 +1225,11 @@ anything but `metadata.json`, data files and `.huron-part` files into the share.
   - `src/huron/pkg/paging.py`: `Cursor` (opaque, base64url of a JSON tuple with a version byte),
     `Page[T](items, next_cursor)`, `clamp_limit(value, default=100, maximum=500)`, `InvalidCursor`
     (`INVALID_CURSOR`, 400).
-  - `src/huron/pkg/canonical.py`: `canonical_bytes(document)` via `rfc8785`, `document_sha256`.
+  - `src/huron/pkg/canonical.py`: `canonical_bytes(document)`, `document_sha256`. RFC 8785 bytes, except
+    that integers past the I-JSON range (2^53) are written with their exact digits rather than refused
+    (jsonb answers a float such as `-1e31` as an integer); strings and floats go through `rfc8785`.
+    NaN, infinity, non-string keys and lone surrogates raise `NotCanonicalizable`, which metadata and
+    schema checks report as 422 `METADATA_INVALID` / `SCHEMA_INVALID` with rule `json`.
   - `src/huron/pkg/identifiers.py`: `new_id()` UUIDv7 as `uuid.UUID`, `parse_id(text)`.
   - `src/huron/pkg/clock.py`: `Clock` protocol (`now() -> datetime` aware UTC), `SystemClock`,
     `FrozenClock(at)` with `advance`.
@@ -1007,7 +1326,8 @@ anything but `metadata.json`, data files and `.huron-part` files into the share.
   - `src/huron/core/security/rbac/privileges.py`: `Privilege` enum with every name in section 5.2.
   - `src/huron/core/security/rbac/roles.py`: `Role` enum (`platform_admin`, `org_admin`,
     `catalog_admin`, `contributor`, `reader`), `ROLE_PRIVILEGES: Mapping[Role, frozenset[Privilege]]`,
-    `scope_type_of(role)`.
+    `scope_type_of(role)` (since 2026-10-31 `scope_types_of(role)`, a set: the catalog roles also
+    hold at organization scope, D-28).
   - `src/huron/core/security/rbac/grants.py`: `Scope(type, id | None)` with `PLATFORM`, `organization(id)`,
     `catalog(id)` constructors; `Grant(scope, role, ldap_group)`; `check_grant(grant)` refusing a
     role at the wrong scope type (`GrantInvalid`, `REQUEST_INVALID`).
@@ -1119,7 +1439,8 @@ memory store in the unit tier.
     `GrantWriter` port (`replace(scope, role, groups) -> (added, removed)`) declared in
     `core/security/rbac/ports.py`.
   - `src/huron/core/lake/organizations/grants.py`: `GrantAdministration(store, authorizer)` with
-    `set_platform_admins`, `set_org_admins`, `set_catalog_role` enforcing the privilege per role, the
+    `set_platform_admins`, `set_org_admins` (since 2026-10-31 `set_organization_role`, for all four
+    organization-scope roles, D-28), `set_catalog_role` enforcing the privilege per role, the
     protected configured group, and `check_grant`; audit `organization.grant`/`revoke`,
     `catalog.grant`/`revoke` per group added or removed.
   - `src/huron/core/metastore/organizations/memory.py`.
@@ -1706,6 +2027,9 @@ memory store in the unit tier.
   `configmap.yaml` (every non-secret `HURON_*`), `secret.example.yaml` (`HURON_DATABASE_URL`),
   `migrate-job.yaml` (`alembic upgrade head`, `ttlSecondsAfterFinished`), `kustomization.yaml`;
   `deploy/README.md` with the rollout order (secret, migrate job, deployment) and the rotation runbook.
+- Amended 2026-10-31 (M10.6): `configmap.yaml` is replaced by a `configMapGenerator` for
+  `huron.yaml` (every non-secret setting and `organizations`), mounted at `/etc/huron` with
+  `HURON_CONFIG_FILE`; the Deployment and the Job take only the Secret into their environment.
 - Verification: `kubectl kustomize deploy/openshift` when `kubectl` is available, otherwise
   `python -c "import yaml,sys; [list(yaml.safe_load_all(open(p))) for p in sys.argv[1:]]"` over every
   file; `make gate`.
@@ -1740,17 +2064,109 @@ memory store in the unit tier.
 - Dependencies: M10.2.
 - Status: complete
 
+#### M10.4 Declared organizations in the service
+
+- Intent: the section 3 amendment of 2026-10-31, service half (D-10 extended, D-28).
+- Create or change:
+  - `src/huron/applications/api/settings.py`: `HURON_CONFIG_FILE` through pydantic-settings' YAML
+    source in a strict subclass (precedence environment, file, defaults; unknown top-level keys fail),
+    `organizations` (entries `name`, `display_name`, `description`, `admin_groups` (since replaced by
+    `groups`, the organization-wide role groups of the section 3 amendment), `root`, `export`; names checked with `huron.schema.naming`, duplicates fail, `root` absolute and
+    normalized without `..`), `HURON_ORGANIZATIONS` as a JSON list replacing it; managed mode when the
+    key is present, even empty.
+  - `src/huron/core/lake/bootstrap.py`: the declared organizations through `LakeSettings`;
+    reconciliation in the bootstrap transaction under `tx.lock_bootstrap()` (create, update through the
+    new `OrganizationStore.update` port with `version` + 1 and audit `organization.update`, exact
+    `org_admin` replacement with grant audit entries, a warning with `catalog_count` for each
+    undeclared organization, no write at all when nothing differs). The lock port on the PostgreSQL and
+    memory transactions; `organization.update` in `core.lake.audit.models.Action`.
+  - Managed-mode guards as registered `ErrorCode`s: `ORGANIZATIONS_MANAGED` (409, `POST
+    /organizations`) and `ORGANIZATION_DECLARED` (409, `DELETE` of a declared organization and `PUT`
+    of its `org_admin` grants).
+  - API views: `declared`, `root`, `path`, `export` on organizations; `share_root` on catalogs,
+    namespaces and collections, from configuration (no migration). `make openapi`.
+  - `docs/api-errors.md` lists both codes.
+  - Tests: unit over the memory fakes and contract over PostgreSQL for the reconciliation (create,
+    update, exact grant replacement and its audit, the undeclared warning, a second run writing
+    nothing), concurrent bootstrap on PostgreSQL, settings precedence and strictness, the 409s and the
+    new view fields.
+- Verification: `make gate`; `uv run pytest -m contract`; `uv run pytest tests/unit/test_openapi_snapshot.py
+  tests/unit/test_error_contract.py`.
+- Dependencies: M10.3.
+- Status: pending
+
+#### M10.5 Per-organization roots in the CLI
+
+- Intent: section 6.1 as rewritten and the section 9 amendment of 2026-10-31.
+- Create or change:
+  - `src/huron/core/storage/marker.py`: `Marker` gains the optional `organization`; verification of a
+    per-organization marker compares it.
+  - `src/huron/applications/cli/mount.py`: absolute paths per organization (its `root`, cached per
+    command, else `mount_prefix`); the marker check inside `path`, `ensure`, `apply` and `remove`.
+    Every path derivation (directory verbs, `inventory` disk paths, `activate`, `apply-acl`, `check`,
+    `tree`, `push` and sync) goes through it.
+  - `huron adm provision-orgs [--org O] [--dry-run] [--emit-script]`; `adm verify-root` renamed
+    `adm verify-mounts` with one row per organization; the `org_*` findings in `adm check`; the
+    managed-mode hints of `create org`, `delete org` and `adm grant org_admin`; `delete org` never
+    removing a rooted organization's directory; the `PATH` column of `get orgs` and `huron org`.
+  - Tests in `tests/unit/cli` and `tests/unit/storage`.
+- Verification: `make gate`.
+- Dependencies: M10.4.
+- Status: pending
+
+#### M10.6 The configuration file in the stacks, the Helm chart and kustomize
+
+- Create or change:
+  - `huron.dev.yaml` (section 3 amendment, Development). `docker-compose.app.yml` mounts it read-only
+    at `/etc/huron/huron.yaml` with `HURON_CONFIG_FILE` and recreates the API when its content
+    changes (verified by editing the file and re-running `make app`); `dev.env` sets
+    `HURON_CONFIG_FILE=huron.dev.yaml` for `make api`.
+  - `docker/seed/run.mjs`: in managed mode no organization and no `org_admin` grant, and no early
+    return keyed on the first organization existing.
+  - `scripts/e2e.sh`: `huron adm provision-orgs` instead of `create org`, with roots under a temporary
+    directory through an override configuration.
+  - `deploy/helm/huron`: `values.yaml` (image, replicas, `database.existingSecret` and key, `config`
+    rendered verbatim as `huron.yaml` into a ConfigMap, `extraEnv`, an OpenShift Route and an ingress,
+    each a toggle, resources, an optional web deployment, off by default), the migration Job as a
+    `pre-install,pre-upgrade` hook needing only the database secret, a `checksum/config` annotation on
+    the API pod template, `values.schema.json` (organization name pattern, `instance_id` required;
+    unique names documented, not expressible), `NOTES.txt` reminding to run
+    `huron adm provision-orgs`. The API pod mounts no share.
+  - `deploy/openshift`: a `configMapGenerator` for `huron.yaml`, `HURON_CONFIG_FILE` and the volume.
+  - `deploy/README.md` documents both paths.
+- Verification: `make gate`; `helm lint --strict deploy/helm/huron -f
+  deploy/helm/huron/ci/example-values.yaml` and `helm template huron deploy/helm/huron -f
+  deploy/helm/huron/ci/example-values.yaml` when `helm` is available (`config.instance_id` has no
+  default, so the chart's defaults alone do not lint); `kubectl kustomize deploy/openshift`; `docker compose -f docker-compose.app.yml
+  config --quiet`; `bash -n scripts/e2e.sh`.
+- Dependencies: M10.5.
+- Status: pending
+
+#### M10.7 Share roots in the web and the documentation
+
+- Create or change: the web shows `share_root` + `/` + the relative path wherever it showed
+  `${mountPrefix}/${path}`, and the configured mount prefix only when `share_root` is `null`;
+  `web/src/lib/api/openapi.ts` regenerated with `npm run generate:api`; a dated accepted amendment in
+  `docs/web-design.md`. `docs/operator.md` (the runbook: declare the organization, `helm upgrade`,
+  `huron adm provision-orgs`), `docs/user-guide.md`, `docs/architecture.md`, `README.md` (the
+  development configuration file and `make app`), `docs/adr/0007-declared-organizations.md`.
+- Verification: `make gate`; `make docs-check`; the web's `npm run check` and unit tests.
+- Dependencies: M10.4.
+- Status: pending
+
 ## 12. Risk register
 
 | Risk | Effect | Mitigation |
 | --- | --- | --- |
-| The NFS server does not honor POSIX ACLs over the mount (NFSv4 without POSIX mapping). | Plans cannot be applied; enforcement falls back to mode bits. | `acl_supported` probe at `verify-root`; `acl_backend: none` keeps the CLI working; an `nfs4` backend over `nfs4_setfacl` is a contained addition behind the same `Storage` port. |
+| The NFS server does not honor POSIX ACLs over the mount (NFSv4 without POSIX mapping). | Plans cannot be applied; enforcement falls back to mode bits. | `acl_supported` probe at `verify-mounts` (formerly `verify-root`); `acl_backend: none` keeps the CLI working; an `nfs4` backend over `nfs4_setfacl` is a contained addition behind the same `Storage` port. |
 | Only owners can change ACLs, so a changed group mapping is applied unevenly. | Drift between grants and disk. | `huron check` reports `acl_drift`; `acl apply` prints what it could not change; the operator runbook names the one-time `chown` a storage admin can do. |
 | LDAP group changes propagate slowly to NFS clients and servers. | A newly granted user is refused on disk for a while. | Documented; the CLI's error on `EACCES` names the groups the plan expects. |
 | The service trusts reported hashes. | A buggy or hostile CLI can record wrong stamps. | `huron check --hash` verifies; the commit records `host` and actor; the upgrade path is HTTP ingest. |
 | Concurrent pushes to one collection. | Lost updates. | `base_version` on every commit; the working copy `flock`; the race test in M4.3. |
 | Schema assignment turning many collections `incomplete` at once. | Surprise for contributors. | The assignment response reports counts; `huron check` lists them; drafts are unaffected. |
 | Catalog names are global. | Two organizations want the same name. | Stated in D-2; organizations can prefix; revisiting it is a plan amendment. |
+| A machine mounts an organization's export at another path, or not at all (amendment 2026-10-31). | The CLI writes into the wrong tree, or fails. | Per-organization markers carry the instance and the organization and are checked inside `Mount`; `huron adm verify-mounts` lists every organization's state; hints name the configured `export`. |
+| Replicas run different configurations during a rollout. | A replica of the old configuration that restarts reconciles the database back to it until the rollout ends. | Reconciliation runs under the bootstrap advisory lock and is idempotent; the Helm chart's `checksum/config` rolls every pod to one configuration; undeclared organizations are never deleted. |
 | Loopback or device login unavailable on a cluster node. | No way to log in. | Both flows exist; `tokens.json` can be copied between machines of the same user (documented, mode checked). |
 
 ## 13. Definition of done
@@ -1758,7 +2174,7 @@ memory store in the unit tier.
 - Every task in section 11 is `complete` with a verifier's note.
 - `make gate`, `uv run pytest -m contract` and `uv run pytest -m integration` are green on `main` after
   the merge; CI runs all three.
-- The service deploys from `deploy/openshift` and answers `/readyz`.
+- The service deploys from `deploy/openshift` and from `deploy/helm/huron` and answers `/readyz`.
 - `scripts/e2e.sh` has been run once against the development stack with the output recorded in the
   release pull request.
 - `docs/operator.md` and `docs/user-guide.md` describe the system as built, and every error code is in

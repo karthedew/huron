@@ -25,10 +25,15 @@ test.describe('the account page', () => {
 		);
 
 		const roles = main.getByRole('region', { name: 'Roles' });
+		// Organizations come before catalogs: helio and geo grant dave's groups organization-wide.
 		await expect(roles.getByRole('listitem').locator('p').first()).toHaveText(
-			'You are a reader of Geoscience in Earth Science.'
+			'You are a reader of every catalog of Earth Science.'
 		);
-		await expect(roles.getByRole('listitem')).toHaveCount(3);
+		await expect(roles.getByRole('listitem')).toHaveCount(5);
+		await expect(roles).toContainText(
+			'You are a contributor to every catalog of Heliophysics Division.'
+		);
+		await expect(roles).toContainText('You are a reader of Geoscience in Earth Science.');
 		await expect(roles).toContainText(
 			'You are a contributor to Heliophysics in Heliophysics Division.'
 		);

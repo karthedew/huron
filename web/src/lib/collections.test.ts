@@ -121,6 +121,13 @@ describe('collectionSummary', () => {
 		expect(collectionSummary(lacking, '/projects/huron').overrideIncompatible).toBe(false);
 	});
 
+	it("puts the share path under the organization's root when the API names one", () => {
+		const rooted = collectionFixture({ share_root: '/data1/huron' });
+		expect(collectionSummary(rooted, '/projects/huron').sharePath).toBe(
+			'/data1/huron/helio/heliophysics/solar-wind/ace/mag-l2-2024'
+		);
+	});
+
 	it('gives a draft no share path, and no title or description it lacks', () => {
 		const draft = collectionFixture({
 			state: 'draft',

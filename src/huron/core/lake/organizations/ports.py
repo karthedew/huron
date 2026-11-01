@@ -20,6 +20,10 @@ class OrganizationStore(Protocol):
         """Store a new organization; raises ``NameTaken`` for a used name."""
         ...
 
+    async def update(self, organization: Organization) -> None:
+        """Replace the display name, description and version of a stored organization."""
+        ...
+
     async def get(self, organization_id: uuid.UUID) -> Organization | None:
         """The organization with ``organization_id``."""
         ...

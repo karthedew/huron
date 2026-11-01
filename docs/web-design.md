@@ -79,11 +79,84 @@ Configuration is read lazily at first use (the build imports server modules; not
 | `HURON_WEB_OIDC_CLIENT_SECRET` | no | Confidential client (`client_secret_basic`); without it the web is a public client. PKCE S256 always. |
 | `HURON_WEB_OIDC_SCOPES` | no | Default `openid profile email`. |
 | `HURON_WEB_OIDC_LOGOUT` | no | `true` (default): after local logout, redirect to the IdP's `end_session_endpoint` when advertised; `false`: local only. |
-| `HURON_WEB_MOUNT_PREFIX` | no | Default `/projects/huron` (the CLI's default). Share paths are shown as `<prefix>/<relative path>`. |
+| `HURON_WEB_MOUNT_PREFIX` | no | Default `/projects/huron` (the CLI's default). Share paths are shown as `<prefix>/<relative path>`, unless the API names the organization's `share_root` (amendment below). |
 | `HURON_WEB_API_TIMEOUT_MS` | no | Default `10000` for API reads and IdP calls. The exchange uses `max(35000, 3×timeout)` so the API's own dependency errors (`GROUP_DIRECTORY_UNAVAILABLE`, `DEPENDENCY_UNAVAILABLE`) arrive before the web gives up. |
 
 A `ConfigError` names the variable (never its value). Hooks turn it into a 500 whose message names the
 variable; `/login` shows `error=config`.
+
+- **Accepted amendment (2026-10-31, declared organizations).** The service configuration may declare
+  organizations, each with an optional root (IMPLEMENTATION_PLAN.md D-28 and §6.1): a declared
+  organization with a root lives at `<root>/<org>` on its own share, not under the mount prefix. The
+  API says so on every catalog, namespace and collection as `share_root` (the owning organization's
+  root, `null` when it has none) and on an organization as `declared`, `root`, `path` (`root/name`)
+  and `export`. The web follows the CLI's `Mount`:
+  - A share path is `<share_root>/<relative path>` when `share_root` is not null, else
+    `<HURON_WEB_MOUNT_PREFIX>/<relative path>` as before. The relative paths (`disk_path` of a
+    namespace, `path` of a collection) are unchanged. `sharePath()` in `src/lib/share.ts` is the one
+    place that joins them; the namespace page load and `collectionSummary()` use it, and so does the
+    organization layout. `HURON_WEB_MOUNT_PREFIX` stays the fallback for organizations without a root.
+  - The organization pages' header (`orgs/[org]/+layout.svelte`) shows the organization's directory
+    as a "Share path" with a copy button (`organizationPath` from the layout load:
+    `sharePath(root, mount prefix, name)`), and "Declared in the service configuration." when
+    `declared` is true.
+  - The decoders in `src/lib/server/huron-api.ts` read the new fields strictly, like every other
+    field; `src/lib/api/openapi.ts` is regenerated from `docs/openapi.json`.
+  - The e2e API runs with an empty `HURON_CONFIG_FILE` (`e2e/support/stack.mjs`), so a developer's
+    exported configuration cannot put it in managed mode: `seed.mjs` creates the organizations, every
+    `share_root` is null and the e2e share paths stay under `MOUNT_PREFIX`.
+
+  The header's copy button is the first control in `main` on an organization's pages, so the skip
+  link's next Tab lands on it, then on the Catalogs section (`e2e/shell.test.ts`). Covered by
+  `src/lib/share.test.ts`, `src/lib/collections.test.ts`, the namespace page load test, the
+  collection layout load test, the organization layout's load and component tests and
+  `e2e/organizations.test.ts` ("heads its pages and lists its catalogs").
+
+- **Accepted amendment (2026-10-31, organization-wide role groups).** Each organization's groups for
+  `org_admin`, `catalog_admin`, `contributor` and `reader` are now granted on the organization itself
+  (declared once as `groups.<role>` in the service configuration for a declared organization), and the
+  three catalog roles granted there hold in every catalog of the organization, existing and future.
+  A catalog's own grants add to them and cannot remove one (IMPLEMENTATION_PLAN.md D-28). The web
+  follows:
+  - The route tree gains `orgs/[org=segment]/access/+page.server.ts/.svelte`, the organization's
+    Access tab (the sub-navigation is now Catalogs · Search · Access). It reads
+    `GET /organizations/{org}/grants` (`HuronApi.organizationGrants`, the four role keys) and shows
+    one card per role of `ORGANIZATION_ROLES` (`$api/types`, checked against the contract) with its
+    groups, the user's marked "You"; the catalog roles' text adds "in every catalog of the
+    organization". The API refuses that read (403) to someone with roles on single catalogs only,
+    and the tab then says "You don't have permission to see this." For a declared organization the
+    tab says the groups are declared as `groups.<role>` in the service configuration; for an
+    undeclared one, `administerOrganization` shows the hint "Grant a role on the organization":
+    `huron adm grant <role> <ldap-group> --org <org>` (`cliCommand({ verb: 'adm grant',
+    organization })`; the CLI then names the `apply-acl` runs of every catalog of it).
+  - The catalog's Access tab (`…/access`) reads `GET /catalogs/{c}/grants/sources`
+    (`HuronApi.catalogGrantSources`) instead of the effective groups, and its load returns
+    `catalogAccess()` (`src/lib/access.ts`): every role, strongest first, with its groups under
+    where they were granted, in the order platform, organization, catalog. Each source is labelled
+    "Inherited from the platform", "Inherited from <organization>" (a link to the organization's
+    Access tab) or "Granted on this catalog", and its list is named by that label. A group granted
+    both on the organization and on the catalog shows under both, since revoking it on the catalog
+    leaves it the role. The role-level "Inherited from …" sentence is gone. The decoder reads `role`
+    and `scope` strictly as the contract's closed enumerations (`asOneOf`), so an unknown one is a
+    malformed answer. `catalogGrants` and the `EffectiveGroups` type are removed: nothing reads them.
+  - `capabilities()` counts `catalog_admin` and `contributor` granted on the catalog's organization
+    like the same role granted on the catalog (§4.6), so `maySeeDrafts` and every hint follow. The
+    account page writes those roles as "You are a reader of every catalog of <organization>." (and
+    likewise for the other two), sorted with the organizations.
+  - The e2e fixture's organizations gain `grants`, the catalog roles granted on them, as
+    `huron.dev.yaml` declares them: helio catalog_admin helio-catalog-admins, contributor
+    helio-contributors and reader helio-readers (granted by bob), geo reader geo-readers (granted by
+    alice). The catalogs' own grants stay, so they overlap; `seed.mjs` grants them after the
+    org_admin grant, and `visibleOrganizations`/`visibleCatalogs` count them. Who sees what is
+    unchanged; dave's account page now lists five roles.
+
+  Covered by `src/lib/access.test.ts`, `src/lib/capabilities.test.ts`, `src/lib/roles.test.ts`,
+  `src/lib/cli.test.ts`, `src/lib/api/types.test.ts`, `src/lib/server/huron-api.test.ts`,
+  `src/lib/server/json.test.ts`, the load and component tests of both Access tabs and of the
+  organization layout, and `e2e/catalogs.test.ts` ("the access tab"), `e2e/organizations.test.ts`
+  ("shows the organization's groups, which every catalog of it inherits", "shows administrators of
+  an organization how to grant a role on it"), `e2e/fixture.test.ts` ("each organization's and
+  catalog's grants are the fixture's"), `e2e/account.test.ts` and `e2e/layout.test.ts`.
 
 ### 3.2 Cookies (`src/lib/server/cookies.ts`)
 
@@ -249,8 +322,11 @@ secure: origin.protocol === 'https:' }` (always explicit — SvelteKit's default
     reviver, and an ordinary float writes one (1/3 is 0.3333333333333333): the numbers of one
     collection in a namespace of 50 large ones held the web's single process for 8 s on each view
     of the namespace, of every collection page in it and of a matching search, and concurrent
-    requests ran into their API timeout. Metadata holds no integer past 2^53 (the API
-    canonicalizes it with RFC 8785), so lists, searches and collections lose nothing.
+    requests ran into their API timeout. Metadata may hold integers past 2^53: a client may send
+    one, PostgreSQL's `jsonb` answers a float such as `-1e31` as one, and the API stores and
+    renders them exactly. Lists, searches and collection reads parse metadata plainly and so show
+    such an integer rounded; this is an accepted display limitation (backend and web follow-up
+    below), and nothing the web writes back carries the rounded value.
   - An answer is read as a stream, at most 64 MiB of it (`MAX_ANSWER_BYTES`): a longer one, or one
     that declares a longer length, fails as a `502` (logged; a page shows its 500) without being
     read further. Lists carry each collection whole (metadata of up to a mebibyte, problems and a
@@ -381,7 +457,7 @@ against the visible list. `(app)/+layout.svelte` writes `huron_org` in `afterNav
 | `/orgs` | Cards: `display_name \|\| name` (name as secondary only when different), description, "N catalogs", paged. |
 | `/orgs/[org]` | Org header (display name, name, description); catalogs list: display name, name, description, schema `name vN` (links to the catalog's Schema tab), "N namespaces in total", paged; empty state with the org-admin hint (4.6). |
 | `/catalogs/[catalog]` (Overview) | Header: display name, name, organization link, description, schema link, "N namespaces in total". Root namespaces (rows with *Holds collections* / *Structure only*, child and collection counts), paged; admin hint for creating namespaces. |
-| `…/access` | Effective groups per role (`platform_admin`, `org_admin`, `catalog_admin`, `contributor`, `reader`) with human role names and what each can do; groups the signed-in user belongs to are marked "You"; admin hint `huron catalog grant …` + `huron acl apply …`. |
+| `…/access` | Effective groups per role (`platform_admin`, `org_admin`, `catalog_admin`, `contributor`, `reader`) with human role names and what each can do; groups the signed-in user belongs to are marked "You"; admin hint `huron --catalog <c> adm grant …` + `huron --catalog <c> adm apply-acl <c> --recursive`. |
 | `…/activity` | Catalog audit log (4.4), paged by `next_cursor` only. |
 | `…/schema` | Resolved schema as a field table (4.3) plus raw JSON in a disclosure. |
 | `namespaces/[path]` | Header: name, identifier, badge, counts, share path with copy; child namespaces (`?namespaces_cursor=`) and collections (`?collections_cursor=`) as two-line rows; empty copy depends on `collections_allowed`; hints (4.6). |
@@ -646,6 +722,12 @@ Raw detail JSON in a disclosure. Timestamps fixed UTC.
   by the activity tab's component test ("lists what happened to the collection without links back to
   it") and `e2e/collections.test.ts` ("lists what happened to it, without links back to itself"). S5
   records this in the AGENTS.md "Frontend: `web/`" section.
+- **Accepted amendment (2026-10-31, declared organizations).** The vocabulary gains
+  `organization.update` ("Updated the organization"), which the service's start-up reconcile records
+  when a declared organization's display name or description changes (actor `huron-bootstrap`). Its
+  detail is `{name, fields}`; the summary names the organization and the changed fields in words,
+  e.g. "helio (display name, description)", skipping fields that are not text. Covered by
+  `src/lib/activity.test.ts`.
 
 ### 4.5 States and copy
 
@@ -722,6 +804,35 @@ Raw detail JSON in a disclosure. Timestamps fixed UTC.
   `src/lib/design/components/CliHint.svelte.test.ts`, `e2e/catalogs.test.ts` ("without a clipboard,
   shows each command whole on a phone, and as a field with room") and `e2e/organizations.test.ts`.
   S5 records this in the AGENTS.md "Frontend: `web/`" section.
+- **Accepted amendment (2026-10-31, the oc-style CLI surface).** The CLI is now `huron <verb> <noun>`
+  (IMPLEMENTATION_PLAN.md §9, "Amendment (2026-10-31): the oc-style CLI surface"), and the old
+  spellings are gone without aliases, so every hint follows the new ones. This replaces the command
+  spellings in this section, its amendments above, the `…/access` row of §4 and the search hints of
+  §5 (catalog search and organization search), which now read the new spellings; placement, titles
+  and `quote()` are unchanged. `cliCommand()` writes, with `<c>` the catalog:
+  - `huron --catalog <c> checkout <identifier>`, `… add <file>…` and `… push -m "<message>"`
+    (unchanged);
+  - `huron --catalog <c> activate collection <identifier>` (was `collection activate`);
+  - `huron --catalog <c> edit meta <identifier>` then `… publish meta <identifier>` (was `meta edit`
+    and `meta publish`);
+  - `huron --catalog <c> set override <override.json> <identifier>` and
+    `… unset override <identifier>` (was `meta override set` and `meta override clear`);
+  - `huron --catalog <c> create collection <namespace>.<name>` and
+    `… create namespace <parent>.<name> [--allow-collections]` (was `collection create` and
+    `namespace create`);
+  - on the access tab, `huron --catalog <c> adm grant <role> <ldap-group>` then
+    `… adm apply-acl <c> --recursive` (was `catalog grant <c> <role> <ldap-group>` and
+    `acl apply <c> --recursive`). `adm grant` takes a catalog role's catalog from its own
+    `--catalog`, else the global one; the hint passes it once, as the global `--catalog` every other
+    catalog hint starts with, rather than twice;
+  - `huron create catalog <name> --org <org>` for an organization without catalogs (was
+    `catalog create <org> <name>`; `--org` is now a required option);
+  - `huron --catalog <c> search [-q …] [-l k=v]… [--state …]…` (was `huron search <c> …`: the
+    catalog positional is gone, and `search` searches the global `--catalog`, else the current one).
+
+  The `verb` of each `CliCommand` is the command's words as typed (`'activate collection'`,
+  `'adm apply-acl'`, …). Covered by `src/lib/cli.test.ts`, the component tests of the routes that
+  show hints and the e2e tests that read them.
 
 ### 4.7 Copy
 
@@ -746,7 +857,7 @@ each catalog; "Read-only — use the huron CLI to create collections and push fi
   filters as removable links; when `q` has spaces, offer one link per word; offer "Search all of <org>".
   Exact match (first page only, not repeated in the list): trim+lowercase `q`; when it parses as
   `<catalog>.<rest>` or `<rest>` within this catalog, try `collectionByIdentifier` (403/404 ignored).
-  Also show the equivalent `huron search <catalog> -q … -l k=v --state …` hint.
+  Also show the equivalent `huron --catalog <catalog> search -q … -l k=v --state …` hint.
 - Organization search (`/orgs/[org]/search`): same form; fans out over the org's catalogs (all pages of
   `GET /catalogs?organization=`, capped at 50 catalogs, concurrency 4, 5 results each, overall deadline
   8 s → partial results with "N catalogs did not answer in time"), grouped by catalog with "See all
@@ -877,7 +988,7 @@ each catalog; "Read-only — use the huron CLI to create collections and push fi
     links inside the organization and no wider search; where some catalogs failed or were late it
     says "No collections match in the catalogs that answered.", and where none answered, only the
     notes show.
-  - No CLI hint: the CLI searches one catalog at a time (`huron search CATALOG`); each catalog's
+  - No CLI hint: the CLI searches one catalog at a time (`huron --catalog <c> search`); each catalog's
     own search, a link away, shows its command.
   - Document title: "“<q>” · Search · <org> · Huron", "Search · <org> · Huron", "Error: Search ·
     <org> · Huron".
@@ -1098,7 +1209,9 @@ each catalog; "Read-only — use the huron CLI to create collections and push fi
     without metadata, problems and `schema_override` for namespaces, search and the explorer; a
     size limit for `schema_override` and published schema documents, like `MAX_METADATA_BYTES`;
     shorter quoted values in validation messages; the Postgres adapter's labels (one value per key,
-    `lower()` against `casefold()`); and the completeness hash of int64 bounds (`rfc8785`).
+    `lower()` against `casefold()`); and exact metadata integers past 2^53 in lists, searches and
+    collection reads (the completeness hash of int64 bounds is fixed: `canonical_bytes` now writes
+    integers of any size).
   - Deployment: compress `text/html` and `application/json` at the route, ingress or reverse proxy
     (adapter-node compresses only prebuilt assets; no page holds a secret for BREACH to extract).
     Sessions live in the one process's memory, so a restart or an out-of-memory kill signs every

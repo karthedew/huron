@@ -86,16 +86,16 @@ def test_every_user_of_the_group_directory_is_in_the_realm() -> None:
 
 def test_admin_is_a_platform_admin_and_user_a_contributor_and_reader() -> None:
     assert GROUPS["admin"] == ["huron-platform-admins"]
-    assert sorted(GROUPS["user"]) == ["geo-readers", "helio-contributors"]
+    assert sorted(GROUPS["user"]) == ["geo-readers", "helio-contributors", "noaa-readers"]
 
 
 def test_the_docker_stack_names_the_issuer_keycloak_stamps_into_tokens() -> None:
     issuer = f"{SERVICES['keycloak']['environment']['KC_HOSTNAME']}/realms/{REALM['realm']}"
-    settings = _dev_env()
-    assert settings["HURON_COMPANY_ISSUER"] == issuer
+    settings = _dev_config()
+    assert settings["company_issuer"] == issuer
     assert SERVICES["web"]["environment"]["HURON_WEB_OIDC_ISSUER"] == issuer
     assert SERVICES["seed"]["environment"]["HURON_SEED_ISSUER"] == issuer
-    assert settings["HURON_COMPANY_AUDIENCE"] == "huron-cli"
+    assert settings["company_audience"] == "huron-cli"
 
 
 def test_the_docker_web_uses_the_realm_client() -> None:
@@ -131,7 +131,10 @@ def _user(username: str) -> dict[str, Any]:
     return found
 
 
-def _dev_env() -> dict[str, str]:
+def _dev_config() -> dict[str, Any]:
+    """The API's development settings: huron.dev.yaml, which dev.env does not override."""
     lines = (ROOT / "dev.env").read_text().splitlines()
-    pairs = [line.split("=", 1) for line in lines if line and not line.startswith("#")]
-    return {name: value for name, value in pairs}
+    overridden = {line.split("=", 1)[0] for line in lines if line and not line.startswith("#")}
+    assert overridden == {"HURON_DATABASE_URL", "HURON_API_URL", "HURON_CONFIG_FILE"}
+    loaded: dict[str, Any] = yaml.safe_load((ROOT / "huron.dev.yaml").read_text())
+    return loaded

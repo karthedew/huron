@@ -10,11 +10,16 @@ __all__ = ["Health", "Page", "ProblemBody", "page_of"]
 
 
 class Health(BaseModel):
-    """The liveness answer."""
+    """The liveness answer.
+
+    ``organizations_managed`` is whether the service configuration declares the organizations:
+    the CLI then looks for an organization's directory only where its declaration puts it.
+    """
 
     status: str
     instance_id: str
     version: str
+    organizations_managed: bool
 
 
 class Page[T](BaseModel):

@@ -17,6 +17,7 @@ __all__ = ["app", "run"]
 
 app = typer.Typer(
     name="huron",
+    cls=commands.VerbGroup,
     no_args_is_help=True,
     add_completion=False,
     help="Catalog, organize and push raw scientific data on the Huron share.",
@@ -68,6 +69,10 @@ def _report(services: Services, error: CliError) -> None:
 
 
 def _failure(services: Services, error: Exception) -> int:
+    if type(error).__name__ == "NoArgsIsHelpError":
+        # A verb typed without its noun: Typer printed the help already and the error has no
+        # message. Typer does not export the class, so match it by name as its rich_utils does.
+        return int(ExitCode.USAGE)
     failure = _as_cli_error(error)
     if failure is not None:
         _report(services, failure)

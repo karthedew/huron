@@ -17,15 +17,15 @@ BASE_ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
 def ready(seeded_cli: Cli) -> Cli:
     """The solar-wind directory exists and dave is logged in with heliophysics selected."""
     seeded_cli.login_as("carol")
-    seeded_cli.ok("namespace", "create", "heliophysics.solar-wind", "--allow-collections")
+    seeded_cli.ok("create", "namespace", "heliophysics.solar-wind", "--allow-collections")
     seeded_cli.login_as("dave")
-    seeded_cli.ok("catalog", "use", "heliophysics")
+    seeded_cli.ok("catalog", "heliophysics")
     return seeded_cli
 
 
 def create(cli: Cli, name: str = "run7") -> None:
     cli.prompter.answers.extend(BASE_ANSWERS)
-    cli.ok("collection", "create", f"solar-wind.{name}")
+    cli.ok("create", "collection", f"solar-wind.{name}")
 
 
 def files(tmp_path: Path, **contents: str) -> list[Path]:
@@ -44,7 +44,7 @@ def test_create_walks_through_metadata_and_activates(ready: Cli, share: MemorySt
     assert share.nodes[COLLECTION].mode == 0o2770
     sidecar = json.loads(share.read_bytes(COLLECTION / "metadata.json") or b"{}")
     assert sidecar["metadata"]["title"] == "Run 7"
-    described = json.loads(ready.ok("-o", "json", "collection", "describe").stdout)
+    described = json.loads(ready.ok("-o", "json", "describe", "collection").stdout)
     assert described["state"] == "active" and described["version"] == 3
     assert result is None
 
@@ -54,15 +54,15 @@ def test_drafts_from_a_file_activate_later(
 ) -> None:
     metadata = tmp_path / "meta.json"
     metadata.write_text(json.dumps({"title": "Run 8"}))
-    ready.ok("collection", "create", "solar-wind.run8", "--metadata", str(metadata), "--draft")
+    ready.ok("create", "collection", "solar-wind.run8", "--metadata", str(metadata), "--draft")
     assert not share.exists(COLLECTION.with_name("run8"))
-    refused = ready.run("collection", "activate")
+    refused = ready.run("activate", "collection")
     assert refused.exit_code == 7 and "METADATA_INVALID" in refused.stderr
     ready.prompter.answers.extend(["Run 8", "desc", *([False] * 7)])
-    ready.ok("meta", "edit")
-    ready.ok("meta", "validate")
-    ready.ok("meta", "publish")
-    ready.ok("collection", "activate")
+    ready.ok("edit", "meta")
+    ready.ok("validate", "meta")
+    ready.ok("publish", "meta")
+    ready.ok("activate", "collection")
     assert share.is_directory(COLLECTION.with_name("run8"))
 
 
@@ -82,7 +82,7 @@ def test_stage_push_status_and_pull(ready: Cli, share: MemoryStorage, tmp_path: 
     assert "version 3 → 4, +3 −0 files" in pushed.stdout
     assert share.read_bytes(COLLECTION / "deep" / "c.txt") == b"charlie"
     assert "nothing to push" in ready.ok("push").stdout
-    listing = ready.ok("files").stdout
+    listing = ready.ok("get", "files").stdout
     assert "deep/c.txt" in listing
     ready.ok("rm", "b.txt")
     ready.ok("push")
@@ -90,7 +90,7 @@ def test_stage_push_status_and_pull(ready: Cli, share: MemoryStorage, tmp_path: 
     share.write_bytes(COLLECTION / "stray.txt", b"x")
     status = json.loads(ready.ok("-o", "json", "status").stdout)
     assert status["unrecorded"] == ["stray.txt"] and status["behind"] is False
-    assert "commit" in ready.ok("log").stdout
+    assert "commit" in ready.ok("get", "log").stdout
 
 
 def test_a_push_behind_the_service_is_refused_until_pull(
@@ -100,7 +100,7 @@ def test_a_push_behind_the_service_is_refused_until_pull(
     (a,) = files(tmp_path, **{"a.txt": "alpha"})
     ready.ok("add", str(a))
     copy = ready.state.read_copy(ready.config_current())
-    ready.ok("meta", "override", "clear")
+    ready.ok("unset", "override")
     assert copy is not None
     ready.state.write_copy(copy)
     behind = ready.run("push")
@@ -118,31 +118,31 @@ def test_metadata_overrides_and_publish(ready: Cli, share: MemoryStorage, tmp_pa
             {"type": "object", "properties": {"run": {"type": "integer"}}, "required": ["run"]}
         )
     )
-    refused = ready.run("meta", "override", "set", str(override))
+    refused = ready.run("set", "override", str(override))
     assert refused.exit_code == 7 and "METADATA_INVALID" in refused.stderr
-    current = json.loads(ready.ok("-o", "json", "collection", "describe").stdout)["metadata"]
+    current = json.loads(ready.ok("-o", "json", "describe", "collection").stdout)["metadata"]
     ready.state.write_draft(ready.config_current(), {**current, "run": 7})
-    ready.ok("meta", "override", "set", str(override))
+    ready.ok("set", "override", str(override))
     sidecar = json.loads(share.read_bytes(COLLECTION / "metadata.json") or b"{}")
     assert sidecar["schema_override"]["required"] == ["run"]
-    shown = json.loads(ready.ok("-o", "json", "meta", "show").stdout)
+    shown = json.loads(ready.ok("-o", "json", "get", "meta").stdout)
     assert shown["metadata"]["run"] == 7 and shown["draft"] is None
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"type": "array"}))
-    assert ready.run("meta", "override", "set", str(bad)).exit_code == 7
-    assert ready.run("meta", "publish").exit_code == 2
+    assert ready.run("set", "override", str(bad)).exit_code == 7
+    assert ready.run("publish", "meta").exit_code == 2
     ready.state.write_draft(ready.config_current(), {"title": ""})
-    invalid = ready.run("meta", "validate")
+    invalid = ready.run("validate", "meta")
     assert invalid.exit_code == 7 and "/title" in invalid.stderr
     ready.prompter.answers.extend(["Fresh", "desc", "8", *([False] * 7)])
-    ready.ok("meta", "init")
+    ready.ok("edit", "meta", "--from-scratch")
     assert ready.state.read_draft(ready.config_current()) == {
         "title": "Fresh",
         "description": "desc",
         "run": 8,
     }
-    ready.ok("meta", "publish")
-    assert "Fresh" in ready.ok("collection", "describe").stdout
+    ready.ok("publish", "meta")
+    assert "Fresh" in ready.ok("describe", "collection").stdout
 
 
 def test_checkout_keeps_each_copy_stage(ready: Cli, tmp_path: Path) -> None:
@@ -179,23 +179,23 @@ def test_delete_removes_files_and_refuses_unrecorded_ones(
     ready.ok("add", str(a), "--as", "sub/a.txt")
     ready.ok("push")
     share.write_bytes(COLLECTION / "stray.txt", b"x")
-    refused = ready.run("collection", "delete", "solar-wind.run7", "--yes")
+    refused = ready.run("delete", "collection", "solar-wind.run7", "--yes")
     assert refused.exit_code == 6 and "stray.txt" in refused.stderr
     assert share.exists(COLLECTION / "sub" / "a.txt")
-    assert json.loads(ready.ok("-o", "json", "collection", "describe").stdout)["file_count"] == 1
+    assert json.loads(ready.ok("-o", "json", "describe", "collection").stdout)["file_count"] == 1
     share.remove_file(COLLECTION / "stray.txt")
     ready.prompter.answers.append(False)
-    assert ready.run("collection", "delete", "solar-wind.run7").exit_code == 130
-    ready.ok("collection", "delete", "solar-wind.run7", "--yes")
+    assert ready.run("delete", "collection", "solar-wind.run7").exit_code == 130
+    ready.ok("delete", "collection", "solar-wind.run7", "--yes")
     assert not share.exists(COLLECTION)
-    assert ready.run("status").exit_code == 2
+    assert json.loads(ready.ok("-o", "json", "status").stdout)["collection"] is None
 
 
 def test_drafts_delete_without_touching_the_share(ready: Cli) -> None:
     ready.prompter.answers.extend(BASE_ANSWERS)
-    ready.ok("collection", "create", "solar-wind.draft", "--draft")
-    ready.ok("collection", "delete", "solar-wind.draft", "--yes")
-    assert ready.run("collection", "describe", "solar-wind.draft").exit_code == 5
+    ready.ok("create", "collection", "solar-wind.draft", "--draft")
+    ready.ok("delete", "collection", "solar-wind.draft", "--yes")
+    assert ready.run("describe", "collection", "solar-wind.draft").exit_code == 5
 
 
 def test_others_cannot_delete_or_push(ready: Cli, share: MemoryStorage, tmp_path: Path) -> None:
@@ -204,7 +204,7 @@ def test_others_cannot_delete_or_push(ready: Cli, share: MemoryStorage, tmp_path
     ready.ok("add", str(kept))
     ready.ok("push")
     ready.login_as("frank")
-    assert ready.run("collection", "delete", "solar-wind.run7", "--yes").exit_code == 4
+    assert ready.run("delete", "collection", "solar-wind.run7", "--yes").exit_code == 4
     assert share.exists(COLLECTION / "kept.txt")
     ready.login_as("erin")
     ready.ok("checkout", "solar-wind.run7")
@@ -243,7 +243,6 @@ def test_pull_drops_removals_of_files_no_longer_recorded(ready: Cli, tmp_path: P
     ready.ok("push")
     ready.ok("rm", "a.txt")
     copy = ready.state.read_copy(ready.config_current())
-    ready.ok("rm", "a.txt")
     ready.ok("push")
     assert copy is not None
     ready.state.write_copy(copy)

@@ -2,6 +2,7 @@
 import type { Collection } from '$api/types';
 import { clip, shortened } from './format';
 import { stringField } from './json';
+import { sharePath } from './share';
 
 /**
  * The longest title a collection's row or the head of its pages shows, in code points: what the
@@ -72,7 +73,10 @@ export interface CollectionSummary {
 	createdBy: string;
 	updatedAt: string;
 	activatedAt: string | null;
-	/** Where its directory is on the share (`<mount prefix>/<path>`); `null` for a draft. */
+	/**
+	 * Where its directory is on the share (`<share root>/<path>`, else `<mount prefix>/<path>`);
+	 * `null` for a draft.
+	 */
 	sharePath: string | null;
 	/** The catalog's schema it validates against. */
 	schema: { name: string; version: number };
@@ -89,8 +93,9 @@ export interface CollectionSummary {
 const INCOMPATIBLE_OVERRIDE = 'schema_incompatible';
 
 /**
- * The summary of a collection. `mountPrefix` is where the share is mounted, as the CLI mounts it
- * (`HURON_WEB_MOUNT_PREFIX`); the collection's `path` is relative to it.
+ * The summary of a collection. Its `path` is relative to its organization's `share_root` when the
+ * API names one, else to `mountPrefix`, where the share is mounted as the CLI mounts it
+ * (`HURON_WEB_MOUNT_PREFIX`); see `sharePath`.
  */
 export function collectionSummary(collection: Collection, mountPrefix: string): CollectionSummary {
 	const title = clipped(metadataTitle(collection.metadata), TITLE_LENGTH);
@@ -109,7 +114,10 @@ export function collectionSummary(collection: Collection, mountPrefix: string): 
 		createdBy: collection.created_by,
 		updatedAt: collection.updated_at,
 		activatedAt: collection.activated_at,
-		sharePath: collection.path === null ? null : `${mountPrefix}/${collection.path}`,
+		sharePath:
+			collection.path === null
+				? null
+				: sharePath(collection.share_root, mountPrefix, collection.path),
 		schema: { name: collection.schema.name, version: collection.schema.version },
 		hasOverride: collection.schema_override !== null,
 		overrideIncompatible: collection.problems.some(({ rule }) => rule === INCOMPATIBLE_OVERRIDE)

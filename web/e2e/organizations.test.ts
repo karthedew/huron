@@ -1,5 +1,11 @@
 import { expect } from '@playwright/test';
-import { CATALOGS, NAMESPACES, ORGANIZATIONS, visibleOrganizations } from './support/fixture.mjs';
+import {
+	CATALOGS,
+	MOUNT_PREFIX,
+	NAMESPACES,
+	ORGANIZATIONS,
+	visibleOrganizations
+} from './support/fixture.mjs';
 import { ApiSession, VIEWPORTS, horizontalOverflow, signIn, test } from './support/harness.ts';
 
 /** The `next_cursor` of an API page answer. */
@@ -100,8 +106,11 @@ test.describe('an organization', () => {
 		await expect(
 			main.getByText('The Sun, the solar wind and the space environment.')
 		).toBeVisible();
+		// The e2e API declares no organizations, so the directory is under the mount prefix.
+		await expect(main.getByText(`${MOUNT_PREFIX}/helio`, { exact: true })).toBeVisible();
+		await expect(main.getByText('Declared in the service configuration.')).toHaveCount(0);
 		const sections = main.getByRole('navigation', { name: 'Organization' });
-		await expect(sections.getByRole('link')).toHaveText(['Catalogs2', 'Search']);
+		await expect(sections.getByRole('link')).toHaveText(['Catalogs2', 'Search', 'Access']);
 		await expect(sections.getByRole('link', { name: 'Catalogs' })).toHaveAttribute(
 			'aria-current',
 			'page'
@@ -131,6 +140,63 @@ test.describe('an organization', () => {
 		await expect(main.getByRole('region')).toHaveCount(0);
 	});
 
+	test("shows the organization's groups, which every catalog of it inherits", async ({ page }) => {
+		const helio = ORGANIZATIONS.find(({ name }) => name === 'helio');
+		if (helio === undefined) throw new Error('the fixture has no helio');
+		await signIn(page, 'erin');
+		await page.goto('/orgs/helio');
+		const main = page.getByRole('main');
+		await main
+			.getByRole('navigation', { name: 'Organization' })
+			.getByRole('link', { name: 'Access' })
+			.click();
+		await expect(page).toHaveURL('/orgs/helio/access');
+		await expect(page).toHaveTitle('Access · Heliophysics Division · Huron');
+		const roles = main.getByRole('list', { name: 'Roles' });
+		await expect(roles.getByRole('heading', { level: 3 })).toHaveText([
+			'Organization administrator',
+			'Catalog administrator',
+			'Contributor',
+			'Reader'
+		]);
+		const expected: Record<string, readonly string[]> = {
+			'Organization administrator': helio.orgAdmins,
+			'Catalog administrator': [],
+			Contributor: [],
+			Reader: []
+		};
+		for (const grant of helio.grants) {
+			const name = {
+				catalog_admin: 'Catalog administrator',
+				contributor: 'Contributor',
+				reader: 'Reader'
+			}[grant.role];
+			expected[name] = grant.groups;
+		}
+		for (const [name, groups] of Object.entries(expected)) {
+			const item = roles
+				.getByRole('listitem')
+				.filter({ has: page.getByRole('heading', { name, exact: true, level: 3 }) });
+			await expect(item.getByRole('list', { name: 'Groups' }).locator('code'), name).toHaveText([
+				...groups
+			]);
+		}
+		// erin belongs to helio-readers only; a reader sees no hint.
+		await expect(main.getByText('You', { exact: true })).toHaveCount(1);
+		await expect(
+			main.getByRole('region', { name: 'Grant a role on the organization' })
+		).toHaveCount(0);
+	});
+
+	test('shows administrators of an organization how to grant a role on it', async ({ page }) => {
+		await signIn(page, 'bob');
+		await page.goto('/orgs/helio/access');
+		const hint = page.getByRole('main').getByRole('region', {
+			name: 'Grant a role on the organization'
+		});
+		await expect(hint.getByText('huron adm grant <role> <ldap-group> --org helio')).toBeVisible();
+	});
+
 	test('without catalogs, shows administrators how to create one', async ({ page, context }) => {
 		await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 		await signIn(page, 'alice');
@@ -139,7 +205,7 @@ test.describe('an organization', () => {
 		await expect(main.getByRole('heading', { name: 'Planetary Science', level: 1 })).toBeVisible();
 		await expect(main.getByText('No catalogs you can see in this organization.')).toBeVisible();
 		const hint = main.getByRole('region', { name: 'Create a catalog in this organization' });
-		await expect(hint.getByText('huron catalog create planetary <name>')).toBeVisible();
+		await expect(hint.getByText('huron create catalog <name> --org planetary')).toBeVisible();
 		await expect(
 			hint.getByText(
 				'This website is read-only; changes are made with the huron CLI on a machine that mounts the share.'
@@ -148,7 +214,7 @@ test.describe('an organization', () => {
 		await hint.getByRole('button', { name: 'Copy: Create a catalog in this organization' }).click();
 		await expect(hint.getByRole('status')).toHaveText('Copied');
 		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-			'huron catalog create planetary <name>'
+			'huron create catalog <name> --org planetary'
 		);
 	});
 
@@ -165,14 +231,14 @@ test.describe('an organization', () => {
 			await signIn(page, 'alice');
 			await page.goto('/orgs/planetary');
 			const hint = page.getByRole('region', { name: 'Create a catalog in this organization' });
-			await expect(hint.locator('pre')).toHaveText('huron catalog create planetary <name>');
+			await expect(hint.locator('pre')).toHaveText('huron create catalog <name> --org planetary');
 			await expect(hint.getByRole('textbox')).toHaveCount(0);
 			await expect(hint.getByRole('button')).toHaveCount(0);
 			expect(await horizontalOverflow(page)).toBe(0);
 
 			await page.setViewportSize(VIEWPORTS.desktop);
 			const field = hint.getByRole('textbox', { name: 'Create a catalog in this organization' });
-			await expect(field).toHaveValue('huron catalog create planetary <name>');
+			await expect(field).toHaveValue('huron create catalog <name> --org planetary');
 			await expect(hint.locator('pre')).toBeHidden();
 			// A command keeps its one row: none is hidden.
 			expect(await field.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(
@@ -226,7 +292,7 @@ test.describe('an organization', () => {
 			await signIn(page, 'alice');
 			await page.goto('/orgs/planetary');
 			const hint = page.getByRole('region', { name: 'Create a catalog in this organization' });
-			await expect(hint.locator('code')).toHaveText('huron catalog create planetary <name>');
+			await expect(hint.locator('code')).toHaveText('huron create catalog <name> --org planetary');
 			await expect(hint.getByRole('button')).toHaveCount(0);
 			// The server's links are relative to the page, and Catalogs still says it leads here.
 			await expect(

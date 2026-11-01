@@ -164,6 +164,14 @@ describe('/catalogs/[catalog]/collections/[identifier] layout load', () => {
 		expect(data.collection).toMatchObject({ state: 'draft', sharePath: null, activatedAt: null });
 	});
 
+	it("puts the share path under the organization's root when the API names one", async () => {
+		routes({ [COLLECTION]: jsonResponse(collectionFixture({ share_root: '/data1/huron' })) });
+		const data = await load(collectionEvent().event);
+		expect(data.collection.sharePath).toBe(
+			'/data1/huron/helio/heliophysics/solar-wind/ace/mag-l2-2024'
+		);
+	});
+
 	it('ends the session when the API no longer accepts the token', async () => {
 		routes({ [COLLECTION]: problemResponse(401, 'TOKEN_INVALID') });
 		const { event, sessionId } = collectionEvent();

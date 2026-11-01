@@ -1,7 +1,9 @@
 import { expect } from '@playwright/test';
 import {
+	CATALOGS,
 	COLLECTIONS,
 	NAMESPACES,
+	ORGANIZATIONS,
 	RUN001_FILE_COUNT,
 	USERNAMES,
 	USERS,
@@ -35,6 +37,40 @@ test('each user sees the organizations and catalogs of the fixture', async () =>
 		);
 	}
 });
+
+test("each organization's and catalog's grants are the fixture's", async () => {
+	const alice = await ApiSession.as('alice');
+	const catalogRoles = ['catalog_admin', 'contributor', 'reader'] as const;
+	for (const organization of ORGANIZATIONS) {
+		const groups = await alice.get(`organizations/${organization.name}/grants`);
+		expect(groups.body, organization.name).toEqual({
+			org_admin: [...organization.orgAdmins],
+			...Object.fromEntries(
+				catalogRoles.map((role) => [
+					role,
+					organization.grants.flatMap((grant) => (grant.role === role ? grant.groups : []))
+				])
+			)
+		});
+	}
+	for (const catalog of CATALOGS) {
+		const sources = await alice.get(`catalogs/${catalog.name}/grants/sources`);
+		const items: unknown[] =
+			isRecord(sources.body) && Array.isArray(sources.body.items) ? sources.body.items : [];
+		const granted = items.filter((item) => isRecord(item) && item.scope === 'catalog');
+		expect(granted, catalog.name).toEqual(
+			catalog.grants
+				.flatMap((grant) =>
+					grant.groups.map((group) => ({ role: grant.role, group, scope: 'catalog' }))
+				)
+				.sort((a, b) => catalogRoles.indexOf(a.role) - catalogRoles.indexOf(b.role))
+		);
+	}
+});
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 test('namespaces and collections are where the fixture puts them', async () => {
 	const alice = await ApiSession.as('alice');

@@ -3,7 +3,7 @@ import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import CliHint from './CliHint.svelte';
 
-const COMMAND = 'huron catalog create helio <name>';
+const COMMAND = 'huron create catalog <name> --org helio';
 const READ_ONLY =
 	'This website is read-only; changes are made with the huron CLI on a machine that mounts the share.';
 
@@ -59,13 +59,16 @@ describe('CliHint', () => {
 
 	it('keeps each word of the command whole, and the text the command', async () => {
 		withClipboard(() => Promise.resolve());
-		const first = 'huron --catalog helio namespace create helio.<name> --allow-collections';
-		const command = `${first}\nhuron acl apply helio`;
+		const first = 'huron --catalog helio create namespace helio.<name> --allow-collections';
+		const command = `${first}\nhuron --catalog helio adm apply-acl helio --recursive`;
 		await show(command);
 		const code = screen.getByRole('region', { name: 'Create a catalog' }).querySelector('pre code');
 		expect(code?.textContent).toBe(command);
 		const lines = [...(code?.children ?? [])];
-		expect(lines.map((line) => line.textContent)).toEqual([`${first}\n`, 'huron acl apply helio']);
+		expect(lines.map((line) => line.textContent)).toEqual([
+			`${first}\n`,
+			'huron --catalog helio adm apply-acl helio --recursive'
+		]);
 		// What a line wraps onto starts further in than the next line does.
 		for (const line of lines) expect(line).toHaveClass('block', 'pl-hang', '-indent-hang');
 		const words = lines.flatMap((line) => [...line.children]);

@@ -9,6 +9,7 @@ import {
 	asInteger,
 	asNullable,
 	asObject,
+	asOneOf,
 	asString,
 	asStrings,
 	isJsonObject,
@@ -54,6 +55,7 @@ describe('decoders', () => {
 		expect(asNullable(asString)(null, 'x')).toBeNull();
 		expect(asNullable(asString)(undefined, 'x')).toBeNull();
 		expect(asNullable(asString)('a', 'x')).toBe('a');
+		expect(asOneOf(['catalog', 'platform'])('platform', 'x')).toBe('platform');
 		expect(isJsonObject({})).toBe(true);
 		expect(isJsonObject([])).toBe(false);
 		expect(isJsonObject(null)).toBe(false);
@@ -67,7 +69,12 @@ describe('decoders', () => {
 		[() => asObject([], 'answer'), 'answer is not an object'],
 		[() => asObject(null, 'answer'), 'answer is not an object'],
 		[() => asArray(asString)({}, 'answer.items'), 'answer.items is not an array'],
-		[() => asStrings(['a', 2], 'answer.groups'), 'answer.groups[1] is not a string']
+		[() => asStrings(['a', 2], 'answer.groups'), 'answer.groups[1] is not a string'],
+		[
+			() => asOneOf(['catalog', 'platform'])('namespace', 'answer.scope'),
+			'answer.scope is not one of catalog, platform'
+		],
+		[() => asOneOf(['reader'])(['reader'], 'answer.role'), 'answer.role is not one of reader']
 	])('name the offending value', (decode, message) => {
 		expect(decode).toThrow(DecodeError);
 		expect(decode).toThrow(message);

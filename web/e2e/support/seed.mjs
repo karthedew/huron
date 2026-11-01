@@ -1,7 +1,7 @@
 /**
  * Seeds the fixture of `fixture.mjs` through the real API, each call as the user whose role it
  * takes: alice (platform admin) creates the organizations, bob (org admin of helio) its
- * catalogs and its schema, carol (catalog admin) namespaces, member grants and the schema
+ * organization-wide grants, its catalogs and its schema, carol (catalog admin) namespaces, member grants and the schema
  * assignment, dave (contributor) the helio collections and their commits. Tokens come from the
  * fake IdP's `POST /test/id-token` and the API's exchange.
  */
@@ -48,6 +48,14 @@ export async function seed({ apiUrl, issuer }) {
 				'PUT',
 				['organizations', organization.name, 'grants', 'org_admin'],
 				{ ldap_groups: organization.orgAdmins }
+			);
+		}
+		for (const grant of organization.grants) {
+			await api.call(
+				grant.grantedBy,
+				'PUT',
+				['organizations', organization.name, 'grants', grant.role],
+				{ ldap_groups: grant.groups }
 			);
 		}
 	}

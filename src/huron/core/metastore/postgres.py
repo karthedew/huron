@@ -25,13 +25,17 @@ if TYPE_CHECKING:
 
     from huron.core.metastore.rows import Db
 
-__all__ = ["PostgresStore", "PostgresTransaction", "lock_key"]
+__all__ = ["BOOTSTRAP_LOCK", "PostgresStore", "PostgresTransaction", "lock_key"]
 
 
 def lock_key(namespace: str, value: uuid.UUID) -> int:
     """A signed 64-bit advisory-lock key for ``value`` within a lock namespace."""
     digest = uuid.uuid5(uuid.NAMESPACE_URL, f"huron:{namespace}:{value}")
     return int.from_bytes(digest.bytes[:8], "big", signed=True)
+
+
+BOOTSTRAP_LOCK = uuid.UUID("0192b6a0-b007-7000-8000-000000000000")
+"""The value whose ``bootstrap`` advisory-lock key serializes service bootstraps."""
 
 
 class PostgresTransaction:
@@ -54,6 +58,12 @@ class PostgresTransaction:
         """Take the catalog's transaction-scoped advisory lock."""
         await self.connection.execute(
             "select pg_advisory_xact_lock($1)", lock_key("catalog", catalog_id)
+        )
+
+    async def lock_bootstrap(self) -> None:
+        """Take the transaction-scoped advisory lock every bootstrap shares."""
+        await self.connection.execute(
+            "select pg_advisory_xact_lock($1)", lock_key("bootstrap", BOOTSTRAP_LOCK)
         )
 
 

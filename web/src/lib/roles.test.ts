@@ -70,6 +70,32 @@ describe('describeRoles', () => {
 		]);
 	});
 
+	it('says that a catalog role granted on an organization holds in every catalog of it', () => {
+		const sentences = describeRoles(
+			[
+				{ scope: 'organization', scope_id: HELIO.id, role: 'reader' },
+				{ scope: 'organization', scope_id: HELIO.id, role: 'contributor' },
+				{ scope: 'organization', scope_id: HELIO.id, role: 'catalog_admin' },
+				{ scope: 'catalog', scope_id: HELIOPHYSICS.id, role: 'contributor' }
+			],
+			SCOPES
+		);
+		expect(sentences.map(({ lead }) => lead)).toEqual([
+			'You are a catalog administrator of every catalog of',
+			'You are a contributor to every catalog of',
+			'You are a reader of every catalog of',
+			'You are a contributor to'
+		]);
+		expect(sentences[0].target).toEqual({
+			kind: 'organization',
+			name: 'helio',
+			label: 'Heliophysics Division',
+			context: null
+		});
+		expect(sentences[2].abilities).toBe(`You can ${ROLE_ABILITIES.reader}.`);
+		expect(new Set(sentences.map(({ key }) => key)).size).toBe(4);
+	});
+
 	it('keeps scopes it cannot name, by their kind and short id', () => {
 		const [catalog, organization] = describeRoles(
 			[

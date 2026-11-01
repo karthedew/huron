@@ -106,12 +106,16 @@ export function webOriginsFrom(env, fallback) {
 }
 
 /**
- * Every setting of the API, on the memory store, trusting the fake IdP.
+ * Every setting of the API, on the memory store, trusting the fake IdP. No configuration file
+ * (an empty `HURON_CONFIG_FILE` names none, even when the shell exports one): the API runs with
+ * unmanaged organizations, which `seed.mjs` creates, and `share_root` is null throughout, so
+ * share paths fall back to `MOUNT_PREFIX`.
  * @param {Stack} stack
  * @returns {Record<string, string>}
  */
 export function apiEnvironment(stack) {
 	return {
+		HURON_CONFIG_FILE: '',
 		HURON_STORE: 'memory',
 		HURON_DATABASE_URL: '',
 		HURON_INSTANCE_ID: INSTANCE_ID,

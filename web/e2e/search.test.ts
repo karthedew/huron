@@ -60,7 +60,9 @@ test.describe('the catalog search', () => {
 					getComputedStyle(mark).color === getComputedStyle(mark.parentElement ?? mark).color
 			)
 		).toBe(true);
-		await expect(search.hint.locator('pre code')).toHaveText('huron search heliophysics -q wind');
+		await expect(search.hint.locator('pre code')).toHaveText(
+			'huron --catalog heliophysics search -q wind'
+		);
 		// The catalog's sub-navigation marks the page; the explorer the catalog, as its section.
 		await expect(
 			search.main.getByRole('navigation', { name: 'Catalog' }).getByRole('link', { name: 'Search' })
@@ -106,7 +108,7 @@ test.describe('the catalog search', () => {
 				await expect(chips.getByRole('link', { name: new RegExp(`^${key}: `) })).toHaveCount(0);
 			}
 			await expect(search.hint.locator('pre code')).toHaveText(
-				`huron search heliophysics -l ${key}=${value}`
+				`huron --catalog heliophysics search -l ${key}=${value}`
 			);
 		});
 	}
@@ -202,7 +204,7 @@ test.describe('the catalog search', () => {
 		await expect(search.form.getByRole('checkbox', { name: 'Active' })).not.toBeChecked();
 		await expect(search.form.getByRole('checkbox', { name: 'Incomplete' })).toBeChecked();
 		await expect(search.hint.locator('pre code')).toHaveText(
-			'huron search space-weather --state incomplete'
+			'huron --catalog space-weather search --state incomplete'
 		);
 	});
 
@@ -217,7 +219,7 @@ test.describe('the catalog search', () => {
 			await expect(titles(search.rows)).toHaveText(drafts.map(titleOf));
 			await expect(search.rows.first()).toContainText('Draft');
 			await expect(search.hint.locator('pre code')).toHaveText(
-				'huron search heliophysics --state draft'
+				'huron --catalog heliophysics search --state draft'
 			);
 		});
 	}
@@ -236,7 +238,9 @@ test.describe('the catalog search', () => {
 			'ACE MAG level 1 (draft)'
 		]);
 		await expect(titles(search.rows)).toHaveText(settled);
-		await expect(search.hint.locator('pre code')).toHaveText('huron search heliophysics -q ace');
+		await expect(search.hint.locator('pre code')).toHaveText(
+			'huron --catalog heliophysics search -q ace'
+		);
 		// Nor by its identifier: the API conceals it.
 		await page.goto(`${HELIOPHYSICS}?q=heliophysics.solar-wind.ace.mag-l1-draft`);
 		await expect(search.exact).toHaveCount(0);
@@ -437,7 +441,7 @@ test.describe('the catalog search', () => {
 			const query = new URLSearchParams({ q: 'wind', label: 'note=two\nlines' });
 			await page.goto(`${HELIOPHYSICS}?${query}`);
 			const search = searchPage(page);
-			const command = "huron search heliophysics -q wind -l $'note=two\\nlines'";
+			const command = "huron --catalog heliophysics search -q wind -l $'note=two\\nlines'";
 			await expect(search.hint.locator('pre code')).toHaveText(command);
 			await search.submit.click();
 			// A browser writes each line break of a field as CR LF, so the form keeps it as JSON.
@@ -463,7 +467,7 @@ test.describe('the catalog search', () => {
 		await page.goto(`${HELIOPHYSICS}?${query}`);
 		const search = searchPage(page);
 		const command =
-			"huron search heliophysics -q $'x\\025rm -rf ~ #\\ry' -l $'note=\\342\\200\\256evil'";
+			"huron --catalog heliophysics search -q $'x\\025rm -rf ~ #\\ry' -l $'note=\\342\\200\\256evil'";
 		await expect(search.hint.locator('pre code')).toHaveText(command);
 		await search.hint.getByRole('button', { name: 'Copy: Run this search with the CLI' }).click();
 		await expect(search.hint.getByRole('status')).toHaveText('Copied');

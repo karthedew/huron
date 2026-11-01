@@ -1,6 +1,7 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Lock } from '@lucide/svelte';
-	import { ROLES, type Role } from '$api/types';
+	import type { RoleScope } from '$api/types';
 	import Badge from '$design/components/Badge.svelte';
 	import CliHint from '$design/components/CliHint.svelte';
 	import { catalogCapabilities } from '$lib/capabilities';
@@ -15,57 +16,71 @@
 
 	const catalog = $derived(data.catalog);
 	const owner = $derived(visibleOrganization(catalog.organization, data.organizations));
+	const ownerName = $derived(owner ? displayName(owner) : catalog.organization);
 	const can = $derived(catalogCapabilities(data.roles, catalog, data.organizations));
 	const mine = $derived(new Set(data.user.groups));
 	const grantCommand = $derived(
 		[
-			cliCommand({ verb: 'catalog grant', catalog: catalog.name }),
-			cliCommand({ verb: 'acl apply', catalog: catalog.name })
+			cliCommand({ verb: 'adm grant', catalog: catalog.name }),
+			cliCommand({ verb: 'adm apply-acl', catalog: catalog.name })
 		].join('\n')
 	);
-
-	/** Where a role comes from when it is not granted on the catalog itself. */
-	function inheritedFrom(role: Role): string | null {
-		if (role === 'platform_admin') return 'Inherited from the platform';
-		if (role === 'org_admin') {
-			return `Inherited from ${owner ? displayName(owner) : catalog.organization}`;
-		}
-		return null;
-	}
 </script>
 
 <svelte:head><title>{pageTitle('Access', displayName(catalog))}</title></svelte:head>
 
+{#snippet sourceLabel(scope: RoleScope)}
+	{#if scope === 'platform'}
+		Inherited from the platform
+	{:else if scope === 'organization'}
+		Inherited from <a
+			href={resolve('/(app)/orgs/[org=segment]/access', { org: catalog.organization })}
+			class="underline underline-offset-2 hover:decoration-2">{ownerName}</a
+		>
+	{:else}
+		Granted on this catalog
+	{/if}
+{/snippet}
+
 <section aria-labelledby="catalog-access">
 	<h2 id="catalog-access" class="m-0 border-0 p-0 text-base font-semibold">Who has access</h2>
-	{#if data.groups === null}
+	{#if data.access === null}
 		<p class="mt-3 mb-0 flex items-center gap-2">
 			<Lock size={16} class="shrink-0 text-app-muted" aria-hidden="true" />You don't have permission
 			to see this.
 		</p>
 	{:else}
-		{@const groups = data.groups}
 		<p class="mt-2 mb-4 max-w-3xl text-sm text-app-muted">
-			The groups that hold each role on this catalog, including those that inherit it from the
-			organization or the platform. Groups you belong to are marked.
+			The groups that hold each role on this catalog, and where each was granted. Groups granted on
+			the organization hold their role in every catalog of it; a catalog can grant more groups, not
+			take those away. Groups you belong to are marked.
 		</p>
 		<ul class="m-0 grid list-none gap-3 p-0" aria-label="Roles">
-			{#each ROLES as role (role)}
-				{@const inherited = inheritedFrom(role)}
+			{#each data.access as { role, sources } (role)}
 				<li class="rounded-card border border-app-line bg-app-card px-4 py-3.5">
 					<h3 class="m-0 text-sm font-semibold">{ROLE_NAMES[role]}</h3>
-					<p class="mt-0.5 mb-0 text-sm text-app-muted">
-						Can {ROLE_ABILITIES[role]}.{#if inherited}{' '}{inherited}.{/if}
-					</p>
-					{#if groups[role].length > 0}
-						<ul class="mt-2.5 mb-0 flex list-none flex-wrap gap-1.5 p-0" aria-label="Groups">
-							{#each groups[role] as group (group)}
-								<li class="flex min-w-0 items-center gap-1.5">
-									<code class="break-all">{group}</code>
-									{#if mine.has(group)}<Badge tone="accent">You</Badge>{/if}
-								</li>
+					<p class="mt-0.5 mb-0 text-sm text-app-muted">Can {ROLE_ABILITIES[role]}.</p>
+					{#if sources.length > 0}
+						<dl class="mt-2.5 mb-0 grid gap-2">
+							{#each sources as source (source.scope)}
+								{@const id = `access-${role}-${source.scope}`}
+								<div class="min-w-0">
+									<dt {id} class="text-xs font-semibold wrap-anywhere text-app-muted">
+										{@render sourceLabel(source.scope)}
+									</dt>
+									<dd class="m-0 mt-1">
+										<ul class="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-labelledby={id}>
+											{#each source.groups as group (group)}
+												<li class="flex min-w-0 items-center gap-1.5">
+													<code class="break-all">{group}</code>
+													{#if mine.has(group)}<Badge tone="accent">You</Badge>{/if}
+												</li>
+											{/each}
+										</ul>
+									</dd>
+								</div>
 							{/each}
-						</ul>
+						</dl>
 					{:else}
 						<p class="mt-2.5 mb-0 text-sm text-app-muted">No groups.</p>
 					{/if}

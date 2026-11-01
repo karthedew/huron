@@ -73,6 +73,13 @@ const LEADS: Readonly<Record<Role, string>> = {
 	reader: 'You are a reader of'
 };
 
+/** The leads of the catalog roles granted on an organization, which hold in all its catalogs. */
+const ORGANIZATION_WIDE_LEADS: Readonly<Partial<Record<Role, string>>> = {
+	catalog_admin: 'You are a catalog administrator of every catalog of',
+	contributor: 'You are a contributor to every catalog of',
+	reader: 'You are a reader of every catalog of'
+};
+
 const SCOPE_ORDER = ['platform', 'organization', 'catalog'];
 
 /**
@@ -92,9 +99,10 @@ function describe(grant: RoleGrant, scopes: RoleScopes): RoleSentence {
 	if (!isRole(grant.role)) {
 		return { key, lead: `You hold the role ${grant.role} on`, target, abilities: '' };
 	}
+	const wide = grant.scope === 'organization' ? ORGANIZATION_WIDE_LEADS[grant.role] : undefined;
 	return {
 		key,
-		lead: LEADS[grant.role],
+		lead: wide ?? LEADS[grant.role],
 		target,
 		abilities: `You can ${ROLE_ABILITIES[grant.role]}.`
 	};

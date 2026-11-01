@@ -194,6 +194,18 @@
           "schema": {
             "$ref": "#/components/schemas/SchemaRefOut"
           },
+          "share_root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The configured root of the organization's directory; clients join it with the relative path, or use their own mount prefix when it is null.",
+            "title": "Share Root"
+          },
           "version": {
             "title": "Version",
             "type": "integer"
@@ -209,7 +221,8 @@
           "version",
           "created_at",
           "created_by",
-          "namespace_count"
+          "namespace_count",
+          "share_root"
         ],
         "title": "CatalogOut",
         "type": "object"
@@ -332,6 +345,18 @@
             ],
             "title": "Schema Override"
           },
+          "share_root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The configured root of the organization's directory; clients join it with the relative path, or use their own mount prefix when it is null.",
+            "title": "Share Root"
+          },
           "state": {
             "title": "State",
             "type": "string"
@@ -364,7 +389,8 @@
           "updated_at",
           "activated_at",
           "path",
-          "problems"
+          "problems",
+          "share_root"
         ],
         "title": "CollectionOut",
         "type": "object"
@@ -463,11 +489,19 @@
         "type": "object"
       },
       "CommitResultOut": {
-        "description": "What a successful commit answers.",
+        "description": "What a successful commit answers; a dry run answers what the commit would make.",
         "properties": {
           "commit_id": {
-            "title": "Commit Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The commit's id; null for a dry run.",
+            "title": "Commit Id"
           },
           "file_count": {
             "title": "File Count",
@@ -671,6 +705,59 @@
         "title": "GrantChangeOut",
         "type": "object"
       },
+      "GrantSourceOut": {
+        "description": "One group holding one role on a catalog, and the scope the grant was made at.",
+        "properties": {
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "platform_admin",
+              "org_admin",
+              "catalog_admin",
+              "contributor",
+              "reader"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "platform",
+              "organization",
+              "catalog"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "group",
+          "scope"
+        ],
+        "title": "GrantSourceOut",
+        "type": "object"
+      },
+      "GrantSourcesOut": {
+        "description": "Every grant holding on a catalog, sorted by role (Platform Admin first), group, scope.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GrantSourceOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "GrantSourcesOut",
+        "type": "object"
+      },
       "GroupsIn": {
         "description": "The complete set of LDAP groups for one role.",
         "properties": {
@@ -725,11 +812,15 @@
         "type": "object"
       },
       "Health": {
-        "description": "The liveness answer.",
+        "description": "The liveness answer.\n\n``organizations_managed`` is whether the service configuration declares the organizations:\nthe CLI then looks for an organization's directory only where its declaration puts it.",
         "properties": {
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
+          },
+          "organizations_managed": {
+            "title": "Organizations Managed",
+            "type": "boolean"
           },
           "status": {
             "title": "Status",
@@ -743,7 +834,8 @@
         "required": [
           "status",
           "instance_id",
-          "version"
+          "version",
+          "organizations_managed"
         ],
         "title": "Health",
         "type": "object"
@@ -844,6 +936,18 @@
             "title": "Path",
             "type": "string"
           },
+          "share_root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The configured root of the organization's directory; clients join it with the relative path, or use their own mount prefix when it is null.",
+            "title": "Share Root"
+          },
           "version": {
             "title": "Version",
             "type": "integer"
@@ -863,9 +967,51 @@
           "created_by",
           "namespace_count",
           "collection_count",
-          "disk_path"
+          "disk_path",
+          "share_root"
         ],
         "title": "NamespaceOut",
+        "type": "object"
+      },
+      "OrganizationGroupsOut": {
+        "description": "Groups per organization-scope role.\n\n``catalog_admin``, ``contributor`` and ``reader`` hold their role in every catalog of the\norganization.",
+        "properties": {
+          "catalog_admin": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Catalog Admin",
+            "type": "array"
+          },
+          "contributor": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Contributor",
+            "type": "array"
+          },
+          "org_admin": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Org Admin",
+            "type": "array"
+          },
+          "reader": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reader",
+            "type": "array"
+          }
+        },
+        "required": [
+          "org_admin",
+          "catalog_admin",
+          "contributor",
+          "reader"
+        ],
+        "title": "OrganizationGroupsOut",
         "type": "object"
       },
       "OrganizationIn": {
@@ -910,6 +1056,11 @@
             "title": "Created By",
             "type": "string"
           },
+          "declared": {
+            "description": "Whether the service configuration declares it.",
+            "title": "Declared",
+            "type": "boolean"
+          },
           "description": {
             "title": "Description",
             "type": "string"
@@ -918,6 +1069,18 @@
             "title": "Display Name",
             "type": "string"
           },
+          "export": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The NFS export the configuration names, if any.",
+            "title": "Export"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -925,6 +1088,30 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The organization's directory, root/name.",
+            "title": "Path"
+          },
+          "root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The configured parent of the organization's directory.",
+            "title": "Root"
           },
           "version": {
             "title": "Version",
@@ -939,7 +1126,11 @@
           "version",
           "created_at",
           "created_by",
-          "catalog_count"
+          "catalog_count",
+          "declared",
+          "root",
+          "path",
+          "export"
         ],
         "title": "OrganizationOut",
         "type": "object"
@@ -1896,9 +2087,52 @@
         ]
       }
     },
+    "/api/v1/catalogs/{catalog}/grants/sources": {
+      "get": {
+        "description": "Every grant holding on the catalog, with the scope it was made at.",
+        "operationId": "catalog_grant_sources_api_v1_catalogs__catalog__grants_sources_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalog",
+            "required": true,
+            "schema": {
+              "title": "Catalog",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantSourcesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Catalog Grant Sources",
+        "tags": [
+          "grants"
+        ]
+      }
+    },
     "/api/v1/catalogs/{catalog}/grants/{role}": {
       "put": {
-        "description": "Replace the groups of a catalog role.",
+        "description": "Replace the groups of a catalog role on the catalog; inherited groups stay.",
         "operationId": "set_catalog_grants_api_v1_catalogs__catalog__grants__role__put",
         "parameters": [
           {
@@ -3056,6 +3290,18 @@
               "title": "Collection Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Check the commit exactly as a real one (right, state, base version, paths) and answer what it would make; change nothing. Adds may leave out sha256.",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Check the commit exactly as a real one (right, state, base version, paths) and answer what it would make; change nothing. Adds may leave out sha256.",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
           }
         ],
         "requestBody": {
@@ -3594,7 +3840,7 @@
     },
     "/api/v1/organizations/{organization}/grants": {
       "get": {
-        "description": "Groups holding Org Admin on the organization.",
+        "description": "Groups per organization-scope role; every catalog of the organization inherits them.",
         "operationId": "organization_grants_api_v1_organizations__organization__grants_get",
         "parameters": [
           {
@@ -3612,7 +3858,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupsOut"
+                  "$ref": "#/components/schemas/OrganizationGroupsOut"
                 }
               }
             },
@@ -3635,10 +3881,10 @@
         ]
       }
     },
-    "/api/v1/organizations/{organization}/grants/org_admin": {
+    "/api/v1/organizations/{organization}/grants/{role}": {
       "put": {
-        "description": "Replace the Org Admin groups of the organization.",
-        "operationId": "set_organization_grants_api_v1_organizations__organization__grants_org_admin_put",
+        "description": "Replace the groups of one organization-scope role of an undeclared organization.",
+        "operationId": "set_organization_grants_api_v1_organizations__organization__grants__role__put",
         "parameters": [
           {
             "in": "path",
@@ -3646,6 +3892,21 @@
             "required": true,
             "schema": {
               "title": "Organization",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "enum": [
+                "org_admin",
+                "catalog_admin",
+                "contributor",
+                "reader"
+              ],
+              "title": "Role",
               "type": "string"
             }
           }

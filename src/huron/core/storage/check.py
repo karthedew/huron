@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 from huron.core.storage.aclplan import AclPlan, diff
 from huron.core.storage.errors import StorageError
-from huron.core.storage.layout import is_reserved_entry, resolve
+from huron.core.storage.layout import MARKER_FILE, is_reserved_entry, resolve
+from huron.core.storage.marker import MarkerState, marker_state
 from huron.pkg.fs.acl import AclError
 from huron.schema.naming import PART_SUFFIX, rel_path_key
 
@@ -24,9 +25,11 @@ __all__ = [
     "STALE_PART_AGE",
     "ExpectedCollection",
     "ExpectedDirectory",
+    "ExpectedOrganization",
     "Finding",
     "Severity",
     "check",
+    "check_organization",
 ]
 
 STALE_PART_AGE = timedelta(hours=1)
@@ -82,6 +85,41 @@ class ExpectedCollection:
     plan: AclPlan | None = None
     files: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     sidecar: bytes | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedOrganization:
+    """An organization directory, whether it carries its own marker, and its ACL plan."""
+
+    name: str
+    directory: Path
+    instance_id: str
+    own_marker: bool
+    plan: AclPlan | None = None
+
+
+def check_organization(storage: Storage, expected: ExpectedOrganization) -> list[Finding]:
+    """The organization-level findings: a missing directory, a missing or wrong marker, ACL drift.
+
+    The marker is only checked for an organization that carries its own; the share root's
+    marker is checked before any disk operation instead.
+    """
+    name, directory = expected.name, expected.directory
+    if not storage.is_directory(directory):
+        return [Finding("org_dir_missing", Severity.ERROR, name, str(directory))]
+    findings: list[Finding] = []
+    if expected.own_marker:
+        state = marker_state(storage, directory, expected.instance_id, name)
+        marker = str(directory / MARKER_FILE)
+        if state is MarkerState.NO_MARKER:
+            findings.append(Finding("org_marker_missing", Severity.ERROR, name, marker))
+        elif state is not MarkerState.OK:
+            findings.append(
+                Finding("org_marker_mismatch", Severity.ERROR, name, marker, str(state))
+            )
+    if expected.plan is not None:
+        findings += _acl(storage, name, directory, expected.plan, "org_acl_drift")
+    return findings
 
 
 def check(
@@ -232,14 +270,16 @@ def _changed(
     return []
 
 
-def _acl(storage: Storage, identifier: str, path: Path, plan: AclPlan) -> list[Finding]:
+def _acl(
+    storage: Storage, identifier: str, path: Path, plan: AclPlan, code: str = "acl_drift"
+) -> list[Finding]:
     try:
         problems = diff(plan, storage.read_acl(path))
     except (AclError, StorageError):
         return []
     if not problems:
         return []
-    return [Finding("acl_drift", Severity.WARNING, identifier, str(path), "; ".join(problems))]
+    return [Finding(code, Severity.WARNING, identifier, str(path), "; ".join(problems))]
 
 
 _RANK = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}

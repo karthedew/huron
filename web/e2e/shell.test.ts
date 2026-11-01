@@ -54,6 +54,11 @@ test.describe('the shell', () => {
 		await expect(skip).toBeInViewport();
 		await page.keyboard.press('Enter');
 		await expect(page.getByRole('main')).toBeFocused();
+		// The organization's header comes first: its share path's copy button, then its sections.
+		await page.keyboard.press('Tab');
+		await expect(
+			page.getByRole('main').getByRole('button', { name: 'Copy share path' })
+		).toBeFocused();
 		await page.keyboard.press('Tab');
 		await expect(
 			page

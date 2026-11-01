@@ -75,6 +75,7 @@ async function show({
 				rememberedOrganization: null,
 				organization: 'helio',
 				organizationDetails: HELIO,
+				organizationPath: '/projects/huron/helio',
 				search,
 				errors,
 				pendingLabel: '',

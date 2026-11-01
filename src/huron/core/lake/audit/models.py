@@ -19,6 +19,7 @@ class Action(StrEnum):
     PLATFORM_GRANT = "platform.grant"
     PLATFORM_REVOKE = "platform.revoke"
     ORGANIZATION_CREATE = "organization.create"
+    ORGANIZATION_UPDATE = "organization.update"
     ORGANIZATION_DELETE = "organization.delete"
     ORGANIZATION_GRANT = "organization.grant"
     ORGANIZATION_REVOKE = "organization.revoke"

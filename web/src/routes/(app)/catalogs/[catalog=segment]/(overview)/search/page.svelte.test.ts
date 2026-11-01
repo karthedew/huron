@@ -225,7 +225,7 @@ describe('the catalog search page', () => {
 		});
 		const hint = screen.getByRole('region', { name: 'Run this search with the CLI' });
 		expect(within(hint).getByRole('textbox')).toHaveValue(
-			"huron search heliophysics -q 'solar wind' -l mission=wind --state incomplete"
+			"huron --catalog heliophysics search -q 'solar wind' -l mission=wind --state incomplete"
 		);
 		unmount();
 		await show();
@@ -233,7 +233,7 @@ describe('the catalog search page', () => {
 			within(screen.getByRole('region', { name: 'Run this search with the CLI' })).getByRole(
 				'textbox'
 			)
-		).toHaveValue('huron search heliophysics');
+		).toHaveValue('huron --catalog heliophysics search');
 	});
 
 	it('shows a search it cannot run at its fields, without results or a CLI hint', async () => {

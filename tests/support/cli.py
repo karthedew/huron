@@ -80,11 +80,14 @@ class Router(httpx.BaseTransport):
         self._issuer = httpx.MockTransport(issuer.handler)
         self._service = service
         self.fail_commits: str | None = None
+        self.observe: Callable[[httpx.Request], None] | None = None
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.host == "idp.test":
             return self._issuer.handle_request(request)
-        if self.fail_commits and request.method == "POST" and request.url.path.endswith("/commits"):
+        if self.observe is not None:
+            self.observe(request)
+        if self.fail_commits and _is_commit(request):
             mode, self.fail_commits = self.fail_commits, None
             if mode == "before":
                 raise httpx.ConnectError("connection refused", request=request)
@@ -97,7 +100,11 @@ class Cli:
     """A CLI wired to an in-process service; ``run`` executes one command line."""
 
     def __init__(
-        self, home: Path, storage_factory: Callable[[Config], Any], mount_prefix: Path
+        self,
+        home: Path,
+        storage_factory: Callable[[Config], Any],
+        mount_prefix: Path,
+        **service_settings: object,
     ) -> None:
         self.loop = LoopThread()
         self.issuer = FakeIssuer()
@@ -105,7 +112,7 @@ class Cli:
         self.clock = frozen()
         self.runtime: Runtime = self.loop.call(
             build_runtime(
-                settings(),
+                settings(**service_settings),
                 store=MemoryStore(),
                 http=httpx.AsyncClient(transport=self.issuer.transport()),
                 groups=FakeGroups(USERS),
@@ -183,3 +190,12 @@ class Cli:
         self.http.close()
         self.loop.call(self.runtime.close())
         self.loop.stop()
+
+
+def _is_commit(request: httpx.Request) -> bool:
+    """A real commit; the dry run a push sends before copying is not one."""
+    return (
+        request.method == "POST"
+        and request.url.path.endswith("/commits")
+        and request.url.params.get("dry_run") != "true"
+    )

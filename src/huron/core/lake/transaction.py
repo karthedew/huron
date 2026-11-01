@@ -88,6 +88,10 @@ class Transaction(Protocol):
         """Serialize catalog-wide changes until the transaction ends."""
         ...
 
+    async def lock_bootstrap(self) -> None:
+        """Serialize bootstraps (of replicas starting together) until the transaction ends."""
+        ...
+
 
 class UnitOfWork(Protocol):
     """Opens transactions; leaving the context commits, an exception rolls back."""

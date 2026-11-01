@@ -4,9 +4,13 @@
 # Starts the stack's backend (PostgreSQL, the migrations, Keycloak, the group directory and the
 # API) as its own compose project with an empty database, logs in as the development users
 # through the Keycloak realm's password grant (enabled on the development realm only), walks the
-# user guide against a temporary directory standing in for the share, and removes the project
+# user guide against a temporary directory standing in for the shares, and removes the project
 # with its volume and its API image. The web and the demo seed do not start. It needs the ports of
 # `make app` and `make up`, so stop those first.
+#
+# The API runs in managed mode with a configuration of its own in place of huron.dev.yaml: the
+# organizations of huron.dev.yaml (helio, geo and noaa) with their organization-wide role groups
+# unchanged and their roots under the temporary directory (<tmp>/data1/huron) instead of /data1.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,13 +40,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
+export HURON_DEV_CONFIG="$work/huron.yaml"
+# huron.dev.yaml with each root moved under the temporary directory: the same settings,
+# organizations and `groups`, so this check follows any edit of that file. The roots are created here, before
+# provisioning: provision-orgs creates <root>/<org>, never a root.
+uv run python - huron.dev.yaml "$work" > "$HURON_DEV_CONFIG" <<'PY'
+import os
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    config = yaml.safe_load(stream)
+for organization in config["organizations"]:
+    if organization.get("root"):
+        organization["root"] = sys.argv[2] + organization["root"]
+        os.makedirs(organization["root"], exist_ok=True)
+yaml.safe_dump(config, sys.stdout, sort_keys=False)
+PY
+# The API in its container runs as another user and reads the file through a bind mount.
+chmod 0644 "$HURON_DEV_CONFIG"
+
 "${compose[@]}" up -d --build --wait api
 api="http://127.0.0.1:8080"
-instance="$(curl -fsS "$api/healthz" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_id"])')"
 
+# The mount prefix is only for organizations without a root; there is none here, so it stays
+# unmarked: every disk operation below must go through the organization roots.
 share="$work/share"
 mkdir -p "$share"
-scripts/init-root.sh "$share" "$(id -gn)" "$api" "$instance"
 
 export XDG_CONFIG_HOME="$work/config" XDG_STATE_HOME="$work/state"
 huron() { uv run huron "$@"; }
@@ -50,46 +75,42 @@ huron config set api_url "$api"
 huron config set mount_prefix "$share"
 huron config set acl_backend none
 
-login_as() {
-  local token
-  token="$(curl -fsS -d grant_type=password -d client_id=huron-cli -d scope=openid \
-    -d username="$1" -d password=password \
-    http://127.0.0.1:8081/realms/company/protocol/openid-connect/token \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["id_token"])')"
-  curl -fsS -H 'Content-Type: application/json' -d "{\"company_token\": \"$token\"}" \
-    "$api/api/v1/auth/exchange" | python3 -c '
-import json, os, sys, datetime
-answer = json.load(sys.stdin)
-path = os.path.join(os.environ["XDG_STATE_HOME"], "huron", "tokens.json")
-os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-expires = datetime.datetime.fromisoformat(answer["expires_at"]).timestamp()
-fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-with os.fdopen(fd, "w") as handle:
-    json.dump({"huron_token": answer["huron_token"], "expires_at": expires,
-               "subject": answer["subject"], "refresh_token": None}, handle)
-'
-}
+# The development users' password grant and token exchange (scripts/dev-login.sh).
+source "$root/scripts/dev-login.sh"
+login_as() { dev_login "$1" password "$api"; }
 
 login_as alice
-huron platform verify-root
-huron org create helio
-huron org grant helio helio-org-admins
+# The declared organizations exist from the start, with their org admins; none can be created.
+if huron create org astro; then
+  echo "e2e: create org succeeded although the organizations are declared" >&2
+  exit 1
+fi
+huron adm verify-mounts && { echo "e2e: verify-mounts passed before provisioning" >&2; exit 1; }
+huron adm provision-orgs --dry-run
+huron adm provision-orgs
+huron adm provision-orgs # again: nothing to do
+huron adm verify-mounts
+test -f "$work/data1/huron/helio/.huron" && test -f "$work/data1/huron/geo/.huron"
+huron get orgs
 login_as bob
-huron catalog create helio heliophysics
-huron catalog grant heliophysics catalog_admin helio-catalog-admins
+huron create catalog heliophysics --org helio
+huron adm grant catalog_admin helio-catalog-admins --catalog heliophysics
 login_as carol
-huron catalog grant heliophysics contributor helio-contributors
-huron catalog grant heliophysics reader helio-readers
-huron namespace create heliophysics.solar-wind --allow-collections
+huron adm grant contributor helio-contributors --catalog heliophysics
+huron adm grant reader helio-readers --catalog heliophysics
+huron create namespace heliophysics.solar-wind --allow-collections
 login_as dave
-huron catalog use heliophysics
+huron catalog heliophysics
 printf '{"title": "Run 7", "description": "End-to-end check"}\n' > "$work/meta.json"
-huron collection create solar-wind.run7 --metadata "$work/meta.json"
+huron create collection solar-wind.run7 --metadata "$work/meta.json"
 echo alpha > "$work/a.txt"
 huron add "$work/a.txt"
 huron push -m "e2e"
+# The collection lives below helio's root, not below the mount prefix.
+test -f "$work/data1/huron/helio/heliophysics/solar-wind/run7/a.txt"
+test -z "$(ls -A "$share")"
 login_as erin
-huron files solar-wind.run7
+huron get files solar-wind.run7
 huron search -q run
-huron check --catalog heliophysics || true
+huron adm check --catalog heliophysics || true
 echo "e2e: ok"

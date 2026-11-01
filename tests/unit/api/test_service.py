@@ -12,6 +12,7 @@ from tests.support.clock import START
 async def test_health_reports_the_instance(api: Service) -> None:
     body = (await api.client.get("/healthz")).json()
     assert body["status"] == "ok" and body["instance_id"] == str(INSTANCE_ID)
+    assert body["organizations_managed"] is False
     ready = await api.client.get("/readyz")
     assert ready.status_code == 200 and ready.json()["checks"] == {
         "database": True,

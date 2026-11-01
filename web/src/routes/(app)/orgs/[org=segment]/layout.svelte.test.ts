@@ -12,7 +12,10 @@ const state = vi.hoisted(() => {
 });
 vi.mock('$app/state', () => state);
 
-function show(organization: Organization) {
+function show(
+	organization: Organization,
+	organizationPath = `/projects/huron/${organization.name}`
+) {
 	return render(Layout, {
 		props: {
 			data: {
@@ -23,7 +26,8 @@ function show(organization: Organization) {
 				rolesUnavailable: false,
 				rememberedOrganization: null,
 				organization: organization.name,
-				organizationDetails: organization
+				organizationDetails: organization,
+				organizationPath
 			},
 			params: { org: organization.name },
 			children: createRawSnippet(() => ({ render: () => '<p>The page</p>' }))
@@ -40,14 +44,34 @@ describe('/orgs/[org] layout', () => {
 		expect(screen.getByText('helio')).toBeInTheDocument();
 		expect(screen.getByText('Sun and solar wind.')).toBeInTheDocument();
 		const sections = screen.getByRole('navigation', { name: 'Organization' });
-		const [catalogs, search] = within(sections).getAllByRole('link');
+		const [catalogs, search, access] = within(sections).getAllByRole('link');
 		expect(catalogs).toHaveTextContent('Catalogs2');
 		expect(catalogs).toHaveAttribute('href', '/orgs/helio');
 		expect(catalogs).toHaveAttribute('aria-current', 'page');
 		expect(search).toHaveTextContent(/^Search$/);
 		expect(search).toHaveAttribute('href', '/orgs/helio/search');
 		expect(search).not.toHaveAttribute('aria-current');
+		expect(access).toHaveTextContent(/^Access$/);
+		expect(access).toHaveAttribute('href', '/orgs/helio/access');
+		expect(access).not.toHaveAttribute('aria-current');
 		expect(screen.getByText('The page')).toBeInTheDocument();
+		expect(screen.getByText('Share path')).toBeInTheDocument();
+		expect(screen.getByText('/projects/huron/helio').tagName).toBe('CODE');
+		expect(screen.queryByText(/Declared in the service configuration/)).not.toBeInTheDocument();
+	});
+
+	it("shows a declared organization's directory under its configured root", () => {
+		show(
+			organizationFixture({
+				name: 'geo',
+				declared: true,
+				root: '/data2/huron',
+				path: '/data2/huron/geo'
+			}),
+			'/data2/huron/geo'
+		);
+		expect(screen.getByText('/data2/huron/geo').tagName).toBe('CODE');
+		expect(screen.getByText('Declared in the service configuration.')).toBeInTheDocument();
 	});
 
 	it('marks Search as the section of the organization search', () => {
@@ -61,6 +85,20 @@ describe('/orgs/[org] layout', () => {
 			);
 			expect(within(sections).getByRole('link', { name: /^Catalogs/ })).not.toHaveAttribute(
 				'aria-current'
+			);
+		} finally {
+			state.page.route.id = '/(app)/orgs/[org=segment]';
+		}
+	});
+
+	it('marks Access as the section of the organization access tab', () => {
+		state.page.route.id = '/(app)/orgs/[org=segment]/access';
+		try {
+			show(organizationFixture());
+			const sections = screen.getByRole('navigation', { name: 'Organization' });
+			expect(within(sections).getByRole('link', { name: 'Access' })).toHaveAttribute(
+				'aria-current',
+				'page'
 			);
 		} finally {
 			state.page.route.id = '/(app)/orgs/[org=segment]';

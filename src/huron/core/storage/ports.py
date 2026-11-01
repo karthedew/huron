@@ -45,8 +45,8 @@ class Storage(Protocol):
         """Copy ``source`` to ``directory / rel_path`` through a part file."""
         ...
 
-    def write_bytes(self, path: Path, data: bytes) -> None:
-        """Write ``data`` atomically."""
+    def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
+        """Write ``data`` atomically; with ``mode``, the file gets exactly that mode."""
         ...
 
     def read_bytes(self, path: Path) -> bytes | None:

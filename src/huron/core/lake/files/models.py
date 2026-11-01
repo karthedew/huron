@@ -39,11 +39,15 @@ class FileRecord:
 
 @dataclass(frozen=True, slots=True)
 class FileAdd:
-    """A file a commit adds or replaces."""
+    """A file a commit adds or replaces.
+
+    ``sha256`` is ``None`` only in a dry run, which may be sent before the file is copied and
+    hashed; a real commit refuses an add without one.
+    """
 
     rel_path: str
     size: int
-    sha256: str
+    sha256: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,16 +93,19 @@ class Commit:
 
 @dataclass(frozen=True, slots=True)
 class CommitResult:
-    """What a successful commit answers."""
+    """What a successful commit answers, or what a dry run says the commit would make.
+
+    A dry run writes no commit, so its ``commit_id`` is ``None``.
+    """
 
     version: int
     file_count: int
-    commit_id: uuid.UUID
+    commit_id: uuid.UUID | None
 
     def as_dict(self) -> dict[str, Any]:
         """Render for the API."""
         return {
             "version": self.version,
             "file_count": self.file_count,
-            "commit_id": str(self.commit_id),
+            "commit_id": None if self.commit_id is None else str(self.commit_id),
         }

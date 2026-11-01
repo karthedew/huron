@@ -14,6 +14,7 @@ from huron.applications.cli.client import ApiClient
 from huron.applications.cli.config import Config
 from huron.applications.cli.errors import UsageError
 from huron.applications.cli.login import Oidc, Session
+from huron.applications.cli.mount import Mount
 from huron.applications.cli.output import OutputFormat
 from huron.applications.cli.prompts import Prompter
 from huron.applications.cli.state import StateDir
@@ -42,6 +43,7 @@ class Services:
     output: OutputFormat = OutputFormat.TABLE
     catalog_override: str | None = None
     _session: Session | None = field(default=None, repr=False)
+    _mount: Mount | None = field(default=None, repr=False)
 
     def oidc(self) -> Oidc:
         """The company identity provider."""
@@ -58,6 +60,16 @@ class Services:
         """The API client, authenticated as the logged-in user."""
         return ApiClient(self.http, self.config.api_url, self.session().token, self.sleep)
 
+    def mount(self) -> Mount:
+        """The share as this machine sees it; one per command, so its checks are cached."""
+        if self._mount is None:
+            self._mount = Mount(self)
+        return self._mount
+
+    def organization(self) -> str | None:
+        """The current organization: catalogs are listed and created in it, if any."""
+        return self.config.current_organization
+
     def catalog(self) -> str | None:
         """The catalog relative identifiers resolve against, if any."""
         return self.catalog_override or self.config.current_catalog
@@ -66,7 +78,10 @@ class Services:
         """The current catalog; refuses when none is set."""
         catalog = self.catalog()
         if catalog is None:
-            raise UsageError("no catalog is selected", hint="run: huron catalog use <name>")
+            raise UsageError(
+                "no catalog is selected",
+                hint="list them with: huron catalog; then run: huron catalog <name>",
+            )
         return catalog
 
     def save_config(self, config: Config) -> None:

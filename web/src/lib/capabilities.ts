@@ -20,7 +20,7 @@ export interface CapabilityScope {
 /**
  * Capabilities from the user's roles (`whoami`). Each role includes the ones below it:
  * `platform_admin` everything, `org_admin` its organization's catalogs, `catalog_admin` and
- * `contributor` one catalog.
+ * `contributor` one catalog, or every catalog of an organization when granted on it.
  */
 export function capabilities(
 	roles: readonly RoleGrant[],
@@ -36,8 +36,11 @@ export function capabilities(
 	const platformAdmin = holds('platform_admin', 'platform');
 	const administerOrganization =
 		platformAdmin || holds('org_admin', 'organization', organizationId);
-	const administerCatalog = administerOrganization || holds('catalog_admin', 'catalog', catalogId);
-	const contribute = administerCatalog || holds('contributor', 'catalog', catalogId);
+	/** A catalog role, granted on the catalog or on its organization. */
+	const inCatalog = (role: string) =>
+		holds(role, 'catalog', catalogId) || holds(role, 'organization', organizationId);
+	const administerCatalog = administerOrganization || inCatalog('catalog_admin');
+	const contribute = administerCatalog || inCatalog('contributor');
 	return { contribute, administerCatalog, administerOrganization, platformAdmin };
 }
 

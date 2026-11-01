@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Response
+from fastapi import APIRouter, Body, Query, Response
 
 from huron.applications.api.authorization import ActorDep
 from huron.applications.api.dependencies import LakeDep
@@ -40,10 +40,21 @@ async def commit(
     lake: LakeDep,
     response: Response,
     body: Annotated[dict[str, Any], Body()],
+    dry_run: Annotated[
+        bool,
+        Query(
+            description=(
+                "Check the commit exactly as a real one (right, state, base version, paths) and"
+                " answer what it would make; change nothing. Adds may leave out sha256."
+            )
+        ),
+    ] = False,
 ) -> CommitResultOut:
     """Record added and removed files in one transaction, or refuse the whole commit."""
-    result = await lake.commits.commit(actor, collection_id, parse_commit_request(body))
-    set_etag(response, result.version)
+    request = parse_commit_request(body, dry_run=dry_run)
+    result = await lake.commits.commit(actor, collection_id, request, dry_run=dry_run)
+    if not dry_run:
+        set_etag(response, result.version)
     return CommitResultOut.model_validate(result.as_dict())
 
 

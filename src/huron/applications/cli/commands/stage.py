@@ -1,16 +1,22 @@
-"""``checkout``, ``add``, ``rm``, ``status``, ``pull`` and ``push``."""
+"""``checkout``, ``add``, ``rm``, ``pull`` and ``push``: the working copy of one collection."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import typer
 
-from huron.applications.cli.commands.collections import fetch_collection
-from huron.applications.cli.commands.common import say, services, show
-from huron.applications.cli.errors import CliError
-from huron.applications.cli.mount import Mount
+from huron.applications.cli.commands.common import (
+    api,
+    fetch_collection,
+    say,
+    services,
+    table_mode,
+)
+from huron.applications.cli.errors import UsageError
+from huron.applications.cli.picker import CollectionPicker
 from huron.applications.cli.sync import (
     checkout as record_checkout,
 )
@@ -18,25 +24,30 @@ from huron.applications.cli.sync import (
     current,
     pull,
     push,
-    recorded_files,
     stage_paths,
     unstage_or_remove,
 )
-from huron.core.storage import is_reserved_entry
-from huron.schema.naming import rel_path_key
 
 __all__ = ["register"]
 
 
-def register(app: typer.Typer) -> None:
-    """Add the working-copy verbs."""
-    for verb in (checkout, add, rm, status, pull_command, push_command):
+def register(app: typer.Typer, panels: Mapping[str, str]) -> None:
+    """Add the working-copy verbs, each under its help panel in ``panels`` (verb to panel)."""
+    for verb in (checkout, add, rm, pull_command, push_command):
         name = verb.__name__.removesuffix("_command")
-        app.command(name)(verb)
+        app.command(name, rich_help_panel=panels[name])(verb)
 
 
-def checkout(ctx: typer.Context, identifier: str) -> None:
+def checkout(
+    ctx: typer.Context,
+    identifier: Annotated[
+        str | None,
+        typer.Argument(help="catalog.namespace.name; pick one interactively when omitted."),
+    ] = None,
+) -> None:
     """Make a collection the current working copy; other working copies keep their stage."""
+    if identifier is None:
+        identifier = _pick(ctx)
     collection = fetch_collection(ctx, identifier)
     copy = record_checkout(services(ctx), collection)
     say(ctx, f"checked out {copy.identifier} at version {copy.version}")
@@ -60,31 +71,10 @@ def rm(
     ctx: typer.Context,
     rel_paths: Annotated[list[str], typer.Argument(help="Paths inside the collection.")],
 ) -> None:
-    """Unstage an add, or stage the removal of a recorded file."""
-    removed = unstage_or_remove(services(ctx), current(services(ctx)), rel_paths)
-    for rel_path in removed:
-        say(ctx, f"staged removal of {rel_path}")
-
-
-def status(ctx: typer.Context) -> None:
-    """Staged changes, how far behind the copy is, and unrecorded files on the share."""
-    found = services(ctx)
-    copy = current(found)
-    stage = found.state.read_stage(copy.collection_id)
-    collection = found.api().get(f"/api/v1/collections/{copy.collection_id}")
-    report: dict[str, object] = {
-        "collection": copy.identifier,
-        "state": collection["state"],
-        "your_version": copy.version,
-        "service_version": collection["version"],
-        "behind": int(collection["version"]) != copy.version,
-        "adds": [add.rel_path for add in stage.adds],
-        "removes": list(stage.removes),
-        "unrecorded": _unrecorded(ctx, collection),
-    }
-    show(ctx, report)
-    if report["behind"]:
-        say(ctx, "behind: run huron pull")
+    """Unstage an add or a removal, or stage the removal of a recorded file."""
+    done = unstage_or_remove(services(ctx), current(services(ctx)), rel_paths)
+    for action, rel_path in done:
+        say(ctx, f"{action} {rel_path}")
 
 
 def pull_command(ctx: typer.Context) -> None:
@@ -112,20 +102,11 @@ def push_command(
     say(ctx, f"version {result.before} → {result.after}, +{result.adds} −{result.removes} files")
 
 
-def _unrecorded(ctx: typer.Context, collection: dict[str, Any]) -> list[str] | None:
-    if collection.get("path") is None:
-        return []
-    mount = Mount(services(ctx))
-    try:
-        storage = mount.require()
-    except CliError:
-        return None
-    recorded = recorded_files(services(ctx).api(), str(collection["id"]))
-    directory = mount.path(str(collection["path"]))
-    return [
-        entry.rel_path
-        for entry in storage.walk(directory)
-        if entry.kind == "file"
-        and not is_reserved_entry(entry.rel_path)
-        and rel_path_key(entry.rel_path) not in recorded
-    ]
+def _pick(ctx: typer.Context) -> str:
+    found = services(ctx)
+    if not table_mode(ctx) or not found.prompter.interactive:
+        raise UsageError(
+            "checkout needs a collection identifier when it cannot ask",
+            hint="see the collections with: huron tree; then run: huron checkout <identifier>",
+        )
+    return CollectionPicker(api(ctx), found.prompter).pick(found.require_catalog())

@@ -1,0 +1,38 @@
+{{- if .Values.migrate.enabled }}
+# A hook, so it runs before this release's pods on every install and upgrade; it needs only the
+# database secret (migrations/env.py reads HURON_DATABASE_URL), which exists before the release.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "huron.fullname" . }}-migrate
+  labels:
+    {{- include "huron.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "huron.selectorLabels" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "huron.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          env:
+            {{- include "huron.databaseEnv" . | nindent 12 }}
+          securityContext:
+            {{- include "huron.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+{{- end }}

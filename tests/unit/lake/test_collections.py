@@ -280,6 +280,33 @@ def test_metadata_size_is_limited() -> None:
     assert raised.value.context["problems"][0]["rule"] == "size"
 
 
+def test_metadata_holds_integers_of_any_size() -> None:
+    document = {"epoch": 2**63, "fill": -(10**31)}
+    assert check_metadata(document) is document
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), "\ud800"])
+def test_metadata_refuses_values_json_cannot_hold(value: object) -> None:
+    with pytest.raises(MetadataInvalid) as raised:
+        check_metadata({"title": "t", "x": value})
+    assert raised.value.context["problems"][0]["rule"] == "json"
+
+
+async def test_sidecar_writes_integers_of_any_size_exactly(seeded: World) -> None:
+    lake = seeded.lake
+    metadata = {**VALID_METADATA, "fill": -(10**31), "epoch": 2**63}
+    view = await active(seeded, "huge", metadata)
+    override = {"type": "object", "properties": {"epoch": {"type": "integer", "maximum": 2**64}}}
+    updated = await lake.collections.update(
+        CONTRIBUTOR, view.collection.id, view.collection.version, Update(schema_override=override)
+    )
+    sidecar = await lake.collections.sidecar(READER, updated.collection.id)
+    assert b'"epoch":9223372036854775808' in sidecar
+    assert b'"fill":-10000000000000000000000000000000' in sidecar
+    assert b'"maximum":18446744073709551616' in sidecar
+    assert sidecar == render_sidecar(updated)
+
+
 async def test_a_collection_stays_readable_when_a_new_catalog_schema_conflicts_with_its_override(
     seeded: World,
 ) -> None:

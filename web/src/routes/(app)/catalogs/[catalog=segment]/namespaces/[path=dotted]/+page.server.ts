@@ -3,6 +3,7 @@ import { LIST_PAGE_SIZE, cursorParam } from '$lib/paging';
 import { getConfig } from '$lib/server/config';
 import { loadTrail } from '$lib/server/explorer';
 import { api, guarded } from '$lib/server/guard';
+import { sharePath } from '$lib/share';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -41,7 +42,7 @@ export const load = (async (event) => {
 	return {
 		namespace,
 		/** Where the namespace's directory is on the share (the CLI's `Mount.path`). */
-		sharePath: `${getConfig().mountPrefix}/${namespace.disk_path}`,
+		sharePath: sharePath(namespace.share_root, getConfig().mountPrefix, namespace.disk_path),
 		namespaces: namespaces.items,
 		namespacesNext: namespaces.next_cursor ?? null,
 		collections: collections.items.map(collectionRow),

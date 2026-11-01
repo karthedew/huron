@@ -33,7 +33,7 @@
 	);
 	const createCollection = $derived(
 		cliCommand({
-			verb: 'collection create',
+			verb: 'create collection',
 			catalog: catalog.name,
 			namespace: namespace.identifier
 		})

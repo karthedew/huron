@@ -75,6 +75,15 @@ export function asArray<T>(decode: Decoder<T>): Decoder<T[]> {
 
 export const asStrings: Decoder<string[]> = asArray(asString);
 
+/** One of `values`: a closed enumeration of the contract, such as a role or a scope. */
+export function asOneOf<T extends string>(values: readonly T[]): Decoder<T> {
+	return (value, path) => {
+		const found = values.find((candidate) => candidate === value);
+		if (found !== undefined) return found;
+		throw new DecodeError(path, `one of ${values.join(', ')}`);
+	};
+}
+
 /** Typed access to the own properties of a JSON object. */
 export class JsonFields {
 	readonly #object: JsonObject;

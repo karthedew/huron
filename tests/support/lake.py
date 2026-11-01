@@ -36,19 +36,21 @@ class World:
     clock: FrozenClock
 
 
-async def make_world() -> World:
-    """A bootstrapped lake with no organizations."""
+async def make_world(settings: LakeSettings = SETTINGS) -> World:
+    """A bootstrapped lake; with the default settings it has no organizations."""
     store = MemoryStore()
     clock = frozen()
-    await bootstrap(store, clock, SETTINGS)
-    return World(build_lake(store, clock, SETTINGS), store, clock)
+    await bootstrap(store, clock, settings)
+    return World(build_lake(store, clock, settings), store, clock)
 
 
 async def seed(world: World) -> None:
     """Organization ``helio``, catalog ``heliophysics`` with grants, namespace ``solar-wind``."""
     lake = world.lake
     await lake.organizations.create(PLATFORM_ADMIN, "helio", "Heliophysics", "Sun and wind")
-    await lake.grants.set_org_admins(PLATFORM_ADMIN, "helio", ["helio-org-admins"])
+    await lake.grants.set_organization_role(
+        PLATFORM_ADMIN, "helio", Role.ORG_ADMIN, ["helio-org-admins"]
+    )
     await lake.catalogs.create(ORG_ADMIN, "helio", "heliophysics")
     await lake.grants.set_catalog_role(
         ORG_ADMIN, "heliophysics", Role.CATALOG_ADMIN, ["helio-catalog-admins"]

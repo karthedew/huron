@@ -11,8 +11,11 @@ from huron.applications.api.dependencies import LakeDep
 from huron.applications.api.routes.v1.schema.grants import (
     EffectiveGroupsOut,
     GrantChangeOut,
+    GrantSourceOut,
+    GrantSourcesOut,
     GroupsIn,
     GroupsOut,
+    OrganizationGroupsOut,
 )
 from huron.core.security.rbac import Role
 
@@ -21,6 +24,7 @@ __all__ = ["router"]
 router = APIRouter(tags=["grants"])
 
 CatalogRole = Literal["catalog_admin", "contributor", "reader"]
+OrganizationRole = Literal["org_admin", "catalog_admin", "contributor", "reader"]
 
 
 @router.get("/platform/grants")
@@ -38,18 +42,22 @@ async def set_platform_grants(body: GroupsIn, actor: ActorDep, lake: LakeDep) ->
 
 
 @router.get("/organizations/{organization}/grants")
-async def organization_grants(organization: str, actor: ActorDep, lake: LakeDep) -> GroupsOut:
-    """Groups holding Org Admin on the organization."""
-    groups = await lake.grants.org_admins(actor, organization)
-    return GroupsOut(role=str(Role.ORG_ADMIN), ldap_groups=groups)
+async def organization_grants(
+    organization: str, actor: ActorDep, lake: LakeDep
+) -> OrganizationGroupsOut:
+    """Groups per organization-scope role; every catalog of the organization inherits them."""
+    groups = await lake.grants.organization_groups(actor, organization)
+    return OrganizationGroupsOut.model_validate(groups.as_dict())
 
 
-@router.put("/organizations/{organization}/grants/org_admin")
+@router.put("/organizations/{organization}/grants/{role}")
 async def set_organization_grants(
-    organization: str, body: GroupsIn, actor: ActorDep, lake: LakeDep
+    organization: str, role: OrganizationRole, body: GroupsIn, actor: ActorDep, lake: LakeDep
 ) -> GrantChangeOut:
-    """Replace the Org Admin groups of the organization."""
-    change = await lake.grants.set_org_admins(actor, organization, body.ldap_groups)
+    """Replace the groups of one organization-scope role of an undeclared organization."""
+    change = await lake.grants.set_organization_role(
+        actor, organization, Role(role), body.ldap_groups
+    )
     return GrantChangeOut.model_validate(change.as_dict())
 
 
@@ -60,10 +68,24 @@ async def catalog_grants(catalog: str, actor: ActorDep, lake: LakeDep) -> Effect
     return EffectiveGroupsOut.model_validate(groups.as_dict())
 
 
+@router.get("/catalogs/{catalog}/grants/sources")
+async def catalog_grant_sources(catalog: str, actor: ActorDep, lake: LakeDep) -> GrantSourcesOut:
+    """Every grant holding on the catalog, with the scope it was made at."""
+    sources = await lake.grants.catalog_grant_sources(actor, catalog)
+    return GrantSourcesOut(
+        items=[
+            GrantSourceOut.model_validate(
+                {"role": str(s.role), "group": s.ldap_group, "scope": str(s.scope.type)}
+            )
+            for s in sources
+        ]
+    )
+
+
 @router.put("/catalogs/{catalog}/grants/{role}")
 async def set_catalog_grants(
     catalog: str, role: CatalogRole, body: GroupsIn, actor: ActorDep, lake: LakeDep
 ) -> GrantChangeOut:
-    """Replace the groups of a catalog role."""
+    """Replace the groups of a catalog role on the catalog; inherited groups stay."""
     change = await lake.grants.set_catalog_role(actor, catalog, Role(role), body.ldap_groups)
     return GrantChangeOut.model_validate(change.as_dict())

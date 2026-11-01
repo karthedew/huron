@@ -6,18 +6,20 @@ import pytest
 
 from huron.core.security.rbac import (
     CATALOG_ROLES,
+    ORGANIZATION_ROLES,
     PLATFORM,
     ROLE_PRIVILEGES,
     Actor,
     Authorizer,
     Grant,
     GrantInvalid,
+    GrantSource,
     Privilege,
     Role,
     Scope,
     ScopeType,
     check_grant,
-    scope_type_of,
+    scope_types_of,
 )
 from huron.pkg.errors import Forbidden
 from tests.support.rbac import FakeGrantReader
@@ -68,6 +70,11 @@ def authorizer() -> Authorizer:
                 Grant(Scope.catalog(CAT_A1), Role.CONTRIBUTOR, "a1-contrib"),
                 Grant(Scope.catalog(CAT_A1), Role.READER, "a1-readers"),
                 Grant(Scope.catalog(CAT_B1), Role.READER, "b1-readers"),
+                Grant(Scope.organization(ORG_A), Role.READER, "a-everyone"),
+                Grant(Scope.organization(ORG_A), Role.READER, "a-shared"),
+                Grant(Scope.catalog(CAT_A1), Role.READER, "a-shared"),
+                Grant(Scope.organization(ORG_A), Role.CONTRIBUTOR, "a-writers"),
+                Grant(Scope.organization(ORG_A), Role.CATALOG_ADMIN, "a-curators"),
             ],
             CATALOGS,
         )
@@ -81,9 +88,11 @@ def test_privilege_table_matches_the_plan(role: Role, privilege: Privilege) -> N
 
 
 def test_roles_have_fixed_scope_types() -> None:
-    assert scope_type_of(Role.PLATFORM_ADMIN) is ScopeType.PLATFORM
-    assert scope_type_of(Role.ORG_ADMIN) is ScopeType.ORGANIZATION
-    assert all(scope_type_of(role) is ScopeType.CATALOG for role in CATALOG_ROLES)
+    assert scope_types_of(Role.PLATFORM_ADMIN) == {ScopeType.PLATFORM}
+    assert scope_types_of(Role.ORG_ADMIN) == {ScopeType.ORGANIZATION}
+    both = {ScopeType.ORGANIZATION, ScopeType.CATALOG}
+    assert all(scope_types_of(role) == both for role in CATALOG_ROLES)
+    assert (Role.ORG_ADMIN, *CATALOG_ROLES) == ORGANIZATION_ROLES
 
 
 @pytest.mark.parametrize(
@@ -106,6 +115,14 @@ def test_misplaced_grants_are_refused(grant: Grant) -> None:
 def test_well_formed_grants_are_accepted() -> None:
     grant = Grant(Scope.catalog(CAT_A1), Role.CONTRIBUTOR, "a1-contrib")
     assert check_grant(grant) is grant
+    for role in ORGANIZATION_ROLES:
+        organization_wide = Grant(Scope.organization(ORG_A), role, "g")
+        assert check_grant(organization_wide) is organization_wide
+
+
+def test_a_misplaced_catalog_role_names_both_scopes() -> None:
+    with pytest.raises(GrantInvalid, match="organization or catalog scope"):
+        check_grant(Grant(PLATFORM, Role.CONTRIBUTOR, "g"))
 
 
 async def test_contributor_holds_nothing_on_another_catalog(authorizer: Authorizer) -> None:
@@ -165,8 +182,8 @@ async def test_effective_groups_include_inherited_scopes(authorizer: Authorizer)
     groups = await authorizer.effective_groups(Scope.catalog(CAT_A1))
     assert groups.platform_admin == ("platform",)
     assert groups.org_admin == ("org-a-admins",)
-    assert groups.contributor == ("a1-contrib",)
-    assert groups.as_dict()["reader"] == ["a1-readers"]
+    assert groups.contributor == ("a-writers", "a1-contrib")
+    assert groups.as_dict()["reader"] == ["a-everyone", "a-shared", "a1-readers"]
     other = await authorizer.effective_groups(Scope.catalog(CAT_B1))
     assert other.org_admin == ()
 
@@ -175,3 +192,57 @@ async def test_roles_are_cached_per_group_set(authorizer: Authorizer) -> None:
     reader = actor("a1-readers")
     first = await authorizer.roles_for(reader)
     assert await authorizer.roles_for(reader) is first
+
+
+async def test_organization_wide_catalog_roles_hold_in_every_catalog_of_it(
+    authorizer: Authorizer,
+) -> None:
+    writer = actor("a-writers")
+    for catalog in (CAT_A1, CAT_A2):
+        assert await authorizer.holds(writer, P.COLLECTION_CREATE, Scope.catalog(catalog))
+        assert not await authorizer.holds(writer, P.NAMESPACE_CREATE, Scope.catalog(catalog))
+    assert not await authorizer.holds(writer, P.COLLECTION_READ, Scope.catalog(CAT_B1))
+    curator = actor("a-curators")
+    assert await authorizer.holds(curator, P.NAMESPACE_CREATE, Scope.catalog(CAT_A2))
+    assert await authorizer.holds(curator, P.CATALOG_GRANT_MEMBER, Scope.catalog(CAT_A2))
+    assert not await authorizer.holds(curator, P.CATALOG_GRANT_ADMIN, Scope.organization(ORG_A))
+    assert not await authorizer.holds(curator, P.CATALOG_CREATE, Scope.organization(ORG_A))
+    everyone = actor("a-everyone")
+    visible = await authorizer.visibility(everyone)
+    assert visible.managed_organization_ids == {ORG_A} == visible.organization_ids
+    assert visible.catalog_ids == frozenset()
+    assert await authorizer.can_see_catalog(everyone, CAT_A2)
+    assert not await authorizer.can_see_catalog(everyone, CAT_B1)
+    assert await authorizer.holds(everyone, P.ORGANIZATION_READ, Scope.organization(ORG_A))
+
+
+async def test_effective_groups_merge_organization_wide_catalog_roles(
+    authorizer: Authorizer,
+) -> None:
+    groups = await authorizer.effective_groups(Scope.catalog(CAT_A2))
+    assert groups.reader == ("a-everyone", "a-shared")
+    assert groups.contributor == ("a-writers",)
+    assert groups.catalog_admin == ("a-curators",)
+    merged = await authorizer.effective_groups(Scope.catalog(CAT_A1))
+    assert merged.reader == ("a-everyone", "a-shared", "a1-readers")
+
+
+async def test_grant_sources_name_the_scope_of_each_grant(authorizer: Authorizer) -> None:
+    sources = await authorizer.grant_sources(Scope.catalog(CAT_A1))
+    org_a, cat_a1 = Scope.organization(ORG_A), Scope.catalog(CAT_A1)
+    assert sources == [
+        GrantSource(Role.PLATFORM_ADMIN, "platform", PLATFORM),
+        GrantSource(Role.ORG_ADMIN, "org-a-admins", org_a),
+        GrantSource(Role.CATALOG_ADMIN, "a-curators", org_a),
+        GrantSource(Role.CATALOG_ADMIN, "a1-admins", cat_a1),
+        GrantSource(Role.CONTRIBUTOR, "a-writers", org_a),
+        GrantSource(Role.CONTRIBUTOR, "a1-contrib", cat_a1),
+        GrantSource(Role.READER, "a-everyone", org_a),
+        GrantSource(Role.READER, "a-shared", org_a),
+        GrantSource(Role.READER, "a-shared", cat_a1),
+        GrantSource(Role.READER, "a1-readers", cat_a1),
+    ]
+    assert await authorizer.grant_sources(Scope.catalog(CAT_B1)) == [
+        GrantSource(Role.PLATFORM_ADMIN, "platform", PLATFORM),
+        GrantSource(Role.READER, "b1-readers", Scope.catalog(CAT_B1)),
+    ]

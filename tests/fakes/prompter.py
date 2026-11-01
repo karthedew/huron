@@ -8,8 +8,10 @@ from huron.applications.cli.prompts import Validate
 class ScriptedPrompter:
     """Pops answers in order; an answer ``validate`` rejects is recorded and the next one used."""
 
-    def __init__(self, answers: Sequence[object] = ()) -> None:
+    def __init__(self, answers: Sequence[object] = (), *, interactive: bool = True) -> None:
         self.answers = list(answers)
+        self.interactive = interactive
+        self.choices: list[list[str]] = []
         self.asked: list[str] = []
         self.rejected: list[tuple[str, str]] = []
 
@@ -23,6 +25,7 @@ class ScriptedPrompter:
             self.rejected.append((value, problem))
 
     def select(self, message: str, choices: Sequence[str], default: str | None = None) -> str:
+        self.choices.append(list(choices))
         answer = self._next(message)
         value = default if answer is None else str(answer)
         assert value in choices, f"{value!r} is not one of {choices}"

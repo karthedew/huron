@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import re2
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError, validators
 
+from huron.pkg.canonical import NotCanonicalizable, canonical_bytes
 from huron.pkg.errors import HuronError, register
 from huron.schema.loader import load_document
 
@@ -65,7 +66,17 @@ class Validator:
 
 
 def check_schema_document(document: Any) -> dict[str, Any]:
-    """Return ``document`` when it is an allowed metadata schema; raises :class:`SchemaInvalid`."""
+    """Return ``document`` when it is an allowed metadata schema; raises :class:`SchemaInvalid`.
+
+    Integers of any size are allowed; NaN, infinity and lone surrogates are not.
+    """
+    try:
+        canonical_bytes(document)
+    except NotCanonicalizable as error:
+        problem = Problem("/", str(error), "json")
+        raise SchemaInvalid(
+            "schema document is not valid JSON", problems_context([problem])
+        ) from error
     problems = Validator(load_document("schema-document-v1")).validate(document)
     if not problems:
         problems = list(_pattern_problems(document, ""))

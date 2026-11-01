@@ -43,6 +43,9 @@ class MemoryTransaction:
     async def lock_catalog(self, catalog_id: uuid.UUID) -> None:
         """Transactions are already serialized; nothing to do."""
 
+    async def lock_bootstrap(self) -> None:
+        """Transactions are already serialized; nothing to do."""
+
 
 class MemoryStore:
     """A unit of work whose transactions run one at a time and commit by swapping state."""

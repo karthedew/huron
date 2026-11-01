@@ -47,6 +47,11 @@ class MemoryStorage:
         self.calls: list[tuple[str, Path]] = []
         self._clock = 0
 
+    def add_root(self, path: Path, owner: str = "root") -> None:
+        """Add a directory owned by ``owner`` (and any missing parents), like a mounted root."""
+        for directory in (*reversed(path.parents), path):
+            self.nodes.setdefault(directory, Node(owner=owner, mode=0o755))
+
     def ensure_directory(self, path: Path, plan: AclPlan) -> bool:
         """Create ``path`` (its parent must exist) and apply ``plan``."""
         if not self.is_directory(path.parent):
@@ -104,11 +109,13 @@ class MemoryStorage:
         self.calls.append(("copy", destination))
         return FileStamp(len(data), hashlib.sha256(data).hexdigest())
 
-    def write_bytes(self, path: Path, data: bytes) -> None:
-        """Store ``data`` at ``path``."""
+    def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
+        """Store ``data`` at ``path`` (mode ``0660`` unless ``mode`` is given)."""
         self._check(path.parent)
         self._clock += 1
-        self.nodes[path] = Node(owner=self.user, mode=0o660, data=data, mtime_ns=self._clock)
+        self.nodes[path] = Node(
+            owner=self.user, mode=0o660 if mode is None else mode, data=data, mtime_ns=self._clock
+        )
 
     def read_bytes(self, path: Path) -> bytes | None:
         """The bytes at ``path``."""

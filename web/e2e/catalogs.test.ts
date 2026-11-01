@@ -290,8 +290,8 @@ test.describe('namespaces', () => {
 		const main = page.getByRole('main');
 		await expect(main.getByText('No collections yet.')).toBeVisible();
 		await expect(
-			main.getByRole('region', { name: 'Create a collection here' }).getByText(/collection create/)
-		).toHaveText('huron --catalog heliophysics collection create heliophysics.empty.<name>');
+			main.getByRole('region', { name: 'Create a collection here' }).getByText(/create collection/)
+		).toHaveText('huron --catalog heliophysics create collection heliophysics.empty.<name>');
 		await page.goto('/catalogs/heliophysics/namespaces/solar-wind');
 		await expect(main.getByRole('region', { name: /^Create a/ })).toHaveCount(0);
 
@@ -304,9 +304,9 @@ test.describe('namespaces', () => {
 			/^\s*wind\b/
 		]);
 		await expect(
-			main.getByRole('region', { name: 'Create a namespace here' }).getByText(/namespace create/)
+			main.getByRole('region', { name: 'Create a namespace here' }).getByText(/create namespace/)
 		).toHaveText(
-			'huron --catalog heliophysics namespace create heliophysics.solar-wind.<name> --allow-collections'
+			'huron --catalog heliophysics create namespace heliophysics.solar-wind.<name> --allow-collections'
 		);
 
 		await logOut(page);
@@ -339,48 +339,76 @@ test.describe('the access tab', () => {
 		alice: 'Platform administrator'
 	};
 
+	/** The list of a role's groups granted at `scope`, as the tab names it. */
+	const SOURCE_NAMES: Record<string, string> = {
+		platform: 'Inherited from the platform',
+		organization: 'Inherited from Heliophysics Division',
+		catalog: 'Granted on this catalog'
+	};
+	const ROLE_HEADINGS: Record<string, string> = {
+		platform_admin: 'Platform administrator',
+		org_admin: 'Organization administrator',
+		catalog_admin: 'Catalog administrator',
+		contributor: 'Contributor',
+		reader: 'Reader'
+	};
+
 	for (const username of ['erin', 'dave', 'carol', 'bob', 'alice'] satisfies Username[]) {
-		test(`shows ${username} the groups per role and marks theirs`, async ({ page }) => {
-			const groups = (await (await ApiSession.as(username)).get('catalogs/heliophysics/grants'))
-				.body;
+		test(`shows ${username} the groups per role, where each was granted, and marks theirs`, async ({
+			page
+		}) => {
+			const answer = (
+				await (await ApiSession.as(username)).get('catalogs/heliophysics/grants/sources')
+			).body;
+			const sources: { role: string; group: string; scope: string }[] =
+				typeof answer === 'object' &&
+				answer !== null &&
+				'items' in answer &&
+				Array.isArray(answer.items)
+					? answer.items
+					: [];
+			// helio's organization-wide groups are also granted on the catalog: both show.
+			expect(sources).toEqual(
+				expect.arrayContaining([
+					{ role: 'reader', group: 'helio-readers', scope: 'organization' },
+					{ role: 'reader', group: 'helio-readers', scope: 'catalog' }
+				])
+			);
 			await signIn(page, username);
 			await page.goto('/catalogs/heliophysics/access');
 			await expect(page).toHaveTitle('Access · Heliophysics · Huron');
 			const main = page.getByRole('main');
-			const roles = main.getByRole('list', { name: 'Roles' }).getByRole('heading', { level: 3 });
-			await expect(roles).toHaveText([
-				'Platform administrator',
-				'Organization administrator',
-				'Catalog administrator',
-				'Contributor',
-				'Reader'
-			]);
-			for (const [role, name] of [
-				['platform_admin', 'Platform administrator'],
-				['org_admin', 'Organization administrator'],
-				['catalog_admin', 'Catalog administrator'],
-				['contributor', 'Contributor'],
-				['reader', 'Reader']
-			]) {
-				const item = main
-					.getByRole('list', { name: 'Roles' })
+			const roles = main.getByRole('list', { name: 'Roles' });
+			await expect(roles.getByRole('heading', { level: 3 })).toHaveText(
+				Object.values(ROLE_HEADINGS)
+			);
+			for (const [role, name] of Object.entries(ROLE_HEADINGS)) {
+				const item = roles
 					.getByRole('listitem')
 					.filter({ has: page.getByRole('heading', { name, exact: true, level: 3 }) });
-				const expected =
-					typeof groups === 'object' && groups !== null && role in groups
-						? Object.entries(groups).find(([key]) => key === role)?.[1]
-						: [];
-				const members = Array.isArray(expected) ? expected.map(String) : [];
-				for (const group of members) await expect(item).toContainText(group);
-				const mine = members.filter((group) => USERS[username].groups.includes(group));
+				const held = sources.filter((source) => source.role === role);
+				for (const scope of ['platform', 'organization', 'catalog']) {
+					const groups = held.filter((source) => source.scope === scope).map(({ group }) => group);
+					const list = item.getByRole('list', { name: SOURCE_NAMES[scope], exact: true });
+					if (groups.length === 0) {
+						await expect(list, `${role} ${scope}`).toHaveCount(0);
+						continue;
+					}
+					await expect(list.getByRole('listitem').locator('code'), `${role} ${scope}`).toHaveText(
+						groups
+					);
+				}
+				const mine = held.filter(({ group }) => USERS[username].groups.includes(group));
 				await expect(item.getByText('You', { exact: true })).toHaveCount(mine.length);
 			}
-			const yours = main
-				.getByRole('list', { name: 'Roles' })
+			const yours = roles
 				.getByRole('listitem')
 				.filter({ has: page.getByText('You', { exact: true }) })
 				.getByRole('heading', { level: 3 });
 			await expect(yours).toHaveText([MARKED[username]]);
+			await expect(
+				roles.getByRole('link', { name: 'Heliophysics Division' }).first()
+			).toHaveAttribute('href', '/orgs/helio/access');
 			const hint = main.getByRole('region', {
 				name: 'Grant a role, then apply the directory ACLs'
 			});
@@ -633,8 +661,8 @@ test.describe('a CLI hint', () => {
 			const title = 'Grant a role, then apply the directory ACLs';
 			const hint = page.getByRole('main').getByRole('region', { name: title });
 			const command =
-				'huron --catalog heliophysics catalog grant heliophysics <role> <ldap-group>\n' +
-				'huron --catalog heliophysics acl apply heliophysics --recursive';
+				'huron --catalog heliophysics adm grant <role> <ldap-group>\n' +
+				'huron --catalog heliophysics adm apply-acl heliophysics --recursive';
 			// On a phone the commands are read rather than run: the code block shows every word of
 			// them, where a field would cut each one off at its edge.
 			const block = hint.locator('pre');

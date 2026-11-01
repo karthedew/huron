@@ -78,9 +78,11 @@ class PosixStorage:
         size, digest = _guard(lambda: posix.atomic_copy(source, destination), destination)
         return FileStamp(size, digest)
 
-    def write_bytes(self, path: Path, data: bytes) -> None:
-        """Write ``data`` atomically."""
+    def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
+        """Write ``data`` atomically; with ``mode``, the file gets exactly that mode."""
         _guard(lambda: posix.atomic_write(path, data), path)
+        if mode is not None:
+            _guard(lambda: os.chmod(path, mode), path)
 
     def read_bytes(self, path: Path) -> bytes | None:
         """The bytes of a file, or ``None``."""

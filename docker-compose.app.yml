@@ -7,6 +7,9 @@
 # token as its issuer, and the API, the web, the seed, the CLI on the host and the browser all
 # reach it, and each other, at those same URLs. `net` publishes the ports, on 127.0.0.1 only.
 #
+# The service configuration is huron.dev.yaml, mounted into the API: edit it and run `make app`
+# again to apply it (the Makefile passes its hash, which recreates the API).
+#
 # The health checks probe every second or two while a service starts and every 30 s after it is
 # up: the API and the group directory log each probe.
 name: huron-app
@@ -99,6 +102,18 @@ services:
     image: ${HURON_API_IMAGE:-huron-app-api:dev}
     network_mode: service:net
     env_file: dev.env
+    environment:
+      # The service configuration, huron.dev.yaml unless HURON_DEV_CONFIG names another file
+      # (scripts/e2e.sh does). Over dev.env's HURON_CONFIG_FILE, a path on the host.
+      HURON_CONFIG_FILE: /etc/huron/huron.yaml
+    # Compose recreates a container when its configuration changes, never when the content of a
+    # bind-mounted file does, and a file an editor replaces stays the old file inside a running
+    # container. `make app` passes the file's SHA-256 here, so an edit recreates the API (and the
+    # services after it, the seed and the web) with the new configuration.
+    labels:
+      dev.huron.config-sha256: ${HURON_DEV_CONFIG_SHA256:-}
+    volumes:
+      - ${HURON_DEV_CONFIG:-./huron.dev.yaml}:/etc/huron/huron.yaml:ro
     depends_on:
       migrate: {condition: service_completed_successfully}
       groups: {condition: service_healthy}
@@ -143,7 +158,8 @@ services:
       HURON_WEB_OIDC_CLIENT_SECRET: huron-web-dev-only-secret
       HURON_WEB_OIDC_SCOPES: openid profile email
       HURON_WEB_OIDC_LOGOUT: "true"
-      # Share paths show as <prefix>/<path>. Set it to the CLI's mount_prefix to see your share's.
+      # Share paths show under the root of their organization (huron.dev.yaml); this prefix is for
+      # organizations without a root. Set it to the CLI's mount_prefix to see your share's.
       HURON_WEB_MOUNT_PREFIX: ${HURON_WEB_MOUNT_PREFIX:-/projects/huron}
       HURON_WEB_API_TIMEOUT_MS: "10000"
     depends_on:

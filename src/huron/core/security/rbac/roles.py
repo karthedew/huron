@@ -1,4 +1,4 @@
-"""The five fixed roles, their scopes and their privileges."""
+"""The five fixed roles, the scopes they are granted at and their privileges."""
 
 from __future__ import annotations
 
@@ -10,7 +10,14 @@ from huron.core.security.rbac.privileges import Privilege
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-__all__ = ["CATALOG_ROLES", "ROLE_PRIVILEGES", "Role", "ScopeType", "scope_type_of"]
+__all__ = [
+    "CATALOG_ROLES",
+    "ORGANIZATION_ROLES",
+    "ROLE_PRIVILEGES",
+    "Role",
+    "ScopeType",
+    "scope_types_of",
+]
 
 
 class ScopeType(StrEnum):
@@ -32,6 +39,10 @@ class Role(StrEnum):
 
 
 CATALOG_ROLES = (Role.CATALOG_ADMIN, Role.CONTRIBUTOR, Role.READER)
+"""The roles granted on one catalog; at organization scope they hold in every catalog of it."""
+
+ORGANIZATION_ROLES = (Role.ORG_ADMIN, *CATALOG_ROLES)
+"""The roles granted at organization scope."""
 
 _P = Privilege
 _READER = frozenset({_P.ORGANIZATION_READ, _P.CATALOG_READ, _P.COLLECTION_READ, _P.AUDIT_READ})
@@ -65,15 +76,21 @@ ROLE_PRIVILEGES: Mapping[Role, frozenset[Privilege]] = {
     Role.READER: _READER,
 }
 
-_SCOPES: Mapping[Role, ScopeType] = {
-    Role.PLATFORM_ADMIN: ScopeType.PLATFORM,
-    Role.ORG_ADMIN: ScopeType.ORGANIZATION,
-    Role.CATALOG_ADMIN: ScopeType.CATALOG,
-    Role.CONTRIBUTOR: ScopeType.CATALOG,
-    Role.READER: ScopeType.CATALOG,
+_ORGANIZATION_OR_CATALOG = frozenset({ScopeType.ORGANIZATION, ScopeType.CATALOG})
+
+_SCOPES: Mapping[Role, frozenset[ScopeType]] = {
+    Role.PLATFORM_ADMIN: frozenset({ScopeType.PLATFORM}),
+    Role.ORG_ADMIN: frozenset({ScopeType.ORGANIZATION}),
+    Role.CATALOG_ADMIN: _ORGANIZATION_OR_CATALOG,
+    Role.CONTRIBUTOR: _ORGANIZATION_OR_CATALOG,
+    Role.READER: _ORGANIZATION_OR_CATALOG,
 }
 
 
-def scope_type_of(role: Role) -> ScopeType:
-    """The only scope type ``role`` may be granted at."""
+def scope_types_of(role: Role) -> frozenset[ScopeType]:
+    """The scope types ``role`` may be granted at.
+
+    The catalog roles are granted on one catalog or on an organization, where they hold in every
+    catalog of the organization, existing and future.
+    """
     return _SCOPES[role]

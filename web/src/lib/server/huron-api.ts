@@ -1,16 +1,18 @@
 import type { ExchangeOut } from '$api/openapi';
+import { ROLES, ROLE_SCOPES } from '$api/types';
 import type {
 	AuditEntry,
 	Catalog,
 	Collection,
 	CollectionProblem,
 	Commit,
-	EffectiveGroups,
 	FileRecord,
+	GrantSource,
 	JsonSchemaDocument,
 	JsonValue,
 	Namespace,
 	Organization,
+	OrganizationGroups,
 	Page,
 	RoleGrant,
 	SchemaEntry,
@@ -22,6 +24,7 @@ import {
 	JsonFields,
 	asArray,
 	asObject,
+	asOneOf,
 	isJsonObject,
 	parseJson,
 	parseJsonExactly,
@@ -159,6 +162,15 @@ export class HuronApi {
 		return this.#get(['organizations', name], [], organization);
 	}
 
+	/**
+	 * The groups granted each role on the organization itself: `org_admin`, and the catalog roles
+	 * that hold in every catalog of it. The API answers 403 to a caller without a role at the
+	 * organization (one who holds roles on single catalogs only).
+	 */
+	organizationGrants(name: string): Promise<OrganizationGroups> {
+		return this.#get(['organizations', name, 'grants'], [], organizationGroups);
+	}
+
 	catalogs({ organization: owner, ...page }: CatalogQuery = {}): Promise<Page<Catalog>> {
 		const query: Query = owner === undefined ? [] : [['organization', owner]];
 		return this.#get(['catalogs'], [...query, ...pageQuery(page)], pageOf(catalog));
@@ -173,8 +185,13 @@ export class HuronApi {
 		return this.#get(['catalogs', name, 'schema'], [], schemaDocument, { exact: true });
 	}
 
-	catalogGrants(name: string): Promise<EffectiveGroups> {
-		return this.#get(['catalogs', name, 'grants'], [], effectiveGroups);
+	/**
+	 * Every group holding a role on the catalog, once per scope it was granted at: the platform,
+	 * the catalog's organization (inherited by all its catalogs) or the catalog itself. Sorted by
+	 * role (Platform Admin first), then group, then scope.
+	 */
+	catalogGrantSources(name: string): Promise<GrantSource[]> {
+		return this.#get(['catalogs', name, 'grants', 'sources'], [], grantSources);
 	}
 
 	catalogLog(name: string, page: PageRequest = {}): Promise<Page<AuditEntry>> {
@@ -533,10 +550,14 @@ const organization: Decoder<Organization> = (value, path) => {
 		catalog_count: f.integer('catalog_count'),
 		created_at: f.string('created_at'),
 		created_by: f.string('created_by'),
+		declared: f.boolean('declared'),
 		description: f.string('description'),
 		display_name: f.string('display_name'),
+		export: f.nullableString('export'),
 		id: f.string('id'),
 		name: f.string('name'),
+		path: f.nullableString('path'),
+		root: f.nullableString('root'),
 		version: f.integer('version')
 	};
 };
@@ -553,6 +574,7 @@ const catalog: Decoder<Catalog> = (value, path) => {
 		namespace_count: f.integer('namespace_count'),
 		organization: f.string('organization'),
 		schema: f.get('schema', schemaRef),
+		share_root: f.nullableString('share_root'),
 		version: f.integer('version')
 	};
 };
@@ -573,6 +595,7 @@ const namespace: Decoder<Namespace> = (value, path) => {
 		organization: f.string('organization'),
 		parent: f.string('parent'),
 		path: f.string('path'),
+		share_root: f.nullableString('share_root'),
 		version: f.integer('version')
 	};
 };
@@ -600,6 +623,7 @@ const collection: Decoder<Collection> = (value, path) => {
 		problems: f.get('problems', asArray(collectionProblem)),
 		schema: f.get('schema', schemaRef),
 		schema_override: f.nullableObject('schema_override'),
+		share_root: f.nullableString('share_root'),
 		state: f.string('state'),
 		updated_at: f.string('updated_at'),
 		version: f.integer('version')
@@ -663,16 +687,27 @@ const schemaEntry: Decoder<SchemaEntry> = (value, path) => {
 	};
 };
 
-const effectiveGroups: Decoder<EffectiveGroups> = (value, path) => {
+const organizationGroups: Decoder<OrganizationGroups> = (value, path) => {
 	const f = new JsonFields(value, path);
 	return {
 		catalog_admin: f.strings('catalog_admin'),
 		contributor: f.strings('contributor'),
 		org_admin: f.strings('org_admin'),
-		platform_admin: f.strings('platform_admin'),
 		reader: f.strings('reader')
 	};
 };
+
+const grantSource: Decoder<GrantSource> = (value, path) => {
+	const f = new JsonFields(value, path);
+	return {
+		group: f.string('group'),
+		role: f.get('role', asOneOf(ROLES)),
+		scope: f.get('scope', asOneOf(ROLE_SCOPES))
+	};
+};
+
+const grantSources: Decoder<GrantSource[]> = (value, path) =>
+	new JsonFields(value, path).get('items', asArray(grantSource));
 
 const roleGrant: Decoder<RoleGrant> = (value, path) => {
 	const f = new JsonFields(value, path);

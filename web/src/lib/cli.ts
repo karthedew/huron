@@ -1,28 +1,38 @@
 /**
- * `huron` commands shown as hints. Verbs and flags follow
- * `src/huron/applications/cli/commands/*.py`.
+ * `huron` commands shown as hints, in the CLI's `huron <verb> <noun>` form (IMPLEMENTATION_PLAN.md
+ * §9). Verbs and flags follow `src/huron/applications/cli/commands/*.py`; each `verb` below is the
+ * command's words as typed.
  *
  * Identifiers are always written in full and the catalog is passed with `--catalog`: the CLI's
  * `qualify()` prefixes the current catalog to any identifier that does not start with it, so a
- * shortened identifier, or a namespace named like its catalog, would resolve elsewhere.
+ * shortened identifier, or a namespace named like its catalog, would resolve elsewhere. Every
+ * command that acts in a catalog starts `huron --catalog <catalog>`, also `adm grant`, which grants a
+ * catalog role on that catalog, and `search`, which searches it; only `create catalog`, which makes
+ * one, and `adm grant` on an organization name the organization with `--org` instead.
  */
 
 export type CliCommand =
 	| { verb: 'checkout'; catalog: string; collection: string }
 	| { verb: 'add'; catalog: string }
 	| { verb: 'push'; catalog: string }
-	| { verb: 'collection activate'; catalog: string; collection: string }
-	| { verb: 'meta edit'; catalog: string; collection: string }
-	| { verb: 'meta publish'; catalog: string; collection: string }
-	| { verb: 'meta override set'; catalog: string; collection: string }
-	| { verb: 'meta override clear'; catalog: string; collection: string }
+	| { verb: 'activate collection'; catalog: string; collection: string }
+	| { verb: 'edit meta'; catalog: string; collection: string }
+	| { verb: 'publish meta'; catalog: string; collection: string }
+	| { verb: 'set override'; catalog: string; collection: string }
+	| { verb: 'unset override'; catalog: string; collection: string }
 	/** `namespace` is the full namespace identifier (`catalog.path`). */
-	| { verb: 'collection create'; catalog: string; namespace: string }
+	| { verb: 'create collection'; catalog: string; namespace: string }
 	/** `parent` is the full parent identifier: the catalog, or `catalog.path`. */
-	| { verb: 'namespace create'; catalog: string; parent: string; allowCollections: boolean }
-	| { verb: 'catalog grant'; catalog: string }
-	| { verb: 'acl apply'; catalog: string }
-	| { verb: 'catalog create'; organization: string }
+	| { verb: 'create namespace'; catalog: string; parent: string; allowCollections: boolean }
+	/** A catalog role (`catalog_admin`, `contributor`, `reader`) on the catalog given with `--catalog`. */
+	| { verb: 'adm grant'; catalog: string }
+	/**
+	 * An organization role on the organization given with `adm grant`'s own `--org`: `org_admin`,
+	 * or a catalog role, which then holds in every catalog of it.
+	 */
+	| { verb: 'adm grant'; organization: string }
+	| { verb: 'adm apply-acl'; catalog: string }
+	| { verb: 'create catalog'; organization: string }
 	| {
 			verb: 'search';
 			catalog: string;
@@ -35,46 +45,50 @@ export type CliCommand =
 export function cliCommand(command: CliCommand): string {
 	switch (command.verb) {
 		case 'checkout':
-		case 'collection activate':
-		case 'meta edit':
-		case 'meta publish':
-		case 'meta override clear':
+		case 'activate collection':
+		case 'edit meta':
+		case 'publish meta':
+		case 'unset override':
 			return line(command.catalog, command.verb, quote(command.collection));
-		case 'meta override set':
+		case 'set override':
 			return line(command.catalog, command.verb, '<override.json>', quote(command.collection));
 		case 'add':
 			return line(command.catalog, 'add', '<file>…');
 		case 'push':
 			return line(command.catalog, 'push', '-m', '"<message>"');
-		case 'collection create':
-			return line(command.catalog, 'collection create', `${quote(command.namespace)}.<name>`);
-		case 'namespace create':
+		case 'create collection':
+			return line(command.catalog, command.verb, `${quote(command.namespace)}.<name>`);
+		case 'create namespace':
 			return line(
 				command.catalog,
-				'namespace create',
+				command.verb,
 				`${quote(command.parent)}.<name>`,
 				...(command.allowCollections ? ['--allow-collections'] : [])
 			);
-		case 'catalog grant':
+		case 'adm grant':
+			if ('organization' in command) {
+				return [
+					'huron',
+					command.verb,
+					'<role>',
+					'<ldap-group>',
+					'--org',
+					quote(command.organization)
+				].join(' ');
+			}
+			return line(command.catalog, command.verb, '<role>', '<ldap-group>');
+		case 'adm apply-acl':
+			return line(command.catalog, command.verb, quote(command.catalog), '--recursive');
+		case 'create catalog':
+			return ['huron', command.verb, '<name>', '--org', quote(command.organization)].join(' ');
+		case 'search':
 			return line(
 				command.catalog,
-				'catalog grant',
-				quote(command.catalog),
-				'<role>',
-				'<ldap-group>'
-			);
-		case 'acl apply':
-			return line(command.catalog, 'acl apply', quote(command.catalog), '--recursive');
-		case 'catalog create':
-			return ['huron', 'catalog create', quote(command.organization), '<name>'].join(' ');
-		case 'search':
-			return [
-				'huron search',
-				quote(command.catalog),
+				'search',
 				...(command.q ? ['-q', quote(command.q)] : []),
 				...(command.labels ?? []).flatMap((label) => ['-l', quote(label)]),
 				...(command.states ?? []).flatMap((state) => ['--state', quote(state)])
-			].join(' ');
+			);
 	}
 }
 
@@ -94,7 +108,7 @@ export interface HintedCollection {
 	hasProblems: boolean;
 	/**
 	 * Whether its schema override no longer fits the catalog's schema. No schema can be resolved
-	 * then, so `meta edit` cannot walk through one: the override has to be replaced or removed.
+	 * then, so `edit meta` cannot walk through one: the override has to be replaced or removed.
 	 */
 	overrideIncompatible: boolean;
 }
@@ -116,19 +130,19 @@ export function collectionHints(collection: HintedCollection, contribute: boolea
 		hints.push(
 			{
 				title: 'Replace the schema override with one that fits',
-				command: cliCommand({ verb: 'meta override set', ...target })
+				command: cliCommand({ verb: 'set override', ...target })
 			},
 			{
 				title: 'Remove the schema override',
-				command: cliCommand({ verb: 'meta override clear', ...target })
+				command: cliCommand({ verb: 'unset override', ...target })
 			}
 		);
 	} else if (state === 'incomplete' || collection.hasProblems) {
 		hints.push({
 			title: 'Complete the metadata, then publish it',
 			command: [
-				cliCommand({ verb: 'meta edit', ...target }),
-				cliCommand({ verb: 'meta publish', ...target })
+				cliCommand({ verb: 'edit meta', ...target }),
+				cliCommand({ verb: 'publish meta', ...target })
 			].join('\n')
 		});
 	}
@@ -136,7 +150,7 @@ export function collectionHints(collection: HintedCollection, contribute: boolea
 		state === 'draft'
 			? {
 					title: 'Activate this draft',
-					command: cliCommand({ verb: 'collection activate', ...target })
+					command: cliCommand({ verb: 'activate collection', ...target })
 				}
 			: addFilesHint(collection)
 	);

@@ -138,11 +138,11 @@ def test_recovery_refuses_when_the_files_are_not_recorded() -> None:
 def ready(seeded_cli: Cli) -> Cli:
     seeded_cli.login_as("carol")
     seeded_cli.ok(
-        "namespace", "create", "heliophysics.solar-wind.deep", "--parents", "--allow-collections"
+        "create", "namespace", "heliophysics.solar-wind.deep", "--parents", "--allow-collections"
     )
-    seeded_cli.ok("namespace", "configure", "heliophysics.solar-wind", "--allow-collections")
+    seeded_cli.ok("set", "namespace", "heliophysics.solar-wind", "--allow-collections")
     seeded_cli.login_as("dave")
-    seeded_cli.ok("catalog", "use", "heliophysics")
+    seeded_cli.ok("catalog", "heliophysics")
     return seeded_cli
 
 
@@ -150,14 +150,14 @@ def test_push_and_status_edge_cases(
     ready: Cli, share: MemoryStorage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ready.prompter.answers.extend(BASE_ANSWERS)
-    ready.ok("collection", "create", "solar-wind.draft", "--draft")
+    ready.ok("create", "collection", "solar-wind.draft", "--draft")
     status = json.loads(ready.ok("-o", "json", "status").stdout)
     assert status["unrecorded"] == []
     source = tmp_path / "a.txt"
     source.write_text("a")
     ready.ok("add", str(source))
     assert ready.run("push").exit_code == 6
-    ready.ok("collection", "activate")
+    ready.ok("activate", "collection")
     ready.ok("add", str(source))
     source.unlink()
     assert ready.run("push").exit_code == 8
@@ -182,7 +182,7 @@ def test_delete_reports_directories_it_cannot_remove(
     ready: Cli, share: MemoryStorage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ready.prompter.answers.extend(BASE_ANSWERS)
-    ready.ok("collection", "create", "solar-wind.deep.run")
+    ready.ok("create", "collection", "solar-wind.deep.run")
     source = tmp_path / "a.txt"
     source.write_text("a")
     ready.ok("add", str(source), "--as", "sub/a.txt")
@@ -192,14 +192,16 @@ def test_delete_reports_directories_it_cannot_remove(
         raise StorageError("busy", {})
 
     monkeypatch.setattr(share, "remove_directory", refuse)
-    assert ready.run("collection", "delete", "solar-wind.deep.run", "--yes").exit_code == 8
+    assert ready.run("delete", "collection", "solar-wind.deep.run", "--yes").exit_code == 8
     monkeypatch.undo()
-    findings = json.loads(ready.run("-o", "json", "check", "--catalog", "heliophysics").stdout)
+    findings = json.loads(
+        ready.run("-o", "json", "adm", "check", "--catalog", "heliophysics").stdout
+    )
     assert any(f["code"] == "sidecar_stale" for f in findings)
 
 
 def test_org_create_repairs_an_existing_organization(cli: Cli, share: MemoryStorage) -> None:
     cli.login_as("alice")
-    cli.ok("org", "create", "helio")
+    cli.ok("create", "org", "helio")
     share.remove_directory(PREFIX / "helio")
-    assert "created:" in cli.ok("org", "create", "helio").stderr
+    assert "created:" in cli.ok("create", "org", "helio").stderr

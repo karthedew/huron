@@ -48,7 +48,12 @@ async def test_platform_and_organization_grants(seeded_api: Service) -> None:
     )
     assert change.json()["added"] == ["ops"]
     org = (await c.get("/api/v1/organizations/helio/grants", headers=alice)).json()
-    assert org == {"role": "org_admin", "ldap_groups": ["helio-org-admins"]}
+    assert org == {
+        "org_admin": ["helio-org-admins"],
+        "catalog_admin": [],
+        "contributor": [],
+        "reader": [],
+    }
     effective = (
         await c.get(
             "/api/v1/catalogs/heliophysics/grants", headers=await seeded_api.headers("erin")
@@ -143,3 +148,53 @@ async def test_signing_key_rotation_shows_in_jwks(api: Service) -> None:
     assert keys[0]["kid"] == rotated.json()["kid"] and "private_pem" not in keys[0]
     denied = await api.client.get("/api/v1/admin/signing-keys", headers=await api.headers("erin"))
     assert denied.status_code == 403
+
+
+async def test_organization_wide_catalog_roles_over_http(seeded_api: Service) -> None:
+    c = seeded_api.client
+    alice = await seeded_api.headers("alice")
+    bob = await seeded_api.headers("bob")
+    carol = await seeded_api.headers("carol")
+    erin = await seeded_api.headers("erin")
+    url = "/api/v1/organizations/helio/grants"
+    granted = await c.put(f"{url}/reader", json={"ldap_groups": ["helio-everyone"]}, headers=bob)
+    assert granted.status_code == 200, granted.text
+    assert granted.json() == {
+        "role": "reader",
+        "ldap_groups": ["helio-everyone"],
+        "added": ["helio-everyone"],
+        "removed": [],
+    }
+    admins = await c.put(
+        f"{url}/catalog_admin", json={"ldap_groups": ["helio-curators"]}, headers=bob
+    )
+    assert admins.json()["added"] == ["helio-curators"]
+    refused = await c.put(f"{url}/contributor", json={"ldap_groups": ["x"]}, headers=carol)
+    assert refused.status_code == 403
+    assert refused.json()["context"]["privilege"] == "CATALOG_GRANT_ADMIN"
+    org_admin = await c.put(f"{url}/org_admin", json={"ldap_groups": ["x"]}, headers=bob)
+    assert org_admin.status_code == 403
+    assert org_admin.json()["context"]["privilege"] == "ORGANIZATION_GRANT"
+    bad_role = await c.put(f"{url}/platform_admin", json={"ldap_groups": []}, headers=alice)
+    assert bad_role.status_code == 422
+    read = (await c.get(url, headers=bob)).json()
+    assert read["reader"] == ["helio-everyone"] and read["catalog_admin"] == ["helio-curators"]
+    assert (await c.get(url, headers=erin)).status_code == 403
+    effective = (await c.get("/api/v1/catalogs/heliophysics/grants", headers=erin)).json()
+    assert effective["reader"] == ["helio-everyone", "helio-readers"]
+    assert effective["catalog_admin"] == ["helio-catalog-admins", "helio-curators"]
+    sources = await c.get("/api/v1/catalogs/heliophysics/grants/sources", headers=erin)
+    assert sources.status_code == 200
+    assert sources.json()["items"] == [
+        {"role": "platform_admin", "group": "huron-platform-admins", "scope": "platform"},
+        {"role": "org_admin", "group": "helio-org-admins", "scope": "organization"},
+        {"role": "catalog_admin", "group": "helio-catalog-admins", "scope": "catalog"},
+        {"role": "catalog_admin", "group": "helio-curators", "scope": "organization"},
+        {"role": "contributor", "group": "helio-contributors", "scope": "catalog"},
+        {"role": "reader", "group": "helio-everyone", "scope": "organization"},
+        {"role": "reader", "group": "helio-readers", "scope": "catalog"},
+    ]
+    hidden = await c.get(
+        "/api/v1/catalogs/heliophysics/grants/sources", headers=await seeded_api.headers("mallory")
+    )
+    assert hidden.status_code == 404

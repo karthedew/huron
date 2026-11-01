@@ -66,7 +66,7 @@ describe('the catalog overview', () => {
 		await show(ROOT, { roles: [catalogRole('catalog_admin')] });
 		const hint = screen.getByRole('region', { name: 'Create a namespace here' });
 		expect(within(hint).getByRole('textbox')).toHaveValue(
-			'huron --catalog heliophysics namespace create heliophysics.<name> --allow-collections'
+			'huron --catalog heliophysics create namespace heliophysics.<name> --allow-collections'
 		);
 		expect(screen.getByText(/the new namespace holds only other namespaces/)).toBeInTheDocument();
 	});

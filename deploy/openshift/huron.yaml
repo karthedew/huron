@@ -1,0 +1,46 @@
+# The service configuration (HURON_CONFIG_FILE), generated into a ConfigMap by kustomization.yaml
+# and mounted at /etc/huron/huron.yaml. Top-level keys are the API's settings
+# (src/huron/applications/api/settings.py) plus `organizations`; an unknown key fails startup.
+# HURON_* variables (the Secret) win over this file. The database URL stays in the Secret.
+# Editing this file changes the ConfigMap's name suffix, so `oc apply -k` rolls the pods, which
+# reconcile the declared organizations at startup.
+store: postgres
+# The UUID written into every share marker (scripts/init-root.sh, huron adm provision-orgs).
+instance_id: replace-with-the-uuid-written-into-the-share-markers
+issuer: https://huron.apps.example.org
+audience: huron
+company_issuer: https://login.example.org/realms/company
+company_audience: huron-cli
+group_directory_url: https://groups.example.org
+platform_admin_group: huron-platform-admins
+pool_size: 10
+log_level: INFO
+# The declared organizations: with this key present (even as []) the service is in managed mode
+# and creates, updates and administers exactly these; remove the key for unmanaged mode. Each
+# directory is <root>/<name>; without root it is <mount_prefix>/<name> of the CLI. After adding
+# one, run `huron adm provision-orgs` as the storage admin on a machine that mounts the root.
+# `groups` gives each organization-wide role its LDAP groups, exactly (each key optional, no other
+# key allowed): org_admin, and catalog_admin, contributor and reader, which every catalog of the
+# organization inherits. A grant on one catalog adds to them. docs/operator.md, "LDAP groups and
+# roles", recommends one POSIX group per role and organization, named as below.
+organizations:
+  - name: helio
+    display_name: Heliophysics Division
+    description: The Sun, the solar wind and the space environment.
+    groups:
+      org_admin: [huron-helio-admins]
+      catalog_admin: [huron-helio-catalog-admins]
+      contributor: [huron-helio-contributors]
+      reader: [huron-helio-readers]
+    root: /data1/huron
+    export: nfs1:/export/data1
+  - name: geo
+    display_name: Earth Science
+    description: Earth observation and ocean data.
+    groups:
+      org_admin: [huron-geo-admins]
+      catalog_admin: [huron-geo-catalog-admins]
+      contributor: [huron-geo-contributors]
+      reader: [huron-geo-readers]
+    root: /data1/huron
+    export: nfs1:/export/data1

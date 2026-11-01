@@ -6,7 +6,7 @@ import copy
 from typing import TYPE_CHECKING, Any
 
 from huron.core.lake.collections.errors import MetadataInvalid
-from huron.pkg.canonical import canonical_bytes
+from huron.pkg.canonical import NotCanonicalizable, canonical_bytes
 
 if TYPE_CHECKING:
     from huron.core.lake.collections.models import CollectionView
@@ -38,7 +38,10 @@ def merge_patch(document: dict[str, Any], patch: dict[str, Any]) -> dict[str, An
 
 
 def check_metadata(document: Any) -> dict[str, Any]:
-    """Return ``document`` when it is a JSON object within the size limit."""
+    """Return ``document`` when it is a JSON object within the size limit.
+
+    Integers of any size are allowed; NaN, infinity and lone surrogates are not.
+    """
     if not isinstance(document, dict):
         raise MetadataInvalid(
             "metadata must be a JSON object",
@@ -48,7 +51,13 @@ def check_metadata(document: Any) -> dict[str, Any]:
                 ]
             },
         )
-    size = len(canonical_bytes(document))
+    try:
+        size = len(canonical_bytes(document))
+    except NotCanonicalizable as error:
+        raise MetadataInvalid(
+            "metadata is not valid JSON",
+            {"problems": [{"path": "/", "message": str(error), "rule": "json"}]},
+        ) from error
     if size > MAX_METADATA_BYTES:
         raise MetadataInvalid(
             "metadata is larger than 1 MiB",

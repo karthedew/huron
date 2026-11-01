@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from huron.core.lake.errors import NameTaken
@@ -29,6 +30,17 @@ class MemoryOrganizations:
                 f"organization {organization.name!r} exists", {"name": organization.name}
             )
         self._state.organizations[organization.id] = organization
+
+    async def update(self, organization: Organization) -> None:
+        """Replace the display name, description and version of a stored organization."""
+        stored = self._state.organizations.get(organization.id)
+        if stored is not None:
+            self._state.organizations[organization.id] = replace(
+                stored,
+                display_name=organization.display_name,
+                description=organization.description,
+                version=organization.version,
+            )
 
     async def get(self, organization_id: uuid.UUID) -> Organization | None:
         """The organization with ``organization_id``."""

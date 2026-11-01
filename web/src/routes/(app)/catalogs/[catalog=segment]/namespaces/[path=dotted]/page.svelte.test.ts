@@ -149,7 +149,7 @@ describe('a namespace page', () => {
 		await show(ACE, { collections: [MAG], roles: [catalogRole('contributor')] });
 		const hint = screen.getByRole('region', { name: 'Create a collection here' });
 		expect(within(hint).getByRole('textbox')).toHaveValue(
-			'huron --catalog heliophysics collection create heliophysics.solar-wind.ace.<name>'
+			'huron --catalog heliophysics create collection heliophysics.solar-wind.ace.<name>'
 		);
 		expect(screen.queryByRole('region', { name: 'Create a namespace here' })).toBeNull();
 	});
@@ -178,7 +178,7 @@ describe('a namespace page', () => {
 		expect(screen.queryByRole('heading', { name: 'Collections' })).toBeNull();
 		const hint = screen.getByRole('region', { name: 'Create a namespace here' });
 		expect(within(hint).getByRole('textbox')).toHaveValue(
-			'huron --catalog heliophysics namespace create heliophysics.solar-wind.<name> --allow-collections'
+			'huron --catalog heliophysics create namespace heliophysics.solar-wind.<name> --allow-collections'
 		);
 		expect(screen.queryByRole('region', { name: 'Create a collection here' })).toBeNull();
 	});

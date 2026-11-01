@@ -70,6 +70,21 @@ def test_disallowed_documents_are_refused(document: dict[str, object]) -> None:
     assert raised.value.context["problems"]
 
 
+def test_integers_of_any_size_are_allowed() -> None:
+    document = {"type": "object", "properties": {"n": {"type": "integer", "maximum": 2**64}}}
+    assert check_schema_document(document) is document
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("-inf")])
+def test_documents_json_cannot_hold_are_refused(value: float) -> None:
+    document = {"type": "object", "properties": {"n": {"type": "number", "maximum": value}}}
+    with pytest.raises(SchemaInvalid) as raised:
+        check_schema_document(document)
+    assert raised.value.context["problems"] == [
+        {"path": "/", "message": f"{value} is not a JSON number", "rule": "json"}
+    ]
+
+
 def test_patterns_inside_enum_values_are_not_compiled() -> None:
     document = {"type": "object", "properties": {"a": {"type": "string", "enum": ["("]}}}
     assert check_schema_document(document) == document
