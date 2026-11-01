@@ -68,8 +68,8 @@ def current(services: Services) -> WorkingCopy:
     copy = None if collection_id is None else services.state.read_copy(collection_id)
     if copy is None:
         raise UsageError(
-            "no collection is checked out",
-            hint="run: huron checkout <identifier>, or huron checkout to pick one",
+            "there is no current collection",
+            hint="run `huron checkout <identifier>`, or run `huron checkout` to choose one",
         )
     return copy
 
@@ -87,7 +87,7 @@ def stage_paths(
 ) -> list[StagedAdd]:
     """Stage local files (and, with ``recursive``, directories) for the next push."""
     if rename is not None and len(paths) != 1:
-        raise UsageError("--as takes exactly one file")
+        raise UsageError("`--as` needs exactly one file")
     staged: list[StagedAdd] = []
     for path in paths:
         staged.extend(_collect(path, rename, recursive))
@@ -139,17 +139,17 @@ def push(services: Services, copy: WorkingCopy, message: str | None) -> PushResu
         collection = api.get(f"/api/v1/collections/{copy.collection_id}")
         if int(collection["version"]) != copy.version:
             raise CliError(
-                f"{copy.identifier} is at version {collection['version']}, your copy at"
-                f" {copy.version}",
+                f"{copy.identifier} is at version {collection['version']},"
+                f" but your working copy is at version {copy.version}",
                 ExitCode.CONFLICT,
-                hint="run: huron pull",
+                hint="run `huron pull`",
                 code="BASE_VERSION_CONFLICT",
             )
         if collection.get("path") is None:
             raise CliError(
                 f"{copy.identifier} is a draft",
                 ExitCode.CONFLICT,
-                hint="run: huron activate collection",
+                hint="run `huron activate collection`",
             )
         _preflight(services, api, copy, stage, message)
         mount = services.mount()
@@ -209,10 +209,10 @@ def _stage_removal(
 
 def _collect(path: Path, rename: str | None, recursive: bool) -> list[StagedAdd]:
     if path.is_symlink():
-        raise UsageError(f"{path} is a symbolic link; stage the file it points to")
+        raise UsageError(f"{path} is a symbolic link. Stage the file that it points to")
     if path.is_dir():
         if not recursive:
-            raise UsageError(f"{path} is a directory", hint="use --recursive")
+            raise UsageError(f"{path} is a directory", hint="use `--recursive`")
         found: list[StagedAdd] = []
         for root, _, names in os.walk(path):
             for name in sorted(names):
@@ -229,7 +229,9 @@ def _staged(path: Path, rel_path: str) -> StagedAdd:
     try:
         check_rel_path(rel_path)
     except RelPathError as error:
-        raise UsageError(f"{rel_path!r} cannot be stored ({error.rule})") from error
+        raise UsageError(
+            f"{rel_path!r} is not a valid path in a collection ({error.rule})"
+        ) from error
     return StagedAdd(rel_path, str(path.resolve()), path.stat().st_size)
 
 

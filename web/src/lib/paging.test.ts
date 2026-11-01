@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { LIST_PAGE_SIZE, SEARCH_PAGE_SIZE, cursorParam, isCursorParameter } from './paging';
+import {
+	BROWSE_PAGE_SIZE,
+	LIST_PAGE_SIZE,
+	SEARCH_PAGE_SIZE,
+	cursorParam,
+	isCursorParameter
+} from './paging';
 
 describe('paging', () => {
-	it('uses 50 items per list page and 25 per search page', () => {
+	it('uses 20 rows for browse tables, 50 for other lists and 25 for search', () => {
+		expect(BROWSE_PAGE_SIZE).toBe(20);
 		expect(LIST_PAGE_SIZE).toBe(50);
 		expect(SEARCH_PAGE_SIZE).toBe(25);
 	});

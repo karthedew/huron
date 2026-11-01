@@ -2,9 +2,6 @@
 	import { Lock } from '@lucide/svelte';
 	import { ORGANIZATION_ROLES, type OrganizationRole } from '$api/types';
 	import Badge from '$design/components/Badge.svelte';
-	import CliHint from '$design/components/CliHint.svelte';
-	import { capabilities } from '$lib/capabilities';
-	import { cliCommand } from '$lib/cli';
 	import { displayName } from '$lib/names';
 	import { ROLE_ABILITIES, ROLE_NAMES } from '$lib/roles';
 	import { pageTitle } from '$lib/title';
@@ -13,7 +10,6 @@
 	let { data }: PageProps = $props();
 
 	const organization = $derived(data.organizationDetails);
-	const can = $derived(capabilities(data.roles, { organizationId: organization.id }));
 	const mine = $derived(new Set(data.user.groups));
 
 	/** What a role granted here allows: the catalog roles hold in every catalog of it. */
@@ -65,13 +61,6 @@
 				These groups are declared in the service configuration, as <code>groups.&lt;role&gt;</code>
 				of the organization: an operator changes them there, and the service applies them when it starts.
 			</p>
-		{:else if can.administerOrganization}
-			<div class="mt-6 max-w-3xl">
-				<CliHint
-					title="Grant a role on the organization"
-					command={cliCommand({ verb: 'adm grant', organization: organization.name })}
-				/>
-			</div>
 		{/if}
 	{/if}
 </section>

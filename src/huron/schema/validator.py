@@ -75,13 +75,16 @@ def check_schema_document(document: Any) -> dict[str, Any]:
     except NotCanonicalizable as error:
         problem = Problem("/", str(error), "json")
         raise SchemaInvalid(
-            "schema document is not valid JSON", problems_context([problem])
+            "the schema document is not valid JSON", problems_context([problem])
         ) from error
     problems = Validator(load_document("schema-document-v1")).validate(document)
     if not problems:
         problems = list(_pattern_problems(document, ""))
     if problems:
-        raise SchemaInvalid("schema document is not allowed", problems_context(problems))
+        raise SchemaInvalid(
+            "the schema document is outside the allowed subset of JSON Schema",
+            problems_context(problems),
+        )
     result: dict[str, Any] = document
     return result
 

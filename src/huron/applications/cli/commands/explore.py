@@ -30,10 +30,10 @@ def register(app: typer.Typer, panel: str) -> None:
 def tree(
     ctx: typer.Context,
     namespace: Annotated[
-        str | None, typer.Argument(help="Only the subtree under this namespace.")
+        str | None, typer.Argument(help="Show only the subtree below this namespace.")
     ] = None,
 ) -> None:
-    """The namespace tree of the current catalog with its collections as leaves."""
+    """Show the namespace tree of the current catalog, with its collections as leaves."""
     found = services(ctx)
     if namespace is None:
         built = build_tree(api(ctx), found.require_catalog())
@@ -45,17 +45,26 @@ def tree(
         return
     found.out.print(render_tree(built), highlight=False)
     if not built["namespaces"] and not built["collections"]:
-        say(ctx, "nothing here yet; create a namespace with: huron create namespace <identifier>")
+        say(
+            ctx,
+            "There is nothing here yet."
+            " To create a namespace, run `huron create namespace <identifier>`",
+        )
     else:
-        say(ctx, "check out a collection with: huron checkout <COLLECTION>")
+        say(ctx, "To select a collection, run `huron checkout <COLLECTION>`")
 
 
 def search(
     ctx: typer.Context,
-    query: Annotated[str | None, typer.Option("-q", "--query", help="Free text.")] = None,
-    label: Annotated[list[str] | None, typer.Option("-l", "--label", help="key=value")] = None,
+    query: Annotated[
+        str | None, typer.Option("-q", "--query", help="Search for this text.")
+    ] = None,
+    label: Annotated[
+        list[str] | None, typer.Option("-l", "--label", help="A label, as `key=value`.")
+    ] = None,
     state: Annotated[
-        list[str] | None, typer.Option("--state", help="draft, active or incomplete.")
+        list[str] | None,
+        typer.Option("--state", help="A collection state: `draft`, `active` or `incomplete`."),
     ] = None,
 ) -> None:
     """Search the current catalog by text, labels and state."""

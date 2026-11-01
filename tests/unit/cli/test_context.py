@@ -51,16 +51,19 @@ def test_org_without_a_selection_lists_every_organization(orgs: Cli) -> None:
     assert "CATALOGS" in lines[0] and "CREATED BY" in lines[0]
     assert names(shown) == ["geo", "helio", "quiet"]
     assert marked(shown) == []
-    assert lines[-2:] == [f"No organization is selected on {API}.", "switch with: huron org <name>"]
+    assert lines[-2:] == [
+        f"There is no current organization on {API}",
+        "To select an organization, run `huron org <name>`",
+    ]
 
 
 def test_org_switches_and_marks_the_current_one(orgs: Cli) -> None:
     switched = orgs.ok("org", "geo").stdout
-    assert switched == f"Now using organization geo on {API}\n"
+    assert switched == f"The current organization is now geo on {API}\n"
     assert saved(orgs).current_organization == "geo"
     shown = orgs.ok("org").stdout
     assert marked(shown) == ["geo"]
-    assert shown.splitlines()[-1] == f"Using organization geo on {API}"
+    assert shown.splitlines()[-1] == f"The current organization is geo on {API}"
     assert "switch with" not in shown
 
 
@@ -91,9 +94,9 @@ def test_org_when_no_organization_is_visible(orgs: Cli) -> None:
     shown = orgs.ok("org").stdout
     assert "CURRENT" not in shown
     assert shown.splitlines() == [
-        "You can see no organizations.",
-        f"No organization is selected on {API}.",
-        "switch with: huron org <name>",
+        "You can see no organizations",
+        f"There is no current organization on {API}",
+        "To select an organization, run `huron org <name>`",
     ]
     assert json.loads(orgs.ok("-o", "json", "org").stdout)["organizations"] == []
 
@@ -103,8 +106,9 @@ def test_switching_org_clears_a_catalog_of_another_organization(orgs: Cli) -> No
     orgs.configure(current_collection=COPY)
     switched = orgs.ok("org", "geo").stdout.splitlines()
     assert switched == [
-        f"Now using organization geo on {API}",
-        "Cleared catalog heliophysics (it belongs to helio); pick one with: huron catalog",
+        f"The current organization is now geo on {API}",
+        "There is no current catalog now, because catalog heliophysics belongs to helio."
+        " To list the catalogs, run `huron catalog`",
     ]
     config = saved(orgs)
     assert (config.current_organization, config.current_catalog) == ("geo", None)
@@ -114,7 +118,7 @@ def test_switching_org_clears_a_catalog_of_another_organization(orgs: Cli) -> No
 def test_switching_org_keeps_a_catalog_of_that_organization(orgs: Cli) -> None:
     orgs.configure(current_catalog="heliophysics")
     switched = orgs.ok("org", "helio").stdout
-    assert switched == f"Now using organization helio on {API}\n"
+    assert switched == f"The current organization is now helio on {API}\n"
     config = saved(orgs)
     assert (config.current_organization, config.current_catalog) == ("helio", "heliophysics")
 
@@ -122,27 +126,32 @@ def test_switching_org_keeps_a_catalog_of_that_organization(orgs: Cli) -> None:
 def test_switching_org_clears_a_catalog_that_cannot_be_found(orgs: Cli) -> None:
     orgs.configure(current_catalog="vanished")
     switched = orgs.ok("org", "geo").stdout
-    assert "Cleared catalog vanished (you cannot see it); pick one with: huron catalog" in switched
+    assert (
+        "There is no current catalog now, because you cannot see catalog vanished."
+        " To list the catalogs, run `huron catalog`"
+    ) in switched
     assert saved(orgs).current_catalog is None
 
 
 def test_switching_org_without_a_catalog_clears_nothing(orgs: Cli) -> None:
-    assert "Cleared" not in orgs.ok("org", "quiet").stdout
+    assert "There is no current catalog now" not in orgs.ok("org", "quiet").stdout
     assert saved(orgs).current_catalog is None
 
 
 def test_catalog_switch_sets_the_organization(orgs: Cli) -> None:
     first = orgs.ok("catalog", "terra").stdout.splitlines()
     assert first == [
-        f"Now using catalog terra on {API}",
-        "Switched organization to geo",
-        "No collection is checked out; pick one with: huron checkout",
+        f"The current catalog is now terra on {API}",
+        "The current organization is now geo",
+        "There is no current collection. To choose one, run `huron checkout`",
     ]
     assert (saved(orgs).current_organization, saved(orgs).current_catalog) == ("geo", "terra")
     second = orgs.ok("catalog", "heliophysics").stdout
-    assert "Switched organization to helio" in second
+    assert "The current organization is now helio" in second
     same = orgs.ok("catalog", "spare").stdout
-    assert "Now using catalog spare" in same and "Switched organization" not in same
+    assert (
+        "The current catalog is now spare" in same and "The current organization is now" not in same
+    )
     assert saved(orgs).current_organization == "helio"
 
 
@@ -152,16 +161,16 @@ def test_catalog_lists_the_catalogs_of_the_current_organization(orgs: Cli) -> No
     lines = shown.splitlines()
     assert lines[0].split() == ["CURRENT", "NAME", "ORGANIZATION", "SCHEMA", "NAMESPACES"]
     assert names(shown) == ["heliophysics", "spare"] and marked(shown) == ["heliophysics"]
-    assert f"Using catalog heliophysics in organization helio on {API}" in lines
-    assert "No collection is checked out; pick one with: huron checkout" in lines
+    assert f"The current catalog is heliophysics in organization helio on {API}" in lines
+    assert "There is no current collection. To choose one, run `huron checkout`" in lines
 
 
 def test_catalog_without_an_organization_lists_every_catalog(orgs: Cli) -> None:
     shown = orgs.ok("catalog").stdout
     assert names(shown) == ["heliophysics", "spare", "terra"] and marked(shown) == []
     assert shown.splitlines()[-2:] == [
-        f"No catalog is selected on {API}.",
-        "switch with: huron catalog <name>",
+        f"There is no current catalog on {API}",
+        "To select a catalog, run `huron catalog <name>`",
     ]
 
 
@@ -170,23 +179,25 @@ def test_catalog_of_an_organization_without_catalogs(orgs: Cli) -> None:
     shown = orgs.ok("catalog").stdout
     assert "CURRENT" not in shown
     assert shown.splitlines() == [
-        "Organization quiet has no catalogs you can see;"
-        " see every organization's with: huron get catalogs -A",
-        f"No catalog is selected on {API}.",
-        "switch with: huron catalog <name>",
+        "Organization quiet has no catalogs that you can see."
+        " To see the catalogs of all organizations, run `huron get catalogs -A`",
+        f"There is no current catalog on {API}",
+        "To select a catalog, run `huron catalog <name>`",
     ]
 
 
 def test_catalog_with_no_visible_catalogs_and_no_organization(orgs: Cli) -> None:
     orgs.login_as("mallory")
-    assert orgs.ok("catalog").stdout.splitlines()[0] == "You can see no catalogs."
+    assert orgs.ok("catalog").stdout.splitlines()[0] == "You can see no catalogs"
 
 
 def test_catalog_override_is_shown_in_its_own_organization(orgs: Cli) -> None:
     orgs.ok("org", "quiet")
     shown = orgs.ok("--catalog", "heliophysics", "catalog").stdout
     assert names(shown) == ["heliophysics", "spare"] and marked(shown) == ["heliophysics"]
-    assert f"Using catalog heliophysics in organization helio on {API}" in shown.splitlines()
+    assert (
+        f"The current catalog is heliophysics in organization helio on {API}" in shown.splitlines()
+    )
     report = json.loads(orgs.ok("-o", "json", "--catalog", "heliophysics", "status").stdout)
     assert (report["organization"], report["catalog"]) == ("helio", "heliophysics")
     assert saved(orgs).current_organization == "quiet"
@@ -196,7 +207,7 @@ def test_catalog_override_that_cannot_be_found_omits_its_organization(orgs: Cli)
     orgs.ok("org", "helio")
     shown = orgs.ok("--catalog", "vanished", "catalog").stdout
     assert names(shown) == ["heliophysics", "spare", "terra"] and marked(shown) == []
-    assert f"Using catalog vanished on {API}" in shown.splitlines()
+    assert f"The current catalog is vanished on {API}" in shown.splitlines()
     report = json.loads(orgs.ok("-o", "json", "--catalog", "vanished", "status").stdout)
     assert (report["organization"], report["catalog"]) == (None, "vanished")
 
@@ -227,15 +238,15 @@ def test_get_catalogs_is_scoped_to_the_current_organization(orgs: Cli) -> None:
 
 def test_get_catalogs_refuses_org_with_all_orgs(orgs: Cli) -> None:
     refused = orgs.run("get", "catalogs", "--org", "helio", "-A")
-    assert refused.exit_code == 2 and "--org and --all-orgs cannot be combined" in refused.stderr
+    assert refused.exit_code == 2 and "use `--org` or `--all-orgs`, not both" in refused.stderr
 
 
 def test_create_catalog_defaults_to_the_current_organization(
     orgs: Cli, share: MemoryStorage
 ) -> None:
     refused = orgs.run("create", "catalog", "extra")
-    assert refused.exit_code == 2 and "no organization is selected" in refused.stderr
-    assert "pass --org <org> or run: huron org <name>" in refused.stderr
+    assert refused.exit_code == 2 and "there is no current organization" in refused.stderr
+    assert "use `--org <org>`, or run `huron org <name>`" in refused.stderr
     orgs.ok("org", "helio")
     assert "huron catalog extra" in orgs.ok("create", "catalog", "extra").stdout
     assert share.is_directory(PREFIX / "helio" / "extra")
@@ -266,7 +277,7 @@ def test_current_organization_round_trips_through_the_config_file(tmp_path: Path
 
 def test_current_organization_is_not_a_settable_key(orgs: Cli) -> None:
     refused = orgs.run("config", "set", "current_organization", "geo")
-    assert refused.exit_code == 2 and "unknown key" in refused.stderr
+    assert refused.exit_code == 2 and "there is no configuration key" in refused.stderr
 
 
 def test_switching_org_stops_when_the_current_catalog_cannot_be_checked(
@@ -288,8 +299,8 @@ def test_switching_org_stops_when_the_current_catalog_cannot_be_checked(
 
 
 GONE_HINT = (
-    "the current organization gone no longer exists or is hidden from you;"
-    " switch with: huron org <name>"
+    "the current organization gone no longer exists, or you cannot see it."
+    " To select an organization, run `huron org <name>`"
 )
 
 
@@ -298,16 +309,16 @@ def test_deleting_the_current_organization_clears_it(orgs: Cli) -> None:
     deleted = orgs.ok("delete", "org", "quiet").stdout.splitlines()
     assert deleted == [
         "organization quiet deleted",
-        "No organization is selected now; pick one with: huron org <name>",
+        "There is no current organization now. To select one, run `huron org <name>`",
     ]
     assert saved(orgs).current_organization is None
     assert names(orgs.ok("catalog").stdout) == ["heliophysics", "spare", "terra"]
-    assert orgs.ok("org").stdout.splitlines()[-2] == f"No organization is selected on {API}."
+    assert orgs.ok("org").stdout.splitlines()[-2] == f"There is no current organization on {API}"
 
 
 def test_deleting_another_organization_keeps_the_current_one(orgs: Cli) -> None:
     orgs.ok("catalog", "heliophysics")
-    assert "No organization is selected" not in orgs.ok("delete", "org", "quiet").stdout
+    assert "There is no current organization" not in orgs.ok("delete", "org", "quiet").stdout
     config = saved(orgs)
     assert (config.current_organization, config.current_catalog) == ("helio", "heliophysics")
 
@@ -329,19 +340,19 @@ def test_org_warns_when_the_saved_organization_is_not_listed(orgs: Cli) -> None:
     shown = orgs.ok("org").stdout
     assert names(shown) == ["geo", "helio", "quiet"] and marked(shown) == []
     assert shown.splitlines()[-2:] == [
-        "The current organization gone no longer exists or is hidden from you.",
-        "switch with: huron org <name>",
+        "The current organization gone no longer exists, or you cannot see it",
+        "To select an organization, run `huron org <name>`",
     ]
-    assert "Using organization" not in shown
+    assert "The current organization is" not in shown
 
 
 def test_org_warns_when_the_saved_organization_is_hidden(orgs: Cli) -> None:
     orgs.ok("catalog", "heliophysics")
     orgs.login_as("mallory")
     assert orgs.ok("org").stdout.splitlines() == [
-        "You can see no organizations.",
-        "The current organization helio no longer exists or is hidden from you.",
-        "switch with: huron org <name>",
+        "You can see no organizations",
+        "The current organization helio no longer exists, or you cannot see it",
+        "To select an organization, run `huron org <name>`",
     ]
 
 
@@ -350,8 +361,8 @@ def test_get_catalogs_explains_an_empty_current_organization(orgs: Cli) -> None:
     lines = orgs.ok("get", "catalogs").stdout.splitlines()
     assert lines[0].split()[:2] == ["CURRENT", "NAME"]
     assert lines[1:] == [
-        "Organization quiet has no catalogs you can see;"
-        " see every organization's with: huron get catalogs -A"
+        "Organization quiet has no catalogs that you can see."
+        " To see the catalogs of all organizations, run `huron get catalogs -A`"
     ]
     assert len(orgs.ok("get", "catalogs", "--org", "quiet").stdout.splitlines()) == 1
     assert json.loads(orgs.ok("-o", "json", "get", "catalogs").stdout) == []
@@ -360,9 +371,9 @@ def test_get_catalogs_explains_an_empty_current_organization(orgs: Cli) -> None:
 def test_no_catalog_hints_point_at_the_catalog_listing(orgs: Cli) -> None:
     orgs.ok("org", "quiet")
     status = " ".join(orgs.ok("status").stdout.split())
-    assert "list them with: huron catalog; then run: huron catalog <name>" in status
+    assert "To list the catalogs, run `huron catalog`. Then run `huron catalog <name>`" in status
     refused = orgs.run("get", "collections")
     assert refused.exit_code == 2
-    assert "list them with: huron catalog; then run: huron catalog <name>" in " ".join(
+    assert "to list the catalogs, run `huron catalog`. Then run `huron catalog <name>`" in " ".join(
         refused.stderr.split()
     )

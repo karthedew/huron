@@ -11,6 +11,8 @@
  * one, and `adm grant` on an organization name the organization with `--org` instead.
  */
 
+import { DOCS_PATH } from './docs';
+
 export type CliCommand =
 	| { verb: 'checkout'; catalog: string; collection: string }
 	| { verb: 'add'; catalog: string }
@@ -92,6 +94,69 @@ export function cliCommand(command: CliCommand): string {
 	}
 }
 
+/**
+ * The root verbs of the huron CLI, each of which has a reference page at
+ * `/docs/reference/cli/<verb>/` (written by `scripts/cli_reference.py`): `VERBS` of
+ * `src/huron/applications/cli/commands/__init__.py`, which `src/lib/cli.test.ts` compares.
+ */
+export const CLI_VERBS: readonly string[] = [
+	'org',
+	'catalog',
+	'get',
+	'describe',
+	'tree',
+	'search',
+	'checkout',
+	'status',
+	'add',
+	'rm',
+	'pull',
+	'push',
+	'edit',
+	'validate',
+	'publish',
+	'activate',
+	'create',
+	'delete',
+	'set',
+	'unset',
+	'adm',
+	'login',
+	'logout',
+	'whoami',
+	'config'
+];
+
+/** A command's reference page in the documentation. */
+export interface CliReference {
+	/** The root verb, e.g. `checkout` for `huron --catalog c checkout …`. */
+	verb: string;
+	href: string;
+}
+
+/** The reference page of a root verb, or `null` for a word that is not one. */
+export function cliReferencePath(verb: string): string | null {
+	return CLI_VERBS.includes(verb) ? `${DOCS_PATH}reference/cli/${verb}/` : null;
+}
+
+/**
+ * The reference pages of the commands a hint runs, one per verb, in the order they first run.
+ * Each line's verb is its first word after `huron` and the global options, every one of which
+ * takes a value (`--catalog <catalog>`, `--output <format>`, `--api-url <url>`). A line that is
+ * no huron command, or has an option the CLI does not have before its verb, links to nothing.
+ */
+export function cliReferences(command: string): CliReference[] {
+	const references = new Map<string, CliReference>();
+	for (const line of command.split('\n')) {
+		const verb = verbOf(line.trim().split(/\s+/));
+		const href = verb === null ? null : cliReferencePath(verb);
+		if (verb !== null && href !== null && !references.has(verb)) {
+			references.set(verb, { verb, href });
+		}
+	}
+	return [...references.values()];
+}
+
 /** A hint: what the commands do, and the commands, one per line, to run in order. */
 export interface Hint {
 	title: string;
@@ -123,13 +188,13 @@ export function collectionHints(collection: HintedCollection, contribute: boolea
 	const { catalog, identifier, state } = collection;
 	const target = { catalog, collection: identifier };
 	const hints: Hint[] = [
-		{ title: 'Check out this collection', command: cliCommand({ verb: 'checkout', ...target }) }
+		{ title: 'Select this collection', command: cliCommand({ verb: 'checkout', ...target }) }
 	];
 	if (!contribute) return hints;
 	if (collection.overrideIncompatible) {
 		hints.push(
 			{
-				title: 'Replace the schema override with one that fits',
+				title: 'Replace the schema override with one that fits the catalog schema',
 				command: cliCommand({ verb: 'set override', ...target })
 			},
 			{
@@ -158,9 +223,9 @@ export function collectionHints(collection: HintedCollection, contribute: boolea
 }
 
 /**
- * How a contributor adds files to a collection: check it out, stage them, then push. `add` and
- * `push` act on whichever collection is checked out, so the hint checks this one out first;
- * without that, the files would go to the collection checked out last.
+ * How a contributor adds files to a collection: select it, stage them, then push. `add` and
+ * `push` act on the current collection, so the hint selects this one first. Without that, the
+ * files would go to the collection selected last.
  */
 export function addFilesHint(collection: { catalog: string; identifier: string }): Hint {
 	const { catalog, identifier } = collection;
@@ -223,6 +288,21 @@ function escaped(point: string): string {
 			.map((byte) => `\\${byte.toString(8).padStart(3, '0')}`)
 			.join('')
 	);
+}
+
+/** The global options of `huron`; each takes a value. */
+const GLOBAL_OPTIONS: ReadonlySet<string> = new Set(['--catalog', '--output', '-o', '--api-url']);
+
+function verbOf(words: readonly string[]): string | null {
+	if (words[0] !== 'huron') return null;
+	let index = 1;
+	while (index < words.length && words[index].startsWith('-')) {
+		const word = words[index];
+		const [name, value] = word.split('=', 2);
+		if (!GLOBAL_OPTIONS.has(name)) return null;
+		index += value === undefined ? 2 : 1;
+	}
+	return words[index] ?? null;
 }
 
 function line(catalog: string, verb: string, ...args: string[]): string {

@@ -77,7 +77,7 @@ def read_marker(storage: Storage, directory: Path) -> Marker:
     data = storage.read_bytes(directory / MARKER_FILE)
     if data is None:
         raise StorageError(
-            f"{directory} is not a Huron share (no {MARKER_FILE})",
+            f"{directory} is not a Huron share: it has no {MARKER_FILE} marker",
             {"prefix": str(directory), "state": str(MarkerState.NO_MARKER)},
         )
     try:
@@ -115,10 +115,14 @@ def verify_marker(
             },
         )
     if marker.organization != organization:
-        named = "no organization" if marker.organization is None else marker.organization
+        named = (
+            "no organization"
+            if marker.organization is None
+            else f"organization {marker.organization}"
+        )
         wanted = "the share root" if organization is None else f"organization {organization}"
         raise StorageError(
-            f"{directory} is marked for {named}, not {wanted}",
+            f"the marker of {directory} names {named}, not {wanted}",
             {
                 "prefix": str(directory),
                 "marker": marker.organization,

@@ -22,4 +22,4 @@ async def unique[T](call: Callable[[], Awaitable[T]], name: str) -> T:
     try:
         return await call()
     except asyncpg.UniqueViolationError as error:
-        raise NameTaken(f"{name!r} is taken", {"name": name}) from error
+        raise NameTaken(f"{name!r} is in use", {"name": name}) from error

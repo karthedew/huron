@@ -25,7 +25,7 @@ __all__ = ["main"]
 def main() -> None:
     """Build the real services from the environment and run the CLI."""
     if sys.platform == "win32":
-        sys.stderr.write("huron: Windows is not supported; use a Linux or macOS machine\n")
+        sys.stderr.write("huron: the CLI does not support Windows. Use a Linux or macOS machine\n")
         raise SystemExit(1)
     environ = dict(os.environ)
     path = config_path(environ)

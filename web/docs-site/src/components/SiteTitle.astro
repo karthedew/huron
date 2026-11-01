@@ -1,0 +1,74 @@
+---
+// The logos come from `logo` in astro.config.mjs: one mark for the light theme, one for the dark.
+import { logos } from 'virtual:starlight/user-images';
+
+const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
+const { light, dark } = logos;
+---
+
+<a href={siteTitleHref} class="site-title" aria-label={siteTitle}>
+	{
+		dark && (
+			<img
+				class="light:sl-hidden print:hidden"
+				src={dark.src}
+				width={dark.width}
+				height={dark.height}
+				alt=""
+			/>
+		)
+	}
+	{
+		light && (
+			<img
+				class="dark:sl-hidden print:block"
+				src={light.src}
+				width={light.width}
+				height={light.height}
+				alt=""
+			/>
+		)
+	}
+	<span class="wordmark" translate="no">
+		Huron <span class="descriptor">Docs</span>
+	</span>
+</a>
+
+<style>
+	.site-title {
+		display: flex;
+		align-items: center;
+		gap: var(--sl-nav-gap);
+		min-width: 0;
+		color: var(--sl-color-text-accent);
+		font-size: var(--sl-text-h4);
+		font-weight: 600;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+
+	img {
+		flex-shrink: 0;
+		width: auto;
+		height: calc(var(--sl-nav-height) - 2 * var(--sl-nav-pad-y));
+	}
+
+	.wordmark {
+		line-height: 1.5;
+	}
+
+	.descriptor {
+		font-size: var(--sl-text-sm);
+		font-weight: 400;
+		vertical-align: -0.2em;
+	}
+
+	@media (max-width: 49.99rem) {
+		.site-title {
+			gap: 0.5rem;
+		}
+		.descriptor {
+			font-size: var(--sl-text-xs);
+		}
+	}
+</style>

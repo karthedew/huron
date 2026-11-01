@@ -1,4 +1,5 @@
 import type { ExchangeOut } from '$api/openapi';
+import type { BrowseSort } from '$lib/browse-sort';
 import { ROLES, ROLE_SCOPES } from '$api/types';
 import type {
 	AuditEntry,
@@ -36,7 +37,10 @@ export interface PageRequest {
 	limit?: number;
 }
 
-export interface CatalogQuery extends PageRequest {
+/** Pagination and optional global sort for catalogs, namespaces and collections. */
+export interface BrowseQuery extends PageRequest, Partial<BrowseSort> {}
+
+export interface CatalogQuery extends BrowseQuery {
 	organization?: string;
 }
 
@@ -173,7 +177,7 @@ export class HuronApi {
 
 	catalogs({ organization: owner, ...page }: CatalogQuery = {}): Promise<Page<Catalog>> {
 		const query: Query = owner === undefined ? [] : [['organization', owner]];
-		return this.#get(['catalogs'], [...query, ...pageQuery(page)], pageOf(catalog));
+		return this.#get(['catalogs'], [...query, ...browseQuery(page)], pageOf(catalog));
 	}
 
 	catalog(name: string): Promise<Catalog> {
@@ -202,12 +206,12 @@ export class HuronApi {
 	namespaces(
 		catalogName: string,
 		parent: string,
-		page: PageRequest = {}
+		page: BrowseQuery = {}
 	): Promise<Page<Namespace>> {
 		const query: Query = parent === '' ? [] : [['parent', parent]];
 		return this.#get(
 			['catalogs', catalogName, 'namespaces'],
-			[...query, ...pageQuery(page)],
+			[...query, ...browseQuery(page)],
 			pageOf(namespace)
 		);
 	}
@@ -219,11 +223,11 @@ export class HuronApi {
 	namespaceCollections(
 		catalogName: string,
 		path: string,
-		page: PageRequest = {}
+		page: BrowseQuery = {}
 	): Promise<Page<Collection>> {
 		return this.#get(
 			['catalogs', catalogName, 'namespaces', path, 'collections'],
-			pageQuery(page),
+			browseQuery(page),
 			pageOf(collection)
 		);
 	}
@@ -282,9 +286,24 @@ export class HuronApi {
 		return this.#get(['catalogs', catalogName, 'search'], query, pageOf(collection), options);
 	}
 
-	/** A registry entry; used to name schema ids in activity rows. */
-	schema(id: string): Promise<SchemaEntry> {
-		return this.#get(['schemas', id], [], schemaEntry);
+	/** Registered versions owned by an organization, ordered by name then newest version. */
+	organizationSchemas(name: string, page: PageRequest = {}): Promise<Page<SchemaEntry>> {
+		return this.#get(['organizations', name, 'schemas'], pageQuery(page), pageOf(schemaEntry));
+	}
+
+	/** Platform schema versions available to every signed-in user. */
+	platformSchemas(page: PageRequest = {}): Promise<Page<SchemaEntry>> {
+		return this.#get(['platform', 'schemas'], pageQuery(page), pageOf(schemaEntry));
+	}
+
+	/** A visible registry entry; exact reads keep the authored document's integer digits. */
+	schema(id: string, options: RequestOptions = {}): Promise<SchemaEntry> {
+		return this.#get(['schemas', id], [], schemaEntry, options);
+	}
+
+	/** A visible registry version with its parents composed, keeping every integer digit. */
+	resolvedSchema(id: string): Promise<JsonSchemaDocument> {
+		return this.#get(['schemas', id, 'resolved'], [], schemaDocument, { exact: true });
 	}
 
 	async #get<T>(
@@ -391,6 +410,14 @@ function pageQuery({ cursor, limit }: PageRequest): Query {
 	if (cursor) query.push(['cursor', cursor]);
 	if (limit !== undefined) query.push(['limit', String(limit)]);
 	return query;
+}
+
+function browseQuery({ sort, order, ...page }: BrowseQuery): Query {
+	return [
+		...pageQuery(page),
+		...(sort === undefined ? [] : [['sort', sort] as const]),
+		...(order === undefined ? [] : [['order', order] as const])
+	];
 }
 
 async function request(

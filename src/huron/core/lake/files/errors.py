@@ -37,7 +37,8 @@ class BaseVersionConflict(HuronError):
 
     def __init__(self, current_version: int, base_version: int) -> None:
         super().__init__(
-            f"the collection is at version {current_version}, not {base_version}; pull first",
+            f"the collection is at version {current_version}, not version {base_version}."
+            " Pull the collection first",
             {"current_version": current_version, "base_version": base_version},
         )
         self.current_version = current_version

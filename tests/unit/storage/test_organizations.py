@@ -106,12 +106,12 @@ def test_organization_markers_round_trip() -> None:
 def test_a_marker_must_name_exactly_the_expected_organization() -> None:
     storage = share()
     storage.write_bytes(ROOT / MARKER_FILE, render_marker(helio_marker()))
-    with pytest.raises(StorageError, match="marked for helio, not organization geo"):
+    with pytest.raises(StorageError, match="names organization helio, not organization geo"):
         verify_marker(storage, ROOT, INSTANCE, "geo")
-    with pytest.raises(StorageError, match="marked for helio, not the share root"):
+    with pytest.raises(StorageError, match="names organization helio, not the share root"):
         verify_marker(storage, ROOT, INSTANCE)
     storage.write_bytes(ROOT / MARKER_FILE, render_marker(helio_marker(organization=None)))
-    with pytest.raises(StorageError, match="marked for no organization, not organization helio"):
+    with pytest.raises(StorageError, match="names no organization, not organization helio"):
         verify_marker(storage, ROOT, INSTANCE, "helio")
 
 
@@ -175,7 +175,7 @@ def test_a_dry_run_reports_and_changes_nothing() -> None:
 
 def test_the_root_itself_is_never_created() -> None:
     storage = share()
-    with pytest.raises(StorageError, match="the storage administrator creates it"):
+    with pytest.raises(StorageError, match="The storage admin creates it"):
         Provisioner(storage).provision(target(Path("/data2/huron"), "geo"))
     with pytest.raises(StorageError, match="does not exist"):
         Provisioner(storage).provision(target(Path("/data2/huron"), "geo"), dry_run=True)
@@ -200,7 +200,7 @@ def test_a_foreign_marker_is_never_overwritten(data: bytes, reason: str) -> None
     storage.write_bytes(ROOT / "helio" / MARKER_FILE, data)
     before = (list(storage.calls), storage.nodes[ROOT / "helio"].acl)
     for dry_run in (False, True):
-        with pytest.raises(StorageError, match="refusing to overwrite") as refused:
+        with pytest.raises(StorageError, match="Huron does not overwrite it") as refused:
             Provisioner(storage).provision(target(), dry_run=dry_run)
         assert reason in refused.value.message
     assert (storage.calls, storage.nodes[ROOT / "helio"].acl) == before

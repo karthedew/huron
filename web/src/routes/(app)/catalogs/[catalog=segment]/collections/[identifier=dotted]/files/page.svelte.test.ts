@@ -78,19 +78,6 @@ describe("a collection's files", () => {
 		expect(screen.queryByText(/files recorded/)).toBeNull();
 	});
 
-	it('shows contributors how to add the first files, checking this collection out first', async () => {
-		await show({ collection: { file_count: 0 }, roles: [catalogRole('contributor')] });
-		expect(screen.getByText('No files yet.')).toBeInTheDocument();
-		expect(screen.queryByText(/files recorded/)).toBeNull();
-		const hint = screen.getByRole('region', { name: 'Add files to this collection' });
-		// `add` and `push` act on whichever collection was checked out last.
-		expect(within(hint).getByRole('textbox')).toHaveValue(
-			'huron --catalog heliophysics checkout heliophysics.fields.run001\n' +
-				'huron --catalog heliophysics add <file>…\n' +
-				'huron --catalog heliophysics push -m "<message>"'
-		);
-	});
-
 	it('shows readers that there are no files, without a hint', async () => {
 		await show({ collection: { file_count: 0 }, roles: [catalogRole('reader')] });
 		expect(screen.getByText('No files yet.')).toBeInTheDocument();

@@ -1,6 +1,6 @@
-import { render, screen, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Organization } from '$api/types';
 import { emptySearch } from '$lib/search';
 import { catalogFixture, organizationFixture } from '$lib/testing/api-fixtures';
@@ -18,11 +18,32 @@ vi.mock('$app/navigation', () => ({
 const HELIO = organizationFixture();
 const GEO = organizationFixture({ id: 'o-geo', name: 'geo', display_name: 'Earth Science' });
 
+beforeEach(() => {
+	vi.stubGlobal(
+		'matchMedia',
+		vi.fn((media: string) => ({
+			matches: media === '(min-width: 1280px)',
+			media,
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn()
+		}))
+	);
+	const values = new Map<string, string>();
+	vi.stubGlobal('localStorage', {
+		getItem: vi.fn((key: string) => values.get(key) ?? null),
+		setItem: vi.fn((key: string, value: string) => {
+			values.set(key, value);
+		})
+	});
+});
+
 afterEach(() => {
 	resetAppState();
 	navigation.callbacks.length = 0;
 	document.cookie = 'huron_org=; Max-Age=0; Path=/';
 	vi.useRealTimers();
+	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 });
 
 function show({
@@ -71,6 +92,7 @@ describe('the shell', () => {
 		page.data = { organization: 'helio' };
 		show();
 		const banner = screen.getByRole('banner');
+		expect(within(banner).getByRole('link', { name: 'Huron' })).toHaveAttribute('href', '/');
 		expect(within(banner).getByRole('search', { name: 'Site search' })).toBeInTheDocument();
 		expect(
 			within(banner).getByText('Organization: Heliophysics Division, switch')
@@ -79,19 +101,37 @@ describe('the shell', () => {
 		expect(banner.querySelectorAll('summary')[1]).toHaveTextContent('Account: Dave Diaz');
 	});
 
-	it("leads Catalogs to the current organization's overview, else to all organizations", async () => {
+	it("leads Catalog to the current organization's overview, else to all organizations", async () => {
 		page.data = { organization: 'geo' };
 		const { unmount } = show();
-		for (const link of screen.getAllByRole('link', { name: 'Catalogs' })) {
+		for (const link of screen.getAllByRole('link', { name: 'Catalog' })) {
 			expect(link).toHaveAttribute('href', '/orgs/geo');
 		}
 		unmount();
 		page.data = { organization: 'astro' };
 		show();
-		for (const link of screen.getAllByRole('link', { name: 'Catalogs' })) {
+		for (const link of screen.getAllByRole('link', { name: 'Catalog' })) {
 			expect(link).toHaveAttribute('href', '/orgs');
 		}
 		await tick();
+	});
+
+	it('links the documentation in the sidebar and the bottom navigation, never as current', () => {
+		page.route = { id: '/(app)/account' };
+		page.url = new URL('http://localhost:4173/account');
+		show();
+		for (const region of navigationRegions()) {
+			const docs = within(region).getByRole('link', { name: 'Docs' });
+			expect(docs).toHaveAttribute('href', '/docs/');
+			// No route of the app holds it: the browser loads the page itself.
+			expect(docs).toHaveAttribute('data-sveltekit-reload');
+			expect(docs).not.toHaveAttribute('aria-current');
+		}
+		for (const name of ['Catalog', 'Search', 'Schemas', 'Account']) {
+			for (const link of screen.getAllByRole('link', { name })) {
+				expect(link).not.toHaveAttribute('data-sveltekit-reload');
+			}
+		}
 	});
 
 	it('marks the section of the current page in the sidebar and the bottom navigation', () => {
@@ -103,7 +143,7 @@ describe('the shell', () => {
 				'aria-current',
 				'page'
 			);
-			expect(within(region).getByRole('link', { name: 'Catalogs' })).not.toHaveAttribute(
+			expect(within(region).getByRole('link', { name: 'Catalog' })).not.toHaveAttribute(
 				'aria-current'
 			);
 		}
@@ -115,7 +155,7 @@ describe('the shell', () => {
 		page.url = new URL('http://localhost:4173/orgs/geo?cursor=c2');
 		const { unmount } = show();
 		for (const region of navigationRegions()) {
-			expect(within(region).getByRole('link', { name: 'Catalogs' })).toHaveAttribute(
+			expect(within(region).getByRole('link', { name: 'Catalog' })).toHaveAttribute(
 				'aria-current',
 				'page'
 			);
@@ -125,131 +165,126 @@ describe('the shell', () => {
 		page.url = new URL('http://localhost:4173/orgs');
 		show();
 		for (const region of navigationRegions()) {
-			const catalogs = within(region).getByRole('link', { name: 'Catalogs' });
+			const catalogs = within(region).getByRole('link', { name: 'Catalog' });
 			expect(catalogs).toHaveAttribute('href', '/orgs/geo');
 			expect(catalogs).toHaveAttribute('aria-current', 'true');
 		}
 	});
 
-	it("counts a catalog's pages as part of the Catalogs section", () => {
+	it("counts a catalog's pages as part of the Catalog section", () => {
 		page.data = { organization: 'helio' };
 		page.route = { id: '/(app)/catalogs/[catalog=segment]/namespaces/[path=dotted]' };
 		page.url = new URL('http://localhost:4173/catalogs/heliophysics/namespaces/fields');
 		show();
 		for (const region of navigationRegions()) {
-			const catalogs = within(region).getByRole('link', { name: 'Catalogs' });
+			const catalogs = within(region).getByRole('link', { name: 'Catalog' });
 			expect(catalogs).toHaveAttribute('href', '/orgs/helio');
 			expect(catalogs).toHaveAttribute('aria-current', 'true');
 		}
 	});
 
-	it("counts a catalog's search as searching, not as part of the Catalogs section", () => {
-		page.data = { organization: 'helio', catalog: catalogFixture() };
-		page.route = { id: '/(app)/catalogs/[catalog=segment]/(overview)/search' };
-		page.url = new URL('http://localhost:4173/catalogs/heliophysics/search?q=wind');
+	it('marks the dedicated Search page from every organization', () => {
+		page.data = { organization: 'geo' };
+		page.route = { id: '/(app)/search' };
+		page.url = new URL('http://localhost:4173/search?organization=geo&q=wind');
 		show();
 		for (const region of navigationRegions()) {
-			const catalogs = within(region).getByRole('link', { name: 'Catalogs' });
-			expect(catalogs).toHaveAttribute('href', '/orgs/helio');
-			expect(catalogs).not.toHaveAttribute('aria-current');
-			expect(within(region).getByRole('link', { name: 'Search' })).toHaveAttribute(
+			const search = within(region).getByRole('link', { name: 'Search' });
+			expect(search).toHaveAttribute('href', '/search');
+			expect(search).toHaveAttribute('aria-current', 'page');
+			expect(within(region).getByRole('link', { name: 'Catalog' })).not.toHaveAttribute(
+				'aria-current'
+			);
+		}
+	});
+
+	it.each([catalogFixture(), undefined])(
+		'always opens dedicated search from the navigation and banner',
+		(catalog) => {
+			page.data = { organization: 'helio', catalog };
+			page.route = { id: '/(app)/catalogs/[catalog=segment]/namespaces/[path=dotted]' };
+			show();
+			for (const region of navigationRegions()) {
+				expect(within(region).getByRole('link', { name: 'Search' })).toHaveAttribute(
+					'href',
+					'/search'
+				);
+			}
+			expect(screen.getByRole('search', { name: 'Site search' })).toHaveAttribute(
+				'action',
+				'/search'
+			);
+			expect(screen.getByRole('searchbox', { name: 'Search' })).toHaveValue('');
+		}
+	);
+
+	it('marks the schema registry and its details as their own section', async () => {
+		page.route = { id: '/(app)/schemas' };
+		page.url = new URL('http://localhost:4173/schemas?organization=helio');
+		show();
+		for (const region of navigationRegions()) {
+			expect(within(region).getByRole('link', { name: 'Schemas' })).toHaveAttribute(
 				'aria-current',
 				'page'
 			);
 		}
-	});
-
-	it("counts an organization's search as searching, not as part of the Catalogs section", () => {
-		page.data = { organization: 'helio' };
-		page.route = { id: '/(app)/orgs/[org=segment]/search' };
-		page.url = new URL('http://localhost:4173/orgs/helio/search?q=wind');
-		show();
+		page.route = { id: '/(app)/schemas/[id=uuid]' };
+		page.url = new URL('http://localhost:4173/schemas/0192f2a4-0000-7000-8000-000000000102');
+		await tick();
 		for (const region of navigationRegions()) {
-			expect(within(region).getByRole('link', { name: 'Catalogs' })).not.toHaveAttribute(
-				'aria-current'
+			expect(within(region).getByRole('link', { name: 'Schemas' })).toHaveAttribute(
+				'aria-current',
+				'true'
 			);
-			const search = within(region).getByRole('link', { name: 'Search' });
-			expect(search).toHaveAttribute('href', '/orgs/helio/search');
-			expect(search).toHaveAttribute('aria-current', 'page');
-		}
-	});
-
-	it('marks Search as the section of the page that asks which organization to search', () => {
-		page.data = { organization: 'geo' };
-		page.route = { id: '/(app)/search' };
-		page.url = new URL('http://localhost:4173/search?q=wind');
-		show();
-		for (const region of navigationRegions()) {
-			const search = within(region).getByRole('link', { name: 'Search' });
-			// It leads to the remembered organization's search, which this page is not.
-			expect(search).toHaveAttribute('href', '/orgs/geo/search');
-			expect(search).toHaveAttribute('aria-current', 'true');
-			expect(within(region).getByRole('link', { name: 'Catalogs' })).not.toHaveAttribute(
+			expect(within(region).getByRole('link', { name: 'Catalog' })).not.toHaveAttribute(
 				'aria-current'
 			);
 		}
 	});
 
-	it('leads Search to what the page belongs to: its catalog, else its organization, else ask', () => {
-		page.data = { organization: 'helio', catalog: catalogFixture() };
-		page.route = { id: '/(app)/catalogs/[catalog=segment]/namespaces/[path=dotted]' };
-		page.url = new URL('http://localhost:4173/catalogs/heliophysics/namespaces/fields');
-		const { unmount } = show();
-		const hrefs = () =>
-			navigationRegions().map((region) =>
-				within(region).getByRole('link', { name: 'Search' }).getAttribute('href')
-			);
-		expect(hrefs()).toEqual(['/catalogs/heliophysics/search', '/catalogs/heliophysics/search']);
-		for (const region of navigationRegions()) {
-			expect(within(region).getByRole('link', { name: 'Search' })).not.toHaveAttribute(
-				'aria-current'
-			);
-		}
-		unmount();
-		page.data = { organization: 'geo' };
-		page.route = { id: '/(app)/orgs/[org=segment]' };
-		page.url = new URL('http://localhost:4173/orgs/geo');
-		const second = show();
-		expect(hrefs()).toEqual(['/orgs/geo/search', '/orgs/geo/search']);
-		second.unmount();
-		page.data = { organization: null };
-		page.route = { id: '/(app)/account' };
-		page.url = new URL('http://localhost:4173/account');
+	it('expands and collapses the sidebar while keeping focus on its control', async () => {
+		localStorage.setItem('huron-sidebar-collapsed', 'true');
 		show();
-		expect(hrefs()).toEqual(['/search', '/search']);
+		const control = await screen.findByRole('button', { name: 'Expand sidebar' });
+		control.focus();
+		await fireEvent.click(control);
+		expect(control).toHaveAccessibleName('Collapse sidebar');
+		expect(control).toHaveAttribute('aria-expanded', 'true');
+		expect(control).toHaveFocus();
+		expect(localStorage.getItem('huron-sidebar-collapsed')).toBe('false');
+		await fireEvent.click(control);
+		expect(control).toHaveAccessibleName('Expand sidebar');
+		expect(control).toHaveAttribute('aria-expanded', 'false');
+		expect(control).toHaveFocus();
+		expect(localStorage.getItem('huron-sidebar-collapsed')).toBe('true');
 	});
 
-	it('has a search box in the banner that searches what the page belongs to', () => {
-		page.data = { organization: 'helio', catalog: catalogFixture() };
-		page.route = { id: '/(app)/catalogs/[catalog=segment]/(overview)' };
-		page.url = new URL('http://localhost:4173/catalogs/heliophysics');
-		const { unmount } = show();
-		const banner = screen.getByRole('banner');
-		const box = within(banner).getByRole('search', { name: 'Site search' });
-		expect(box).toHaveAttribute('action', '/catalogs/heliophysics/search');
-		expect(within(box).getByRole('searchbox', { name: 'Search Heliophysics' })).toHaveValue('');
-		unmount();
-		page.data = { organization: 'helio' };
-		page.route = { id: '/(app)/orgs/[org=segment]' };
-		page.url = new URL('http://localhost:4173/orgs/helio');
-		const second = show();
-		expect(screen.getByRole('search', { name: 'Site search' })).toHaveAttribute(
-			'action',
-			'/orgs/helio/search'
+	it('restores the saved expanded sidebar on another visit', async () => {
+		localStorage.setItem('huron-sidebar-collapsed', 'false');
+		show();
+		expect(await screen.findByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute(
+			'aria-expanded',
+			'true'
 		);
-		expect(
-			screen.getByRole('searchbox', { name: 'Search Heliophysics Division' })
-		).toBeInTheDocument();
-		second.unmount();
-		page.data = { organization: null };
-		page.route = { id: '/(app)/account' };
-		page.url = new URL('http://localhost:4173/account');
+	});
+
+	it('still opens the sidebar when preference storage is unavailable', async () => {
+		vi.mocked(window.matchMedia).mockReturnValue({
+			...window.matchMedia('(min-width: 1280px)'),
+			matches: false
+		});
+		vi.mocked(localStorage.getItem).mockImplementation(() => {
+			throw new Error('blocked');
+		});
+		vi.mocked(localStorage.setItem).mockImplementation(() => {
+			throw new Error('blocked');
+		});
 		show();
-		expect(screen.getByRole('search', { name: 'Site search' })).toHaveAttribute(
-			'action',
-			'/search'
+		await fireEvent.click(await screen.findByRole('button', { name: 'Expand sidebar' }));
+		expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute(
+			'aria-expanded',
+			'true'
 		);
-		expect(screen.getByRole('searchbox', { name: 'Search' })).toBeInTheDocument();
 	});
 
 	it('holds the text of the search a search page shows, and of no other page', async () => {
@@ -257,18 +292,16 @@ describe('the shell', () => {
 		page.route = { id: '/(app)/orgs/[org=segment]/search' };
 		page.url = new URL('http://localhost:4173/orgs/helio/search?q=solar+wind');
 		show();
-		expect(screen.getByRole('searchbox', { name: 'Search Heliophysics Division' })).toHaveValue(
-			'solar wind'
-		);
+		expect(screen.getByRole('searchbox', { name: 'Search' })).toHaveValue('solar wind');
 		// Typed and not sent: another page shows its own text, not what was typed.
-		const field = screen.getByRole('searchbox', { name: 'Search Heliophysics Division' });
+		const field = screen.getByRole('searchbox', { name: 'Search' });
 		if (!(field instanceof HTMLInputElement)) throw new Error('no field');
 		field.value = 'typed';
 		page.data = { organization: 'helio' };
 		page.route = { id: '/(app)/orgs/[org=segment]' };
 		page.url = new URL('http://localhost:4173/orgs/helio');
 		await tick();
-		expect(screen.getByRole('searchbox', { name: 'Search Heliophysics Division' })).toHaveValue('');
+		expect(screen.getByRole('searchbox', { name: 'Search' })).toHaveValue('');
 	});
 
 	it('keeps what was typed in the box while the page stays, as when skipping to the content', async () => {
@@ -276,13 +309,13 @@ describe('the shell', () => {
 		page.route = { id: '/(app)/orgs/[org=segment]/search' };
 		page.url = new URL('http://localhost:4173/orgs/helio/search?q=mag');
 		show();
-		const field = screen.getByRole('searchbox', { name: 'Search Heliophysics Division' });
+		const field = screen.getByRole('searchbox', { name: 'Search' });
 		if (!(field instanceof HTMLInputElement)) throw new Error('no field');
 		field.value = 'typed';
 		// The skip link leads to #main: the address changes, the page does not.
 		page.url = new URL('http://localhost:4173/orgs/helio/search?q=mag#main');
 		await tick();
-		expect(screen.getByRole('searchbox', { name: 'Search Heliophysics Division' })).toBe(field);
+		expect(screen.getByRole('searchbox', { name: 'Search' })).toBe(field);
 		expect(field).toHaveValue('typed');
 	});
 
@@ -305,7 +338,7 @@ describe('the shell', () => {
 		page.data = {};
 		show({ remembered: 'geo' });
 		expect(screen.getByText('Organization: Earth Science, switch')).toBeInTheDocument();
-		for (const link of screen.getAllByRole('link', { name: 'Catalogs' })) {
+		for (const link of screen.getAllByRole('link', { name: 'Catalog' })) {
 			expect(link).toHaveAttribute('href', '/orgs/geo');
 		}
 	});

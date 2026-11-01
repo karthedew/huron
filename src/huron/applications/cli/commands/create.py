@@ -27,7 +27,7 @@ from huron.core.storage import DirectoryKind, EffectiveGroups
 __all__ = ["create_app", "register"]
 
 create_app = typer.Typer(
-    help="Create an org, catalog, namespace or collection, and its directory.",
+    help="Create an organization, catalog, namespace or collection, and its directory.",
     no_args_is_help=True,
 )
 
@@ -41,13 +41,13 @@ def register(app: typer.Typer, panel: str) -> None:
 def create_org(
     ctx: typer.Context,
     name: str,
-    display_name: Annotated[str, typer.Option(help="Human-readable name.")] = "",
-    description: Annotated[str, typer.Option(help="What the organization is.")] = "",
+    display_name: Annotated[str, typer.Option(help="A human-readable name.")] = "",
+    description: Annotated[str, typer.Option(help="A description of the organization.")] = "",
 ) -> None:
     """Create an organization and its directory on the share (Platform Admin).
 
-    Refused when the service declares its organizations in its configuration; a storage
-    administrator then prepares their directories with ``huron adm provision-orgs``.
+    The service refuses this command when its configuration declares the organizations. In that
+    case, a storage admin prepares their directories with `huron adm provision-orgs`.
     """
     mount = services(ctx).mount()
     body = {"name": name, "display_name": display_name, "description": description}
@@ -67,17 +67,26 @@ def create_catalog(
     name: str,
     organization: Annotated[
         str | None,
-        typer.Option("--org", help="The organization it belongs to; the current one if omitted."),
+        typer.Option(
+            "--org",
+            help="The organization of the catalog. The default is the current organization.",
+        ),
     ] = None,
-    schema: Annotated[str | None, typer.Option("--schema", help="Schema id to assign.")] = None,
-    display_name: Annotated[str, typer.Option(help="Human-readable name.")] = "",
-    description: Annotated[str, typer.Option(help="What the catalog holds.")] = "",
+    schema: Annotated[
+        str | None, typer.Option("--schema", help="The ID of the schema to assign.")
+    ] = None,
+    display_name: Annotated[str, typer.Option(help="A human-readable name.")] = "",
+    description: Annotated[str, typer.Option(help="A description of what the catalog holds.")] = "",
 ) -> None:
-    """Create a catalog and its directory (Org Admin); re-running repairs a missing directory."""
+    """Create a catalog and its directory (Org Admin).
+
+    Run the command again to repair a missing directory.
+    """
     owner = organization or services(ctx).organization()
     if owner is None:
         raise UsageError(
-            "no organization is selected", hint="pass --org <org> or run: huron org <name>"
+            "there is no current organization",
+            hint="use `--org <org>`, or run `huron org <name>`",
         )
     mount = services(ctx).mount()
     try:
@@ -100,19 +109,27 @@ def create_catalog(
         catalog = api(ctx).get(f"/api/v1/catalogs/{name}")
     relative = f"{catalog['organization']}/{name}"
     mount.ensure(relative, DirectoryKind.CATALOG, mount.catalog_groups(name))
-    say(ctx, f"catalog {name} ready; switch to it with: huron catalog {name}")
+    say(ctx, f"Catalog {name} is ready. To select it, run `huron catalog {name}`")
 
 
 @create_app.command("namespace")
 def create_namespace(
     ctx: typer.Context,
-    identifier: Annotated[str, typer.Argument(help="catalog.namespace[.child…]")],
+    identifier: Annotated[str, typer.Argument(help="`catalog.namespace[.child…]`.")],
     allow_collections: Annotated[
-        bool, typer.Option("--allow-collections", help="Contributors may create collections here.")
+        bool,
+        typer.Option(
+            "--allow-collections", help="Contributors may create collections in this namespace."
+        ),
     ] = False,
-    parents: Annotated[bool, typer.Option("--parents", help="Create missing ancestors.")] = False,
+    parents: Annotated[
+        bool, typer.Option("--parents", help="Create missing ancestor namespaces.")
+    ] = False,
 ) -> None:
-    """Create a namespace and its directory (Catalog Admin); re-running repairs the directory."""
+    """Create a namespace and its directory (Catalog Admin).
+
+    Run the command again to repair the directory.
+    """
     parsed = resolve_namespace(identifier, services(ctx).catalog())
     mount = services(ctx).mount()
     mount.verify_catalog(parsed.catalog)
@@ -131,11 +148,16 @@ def create_namespace(
 @create_app.command("collection")
 def create_collection(
     ctx: typer.Context,
-    identifier: Annotated[str, typer.Argument(help="catalog.namespace.name")],
+    identifier: Annotated[str, typer.Argument(help="`catalog.namespace.name`.")],
     metadata: Annotated[
-        Path | None, typer.Option("--metadata", help="JSON metadata instead of the walkthrough.")
+        Path | None,
+        typer.Option(
+            "--metadata", help="Read the metadata from this JSON file. Do not ask for each field."
+        ),
     ] = None,
-    draft: Annotated[bool, typer.Option("--draft", help="Stop before activation.")] = False,
+    draft: Annotated[
+        bool, typer.Option("--draft", help="Stop before the CLI activates the collection.")
+    ] = False,
 ) -> None:
     """Reserve a collection, fill its metadata, then create its directory and activate it."""
     found = services(ctx)
@@ -154,7 +176,8 @@ def create_collection(
         checkout(found, collection)
         say(
             ctx,
-            f"draft {collection['identifier']} reserved; activate with: huron activate collection",
+            f"Draft {collection['identifier']} is reserved."
+            " To activate it, run `huron activate collection`",
         )
         return
     activated = activate(ctx, collection, mount)

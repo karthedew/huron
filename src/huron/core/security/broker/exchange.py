@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 __all__ = ["ExchangeResult", "TokenExchange"]
 
-_log = structlog.get_logger()
+_log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)

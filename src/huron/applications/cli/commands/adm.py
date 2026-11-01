@@ -59,7 +59,8 @@ SHARE = "Share"
 SCHEMAS = "Schemas"
 
 adm_app = typer.Typer(
-    help="Administration: roles, directory ACLs, drift checks and schemas.", no_args_is_help=True
+    help="Run administration tasks: roles, directory ACLs, drift checks and schemas.",
+    no_args_is_help=True,
 )
 publish_app = typer.Typer(help="Publish a schema.", no_args_is_help=True)
 assign_app = typer.Typer(help="Assign a schema to a catalog.", no_args_is_help=True)
@@ -68,18 +69,21 @@ adm_app.add_typer(assign_app, name="assign", rich_help_panel=SCHEMAS)
 
 Role = Literal["org_admin", "catalog_admin", "contributor", "reader"]
 RoleArgument = Annotated[
-    Role, typer.Argument(help="org_admin, catalog_admin, contributor or reader.")
+    Role, typer.Argument(help="`org_admin`, `catalog_admin`, `contributor` or `reader`.")
 ]
 GroupArgument = Annotated[str, typer.Argument(help="An LDAP group.")]
 OrgOption = Annotated[
     str | None,
     typer.Option(
-        "--org", help="The organization: org_admin, or a catalog role for all its catalogs."
+        "--org",
+        help="The organization, for `org_admin` or for a catalog role in all its catalogs.",
     ),
 ]
 CatalogOption = Annotated[
     str | None,
-    typer.Option("--catalog", help="The catalog (catalog roles); defaults to the current one."),
+    typer.Option(
+        "--catalog", help="The catalog, for a catalog role. The default is the current catalog."
+    ),
 ]
 
 MOUNT_COLUMNS = [
@@ -114,10 +118,10 @@ def grant(
     organization: OrgOption = None,
     catalog: CatalogOption = None,
 ) -> None:
-    """Give a role to an LDAP group on an organization (--org) or a catalog (--catalog).
+    """Give a role to an LDAP group on an organization (`--org`) or a catalog (`--catalog`).
 
-    org_admin is granted on an organization only. A catalog role granted on an organization
-    holds in every catalog of it, existing and future; one granted on a catalog adds to those.
+    You can grant `org_admin` only on an organization. A catalog role on an organization applies
+    to all its catalogs, existing and future. A grant on a catalog adds to those grants.
     """
     target = _grant_target(ctx, role, organization, catalog)
     _set_role(ctx, role, target, sorted({*target.groups, group}))
@@ -132,10 +136,11 @@ def revoke(
     organization: OrgOption = None,
     catalog: CatalogOption = None,
 ) -> None:
-    """Take a role from an LDAP group on an organization (--org) or a catalog (--catalog).
+    """Take a role from an LDAP group on an organization (`--org`) or a catalog (`--catalog`).
 
-    A group that holds a catalog role through the catalog's organization keeps it in every
-    catalog of the organization; revoke it there, with --org.
+    A group that holds a catalog role through the organization of the catalog keeps that role in
+    all catalogs of the organization. To take that role from the group, revoke it on the
+    organization with `--org`.
     """
     target = _grant_target(ctx, role, organization, catalog)
     if group not in target.groups and group in target.inherited:
@@ -147,12 +152,19 @@ def revoke(
 @adm_app.command("apply-acl", rich_help_panel=ACCESS)
 def apply_acl(
     ctx: typer.Context,
-    identifier: Annotated[str, typer.Argument(help="catalog, catalog.namespace or a collection")],
+    identifier: Annotated[
+        str,
+        typer.Argument(help="A catalog, a namespace (`catalog.namespace`) or a collection."),
+    ],
     recursive: Annotated[
-        bool, typer.Option("--recursive", "-R", help="Everything beneath it too.")
+        bool,
+        typer.Option("--recursive", "-R", help="Also apply the plans to all directories below it."),
     ] = False,
 ) -> None:
-    """Re-apply ACL plans to directories you own; exit 1 when some could not be changed."""
+    """Re-apply the ACL plans to the directories that you own.
+
+    The exit code is 1 when the CLI could not change some directories.
+    """
     found = services(ctx)
     target = qualify(identifier, found.catalog())
     catalog = target.split(".")[0]
@@ -161,12 +173,14 @@ def apply_acl(
     mount.verify(str(inventory.catalog["organization"]))
     selected = _selected(inventory.directories(), target, catalog, recursive)
     if not selected:
-        raise StorageFailure(f"{target} has no directory to apply")
+        raise StorageFailure(f"{target} has no directory, so there is no ACL plan to apply")
     skipped = 0
     for name, disk_path, kind in selected:
         path = mount.path(disk_path)
         if not mount.storage.is_directory(path) or not mount.storage.owned_by_me(path):
-            found.err.print(f"skipped (not yours or missing): {path}", markup=False)
+            found.err.print(
+                f"skipped (you do not own it, or it does not exist): {path}", markup=False
+            )
             skipped += 1
             continue
         changed = mount.apply(disk_path, kind, inventory.groups)
@@ -178,15 +192,19 @@ def apply_acl(
 @adm_app.command("check", rich_help_panel=SHARE)
 def check_share(
     ctx: typer.Context,
-    catalog: Annotated[str | None, typer.Option("--catalog", help="Only this catalog.")] = None,
-    hash_files: Annotated[bool, typer.Option("--hash", help="Also compare sha256.")] = False,
+    catalog: Annotated[
+        str | None, typer.Option("--catalog", help="Check only this catalog.")
+    ] = None,
+    hash_files: Annotated[
+        bool, typer.Option("--hash", help="Also compare the `sha256` of each file.")
+    ] = False,
 ) -> None:
-    """Report drift between the service and the share; exit 1 when anything is found.
+    """Report drift between the service and the share. The exit code is 1 when there are findings.
 
-    Organization directories are checked first; the catalogs of an organization whose own
-    marker is missing or wrong are not looked at, nor those of an organization the managed
-    service configuration no longer declares when the mount prefix is not its share
-    (``org_undeclared``).
+    The check starts with the organization directories. It skips the catalogs of an
+    organization when the marker in its own directory is missing or wrong. It also skips the
+    catalogs of an organization that the managed service configuration no longer declares, when
+    the mount prefix is not its share (`org_undeclared`).
     """
     found = services(ctx)
     names = [catalog] if catalog else [c["name"] for c in api(ctx).pages("/api/v1/catalogs")]
@@ -202,12 +220,13 @@ def check_share(
 
 @adm_app.command("verify-mounts", rich_help_panel=SHARE)
 def verify_mounts(ctx: typer.Context) -> None:
-    """Check each organization's directory is mounted and marked for this service.
+    """Check that the directory of each organization is mounted and has this service's marker.
 
-    One row per organization: ok, missing, no marker, wrong instance or wrong org; exit 1 when
-    any is not ok. Organizations without their own marker are checked at the mount prefix. An
-    organization the managed service configuration does not declare has no known root: its row
-    says undeclared and does not fail the check.
+    The table has one row for each organization. Its state is `ok`, `missing`, `no marker`,
+    `wrong instance` or `wrong org`. The exit code is 1 when a state is not `ok`. For an
+    organization without its own marker, the CLI checks the marker at the mount prefix. An
+    organization that the managed service configuration does not declare has no known root.
+    Its state is `undeclared`, and it does not make the check fail.
     """
     mount = services(ctx).mount()
     places = [mount.place_of_view(view) for view in api(ctx).pages("/api/v1/organizations")]
@@ -224,28 +243,29 @@ def verify_mounts(ctx: typer.Context) -> None:
 def provision_orgs(
     ctx: typer.Context,
     organization: Annotated[
-        str | None, typer.Option("--org", help="Only this declared organization.")
+        str | None, typer.Option("--org", help="Prepare only this declared organization.")
     ] = None,
     dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Print what would be done; change nothing.")
+        bool, typer.Option("--dry-run", help="Print the planned steps. Do not change anything.")
     ] = False,
     emit_script: Annotated[
         bool,
         typer.Option(
-            "--emit-script", help="Print an equivalent shell script for root-owned roots."
+            "--emit-script", help="Print an equivalent shell script, for roots that `root` owns."
         ),
     ] = False,
 ) -> None:
-    """Prepare each declared organization's directory under its root (storage admin).
+    """Prepare the directory of each declared organization below its root (storage admin).
 
-    The root itself must exist; the organization's directory is created when missing, given the
-    organization ACL plan and marked for this service and the organization. Safe to re-run.
+    The root must exist. When the organization directory does not exist, the command creates
+    it. The command gives the directory the organization ACL plan and a marker for this service
+    and the organization. You can run the command again safely.
     """
     found = services(ctx)
     mount = found.mount()
     targets = [_target(found.config.api_url, mount, v) for v in _declared(ctx, organization)]
     if not targets:
-        say(ctx, "no organizations are declared in the service configuration; nothing to do")
+        say(ctx, "The service configuration declares no organizations. There is nothing to do")
         return
     acls = found.config.acl_backend == "posix"
     if emit_script:
@@ -253,7 +273,7 @@ def provision_orgs(
         found.out.print(script, markup=False, highlight=False, end="", soft_wrap=True)
         return
     rows, failed = _provision(found.err, Provisioner(mount.storage), targets, dry_run)
-    note = "" if acls else " (modes only: acl_backend none)"
+    note = "" if acls else " (modes only, because `acl_backend` is `none`)"
     if table_mode(ctx):
         for row in rows:
             say(ctx, f"{row['organization']}: {row['step']}{note}")
@@ -261,32 +281,38 @@ def provision_orgs(
         show_list(ctx, rows, STEP_COLUMNS)
     if failed:
         raise StorageFailure(
-            f"{len(failed)} of {len(targets)} organizations could not be provisioned:"
+            f"the CLI could not prepare {len(failed)} of {len(targets)} organizations:"
             f" {', '.join(failed)}",
-            hint="where only root may write a root, run: huron adm provision-orgs --emit-script",
+            hint=(
+                "when only `root` may write to a root, run `huron adm provision-orgs --emit-script`"
+            ),
         )
 
 
 def declared_groups_hint(role: str) -> str:
     """The hint for a 409 ``ORGANIZATION_DECLARED`` on an organization-wide ``role``."""
     after = (
-        "re-apply its directory ACL with: huron adm provision-orgs"
+        "To re-apply its directory ACL, run `huron adm provision-orgs`"
         if role == "org_admin"
-        else "re-apply the directory ACLs of its catalogs with: huron adm apply-acl <catalog> -R"
+        else (
+            "To re-apply the directory ACLs of its catalogs, run `huron adm apply-acl <catalog> -R`"
+        )
     )
     return (
-        "the organization's groups are declared in the service configuration; edit"
-        f" groups.{role} there, restart the service, then {after}"
+        "the service configuration declares the groups of this organization."
+        f" Edit `groups.{role}` there. Restart the service. {after}"
     )
 
 
 @publish_app.command("schema")
 def publish_schema(
     ctx: typer.Context,
-    organization: Annotated[str, typer.Argument(help="Organization, or 'platform'.")],
+    organization: Annotated[str, typer.Argument(help="An organization, or `platform`.")],
     name: str,
     file: Path,
-    extends: Annotated[str | None, typer.Option("--extends", help="Schema id it extends.")] = None,
+    extends: Annotated[
+        str | None, typer.Option("--extends", help="The ID of the schema that it extends.")
+    ] = None,
 ) -> None:
     """Publish the next version of a named schema from a JSON file."""
     document = read_document(file)
@@ -305,10 +331,10 @@ def assign_schema(
     ctx: typer.Context,
     schema_id: str,
     catalog: Annotated[
-        str | None, typer.Option("--catalog", help="Defaults to the current catalog.")
+        str | None, typer.Option("--catalog", help="The default is the current catalog.")
     ] = None,
 ) -> None:
-    """Assign a schema to a catalog and re-validate its collections."""
+    """Assign a schema to a catalog and check its collections again."""
     target = catalog or services(ctx).require_catalog()
     result = api(ctx).put(f"/api/v1/catalogs/{target}/schema", json={"schema_id": schema_id})
     counts = result["recompute"]
@@ -326,13 +352,15 @@ def _grant_target(
 ) -> _GrantTarget:
     """Where ``role`` is granted (--org or --catalog) and the groups holding it there."""
     if organization is not None and catalog is not None:
-        raise UsageError("--org and --catalog cannot be combined")
+        raise UsageError("use `--org` or `--catalog`, not both")
     if organization is not None:
         path = f"/api/v1/organizations/{organization}/grants"
         groups = tuple(api(ctx).get(path)[role])
         return _GrantTarget(f"{path}/{role}", groups, organization=organization)
     if role == "org_admin":
-        raise UsageError("org_admin is granted on an organization", hint="use --org <name>")
+        raise UsageError(
+            "you can grant `org_admin` only on an organization", hint="use `--org <name>`"
+        )
     target = catalog or services(ctx).require_catalog()
     sources = grant_sources(ctx, target)
 
@@ -352,8 +380,11 @@ def _inherited(ctx: typer.Context, role: str, group: str, target: _GrantTarget) 
     organization = api(ctx).get(f"/api/v1/catalogs/{target.catalog}")["organization"]
     return UsageError(
         f"{group} holds {role} on {target.catalog} through organization {organization},"
-        " not on the catalog",
-        hint=f"revoke it on the organization: huron adm revoke {role} {group} --org {organization}",
+        " not through a grant on the catalog",
+        hint=(
+            "to revoke it on the organization,"
+            f" run `huron adm revoke {role} {group} --org {organization}`"
+        ),
     )
 
 
@@ -381,8 +412,8 @@ def _remind(ctx: typer.Context, role: str, target: _GrantTarget) -> None:
     for catalog in catalogs:
         say(
             ctx,
-            f"directory ACLs follow the new groups after:"
-            f" huron adm apply-acl {catalog} --recursive",
+            "To make the directory ACLs use the new groups,"
+            f" run `huron adm apply-acl {catalog} --recursive`",
         )
 
 
@@ -450,7 +481,10 @@ def _organization_findings(
     place = mount.place(organization)
     if not place.own_marker:
         if mount.undeclared(place) and mount.prefix_state() is not MarkerState.OK:
-            detail = "not declared in the service configuration; its directory cannot be located"
+            detail = (
+                "the service configuration does not declare it,"
+                " so the CLI cannot find its directory"
+            )
             warning = Finding(
                 "org_undeclared", Severity.WARNING, organization, str(place.directory), detail
             )
@@ -514,8 +548,8 @@ def _declared(ctx: typer.Context, organization: str | None) -> list[dict[str, An
     chosen = [o for o in declared if o["name"] == organization]
     if not chosen:
         raise UsageError(
-            f"organization {organization} is not declared in the service configuration",
-            hint="see the organizations and their paths with: huron get orgs",
+            f"the service configuration does not declare organization {organization}",
+            hint="to see the organizations and their paths, run `huron get orgs`",
         )
     return chosen
 

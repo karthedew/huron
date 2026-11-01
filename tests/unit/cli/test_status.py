@@ -19,9 +19,9 @@ RUN7 = "heliophysics.solar-wind.run7"
 RUN8 = "heliophysics.solar-wind.run8"
 RUN7_DIR = PREFIX / "helio" / "heliophysics" / "solar-wind" / "run7"
 WHERE = "in catalog heliophysics, organization helio"
-NOTHING_STAGED = "nothing staged; stage files with: huron add <file>"
-PUSH_HINT = 'push with: huron push -m "<message>" · unstage with: huron rm <path>'
-NOTHING_ANYWHERE = "nothing staged in any working copy"
+NOTHING_STAGED = "Nothing is staged. To stage files, run `huron add <file>`"
+PUSH_HINT = 'To push, run `huron push -m "<message>"`. To unstage a path, run `huron rm <path>`'
+NOTHING_ANYWHERE = "Nothing is staged in any working copy"
 REPORT_KEYS = {
     "organization",
     "catalog",
@@ -101,15 +101,18 @@ def test_status_names_unrecorded_files_on_the_share(staged: Cli, share: MemorySt
     share.write_bytes(RUN7_DIR / "stray.txt", b"x")
     share.write_bytes(RUN7_DIR / "deep" / "other.txt", b"y")
     shown = lines(staged, "status")
-    assert "Unrecorded on the share: deep/other.txt, stray.txt" in shown
+    assert "Unrecorded files on the share: deep/other.txt, stray.txt" in shown
     assert shown[-1] == PUSH_HINT
 
 
 def test_status_says_when_the_share_is_not_mounted(staged: Cli) -> None:
     staged.configure(mount_prefix="/elsewhere")
     shown = lines(staged, "status")
-    assert "share not mounted here; unrecorded files are not checked" in shown
-    assert not any(line.startswith("Unrecorded on the share") for line in shown)
+    assert (
+        "The share is not mounted on this machine. The CLI did not check for unrecorded files"
+        in shown
+    )
+    assert not any(line.startswith("Unrecorded files on the share") for line in shown)
 
 
 def test_status_behind_the_service_names_both_versions_and_says_pull(ready: Cli) -> None:
@@ -119,7 +122,10 @@ def test_status_behind_the_service_names_both_versions_and_says_pull(ready: Cli)
     ready.state.write_copy(copy)
     shown = lines(ready, "status")
     assert shown[0] == f"On collection {RUN8} (version 3, behind the service's version 4) {WHERE}"
-    assert shown[1:] == ["behind: run huron pull", NOTHING_STAGED]
+    assert shown[1:] == [
+        "Your working copy is behind the service. Run `huron pull`",
+        NOTHING_STAGED,
+    ]
     ready.ok("pull")
     assert "up to date" in lines(ready, "status")[0]
 
@@ -129,7 +135,7 @@ def test_status_without_a_checkout_shows_the_context_and_hints(seeded_cli: Cli) 
     assert "huron catalog <name>" in seeded_cli.ok("status").stdout
     seeded_cli.ok("catalog", "heliophysics")
     shown = seeded_cli.ok("status").stdout
-    assert "organization  helio" in shown and "pick one with: huron checkout" in shown
+    assert "organization  helio" in shown and "To choose one, run `huron checkout`" in shown
 
 
 def test_status_json_keeps_every_key_and_adds_the_staged_rows(staged: Cli, tmp_path: Path) -> None:
@@ -156,7 +162,7 @@ def test_status_all_shows_only_copies_with_something_staged(
     shown = lines(staged, "status", "--all")
     assert shown[0] == f"On collection {RUN7} (version 4) {WHERE}"
     assert [row.split()[0] for row in shown[1:4]] == ["STAGED", "add", "remove"]
-    assert shown[4:] == [f"check it out to push or unstage: huron checkout {RUN7}"]
+    assert shown[4:] == [f"To push or unstage these changes, run `huron checkout {RUN7}` first"]
     run7 = staged.state.read_copy(_id_of(staged, RUN7))
     assert run7 is not None and not any(run7.collection_id in path for path in paths)
 
@@ -186,7 +192,8 @@ def test_status_all_with_nothing_staged_shows_only_the_checked_out_copy(ready: C
 def test_status_all_without_any_working_copy(seeded_cli: Cli) -> None:
     seeded_cli.login_as("dave")
     assert lines(seeded_cli, "status", "--all") == [
-        "no working copies here; check one out with: huron checkout <identifier>",
+        "There are no working copies on this machine."
+        " To make one, run `huron checkout <identifier>`",
         NOTHING_ANYWHERE,
     ]
     assert json.loads(seeded_cli.ok("-o", "json", "status", "--all").stdout) == []

@@ -54,11 +54,13 @@ def check_grant(grant: Grant) -> Grant:
     if grant.scope.type not in allowed:
         where = " or ".join(str(t) for t in ScopeType if t in allowed)
         raise GrantInvalid(
-            f"role {grant.role} is granted at {where} scope",
+            f"you can grant role {grant.role} only at {where} scope",
             {"role": str(grant.role), "scope": str(grant.scope.type)},
         )
     if (grant.scope.type is ScopeType.PLATFORM) != (grant.scope.id is None):
-        raise GrantInvalid("platform scope has no id; other scopes need one", {})
+        raise GrantInvalid("the platform scope has no ID. Every other scope needs an ID", {})
     if not grant.ldap_group or grant.ldap_group != grant.ldap_group.strip():
-        raise GrantInvalid("LDAP group names are non-empty and unpadded", {})
+        raise GrantInvalid(
+            "an LDAP group name must not be empty or start or end with white space", {}
+        )
     return grant

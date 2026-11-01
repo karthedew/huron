@@ -22,6 +22,7 @@ from huron.schema.naming import Identifier
 __all__ = [
     "CATALOG_COLUMNS",
     "COLLECTION_COLUMNS",
+    "LIST_CATALOGS",
     "NAMESPACE_COLUMNS",
     "ORGANIZATION_COLUMNS",
     "CollectionArgument",
@@ -31,6 +32,7 @@ __all__ = [
     "current_column",
     "empty_organization",
     "explain_missing_organization",
+    "fetch_catalog",
     "fetch_collection",
     "fetch_namespace",
     "grant_sources",
@@ -45,10 +47,11 @@ __all__ = [
     "show",
     "show_list",
     "table_mode",
+    "tree_command",
 ]
 
 CollectionArgument = Annotated[
-    str | None, typer.Argument(help="Defaults to the checked-out collection.")
+    str | None, typer.Argument(help="The default is the current collection.")
 ]
 
 ORGANIZATION_COLUMNS = [
@@ -72,6 +75,8 @@ COLLECTION_COLUMNS = [
     Column("FILES", lambda c: c["file_count"]),
     Column("TITLE", lambda c: c["metadata"].get("title")),
 ]
+
+LIST_CATALOGS = "To list the catalogs, run `huron get catalogs -A`"
 
 NAMESPACE_COLUMNS = [
     Column("NAMESPACE", lambda n: n["identifier"]),
@@ -134,16 +139,16 @@ def explain_missing_organization(
     saved = services(ctx).organization()
     if error.exit_code is ExitCode.NOT_FOUND and organization is not None and organization == saved:
         error.hint = (
-            f"the current organization {organization} no longer exists or is hidden from you;"
-            " switch with: huron org <name>"
+            f"the current organization {organization} no longer exists, or you cannot see it."
+            " To select an organization, run `huron org <name>`"
         )
 
 
 def empty_organization(organization: str) -> str:
     """The line saying ``organization`` holds no catalogs the user can see."""
     return (
-        f"Organization {organization} has no catalogs you can see;"
-        " see every organization's with: huron get catalogs -A"
+        f"Organization {organization} has no catalogs that you can see."
+        " To see the catalogs of all organizations, run `huron get catalogs -A`"
     )
 
 
@@ -179,8 +184,8 @@ def fetch_collection(ctx: typer.Context, identifier: str | None) -> dict[str, An
         current = found.config.current_collection
         if current is None:
             raise UsageError(
-                "no collection is checked out",
-                hint="run: huron checkout <identifier>, or huron checkout to pick one",
+                "there is no current collection",
+                hint="run `huron checkout <identifier>`, or run `huron checkout` to choose one",
             )
         collection: dict[str, Any] = api(ctx).get(f"/api/v1/collections/{current}")
         return collection
@@ -226,13 +231,36 @@ def locate(
             if error.exit_code is not ExitCode.NOT_FOUND:
                 raise
     tried = " or ".join(str(candidate) for candidate in candidates)
-    current = services(ctx).catalog()
-    hint = (
-        None
-        if current is None
-        else f"identifiers are relative to the current catalog {current}; see it with: huron tree"
+    raise CliError(
+        f"the API found no {kind} {tried}",
+        ExitCode.NOT_FOUND,
+        code="NOT_FOUND",
+        hint=_not_found_hint(ctx, candidates),
     )
-    raise CliError(f"{kind} {tried} not found", ExitCode.NOT_FOUND, code="NOT_FOUND", hint=hint)
+
+
+def tree_command(ctx: typer.Context, catalog: str | None = None) -> str:
+    """The command that shows the tree of ``catalog``. The default is the catalog in view.
+
+    ``huron tree`` shows only the saved current catalog. A different catalog, such as a
+    ``--catalog`` override or the catalog of a full identifier, needs ``--catalog``.
+    """
+    found = services(ctx)
+    target = catalog or found.catalog()
+    if target is None or target == found.config.current_catalog:
+        return "huron tree"
+    return f"huron --catalog {target} tree"
+
+
+def fetch_catalog(ctx: typer.Context, name: str) -> dict[str, Any]:
+    """The catalog ``name``. When the API does not find it, the error tells how to list them."""
+    try:
+        view: dict[str, Any] = api(ctx).get(f"/api/v1/catalogs/{name}")
+    except CliError as error:
+        if error.exit_code is ExitCode.NOT_FOUND:
+            error.hint = error.hint or _as_hint(LIST_CATALOGS)
+        raise
+    return view
 
 
 def activate(ctx: typer.Context, collection: dict[str, Any], mount: Mount) -> dict[str, Any]:
@@ -278,7 +306,7 @@ def set_groups(ctx: typer.Context, path: str, groups: list[str]) -> dict[str, An
     change: dict[str, Any] = api(ctx).put(path, json={"ldap_groups": groups})
     added = ", ".join(change["added"]) or "-"
     removed = ", ".join(change["removed"]) or "-"
-    say(ctx, f"{change['role']}: added {added}; removed {removed}")
+    say(ctx, f"{change['role']}: added {added}, revoked {removed}")
     return change
 
 
@@ -287,7 +315,59 @@ def read_document(path: Path) -> dict[str, object]:
     try:
         document = json.loads(path.read_text())
     except (OSError, ValueError) as error:
-        raise UsageError(f"cannot read {path}: {error}") from error
+        raise UsageError(f"the CLI cannot read {path}: {error}") from error
     if not isinstance(document, dict):
         raise UsageError(f"{path} must hold a JSON object")
     return document
+
+
+def _not_found_hint(ctx: typer.Context, candidates: Sequence[Identifier]) -> str | None:
+    """What to run next when the API found none of ``candidates``.
+
+    A relative identifier points at the tree of the catalog in view. A full identifier of
+    another catalog points at the tree of that catalog, or at the catalog list when the API
+    does not find that catalog either.
+    """
+    found = services(ctx)
+    current = found.catalog()
+    sentences: list[str] = []
+    if current is not None and candidates[0].catalog == current:
+        source = (
+            f"the current catalog {current}"
+            if current == found.config.current_catalog
+            else f"catalog {current}, which `--catalog` selects"
+        )
+        sentences.append(
+            f"Identifiers are relative to {source}. To see that catalog, run `{tree_command(ctx)}`"
+        )
+    for candidate in candidates:
+        if candidate.catalog == current:
+            continue
+        if current is not None and not candidate.namespace_path:
+            continue  # most likely a relative name, which the first sentence covers
+        sentence = _catalog_hint(ctx, candidate)
+        if sentence is not None:
+            sentences.append(sentence)
+    return _as_hint(". ".join(sentences)) if sentences else None
+
+
+def _catalog_hint(ctx: typer.Context, candidate: Identifier) -> str | None:
+    """How to see the catalog of ``candidate``, or how to list catalogs when it is missing.
+
+    A candidate that is only a catalog was the lookup itself, so the API did not find it.
+    """
+    catalog = candidate.catalog
+    if not candidate.namespace_path:
+        return LIST_CATALOGS
+    try:
+        api(ctx).get(f"/api/v1/catalogs/{catalog}")
+    except CliError as error:
+        if error.exit_code is not ExitCode.NOT_FOUND:
+            return None
+        return f"The API found no catalog {catalog}. {LIST_CATALOGS}"
+    return f"To see catalog {catalog}, run `{tree_command(ctx, catalog)}`"
+
+
+def _as_hint(text: str) -> str:
+    """``text`` as a hint, which starts with a lowercase letter like an error message."""
+    return text[:1].lower() + text[1:]

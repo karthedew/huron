@@ -67,7 +67,7 @@ describe('the search form', () => {
 		expect(text).toHaveAttribute('maxlength', '200');
 		expect(text).not.toHaveAttribute('aria-invalid');
 		expect(text).toHaveAccessibleDescription(
-			'Matches the exact text in identifiers, titles and descriptions. Use labels for exact key=value filters. Sorted by identifier.'
+			'Search identifiers, titles and descriptions. Labels filter metadata by exact key=value. Results are sorted by identifier.'
 		);
 	});
 
@@ -169,7 +169,7 @@ describe('the search form', () => {
 		expect(text).toHaveAttribute('aria-invalid', 'true');
 		expect(text).toHaveValue('w'.repeat(201));
 		expect(text).toHaveAccessibleDescription(
-			/^Use at most 200 characters; this text has 201\. Matches the exact text/
+			/^Use at most 200 characters; this text has 201\. Search identifiers/
 		);
 		expect(screen.getByRole('textbox', { name: 'Add a label filter' })).not.toHaveAttribute(
 			'aria-invalid'

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import CliHint from './CliHint.svelte';
@@ -109,5 +109,28 @@ describe('CliHint', () => {
 		await show();
 		expect(screen.queryByRole('textbox')).toBeNull();
 		expect(document.querySelector('pre')).not.toHaveClass('@md:hidden');
+	});
+
+	it("links each command's reference page in the documentation, once each", async () => {
+		withClipboard(() => Promise.resolve());
+		await show(
+			'huron --catalog helio checkout helio.a.b\nhuron --catalog helio add <file>…\nhuron --catalog helio checkout helio.a.c'
+		);
+		const hint = screen.getByRole('region', { name: 'Create a catalog' });
+		const links = within(hint).getAllByRole('link');
+		expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+			['huron checkout', '/docs/reference/cli/checkout/'],
+			['huron add', '/docs/reference/cli/add/']
+		]);
+		// SvelteKit has no route there: the browser loads the page itself.
+		for (const link of links) expect(link).toHaveAttribute('data-sveltekit-reload');
+		expect(hint).toHaveTextContent('Reference:');
+	});
+
+	it('links nothing when the hint runs no huron command', async () => {
+		withClipboard(() => Promise.resolve());
+		await show('ls -l /projects/huron');
+		expect(screen.queryByRole('link')).toBeNull();
+		expect(screen.queryByText('Reference:')).toBeNull();
 	});
 });

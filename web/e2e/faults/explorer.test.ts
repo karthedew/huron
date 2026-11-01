@@ -64,7 +64,7 @@ test.describe("the explorer's tree fetch", () => {
 		await faults('oscar', null);
 		await page
 			.getByRole('main')
-			.getByRole('list', { name: 'Top-level namespaces' })
+			.getByRole('table', { name: 'Top-level namespaces' })
 			.getByRole('link', { name: 'solar-wind' })
 			.click();
 		await expect(page).toHaveURL('/catalogs/heliophysics/namespaces/solar-wind');

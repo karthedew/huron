@@ -1,113 +1,56 @@
 import { render, screen, within } from '@testing-library/svelte';
-import { createRawSnippet } from 'svelte';
-import { describe, expect, it, vi } from 'vitest';
-import type { Organization } from '$api/types';
+import { createRawSnippet, tick } from 'svelte';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { page, resetAppState } from '$lib/testing/app-state.svelte';
+import { catalogPageData } from '$lib/testing/catalog-data';
 import { organizationFixture } from '$lib/testing/api-fixtures';
-import { fakeUser } from '$lib/testing/events';
 import Layout from './+layout.svelte';
-
-const state = vi.hoisted(() => {
-	const route: { id: string | null } = { id: '/(app)/orgs/[org=segment]' };
-	return { page: { route, url: new URL('http://localhost:4173/orgs/helio') } };
+vi.mock('$app/state', () => import('$lib/testing/app-state.svelte'));
+afterEach(() => {
+	resetAppState();
+	Reflect.deleteProperty(navigator, 'clipboard');
 });
-vi.mock('$app/state', () => state);
-
-function show(
-	organization: Organization,
-	organizationPath = `/projects/huron/${organization.name}`
-) {
-	return render(Layout, {
+async function show(route = '/(app)/orgs/[org=segment]') {
+	page.route = { id: route };
+	render(Layout, {
 		props: {
 			data: {
-				user: fakeUser(),
-				organizations: [organization],
-				organizationsUnavailable: false,
-				roles: [],
-				rolesUnavailable: false,
-				rememberedOrganization: null,
-				organization: organization.name,
-				organizationDetails: organization,
-				organizationPath
+				...catalogPageData(),
+				organizationDetails: organizationFixture(),
+				organizationPath: '/projects/huron/helio'
 			},
-			params: { org: organization.name },
-			children: createRawSnippet(() => ({ render: () => '<p>The page</p>' }))
+			params: { org: 'helio' },
+			children: createRawSnippet(() => ({ render: () => '<p>The tab</p>' }))
 		}
 	});
+	await tick();
 }
-
-describe('/orgs/[org] layout', () => {
-	it("heads the organization's pages with its names, description and sections", () => {
-		show(organizationFixture());
+describe('Organization header', () => {
+	it('shows the name and copies the complete logical path', async () => {
+		const writeText = vi.fn(() => Promise.resolve());
+		Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+		await show();
+		const header = screen.getByRole('banner');
 		expect(
-			screen.getByRole('heading', { level: 1, name: 'Heliophysics Division' })
+			within(header).getByRole('heading', { level: 1, name: 'Heliophysics Division' })
 		).toBeInTheDocument();
-		expect(screen.getByText('helio')).toBeInTheDocument();
-		expect(screen.getByText('Sun and solar wind.')).toBeInTheDocument();
-		const sections = screen.getByRole('navigation', { name: 'Organization' });
-		const [catalogs, search, access] = within(sections).getAllByRole('link');
-		expect(catalogs).toHaveTextContent('Catalogs2');
-		expect(catalogs).toHaveAttribute('href', '/orgs/helio');
-		expect(catalogs).toHaveAttribute('aria-current', 'page');
-		expect(search).toHaveTextContent(/^Search$/);
-		expect(search).toHaveAttribute('href', '/orgs/helio/search');
-		expect(search).not.toHaveAttribute('aria-current');
-		expect(access).toHaveTextContent(/^Access$/);
-		expect(access).toHaveAttribute('href', '/orgs/helio/access');
-		expect(access).not.toHaveAttribute('aria-current');
-		expect(screen.getByText('The page')).toBeInTheDocument();
-		expect(screen.getByText('Share path')).toBeInTheDocument();
-		expect(screen.getByText('/projects/huron/helio').tagName).toBe('CODE');
-		expect(screen.queryByText(/Declared in the service configuration/)).not.toBeInTheDocument();
+		await within(header).getByRole('button', { name: 'Copy full path' }).click();
+		expect(writeText).toHaveBeenCalledWith('helio');
+		expect(within(header).queryByText('Share path')).toBeNull();
+		expect(screen.getByText('The tab')).toBeInTheDocument();
 	});
-
-	it("shows a declared organization's directory under its configured root", () => {
-		show(
-			organizationFixture({
-				name: 'geo',
-				declared: true,
-				root: '/data2/huron',
-				path: '/data2/huron/geo'
-			}),
-			'/data2/huron/geo'
+	it('links every section and marks CLI as the current page', async () => {
+		await show('/(app)/orgs/[org=segment]/cli');
+		const links = within(screen.getByRole('navigation', { name: 'Organization' })).getAllByRole(
+			'link'
 		);
-		expect(screen.getByText('/data2/huron/geo').tagName).toBe('CODE');
-		expect(screen.getByText('Declared in the service configuration.')).toBeInTheDocument();
-	});
-
-	it('marks Search as the section of the organization search', () => {
-		state.page.route.id = '/(app)/orgs/[org=segment]/search';
-		try {
-			show(organizationFixture());
-			const sections = screen.getByRole('navigation', { name: 'Organization' });
-			expect(within(sections).getByRole('link', { name: 'Search' })).toHaveAttribute(
-				'aria-current',
-				'page'
-			);
-			expect(within(sections).getByRole('link', { name: /^Catalogs/ })).not.toHaveAttribute(
-				'aria-current'
-			);
-		} finally {
-			state.page.route.id = '/(app)/orgs/[org=segment]';
-		}
-	});
-
-	it('marks Access as the section of the organization access tab', () => {
-		state.page.route.id = '/(app)/orgs/[org=segment]/access';
-		try {
-			show(organizationFixture());
-			const sections = screen.getByRole('navigation', { name: 'Organization' });
-			expect(within(sections).getByRole('link', { name: 'Access' })).toHaveAttribute(
-				'aria-current',
-				'page'
-			);
-		} finally {
-			state.page.route.id = '/(app)/orgs/[org=segment]';
-		}
-	});
-
-	it('shows the name only once when there is no display name', () => {
-		show(organizationFixture({ display_name: '', description: '' }));
-		expect(screen.getByRole('heading', { level: 1, name: 'helio' })).toBeInTheDocument();
-		expect(screen.getAllByText('helio')).toHaveLength(1);
+		expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+			['Catalogs2', '/orgs/helio'],
+			['Access', '/orgs/helio/access'],
+			['CLI', '/orgs/helio/cli']
+		]);
+		expect(links.filter((link) => link.getAttribute('aria-current') === 'page')).toEqual([
+			links.at(-1)
+		]);
 	});
 });

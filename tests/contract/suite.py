@@ -5,6 +5,7 @@ import this suite provide it for the in-memory store and for PostgreSQL.
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
@@ -16,6 +17,7 @@ from huron.core.lake.catalogs.models import Catalog
 from huron.core.lake.collections.models import Collection, Search, State
 from huron.core.lake.errors import NameTaken
 from huron.core.lake.files.models import Commit, FileRecord
+from huron.core.lake.listing import Listed, ListOrder, Position, SortDirection, SortField
 from huron.core.lake.namespaces.models import Namespace
 from huron.core.lake.organizations.models import Organization
 from huron.core.lake.schemas.models import SchemaEntry
@@ -450,3 +452,83 @@ async def test_keys(uow: UnitOfWork) -> None:
         assert [k.kid for k in keys] == [new.kid, old.kid]
         assert keys[1].retired_at == clock.now()
         assert keys[0].public_jwk == new.public_jwk
+
+
+@pytest.mark.parametrize("field", list(SortField))
+@pytest.mark.parametrize("direction", list(SortDirection))
+async def test_browse_orders_all_visible_rows_before_cursor_pagination(
+    uow: UnitOfWork, field: SortField, direction: SortDirection
+) -> None:
+    org, cat, ns = await tree(uow)
+    parent = namespace(cat, "children")
+    other_org = organization("other")
+    names = ["alpha", "bravo", "charlie", "delta"]
+    creators = ["zoe", "alice", "alice", "éclair"]
+    days = [3, 1, 1, 2]
+    catalogs = [
+        replace(
+            catalog(org, cat.schema_id, name),
+            created_by=creator,
+            created_at=START + timedelta(days=day),
+        )
+        for name, creator, day in zip(names, creators, days, strict=True)
+    ]
+    namespaces = [
+        replace(
+            namespace(cat, f"children.{name}", parent),
+            created_by=creator,
+            created_at=START + timedelta(days=day),
+        )
+        for name, creator, day in zip(names, creators, days, strict=True)
+    ]
+    collections = [
+        replace(
+            collection(cat, ns, name), created_by=creator, created_at=START + timedelta(days=day)
+        )
+        for name, creator, day in zip(names, creators, days, strict=True)
+    ]
+    foreign = catalog(other_org, cat.schema_id, "foreign")
+    async with uow.transaction() as tx:
+        await tx.organizations.insert(other_org)
+        await tx.catalogs.insert(foreign)
+        await tx.namespaces.insert(parent)
+        for c, n, item in zip(catalogs, namespaces, collections, strict=True):
+            await tx.catalogs.insert(c)
+            await tx.namespaces.insert(n)
+            await tx.collections.insert(item)
+        await tx.collections.insert(collection(cat, ns, "hidden", state=State.DRAFT))
+        await tx.collections.insert(collection(cat, parent, "elsewhere"))
+    expected = {
+        SortField.NAME: ["alpha", "bravo", "charlie", "delta"],
+        SortField.CREATED_BY: ["bravo", "charlie", "alpha", "delta"],
+        SortField.CREATED_AT: ["bravo", "charlie", "delta", "alpha"],
+    }[field]
+    if direction is SortDirection.DESC:
+        expected.reverse()
+    ordering = ListOrder(field, direction)
+    # One row per page forces equal primary values to cross page boundaries.
+    for family in ("catalogs", "namespaces", "collections"):
+        seen: list[str] = []
+        rows: Sequence[Listed]
+        after: Position = None
+        async with uow.transaction() as tx:
+            for _ in range(5):
+                if family == "catalogs":
+                    rows = await tx.catalogs.list(
+                        org.id, ([], [c.id for c in [*catalogs, foreign]]), after, 1, ordering
+                    )
+                elif family == "namespaces":
+                    rows = await tx.namespaces.children(cat.id, parent.id, after, 1, ordering)
+                else:
+                    rows = await tx.collections.list_in_namespace(
+                        ns.id, {State.ACTIVE}, after, 1, ordering
+                    )
+                if not rows:
+                    break
+                seen.extend(row.name for row in rows)
+                after = ordering.key(rows[-1])
+        assert seen == expected, family
+    async with uow.transaction() as tx:
+        assert await tx.catalogs.list(org.id, ([], []), None, 20, ordering) == []
+        assert await tx.namespaces.children(cat.id, namespaces[0].id, None, 20, ordering) == []
+        assert await tx.collections.list_in_namespace(ns.id, set(), None, 20, ordering) == []

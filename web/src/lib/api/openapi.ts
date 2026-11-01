@@ -338,6 +338,12 @@ export interface SigningKeyOut {
 	retired_at: string | null;
 }
 
+/** The direction of both the primary field and its name tie-breaker. */
+export type SortDirection = 'asc' | 'desc';
+
+/** Recorded fields available for browsing in a consistent order. */
+export type SortField = 'name' | 'created_by' | 'created_at';
+
 /** The lifecycle state of a collection. */
 export type State = 'draft' | 'active' | 'incomplete';
 

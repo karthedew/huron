@@ -214,6 +214,12 @@
 		return current.overview ? 'page' : 'true';
 	}
 
+	/** A namespace marks its overview as the page and its other tabs as the current section. */
+	function namespaceCurrent(path: string): 'page' | 'true' | undefined {
+		if (!isCurrentNamespace(path, current)) return undefined;
+		return current.kind === 'namespace' && current.overview ? 'page' : 'true';
+	}
+
 	/** A collection's leaf is the page on its overview; on its other tabs it marks their section. */
 	function collectionCurrent(identifier: string): 'page' | 'true' | undefined {
 		if (!isCurrentCollection(identifier, catalog.name, current)) return undefined;
@@ -269,7 +275,7 @@
 
 {#snippet folder(node: ExplorerNamespace)}
 	{@const open = isOpen(node.path)}
-	{@const marked = isCurrentNamespace(node.path, current)}
+	{@const marked = namespaceCurrent(node.path)}
 	<li class="min-w-0" aria-busy={progressOf(node.path) === 'loading' ? 'true' : undefined}>
 		<div class="flex min-w-0 items-start gap-0.5">
 			{#if mounted && hasContents(node.path, node.empty)}
@@ -279,7 +285,7 @@
 			{/if}
 			<a
 				href={namespaceHref(node.path)}
-				aria-current={marked ? 'page' : undefined}
+				aria-current={marked}
 				class={[ROW, marked ? MARKED : PLAIN]}
 			>
 				{#if marked}{@render bar()}{/if}
@@ -370,11 +376,11 @@
 <nav
 	bind:this={scroller}
 	aria-labelledby="{id}-heading"
-	class="text-sm lg:sticky lg:top-20 lg:max-h-explorer lg:scroll-py-1 lg:overflow-y-auto lg:p-1 lg:scrollbar-thin"
+	class="rounded-card bg-app-card text-sm lg:sticky lg:top-workspace-top lg:h-explorer lg:max-h-explorer lg:scroll-py-2 lg:overflow-y-auto lg:p-2 lg:scrollbar-thin"
 >
 	<h2
 		id="{id}-heading"
-		class="m-0 mb-2 border-0 p-0 px-1.5 text-xs font-semibold tracking-wide text-app-muted uppercase"
+		class="m-0 mb-2 border-0 px-2 pt-2 pb-3 text-xs font-semibold tracking-wide text-app-muted uppercase"
 	>
 		Explorer
 	</h2>

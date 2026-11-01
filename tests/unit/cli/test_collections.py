@@ -81,7 +81,7 @@ def test_stage_push_status_and_pull(ready: Cli, share: MemoryStorage, tmp_path: 
     pushed = ready.ok("push", "-m", "first data")
     assert "version 3 → 4, +3 −0 files" in pushed.stdout
     assert share.read_bytes(COLLECTION / "deep" / "c.txt") == b"charlie"
-    assert "nothing to push" in ready.ok("push").stdout
+    assert "There is nothing to push" in ready.ok("push").stdout
     listing = ready.ok("get", "files").stdout
     assert "deep/c.txt" in listing
     ready.ok("rm", "b.txt")
@@ -250,4 +250,4 @@ def test_pull_drops_removals_of_files_no_longer_recorded(ready: Cli, tmp_path: P
         copy.collection_id, ready.state.read_stage(copy.collection_id).__class__([], ["a.txt"])
     )
     pulled = ready.ok("pull")
-    assert "no longer recorded" in pulled.stderr
+    assert "no longer records" in pulled.stderr

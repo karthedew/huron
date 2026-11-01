@@ -76,7 +76,9 @@ class SchemaResolver:
         except SchemaIncompatible as error:
             return [
                 Problem(
-                    "/", f"schema override is incompatible: {error.message}", "schema_incompatible"
+                    "/",
+                    f"the schema override is incompatible: {error.message}",
+                    "schema_incompatible",
                 )
             ]
         return Validator(document).validate(metadata)
@@ -183,7 +185,8 @@ class SchemaRegistry:
             if organization_id is None and name == BASE_SCHEMA_NAME:
                 return
             raise SchemaIncompatible(
-                f"every schema must extend {BASE_SCHEMA_NAME} or a schema that does",
+                f"every schema must extend {BASE_SCHEMA_NAME}"
+                f" or a schema that extends {BASE_SCHEMA_NAME}",
                 {"name": name},
             )
         parent = await store.get(extends_id)
@@ -191,7 +194,7 @@ class SchemaRegistry:
             raise NotFound("parent schema not found", {"schema": str(extends_id)})
         if parent.organization_id not in (None, organization_id):
             raise SchemaScope(
-                "a schema can only extend platform schemas or its own organization's",
+                "a schema can extend only platform schemas or the schemas of its own organization",
                 {"extends_id": str(extends_id)},
             )
         compose(await self._resolver.resolve(store, extends_id), document)
@@ -202,5 +205,5 @@ def _schema_cursor(cursor: str | None) -> tuple[str, int] | None:
         return None
     values = decode_cursor(cursor)
     if len(values) != 2 or not isinstance(values[0], str) or not isinstance(values[1], int):
-        raise InvalidCursor("cursor does not belong to this listing", {"cursor": cursor})
+        raise InvalidCursor("the cursor does not belong to this listing", {"cursor": cursor})
     return values[0], values[1]

@@ -59,8 +59,8 @@ class Provisioner:
         directory = place.directory
         if not storage.is_directory(place.base):
             raise StorageError(
-                f"the root {place.base} of organization {place.name} does not exist;"
-                " the storage administrator creates it",
+                f"the root {place.base} of organization {place.name} does not exist."
+                " The storage admin creates it",
                 {"organization": place.name, "root": str(place.base)},
             )
         exists = storage.is_directory(directory)
@@ -99,7 +99,7 @@ class Provisioner:
                 f" {found.organization or '(none)'}"
             )
         raise StorageError(
-            f"refusing to overwrite {directory / MARKER_FILE}: it {detail}",
+            f"{directory / MARKER_FILE} {detail}. Huron does not overwrite it",
             {"organization": target.place.name, "path": str(directory), "state": str(state)},
         )
 
@@ -142,7 +142,8 @@ def _script(target: OrganizationTarget, acls: bool) -> list[str]:
         group = shlex.quote(plan.owning_group)
         lines.append(
             f"chgrp {group} {directory} || printf"
-            f" 'warning: group %s is unknown here; group left unchanged\\n' {group} >&2"
+            f" 'warning: group %s is unknown on this machine. The directory keeps its group\\n'"
+            f" {group} >&2"
         )
     lines.append(f"chmod {plan.mode:o} {directory}")
     if acls:

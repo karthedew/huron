@@ -70,17 +70,17 @@ A pure `parseConfig(env: Record<string, string | undefined>, { dev })` (unit-tes
 accessor over `$env/dynamic/private` with a reset hook for tests. An empty string counts as unset.
 Configuration is read lazily at first use (the build imports server modules; nothing may throw at import).
 
-| Variable | Required | Meaning |
-| --- | --- | --- |
-| `ORIGIN` | outside dev | Public http(s) origin without path, e.g. `https://huron-web.apps.example.org`. Derives the redirect URI `<ORIGIN>/auth/callback`, the post-logout URI `<ORIGIN>/login?status=signed-out`, cookie `Secure` and `__Host-` naming. In `vite dev`, `event.url.origin` is used instead. |
-| `HURON_API_URL` | yes | API origin, e.g. `http://127.0.0.1:8080` (no path; the client appends `/api/v1`). |
-| `HURON_WEB_OIDC_ISSUER` | yes | Company IdP issuer (trailing slash stripped). Must equal the API's `HURON_COMPANY_ISSUER` byte for byte, and the browser-facing issuer (Keycloak derives `iss` from the request host; in host-run dev both are `http://127.0.0.1:8081/realms/company`). |
-| `HURON_WEB_OIDC_CLIENT_ID` | yes | The web's client, e.g. `huron-web`. Its ID tokens must carry the API's `HURON_COMPANY_AUDIENCE` in `aud` (Keycloak: an audience mapper on the ID token only). IdPs without audience mappers: set this to the API audience's client and register the web's redirect URI there. |
-| `HURON_WEB_OIDC_CLIENT_SECRET` | no | Confidential client (`client_secret_basic`); without it the web is a public client. PKCE S256 always. |
-| `HURON_WEB_OIDC_SCOPES` | no | Default `openid profile email`. |
-| `HURON_WEB_OIDC_LOGOUT` | no | `true` (default): after local logout, redirect to the IdP's `end_session_endpoint` when advertised; `false`: local only. |
-| `HURON_WEB_MOUNT_PREFIX` | no | Default `/projects/huron` (the CLI's default). Share paths are shown as `<prefix>/<relative path>`, unless the API names the organization's `share_root` (amendment below). |
-| `HURON_WEB_API_TIMEOUT_MS` | no | Default `10000` for API reads and IdP calls. The exchange uses `max(35000, 3×timeout)` so the API's own dependency errors (`GROUP_DIRECTORY_UNAVAILABLE`, `DEPENDENCY_UNAVAILABLE`) arrive before the web gives up. |
+| Variable                       | Required    | Meaning                                                                                                                                                                                                                                                                            |
+| ------------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ORIGIN`                       | outside dev | Public http(s) origin without path, e.g. `https://huron-web.apps.example.org`. Derives the redirect URI `<ORIGIN>/auth/callback`, the post-logout URI `<ORIGIN>/login?status=signed-out`, cookie `Secure` and `__Host-` naming. In `vite dev`, `event.url.origin` is used instead. |
+| `HURON_API_URL`                | yes         | API origin, e.g. `http://127.0.0.1:8080` (no path; the client appends `/api/v1`).                                                                                                                                                                                                  |
+| `HURON_WEB_OIDC_ISSUER`        | yes         | Company IdP issuer (trailing slash stripped). Must equal the API's `HURON_COMPANY_ISSUER` byte for byte, and the browser-facing issuer (Keycloak derives `iss` from the request host; in host-run dev both are `http://127.0.0.1:8081/realms/company`).                            |
+| `HURON_WEB_OIDC_CLIENT_ID`     | yes         | The web's client, e.g. `huron-web`. Its ID tokens must carry the API's `HURON_COMPANY_AUDIENCE` in `aud` (Keycloak: an audience mapper on the ID token only). IdPs without audience mappers: set this to the API audience's client and register the web's redirect URI there.      |
+| `HURON_WEB_OIDC_CLIENT_SECRET` | no          | Confidential client (`client_secret_basic`); without it the web is a public client. PKCE S256 always.                                                                                                                                                                              |
+| `HURON_WEB_OIDC_SCOPES`        | no          | Default `openid profile email`.                                                                                                                                                                                                                                                    |
+| `HURON_WEB_OIDC_LOGOUT`        | no          | `true` (default): after local logout, redirect to the IdP's `end_session_endpoint` when advertised; `false`: local only.                                                                                                                                                           |
+| `HURON_WEB_MOUNT_PREFIX`       | no          | Default `/projects/huron` (the CLI's default). Share paths are shown as `<prefix>/<relative path>`, unless the API names the organization's `share_root` (amendment below).                                                                                                        |
+| `HURON_WEB_API_TIMEOUT_MS`     | no          | Default `10000` for API reads and IdP calls. The exchange uses `max(35000, 3×timeout)` so the API's own dependency errors (`GROUP_DIRECTORY_UNAVAILABLE`, `DEPENDENCY_UNAVAILABLE`) arrive before the web gives up.                                                                |
 
 A `ConfigError` names the variable (never its value). Hooks turn it into a 500 whose message names the
 variable; `/login` shows `error=config`.
@@ -128,7 +128,7 @@ variable; `/login` shows `error=config`.
     tab says the groups are declared as `groups.<role>` in the service configuration; for an
     undeclared one, `administerOrganization` shows the hint "Grant a role on the organization":
     `huron adm grant <role> <ldap-group> --org <org>` (`cliCommand({ verb: 'adm grant',
-    organization })`; the CLI then names the `apply-acl` runs of every catalog of it).
+organization })`; the CLI then names the `apply-acl` runs of every catalog of it).
   - The catalog's Access tab (`…/access`) reads `GET /catalogs/{c}/grants/sources`
     (`HuronApi.catalogGrantSources`) instead of the effective groups, and its load returns
     `catalogAccess()` (`src/lib/access.ts`): every role, strongest first, with its groups under
@@ -164,19 +164,19 @@ One helper decides names and options for every set and delete: `{ path: '/', htt
 secure: origin.protocol === 'https:' }` (always explicit — SvelteKit's default `secure` is wrong for
 `http://127.0.0.1`). On https every cookie name gets the `__Host-` prefix.
 
-| Cookie | Written by | Content |
-| --- | --- | --- |
-| `huron_session` | server | Opaque session id (32 random bytes, base64url), HttpOnly, `Max-Age` until the session expires. |
-| `huron_oidc_<first 8 chars of state>` | server | Sealed sign-in transaction (3.4), HttpOnly, `Max-Age=600`; at most 3 at a time (the oldest is deleted). |
-| `huron_org` | **browser** (`afterNavigate`) | Remembered organization name, not HttpOnly, `Max-Age` one year. Never set from a load (hover/tap preloads would change it). The server validates it with the segment matcher and against the visible organizations before use. |
+| Cookie                                | Written by                    | Content                                                                                                                                                                                                                        |
+| ------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `huron_session`                       | server                        | Opaque session id (32 random bytes, base64url), HttpOnly, `Max-Age` until the session expires.                                                                                                                                 |
+| `huron_oidc_<first 8 chars of state>` | server                        | Sealed sign-in transaction (3.4), HttpOnly, `Max-Age=600`; at most 3 at a time (the oldest is deleted).                                                                                                                        |
+| `huron_org`                           | **browser** (`afterNavigate`) | Remembered organization name, not HttpOnly, `Max-Age` one year. Never set from a load (hover/tap preloads would change it). The server validates it with the segment matcher and against the visible organizations before use. |
 
 ### 3.3 Sessions (`src/lib/server/sessions.ts`)
 
 - Store factory with an in-memory implementation; the production accessor anchors one instance on
   `globalThis` (survives Vite HMR). Record: `{ id, huronToken, expiresAt, subject, name, groups,
-  createdAt }` — all from `ExchangeOut`, never from the unverified ID token. No ID token is kept.
+createdAt }` — all from `ExchangeOut`, never from the unverified ID token. No ID token is kept.
 - **Credentials never leave the module**: hooks put only `locals.user = { subject, name, groups,
-  expiresAt, signedInAt }` (plain data) in `App.Locals`. The token is reachable only through
+expiresAt, signedInAt }` (plain data) in `App.Locals`. The token is reachable only through
   `api(event)` (3.6), which looks the session up by cookie. Nothing returns the record from a load.
 - Expiry: absolute, at the Huron token's `expires_at` minus 30 s. No refresh (the API issues none).
 - Caps: at most 10 sessions per subject (that subject's oldest evicted); a global cap of 10 000 — when
@@ -199,11 +199,11 @@ secure: origin.protocol === 'https:' }` (always explicit — SvelteKit's default
 - `/login` (public page, no shell): heading, short copy (section 4.7), one primary link **Sign in with
   your company account** → `/auth/login?returnTo=…`. Status line for known codes only, never echoing
   query text: `status=signed-out|expired`; `error=state_mismatch|idp_error|idp_unavailable|
-  token_rejected|groups_unavailable|service_unavailable|config`. Every error shows **Try again**. A
+token_rejected|groups_unavailable|service_unavailable|config`. Every error shows **Try again**. A
   signed-in visitor is redirected to `returnTo`.
 - `GET /auth/login`: create and seal the transaction, set its cookie, `303` to the authorization
   endpoint with `response_type=code, client_id, redirect_uri, scope, state, nonce, code_challenge,
-  code_challenge_method=S256`. Discovery/network failure → `/login?error=idp_unavailable`.
+code_challenge_method=S256`. Discovery/network failure → `/login?error=idp_unavailable`.
 - `GET /auth/callback`: pick the transaction cookie by the `state` query parameter's first 8 chars;
   open it (bad seal, expired, missing → if the browser already has a valid session redirect to its
   `returnTo` or `/`, else `state_mismatch`); compare state with `timingSafeEqual` after a length check;
@@ -287,7 +287,7 @@ secure: origin.protocol === 'https:' }` (always explicit — SvelteKit's default
   `namespaceCollections(catalog, path, page)`, `collectionByIdentifier(catalog, rest)`,
   `collection(id)`, `collectionSchema(id)`, `collectionSidecar(id)` (text), `files(id, page)`,
   `commits(id, page)`, `collectionLog(id, page)`, `search(catalog, { q?, labels?, states?, cursor?,
-  limit? })`, `schema(id)` (only to name schema ids in activity rows). `page = { cursor?, limit? }`.
+limit? })`, `schema(id)` (only to name schema ids in activity rows). `page = { cursor?, limit? }`.
   Plus a standalone `exchange(companyToken)`.
 - `class HuronApiError extends Error { status; code; title; detail; context; requestId? }` from
   `application/problem+json` (`requestId` = `context.request_id`); non-problem answers → `code: 'HTTP'`;
@@ -333,13 +333,19 @@ secure: origin.protocol === 'https:' }` (always explicit — SvelteKit's default
     schema override of any size), and the web's one process also holds every session; an endless
     answer filled its heap. 64 MiB is above any first page of 50 collections whose metadata keeps
     to the API's limit.
-  Covered by `src/lib/server/huron-api.test.ts` ("parses lists, searches and collections without a
-  reviver, whatever digits they hold", "keeps the digits of integers past 2^53 in schema documents
-  and exact reads", "stops reading an answer once it holds more than its ceiling, …", "refuses an
-  answer whose declared length is over its ceiling …"), `src/lib/server/json.test.ts` and the
-  collection Schema tab's load test ("reads the collection only once where its override holds no
-  integer a parse rounds"). The API offers no smaller listing (§9 follow-ups). S5 records this in
-  the AGENTS.md "Frontend: `web/`" section.
+    Covered by `src/lib/server/huron-api.test.ts` ("parses lists, searches and collections without a
+    reviver, whatever digits they hold", "keeps the digits of integers past 2^53 in schema documents
+    and exact reads", "stops reading an answer once it holds more than its ceiling, …", "refuses an
+    answer whose declared length is over its ceiling …"), `src/lib/server/json.test.ts` and the
+    collection Schema tab's load test ("reads the collection only once where its override holds no
+    integer a parse rounds"). The API offers no smaller listing (§9 follow-ups). S5 records this in
+    the AGENTS.md "Frontend: `web/`" section.
+
+- **Accepted amendment (2026-11-01, registered schemas).** The client also reads organization and
+  platform schema lists, and resolved schemas. Registry detail pages read the authored document
+  with `schema(id, { exact: true })` and the composed document with `resolvedSchema(id)`, both
+  preserving integer digits. Ordinary `schema(id)` reads used only for names remain plain. Registry
+  loads return bounded summaries and `schemaView` models, never raw document objects.
 
 ### 3.7 Content Security Policy
 
@@ -371,6 +377,67 @@ IdP; record as follow-up). The theme script in `app.html` gets `nonce="%svelteki
   and audit action (closed vocabulary in `src/huron/core/lake/audit/models.py`). `HTTPValidationError`
   is generated but not re-exported (never returned). Routes/components import domain types only from
   `$api/types`.
+
+### 3.9 Documentation (`/docs`, `src/lib/server/docs.ts`)
+
+- **Accepted amendment (2026-11-01, public documentation).** The web serves the documentation, a
+  static Astro Starlight site in `web/docs-site/` (base `/docs`, Pagefind search), at `/docs`. It
+  is the only part of the web readable without signing in; everything else stays behind sign-in as
+  §3.5 says. This amends §1 (a fifth goal: read the documentation without signing in), §2 (the
+  site is a package of its own, with Astro and Starlight pinned in `web/docs-site/package-lock.json`;
+  the web's own `package.json` gains no dependency), §3.5, §3.7, §4.1, §4.6 and the login copy of
+  §4.7.
+  - **Content.** The guides are generated from `docs/*.md` by the site's sync step
+    (`npm run docs:sync`, gitignored output), so `docs/` stays the only copy of that prose. The CLI
+    reference (`/docs/reference/cli/<verb>/`, one page per root verb of the CLI's `LAYOUT`, with an
+    index per help panel) is written by `scripts/cli_reference.py` and committed;
+    `make gate` runs it with `--check`.
+  - **Serving.** `handle` answers every path that is `/docs` or starts with `/docs/` first, before
+    it reads the settings or the session cookie: such a request needs no cookie, writes none
+    (not even the deletion of a stale session cookie), sets no `locals.user`, calls no API and
+    works while the sign-in settings are broken. `/doc`, `/docsx` and the like are not docs paths.
+    `serveDocs` reads the build from `HURON_WEB_DOCS_DIR` (default `docs-site/dist` relative to
+    the working directory): GET and HEAD only (else 405 with `Allow`); a directory answers its
+    `index.html`, and its path without the trailing slash redirects (308) to the path with it; a
+    missing path, an empty, `.`, `..` or dot-file segment, an encoded slash, backslash or NUL, an
+    undecodable segment, or a link whose real path leaves the build answers the build's
+    `404.html` with status 404 (plain `Not Found` without one, and a 404 that names
+    `npm run docs:build` when the build is missing). Astro's hashed `_astro/` assets are
+    `public, max-age=31536000, immutable`, everything else `no-cache`; no answer is `no-store`,
+    as none is personal. adapter-node's static handler cannot serve them, as the client directory
+    is served before the hooks run and would carry no security headers.
+  - **Headers.** Every docs answer carries §3.5's `X-Content-Type-Options`, `X-Frame-Options` and
+    `Referrer-Policy` (`src/lib/server/security-headers.ts`, shared with the hook) and a
+    content security policy of its own: §3.7's directives with one change, `script-src 'self'
+'wasm-unsafe-eval' <hashes>`. The hashes are the SHA-256 of each inline script of the HTML
+    file served (Starlight's theme script, the small scripts Astro inlines), computed from the
+    file at each answer, so a rebuild needs no configuration. `'wasm-unsafe-eval'` lets Pagefind
+    compile its WebAssembly. There is no `'unsafe-inline'` and no `'unsafe-eval'` for scripts; the
+    build has no inline event handlers. `style-src` keeps §3.7's `'unsafe-inline'`, which
+    Starlight's inline styles need too. `src/lib/server/docs.test.ts` fails when the docs policy
+    differs from `kit.csp` anywhere but `script-src`.
+  - **Navigation.** The shell's sidebar (above Account) and bottom navigation gain a Docs link
+    (`/docs/`), and the login page a "Docs" link below the sign-in button ("for the huron CLI and
+    the website, no sign-in needed"). No route holds `/docs`, so these links carry
+    `data-sveltekit-reload`, and Docs is never `aria-current`. Each `CliHint` lists a reference
+    link per root verb its command lines run ("Reference: huron checkout · huron add · huron
+    push"), from `cliReferences()` in `src/lib/cli.ts`: the first word after `huron` and the
+    global options (`--catalog`, `--output`/`-o`, `--api-url`), when it is one of `CLI_VERBS`,
+    which `src/lib/cli.test.ts` compares with the CLI's `LAYOUT` and with the reference pages
+    `scripts/cli_reference.py` wrote.
+  - **Build.** `npm run docs:install` (once), `docs:sync`, `docs:build` (sync and `astro build`
+    into `web/docs-site/dist`) and `docs:dev` (Astro's own server) run the site's scripts;
+    `npm run test:e2e` runs `docs:build` after the web's build. `web/Containerfile` builds the site
+    in a stage of its own from `web/docs-site` and the repository's `docs/`, passed as the named
+    build context `docs` (`docker-compose.app.yml`: `additional_contexts`), and copies `dist` to
+    `/app/docs-site/dist`, the default directory.
+  - **Tests.** `src/lib/server/docs.test.ts` and `src/hooks.server.test.ts` use the stand-in
+    build in `src/lib/testing/docs` (with `docs-outside.txt` beside it for traversal). The e2e tests
+    (`e2e/docs.test.ts`: signed out from the login page with no cookie, pages, the 404, the
+    search finding a CLI command, `/catalogs` still redirecting to sign-in, the two policies, a
+    signed-in user reaching the docs from the sidebar and a CLI hint and staying signed in) run
+    against `HURON_E2E_DOCS_DIR`, by default `docs-site/dist`; the stand-in serves every one but
+    the search. `e2e/security.test.ts`'s crawl leaves `/docs` out.
 
 ## 4. Routes, layouts and pages
 
@@ -449,27 +516,27 @@ against the visible list. `(app)/+layout.svelte` writes `huron_org` in `afterNav
     error page, without the shell. No `(app)/[...rest]` catch-all: it would read the shell's
     organizations and roles for every mistyped or scanned address, and it would be the kind of
     unmatched twin this section forbids.
-  S5 records this in the AGENTS.md "Frontend: `web/`" section.
+    S5 records this in the AGENTS.md "Frontend: `web/`" section.
 
-| Page | Content |
-| --- | --- |
-| `/` | Redirect to the remembered org if visible, else the only visible org; else the organization list; with none, the empty state (4.5). |
-| `/orgs` | Cards: `display_name \|\| name` (name as secondary only when different), description, "N catalogs", paged. |
-| `/orgs/[org]` | Org header (display name, name, description); catalogs list: display name, name, description, schema `name vN` (links to the catalog's Schema tab), "N namespaces in total", paged; empty state with the org-admin hint (4.6). |
-| `/catalogs/[catalog]` (Overview) | Header: display name, name, organization link, description, schema link, "N namespaces in total". Root namespaces (rows with *Holds collections* / *Structure only*, child and collection counts), paged; admin hint for creating namespaces. |
-| `…/access` | Effective groups per role (`platform_admin`, `org_admin`, `catalog_admin`, `contributor`, `reader`) with human role names and what each can do; groups the signed-in user belongs to are marked "You"; admin hint `huron --catalog <c> adm grant …` + `huron --catalog <c> adm apply-acl <c> --recursive`. |
-| `…/activity` | Catalog audit log (4.4), paged by `next_cursor` only. |
-| `…/schema` | Resolved schema as a field table (4.3) plus raw JSON in a disclosure. |
-| `namespaces/[path]` | Header: name, identifier, badge, counts, share path with copy; child namespaces (`?namespaces_cursor=`) and collections (`?collections_cursor=`) as two-line rows; empty copy depends on `collections_allowed`; hints (4.6). |
-| `collections/[identifier]` (Overview) | Header: title (h1), identifier (mono), state badge + explanation (4.3), description. Problems (draft/incomplete) with field titles. Metadata (4.3). Details aside: share path + copy (drafts: "No directory yet"), files "N files", created by/at, updated, activated; *Technical details* disclosure: "Record revision N" (not a data version), id; `metadata.json` link for settled collections; CLI hints (4.6). |
-| `…/files` | "N files" (from `file_count`); table (path, size, SHA-256 — short with the full value in a disclosure + copy, recorded at/by) in a scroll region; paged. Drafts and empty: explanatory copy. |
-| `…/commits` | Rows: message (or "No message"), actor, host, "+adds / −removes", "revision a → b", time, commit id (last 12 hex + full in title/copy — UUIDv7 prefixes repeat). |
-| `…/activity` | Collection audit entries (4.4). |
-| `…/schema` | Resolved schema for the collection; schema override shown separately when present. |
-| `…/metadata.json` | `+server.ts`: `new Response(body, { headers: { 'content-type': 'application/json', 'content-disposition': 'inline', 'content-security-policy': "default-src 'none'; sandbox" } })` (never the upstream Response). 409/404 → 404 copy. |
-| `collections/[id]` | `GET /collections/{id}` → 303 to `/catalogs/<catalog>/collections/<identifier minus catalog>`; 404 copy "Not found, deleted, or you do not have access". |
-| `/account` | Name, subject, groups "as of sign-in at <UTC time>" (+ re-sign-in hint), roles as sentences with scope names resolved through the visible organizations and catalogs (`GET /catalogs?limit=500`), session expiry, sign-out button, a short CLI setup block (`huron login`, `huron whoami`) without server URLs. |
-| `/healthz` | Public `{"status":"ok"}`. |
+| Page                                  | Content                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                                   | Redirect to the remembered org if visible, else the only visible org; else the organization list; with none, the empty state (4.5).                                                                                                                                                                                                                                                                                 |
+| `/orgs`                               | Cards: `display_name \|\| name` (name as secondary only when different), description, "N catalogs", paged.                                                                                                                                                                                                                                                                                                          |
+| `/orgs/[org]`                         | Org header (display name, name, description); catalogs list: display name, name, description, schema `name vN` (links to the catalog's Schema tab), "N namespaces in total", paged; empty state with the org-admin hint (4.6).                                                                                                                                                                                      |
+| `/catalogs/[catalog]` (Overview)      | Header: display name, name, organization link, description, schema link, "N namespaces in total". Root namespaces (rows with _Holds collections_ / _Structure only_, child and collection counts), paged; admin hint for creating namespaces.                                                                                                                                                                       |
+| `…/access`                            | Effective groups per role (`platform_admin`, `org_admin`, `catalog_admin`, `contributor`, `reader`) with human role names and what each can do; groups the signed-in user belongs to are marked "You"; admin hint `huron --catalog <c> adm grant …` + `huron --catalog <c> adm apply-acl <c> --recursive`.                                                                                                          |
+| `…/activity`                          | Catalog audit log (4.4), paged by `next_cursor` only.                                                                                                                                                                                                                                                                                                                                                               |
+| `…/schema`                            | Resolved schema as a field table (4.3) plus raw JSON in a disclosure.                                                                                                                                                                                                                                                                                                                                               |
+| `namespaces/[path]`                   | Header: name, identifier, badge, counts, share path with copy; child namespaces (`?namespaces_cursor=`) and collections (`?collections_cursor=`) as two-line rows; empty copy depends on `collections_allowed`; hints (4.6).                                                                                                                                                                                        |
+| `collections/[identifier]` (Overview) | Header: title (h1), identifier (mono), state badge + explanation (4.3), description. Problems (draft/incomplete) with field titles. Metadata (4.3). Details aside: share path + copy (drafts: "No directory yet"), files "N files", created by/at, updated, activated; _Technical details_ disclosure: "Record revision N" (not a data version), id; `metadata.json` link for settled collections; CLI hints (4.6). |
+| `…/files`                             | "N files" (from `file_count`); table (path, size, SHA-256 — short with the full value in a disclosure + copy, recorded at/by) in a scroll region; paged. Drafts and empty: explanatory copy.                                                                                                                                                                                                                        |
+| `…/commits`                           | Rows: message (or "No message"), actor, host, "+adds / −removes", "revision a → b", time, commit id (last 12 hex + full in title/copy — UUIDv7 prefixes repeat).                                                                                                                                                                                                                                                    |
+| `…/activity`                          | Collection audit entries (4.4).                                                                                                                                                                                                                                                                                                                                                                                     |
+| `…/schema`                            | Resolved schema for the collection; schema override shown separately when present.                                                                                                                                                                                                                                                                                                                                  |
+| `…/metadata.json`                     | `+server.ts`: `new Response(body, { headers: { 'content-type': 'application/json', 'content-disposition': 'inline', 'content-security-policy': "default-src 'none'; sandbox" } })` (never the upstream Response). 409/404 → 404 copy.                                                                                                                                                                               |
+| `collections/[id]`                    | `GET /collections/{id}` → 303 to `/catalogs/<catalog>/collections/<identifier minus catalog>`; 404 copy "Not found, deleted, or you do not have access".                                                                                                                                                                                                                                                            |
+| `/account`                            | Name, subject, groups "as of sign-in at <UTC time>" (+ re-sign-in hint), roles as sentences with scope names resolved through the visible organizations and catalogs (`GET /catalogs?limit=500`), session expiry, sign-out button, a short CLI setup block (`huron login`, `huron whoami`) without server URLs.                                                                                                     |
+| `/healthz`                            | Public `{"status":"ok"}`.                                                                                                                                                                                                                                                                                                                                                                                           |
 
 - **Accepted amendment (2026-10-30, S3b review).** `collections/[id]` answers the 404 copy ("Not
   found, deleted, or you do not have access.") only when the API answers 403 or 404 for the id. A
@@ -527,9 +594,9 @@ static label plus the All link.
     and keeps it. It sits first in the top bar from md on (at most 28rem wide), before the
     switcher; below md it is hidden, and the bottom navigation's Search opens the scoped page.
     `App.PageData` declares `catalog` and `search` for the shell.
-  Covered by `src/lib/search-links.test.ts`, `src/lib/design/components/SiteSearch.svelte.test.ts`,
-  `src/routes/(app)/layout.svelte.test.ts`, `e2e/site-search.test.ts` and `e2e/shell.test.ts`. S5
-  records this in the AGENTS.md "Frontend: `web/`" section.
+    Covered by `src/lib/search-links.test.ts`, `src/lib/design/components/SiteSearch.svelte.test.ts`,
+    `src/routes/(app)/layout.svelte.test.ts`, `e2e/site-search.test.ts` and `e2e/shell.test.ts`. S5
+    records this in the AGENTS.md "Frontend: `web/`" section.
 - **Accepted amendment (2026-10-31, S6 review).**
   - The account menu's form button reads **Sign out**, as on `/account`, in the no-organization
     empty state and in §4.5's "sign out and sign in again": two names for one action fail WCAG
@@ -548,20 +615,123 @@ static label plus the All link.
   - Without scripts the theme toggle could do nothing, so it is not drawn: `app.html`'s first script
     marks `<html>` with `js`, and the `no-js` variant (`app.css`) hides the toggle. Its icon follows
     the `.dark` class that script sets, so it is right before the page hydrates.
-  Covered by `src/lib/search.test.ts` ("sharedSearch"),
-  `src/lib/design/components/OrganizationSwitcher.svelte.test.ts`,
-  `src/routes/(app)/layout.server.test.ts` and `e2e/shell.test.ts` ("leaves a catalogs list's query
-  behind, and keeps of a search what it reads", "the theme toggle"). S5 records this in the
-  AGENTS.md "Frontend: `web/`" section.
+    Covered by `src/lib/search.test.ts` ("sharedSearch"),
+    `src/lib/design/components/OrganizationSwitcher.svelte.test.ts`,
+    `src/routes/(app)/layout.server.test.ts` and `e2e/shell.test.ts` ("leaves a catalogs list's query
+    behind, and keeps of a search what it reads", "the theme toggle"). S5 records this in the
+    AGENTS.md "Frontend: `web/`" section.
+
+- **Accepted amendment (2026-11-01, catalog workspace).** Catalog pages use the full body below
+  the top bar, following the `raw-storage` browse layout. When page data includes a catalog, the
+  shell removes its centered width cap and outer padding. The catalog layout supplies a
+  continuous workspace: a bordered Explorer column at lg and above, a breadcrumb strip across
+  the selection pane, and 16px (24px from sm) padding around the selected page. Other pages keep
+  their existing shell spacing. The workspace is at least the viewport height minus the 64px
+  header; the document continues to scroll for long page content.
+
+- **Accepted amendment (2026-11-01, primary navigation).** The primary navigation contains Catalogs,
+  Search, Schemas and Account. Search always leads to the standalone `/search` page. Schemas leads
+  to `/schemas`. From md, the Huron mark opens the sidebar and its expanded header offers Collapse
+  sidebar. The same focused button survives either action. A choice is saved in local storage as
+  `huron-sidebar-collapsed`; unavailable storage leaves a working choice for the current visit.
+  With no saved choice, the sidebar is a 72px rail below xl and 248px wide from xl. An explicit
+  choice controls its width and the header/content offsets together. Section navigation uses
+  wrapping pills below a 576px content width, so all six collection tabs fit before switching to
+  underline tabs. Below md, bottom navigation
+  remains visible. Without scripts the responsive sidebar works without an inert toggle.
+
+- **Accepted amendment (2026-11-01, visible sidebar toggle).** From md, the sidebar has a
+  permanently visible 24px square button with a sidebar-panel icon, centered at the 32px midpoint of
+  the toolbar between the Huron logo and the search box. In the collapsed rail it straddles the
+  right border; when expanded it sits fully inside the sidebar with a 16px right inset. Its accessible
+  name and tooltip say Expand or Collapse sidebar, with the corresponding `aria-expanded` state.
+  The control is drawn above the adjacent toolbar so its full surface and focus ring remain visible.
+  The same control retains focus after toggling. The Huron mark is always
+  a home link; sidebar state and storage behavior remain as described above. The toggle is absent
+  without scripts and below md, where the bottom navigation is used.
+
+- **Accepted amendment (2026-11-01, sidebar motion).** Toggling the sidebar slides its width,
+  the toolbar and content offsets, and the toggle's position together over 200ms with ease-in-out
+  timing. The saved preference is restored without animation on load. A reduced-motion preference
+  switches immediately between states. The logo label reserves space for the toggle, and navigation
+  content stays inside the sidebar as it widens; its outer toggle and focus ring remain unclipped.
+
+- **Accepted amendment (2026-11-01, shared Huron mark).** The main shell's desktop and mobile
+  toolbar logos use `static/huron-mark.svg`, the same chunked H as the documentation, in light mode.
+  Dark mode uses `static/huron-mark-dark.svg`: light tiles with the same blue/cyan accents, on a
+  transparent background. The documentation header shows the same two marks for its light and dark
+  themes. The toolbar keeps its 32px footprint and the home link's accessible name
+  Huron. The favicon follows the website's selected theme, both in the initial theme script and
+  when the user toggles it, rather than independently following the operating system's theme.
+
+- **Accepted amendment (2026-11-01, continuous shell and floating navigation).** The full-width
+  toolbar and sidebar share the sidebar background with no separating borders. A 28px panel
+  toggle sits to the left of the Huron home link in the toolbar. Search is centered in the viewport
+  from lg; at tablet width it uses the space between branding and account controls. Primary sidebar links
+  are compact 32px rows. Collapsing hides the entire 248px sidebar and releases its content offset.
+  The saved preference and 200ms slide remain; without a saved preference, desktop at xl starts
+  pinned and tablet starts closed. Hovering over the closed toggle temporarily reveals the sidebar
+  over the page with the same slide, without moving content. Its half-pixel inset outline is gray
+  in light mode and translucent white in dark mode. The panel is inset 8px from the left, starts
+  at 64px and ends 4px above the viewport bottom, extending 8px above and 4px below the Explorer.
+  Its 8px top padding puts the first Catalogs row at 72px, aligned with the Explorer. The light
+  outline uses muted gray at 60% opacity. Pinned and floating navigation
+  have identical bounds and inner spacing; only the floating outline/shadow change when pinned.
+  The pinned content offset is 256px, leaving the ordinary 8px workspace gutter to its right.
+  Leaving the toggle and sidebar closes this preview after a short crossing delay, while keyboard
+  focus inside it keeps it open. Escape dismisses the
+  preview and restores toggle focus; clicking the toggle pins or unpins navigation. Hidden links
+  are inert. Without scripts the sidebar stays open from md; mobile keeps bottom navigation.
+  Catalog Explorer and content use matching card surfaces, rounded corners and 8px of shell-colored
+  outer space and inter-column gap. The Explorer has no surrounding border: the gap is its divider.
+  Its sticky top is 72px and its height is the viewport minus 80px, retaining an 8px bottom inset.
+  Other app pages use the same inset content surface. Reduced motion skips the slide.
+
+- **Accepted amendment (2026-11-01, documentation colors).** The main app uses the documentation's
+  header color for its toolbar, sidebar and workspace gutters. This color is `#f6f7f9` in light mode
+  and `#23262f` in dark mode. Explorer and content panels use the documentation's page background:
+  `#ffffff` in light mode and `#17181c` in dark mode. The shared `--sidebar` and `--card` tokens
+  supply these colors. The dark navigation hover fill is `#30343d` to remain distinct from the shell.
+
+- **Accepted amendment (2026-11-01, compact sidebar).** The sidebar is 208px wide, with a 216px
+  content offset when pinned. Its links use 30px rows, 13px text, 15px icons and 8px horizontal padding.
+  Floating and pinned navigation keep the same dimensions. The toolbar toggle and mobile navigation retain their sizes.
+
+- **Accepted amendment (2026-11-01, narrower workspace divider).** The gap between Explorer and the
+  content panel is 4px. The outer workspace padding remains 8px.
 
 ### 4.2 Explorer (in `catalogs/[catalog]/+layout.svelte`, visible at ≥ lg, after content in DOM order)
+
+- **Accepted amendment (2026-11-01, browse tables and object headers).** Catalog, namespace,
+  collection and organization headers show the name and an icon that copies the full logical
+  Huron identifier. Descriptions, state explanations, share paths and summary details belong in
+  Overview (Catalogs for an organization). The copy control has an accessible name and a
+  selectable full-path fallback without clipboard support. Catalog workspace breadcrumbs appear
+  below lg only, where the Explorer is hidden; the Explorer provides desktop navigation.
+  Catalog lists, namespace lists and namespace collection lists use bordered tables with sortable
+  Name, Created by and Created at columns. Created by is the recorded creator, not an ownership
+  role. API `sort=name|created_by|created_at` and `order=asc|desc` apply before cursor pagination,
+  with deterministic ties and cursors bound to their ordering. Browse pages request 20 rows;
+  Explorer reads, files and other existing lists retain their limits. Sort links work without
+  JavaScript and reset only their own list cursor. Narrow screens scroll inside the labeled table.
+  Namespace CLI pages keep their node selected as a section in the Explorer.
+
+- **Accepted amendment (2026-11-01, compact browse rows).** Browse tables use compact rows with
+  8px vertical cell padding and a single name line for ordinary identifiers; long names may wrap.
+  Namespace capability badges are omitted from rows. Namespace tables have separate numeric
+  Namespaces and Collections columns, catalog tables have a Namespaces column, and collection
+  tables have a Files column. Zero counts remain visible. Count columns are informational;
+  sorting remains available on Name, Created by and Created at. Collection state badges remain
+  beside the name for non-active states. Catalog descriptions and schema details stay on the
+  catalog Overview; distinct catalog display names and collection titles are available as link
+  titles rather than stacked secondary text. Namespace capability remains in its own Overview.
 
 - Top level: the organization's catalogs (database icon); the current catalog expanded into namespace
   folders and collection leaves. Wrap in `{#key data.catalog.name}`.
 - Server data: the catalog layout returns the root level; namespace and collection page loads return
   `trail` (levels for every ancestor path below the root, computed in parallel, sharing memoized calls
   with the page). The explorer reads levels through `$derived` lookups (`fetched.get(p) ?? server
-  level`); client-fetched levels live in a `SvelteMap` inside the keyed instance; never copy props into
+level`); client-fetched levels live in a `SvelteMap` inside the keyed instance; never copy props into
   `$state` (svelte-check `state_referenced_locally` is a gate failure).
 - Level shape: `{ parent, namespaces, namespacesNext, collections, collectionsNext }` (first page, 50);
   "More…" links to the namespace page. The current node gets `aria-current="page"`; when it is beyond the
@@ -599,11 +769,18 @@ static label plus the All link.
     token still ends the session. Levels above the page's own namespace list 10 collections
     (`ANCESTOR_COLLECTIONS`), then "More…": the API lists collections whole, and the explorer shows
     only their names.
-  Covered by `src/lib/server/explorer.test.ts`, `src/lib/design/components/Explorer.svelte.test.ts`
-  ("says a level on the way that the server could not load failed, and loads it on Retry") and
-  `e2e/explorer.test.ts` ("shows the page's node on load without scrolling the window at …", "keeps
-  the focus rings of rows at its edges inside it while it scrolls", "keeps a deep tree inside its
-  column, beside the content"). S5 records this in the AGENTS.md "Frontend: `web/`" section.
+    Covered by `src/lib/server/explorer.test.ts`, `src/lib/design/components/Explorer.svelte.test.ts`
+    ("says a level on the way that the server could not load failed, and loads it on Retry") and
+    `e2e/explorer.test.ts` ("shows the page's node on load without scrolling the window at …", "keeps
+    the focus rings of rows at its edges inside it while it scrolls", "keeps a deep tree inside its
+    column, beside the content"). S5 records this in the AGENTS.md "Frontend: `web/`" section.
+
+- **Accepted amendment (2026-11-01, catalog workspace).** The Explorer's column is 260px wide,
+  has a background and a right border, and fills the body under the top bar. Its navigation is
+  sticky at 4rem and `calc(100dvh - 4rem)` tall (`--spacing-explorer`, also used by
+  `--max-height-explorer`), with 8px of inner padding for focus rings. This replaces the earlier
+  5rem top offset and 6rem height subtraction. Its scroll, current-node reveal, DOM order,
+  navigation semantics, loading bounds and lg visibility breakpoint stay as specified above.
 
 ### 4.3 Collection presentation
 
@@ -653,10 +830,10 @@ static label plus the All link.
     note; the Schema tab shows the override alone and explains why there is no composed schema; and
     contributors get the override hints of §4.6 instead of `meta edit` + `meta publish`, which cannot
     run without a schema.
-  Covered by `src/lib/metadata.test.ts`, `src/lib/collections.test.ts`,
-  `src/lib/collection-state.test.ts`, `src/lib/design/components/MetadataView.svelte.test.ts` and the
-  collection layout's, Overview's and Schema tab's tests. S5 records this in the AGENTS.md
-  "Frontend: `web/`" section.
+    Covered by `src/lib/metadata.test.ts`, `src/lib/collections.test.ts`,
+    `src/lib/collection-state.test.ts`, `src/lib/design/components/MetadataView.svelte.test.ts` and the
+    collection layout's, Overview's and Schema tab's tests. S5 records this in the AGENTS.md
+    "Frontend: `web/`" section.
 - **Accepted amendment (2026-10-30, S4 review).** A label chip links to the catalog search only when
   its key and its value each hold at most 100 code points (`MAX_LABEL_LENGTH` in
   `src/lib/metadata.ts`); a longer label shows as plain text (on the Overview in full). A label may
@@ -679,10 +856,10 @@ static label plus the All link.
     Overview in full)" in the S4 amendment above;
   - problem messages, which quote the value they are about, and the field each names, at most
     1,000 (`PROBLEM_LENGTH`).
-  A cut text ends in "…". The Overview's "This metadata is too long to show in full here." also
-  shows where the header was shortened (`CollectionSummary.shortened`). Measured before: a
-  description of a mebibyte of `<` made each of a collection's five tabs 9.8 MB, and a draft's
-  title of a mebibyte made its Overview 5 MB and its namespace page 5.9 MB.
+    A cut text ends in "…". The Overview's "This metadata is too long to show in full here." also
+    shows where the header was shortened (`CollectionSummary.shortened`). Measured before: a
+    description of a mebibyte of `<` made each of a collection's five tabs 9.8 MB, and a draft's
+    title of a mebibyte made its Overview 5 MB and its namespace page 5.9 MB.
 - **Accepted amendment (2026-10-31, S6 review).** Schema tables (`src/lib/schema-view.ts`) show
   at most 200 rows (`MAX_SCHEMA_FIELDS`), then "and N more fields: this schema is too long to show
   in full here."; each cell at most 1,000 code points (`SCHEMA_TEXT_LENGTH`); an enum its first 50
@@ -696,6 +873,25 @@ static label plus the All link.
   `src/lib/design/components/SchemaTable.svelte.test.ts` and the collection Schema tab's component
   test ("points to metadata.json for the whole of an override too long to show, …"). S5 records
   this in the AGENTS.md "Frontend: `web/`" section.
+
+- **Accepted amendment (2026-11-01, collection workspace).** Collections follow the compact
+  detail presentation of the `raw-storage` UI: a file icon, a 20px title with the state badge
+  beside it, and a smaller type/identifier row. State explanations and descriptions remain
+  visible above the existing page tabs. The Overview uses separated property rows and a
+  bordered Details panel that moves below metadata when space is limited. “With the CLI” stays
+  below them with the same capability-dependent commands. All metadata bounds, text escaping,
+  state handling, download links and read-only behavior remain unchanged.
+
+- **Accepted amendment (2026-11-01, readable collection overview).** The collection tabs are Overview,
+  Metadata, Files, Commits, Activity and Schema. Overview contains an At a glance preview of six
+  recognized discovery fields: instrument, mission, start time, end time, keywords and labels.
+  Text is limited to 160 code points; keyword and label lists show four items. Missing, malformed
+  and nested values are left to Metadata. An explicit link opens the full metadata. Share path,
+  files and the applicable With the CLI actions are prominent; timestamps, schema, revision and
+  identifier are under a closed Record details disclosure. Draft and incomplete explanations and
+  problems remain visible. The Metadata tab holds the previous schema-driven fields and Other
+  fields, with all existing text/item bounds and safe links. Schema validation rules stay on
+  Schema. The common header retains the title and description bounds.
 
 ### 4.4 Activity
 
@@ -731,17 +927,17 @@ Raw detail JSON in a disclosure. Timestamps fixed UTC.
 
 ### 4.5 States and copy
 
-| State | Copy / behavior |
-| --- | --- |
-| No visible organizations | "You don't have access to any organization yet." Show the user's groups; with none: "Huron received no groups for your account." Always: "Groups are read when you sign in; if you were just added to a group, sign out and sign in again" + sign-out button. |
-| Org with no catalogs | "No catalogs you can see in this organization." + org-admin hint. |
-| Namespace empty | Holds collections: "No collections yet." + contributor hint. Structure only: "No namespaces yet." + admin hint. |
-| 0 files / 0 commits / empty activity | Specific copy; active collection with no files: contributor hint. |
-| 404 | "Not found, or you don't have access." + groups re-sign-in hint + "Back to <org>". |
-| 403 | "You don't have permission to see this." |
-| 503 | "The Huron service isn't responding." + Try again. |
-| 500 | "Something went wrong." + reference id. |
-| Organizations unavailable | Shell still renders; switcher shows "Organizations unavailable · Try again". |
+| State                                | Copy / behavior                                                                                                                                                                                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No visible organizations             | "You don't have access to any organization yet." Show the user's groups; with none: "Huron received no groups for your account." Always: "Groups are read when you sign in; if you were just added to a group, sign out and sign in again" + sign-out button. |
+| Org with no catalogs                 | "No catalogs you can see in this organization." + org-admin hint.                                                                                                                                                                                             |
+| Namespace empty                      | Holds collections: "No collections yet." + contributor hint. Structure only: "No namespaces yet." + admin hint.                                                                                                                                               |
+| 0 files / 0 commits / empty activity | Specific copy; active collection with no files: contributor hint.                                                                                                                                                                                             |
+| 404                                  | "Not found, or you don't have access." + groups re-sign-in hint + "Back to <org>".                                                                                                                                                                            |
+| 403                                  | "You don't have permission to see this."                                                                                                                                                                                                                      |
+| 503                                  | "The Huron service isn't responding." + Try again.                                                                                                                                                                                                            |
+| 500                                  | "Something went wrong." + reference id.                                                                                                                                                                                                                       |
+| Organizations unavailable            | Shell still renders; switcher shows "Organizations unavailable · Try again".                                                                                                                                                                                  |
 
 ### 4.6 Capabilities and CLI hints
 
@@ -766,7 +962,7 @@ Raw detail JSON in a disclosure. Timestamps fixed UTC.
 - **Accepted amendment (2026-10-30, S3b review).** Placement on a collection, in this order:
   everyone gets `checkout`. Contributors then get, for a schema override that no longer fits (§4.3),
   `meta override set <override.json> <identifier>` and `meta override clear <identifier>` as two hints
-  ("Replace the schema override with one that fits", "Remove the schema override"); otherwise, for an
+  ("Replace the schema override with one that fits the catalog schema", "Remove the schema override"); otherwise, for an
   incomplete collection or a draft whose metadata has problems, `meta edit` then `meta publish` (the
   API refuses to activate a draft with problems, so the activate hint alone would mislead). Last comes
   a draft's `collection activate`, or for any other collection "Add files to this collection":
@@ -835,6 +1031,14 @@ Raw detail JSON in a disclosure. Timestamps fixed UTC.
   show hints and the e2e tests that read them.
 
 ### 4.7 Copy
+
+- **Accepted amendment (2026-11-01, dedicated CLI tabs).** Organizations, catalogs, namespaces and
+  collections expose a CLI tab. Commands previously embedded in Overview, Access or empty Files
+  pages move there, preserving their existing capabilities, state conditions and escaping.
+  Collection CLI retains “With the CLI” and its checkout, activation, metadata, override and file
+  commands. Namespace navigation is Overview and CLI; no unsupported tabs are implied. Collection
+  navigation now has seven tabs, using wrapping pills until there is room for a single underlined
+  row. Search keeps its query-specific CLI hint alongside search results.
 
 Login: title "Sign in to Huron", lead "The catalog of raw scientific data on the Huron share.", bullets:
 browse catalogs, namespaces and collections; search metadata across your organization; see who can read
@@ -909,8 +1113,8 @@ each catalog; "Read-only — use the huron CLI to create collections and push fi
     name, its link and the page data: five rows with a mebibyte-long label made the catalog's Search
     tab, which every reader opens, 25 MB, and each chip that adds a label links to the whole search
     again, so 25 rows of 50 chips made it 1 MB (318 KB with 12). The identifier and the
-    description use the foreground color, so `<mark>` text reads at 13.5:1 (light) and 8.2:1
-    (dark); muted text would read at 4.4:1 and 3.6:1. A label chip whose filter the search already has
+    description use the foreground color, so `<mark>` text reads at 13.5:1 (light) and 8.5:1
+    (dark); muted text would read at 4.4:1 and 3.8:1. A label chip whose filter the search already has
     is no link: it shows with a check and ", in this search". The chips that add a label are named
     "<key>: <value>, add this label to the search", as the collection page's are "<key>: <value>,
     search the catalog for this label".
@@ -928,14 +1132,14 @@ each catalog; "Read-only — use the huron CLI to create collections and push fi
     "Error: Search · <catalog> · Huron" while a field shows an error.
   - The shell's Catalogs item does not claim the catalog search; until the Search item arrives, no
     primary navigation item is current there.
-  Covered by `src/lib/search.test.ts`, `src/lib/search-links.test.ts`, the search load's and page's
-  tests, `SearchForm`, `SearchResults` and `NoSearchResults` component tests, and `e2e/search.test.ts`
-  (among them "explains label filters it will not search for at the field for adding one" and "keeps
-  a label filter with a line break when the form is sent without scripts"). Still open for S6: a
-  hand-made address of six filters of 100 + 100 four-byte code points, the most the web server's
-  16 KB header limit holds, on 25 rows that a contributor gave those labels, makes a page of 4.7 MB
-  for whoever opens it (300 links of 14 KB each); the organization search shows more rows. S5
-  records this in the AGENTS.md "Frontend: `web/`" section.
+    Covered by `src/lib/search.test.ts`, `src/lib/search-links.test.ts`, the search load's and page's
+    tests, `SearchForm`, `SearchResults` and `NoSearchResults` component tests, and `e2e/search.test.ts`
+    (among them "explains label filters it will not search for at the field for adding one" and "keeps
+    a label filter with a line break when the form is sent without scripts"). Still open for S6: a
+    hand-made address of six filters of 100 + 100 four-byte code points, the most the web server's
+    16 KB header limit holds, on 25 rows that a contributor gave those labels, makes a page of 4.7 MB
+    for whoever opens it (300 links of 14 KB each); the organization search shows more rows. S5
+    records this in the AGENTS.md "Frontend: `web/`" section.
 - **Accepted amendment (2026-10-30, S4 review).** The organization search (`orgs/[org]/search`,
   `src/lib/server/org-search.ts`) and the chooser (`/search`) decide what this section leaves open
   as follows.
@@ -1000,11 +1204,11 @@ each catalog; "Read-only — use the huron CLI to create collections and push fi
     to its search (303) with the address's `q`, `label` and `label_json` as written, so that its
     form explains anything wrong with them; one with none sees §4.5's empty state. Titles as
     above, without the organization.
-  Covered by `src/lib/server/org-search.test.ts` (fan-out, cap, concurrency, the deadline with fake
-  timers, failures, drafts, the exact match within the organization), the two loads' and pages'
-  tests, `src/lib/search.test.ts`, `src/lib/search-links.test.ts`, `e2e/org-search.test.ts`,
-  `e2e/site-search.test.ts`, `e2e/faults/org-search.test.ts` (a failing catalog and the deadline)
-  and `e2e/layout.test.ts`. S5 records this in the AGENTS.md "Frontend: `web/`" section.
+    Covered by `src/lib/server/org-search.test.ts` (fan-out, cap, concurrency, the deadline with fake
+    timers, failures, drafts, the exact match within the organization), the two loads' and pages'
+    tests, `src/lib/search.test.ts`, `src/lib/search-links.test.ts`, `e2e/org-search.test.ts`,
+    `e2e/site-search.test.ts`, `e2e/faults/org-search.test.ts` (a failing catalog and the deadline)
+    and `e2e/layout.test.ts`. S5 records this in the AGENTS.md "Frontend: `web/`" section.
 - **Accepted amendment (2026-10-31, S6 review).** What the S4 notes left open.
   - Crafted addresses: accepted as a residual, which closes "Still open for S6" above. The bound is
     the web's own reading of an address, not Node's 16 KB header limit: `q` holds at most 200 code
@@ -1027,9 +1231,37 @@ each catalog; "Read-only — use the huron CLI to create collections and push fi
     and still runs. The organization search reads it on every visit; deciding the form's Draft
     offer from the shell's roles and reading it only when the address asks for drafts would save
     those two reads and is left for later.
-  Covered by `src/lib/search.test.ts` ("sharedSearch"), `src/routes/(app)/search/page.svelte.test.ts`
-  ("repeats no more of a long search than each of many links may hold, and says so") and
-  `e2e/shell.test.ts`. S5 records this in the AGENTS.md "Frontend: `web/`" section.
+    Covered by `src/lib/search.test.ts` ("sharedSearch"), `src/routes/(app)/search/page.svelte.test.ts`
+    ("repeats no more of a long search than each of many links may hold, and says so") and
+    `e2e/shell.test.ts`. S5 records this in the AGENTS.md "Frontend: `web/`" section.
+
+- **Accepted amendment (2026-11-01, dedicated search).** `/search` is the sole search interface.
+  Its organization selector and catalog selector choose the scope; all catalogs in one organization
+  use the existing bounded fan-out, while one catalog uses the existing cursor-paged search. Query
+  parameters are `organization`, optional `catalog`, `q`, repeated `label`, repeated `state`, and
+  `cursor`. A catalog without an organization identifies its owner. With neither, the remembered
+  visible organization or first visible organization is selected. Text searches the API-supported
+  metadata; labels and states are the supported filters. No arbitrary schema-field predicates are
+  implied. Changing organization resets catalog and cursor; controls work through GET forms without
+  scripts. Existing organization/catalog search addresses redirect here, and label/result links
+  point here with their scope. Organization and catalog section navigation no longer includes
+  Search. Previous search bounds, exact-match handling, permission-aware draft filtering and error
+  handling remain in force.
+
+### 5.1 Registered schema browser
+
+- **Accepted amendment (2026-11-01, registered schemas).** `/schemas?organization=<name>` lists
+  versions registered to that organization; `/schemas?organization=` lists platform versions.
+  Bare `/schemas` chooses the remembered visible organization, otherwise platform. Organization
+  lists describe their own registrations and offer the platform scope for inherited definitions.
+  Lists page by 50 and show name, version and publication information. `/schemas/[id=uuid]` shows
+  a version's scope, publication information and parent, then its resolved field table and a
+  disclosure for the authored document. Parent links allow inheritance to be followed. The API
+  determines visibility, including concealed 404s. Organization detail links carry their source;
+  the detail load validates its syntax and ownership before using it, including sources beyond
+  the first 500 choices. Direct links with an unknown owner offer Choose organization.
+  Summaries use the 1,000-code-point schema text
+  bound, and field/document rendering reuses all `schemaView` bounds. These are read-only pages.
 
 ## 6. Accessibility, responsiveness, determinism
 
@@ -1059,11 +1291,11 @@ each catalog; "Read-only — use the huron CLI to create collections and push fi
     its own still breaks anywhere. Copying copies the path as it is.
   - The static error page (`src/error.html`) sizes its boxes with `border-box`, so its card fits a
     phone.
-  Covered by `e2e/shell.test.ts` ("each link of the bottom navigation has room for its whole focus
-  ring on screen", "brings what Tab reaches from below the screen into view with its whole focus
-  ring", "in forced colors"), `e2e/collections.test.ts` ("answers its metadata.json with a page of
-  its own that fits a phone") and `src/lib/design/components/CopyText.svelte.test.ts`. S5 records
-  this in the AGENTS.md "Frontend: `web/`" section.
+    Covered by `e2e/shell.test.ts` ("each link of the bottom navigation has room for its whole focus
+    ring on screen", "brings what Tab reaches from below the screen into view with its whole focus
+    ring", "in forced colors"), `e2e/collections.test.ts` ("answers its metadata.json with a page of
+    its own that fits a phone") and `src/lib/design/components/CopyText.svelte.test.ts`. S5 records
+    this in the AGENTS.md "Frontend: `web/`" section.
 
 ## 7. Testing and gate
 
@@ -1161,8 +1393,8 @@ each catalog; "Read-only — use the huron CLI to create collections and push fi
     collection is incomplete. The space-weather search for incomplete collections finds it and
     `flare-list-2024`, and the catalog log marks both incomplete. `fixture.mjs` exports
     `titleOf(identifier)`.
-  Covered by `e2e/collections.test.ts` ("a collection whose schema override no longer fits"). S5
-  records this in the AGENTS.md "Frontend: `web/`" section and in `web/README.md`.
+    Covered by `e2e/collections.test.ts` ("a collection whose schema override no longer fits"). S5
+    records this in the AGENTS.md "Frontend: `web/`" section and in `web/README.md`.
 
 ## 9. Repository changes outside `web/`
 
@@ -1262,10 +1494,10 @@ component left unused; all legacy routes (`admin`, `browse`, `polaris`, `setting
   auth routes (3.4); hooks (3.5); API client and guard (3.6); CSP (3.7); types and generator (3.8); route
   matchers; the `(app)` group with `+layout.server.ts`, the shell (4.1) without the header search box,
   switcher, account menu, both error pages, `src/error.html`; pages `/`, `/orgs`, `/orgs/[org]` (layout
-  + catalogs list; the Search sub-nav item may point at the search route that arrives in S4 only if hidden
-  until then — prefer adding it in S4), `/account`, `/login`, `/healthz`; `format.ts`, `capabilities.ts`,
-  `cli.ts`; token contrast fixes; `vite.config.ts` (`svelteTesting`), `.prettierignore`, `.gitignore`;
-  unit/component tests. Gate without e2e (the harness is S2).
+  - catalogs list; the Search sub-nav item may point at the search route that arrives in S4 only if hidden
+    until then — prefer adding it in S4), `/account`, `/login`, `/healthz`; `format.ts`, `capabilities.ts`,
+    `cli.ts`; token contrast fixes; `vite.config.ts` (`svelteTesting`), `.prettierignore`, `.gitignore`;
+    unit/component tests. Gate without e2e (the harness is S2).
 - **S2 Harness** — section 8 (fake IdP + fault proxy, fixture, seed, Playwright config, demo),
   `tsconfig.tools.json` + `npm run check`, e2e for: unauthenticated redirect + returnTo; sign-in/out;
   `/` redirect rules (erin single org, dave multi-org then remembered); org switcher by keyboard; org

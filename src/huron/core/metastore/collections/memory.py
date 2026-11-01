@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from huron.core.lake.errors import NameTaken
+from huron.core.lake.listing import ListOrder, Position
 
 if TYPE_CHECKING:
     import uuid
@@ -53,7 +54,7 @@ class MemoryCollections:
             for n in self._state.namespaces.values()
         )
         if taken:
-            raise NameTaken(f"{collection.identifier!r} is taken", {"name": collection.name})
+            raise NameTaken(f"{collection.identifier!r} is in use", {"name": collection.name})
         self._state.collections[collection.id] = _copy(collection)
 
     async def get(self, collection_id: uuid.UUID) -> Collection | None:
@@ -81,20 +82,20 @@ class MemoryCollections:
         self._state.collections.pop(collection_id, None)
 
     async def list_in_namespace(
-        self, namespace_id: uuid.UUID, states: Container[State], after: str | None, limit: int
+        self,
+        namespace_id: uuid.UUID,
+        states: Container[State],
+        after: Position,
+        limit: int,
+        ordering: ListOrder | None = None,
     ) -> Sequence[Collection]:
-        """Collections in a namespace sorted by name."""
-        rows = sorted(
-            (
-                c
-                for c in self._state.collections.values()
-                if c.namespace_id == namespace_id
-                and c.state in states
-                and (after is None or c.name > after)
-            ),
-            key=lambda c: c.name,
+        """Collections in a namespace in the requested order."""
+        rows = (
+            c
+            for c in self._state.collections.values()
+            if c.namespace_id == namespace_id and c.state in states
         )
-        return [_copy(c) for c in rows[:limit]]
+        return [_copy(c) for c in (ordering or ListOrder()).rows(rows, after, limit)]
 
     async def list_in_catalog(
         self, catalog_id: uuid.UUID, states: Container[State]

@@ -8,13 +8,14 @@ from fastapi import APIRouter, Query, status
 
 from huron.applications.api.authorization import ActorDep
 from huron.applications.api.dependencies import DeclarationsDep, LakeDep, with_share_root
-from huron.applications.api.routes.pagination import Cursor, Limit
+from huron.applications.api.routes.pagination import Cursor, Limit, Order, Sort
 from huron.applications.api.routes.v1.schema.common import Page, page_of
 from huron.applications.api.routes.v1.schema.namespaces import (
     NamespaceConfigureIn,
     NamespaceIn,
     NamespaceOut,
 )
+from huron.core.lake.listing import ListOrder, SortDirection, SortField
 
 __all__ = ["router"]
 
@@ -30,9 +31,13 @@ async def list_namespaces(
     parent: Annotated[str, Query(description="Dotted parent path; empty for the root.")] = "",
     cursor: Cursor = None,
     limit: Limit = None,
+    sort: Sort = SortField.NAME,
+    order: Order = SortDirection.ASC,
 ) -> Page[NamespaceOut]:
     """Direct children of ``parent``."""
-    page = await lake.namespaces.children(actor, catalog, parent, cursor, limit)
+    page = await lake.namespaces.children(
+        actor, catalog, parent, cursor, limit, ListOrder(sort, order)
+    )
     rows = [with_share_root(v.as_dict(), declarations) for v in page.items]
     return page_of(NamespaceOut, rows, page.next_cursor)
 

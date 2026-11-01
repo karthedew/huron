@@ -39,7 +39,9 @@ def login(
     else:
 
         def announce(url: str, code: str) -> None:
-            found.err.print(f"Open {url} and enter the code {code}", markup=False, highlight=False)
+            found.err.print(
+                f"Open {url}. Then enter the code {code}", markup=False, highlight=False
+            )
 
         tokens = oidc.device_flow(announce, found.sleep)
     stored = found.session().login(tokens)
@@ -47,13 +49,13 @@ def login(
 
 
 def logout(ctx: typer.Context) -> None:
-    """Forget the stored tokens."""
+    """Delete the stored tokens."""
     removed = services(ctx).session().logout()
     say(ctx, "logged out" if removed else "not logged in")
 
 
 def whoami(ctx: typer.Context) -> None:
-    """Who you are, your LDAP groups and the roles they hold."""
+    """Show who you are, your LDAP groups and the roles that they hold."""
     me = api(ctx).get("/api/v1/auth/whoami")
     if services(ctx).output.value != "table":
         show(ctx, me)
@@ -80,7 +82,9 @@ def config_show(ctx: typer.Context) -> None:
 @config_app.command("set")
 def config_set(
     ctx: typer.Context,
-    key: Annotated[str, typer.Argument(help=", ".join(CONFIG_KEYS))],
+    key: Annotated[
+        str, typer.Argument(help="One of " + ", ".join(f"`{key}`" for key in CONFIG_KEYS) + ".")
+    ],
     value: str,
 ) -> None:
     """Set one configuration value."""

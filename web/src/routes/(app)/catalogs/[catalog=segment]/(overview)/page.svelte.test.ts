@@ -36,7 +36,12 @@ async function show(
 	page.url = new URL(`http://localhost:4173${path}`);
 	render(Page, {
 		props: {
-			data: { ...catalogPageData({ roles }), namespaces, nextCursor },
+			data: {
+				...catalogPageData({ roles }),
+				namespaces,
+				nextCursor,
+				namespaceSort: { sort: 'name', order: 'asc' }
+			},
 			params: { catalog: 'heliophysics' },
 			form: undefined
 		}
@@ -45,30 +50,29 @@ async function show(
 }
 
 describe('the catalog overview', () => {
-	it('lists the top-level namespaces with their kind and what they hold', async () => {
+	it('lists the top-level namespaces with separate child counts', async () => {
 		await show(ROOT);
-		const [fields, solarWind] = within(
-			screen.getByRole('list', { name: 'Top-level namespaces' })
-		).getAllByRole('listitem');
+		const [fields, solarWind] = within(screen.getByRole('table', { name: 'Top-level namespaces' }))
+			.getAllByRole('row')
+			.slice(1);
 		expect(within(fields).getByRole('link', { name: 'fields' })).toHaveAttribute(
 			'href',
 			'/catalogs/heliophysics/namespaces/fields'
 		);
-		expect(fields).toHaveTextContent('Holds collections');
-		expect(fields).toHaveTextContent('60 collections');
-		expect(solarWind).toHaveTextContent('Structure only');
-		expect(solarWind).toHaveTextContent('2 namespaces');
+		expect(
+			within(fields)
+				.getAllByRole('cell')
+				.slice(0, 2)
+				.map((cell) => cell.textContent)
+		).toEqual(['0', '60']);
+		expect(
+			within(solarWind)
+				.getAllByRole('cell')
+				.slice(0, 2)
+				.map((cell) => cell.textContent)
+		).toEqual(['2', '0']);
 		expect(document.title).toBe('Heliophysics · Heliophysics Division · Huron');
 		expect(screen.queryByRole('region', { name: /Create/ })).toBeNull();
-	});
-
-	it('shows catalog administrators how to add a namespace', async () => {
-		await show(ROOT, { roles: [catalogRole('catalog_admin')] });
-		const hint = screen.getByRole('region', { name: 'Create a namespace here' });
-		expect(within(hint).getByRole('textbox')).toHaveValue(
-			'huron --catalog heliophysics create namespace heliophysics.<name> --allow-collections'
-		);
-		expect(screen.getByText(/the new namespace holds only other namespaces/)).toBeInTheDocument();
 	});
 
 	it('shows contributors no hint', async () => {
@@ -76,10 +80,10 @@ describe('the catalog overview', () => {
 		expect(screen.queryByRole('region', { name: /Create/ })).toBeNull();
 	});
 
-	it('says when the catalog has no namespaces, with the hint for administrators', async () => {
+	it('says when the catalog has no namespaces', async () => {
 		await show([], { roles: [catalogRole('catalog_admin')] });
 		expect(screen.getByText('No namespaces yet.')).toBeInTheDocument();
-		expect(screen.getByRole('region', { name: 'Create a namespace here' })).toBeInTheDocument();
+		expect(screen.queryByRole('region', { name: 'Create a namespace here' })).toBeNull();
 	});
 
 	it('pages through the namespaces and says when a later page is empty', async () => {

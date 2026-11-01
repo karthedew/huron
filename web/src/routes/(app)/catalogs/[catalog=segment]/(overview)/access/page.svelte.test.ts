@@ -125,24 +125,6 @@ describe('the catalog access tab', () => {
 		expect(role('Contributor')).toHaveTextContent('No groups.');
 	});
 
-	it('shows catalog administrators and above how to grant a role', async () => {
-		await show(ACCESS, { roles: [catalogRole('catalog_admin')] });
-		const hint = screen.getByRole('region', {
-			name: 'Grant a role, then apply the directory ACLs'
-		});
-		expect(within(hint).getByRole('textbox')).toHaveValue(
-			[
-				'huron --catalog heliophysics adm grant <role> <ldap-group>',
-				'huron --catalog heliophysics adm apply-acl heliophysics --recursive'
-			].join('\n')
-		);
-		document.body.innerHTML = '';
-		await show(ACCESS, {
-			roles: [{ scope: 'organization', scope_id: organizationFixture().id, role: 'org_admin' }]
-		});
-		expect(screen.getByRole('region', { name: /Grant a role/ })).toBeInTheDocument();
-	});
-
 	it('shows contributors and readers no hint', async () => {
 		await show(ACCESS, { roles: [catalogRole('contributor')] });
 		expect(screen.queryByRole('region', { name: /Grant a role/ })).toBeNull();

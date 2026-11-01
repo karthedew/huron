@@ -95,7 +95,7 @@ class Authorizer:
         """Raise :class:`Forbidden` unless the actor holds ``privilege`` at ``scope``."""
         if not await self.holds(actor, privilege, scope):
             raise Forbidden(
-                f"{privilege} is required",
+                f"this operation needs the {privilege} privilege",
                 {"privilege": str(privilege), "scope": str(scope.type)},
             )
 

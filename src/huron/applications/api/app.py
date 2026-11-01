@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from huron.applications.api.logs import configure_logging
 from huron.applications.api.problems import install_problem_handlers
 from huron.applications.api.routes import discovery, health
 from huron.applications.api.routes.v1.router import router as v1
@@ -19,8 +20,9 @@ __all__ = ["create_app"]
 def create_app(settings: Settings | None = None, runtime: Runtime | None = None) -> FastAPI:
     """Build the application.
 
-    With ``runtime`` the caller owns startup and shutdown; otherwise the lifespan builds the
-    runtime from ``settings`` and closes it on shutdown.
+    With ``runtime`` the caller owns startup and shutdown, logging included; otherwise the
+    lifespan configures logging at ``settings.log_level``, builds the runtime from ``settings``
+    and closes it on shutdown.
     """
 
     @asynccontextmanager
@@ -31,6 +33,7 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
             return
         if settings is None:
             raise RuntimeError("create_app needs settings or a runtime")
+        configure_logging(settings.log_level)
         built = await build_runtime(settings)
         app.state.runtime = built
         try:

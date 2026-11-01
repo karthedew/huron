@@ -91,7 +91,7 @@ class Organizations:
             authz = Authorizer(tx.grants)
             organization = await find_organization(tx, authz, actor, name)
             await authz.require(actor, Privilege.ORGANIZATION_DELETE, PLATFORM)
-            self._declarations.require_undeclared(name, "remove it from there first")
+            self._declarations.require_undeclared(name, "Delete the declaration first")
             count = await tx.organizations.catalog_count(organization.id)
             if count:
                 raise OrganizationNotEmpty(

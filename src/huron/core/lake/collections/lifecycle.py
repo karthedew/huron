@@ -20,6 +20,7 @@ from huron.core.lake.collections.models import (
     Unset,
     Update,
 )
+from huron.core.lake.listing import ListOrder
 from huron.core.lake.lookups import (
     check_version,
     collection_view,
@@ -82,7 +83,7 @@ class Collections:
             parent = await find_namespace(tx, found, namespace)
             if not parent.collections_allowed:
                 raise CollectionsNotAllowed(
-                    f"{catalog}.{namespace} does not allow collections",
+                    f"namespace {catalog}.{namespace} does not allow collections",
                     {"namespace": f"{catalog}.{namespace}"},
                 )
             now = self._clock.now()
@@ -126,10 +127,12 @@ class Collections:
         namespace: str,
         cursor: str | None = None,
         limit: int | None = None,
+        ordering: ListOrder | None = None,
     ) -> Page[CollectionView]:
         """Collections directly in a namespace; drafts only for actors who may create them."""
+        ordering = ordering or ListOrder()
         size = clamp_limit(limit)
-        after = cursor_value(cursor)
+        after = ordering.after(cursor)
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
             found = await find_catalog(tx, authz, actor, catalog)
@@ -137,10 +140,10 @@ class Collections:
             parent = await find_namespace(tx, found, namespace)
             states = await self._visible_states(authz, actor, found)
             rows = await tx.collections.list_in_namespace(
-                parent.id, states, None if after is None else str(after), size + 1
+                parent.id, states, after, size + 1, ordering
             )
             views = [await collection_view(tx, row, found) for row in rows]
-        return page_of(views, size, lambda view: view.collection.name)
+        return ordering.page(views, size, lambda view: view.collection)
 
     async def search(
         self,
@@ -209,7 +212,7 @@ class Collections:
             )
             if collection.state is not State.DRAFT:
                 raise Conflict(
-                    "only drafts can be activated",
+                    "you can activate only a draft collection",
                     {"state": str(collection.state), "allowed": ["draft"]},
                 )
             check_version(collection.version, expected_version)
@@ -255,7 +258,7 @@ class Collections:
                 return
             if collection.file_count:
                 raise CollectionNotEmpty(
-                    f"{collection.identifier} still has {collection.file_count} files",
+                    f"collection {collection.identifier} still has {collection.file_count} files",
                     {"file_count": collection.file_count},
                 )
             await tx.collections.delete(collection.id)

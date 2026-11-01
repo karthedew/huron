@@ -43,7 +43,7 @@ class Config:
         if path.exists():
             loaded = yaml.safe_load(path.read_text()) or {}
             if not isinstance(loaded, dict):
-                raise UsageError(f"{path} is not a mapping")
+                raise UsageError(f"{path} does not contain a YAML mapping")
             names = {field.name for field in fields(cls)}
             values = {k: v for k, v in loaded.items() if k in names}
         for key, variable in _ENVIRONMENT.items():
@@ -56,12 +56,15 @@ class Config:
     def check(self) -> None:
         """Refuse values the CLI cannot use."""
         if self.acl_backend not in ("posix", "none"):
-            raise UsageError("acl_backend is posix or none")
+            raise UsageError("`acl_backend` must be `posix` or `none`")
 
     def set(self, key: str, value: str) -> Config:
         """A copy with ``key`` set; only the documented keys may be set."""
         if key not in CONFIG_KEYS:
-            raise UsageError(f"unknown key {key!r}", hint="keys: " + ", ".join(CONFIG_KEYS))
+            raise UsageError(
+                f"there is no configuration key {key!r}",
+                hint="use one of these keys: " + ", ".join(CONFIG_KEYS),
+            )
         updated = replace(self, **{key: value})  # type: ignore[arg-type]
         updated.check()
         return updated

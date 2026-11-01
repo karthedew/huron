@@ -30,13 +30,13 @@ class CollectionPicker:
             if not choices:
                 raise UsageError(
                     f"catalog {catalog} has no namespaces",
-                    hint="create one with: huron create namespace <identifier>",
+                    hint="to create one, run `huron create namespace <identifier>`",
                 )
             where = f"{catalog}.{path}" if path else catalog
             question = (
-                f"{where} is empty; choose {UP} to go up"
+                f"{where} is empty. Choose {UP} to go to the level above"
                 if list(choices) == [UP]
-                else f"{where}: choose a namespace (ending in /) or a collection"
+                else f"{where}: choose a namespace (its name ends with /) or a collection"
             )
             kind, value = choices[self._prompter.select(question, list(choices))]
             if kind == "collection":

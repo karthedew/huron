@@ -1,0 +1,151 @@
+[
+	{
+		"label": "Overview",
+		"slug": "reference/cli"
+	},
+	{
+		"label": "Catalog",
+		"items": [
+			{
+				"label": "Overview",
+				"slug": "reference/cli/panels/catalog"
+			},
+			{
+				"label": "org",
+				"slug": "reference/cli/org"
+			},
+			{
+				"label": "catalog",
+				"slug": "reference/cli/catalog"
+			},
+			{
+				"label": "get",
+				"slug": "reference/cli/get"
+			},
+			{
+				"label": "describe",
+				"slug": "reference/cli/describe"
+			},
+			{
+				"label": "tree",
+				"slug": "reference/cli/tree"
+			},
+			{
+				"label": "search",
+				"slug": "reference/cli/search"
+			},
+			{
+				"label": "checkout",
+				"slug": "reference/cli/checkout"
+			}
+		]
+	},
+	{
+		"label": "Collection",
+		"items": [
+			{
+				"label": "Overview",
+				"slug": "reference/cli/panels/collection"
+			},
+			{
+				"label": "status",
+				"slug": "reference/cli/status"
+			},
+			{
+				"label": "add",
+				"slug": "reference/cli/add"
+			},
+			{
+				"label": "rm",
+				"slug": "reference/cli/rm"
+			},
+			{
+				"label": "pull",
+				"slug": "reference/cli/pull"
+			},
+			{
+				"label": "push",
+				"slug": "reference/cli/push"
+			},
+			{
+				"label": "edit",
+				"slug": "reference/cli/edit"
+			},
+			{
+				"label": "validate",
+				"slug": "reference/cli/validate"
+			},
+			{
+				"label": "publish",
+				"slug": "reference/cli/publish"
+			},
+			{
+				"label": "activate",
+				"slug": "reference/cli/activate"
+			}
+		]
+	},
+	{
+		"label": "Manage",
+		"items": [
+			{
+				"label": "Overview",
+				"slug": "reference/cli/panels/manage"
+			},
+			{
+				"label": "create",
+				"slug": "reference/cli/create"
+			},
+			{
+				"label": "delete",
+				"slug": "reference/cli/delete"
+			},
+			{
+				"label": "set",
+				"slug": "reference/cli/set"
+			},
+			{
+				"label": "unset",
+				"slug": "reference/cli/unset"
+			}
+		]
+	},
+	{
+		"label": "Administration",
+		"items": [
+			{
+				"label": "Overview",
+				"slug": "reference/cli/panels/administration"
+			},
+			{
+				"label": "adm",
+				"slug": "reference/cli/adm"
+			}
+		]
+	},
+	{
+		"label": "Settings",
+		"items": [
+			{
+				"label": "Overview",
+				"slug": "reference/cli/panels/settings"
+			},
+			{
+				"label": "login",
+				"slug": "reference/cli/login"
+			},
+			{
+				"label": "logout",
+				"slug": "reference/cli/logout"
+			},
+			{
+				"label": "whoami",
+				"slug": "reference/cli/whoami"
+			},
+			{
+				"label": "config",
+				"slug": "reference/cli/config"
+			}
+		]
+	}
+]

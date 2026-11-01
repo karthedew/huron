@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
 
+    from huron.core.lake.listing import ListOrder, Position
     from huron.core.lake.namespaces.models import Namespace
 
 __all__ = ["NamespaceStore"]
@@ -29,9 +30,14 @@ class NamespaceStore(Protocol):
         ...
 
     async def children(
-        self, catalog_id: uuid.UUID, parent_id: uuid.UUID | None, after: str | None, limit: int
+        self,
+        catalog_id: uuid.UUID,
+        parent_id: uuid.UUID | None,
+        after: Position,
+        limit: int,
+        ordering: ListOrder | None = None,
     ) -> Sequence[Namespace]:
-        """Direct children of ``parent_id`` (``None``: the catalog root), sorted by name."""
+        """Direct children of ``parent_id`` (``None``: the catalog root), in the requested order."""
         ...
 
     async def child_counts(self, namespace_id: uuid.UUID) -> tuple[int, int]:

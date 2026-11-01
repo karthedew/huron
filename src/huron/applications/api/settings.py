@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, PrivateAttr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CONFIG_FILE_VARIABLE",
+    "LogLevel",
     "OrganizationEntry",
     "RoleGroupsEntry",
     "Settings",
@@ -40,6 +41,9 @@ __all__ = [
 ]
 
 CONFIG_FILE_VARIABLE = "HURON_CONFIG_FILE"
+
+#: The level names ``log_level`` accepts, in any case; the value is kept upper-case.
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
 class RoleGroupsEntry(BaseModel):
@@ -117,7 +121,8 @@ class Settings(BaseSettings):
 
     ``organizations`` present (even an empty list) puts the service in managed mode: the
     configuration declares the organizations. ``HURON_ORGANIZATIONS`` (a JSON list) replaces
-    the file's list.
+    the file's list. ``log_level`` is a standard level name in any case; another value fails
+    startup.
     """
 
     model_config = SettingsConfigDict(env_prefix="HURON_", extra="ignore")
@@ -135,7 +140,7 @@ class Settings(BaseSettings):
     group_directory_url: str
     platform_admin_group: str
     pool_size: int = 10
-    log_level: str = "INFO"
+    log_level: LogLevel = "INFO"
     organizations: list[OrganizationEntry] | None = None
 
     _declarations: Declarations = PrivateAttr(default_factory=Declarations)
@@ -155,6 +160,11 @@ class Settings(BaseSettings):
         if path:
             sources.append(StrictYamlSource(settings_cls, Path(path)))
         return tuple(sources)
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _upper_case_level(cls, value: Any) -> Any:
+        return value.upper() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _declare(self) -> Settings:

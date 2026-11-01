@@ -2,6 +2,12 @@
 # settings, which may hold secrets.
 node_modules
 build
+# The documentation site's install, build and generated pages: the image builds them afresh.
+docs-site/node_modules
+docs-site/dist
+docs-site/.astro
+docs-site/src/content/docs/guides
+docs-site/src/content/docs/administration
 .svelte-kit
 test-results
 playwright-report

@@ -131,7 +131,9 @@ describe('/account page', () => {
 
 	it('shows how to sign in with the CLI, without server addresses', async () => {
 		await show(SENTENCES);
-		const cli = screen.getByRole('region', { name: 'Sign in and see what Huron knows about you' });
+		const cli = screen.getByRole('region', {
+			name: 'Log in, then show your name, groups and roles'
+		});
 		expect(within(cli).getByRole('textbox')).toHaveValue('huron login\nhuron whoami');
 		expect(cli.textContent).not.toMatch(/https?:/);
 	});

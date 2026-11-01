@@ -10,7 +10,7 @@
 	--brand-soft: #e2faf6;
 	/*
 		Search matches (`<mark>`), in both themes. Text keeps its color: the row's fg text reads at
-		13.5:1 on it over a card in light and 8.2:1 in dark, muted text would not (4.4:1 and 3.6:1).
+		13.5:1 on it over a card in light and 8.5:1 in dark, muted text would not (4.4:1 and 3.8:1).
 	*/
 	--mark: color-mix(in srgb, var(--brand) 30%, transparent);
 	/* Text and fills on brand-colored surfaces, in both themes. */
@@ -22,7 +22,8 @@
 	--code-bg: #f0f2f4;
 	--card: #ffffff;
 	--card-raised: #ffffff;
-	--sidebar: #f0f2f4;
+	/* Shell and content surfaces match Starlight's docs header and page in each theme. */
+	--sidebar: #f6f7f9;
 	--sidebar-hover: #e6e9ed;
 	--warn-bg: #fff6e8;
 	--warn-line: #e9b863;
@@ -54,10 +55,10 @@
 	--accent: #2cdbc4;
 	--accent2: #f1b867;
 	--code-bg: #1c2127;
-	--card: #181c21;
+	--card: #17181c;
 	--card-raised: #1d2228;
-	--sidebar: #15191e;
-	--sidebar-hover: #232930;
+	--sidebar: #23262f;
+	--sidebar-hover: #30343d;
 	--warn-bg: #332719;
 	--warn-line: #7b5b2d;
 	--note-bg: #12312e;

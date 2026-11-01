@@ -3,9 +3,6 @@
 	import { Lock } from '@lucide/svelte';
 	import type { RoleScope } from '$api/types';
 	import Badge from '$design/components/Badge.svelte';
-	import CliHint from '$design/components/CliHint.svelte';
-	import { catalogCapabilities } from '$lib/capabilities';
-	import { cliCommand } from '$lib/cli';
 	import { displayName } from '$lib/names';
 	import { visibleOrganization } from '$lib/organizations';
 	import { ROLE_ABILITIES, ROLE_NAMES } from '$lib/roles';
@@ -17,14 +14,7 @@
 	const catalog = $derived(data.catalog);
 	const owner = $derived(visibleOrganization(catalog.organization, data.organizations));
 	const ownerName = $derived(owner ? displayName(owner) : catalog.organization);
-	const can = $derived(catalogCapabilities(data.roles, catalog, data.organizations));
 	const mine = $derived(new Set(data.user.groups));
-	const grantCommand = $derived(
-		[
-			cliCommand({ verb: 'adm grant', catalog: catalog.name }),
-			cliCommand({ verb: 'adm apply-acl', catalog: catalog.name })
-		].join('\n')
-	);
 </script>
 
 <svelte:head><title>{pageTitle('Access', displayName(catalog))}</title></svelte:head>
@@ -87,10 +77,5 @@
 				</li>
 			{/each}
 		</ul>
-		{#if can.administerCatalog}
-			<div class="mt-6 max-w-3xl">
-				<CliHint title="Grant a role, then apply the directory ACLs" command={grantCommand} />
-			</div>
-		{/if}
 	{/if}
 </section>

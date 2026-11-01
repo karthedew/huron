@@ -79,7 +79,7 @@ test.describe('when the API fails', () => {
 		expect(response?.status()).toBe(200);
 		const main = page.getByRole('main');
 		await expect(main.getByRole('region', { name: 'Signed in' })).toContainText('Oscar Ortiz');
-		await expect(main.getByRole('region', { name: 'Roles' })).toContainText(
+		await expect(main.getByRole('region', { name: 'Roles', exact: true })).toContainText(
 			"Your roles couldn't be loaded."
 		);
 		await expect(page.getByRole('banner').getByText('Organizations unavailable')).toBeVisible();

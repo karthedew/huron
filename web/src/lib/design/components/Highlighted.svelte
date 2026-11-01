@@ -14,11 +14,15 @@
 
 <!--
 	The parts of one text, in order; two may be alike. The match keeps the text's own color, which
-	reads on the mark in both themes where that color is the foreground (see `--mark`).
+	reads on the mark in both themes where that color is the foreground (see `--mark`). Forced
+	colors use the system's paired highlight colors without a translucent background.
 -->
 {#each parts as part}
 	{#if part.match}
-		<mark class="rounded-xs bg-app-mark box-decoration-clone text-inherit">{part.text}</mark>
+		<mark
+			class="rounded-xs bg-app-mark box-decoration-clone text-inherit forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]"
+			>{part.text}</mark
+		>
 	{:else}
 		{part.text}
 	{/if}

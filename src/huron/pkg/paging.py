@@ -59,9 +59,9 @@ def decode_cursor(cursor: str) -> tuple[CursorValue, ...]:
     try:
         decoded = json.loads(base64.urlsafe_b64decode(padded.encode()))
     except (binascii.Error, ValueError, UnicodeDecodeError) as error:
-        raise InvalidCursor("cursor is not readable", {"cursor": cursor}) from error
+        raise InvalidCursor("the cursor is unreadable", {"cursor": cursor}) from error
     if not isinstance(decoded, list) or not decoded or decoded[0] != CURSOR_VERSION:
-        raise InvalidCursor("cursor version is not supported", {"cursor": cursor})
+        raise InvalidCursor("Huron does not support the version of the cursor", {"cursor": cursor})
     return tuple(decoded[1:])
 
 

@@ -15,11 +15,14 @@ describe('collectionRow', () => {
 	it('keeps what a list shows of a collection', () => {
 		expect(collectionRow(collectionFixture())).toEqual({
 			id: '0192f2a4-0000-7000-8000-000000000401',
+			name: 'mag-l2-2024',
 			identifier: 'heliophysics.solar-wind.ace.mag-l2-2024',
 			catalog: 'heliophysics',
 			state: 'active',
 			title: 'ACE magnetometer level 2, 2024',
 			fileCount: 3,
+			createdBy: 'sub-dave',
+			createdAt: '2026-10-02T09:00:00+00:00',
 			updatedAt: '2026-10-03T09:00:00+00:00'
 		});
 	});

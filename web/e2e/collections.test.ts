@@ -54,7 +54,7 @@ function metadata(page: Page): Locator {
 }
 
 function details(page: Page): Locator {
-	return main(page).getByRole('complementary', { name: 'Details' });
+	return main(page).getByRole('region', { name: 'Use this collection' });
 }
 
 function tabs(page: Page): Locator {
@@ -71,27 +71,31 @@ async function apiCollection(username: Username, identifier: string) {
 }
 
 test.describe('an active collection', () => {
-	test('heads its pages with its title, identifier, state and description', async ({ page }) => {
+	test('heads its pages with a title, copy control and state', async ({ page }) => {
 		await signIn(page, 'bob');
 		await page.goto(collectionPath(MAG));
 		await expect(page).toHaveTitle(`${titleOf(MAG)} · Heliophysics · Huron`);
 		const header = main(page).locator('header');
 		await expect(header.getByRole('heading', { level: 1 })).toHaveText(titleOf(MAG));
-		await expect(header.getByText(MAG, { exact: true })).toBeVisible();
-		await expect(header.getByText('Active', { exact: true })).toBeVisible();
-		await expect(header).toContainText(String(collection(MAG).metadata.description));
+		await expect(header.getByRole('button', { name: 'Copy full path' })).toBeVisible();
+		await expect(main(page).getByText('Active', { exact: true })).toBeVisible();
+		await expect(main(page)).toContainText(String(collection(MAG).metadata.description));
 		await expect(tabs(page).getByRole('link')).toHaveText([
 			'Overview',
+			'Metadata',
 			`Files${recordedFiles(collection(MAG)).length}`,
 			'Commits',
 			'Activity',
-			'Schema'
+			'Schema',
+			'CLI'
 		]);
 		await expect(tabs(page).getByRole('link', { name: 'Overview' })).toHaveAttribute(
 			'aria-current',
 			'page'
 		);
-		const crumbs = page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link');
+		const crumbs = page
+			.getByRole('navigation', { name: 'Breadcrumb', includeHidden: true })
+			.getByRole('link', { includeHidden: true });
 		await expect(crumbs).toHaveText([
 			'Heliophysics Division',
 			'Heliophysics',
@@ -103,9 +107,9 @@ test.describe('an active collection', () => {
 		await expect(crumbs.last()).toHaveAttribute('href', collectionPath(MAG));
 	});
 
-	test('shows its metadata against the catalog schema', async ({ page }) => {
+	test('shows its full metadata against the catalog schema on Metadata', async ({ page }) => {
 		await signIn(page, 'carol');
-		await page.goto(collectionPath(MAG));
+		await page.goto(collectionPath(MAG, '/metadata'));
 		const fields = metadata(page);
 		await expect(fields.locator('xpath=./dl/div/dt')).toHaveText([
 			'Contacts',
@@ -133,7 +137,7 @@ test.describe('an active collection', () => {
 		await expect(labels).toHaveText(['instrument: mag', 'level: l2', 'mission: ace']);
 		await expect(labels.last()).toHaveAttribute(
 			'href',
-			'/catalogs/heliophysics/search?label=mission%3Dace'
+			'/search?catalog=heliophysics&label=mission%3Dace'
 		);
 		// The name starts with what the chip shows and says that it searches.
 		await expect(labels.last()).toHaveAccessibleName(
@@ -160,18 +164,22 @@ test.describe('an active collection', () => {
 		await expect(definition(aside, 'Share path').getByRole('status')).toHaveText('Copied');
 		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(share);
 		await expect(definition(aside, 'Files').getByRole('link')).toHaveText('3 files');
-		await expect(definition(aside, 'Created')).toContainText('by dave');
-		await expect(definition(aside, 'Activated').locator('time')).toHaveText(
+		const record = main(page)
+			.locator('details')
+			.filter({ has: page.getByText('Record details', { exact: true }) });
+		await record.locator('summary').click();
+		await expect(definition(record, 'Created')).toContainText('by dave');
+		await expect(definition(record, 'Activated').locator('time')).toHaveText(
 			/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$/
 		);
-		await expect(definition(aside, 'Schema').getByRole('link')).toHaveText('huron-base v1');
+		await expect(definition(record, 'Schema').getByRole('link')).toHaveText('huron-base v1');
 		await expect(
-			definition(aside, 'Metadata file').getByRole('link', { name: 'metadata.json' })
+			definition(record, 'Metadata file').getByRole('link', { name: 'metadata.json' })
 		).toHaveAttribute('href', collectionPath(MAG, '/metadata.json'));
-		await aside.getByText('Technical details').click();
+
 		const version = 'version' in body ? String(body.version) : '';
-		await expect(aside).toContainText(`Record revision ${version}`);
-		await expect(aside).toContainText('id' in body ? String(body.id) : 'no id');
+		await expect(record).toContainText(`Record revision ${version}`);
+		await expect(record).toContainText('id' in body ? String(body.id) : 'no id');
 	});
 
 	test('lists its files in a scroll region with their sizes, hashes and recording', async ({
@@ -350,7 +358,9 @@ test.describe('a draft', () => {
 		await expect(
 			main(page).getByRole('link', { name: 'Back to Heliophysics Division' })
 		).toHaveAttribute('href', '/orgs/helio');
-		const crumbs = page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link');
+		const crumbs = page
+			.getByRole('navigation', { name: 'Breadcrumb', includeHidden: true })
+			.getByRole('link', { includeHidden: true });
 		await expect(crumbs).toHaveText(['Heliophysics Division', 'Heliophysics']);
 		const tree = page.getByRole('navigation', { name: 'Explorer' });
 		await expect(tree.getByRole('link', { name: 'mag-l1-draft' })).toHaveCount(0);
@@ -363,17 +373,17 @@ test.describe('a draft', () => {
 			await page.goto(collectionPath(DRAFT));
 			const header = main(page).locator('header');
 			await expect(header.getByRole('heading', { level: 1 })).toHaveText(titleOf(DRAFT));
-			await expect(header.getByText('Draft', { exact: true })).toBeVisible();
-			await expect(header).toContainText(
+			await expect(main(page).getByText('Draft', { exact: true })).toBeVisible();
+			await expect(main(page)).toContainText(
 				'Reserved, not yet activated: no directory or files on the share; visible to contributors only.'
 			);
 			await expect(tabs(page).getByRole('link', { name: 'Files' })).toHaveText('Files');
 			const problems = main(page).getByRole('region', { name: '1 problem in the metadata' });
 			await expect(problems).toContainText("'description' is a required property");
-			await expect(definition(metadata(page), 'Description')).toHaveText('Missing');
 			await expect(definition(details(page), 'Share path')).toHaveText('No directory yet');
 			await expect(details(page).getByRole('link', { name: 'metadata.json' })).toHaveCount(0);
 			await expect(definition(details(page), 'Files')).toHaveCount(0);
+			await tabs(page).getByRole('link', { name: 'CLI', exact: true }).click();
 			const activate = main(page).getByRole('region', { name: 'Activate this draft' });
 			await expect(activate.locator('pre')).toHaveText(
 				`huron --catalog heliophysics activate collection ${DRAFT}`
@@ -381,6 +391,8 @@ test.describe('a draft', () => {
 			await expect(
 				main(page).getByRole('region', { name: 'Add files to this collection' })
 			).toHaveCount(0);
+			await tabs(page).getByRole('link', { name: 'Metadata', exact: true }).click();
+			await expect(definition(metadata(page), 'Description')).toHaveText('Missing');
 		});
 	}
 
@@ -399,22 +411,21 @@ test.describe('an incomplete collection', () => {
 	test('names what the schema now requires and marks it missing', async ({ page }) => {
 		await signIn(page, 'erin');
 		await page.goto(collectionPath(FLARES));
-		const header = main(page).locator('header');
-		await expect(header.getByText('Incomplete', { exact: true })).toBeVisible();
-		await expect(header).toContainText(
+		await expect(main(page).getByText('Incomplete', { exact: true })).toBeVisible();
+		await expect(main(page)).toContainText(
 			"The catalog's schema now requires fields this collection lacks. Its files are unaffected."
 		);
 		const problems = main(page).getByRole('region', { name: '1 problem in the metadata' });
 		await expect(problems.getByRole('listitem')).toHaveText(["'mission' is a required property"]);
-		await expect(definition(metadata(page), 'Mission')).toHaveText('Missing');
-		await expect(details(page).getByRole('link', { name: 'metadata.json' })).toBeVisible();
-		await expect(definition(details(page), 'Schema')).toHaveText('space-weather v1');
 		await expect(main(page).getByRole('region', { name: /^Complete the metadata/ })).toHaveCount(0);
+		await tabs(page).getByRole('link', { name: 'Metadata', exact: true }).click();
+		await expect(definition(metadata(page), 'Mission')).toHaveText('Missing');
+		await expect(metadata(page).getByRole('link', { name: 'metadata.json' })).toBeVisible();
 	});
 
 	test('shows contributors how to edit and publish its metadata', async ({ page }) => {
 		await signIn(page, 'dave');
-		await page.goto(collectionPath(FLARES));
+		await page.goto(collectionPath(FLARES, '/cli'));
 		const hint = main(page).getByRole('region', { name: 'Complete the metadata, then publish it' });
 		await expect(hint.locator('pre')).toHaveText(
 			`huron --catalog space-weather edit meta ${FLARES}\n` +
@@ -433,37 +444,41 @@ test.describe('a collection whose schema override no longer fits', () => {
 	}) => {
 		await signIn(page, 'erin');
 		await page.goto(collectionPath(STORMS));
-		const header = main(page).locator('header');
-		await expect(header.getByText('Incomplete', { exact: true })).toBeVisible();
-		await expect(header).toContainText(
+		await expect(main(page).getByText('Incomplete', { exact: true })).toBeVisible();
+		await expect(main(page)).toContainText(
 			"Its schema override no longer fits the catalog's schema. Its files are unaffected."
 		);
-		await expect(header).not.toContainText("The catalog's schema now requires fields");
+		await expect(main(page)).not.toContainText("The catalog's schema now requires fields");
 		const problems = main(page).getByRole('region', { name: '1 problem with the schema override' });
 		await expect(problems).toContainText(
 			'The collection is active again once its schema override is fixed or removed and its metadata is valid.'
 		);
 		await expect(problems.getByRole('listitem')).toHaveCount(1);
-		await expect(metadata(page)).toContainText(
-			"Its schema override no longer fits the catalog's schema, so the fields show by their keys."
-		);
-		await expect(definition(metadata(page), 'Mission')).toHaveText('7');
+
+		await tabs(page).getByRole('link', { name: 'CLI', exact: true }).click();
 		await expect(
 			main(page).getByRole('region', { name: 'With the CLI' }).getByRole('region')
 		).toHaveCount(1);
 		await expect(
-			main(page).getByRole('region', { name: 'Check out this collection' }).locator('pre')
+			main(page).getByRole('region', { name: 'Select this collection' }).locator('pre')
 		).toHaveText(`huron --catalog space-weather checkout ${STORMS}`);
+		await tabs(page).getByRole('link', { name: 'Metadata', exact: true }).click();
+		await expect(metadata(page)).toContainText(
+			"Its schema override no longer fits the catalog's schema, so the fields show by their keys."
+		);
+		await expect(definition(metadata(page), 'Mission')).toHaveText('7');
 	});
 
 	test('shows a contributor how to replace or remove the override, not to edit the metadata', async ({
 		page
 	}) => {
 		await signIn(page, 'dave');
-		await page.goto(collectionPath(STORMS));
+		await page.goto(collectionPath(STORMS, '/cli'));
 		await expect(
 			main(page)
-				.getByRole('region', { name: 'Replace the schema override with one that fits' })
+				.getByRole('region', {
+					name: 'Replace the schema override with one that fits the catalog schema'
+				})
 				.locator('pre')
 		).toHaveText(`huron --catalog space-weather set override <override.json> ${STORMS}`);
 		await expect(
@@ -509,14 +524,16 @@ test.describe('the hints of a collection', () => {
 		await expect(definition(details(page), 'Share path')).toContainText(
 			`${MOUNT_PREFIX}/helio/heliophysics/solar-wind/ace/mag-l2-2024`
 		);
+		await tabs(page).getByRole('link', { name: 'CLI', exact: true }).click();
 		await expect(regions(page)).toHaveCount(1);
 		await expect(
-			main(page).getByRole('region', { name: 'Check out this collection' }).locator('pre')
+			main(page).getByRole('region', { name: 'Select this collection' }).locator('pre')
 		).toHaveText(`huron --catalog heliophysics checkout ${MAG}`);
 
 		await logOut(page);
 		await signIn(page, 'dave');
 		await page.goto(collectionPath(MAG));
+		await tabs(page).getByRole('link', { name: 'CLI', exact: true }).click();
 		await expect(regions(page)).toHaveCount(2);
 		// `add` and `push` act on the collection checked out last, so the hint checks this one out.
 		await expect(
@@ -528,6 +545,7 @@ test.describe('the hints of a collection', () => {
 		);
 		await page.goto(collectionPath(LEAF, '/files'));
 		await expect(main(page).getByText('No files yet.')).toBeVisible();
+		await tabs(page).getByRole('link', { name: 'CLI', exact: true }).click();
 		await expect(
 			main(page).getByRole('region', { name: 'Add files to this collection' }).locator('pre')
 		).toHaveText(
@@ -616,9 +634,11 @@ test.describe('a deep collection', () => {
 	test('shows the way down to it in the breadcrumbs and the explorer', async ({ page }) => {
 		await signIn(page, 'alice');
 		await page.goto(collectionPath(LEAF));
-		await expect(page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link')).toHaveText(
-			['Heliophysics Division', 'Heliophysics', 'deep', 'a', 'b', 'c', 'leaf']
-		);
+		await expect(
+			page
+				.getByRole('navigation', { name: 'Breadcrumb', includeHidden: true })
+				.getByRole('link', { includeHidden: true })
+		).toHaveText(['Heliophysics Division', 'Heliophysics', 'deep', 'a', 'b', 'c', 'leaf']);
 		const tree = page.getByRole('navigation', { name: 'Explorer' });
 		for (const name of ['deep', 'a', 'b', 'c']) {
 			await expect(tree.getByRole('button', { name: `Contents of ${name}` })).toHaveAttribute(
@@ -627,7 +647,9 @@ test.describe('a deep collection', () => {
 			);
 		}
 		await expect(tree.getByRole('link', { name: 'leaf' })).toHaveAttribute('aria-current', 'page');
-		await expect(metadata(page)).toContainText('Nothing beyond the title and description.');
+		await expect(main(page).getByRole('region', { name: 'At a glance' })).toContainText(
+			"Explore the Metadata tab for this collection's recorded details."
+		);
 	});
 
 	test("marks its section, not the page, on the collection's other tabs", async ({ page }) => {
@@ -638,7 +660,9 @@ test.describe('a deep collection', () => {
 			page.getByRole('navigation', { name: 'Explorer' }).getByRole('link', { name: 'leaf' })
 		).toHaveAttribute('aria-current', 'true');
 		await expect(
-			page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'leaf' })
+			page
+				.getByRole('navigation', { name: 'Breadcrumb', includeHidden: true })
+				.getByRole('link', { name: 'leaf', includeHidden: true })
 		).not.toHaveAttribute('aria-current');
 		await page.goto(collectionPath(LEAF, '/files'));
 		await expect(main(page).getByText('No files yet.')).toBeVisible();
@@ -646,9 +670,36 @@ test.describe('a deep collection', () => {
 });
 
 test.describe('a collection with every kind of value', () => {
+	test('keeps Overview focused and opens the full record through Metadata', async ({ page }) => {
+		await signIn(page, 'carol');
+		await page.goto(collectionPath(SWE));
+		const summary = main(page).getByRole('region', { name: 'At a glance' });
+		await expect(summary.locator('dl > div > dt')).toHaveText([
+			'Instrument',
+			'Start time',
+			'End time',
+			'Keywords',
+			'Labels'
+		]);
+		await expect(main(page).getByRole('heading', { name: 'Other fields' })).toHaveCount(0);
+		await expect(
+			main(page).getByText('Record details', { exact: true }).locator('..')
+		).not.toHaveAttribute('open');
+		await expect(main(page).getByRole('region', { name: 'With the CLI' })).toHaveCount(0);
+		await expect(tabs(page).getByRole('link', { name: 'CLI', exact: true })).toBeVisible();
+		await summary.getByRole('link', { name: 'View all metadata' }).click();
+		await expect(page).toHaveURL(collectionPath(SWE, '/metadata'));
+		await expect(tabs(page).getByRole('link', { name: 'Metadata', exact: true })).toHaveAttribute(
+			'aria-current',
+			'page'
+		);
+		await expect(definition(metadata(page), 'Processing')).toContainText('L2');
+		await expect(metadata(page).getByRole('heading', { name: 'Other fields' })).toBeVisible();
+	});
+
 	test('shows each value as its schema override describes it', async ({ page }) => {
 		await signIn(page, 'bob');
-		await page.goto(collectionPath(SWE));
+		await page.goto(collectionPath(SWE, '/metadata'));
 		const fields = metadata(page);
 		await expect(definition(fields, 'Release date').locator('time')).toHaveAttribute(
 			'datetime',
@@ -675,12 +726,11 @@ test.describe('a collection with every kind of value', () => {
 		await expect(definition(processing, 'Reprocessed')).toHaveText('No');
 		await expect(fields.getByRole('heading', { name: 'Other fields', level: 3 })).toBeVisible();
 		await expect(definition(fields, 'Archive note')).toContainText('See the release notes.');
-		await expect(definition(details(page), 'Schema')).toHaveText('huron-base v1 with an override');
 	});
 
 	test('shows numbers exactly, however small or large', async ({ page }) => {
 		await signIn(page, 'bob');
-		await page.goto(collectionPath(SWE));
+		await page.goto(collectionPath(SWE, '/metadata'));
 		const calibration = definition(metadata(page), 'Calibration');
 		await expect(definition(calibration, 'Proton mass kg')).toHaveText('1.67262192e-27');
 		await expect(definition(calibration, 'Cdf fill value')).toHaveText('-1e+31');

@@ -1,0 +1,12 @@
+/* The web's brand colours (web/src/lib/design/tokens.css) as Starlight's accent. */
+:root {
+	--sl-color-accent-low: #0e3834;
+	--sl-color-accent: #00a08b;
+	--sl-color-accent-high: #8ff0e2;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #e2faf6;
+	--sl-color-accent: #00766a;
+	--sl-color-accent-high: #062d29;
+}

@@ -1,0 +1,21 @@
+{
+	"name": "huron-docs",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"sync": "node scripts/sync.mjs",
+		"dev": "npm run sync && astro dev",
+		"build": "npm run sync && astro build && node scripts/postbuild.mjs",
+		"preview": "astro preview",
+		"test": "node --test scripts/*.test.mjs"
+	},
+	"dependencies": {
+		"@astrojs/starlight": "0.42.6",
+		"astro": "7.4.0",
+		"github-slugger": "2.0.0"
+	},
+	"engines": {
+		"node": ">=22.22.0"
+	}
+}

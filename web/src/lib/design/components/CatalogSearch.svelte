@@ -13,7 +13,20 @@
 	import { atPage, emptySearch, hasErrors, labelText, type Search } from '$lib/search';
 	import { catalogSearchHref, organizationSearchHref } from '$lib/search-links';
 	import { pageTitle } from '$lib/title';
-	import type { PageProps } from './$types';
+	import type { Catalog, RoleGrant } from '$api/types';
+	import type { ShellOrganization } from '$lib/organizations';
+	import type { SearchPage } from '$lib/server/catalog-search';
+	import type { SearchCatalogScope } from '$lib/search-links';
+	interface PageProps {
+		data: SearchPage & {
+			catalog: Catalog;
+			roles: RoleGrant[];
+			organizations: ShellOrganization[];
+			scope?: SearchCatalogScope;
+		} & Record<string, unknown>;
+		params?: unknown;
+		form?: unknown;
+	}
 
 	let { data }: PageProps = $props();
 
@@ -68,6 +81,7 @@
 	pendingLabel={data.pendingLabel}
 	drafts={can.contribute}
 	{href}
+	scope={data.scope}
 />
 <PageExpiredNotice />
 {#if data.exact !== null}

@@ -14,6 +14,8 @@ API_CONFIG := huron.dev.yaml
 DEV_CONFIG ?= $(or $(HURON_DEV_CONFIG),$(API_CONFIG))
 # Its SHA-256, which makes `make app` recreate the API when the file changes (docker-compose.app.yml).
 DEV_CONFIG_SHA256 = $(firstword $(shell sha256sum $(DEV_CONFIG) 2>/dev/null || shasum -a 256 $(DEV_CONFIG) 2>/dev/null))
+# The scripts the gate lints and type-checks with src and tests. The other scripts fail ruff today.
+CHECKED_SCRIPTS := scripts/cli_reference.py scripts/ste_check.py
 
 help: ## List available commands.
 	@grep -E '^[a-zA-Z_-]+:.*## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -64,11 +66,15 @@ test-integration: ## Run the integration tier.
 	uv run pytest -m integration
 
 lint: ## Static checks only.
-	uv run ruff check src tests
-	uv run ruff format --check src tests
+	uv run ruff check src tests $(CHECKED_SCRIPTS)
+	uv run ruff format --check src tests $(CHECKED_SCRIPTS)
 	uv run mypy
+	uv run mypy $(CHECKED_SCRIPTS)
 	uv run ty check
+	uv run ty check $(CHECKED_SCRIPTS)
 	uv run lint-imports
+	uv run python scripts/cli_reference.py --check
+	uv run python scripts/ste_check.py
 
 gate: lint ## The plan-wide gate (section 10); the contract tier needs Docker or HURON_TEST_DATABASE_URL.
 	uv run pytest -m "not integration" --cov=src/huron --cov-report=term-missing

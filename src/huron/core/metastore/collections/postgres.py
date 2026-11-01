@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from huron.core.lake.collections.models import Collection, Search, State
+from huron.core.lake.listing import ListOrder, Position
 from huron.core.metastore.rows import Db, unique
+from huron.core.metastore.sorting import ListingSql
 
 if TYPE_CHECKING:
     import uuid
@@ -99,16 +101,21 @@ class PostgresCollections:
         await self._db.execute("delete from huron.collections where id = $1", collection_id)
 
     async def list_in_namespace(
-        self, namespace_id: uuid.UUID, states: Container[State], after: str | None, limit: int
+        self,
+        namespace_id: uuid.UUID,
+        states: Container[State],
+        after: Position,
+        limit: int,
+        ordering: ListOrder | None = None,
     ) -> Sequence[Collection]:
-        """Collections in a namespace sorted by name."""
+        """Collections in a namespace in the requested order."""
+        sorting = ListingSql(ordering or ListOrder(), 3)
         rows = await self._db.fetch(
             f"select {_COLUMNS} from huron.collections where namespace_id = $1"
-            " and state = any($2) and ($3::text is null or name > $3) order by name limit $4",
+            " and state = any($2)" + sorting.clause(),
             namespace_id,
             _states(states),
-            after,
-            limit,
+            *sorting.values(after, limit),
         )
         return [_row(row) for row in rows]
 

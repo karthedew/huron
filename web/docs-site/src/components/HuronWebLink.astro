@@ -1,0 +1,114 @@
+---
+/**
+ * The link back to the Huron web. It goes to `/`, the web's home: a signed-in user lands on their
+ * catalogs, a signed-out visitor goes through sign-in. It is a plain link without a script, so the
+ * web's documentation policy (web/src/lib/server/docs.ts) needs nothing for it. The icon is
+ * lucide's `boxes` (ISC license), as the web's own Catalog entry shows it: Starlight has no icon for
+ * catalogs.
+ *
+ * Two copies render, and each shows at its own width (Starlight's `md` breakpoint, 50rem):
+ * - the full link (SocialIcons.astro), beside the theme selector on wide screens. Starlight hides
+ *   that header group on narrow screens, and this copy then hides in the menu footer too.
+ * - the `compact` icon (Search.astro), beside the search button on narrow screens. That header slot
+ *   shows on every layout, also on the splash home page, which has no menu.
+ */
+interface Props {
+	compact?: boolean;
+}
+
+const { compact = false } = Astro.props;
+---
+
+<a class:list={['huron-web', { compact }]} href="/" aria-label="Catalog">
+	<svg
+		aria-hidden="true"
+		viewBox="0 0 24 24"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+	>
+		<path
+			d="M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z"
+		></path>
+		<path d="m7 16.5-4.74-2.85"></path>
+		<path d="m7 16.5 5-3"></path>
+		<path d="M7 16.5v5.17"></path>
+		<path
+			d="M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5l-5 3Z"
+		></path>
+		<path d="m17 16.5-5-3"></path>
+		<path d="m17 16.5 4.74-2.85"></path>
+		<path d="M17 16.5v5.17"></path>
+		<path
+			d="M7.97 4.42A2 2 0 0 0 7 6.13v4.37l5 3 5-3V6.13a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0l-3 1.8Z"
+		></path>
+		<path d="M12 8 7.26 5.15"></path>
+		<path d="m12 8 4.74-2.85"></path>
+		<path d="M12 13.5V8"></path>
+	</svg>
+	{!compact && <span class="label">Catalog</span>}
+</a>
+
+<style>
+	/* The colours and size of Starlight's theme selector (Select.astro), in both themes. */
+	.huron-web {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.375rem;
+		/* At least 24px wide when only the icon shows; the margin keeps the header spacing. */
+		min-width: 1.5rem;
+		padding-block: 0.625rem;
+		padding-inline: 0.25rem;
+		margin-inline: -0.25rem;
+		color: var(--sl-color-gray-2);
+		font-size: var(--sl-text-sm);
+		text-decoration: none;
+		white-space: nowrap;
+	}
+
+	.huron-web:hover {
+		color: var(--sl-color-white);
+	}
+
+	svg {
+		flex-shrink: 0;
+		width: 1rem;
+		height: 1rem;
+	}
+
+	/* The icon beside the search button: the size of that button (Search.astro), narrow screens only. */
+	.compact {
+		width: 2.5rem;
+		height: 2.5rem;
+		padding: 0;
+		margin-inline: 0;
+		color: var(--sl-color-gray-1);
+	}
+
+	.compact svg {
+		width: 1.25rem;
+		height: 1.25rem;
+	}
+
+	@media (min-width: 50rem) {
+		.compact {
+			display: none;
+		}
+	}
+
+	@media (max-width: 49.99rem) {
+		.huron-web:not(.compact) {
+			display: none;
+		}
+	}
+
+	/* Medium screens: the icon only. The link keeps its name through aria-label. */
+	@media (max-width: 71.99rem) {
+		.label {
+			display: none;
+		}
+	}
+</style>

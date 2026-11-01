@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, status
 
 from huron.applications.api.authorization import ActorDep
 from huron.applications.api.dependencies import DeclarationsDep, LakeDep, with_share_root
-from huron.applications.api.routes.pagination import Cursor, Limit
+from huron.applications.api.routes.pagination import Cursor, Limit, Order, Sort
 from huron.applications.api.routes.v1.schema.admin import AuditOut
 from huron.applications.api.routes.v1.schema.catalogs import (
     AssignIn,
@@ -18,6 +18,7 @@ from huron.applications.api.routes.v1.schema.catalogs import (
     RecomputeOut,
 )
 from huron.applications.api.routes.v1.schema.common import Page, page_of
+from huron.core.lake.listing import ListOrder, SortDirection, SortField
 
 __all__ = ["router"]
 
@@ -32,9 +33,11 @@ async def list_catalogs(
     organization: Annotated[str | None, Query()] = None,
     cursor: Cursor = None,
     limit: Limit = None,
+    sort: Sort = SortField.NAME,
+    order: Order = SortDirection.ASC,
 ) -> Page[CatalogOut]:
     """Catalogs the caller may see, optionally within one organization."""
-    page = await lake.catalogs.list(actor, organization, cursor, limit)
+    page = await lake.catalogs.list(actor, organization, cursor, limit, ListOrder(sort, order))
     rows = [with_share_root(v.as_dict(), declarations) for v in page.items]
     return page_of(CatalogOut, rows, page.next_cursor)
 

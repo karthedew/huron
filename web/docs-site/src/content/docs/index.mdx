@@ -1,0 +1,39 @@
+---
+title: Huron
+description: Catalog, organize and push raw scientific data on the Huron share.
+template: splash
+hero:
+  tagline: Catalog, organize and push raw scientific data on the Huron share.
+  actions:
+    - text: Get started
+      link: /docs/getting-started/
+      icon: right-arrow
+    - text: CLI reference
+      link: /docs/reference/cli/
+      variant: minimal
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+<CardGrid>
+	<LinkCard
+		title="User guide"
+		description="Log in, find your way, select a collection, push files and edit metadata."
+		href="/docs/guides/user-guide/"
+	/>
+	<LinkCard
+		title="CLI reference"
+		description="Every huron command with its arguments and options, grouped as huron --help groups them."
+		href="/docs/reference/cli/"
+	/>
+	<LinkCard
+		title="API error codes"
+		description="What each error code means and which exit code the CLI gives it."
+		href="/docs/guides/api-errors/"
+	/>
+	<LinkCard
+		title="Administration"
+		description="Deploying and configuring the service and the web, organizations, roles and drift checks."
+		href="/docs/administration/prerequisites/"
+	/>
+</CardGrid>

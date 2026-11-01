@@ -1,6 +1,5 @@
 import { expect, type Page } from '@playwright/test';
 import { expectMarkedCurrent } from './support/cues.ts';
-import { ORGANIZATIONS, visibleOrganizations } from './support/fixture.mjs';
 import { COOKIES, VIEWPORTS, signIn, test, webCookie } from './support/harness.ts';
 
 /** The search box of the banner. */
@@ -9,180 +8,123 @@ function siteSearch(page: Page) {
 	return { form, field: form.getByRole('searchbox') };
 }
 
-/** The display name of a fixture organization. */
-function displayNameOf(organization: string): string {
-	const found = ORGANIZATIONS.find(({ name }) => name === organization);
-	if (found === undefined) throw new Error(`no fixture organization ${organization}`);
-	return found.displayName;
-}
-
-test.describe("the banner's search box", () => {
-	test("searches a catalog from the catalog's pages", async ({ page }) => {
+test.describe('the single Search workspace', () => {
+	test('opens from a catalog page through the global search box', async ({ page }) => {
 		await signIn(page, 'bob');
 		await page.goto('/catalogs/heliophysics/namespaces/fields');
 		const box = siteSearch(page);
 		await expect(box.form).toMatchAriaSnapshot(`
 			- search "Site search":
-			  - searchbox "Search Heliophysics"
+			  - searchbox "Search"
 		`);
 		await expect(box.field).toHaveAttribute('maxlength', '200');
 		await box.field.fill('run');
 		await box.field.press('Enter');
-		await expect(page).toHaveURL('/catalogs/heliophysics/search?q=run');
+		await expect(page).toHaveURL('/search?q=run');
 		const main = page.getByRole('main');
-		await expect(
-			main.getByRole('search', { name: 'Catalog search' }).getByRole('searchbox')
-		).toHaveValue('run');
-		// On a search page it holds the text of the search shown.
+		await expect(main.getByRole('heading', { level: 1, name: 'Search' })).toBeVisible();
+		await expect(main.getByRole('combobox', { name: 'Catalog' })).toHaveValue('');
 		await expect(siteSearch(page).field).toHaveValue('run');
 	});
 
-	test('keeps what was typed while the page stays, as when skipping to the content', async ({
-		page
-	}) => {
+	test('keeps text typed in the header while skipping to the content', async ({ page }) => {
 		await signIn(page, 'carol');
-		await page.goto('/catalogs/heliophysics/search?q=mag');
-		const box = siteSearch(page);
-		await expect(box.field).toHaveValue('mag');
-		await box.field.fill('typed, not sent');
+		await page.goto('/search?catalog=heliophysics&q=mag');
+		await siteSearch(page).field.fill('typed, not sent');
 		await page.getByRole('link', { name: 'Skip to content' }).focus();
 		await page.keyboard.press('Enter');
-		await expect(page).toHaveURL('/catalogs/heliophysics/search?q=mag#main');
+		await expect(page).toHaveURL('/search?catalog=heliophysics&q=mag#main');
 		await expect(page.getByRole('main')).toBeFocused();
 		await expect(siteSearch(page).field).toHaveValue('typed, not sent');
 	});
 
-	test('searches an organization from its pages, the text trimmed', async ({ page }) => {
-		await signIn(page, 'carol');
-		await page.goto('/orgs/helio');
-		const box = siteSearch(page);
-		await expect(box.field).toHaveAccessibleName('Search Heliophysics Division');
-		await box.field.fill('  wind ');
-		await box.field.press('Enter');
-		await expect(page).toHaveURL('/orgs/helio/search?q=wind');
-		await expect(
-			page.getByRole('main').getByRole('region', { name: 'Heliophysics', exact: true })
-		).toBeVisible();
-		// No text: the search page itself.
-		await siteSearch(page).field.fill('   ');
-		await siteSearch(page).field.press('Enter');
-		await expect(page).toHaveURL('/orgs/helio/search');
-	});
-
-	test('searches the remembered organization from the account page', async ({ page, context }) => {
+	test('trims header text and uses the remembered organization', async ({ page, context }) => {
 		await signIn(page, 'dave');
 		await page.goto('/orgs/geo');
-		await expect(page.getByRole('heading', { name: 'Earth Science', level: 1 })).toBeVisible();
 		await expect
 			.poll(async () => (await webCookie(context, COOKIES.organization))?.value)
 			.toBe('geo');
 		await page.goto('/account');
 		const box = siteSearch(page);
-		await expect(box.field).toHaveAccessibleName('Search Earth Science');
-		await box.field.fill('ocean');
+		await expect(box.field).toHaveAccessibleName('Search');
+		await box.field.fill('  ocean ');
 		await box.field.press('Enter');
-		await expect(page).toHaveURL('/orgs/geo/search?q=ocean');
+		await expect(page).toHaveURL('/search?q=ocean');
+		await expect(page.getByRole('combobox', { name: 'Organization' })).toHaveValue('geo');
 		await expect(
 			page.getByRole('main').getByRole('region', { name: 'Geoscience', exact: true })
 		).toBeVisible();
+		await siteSearch(page).field.fill('   ');
+		await siteSearch(page).field.press('Enter');
+		await expect(page).toHaveURL('/search');
 	});
 
-	test('asks which organization to search where none is remembered', async ({ page }) => {
-		// Two organizations, and none remembered yet.
+	test('changes organization on the same Search page and preserves the text', async ({ page }) => {
 		await signIn(page, 'dave');
-		await page.goto('/account');
-		const box = siteSearch(page);
-		await expect(box.field).toHaveAccessibleName('Search');
-		await box.field.fill('wind');
-		await box.field.press('Enter');
-		await expect(page).toHaveURL('/search?q=wind');
-		await expect(page).toHaveTitle('“wind” · Search · Huron');
+		await page.goto('/search?organization=geo&q=wind');
 		const main = page.getByRole('main');
-		await expect(main.getByRole('heading', { name: 'Search', level: 1 })).toBeVisible();
-		await expect(main.getByText('Search “wind” in:')).toBeVisible();
-		const offered = main.getByRole('list', { name: 'Organizations' }).getByRole('link');
-		await expect(offered).toHaveText(visibleOrganizations('dave').map(displayNameOf));
-		await expect(siteSearch(page).field).toHaveValue('wind');
-		const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
-		await expect(sidebar.getByRole('link', { name: 'Search' })).toHaveAttribute(
-			'aria-current',
-			'page'
+		await main.getByRole('combobox', { name: 'Organization' }).selectOption('helio');
+		await main.getByRole('button', { name: 'Choose organization' }).click();
+		await expect(page).toHaveURL(
+			/\/search\?(?:q=wind&organization=helio|organization=helio&q=wind)$/
 		);
-		await offered.filter({ hasText: 'Heliophysics Division' }).click();
-		await expect(page).toHaveURL('/orgs/helio/search?q=wind');
-		await expect(
-			page.getByRole('main').getByRole('region', { name: 'Heliophysics', exact: true })
-		).toBeVisible();
+		await expect(main.getByRole('region', { name: 'Heliophysics', exact: true })).toBeVisible();
+		await expect(main.getByRole('combobox', { name: 'Catalog' })).toHaveValue('');
 	});
 
-	test('says why it leaves each part of the address out that it cannot search', async ({
-		page
-	}) => {
+	test('keeps invalid search fields in the form with an explanation', async ({ page }) => {
 		await signIn(page, 'dave');
-		await page.goto(`/search?q=${'w'.repeat(201)}&label=mission`);
-		await expect(page).toHaveTitle('Error: Search · Huron');
+		await page.goto(`/search?organization=helio&q=${'w'.repeat(201)}&label=mission`);
 		const main = page.getByRole('main');
 		await expect(main.getByText('Use at most 200 characters; this text has 201.')).toBeVisible();
 		await expect(
 			main.getByText('Write a label filter as key=value, for example mission=ace.')
 		).toBeVisible();
-		await expect(main.getByText('Choose the organization to search:')).toBeVisible();
-		const offered = main.getByRole('list', { name: 'Organizations' }).getByRole('link');
-		await expect(offered).toHaveText(visibleOrganizations('dave').map(displayNameOf));
-		for (const organization of visibleOrganizations('dave')) {
-			await expect(offered.filter({ hasText: displayNameOf(organization) })).toHaveAttribute(
-				'href',
-				`/orgs/${organization}/search`
-			);
-		}
+		await expect(main.getByRole('searchbox', { name: 'Search text' })).toHaveValue('w'.repeat(201));
 	});
 
-	test('goes straight to the search of the only organization the user can see', async ({
+	test('keeps a single-organization account on the central page', async ({ page }) => {
+		await signIn(page, 'bob');
+		await page.goto('/search?q=wind&label=mission%3Dwind');
+		await expect(page).toHaveURL('/search?q=wind&label=mission%3Dwind');
+		await expect(page.getByRole('combobox', { name: 'Organization' })).toHaveValue('helio');
+	});
+
+	test('redirects saved catalog and organization search addresses with their filters', async ({
 		page
 	}) => {
 		await signIn(page, 'bob');
-		expect(visibleOrganizations('bob')).toEqual(['helio']);
-		await page.goto('/search?q=wind&label=mission%3Dwind');
-		await expect(page).toHaveURL('/orgs/helio/search?q=wind&label=mission%3Dwind');
+		await page.goto('/catalogs/heliophysics/search?q=wind&label=mission%3Dwind');
+		await expect(page).toHaveURL('/search?catalog=heliophysics&q=wind&label=mission%3Dwind');
+		await page.goto('/orgs/helio/search?q=wind');
+		await expect(page).toHaveURL('/search?organization=helio&q=wind');
 	});
 
-	test('tells someone without organizations why there is nothing to search', async ({ page }) => {
+	test('explains why an account without organizations has nothing to search', async ({ page }) => {
 		await signIn(page, 'mallory');
 		await page.goto('/search?q=wind');
-		const main = page.getByRole('main');
-		await expect(main.getByText("You don't have access to any organization yet.")).toBeVisible();
-		await expect(main.getByRole('list', { name: 'Organizations' })).toHaveCount(0);
+		await expect(page.getByText("You don't have access to any organization yet.")).toBeVisible();
+		await expect(page.getByRole('main').getByRole('combobox')).toHaveCount(0);
 	});
 });
 
 test.describe('on a phone', () => {
 	test.use({ viewport: VIEWPORTS.phone });
-
-	test("the bottom navigation's Search opens the search of where the user is", async ({ page }) => {
+	test('opens the same Search workspace from the bottom navigation', async ({ page }) => {
 		await signIn(page, 'carol');
 		await page.goto('/catalogs/heliophysics/namespaces/fields');
 		await expect(siteSearch(page).form).toBeHidden();
 		const navigation = page.getByRole('navigation', { name: 'Primary' });
-		await expect(navigation).toMatchAriaSnapshot(`
-			- navigation "Primary":
-			  - link "Catalogs":
-			    - /url: /orgs/helio
-			  - link "Search":
-			    - /url: /catalogs/heliophysics/search
-			  - link "Account":
-			    - /url: /account
-		`);
+		await expect(navigation.getByRole('link', { name: 'Search' })).toHaveAttribute(
+			'href',
+			'/search'
+		);
 		await navigation.getByRole('link', { name: 'Search' }).click();
-		await expect(page).toHaveURL('/catalogs/heliophysics/search');
+		await expect(page).toHaveURL('/search');
 		await expectMarkedCurrent(
 			navigation.getByRole('link', { name: 'Search' }),
-			navigation.getByRole('link', { name: 'Catalogs' })
+			navigation.getByRole('link', { name: 'Catalog', exact: true })
 		);
-		await page.goto('/orgs/helio');
-		await navigation.getByRole('link', { name: 'Search' }).click();
-		await expect(page).toHaveURL('/orgs/helio/search');
-		await expect(
-			page.getByRole('main').getByRole('search', { name: 'Organization search' })
-		).toBeVisible();
+		await expect(page.getByRole('main').getByRole('combobox', { name: 'Catalog' })).toBeVisible();
 	});
 });

@@ -5,7 +5,8 @@
 	import { Building2, Check, ChevronsUpDown } from '@lucide/svelte';
 	import { displayName, secondaryName } from '$lib/names';
 	import type { ShellOrganization } from '$lib/organizations';
-	import { readSearch, searchQuery, sharedSearch } from '$lib/search';
+	import { readSearch, sharedSearch } from '$lib/search';
+	import { organizationSearchHref } from '$lib/search-links';
 	import { HeaderMenu } from './header-menu.svelte';
 
 	interface Props {
@@ -39,15 +40,16 @@
 	 * these links may repeat (`sharedSearch`: they are one per organization). Elsewhere none: the
 	 * catalogs list reads only a cursor and a notice, which belong to the page that shows them.
 	 */
-	const keptQuery = $derived.by(() => {
-		if (subRoute !== '/search') return '';
+	const keptSearch = $derived.by(() => {
+		if (page.route.id !== '/(app)/search' && subRoute !== '/search') return null;
 		const { search } = readSearch(page.url.searchParams, { drafts: true });
-		return searchQuery(sharedSearch(search, organizations.length));
+		return sharedSearch(search, organizations.length);
 	});
 
 	function href(organization: ShellOrganization): string {
+		if (keptSearch !== null) return organizationSearchHref(organization.name, keptSearch);
 		const overview = resolve(ORGANIZATION_ROUTE, { org: organization.name });
-		return subRoute === null ? overview : `${overview}${subRoute}${keptQuery}`;
+		return subRoute === null ? overview : `${overview}${subRoute}`;
 	}
 </script>
 

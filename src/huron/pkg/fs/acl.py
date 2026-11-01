@@ -145,7 +145,7 @@ def acl_supported(path: Path, runner: Runner) -> bool:
 def _parse_entry(text: str) -> AclEntry:
     parts = text.split(":")
     if len(parts) != 3 or parts[0] not in _TAGS:
-        raise AclError("unreadable ACL entry", {"entry": text})
+        raise AclError("the ACL entry is unreadable", {"entry": text})
     tag, qualifier, perms = parts
     return AclEntry(_TAGS[tag], qualifier or None, perms)
 

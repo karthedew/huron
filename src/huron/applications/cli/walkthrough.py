@@ -134,7 +134,7 @@ def _pairs(prompter: Prompter, prop: Mapping[str, Any], current: Any, label: str
         for chunk in filter(None, (part.strip() for part in text.split(","))):
             key, sep, value = chunk.partition("=")
             if not sep or not key.strip():
-                return {}, f"{chunk!r} is not key=value"
+                return {}, f"{chunk!r} is not in the form key=value"
             pairs[key.strip()] = value.strip()
         return pairs, None
 

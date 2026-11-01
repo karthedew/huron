@@ -43,17 +43,19 @@ class HttpGroupDirectory:
         try:
             response = await self._http.get(url)
         except httpx.HTTPError as error:
-            raise GroupDirectoryUnavailable("group directory is unreachable") from error
+            raise GroupDirectoryUnavailable("the group directory is unreachable") from error
         if response.status_code == 404:
             return frozenset()
         if response.status_code != 200:
             raise GroupDirectoryUnavailable(
-                "group directory failed", {"status": response.status_code}
+                "the group directory failed", {"status": response.status_code}
             )
         try:
             groups = response.json()["groups"]
         except (ValueError, KeyError, TypeError) as error:
-            raise GroupDirectoryUnavailable("group directory answer is unreadable") from error
+            raise GroupDirectoryUnavailable(
+                "the answer of the group directory is unreadable"
+            ) from error
         if not isinstance(groups, list) or not all(isinstance(g, str) for g in groups):
-            raise GroupDirectoryUnavailable("group directory answer is unreadable")
+            raise GroupDirectoryUnavailable("the answer of the group directory is unreadable")
         return frozenset(groups)

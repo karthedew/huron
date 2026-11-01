@@ -1,5 +1,30 @@
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { addFilesHint, cliCommand, collectionHints, quote, type CliCommand } from './cli';
+import {
+	CLI_VERBS,
+	addFilesHint,
+	cliCommand,
+	cliReferencePath,
+	cliReferences,
+	collectionHints,
+	quote,
+	type CliCommand
+} from './cli';
+
+/** The CLI's verbs in its help order, read from `LAYOUT` in the CLI's command registry. */
+function layoutVerbs(): string[] {
+	const registry = path.resolve(
+		path.dirname(fileURLToPath(import.meta.url)),
+		'../../../src/huron/applications/cli/commands/__init__.py'
+	);
+	const source = readFileSync(registry, 'utf8');
+	const layout = /^LAYOUT\b[^=]*=([\s\S]*?)^\)$/m.exec(source)?.[1];
+	if (layout === undefined) throw new Error('LAYOUT not found in the CLI command registry');
+	// Panel titles are capitalized, verbs are not.
+	return [...layout.matchAll(/"([a-z][a-z-]*)"/g)].map(([, verb]) => verb);
+}
 
 describe('cliCommand', () => {
 	it.each<[CliCommand, string]>([
@@ -178,7 +203,7 @@ describe('collectionHints', () => {
 	it('shows readers how to check the collection out, and nothing else', () => {
 		expect(collectionHints(ACTIVE, false)).toEqual([
 			{
-				title: 'Check out this collection',
+				title: 'Select this collection',
 				command: 'huron --catalog heliophysics checkout heliophysics.solar-wind.ace.mag-l2-2024'
 			}
 		]);
@@ -192,7 +217,7 @@ describe('collectionHints', () => {
 
 	it('shows contributors how to add files to this collection and push them', () => {
 		expect(collectionHints(ACTIVE, true).map(({ title }) => title)).toEqual([
-			'Check out this collection',
+			'Select this collection',
 			'Add files to this collection'
 		]);
 		expect(collectionHints(ACTIVE, true)[1]).toEqual(addFilesHint(ACTIVE));
@@ -210,7 +235,7 @@ describe('collectionHints', () => {
 			true
 		);
 		expect(hints.map(({ title }) => title)).toEqual([
-			'Check out this collection',
+			'Select this collection',
 			'Complete the metadata, then publish it',
 			'Add files to this collection'
 		]);
@@ -227,12 +252,12 @@ describe('collectionHints', () => {
 			state: 'draft'
 		};
 		expect(collectionHints(draft, true).map(({ title }) => title)).toEqual([
-			'Check out this collection',
+			'Select this collection',
 			'Activate this draft'
 		]);
 		const lacking = collectionHints({ ...draft, hasProblems: true }, true);
 		expect(lacking.map(({ title }) => title)).toEqual([
-			'Check out this collection',
+			'Select this collection',
 			'Complete the metadata, then publish it',
 			'Activate this draft'
 		]);
@@ -253,11 +278,11 @@ describe('collectionHints', () => {
 		// `edit meta` needs the resolved schema, which the API refuses while the override clashes.
 		expect(hints).toEqual([
 			{
-				title: 'Check out this collection',
+				title: 'Select this collection',
 				command: 'huron --catalog adv-cat checkout adv-cat.box.clash'
 			},
 			{
-				title: 'Replace the schema override with one that fits',
+				title: 'Replace the schema override with one that fits the catalog schema',
 				command: 'huron --catalog adv-cat set override <override.json> adv-cat.box.clash'
 			},
 			{
@@ -267,8 +292,8 @@ describe('collectionHints', () => {
 			addFilesHint(clash)
 		]);
 		expect(collectionHints({ ...clash, state: 'draft' }, true).map(({ title }) => title)).toEqual([
-			'Check out this collection',
-			'Replace the schema override with one that fits',
+			'Select this collection',
+			'Replace the schema override with one that fits the catalog schema',
 			'Remove the schema override',
 			'Activate this draft'
 		]);
@@ -277,7 +302,7 @@ describe('collectionHints', () => {
 
 describe('addFilesHint', () => {
 	it('checks the collection out, stages files, then pushes them with a message', () => {
-		// `add` and `push` act on the collection checked out last, whichever that is.
+		// `add` and `push` act on the collection selected last, whichever that is.
 		expect(
 			addFilesHint({ catalog: 'heliophysics', identifier: 'heliophysics.fields.run001' })
 		).toEqual({
@@ -318,3 +343,85 @@ function unquote(word: string): string {
 	}
 	return new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(bytes));
 }
+
+describe('cliReferences', () => {
+	it("knows the CLI's verbs, in its help order", () => {
+		expect(CLI_VERBS).toEqual(layoutVerbs());
+	});
+
+	it('links only to reference pages scripts/cli_reference.py wrote', () => {
+		const reference = path.resolve(
+			path.dirname(fileURLToPath(import.meta.url)),
+			'../../docs-site/src/content/docs/reference/cli'
+		);
+		for (const verb of CLI_VERBS) {
+			expect(existsSync(path.join(reference, `${verb}.md`)), `${verb}.md`).toBe(true);
+		}
+	});
+
+	it('links a root verb to its reference page and nothing else', () => {
+		expect(cliReferencePath('checkout')).toBe('/docs/reference/cli/checkout/');
+		expect(cliReferencePath('adm')).toBe('/docs/reference/cli/adm/');
+		expect(cliReferencePath('collection')).toBeNull();
+		expect(cliReferencePath('')).toBeNull();
+	});
+
+	it('finds the verb after the global options of each command, once each', () => {
+		const hint = addFilesHint({ catalog: 'heliophysics', identifier: 'heliophysics.a.b' });
+		expect(cliReferences(hint.command)).toEqual([
+			{ verb: 'checkout', href: '/docs/reference/cli/checkout/' },
+			{ verb: 'add', href: '/docs/reference/cli/add/' },
+			{ verb: 'push', href: '/docs/reference/cli/push/' }
+		]);
+		expect(cliReferences('huron login\nhuron whoami\nhuron login').map((r) => r.verb)).toEqual([
+			'login',
+			'whoami'
+		]);
+	});
+
+	it.each<[string, string[]]>([
+		['huron -o json --api-url http://api get orgs', ['get']],
+		['huron --catalog=heliophysics --output=yaml describe catalog x', ['describe']],
+		['huron create catalog <name> --org helio', ['create']],
+		['  huron   adm grant reader g  ', ['adm']]
+	])('reads %s', (command, verbs) => {
+		expect(cliReferences(command).map((reference) => reference.verb)).toEqual(verbs);
+	});
+
+	it.each([
+		'',
+		'huron',
+		'huron --catalog',
+		'huron --verbose get orgs',
+		'huron nonsense',
+		'ls -l',
+		'echo huron get'
+	])('links nothing for %j', (command) => {
+		expect(cliReferences(command)).toEqual([]);
+	});
+
+	it('links every verb the hints use', () => {
+		const commands: CliCommand[] = [
+			{ verb: 'checkout', catalog: 'c', collection: 'c.x' },
+			{ verb: 'add', catalog: 'c' },
+			{ verb: 'push', catalog: 'c' },
+			{ verb: 'activate collection', catalog: 'c', collection: 'c.x' },
+			{ verb: 'edit meta', catalog: 'c', collection: 'c.x' },
+			{ verb: 'publish meta', catalog: 'c', collection: 'c.x' },
+			{ verb: 'set override', catalog: 'c', collection: 'c.x' },
+			{ verb: 'unset override', catalog: 'c', collection: 'c.x' },
+			{ verb: 'create collection', catalog: 'c', namespace: 'c.n' },
+			{ verb: 'create namespace', catalog: 'c', parent: 'c', allowCollections: false },
+			{ verb: 'adm grant', catalog: 'c' },
+			{ verb: 'adm grant', organization: 'o' },
+			{ verb: 'adm apply-acl', catalog: 'c' },
+			{ verb: 'create catalog', organization: 'o' },
+			{ verb: 'search', catalog: 'c', q: 'solar wind' }
+		];
+		for (const command of commands) {
+			expect(cliReferences(cliCommand(command)), command.verb).toEqual([
+				{ verb: command.verb.split(' ')[0], href: expect.any(String) }
+			]);
+		}
+	});
+});

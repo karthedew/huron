@@ -3,9 +3,9 @@
 	import { MAX_TEXT_LENGTH, tidySearchForm } from '$lib/search';
 
 	interface Props {
-		/** The search page it submits to, without a query: what it searches (see `searchScope`). */
+		/** The central Search page it submits to, without a query. */
 		action: string;
-		/** The name of the catalog or organization it searches; `null` where the page asks which. */
+		/** An optional context name; the application shell uses a global Search label. */
 		name: string | null;
 		/** The text of the search a search page shows, else `''`. */
 		q: string;
@@ -23,8 +23,8 @@
 </script>
 
 <!--
-	One field, no scope to choose: it searches what the page belongs to, which its name says. Below
-	md the bottom navigation's Search leads to the same page instead.
+	One text field opens the dedicated Search page, where scope and filters are selected. Below
+	md the bottom navigation opens the same page.
 -->
 <form
 	role="search"

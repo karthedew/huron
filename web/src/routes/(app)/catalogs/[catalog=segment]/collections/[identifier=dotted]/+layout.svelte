@@ -1,20 +1,14 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import Badge from '$design/components/Badge.svelte';
+	import CopyIdentifier from '$design/components/CopyIdentifier.svelte';
 	import SectionNav from '$design/components/SectionNav.svelte';
-	import { statePresentation } from '$lib/collection-state';
 	import { identifierInCatalog } from '$lib/explorer';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
 
 	const collection = $derived(data.collection);
-	const shown = $derived(
-		statePresentation(collection.state, {
-			overrideIncompatible: collection.overrideIncompatible
-		})
-	);
 	const params = $derived({
 		catalog: collection.catalog,
 		identifier: identifierInCatalog(collection.identifier)
@@ -24,6 +18,16 @@
 			label: 'Overview',
 			href: resolve('/(app)/catalogs/[catalog=segment]/collections/[identifier=dotted]', params),
 			current: page.route.id === '/(app)/catalogs/[catalog=segment]/collections/[identifier=dotted]'
+		},
+		{
+			label: 'Metadata',
+			href: resolve(
+				'/(app)/catalogs/[catalog=segment]/collections/[identifier=dotted]/metadata',
+				params
+			),
+			current:
+				page.route.id ===
+				'/(app)/catalogs/[catalog=segment]/collections/[identifier=dotted]/metadata'
 		},
 		{
 			label: 'Files',
@@ -64,24 +68,27 @@
 			),
 			current:
 				page.route.id === '/(app)/catalogs/[catalog=segment]/collections/[identifier=dotted]/schema'
+		},
+		{
+			label: 'CLI',
+			href: resolve(
+				'/(app)/catalogs/[catalog=segment]/collections/[identifier=dotted]/cli',
+				params
+			),
+			current:
+				page.route.id === '/(app)/catalogs/[catalog=segment]/collections/[identifier=dotted]/cli'
 		}
 	]);
 </script>
 
 <header class="border-b border-app-line">
-	<p class="m-0 text-xs font-semibold tracking-wide text-app-muted uppercase">Collection</p>
-	<h1 class="mt-1 wrap-anywhere">{collection.title ?? collection.identifier}</h1>
-	{#if collection.title !== null}
-		<p class="mono mt-1 mb-0 text-sm break-all text-app-muted">{collection.identifier}</p>
-	{/if}
-	<p class="mt-3 mb-0 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-		<Badge tone={shown.tone}>{shown.label}</Badge>
-		{#if shown.explanation}<span class="min-w-0 text-app-muted">{shown.explanation}</span>{/if}
-	</p>
-	{#if collection.description}
-		<p class="mt-3 mb-0 max-w-3xl whitespace-pre-line wrap-anywhere">{collection.description}</p>
-	{/if}
+	<div class="relative flex min-w-0 items-start gap-2">
+		<h1 class="m-0 min-w-0 text-xl leading-8 font-semibold wrap-anywhere">
+			{collection.title ?? collection.identifier}
+		</h1>
+		<CopyIdentifier value={collection.identifier} />
+	</div>
 	<SectionNav label="Collection" {sections} />
 </header>
 
-<div class="mt-6">{@render children()}</div>
+<div class="pt-5">{@render children()}</div>

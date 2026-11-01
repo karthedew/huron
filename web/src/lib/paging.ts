@@ -1,6 +1,9 @@
 /** Items per page of a list (organizations, catalogs, namespaces, files, …). */
 export const LIST_PAGE_SIZE = 50;
 
+/** Rows per page when browsing catalogs, namespaces or collections. */
+export const BROWSE_PAGE_SIZE = 20;
+
 /** Results per page of a search. */
 export const SEARCH_PAGE_SIZE = 25;
 

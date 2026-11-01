@@ -35,6 +35,14 @@ describe('login page', () => {
 		expect(screen.queryByRole('status')).not.toBeInTheDocument();
 	});
 
+	it('links the public documentation, which the browser loads itself', () => {
+		show();
+		const docs = screen.getByRole('link', { name: 'Docs' });
+		expect(docs).toHaveAttribute('href', '/docs/');
+		expect(docs).toHaveAttribute('data-sveltekit-reload');
+		expect(docs.parentElement).toHaveTextContent('no sign-in needed');
+	});
+
 	it('keeps the return path in the sign-in link', () => {
 		show({ returnTo: '/orgs/helio?x=1' });
 		expect(screen.getByRole('link', { name: 'Sign in with your company account' })).toHaveAttribute(

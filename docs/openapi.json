@@ -1597,6 +1597,25 @@
         "title": "SigningKeyOut",
         "type": "object"
       },
+      "SortDirection": {
+        "description": "The direction of both the primary field and its name tie-breaker.",
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "title": "SortDirection",
+        "type": "string"
+      },
+      "SortField": {
+        "description": "Recorded fields available for browsing in a consistent order.",
+        "enum": [
+          "name",
+          "created_by",
+          "created_at"
+        ],
+        "title": "SortField",
+        "type": "string"
+      },
       "State": {
         "description": "The lifecycle state of a collection.",
         "enum": [
@@ -1884,6 +1903,28 @@
               ],
               "description": "Page size, 1 to 500.",
               "title": "Limit"
+            }
+          },
+          {
+            "description": "Global sort field; names break ties.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortField",
+              "default": "name",
+              "description": "Global sort field; names break ties."
+            }
+          },
+          {
+            "description": "Sort direction, also used for name ties.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortDirection",
+              "default": "asc",
+              "description": "Sort direction, also used for name ties."
             }
           }
         ],
@@ -2341,6 +2382,28 @@
               "description": "Page size, 1 to 500.",
               "title": "Limit"
             }
+          },
+          {
+            "description": "Global sort field; names break ties.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortField",
+              "default": "name",
+              "description": "Global sort field; names break ties."
+            }
+          },
+          {
+            "description": "Sort direction, also used for name ties.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortDirection",
+              "default": "asc",
+              "description": "Sort direction, also used for name ties."
+            }
           }
         ],
         "responses": {
@@ -2636,6 +2699,28 @@
               ],
               "description": "Page size, 1 to 500.",
               "title": "Limit"
+            }
+          },
+          {
+            "description": "Global sort field; names break ties.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortField",
+              "default": "name",
+              "description": "Global sort field; names break ties."
+            }
+          },
+          {
+            "description": "Sort direction, also used for name ties.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortDirection",
+              "default": "asc",
+              "description": "Sort direction, also used for name ties."
             }
           }
         ],

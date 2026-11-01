@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
     from huron.core.lake.catalogs.models import Catalog
+    from huron.core.lake.listing import ListOrder, Position
 
 __all__ = ["CatalogStore"]
 
@@ -32,10 +33,11 @@ class CatalogStore(Protocol):
         self,
         organization_id: uuid.UUID | None,
         visible: tuple[Collection[uuid.UUID], Collection[uuid.UUID]] | None,
-        after: str | None,
+        after: Position,
         limit: int,
+        ordering: ListOrder | None = None,
     ) -> Sequence[Catalog]:
-        """Catalogs sorted by name after ``after``, within one organization unless ``None``.
+        """Catalogs in the requested order after ``after``, within one organization unless ``None``.
 
         ``visible`` is ``(organization_ids, catalog_ids)``: a catalog is listed when its
         organization or its own id is in them. ``None`` lists every catalog.

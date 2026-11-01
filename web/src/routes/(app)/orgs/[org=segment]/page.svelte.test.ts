@@ -33,6 +33,7 @@ async function show(
 				organizationDetails: HELIO,
 				organizationPath: '/projects/huron/helio',
 				catalogs,
+				catalogSort: { sort: 'name', order: 'asc' },
 				nextCursor
 			},
 			params: { org: 'helio' },
@@ -49,7 +50,7 @@ interface ShowOptions {
 }
 
 describe('/orgs/[org] page', () => {
-	it('lists the catalogs with their names, schema and namespace count', async () => {
+	it('lists the catalogs with their names and separate namespace counts', async () => {
 		await show([
 			catalogFixture({ description: 'Solar wind and fields.', namespace_count: 9 }),
 			catalogFixture({
@@ -60,43 +61,18 @@ describe('/orgs/[org] page', () => {
 				schema: { id: 's2', name: 'space-weather', version: 1 }
 			})
 		]);
-		const [heliophysics, spaceWeather] = within(
-			screen.getByRole('list', { name: 'Catalogs' })
-		).getAllByRole('listitem');
-		expect(within(heliophysics).getByRole('link', { name: 'Heliophysics' })).toHaveAttribute(
+		const [heliophysics, spaceWeather] = within(screen.getByRole('table', { name: 'Catalogs' }))
+			.getAllByRole('row')
+			.slice(1);
+		expect(within(heliophysics).getByRole('link', { name: 'heliophysics' })).toHaveAttribute(
 			'href',
 			'/catalogs/heliophysics'
 		);
 		expect(within(heliophysics).getByText('heliophysics')).toBeInTheDocument();
-		expect(within(heliophysics).getByText('Solar wind and fields.')).toBeInTheDocument();
-		expect(within(heliophysics).getByRole('link', { name: 'huron-base v1' })).toHaveAttribute(
-			'href',
-			'/catalogs/heliophysics/schema'
-		);
-		expect(within(heliophysics).getByText('9 namespaces in total')).toBeInTheDocument();
+		expect(within(heliophysics).getByRole('cell', { name: '9' })).toBeInTheDocument();
 		expect(within(spaceWeather).getAllByText('space-weather')).toHaveLength(1);
-		expect(within(spaceWeather).getByText('1 namespace in total')).toBeInTheDocument();
+		expect(within(spaceWeather).getByRole('cell', { name: '1' })).toBeInTheDocument();
 		expect(document.title).toBe('Catalogs · Heliophysics Division · Huron');
-	});
-
-	it('shows organization administrators how to create the first catalog', async () => {
-		await show([], { roles: [{ scope: 'organization', scope_id: HELIO.id, role: 'org_admin' }] });
-		expect(screen.getByText('No catalogs you can see in this organization.')).toBeInTheDocument();
-		const hint = screen.getByRole('region', { name: 'Create a catalog in this organization' });
-		expect(within(hint).getByRole('textbox')).toHaveValue(
-			'huron create catalog <name> --org helio'
-		);
-	});
-
-	it('shows the hint to platform administrators too, but not to anyone else', async () => {
-		await show([], { roles: [{ scope: 'platform', scope_id: null, role: 'platform_admin' }] });
-		expect(screen.getByRole('region', { name: /Create a catalog/ })).toBeInTheDocument();
-		document.body.innerHTML = '';
-		await show([], {
-			roles: [{ scope: 'organization', scope_id: 'another-organization', role: 'org_admin' }]
-		});
-		expect(screen.getByText('No catalogs you can see in this organization.')).toBeInTheDocument();
-		expect(screen.queryByRole('region')).not.toBeInTheDocument();
 	});
 
 	it('pages through the catalogs', async () => {

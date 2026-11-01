@@ -252,7 +252,7 @@ describe('Explorer', () => {
 		const calls = stubFetch(jsonResponse(ACE));
 		const shown = await show({
 			levels: [ROOT, SOLAR_WIND, ACE],
-			current: { kind: 'namespace', path: 'solar-wind.ace' }
+			current: { kind: 'namespace', path: 'solar-wind.ace', overview: true }
 		});
 		await fireEvent.click(toggleOf('ace'));
 		await fireEvent.click(toggleOf('ace'));
@@ -262,7 +262,7 @@ describe('Explorer', () => {
 
 		shown.rerender({
 			levels: [ROOT, SOLAR_WIND, WIND],
-			current: { kind: 'namespace', path: 'solar-wind.wind' }
+			current: { kind: 'namespace', path: 'solar-wind.wind', overview: true }
 		});
 		await navigated();
 		// Never open and empty: closed, with nothing on its way.
@@ -288,7 +288,10 @@ describe('Explorer', () => {
 		await fireEvent.click(toggleOf('solar-wind'));
 		await within(explorer()).findByRole('link', { name: 'ace' });
 
-		shown.rerender({ levels: [ROOT, DEEP], current: { kind: 'namespace', path: 'deep' } });
+		shown.rerender({
+			levels: [ROOT, DEEP],
+			current: { kind: 'namespace', path: 'deep', overview: true }
+		});
 		await navigated();
 		expect(toggleOf('solar-wind')).toHaveAttribute('aria-expanded', 'true');
 		expect(within(explorer()).getByRole('link', { name: 'ace' })).toBeInTheDocument();
@@ -304,7 +307,7 @@ describe('Explorer', () => {
 
 		shown.rerender({
 			levels: [ROOT, SOLAR_WIND],
-			current: { kind: 'namespace', path: 'solar-wind' }
+			current: { kind: 'namespace', path: 'solar-wind', overview: true }
 		});
 		await navigated();
 		expect(toggleOf('solar-wind')).toHaveAttribute('aria-expanded', 'true');
@@ -318,7 +321,7 @@ describe('Explorer', () => {
 		const calls = stubFetch();
 		await show({
 			levels: [ROOT, SOLAR_WIND, ACE],
-			current: { kind: 'namespace', path: 'solar-wind.ace' }
+			current: { kind: 'namespace', path: 'solar-wind.ace', overview: true }
 		});
 		const tree = explorer();
 		expect(toggleOf('solar-wind')).toHaveAttribute('aria-expanded', 'true');
@@ -335,11 +338,22 @@ describe('Explorer', () => {
 		expect(calls).toHaveLength(0);
 	});
 
+	it('marks a namespace as the current section on its CLI tab', async () => {
+		await show({
+			levels: [ROOT, SOLAR_WIND, ACE],
+			current: { kind: 'namespace', path: 'solar-wind.ace', overview: false }
+		});
+		expect(within(explorer()).getByRole('link', { name: 'ace' })).toHaveAttribute(
+			'aria-current',
+			'true'
+		);
+	});
+
 	it('says a level on the way that the server could not load failed, and loads it on Retry', async () => {
 		const calls = stubFetch(jsonResponse(SOLAR_WIND));
 		await show({
 			levels: [ROOT, { parent: 'solar-wind', failed: true }, ACE],
-			current: { kind: 'namespace', path: 'solar-wind.ace' }
+			current: { kind: 'namespace', path: 'solar-wind.ace', overview: true }
 		});
 		expect(toggleOf('solar-wind')).toHaveAttribute('aria-expanded', 'true');
 		const retry = within(explorer()).getByRole('button', { name: 'Retry loading solar-wind' });
@@ -357,7 +371,7 @@ describe('Explorer', () => {
 	it('links what follows a first page to the page that lists it', async () => {
 		await show({
 			levels: [{ ...ROOT, namespacesNext: 'n2' }, SOLAR_WIND, ACE],
-			current: { kind: 'namespace', path: 'solar-wind.ace' }
+			current: { kind: 'namespace', path: 'solar-wind.ace', overview: true }
 		});
 		expect(
 			within(explorer()).getByRole('link', { name: 'More collections in ace' })
@@ -422,7 +436,7 @@ describe('Explorer', () => {
 	it('pins the current namespace when it is beyond the loaded page', async () => {
 		await show({
 			levels: [ROOT, SOLAR_WIND, { ...ACE, parent: 'solar-wind.zeta', collectionsNext: null }],
-			current: { kind: 'namespace', path: 'solar-wind.zeta' }
+			current: { kind: 'namespace', path: 'solar-wind.zeta', overview: true }
 		});
 		const zeta = within(explorer()).getByRole('link', { name: 'zeta' });
 		expect(zeta).toHaveAttribute('aria-current', 'page');
@@ -433,7 +447,7 @@ describe('Explorer', () => {
 	it('opens the way to the page again after navigating there', async () => {
 		await show({
 			levels: [ROOT, SOLAR_WIND, ACE],
-			current: { kind: 'namespace', path: 'solar-wind.ace' }
+			current: { kind: 'namespace', path: 'solar-wind.ace', overview: true }
 		});
 		await fireEvent.click(toggleOf('solar-wind'));
 		expect(within(explorer()).queryByRole('link', { name: 'ace' })).toBeNull();

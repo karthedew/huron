@@ -376,6 +376,21 @@ project and the image afterwards; stop both stacks first with `make down`.
 
 ## Documentation
 
+The guides below and the CLI reference are also a website: the web serves it at `/docs`
+(http://localhost:3000/docs/ under `make app`), readable without signing in, with search. Its
+source is `web/docs-site/`. The prose stays in `docs/*.md`, from which the site's pages are
+generated, and the CLI reference is generated from the CLI itself:
+
+```bash
+uv run python scripts/cli_reference.py    # after changing a command; make gate runs it with --check
+cd web && npm run docs:install            # once
+npm run docs:build                        # rebuild web/docs-site/dist, which the web serves
+npm run docs:dev                          # or preview the site alone at http://localhost:4321/docs/
+```
+
+`make app` builds the site into the web image. [web/README.md](web/README.md#the-documentation-at-docs)
+has the details.
+
 - [Architecture](docs/architecture.md)
 - [Operator guide](docs/operator.md)
 - [Deploying: Helm chart and Kustomize base](deploy/README.md)

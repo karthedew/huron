@@ -1,5 +1,24 @@
-# The Huron web image: the SvelteKit build (adapter-node), served by Node as a non-root user.
+# The Huron web image: the SvelteKit build (adapter-node), served by Node as a non-root user,
+# with the documentation (web/docs-site, a static Starlight build) that it serves at /docs.
 # Configuration is entirely environment variables; see .env.example and docker-compose.app.yml.
+#
+# The build context is web/. The documentation's guides are generated from the repository's
+# docs/*.md, so the build also needs that directory as the named context `docs`:
+#   docker build --build-context docs=docs -f web/Containerfile web
+# (docker-compose.app.yml passes it as `additional_contexts`).
+
+# The documentation: the sync step writes the guides from docs/*.md, Astro builds the site with
+# its Pagefind search index into dist/.
+FROM node:26.13.0-trixie-slim AS docs-site
+# Astro sends anonymous usage data unless this is set.
+ENV ASTRO_TELEMETRY_DISABLED=1
+WORKDIR /app/docs-site
+COPY docs-site/package.json docs-site/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY docs-site/ ./
+COPY --from=docs . /repository-docs
+RUN HURON_DOCS_DIR=/repository-docs npm run build
+
 FROM node:26.13.0-trixie-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -15,6 +34,8 @@ ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/build ./build
+# Where src/lib/server/docs.ts looks by default (HURON_WEB_DOCS_DIR is unset), relative to /app.
+COPY --from=docs-site /app/docs-site/dist ./docs-site/dist
 USER node
 EXPOSE 3000
 CMD ["node", "build/index.js"]

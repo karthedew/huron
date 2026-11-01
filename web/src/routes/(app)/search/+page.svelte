@@ -1,82 +1,80 @@
 <script lang="ts">
-	import { CircleAlert } from '@lucide/svelte';
+	import { resolve } from '$app/paths';
+	import CatalogSearch from '$design/components/CatalogSearch.svelte';
+	import OrganizationSearch from '$design/components/OrganizationSearch.svelte';
 	import NoOrganizations from '$design/components/NoOrganizations.svelte';
-	import { formatList } from '$lib/format';
 	import { displayName } from '$lib/names';
-	import { hasErrors, sharedSearch } from '$lib/search';
-	import { organizationSearchHref } from '$lib/search-links';
+	import { formLabel } from '$lib/search';
 	import { pageTitle } from '$lib/title';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
-
-	/** What each organization's link searches: one per organization, each with a bounded query. */
-	const shared = $derived(sharedSearch(data.search, data.organizationList.length));
-	/** What the links leave out of the address's search, being too long to repeat for each. */
-	const dropped = $derived(
-		shared.q !== data.search.q
-			? 'all of it'
-			: shared.labels.length < data.search.labels.length
-				? 'its label filters'
-				: null
-	);
-	const search = $derived(data.search);
-	const title = $derived.by(() => {
-		if (hasErrors(data.errors)) return pageTitle('Error: Search');
-		if (search.q === '') return pageTitle('Search');
-		return pageTitle(`“${search.q}”`, 'Search');
-	});
-	/** Why each part of the address that is left out of the search is: the text, the labels. */
-	const refusals = $derived(
-		(['q', 'label'] as const).flatMap((field) => {
-			const message = data.errors[field];
-			return message === null ? [] : [{ field, message }];
-		})
-	);
-	/** What the links search for, in words: its text, then its label filters. */
-	const lead = $derived.by(() => {
-		const labels = shared.labels.map(({ key, value }) => `${key} = ${value}`);
-		const parts = [
-			...(shared.q === '' ? [] : [`“${shared.q}”`]),
-			...(labels.length === 0 ? [] : [`with ${formatList(labels)}`])
-		];
-		return parts.length === 0
-			? 'Choose the organization to search:'
-			: `Search ${parts.join(' ')} in:`;
-	});
 </script>
 
-<svelte:head><title>{title}</title></svelte:head>
+<svelte:head><title>{pageTitle('Search')}</title></svelte:head>
 
-<h1>Search</h1>
-{#if data.organizationList.length === 0}
-	<div class="mt-6"><NoOrganizations groups={data.user.groups} /></div>
-{:else}
-	{#if refusals.length > 0}
-		<div class="mt-3 grid gap-1.5">
-			{#each refusals as refusal (refusal.field)}
-				<p class="m-0 flex items-start gap-1.5 text-sm font-semibold text-app-danger">
-					<CircleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />{refusal.message}
-				</p>
+<div class="min-w-0">
+	<header class="mb-6">
+		<h1 class="m-0 text-2xl font-semibold tracking-tight">Search</h1>
+		<p class="mt-2 mb-0 text-sm text-app-muted">
+			Find collections by text, metadata labels and state.
+		</p>
+	</header>
+	{#if data.selectedOrganization === null}
+		<NoOrganizations groups={data.user.groups} />
+	{:else}
+		<form
+			method="GET"
+			action={resolve('/(app)/search')}
+			aria-label="Search organization"
+			class="mb-5 flex flex-col items-stretch gap-3 sm:flex-row sm:items-end"
+		>
+			{#if data.search.q}<input type="hidden" name="q" value={data.search.q} />{/if}
+			{#each data.search.states ?? [] as state (state)}
+				<input type="hidden" name="state" value={state} />
 			{/each}
-		</div>
-	{/if}
-	{#if dropped !== null}
-		<p class="mt-3 mb-0 text-sm text-app-muted">
-			This search is too long to repeat in a link to each organization, so the links leave out
-			{dropped}.
+			{#each data.search.labels as filter (filter.key + '=' + filter.value)}
+				{@const kept = formLabel(filter)}
+				<input type="hidden" name={kept.name} value={kept.value} />
+			{/each}
+			<div class="min-w-0 flex-1 sm:max-w-lg">
+				<label for="search-organization" class="mb-1.5 block text-sm font-semibold"
+					>Organization</label
+				>
+				<select
+					id="search-organization"
+					name="organization"
+					value={data.organization ?? ''}
+					class="w-full min-w-0 rounded-md border border-app-line-strong bg-app-bg px-3 py-2 text-sm"
+				>
+					{#each data.organizationList as organization (organization.id)}
+						<option value={organization.name}>{displayName(organization)}</option>
+					{/each}
+				</select>
+			</div>
+			<button
+				type="submit"
+				class="self-start rounded-md border border-app-line-strong bg-app-card px-3 py-2 text-sm font-semibold hover:bg-app-hover sm:self-auto"
+				>Choose organization</button
+			>
+		</form>
+		{#if data.moreOrganizations}
+			<p class="mb-4 text-sm text-app-muted">
+				The selector shows the first 500 organizations you can see, plus the selected organization. <a
+					href={resolve('/orgs')}>Browse all organizations</a
+				> to choose another.
+			</p>
+		{/if}
+		{#if data.catalogSearch !== null}
+			<CatalogSearch
+				data={{ ...data.catalogSearch, roles: data.roles, organizations: data.organizations }}
+			/>
+		{:else if data.organizationSearch !== null}
+			<OrganizationSearch data={data.organizationSearch} />
+		{/if}
+		<p class="mt-5 text-xs text-app-muted">
+			Text searches identifiers, titles and descriptions. Labels match exact metadata values. Schema
+			fields and other metadata properties are not searchable yet.
 		</p>
 	{/if}
-	<p class="mt-4 mb-0 wrap-anywhere">{lead}</p>
-	<ul class="m-0 mt-3 flex list-none flex-wrap gap-2 p-0" aria-label="Organizations">
-		{#each data.organizationList as organization (organization.id)}
-			<li class="max-w-full">
-				<a
-					href={organizationSearchHref(organization.name, shared)}
-					class="inline-flex min-h-9 max-w-full items-center rounded-md border border-app-line-strong bg-app-card px-3 py-1.5 text-sm font-semibold wrap-anywhere text-app-fg no-underline hover:border-brand-strong hover:underline"
-					>{displayName(organization)}</a
-				>
-			</li>
-		{/each}
-	</ul>
-{/if}
+</div>

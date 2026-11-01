@@ -174,7 +174,7 @@ describe('MetadataView', () => {
 		const link = labels.getByRole('link', {
 			name: 'mission: wind, search the catalog for this label'
 		});
-		expect(link).toHaveAttribute('href', '/catalogs/heliophysics/search?label=mission%3Dwind');
+		expect(link).toHaveAttribute('href', '/search?catalog=heliophysics&label=mission%3Dwind');
 		expect(link).toHaveTextContent(/^mission: wind$/);
 		expect(labels.getByText('odd=key: x').tagName).toBe('SPAN');
 		expect(labels.getAllByRole('link')).toHaveLength(1);

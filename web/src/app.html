@@ -2,7 +2,14 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+		<link
+			id="huron-favicon"
+			rel="icon"
+			type="image/svg+xml"
+			href="%sveltekit.assets%/huron-mark.svg"
+			data-light="%sveltekit.assets%/huron-mark.svg"
+			data-dark="%sveltekit.assets%/huron-mark-dark.svg"
+		/>
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="color-scheme" content="light dark" />
 		<meta name="theme-color" content="#00c7ad" />
@@ -10,11 +17,16 @@
 		<script nonce="%sveltekit.nonce%">
 			// Scripts run: controls that need them may show (the `no-js` variant hides them).
 			document.documentElement.classList.add('js');
+			// Keep asset addresses valid after client navigation changes the page's depth.
+			const favicon = document.getElementById('huron-favicon');
+			favicon.dataset.light = new URL(favicon.dataset.light, document.baseURI).href;
+			favicon.dataset.dark = new URL(favicon.dataset.dark, document.baseURI).href;
 			try {
 				const saved = localStorage.getItem('huron-theme');
 				const dark =
 					saved === 'dark' || (!saved && matchMedia('(prefers-color-scheme: dark)').matches);
 				document.documentElement.classList.toggle('dark', dark);
+				favicon.href = dark ? favicon.dataset.dark : favicon.dataset.light;
 			} catch {}
 		</script>
 		%sveltekit.head%

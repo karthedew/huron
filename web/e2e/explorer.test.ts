@@ -138,9 +138,9 @@ test.describe('the explorer', () => {
 		await expect(page).toHaveURL(
 			/\/catalogs\/space-weather\/namespaces\/stations\?namespaces_cursor=/
 		);
-		const rest = page.getByRole('main').getByRole('list', { name: 'Namespaces in stations' });
-		await expect(rest.getByRole('listitem')).toHaveCount(STATION_COUNT - 50);
-		await expect(rest.getByRole('listitem').first()).toContainText('station-51');
+		const rest = page.getByRole('main').getByRole('table', { name: 'Namespaces in stations' });
+		await expect(rest.locator('tbody').getByRole('row')).toHaveCount(STATION_COUNT - 50);
+		await expect(rest.locator('tbody').getByRole('row').first()).toContainText('station-51');
 	});
 
 	test('is drawn beside the content from lg and left out on narrower screens', async ({ page }) => {
@@ -166,9 +166,42 @@ test.describe('the explorer', () => {
 		await expect(page.getByRole('main')).toBeFocused();
 		await page.keyboard.press('Tab');
 		await expect(
-			page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link').first()
+			page.getByRole('main').getByRole('button', { name: 'Copy full path' })
 		).toBeFocused();
 	});
+
+	for (const width of [1024, 1440, 1920]) {
+		test(`fills the workspace inside its shell gutter at ${width} pixels wide`, async ({
+			page
+		}) => {
+			await page.setViewportSize({ width, height: 900 });
+			await signIn(page, 'erin');
+			for (const path of [
+				'/catalogs/heliophysics',
+				'/catalogs/heliophysics/collections/solar-wind.ace.mag-l2-2024'
+			]) {
+				await page.goto(path);
+				const [banner, workspace, tree] = await Promise.all([
+					page.getByRole('banner').boundingBox(),
+					page.getByRole('main').locator(':scope > div').boundingBox(),
+					explorer(page).boundingBox()
+				]);
+				if (banner === null || workspace === null || tree === null) {
+					throw new Error(`workspace is missing on ${path}`);
+				}
+				// The shell surrounds the full remaining workspace with an 8px gutter. The
+				// Explorer keeps that inset at the top and bottom, even with only a few rows.
+				expect(workspace.x + workspace.width, path).toBe(width);
+				expect(workspace.x, path).toBe(width >= 1280 ? 216 : 0);
+				expect(workspace.y, path).toBe(banner.y + banner.height);
+				expect(workspace.y + workspace.height, path).toBeGreaterThanOrEqual(900);
+				expect(tree.x, path).toBe(workspace.x + 8);
+				expect(tree.width, path).toBe(260);
+				expect(tree.y, path).toBe(banner.y + banner.height + 8);
+				expect(tree.y + tree.height, path).toBe(892);
+			}
+		});
+	}
 
 	test('shows that a folder is loading while its answer is on its way', async ({ page }) => {
 		await signIn(page, 'erin');

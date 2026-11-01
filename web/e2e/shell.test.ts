@@ -1,4 +1,4 @@
-import { expect, type Locator } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { drawnOnTop, drawsLabelInside, expectMarkedCurrent } from './support/cues.ts';
 import {
 	ApiSession,
@@ -16,8 +16,11 @@ test.describe('the shell', () => {
 		await expect(page).toHaveTitle('Catalogs · Heliophysics Division · Huron');
 		await expect(page.getByRole('banner')).toMatchAriaSnapshot(`
 			- banner:
+			  - button "Collapse sidebar" [expanded]
+			  - link "Huron":
+			    - /url: /
 			  - search "Site search":
-			    - searchbox "Search Heliophysics Division"
+			    - searchbox "Search"
 			  - group: "Organization: Heliophysics Division, switch"
 			  - button "Use dark mode"
 			  - group: "Account: Dave Diaz"
@@ -25,18 +28,20 @@ test.describe('the shell', () => {
 		const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
 		await expect(sidebar).toMatchAriaSnapshot(`
 			- complementary "Sidebar":
-			  - link "Huron":
-			    - /url: /
 			  - navigation "Primary":
-			    - link "Catalogs":
+			    - link "Catalog":
 			      - /url: /orgs/helio
 			    - link "Search":
-			      - /url: /orgs/helio/search
+			      - /url: /search
+			    - link "Schemas":
+			      - /url: /schemas
+			  - link "Docs":
+			    - /url: /docs/
 			  - link "Account":
 			    - /url: /account
 			  - paragraph: Read-only · changes are made with the huron CLI
 		`);
-		await expect(sidebar.getByRole('link', { name: 'Catalogs' })).toHaveAttribute(
+		await expect(sidebar.getByRole('link', { name: 'Catalog', exact: true })).toHaveAttribute(
 			'aria-current',
 			'page'
 		);
@@ -44,6 +49,158 @@ test.describe('the shell', () => {
 		await expect(
 			page.getByRole('main').getByRole('heading', { name: 'Heliophysics Division', level: 1 })
 		).toBeVisible();
+	});
+
+	for (const width of [1180, 1440]) {
+		test(`the sidebar choice persists without moving the toolbar at ${width}px`, async ({
+			page
+		}) => {
+			await page.setViewportSize({ width, height: 900 });
+			await signIn(page, 'dave');
+			await page.goto('/catalogs/heliophysics');
+			const banner = page.getByRole('banner');
+			const control = banner.getByRole('button', { name: /sidebar$/ });
+			const initiallyExpanded = width >= 1280;
+			await expect(control).toHaveAttribute('aria-expanded', String(initiallyExpanded));
+			await expectSidebarState(page, initiallyExpanded);
+			await expect(banner.getByRole('link', { name: 'Huron', exact: true })).toBeVisible();
+			await expectToolbarToggle(control);
+			const before = await control.boundingBox();
+			await control.focus();
+			await page.keyboard.press('Enter');
+			await expect(control).toHaveAttribute('aria-expanded', String(!initiallyExpanded));
+			await expect(control).toBeFocused();
+			await expectSidebarState(page, !initiallyExpanded);
+			await expectToolbarToggle(control);
+			expect(await control.boundingBox()).toEqual(before);
+			await page.reload();
+			await expect(control).toHaveAttribute('aria-expanded', String(!initiallyExpanded));
+			await expectSidebarState(page, !initiallyExpanded);
+		});
+	}
+
+	test('hovering the closed toggle previews navigation without shifting the page', async ({
+		page
+	}) => {
+		await page.setViewportSize(VIEWPORTS.tablet);
+		await page.emulateMedia({ reducedMotion: 'no-preference' });
+		await signIn(page, 'dave');
+		await page.goto('/catalogs/heliophysics');
+		const control = page.getByRole('button', { name: 'Expand sidebar' });
+		await expectSidebarState(page, false);
+		const content = page.getByRole('heading', { name: 'Heliophysics', level: 1 });
+		const before = await content.boundingBox();
+		const sidebar = page.getByRole('complementary', { name: 'Sidebar', includeHidden: true });
+		// Begin in the browser before hovering, so an instant jump cannot pass as a slide.
+		const motion = await sidebar.evaluateHandle((element) => ({
+			positions: new Promise<number[]>((resolve) => {
+				const positions = [element.getBoundingClientRect().x];
+				const started = performance.now();
+				let settledFrames = 0;
+				const sample = () => {
+					const x = element.getBoundingClientRect().x;
+					positions.push(x);
+					settledFrames = x === 8 ? settledFrames + 1 : 0;
+					if (settledFrames >= 2 || performance.now() - started > 1500) resolve(positions);
+					else requestAnimationFrame(sample);
+				};
+				requestAnimationFrame(sample);
+			})
+		}));
+		await control.hover();
+		const positions = await motion.evaluate(({ positions }) => positions);
+		await motion.dispose();
+		expect(positions[0]).toBe(-208);
+		expect(positions.some((x) => x > -199 && x < 7)).toBe(true);
+		expect(positions.at(-1)).toBe(8);
+		const outline = await sidebarOutline(sidebar);
+		expect(outline.shadow).toMatch(/0\.5px inset(?:,|$)/);
+		expect(outline.borders).toEqual(['0px', '0px', '0px', '0px']);
+		await expect(sidebar).toBeVisible();
+		await expect(sidebar).toBeInViewport();
+		const preview = await sidebar.boundingBox();
+		expect(preview).toEqual({ x: 8, y: 64, width: 208, height: VIEWPORTS.tablet.height - 68 });
+		await expect(control).toHaveAttribute('aria-expanded', 'true');
+		const catalogs = sidebar.getByRole('link', { name: 'Catalog', exact: true });
+		const previewLink = await catalogs.boundingBox();
+		expect(previewLink?.y).toBe(72);
+		await catalogs.hover();
+		await expect(sidebar).toBeInViewport();
+		expect(await content.boundingBox()).toEqual(before);
+		expect(await drawnOnTop(catalogs)).toBe(true);
+		expect(await page.evaluate(() => localStorage.getItem('huron-sidebar-collapsed'))).toBeNull();
+		await page.mouse.move(VIEWPORTS.tablet.width - 20, 400);
+		await expectSidebarState(page, false);
+		await expect(control).toHaveAttribute('aria-expanded', 'false');
+		expect(await content.boundingBox()).toEqual(before);
+
+		await control.hover();
+		await expect.poll(async () => (await sidebar.boundingBox())?.x).toBe(8);
+		await control.click();
+		await content.hover();
+		await expectSidebarState(page, true);
+		expect((await sidebarOutline(sidebar)).shadow).not.toContain('0.5px');
+		expect(await sidebar.boundingBox()).toEqual(preview);
+		expect(await catalogs.boundingBox()).toEqual(previewLink);
+		await expect(page.getByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute(
+			'aria-expanded',
+			'true'
+		);
+		await page.reload();
+		await expectSidebarState(page, true);
+	});
+
+	test('a preview keeps keyboard focus reachable and Escape returns to its toggle', async ({
+		page
+	}) => {
+		await page.setViewportSize(VIEWPORTS.tablet);
+		await signIn(page, 'dave');
+		const control = page.getByRole('button', { name: 'Expand sidebar' });
+		await control.hover();
+		const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
+		const catalogs = sidebar.getByRole('link', { name: 'Catalog', exact: true });
+		await catalogs.focus();
+		await expect(catalogs).toBeFocused();
+		await page.getByRole('heading', { name: 'Organizations', level: 1 }).hover();
+		await expect(sidebar).toBeInViewport();
+		await page.keyboard.press('Tab');
+		await expect(sidebar.getByRole('link', { name: 'Search' })).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(control).toBeFocused();
+		await expectSidebarState(page, false);
+		await expect(control).toHaveAttribute('aria-expanded', 'false');
+		await page.keyboard.press('Enter');
+		await expectSidebarState(page, true);
+	});
+
+	test('reduced motion opens and hides navigation without a slide', async ({ page }) => {
+		await page.emulateMedia({ reducedMotion: 'reduce' });
+		await signIn(page, 'dave');
+		const control = page.getByRole('button', { name: 'Collapse sidebar' });
+		await control.focus();
+		await page.keyboard.press('Enter');
+		await expectSidebarState(page, false);
+		const sidebar = page.getByRole('complementary', { name: 'Sidebar', includeHidden: true });
+		for (const region of [sidebar, page.getByRole('main')]) {
+			expect(await region.evaluate((element) => getComputedStyle(element).transitionProperty)).toBe(
+				'none'
+			);
+		}
+		await page.keyboard.press('Enter');
+		await expectSidebarState(page, true);
+	});
+
+	test('the desktop search stays centered when navigation is hidden', async ({ page }) => {
+		await signIn(page, 'dave');
+		const search = page.getByRole('search', { name: 'Site search' });
+		const before = await search.boundingBox();
+		if (before === null) throw new Error('the search is hidden');
+		expect(Math.abs(before.x + before.width / 2 - VIEWPORTS.desktop.width / 2)).toBeLessThan(1);
+		const control = page.getByRole('button', { name: 'Collapse sidebar' });
+		await control.focus();
+		await page.keyboard.press('Enter');
+		await expectSidebarState(page, false);
+		expect(await search.boundingBox()).toEqual(before);
 	});
 
 	test('the skip link moves focus to the page content', async ({ page }) => {
@@ -54,10 +211,10 @@ test.describe('the shell', () => {
 		await expect(skip).toBeInViewport();
 		await page.keyboard.press('Enter');
 		await expect(page.getByRole('main')).toBeFocused();
-		// The organization's header comes first: its share path's copy button, then its sections.
+		// The organization's header comes first: its identifier copy button, then its sections.
 		await page.keyboard.press('Tab');
 		await expect(
-			page.getByRole('main').getByRole('button', { name: 'Copy share path' })
+			page.getByRole('main').getByRole('button', { name: 'Copy full path' })
 		).toBeFocused();
 		await page.keyboard.press('Tab');
 		await expect(
@@ -147,6 +304,56 @@ test.describe('the shell', () => {
 	});
 });
 
+/** The toolbar remains fixed while navigation opens, closes or floats above the page. */
+async function expectSidebarState(page: Page, pinned: boolean) {
+	const sidebar = page.getByRole('complementary', { name: 'Sidebar', includeHidden: true });
+	await expect
+		.poll(() => page.getByRole('main').evaluate((main) => getComputedStyle(main).paddingLeft))
+		.toBe(pinned ? '216px' : '0px');
+	const banner = await page.getByRole('banner').boundingBox();
+	expect(banner?.x).toBe(0);
+	expect(banner?.width).toBe(page.viewportSize()?.width);
+	if (pinned) {
+		await expect(sidebar).not.toHaveAttribute('inert');
+		await expect(sidebar).toBeVisible();
+		await expect.poll(async () => (await sidebar.boundingBox())?.x).toBe(8);
+		expect((await sidebar.boundingBox())?.width).toBe(208);
+	} else {
+		await expect(sidebar).toHaveAttribute('inert', '');
+		await expect(sidebar).not.toBeInViewport();
+	}
+}
+
+/** A half-pixel inset outline decorates the panel without altering its box or contents. */
+function sidebarOutline(sidebar: Locator) {
+	return sidebar.evaluate((element) => {
+		const style = getComputedStyle(element);
+		return {
+			shadow: style.boxShadow,
+			borders: ['top', 'right', 'bottom', 'left'].map((edge) =>
+				style.getPropertyValue(`border-${edge}-width`)
+			)
+		};
+	});
+}
+
+/** The persistent square toggle stays in the toolbar and keeps its whole hit area. */
+async function expectToolbarToggle(control: Locator) {
+	const button = await control.boundingBox();
+	if (button === null) throw new Error('the sidebar toggle is hidden');
+	expect(button.width).toBe(28);
+	expect(button.height).toBe(28);
+	expect(Math.abs(button.y + button.height / 2 - 32)).toBeLessThanOrEqual(1);
+	const home = await control
+		.page()
+		.getByRole('banner')
+		.getByRole('link', { name: 'Huron' })
+		.boundingBox();
+	if (home === null) throw new Error('the Huron home link is hidden');
+	expect(button.x + button.width).toBeLessThanOrEqual(home.x);
+	expect(await drawnOnTop(control)).toBe(true);
+}
+
 test.describe('the theme toggle', () => {
 	test('is left out without scripts, where it could do nothing', async ({ browser }) => {
 		const context = await browser.newContext({ javaScriptEnabled: false });
@@ -155,6 +362,11 @@ test.describe('the theme toggle', () => {
 			await signIn(page, 'bob');
 			await expect(accountMenu(page).summary).toBeVisible();
 			await expect(page.getByRole('banner').getByRole('button')).toHaveCount(0);
+			await expect(
+				page
+					.getByRole('navigation', { name: 'Primary' })
+					.getByRole('link', { name: 'Catalog', exact: true })
+			).toBeVisible();
 		} finally {
 			await context.close();
 		}
@@ -183,12 +395,13 @@ test.describe('the keyboard', () => {
 		page
 	}) => {
 		await signIn(page, 'bob');
+		const height = 600;
+		await page.setViewportSize({ width: VIEWPORTS.desktop.width, height });
 		await page.goto('/catalogs/heliophysics/search?q=mag&label=mission%3Dace');
 		const wider = page
 			.getByRole('main')
 			.getByRole('link', { name: 'Search all of Heliophysics Division' });
 		const before = await wider.boundingBox();
-		const height = VIEWPORTS.desktop.height;
 		// It starts below the screen, so Tab scrolls it into view.
 		expect(before !== null && before.y + before.height > height).toBe(true);
 		for (let presses = 0; presses < 80; presses += 1) {
@@ -241,10 +454,10 @@ test.describe('the organization switcher', () => {
 		await switcher.panel.getByRole('link', { name: 'All organizations' }).click();
 		await expect(page).toHaveURL('/orgs');
 		await expect(switcher.summary).toContainText('Organization: Earth Science, switch');
-		// Catalogs leads to Earth Science, not to this page, which is in its section.
+		// Catalog leads to Earth Science, not to this page, which is in its section.
 		const catalogs = page
 			.getByRole('complementary', { name: 'Sidebar' })
-			.getByRole('link', { name: 'Catalogs' });
+			.getByRole('link', { name: 'Catalog', exact: true });
 		await expect(catalogs).toHaveAttribute('href', '/orgs/geo');
 		await expect(catalogs).toHaveAttribute('aria-current', 'true');
 	});
@@ -297,7 +510,7 @@ test.describe('the organization switcher', () => {
 
 		await signIn(page, 'dave');
 		await page.goto(`/orgs/helio?view=compact&cursor=${encodeURIComponent(cursor)}`);
-		await expect(page.getByRole('link', { name: 'Space Weather' })).toBeVisible();
+		await expect(page.getByRole('link', { name: 'space-weather', exact: true })).toBeVisible();
 		await expect(page.getByRole('link', { name: 'Heliophysics', exact: true })).toHaveCount(0);
 
 		const switcher = organizationSwitcher(page);
@@ -309,9 +522,9 @@ test.describe('the organization switcher', () => {
 
 		await page.goto(`/orgs/helio/search?junk=${'Z'.repeat(2000)}&q=wind&cursor=x`);
 		await switcher.summary.click();
-		await expect(geo).toHaveAttribute('href', '/orgs/geo/search?q=wind');
+		await expect(geo).toHaveAttribute('href', '/search?organization=geo&q=wind');
 		await geo.click();
-		await expect(page).toHaveURL('/orgs/geo/search?q=wind');
+		await expect(page).toHaveURL('/search?organization=geo&q=wind');
 		await expect(page.getByRole('search', { name: 'Organization search' })).toBeVisible();
 	});
 
@@ -334,10 +547,14 @@ test.describe('on a phone', () => {
 		await expect(page.getByRole('complementary', { name: 'Sidebar' })).toBeHidden();
 		await expect(page.getByRole('navigation', { name: 'Primary' })).toMatchAriaSnapshot(`
 			- navigation "Primary":
-			  - link "Catalogs":
+			  - link "Catalog":
 			    - /url: /orgs/helio
 			  - link "Search":
-			    - /url: /orgs/helio/search
+			    - /url: /search
+			  - link "Schemas":
+			    - /url: /schemas
+			  - link "Docs":
+			    - /url: /docs/
 			  - link "Account":
 			    - /url: /account
 		`);
@@ -366,7 +583,7 @@ test.describe('on a phone', () => {
 		await signIn(page, 'erin');
 		const navigation = page.getByRole('navigation', { name: 'Primary' });
 		await expectMarkedCurrent(
-			navigation.getByRole('link', { name: 'Catalogs' }),
+			navigation.getByRole('link', { name: 'Catalog', exact: true }),
 			navigation.getByRole('link', { name: 'Account' })
 		);
 	});
@@ -376,7 +593,7 @@ test.describe('on a phone', () => {
 	}) => {
 		await signIn(page, 'bob');
 		const navigation = page.getByRole('navigation', { name: 'Primary' });
-		for (const name of ['Catalogs', 'Search', 'Account']) {
+		for (const name of ['Catalog', 'Search', 'Schemas', 'Account']) {
 			const link = navigation.getByRole('link', { name });
 			await link.focus();
 			expect(await ringBottom(link), name).toBeLessThanOrEqual(VIEWPORTS.phone.height);
@@ -471,19 +688,22 @@ test.describe('on a phone held sideways', () => {
 test.describe('at tablet width', () => {
 	test.use({ viewport: VIEWPORTS.tablet });
 
-	test('the rail shows its labels and marks the current section', async ({ page }) => {
+	test('opening navigation shows its labels and marks the current section', async ({ page }) => {
 		await signIn(page, 'erin');
+		await expectSidebarState(page, false);
+		await page.getByRole('button', { name: 'Expand sidebar' }).click();
+		await expectSidebarState(page, true);
 		const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
-		const catalogs = sidebar.getByRole('link', { name: 'Catalogs' });
+		const catalogs = sidebar.getByRole('link', { name: 'Catalog', exact: true });
 		const search = sidebar.getByRole('link', { name: 'Search' });
 		const account = sidebar.getByRole('link', { name: 'Account' });
-		// Nothing hover-only: not a tooltip, a label under each icon.
+		// Opening the sidebar by click also works on a touchscreen.
 		for (const link of [catalogs, search, account]) {
 			expect(await drawsLabelInside(link)).toBe(true);
 		}
 		await expectMarkedCurrent(catalogs, account);
 		await search.click();
-		await expect(page).toHaveURL('/orgs/helio/search');
+		await expect(page).toHaveURL('/search');
 		await expectMarkedCurrent(search, catalogs);
 	});
 

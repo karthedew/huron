@@ -194,12 +194,12 @@ def test_a_catalog_role_is_granted_on_an_organization_with_a_reminder_per_catalo
     cli, service = grants
     before = list(service.organizations["helio"][role])
     granted = cli.ok("adm", "grant", role, "helio-extra", "--org", "helio").stdout
-    assert f"{role}: added helio-extra; removed -" in granted
+    assert f"{role}: added helio-extra, revoked -" in granted
     assert "huron adm apply-acl heliophysics --recursive" in granted
     assert "huron adm apply-acl spare --recursive" in granted
     assert service.organizations["helio"][role] == sorted({*before, "helio-extra"})
     revoked = cli.ok("adm", "revoke", role, "helio-extra", "--org", "helio").stdout
-    assert "removed helio-extra" in revoked and "apply-acl spare" in revoked
+    assert "revoked helio-extra" in revoked and "apply-acl spare" in revoked
     assert service.organizations["helio"][role] == before
 
 
@@ -240,7 +240,7 @@ def test_a_catalog_grant_sends_only_the_groups_granted_on_the_catalog(
 ) -> None:
     cli, service = grants
     granted = cli.ok("adm", "grant", "contributor", "solar-team", "--catalog", "heliophysics")
-    assert "contributor: added solar-team; removed -" in granted.stdout
+    assert "contributor: added solar-team, revoked -" in granted.stdout
     assert "huron adm apply-acl heliophysics --recursive" in granted.stdout
     assert "apply-acl spare" not in granted.stdout
     assert service.puts == [("/api/v1/catalogs/heliophysics/grants/contributor", ["solar-team"])]
@@ -265,7 +265,7 @@ def test_revoking_on_a_catalog_a_group_also_inherited_removes_the_catalog_grant(
 ) -> None:
     cli, service = grants
     revoked = cli.ok("adm", "revoke", "reader", "helio-readers", "--catalog", "heliophysics")
-    assert "reader: added -; removed helio-readers" in revoked.stdout
+    assert "reader: added -, revoked helio-readers" in revoked.stdout
     assert service.puts == [("/api/v1/catalogs/heliophysics/grants/reader", ["solar-guests"])]
     assert ["reader", "helio-readers", "organization", "helio"] in rows(
         cli.ok("get", "grants", "--catalog", "heliophysics").stdout
@@ -277,7 +277,7 @@ def test_revoking_a_group_that_holds_nothing_changes_nothing(
 ) -> None:
     cli, service = grants
     revoked = cli.ok("adm", "revoke", "reader", "nobody", "--catalog", "heliophysics").stdout
-    assert "reader: added -; removed -" in revoked
+    assert "reader: added -, revoked -" in revoked
     assert service.puts == [
         ("/api/v1/catalogs/heliophysics/grants/reader", ["helio-readers", "solar-guests"])
     ]
@@ -301,7 +301,7 @@ def test_a_declared_organization_points_at_its_groups_in_the_configuration(
     for verb in ("grant", "revoke"):
         refused = cli.run("adm", verb, role, "helio-readers", "--org", "helio")
         assert refused.exit_code == 6 and "[ORGANIZATION_DECLARED]" in refused.stderr
-        assert f"edit groups.{role} there" in refused.stderr and after in refused.stderr
+        assert f"Edit `groups.{role}` there" in refused.stderr and after in refused.stderr
 
 
 def test_a_catalog_conflict_keeps_its_own_hint(
@@ -318,7 +318,7 @@ def test_a_catalog_conflict_keeps_its_own_hint(
 
     monkeypatch.setattr(cli.router, "handle_request", conflict)
     refused = cli.run("adm", "grant", "reader", "x", "--catalog", "heliophysics")
-    assert refused.exit_code == 6 and "edit groups." not in refused.stderr
+    assert refused.exit_code == 6 and "Edit `groups." not in refused.stderr
 
 
 @pytest.mark.parametrize(
@@ -326,8 +326,8 @@ def test_a_catalog_conflict_keeps_its_own_hint(
     [
         (("grant", "org_admin", "x"), "--org"),
         (("grant", "org_admin", "x", "--catalog", "heliophysics"), "--org"),
-        (("grant", "reader", "x", "--org", "helio", "--catalog", "heliophysics"), "cannot be"),
-        (("revoke", "contributor", "x", "--org", "helio", "--catalog", "spare"), "cannot be"),
+        (("grant", "reader", "x", "--org", "helio", "--catalog", "heliophysics"), "not both"),
+        (("revoke", "contributor", "x", "--org", "helio", "--catalog", "spare"), "not both"),
         (("grant", "owner", "x", "--org", "helio"), "owner"),
     ],
 )
@@ -345,7 +345,7 @@ def test_get_grants_refuses_an_organization_and_a_catalog_together(
 ) -> None:
     cli, _ = grants
     both = cli.run("get", "grants", "--org", "helio", "--catalog", "heliophysics")
-    assert both.exit_code == 2 and "cannot be combined" in both.stderr
+    assert both.exit_code == 2 and "not both" in both.stderr
 
 
 def _problem(status: int, code: str, detail: str) -> httpx.Response:

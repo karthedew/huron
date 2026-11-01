@@ -40,9 +40,40 @@ Run from `web/`:
 | `npm test`             | Unit and component tests (Vitest).                                                  |
 | `npm run lint`         | Prettier check.                                                                     |
 | `npm run build`        | Production build into `build/` (adapter-node).                                      |
-| `npm run test:e2e`     | Build, then the Playwright tests against the fake IdP, the API and the build.       |
+| `npm run test:e2e`     | Both builds, then the Playwright tests against the fake IdP, the API and the build. |
 | `npm run start`        | Serve the build with the settings in `.env`.                                        |
 | `npm run generate:api` | Regenerate `src/lib/api/openapi.ts` from `docs/openapi.json`.                       |
+| `npm run docs:install` | Install the documentation site's packages (`docs-site/package-lock.json`).          |
+| `npm run docs:sync`    | Write the guides of the documentation site from `docs/*.md`.                        |
+| `npm run docs:build`   | Sync, then build the documentation into `docs-site/dist`, which the web serves.     |
+| `npm run docs:dev`     | Sync, then Astro's development server for the documentation alone.                  |
+
+## The documentation at `/docs`
+
+The web serves the documentation, a static [Starlight](https://starlight.astro.build/) site, at
+`/docs` to anyone: no sign-in, no cookie, no API call. Every other path stays behind sign-in. The
+site lives in `docs-site/` with its own packages. Its guides are generated from `docs/*.md`, the
+only copy of that prose (edit those files, never the generated pages), and its CLI reference
+(`docs-site/src/content/docs/reference/cli/`) is written by `scripts/cli_reference.py` in the
+repository root. CLI hints link each command to its reference page, as do the sidebar and the
+sign-in page.
+
+Once, with network access, run `npm run docs:install`. Then:
+
+- `npm run docs:build` builds the site into `docs-site/dist`. `npm run dev`, `npm run preview`
+  and `npm run start` serve that build at http://localhost:5173/docs/ (or the port they use);
+  rebuild after changing `docs/*.md` or the CLI. Without a build, `/docs` answers a 404 that says
+  so.
+- `npm run docs:dev` previews the site alone, with live reload, at http://localhost:4321/docs/,
+  while you write.
+
+The server (`src/lib/server/docs.ts`) reads the build from `HURON_WEB_DOCS_DIR`, by default
+`docs-site/dist` relative to its working directory, which is where `web/Containerfile` puts it in
+the image. A directory answers its `index.html`, a path without its trailing slash redirects to
+the one with it, and anything else answers the site's 404 page. The image builds the site from
+`docs/`, which `docker build` must get as the build context `docs`
+(`docker build --build-context docs=docs -f web/Containerfile web` from the repository root;
+`docker-compose.app.yml` passes it).
 
 ## Try it: `npm run demo`
 
@@ -160,6 +191,27 @@ flow, and writes through the same API, so what it creates shows here at once.
 accounts and covers the CLI's setup, stopping, resetting and troubleshooting. `make up` and
 `make app` use the same ports, so run one at a time.
 
+## Develop the frontend locally with the Docker backend
+
+If `make app` is already running, the local frontend can use its API, Keycloak and seeded data.
+Stop just the web service from the repository root:
+
+```bash
+docker compose -f docker-compose.app.yml stop web
+```
+
+Then, from `web/`, copy `.env.example` to `.env` if you do not already have one, and run:
+
+```bash
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Open http://127.0.0.1:5173 and sign in again. The development server uses this address for its
+sign-in callback; the seeded Keycloak client already allows it. The API, database and identity
+provider continue running in Docker. Port 3000 stays reserved by the stack's network container.
+To return to the built Docker frontend, stop Vite with Ctrl+C, then run
+`docker compose -f docker-compose.app.yml start web` from the repository root.
+
 ## The gate and the end-to-end tests
 
 Run from `web/`, after the [setup](#setup); each must pass, and `npm run check` must report 0
@@ -174,12 +226,14 @@ npm run test:e2e
 ```
 
 The end-to-end tests run the whole stack on this machine, as the demo does. `npm run test:e2e`
-builds, then starts the fake IdP and the fault proxy (8199, 8197), the API on the memory store
+builds the web and the documentation (run `npm run docs:install` once first), then starts the fake IdP and the fault proxy (8199, 8197), the API on the memory store
 (8198) and the built web server (`node build/index.js` at http://localhost:4173, which reads no
 `.env`), seeds the fixture once, and runs the tests in Chromium. Every process gets every setting
 explicitly, so nothing leaks in from `.env` or the shell. The ports are the demo's, so the two
 cannot run at the same time; move them with the variables above and `HURON_E2E_WEB_PORT`. The
-pieces live in `e2e/support/`:
+web serves the documentation from `HURON_E2E_DOCS_DIR`, by default `docs-site/dist`; with
+`HURON_E2E_DOCS_DIR=src/lib/testing/docs`, the unit tests' small stand-in, every docs test but the
+search runs without a documentation build. The pieces live in `e2e/support/`:
 
 - `fake-idp.mjs`: the stand-in company IdP and group directory, one sign-in button per fixture
   user, and the fault proxy.
@@ -227,7 +281,10 @@ Playwright project runs one test at a time. `paula` signs in only for the long w
   `default-src 'self'`, scripts from the web's own origin and inline scripts only with SvelteKit's
   nonce, inline styles, `data:` images, no plugins and no framing. It sets no `form-action`,
   because Chromium would apply it to the sign-out's redirect to the IdP. A proxy that injects
-  scripts breaks the pages.
+  scripts breaks the pages. The documentation under `/docs` has the same policy with a different
+  `script-src`: `'self'`, the SHA-256 hash of each inline script of the page served (Starlight's
+  theme script and the small scripts Astro inlines) and `'wasm-unsafe-eval'` for the search's
+  WebAssembly; never `'unsafe-inline'`.
 - **Logs** go to stderr: `huron-web API call failed` with its reference (the API's request id when
   the API sent one; the 500 page shows it), status, code, title and path;
   `huron-web request failed` for other server errors, with their reference;

@@ -88,9 +88,9 @@ class StateDir:
         info = path.stat()
         if stat.S_IMODE(info.st_mode) & 0o077 or info.st_uid != os.getuid():
             raise CliError(
-                f"{path} must be owned by you with mode 0600",
+                f"you must own {path}, and its mode must be 0600",
                 ExitCode.NOT_LOGGED_IN,
-                hint=f"run: chmod 600 {path}, or huron login",
+                hint=f"run `chmod 600 {path}`, or run `huron login`",
             )
         return Tokens(**json.loads(path.read_text()))
 

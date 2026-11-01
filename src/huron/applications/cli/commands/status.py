@@ -31,9 +31,9 @@ STAGED_COLUMNS = [
 A long source path wraps rather than losing its end, the file name that tells rows apart.
 """
 
-NOTHING_STAGED = "nothing staged; stage files with: huron add <file>"
-PUSH_HINT = 'push with: huron push -m "<message>" · unstage with: huron rm <path>'
-NOTHING_ANYWHERE = "nothing staged in any working copy"
+NOTHING_STAGED = "Nothing is staged. To stage files, run `huron add <file>`"
+PUSH_HINT = 'To push, run `huron push -m "<message>"`. To unstage a path, run `huron rm <path>`'
+NOTHING_ANYWHERE = "Nothing is staged in any working copy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,14 +124,16 @@ def status(
     ctx: typer.Context,
     every: Annotated[
         bool,
-        typer.Option("--all", help="Every working copy on this machine, not only the current one."),
+        typer.Option(
+            "--all", help="Show all working copies on this machine, not only the current one."
+        ),
     ] = False,
 ) -> None:
-    """Where you are, and the checked-out collection's staged changes and drift.
+    """Show where you are, and the staged changes and drift of the current collection.
 
-    With --all: every working copy on this machine that has something staged, the checked-out
-    one marked *. Only the checked-out one is compared with the service and the share. Each
-    entry names its collection's own catalog and organization.
+    With `--all`, show all working copies on this machine that hold staged changes. A `*` marks
+    the current collection. The CLI compares only the current collection with the service and
+    the share. Each entry names the catalog and the organization of its collection.
     """
     if every:
         _every_copy(ctx)
@@ -143,9 +145,9 @@ def status(
     if copy is None:
         show(ctx, context_report(found, scope, current, None))
         if current is None:
-            say(ctx, f"no catalog is selected; {CHOOSE_CATALOG}")
+            say(ctx, f"There is no current catalog. {CHOOSE_CATALOG}")
         else:
-            say(ctx, "no collection is checked out; pick one with: huron checkout")
+            say(ctx, "There is no current collection. To choose one, run `huron checkout`")
         return
     checked = _checked_out_status(ctx, copy)
     if not table_mode(ctx):
@@ -182,7 +184,11 @@ def _show_every(ctx: typer.Context, statuses: list[CopyStatus]) -> None:
             say(ctx, "")
         _section(ctx, item, alone=False)
     if not statuses:
-        say(ctx, "no working copies here; check one out with: huron checkout <identifier>")
+        say(
+            ctx,
+            "There are no working copies on this machine."
+            " To make one, run `huron checkout <identifier>`",
+        )
     if not staged:
         say(ctx, NOTHING_ANYWHERE)
 
@@ -221,13 +227,19 @@ def _section(ctx: typer.Context, item: CopyStatus, *, alone: bool) -> None:
     elif item.current:
         say(ctx, PUSH_HINT)
     else:
-        say(ctx, f"check it out to push or unstage: huron checkout {item.copy.identifier}")
+        say(
+            ctx,
+            f"To push or unstage these changes, run `huron checkout {item.copy.identifier}` first",
+        )
 
 
 def _drift(ctx: typer.Context, item: CopyStatus) -> None:
     if item.unrecorded is None:
-        say(ctx, "share not mounted here; unrecorded files are not checked")
+        say(
+            ctx,
+            "The share is not mounted on this machine. The CLI did not check for unrecorded files",
+        )
     elif item.unrecorded:
-        say(ctx, f"Unrecorded on the share: {', '.join(item.unrecorded)}")
+        say(ctx, f"Unrecorded files on the share: {', '.join(item.unrecorded)}")
     if item.behind:
-        say(ctx, "behind: run huron pull")
+        say(ctx, "Your working copy is behind the service. Run `huron pull`")

@@ -144,7 +144,8 @@ services:
       keycloak: {condition: service_healthy}
 
   web:
-    build: {context: ./web, dockerfile: Containerfile}
+    # The documentation the web serves at /docs is built from docs/*.md: web/Containerfile.
+    build: {context: ./web, dockerfile: Containerfile, additional_contexts: {docs: ./docs}}
     image: huron-app-web:dev
     network_mode: service:net
     environment:

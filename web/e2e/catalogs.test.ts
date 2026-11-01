@@ -7,6 +7,8 @@ import {
 	SCHEMAS,
 	USERS,
 	collectionIdentifier,
+	recordedFiles,
+	titleOf,
 	type Username
 } from './support/fixture.mjs';
 import {
@@ -47,25 +49,13 @@ function collectionsIn(catalog: string, namespace: string, username: Username) {
 	);
 }
 
-/** "N namespaces" / "N collections", as rows and headers count what a namespace holds. */
+/** "N namespaces" / "N collections", as the namespace overview counts what it holds. */
 function count(value: number, noun: string): string {
 	return `${value} ${value === 1 ? noun : `${noun}s`}`;
 }
 
-/** What a namespace row or header says it holds, from the fixture. */
-function contents(catalog: string, path: string, username: Username): string {
-	const namespace = NAMESPACES.find((item) => item.catalog === catalog && item.path === path);
-	if (namespace === undefined) throw new Error(`no fixture namespace ${catalog}.${path}`);
-	const namespaces = childNamespaces(catalog, path).length;
-	const collections = collectionsIn(catalog, path, username).length;
-	const parts: string[] = [];
-	if (namespaces > 0 || !namespace.collectionsAllowed) parts.push(count(namespaces, 'namespace'));
-	if (namespace.collectionsAllowed || collections > 0) parts.push(count(collections, 'collection'));
-	return parts.join(' · ');
-}
-
 function rows(list: Locator): Locator {
-	return list.getByRole('listitem');
+	return list.locator('tbody').getByRole('row');
 }
 
 test.describe('a catalog', () => {
@@ -90,17 +80,17 @@ test.describe('a catalog', () => {
 			const tabs = main.getByRole('navigation', { name: 'Catalog' });
 			await expect(tabs.getByRole('link')).toHaveText([
 				'Overview',
-				'Search',
 				'Access',
 				'Activity',
-				'Schema'
+				'Schema',
+				'CLI'
 			]);
 			await expect(tabs.getByRole('link', { name: 'Overview' })).toHaveAttribute(
 				'aria-current',
 				'page'
 			);
 
-			const list = rows(main.getByRole('list', { name: 'Top-level namespaces' }));
+			const list = rows(main.getByRole('table', { name: 'Top-level namespaces' }));
 			const root = childNamespaces('heliophysics', '');
 			await expect(list).toHaveCount(root.length);
 			for (const [index, namespace] of root.entries()) {
@@ -109,11 +99,14 @@ test.describe('a catalog', () => {
 					'href',
 					`/catalogs/heliophysics/namespaces/${namespace.path}`
 				);
-				await expect(row).toContainText(
-					namespace.collectionsAllowed ? 'Holds collections' : 'Structure only'
+				await expect(row.getByRole('cell').nth(0)).toHaveText(
+					String(childNamespaces('heliophysics', namespace.path).length)
 				);
-				await expect(row).toContainText(contents('heliophysics', namespace.path, username));
+				await expect(row.getByRole('cell').nth(1)).toHaveText(
+					String(collectionsIn('heliophysics', namespace.path, username).length)
+				);
 			}
+			await tabs.getByRole('link', { name: 'CLI', exact: true }).click();
 			const hint = main.getByRole('region', { name: 'Create a namespace here' });
 			await expect(hint).toHaveCount(ADMINISTRATORS.has(username) ? 1 : 0);
 			// The shell follows the catalog's organization.
@@ -165,8 +158,7 @@ test.describe('a catalog', () => {
 		);
 		await expect(page).toHaveTitle('Not found · Huron');
 		// The namespace may not exist: the breadcrumbs and the explorer stop at the catalog.
-		const crumbs = page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link');
-		await expect(crumbs).toHaveText(['Heliophysics Division', 'Heliophysics']);
+		await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toBeHidden();
 		const tree = page.getByRole('navigation', { name: 'Explorer' });
 		await expect(tree.getByRole('link', { name: 'Heliophysics', exact: true })).toHaveAttribute(
 			'aria-current',
@@ -179,36 +171,37 @@ test.describe('a catalog', () => {
 	test('is reached from its organization and leads back to it', async ({ page }) => {
 		await signIn(page, 'dave');
 		await page.goto('/orgs/helio');
-		await page.getByRole('main').getByRole('link', { name: 'Space Weather' }).click();
+		await page.getByRole('main').getByRole('link', { name: 'space-weather', exact: true }).click();
 		await expect(page).toHaveURL('/catalogs/space-weather');
 		await expect(page.getByRole('heading', { name: 'Space Weather', level: 1 })).toBeVisible();
 		await page
-			.getByRole('navigation', { name: 'Breadcrumb' })
-			.getByRole('link', { name: 'Heliophysics Division' })
+			.getByRole('main')
+			.getByRole('link', { name: 'Heliophysics Division', exact: true })
+			.last()
 			.click();
 		await expect(page).toHaveURL('/orgs/helio');
 	});
 });
 
 test.describe('namespaces', () => {
-	test('lead down a deep tree, with the way back in the breadcrumbs', async ({ page }) => {
+	test('lead down a deep tree, with the way back in mobile breadcrumbs', async ({ page }) => {
+		await page.setViewportSize(VIEWPORTS.tablet);
 		await signIn(page, 'erin');
 		await page.goto('/catalogs/heliophysics');
 		const main = page.getByRole('main');
-		let list = main.getByRole('list', { name: 'Top-level namespaces' });
+		let list = main.getByRole('table', { name: 'Top-level namespaces' });
 		for (const path of ['deep', 'deep.a', 'deep.a.b', 'deep.a.b.c']) {
 			const name = path.split('.').at(-1) ?? path;
 			await list.getByRole('link', { name, exact: true }).click();
-			list = main.getByRole('list', { name: `Namespaces in ${name}` });
+			list = main.getByRole('table', { name: `Namespaces in ${name}` });
 			await expect(page).toHaveURL(`/catalogs/heliophysics/namespaces/${path}`);
 			await expect(main.getByRole('heading', { name, level: 1 })).toBeVisible();
-			await expect(main.getByText(`heliophysics.${path}`, { exact: true })).toBeVisible();
+			await expect(main.getByRole('button', { name: 'Copy full path' })).toBeVisible();
 		}
 		await expect(page).toHaveTitle('deep.a.b.c · Heliophysics · Huron');
-		const header = main.locator('header');
-		await expect(header).toContainText('Holds collections');
-		await expect(header).toContainText('1 collection');
-		await expect(header).toContainText(`${MOUNT_PREFIX}/helio/heliophysics/deep/a/b/c`);
+		await expect(main).toContainText('Holds collections');
+		await expect(main).toContainText('1 collection');
+		await expect(main).toContainText(`${MOUNT_PREFIX}/helio/heliophysics/deep/a/b/c`);
 		const crumbs = page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link');
 		await expect(crumbs).toHaveText([
 			'Heliophysics Division',
@@ -222,7 +215,7 @@ test.describe('namespaces', () => {
 		const leaf = collectionIdentifier(
 			COLLECTIONS.find(({ namespace }) => namespace === 'deep.a.b.c') ?? COLLECTIONS[0]
 		);
-		await expect(main.getByRole('link', { name: 'Deeply nested leaf' })).toHaveAttribute(
+		await expect(main.getByRole('link', { name: 'leaf', exact: true })).toHaveAttribute(
 			'href',
 			`/catalogs/${leaf.replace('.', '/collections/')}`
 		);
@@ -236,24 +229,35 @@ test.describe('namespaces', () => {
 		await signIn(page, 'erin');
 		await page.goto('/catalogs/heliophysics/namespaces/fields');
 		const main = page.getByRole('main');
-		const list = rows(main.getByRole('list', { name: 'Collections in fields' }));
-		await expect(list).toHaveCount(50);
-		await expect(list.first()).toContainText('Encounter 17 run 001');
-		await expect(list.first()).toContainText('120 files');
-		await expect(list.last()).toContainText('Encounter 17 run 050');
+		const list = rows(main.getByRole('table', { name: 'Collections in fields' }));
+		const expected = collectionsIn('heliophysics', 'fields', 'erin');
+		await expect(list).toHaveCount(20);
+		await expect(list.first().getByRole('link')).toHaveText(expected[0].name);
+		await expect(list.first().getByRole('link')).toHaveAttribute(
+			'title',
+			titleOf(collectionIdentifier(expected[0]))
+		);
+		await expect(list.first().getByRole('cell').nth(0)).toHaveText(
+			String(recordedFiles(expected[0]).length)
+		);
+		await expect(list.last().getByRole('link')).toHaveText(expected[19].name);
 		const pages = main.getByRole('navigation', { name: 'Collection pages' });
 		await expect(pages.getByRole('link', { name: 'First page' })).toHaveCount(0);
 		await pages.getByRole('link', { name: 'Next page' }).click();
 		await expect(page).toHaveURL(
 			/\/catalogs\/heliophysics\/namespaces\/fields\?collections_cursor=/
 		);
-		await expect(list).toHaveCount(10);
-		await expect(list.first()).toContainText('Encounter 17 run 051');
-		await expect(list.last()).toContainText('Encounter 17 run 060');
+		await expect(list).toHaveCount(20);
+		await expect(list.first().getByRole('link')).toHaveText(expected[20].name);
+		await expect(list.last().getByRole('link')).toHaveText(expected[39].name);
+		await pages.getByRole('link', { name: 'Next page' }).click();
+		await expect(list).toHaveCount(20);
+		await expect(list.first().getByRole('link')).toHaveText(expected[40].name);
+		await expect(list.last().getByRole('link')).toHaveText(expected[59].name);
 		await expect(pages.getByRole('link', { name: 'Next page' })).toHaveCount(0);
 		await pages.getByRole('link', { name: 'First page' }).click();
 		await expect(page).toHaveURL('/catalogs/heliophysics/namespaces/fields');
-		await expect(list).toHaveCount(50);
+		await expect(list).toHaveCount(20);
 	});
 
 	test('start over when a page link expired, and say so', async ({ page }) => {
@@ -264,8 +268,8 @@ test.describe('namespaces', () => {
 			'That page link expired; showing the first page.'
 		);
 		await expect(
-			rows(page.getByRole('main').getByRole('list', { name: 'Collections in fields' }))
-		).toHaveCount(50);
+			rows(page.getByRole('main').getByRole('table', { name: 'Collections in fields' }))
+		).toHaveCount(20);
 	});
 
 	test('show drafts to contributors only', async ({ page }) => {
@@ -274,10 +278,12 @@ test.describe('namespaces', () => {
 			await page.goto('/catalogs/heliophysics/namespaces/solar-wind.ace');
 			const main = page.getByRole('main');
 			const expected = collectionsIn('heliophysics', 'solar-wind.ace', username);
-			await expect(main.locator('header')).toContainText(count(expected.length, 'collection'));
-			const list = rows(main.getByRole('list', { name: 'Collections in ace' }));
+			await expect(main).toContainText(count(expected.length, 'collection'));
+			const list = rows(main.getByRole('table', { name: 'Collections in ace' }));
 			await expect(list).toHaveCount(expected.length);
-			const draft = list.filter({ hasText: 'ACE MAG level 1 (draft)' });
+			const draft = list.filter({
+				has: page.getByRole('link', { name: 'mag-l1-draft', exact: true })
+			});
 			await expect(draft).toHaveCount(seesDrafts(username) ? 1 : 0);
 			if (seesDrafts(username)) await expect(draft).toContainText('Draft');
 			await logOut(page);
@@ -289,6 +295,10 @@ test.describe('namespaces', () => {
 		await page.goto('/catalogs/heliophysics/namespaces/empty');
 		const main = page.getByRole('main');
 		await expect(main.getByText('No collections yet.')).toBeVisible();
+		await main
+			.getByRole('navigation', { name: 'Namespace', exact: true })
+			.getByRole('link', { name: 'CLI', exact: true })
+			.click();
 		await expect(
 			main.getByRole('region', { name: 'Create a collection here' }).getByText(/create collection/)
 		).toHaveText('huron --catalog heliophysics create collection heliophysics.empty.<name>');
@@ -298,11 +308,17 @@ test.describe('namespaces', () => {
 		await logOut(page);
 		await signIn(page, 'carol');
 		await page.goto('/catalogs/heliophysics/namespaces/solar-wind');
-		await expect(main.locator('header')).toContainText('Structure only');
-		await expect(rows(main.getByRole('list', { name: 'Namespaces in solar-wind' }))).toHaveText([
-			/^\s*ace\b/,
-			/^\s*wind\b/
-		]);
+		await expect(main).toContainText('Structure only');
+		await expect(
+			main
+				.getByRole('table', { name: 'Namespaces in solar-wind' })
+				.getByRole('rowheader')
+				.getByRole('link')
+		).toHaveText(['ace', 'wind']);
+		await main
+			.getByRole('navigation', { name: 'Namespace', exact: true })
+			.getByRole('link', { name: 'CLI', exact: true })
+			.click();
 		await expect(
 			main.getByRole('region', { name: 'Create a namespace here' }).getByText(/create namespace/)
 		).toHaveText(
@@ -321,9 +337,9 @@ test.describe('namespaces', () => {
 		await signIn(page, 'erin');
 		await page.goto('/catalogs/heliophysics/namespaces/solar-wind.ace');
 		// The header's own status; the explorer, also in main, has one for its folders.
-		const header = page.getByRole('main').locator('header');
-		await header.getByRole('button', { name: 'Copy share path' }).click();
-		await expect(header.getByRole('status')).toHaveText('Copied');
+		const copy = page.getByRole('main').getByRole('button', { name: 'Copy share path' });
+		await copy.click();
+		await expect(page.getByRole('status').filter({ hasText: 'Copied' })).toBeVisible();
 		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
 			`${MOUNT_PREFIX}/helio/heliophysics/solar-wind/ace`
 		);
@@ -409,6 +425,10 @@ test.describe('the access tab', () => {
 			await expect(
 				roles.getByRole('link', { name: 'Heliophysics Division' }).first()
 			).toHaveAttribute('href', '/orgs/helio/access');
+			await main
+				.getByRole('navigation', { name: 'Catalog', exact: true })
+				.getByRole('link', { name: 'CLI', exact: true })
+				.click();
 			const hint = main.getByRole('region', {
 				name: 'Grant a role, then apply the directory ACLs'
 			});
@@ -617,10 +637,10 @@ test.describe('a CLI hint', () => {
 			await page.setViewportSize(viewport);
 			await signIn(page, 'alice');
 			for (const path of [
-				'/catalogs/heliophysics',
-				'/catalogs/heliophysics/namespaces/solar-wind',
-				'/catalogs/heliophysics/namespaces/empty',
-				'/catalogs/heliophysics/access'
+				'/catalogs/heliophysics/cli',
+				'/catalogs/heliophysics/namespaces/solar-wind/cli',
+				'/catalogs/heliophysics/namespaces/empty/cli',
+				'/catalogs/heliophysics/cli'
 			]) {
 				await page.goto(path);
 				const hints = page
@@ -657,7 +677,7 @@ test.describe('a CLI hint', () => {
 			});
 			const page = await context.newPage();
 			await signIn(page, 'carol');
-			await page.goto('/catalogs/heliophysics/access');
+			await page.goto('/catalogs/heliophysics/cli');
 			const title = 'Grant a role, then apply the directory ACLs';
 			const hint = page.getByRole('main').getByRole('region', { name: title });
 			const command =

@@ -116,9 +116,9 @@
 		<!-- In their order and not keyed: two long keys, shortened, may read alike. -->
 		{#each fields as field}
 			<div
-				class="grid min-w-0 gap-x-6 gap-y-1 border-b border-app-line py-2.5 text-sm first:pt-0 last:border-b-0 @lg:grid-cols-fields"
+				class="grid min-w-0 gap-x-5 gap-y-1 border-b border-app-line py-3 text-sm last:border-b-0 @lg:grid-cols-fields"
 			>
-				<dt class="font-semibold wrap-anywhere text-app-muted">{field.label}</dt>
+				<dt class="text-xs leading-5 font-medium wrap-anywhere text-app-muted">{field.label}</dt>
 				<dd class="m-0 min-w-0">{@render value(field.value)}</dd>
 			</div>
 		{/each}
@@ -128,11 +128,11 @@
 {#if view.fields.length > 0}
 	{@render fieldList(view.fields)}
 {:else if view.other.length === 0}
-	<p class="m-0 text-sm text-app-muted">Nothing beyond the title and description.</p>
+	<p class="mt-3 mb-0 text-sm text-app-muted">Nothing beyond the title and description.</p>
 {/if}
 {#if view.other.length > 0}
-	<h3 class="mt-6 mb-0 text-sm font-semibold">Other fields</h3>
-	<p class="mt-0.5 mb-3 text-xs text-app-muted">Fields the collection's schema does not name.</p>
+	<h3 class="mt-4 mb-0 text-sm font-semibold">Other fields</h3>
+	<p class="mt-0.5 mb-0 text-xs text-app-muted">Fields the collection's schema does not name.</p>
 	{@render fieldList(view.other)}
 {/if}
 {#if view.more > 0}

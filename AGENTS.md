@@ -59,7 +59,8 @@ Enforced by import-linter (`pyproject.toml`):
 | `src/huron/applications/api/` | `fastapi` |
 | `src/huron/core/metastore/`, `migrations/` | `postgresql-table-design` |
 | `web/` | `svelte-core-bestpractices`, `svelte-code-writer`, `tailwind-design-system` |
-| Instruction files | `writing-for-agents` |
+| Documentation, CLI help and messages, API error messages, web CLI hint titles | `asd-ste100` |
+| `AGENTS.md`, `CLAUDE.md`, skills (load before editing) | `writing-for-agents` |
 
 ## Gate
 
@@ -67,17 +68,25 @@ Run from the repository root; every command must exit 0 and radon must print not
 runs all of them.
 
 ```text
-uv run ruff check src tests
-uv run ruff format --check src tests
+uv run ruff check src tests scripts/cli_reference.py scripts/ste_check.py
+uv run ruff format --check src tests scripts/cli_reference.py scripts/ste_check.py
 uv run mypy
+uv run mypy scripts/cli_reference.py scripts/ste_check.py
 uv run ty check
+uv run ty check scripts/cli_reference.py scripts/ste_check.py
 uv run lint-imports
 uv run pytest -m "not integration" --cov=src/huron --cov-report=term-missing
 uv run radon cc src --min C
 uv run radon mi src --min B
 uv run complexipy src --max-complexity-allowed 15
 uv run python scripts/check_schema_map.py
+uv run python scripts/cli_reference.py --check
+uv run python scripts/ste_check.py
 ```
+
+`scripts/ste_check.py` fails on any hard `asd-ste100` rule in the docs and in the user-facing
+strings of the code. A sentence that must stay long for precision goes into its `KEPT` list, with
+the reason.
 
 The gate's pytest run includes the contract tier, so it needs PostgreSQL: `HURON_TEST_DATABASE_URL`
 (a server URL whose user may create databases) when set, otherwise a `postgres:16` testcontainer.
@@ -132,6 +141,10 @@ and design tokens.
   restart or an out-of-memory kill signs everyone out.
 - `POST /logout` answers 403 unless `Origin` is the web's own: every sign-out control is a plain
   same-origin form POST, and a proxy in front of the web passes `Origin` through.
+- `/docs` and `/docs/**` are public: `handle` answers them first, from the Starlight build
+  (`web/src/lib/server/docs.ts`), before it reads the settings or a session, so they set no
+  cookie and call no API. Their CSP is `kit.csp` with per-page inline-script hashes and
+  `'wasm-unsafe-eval'` added to `script-src` (docs/web-design.md §3.9).
 - `handleError` (`web/src/hooks.server.ts`) logs, and gives a reference, for status 500 and above
   only. Error pages take their copy from `errorCopy(status, code)` (`web/src/lib/error-copy.ts`),
   never from `page.error.message`.
@@ -142,8 +155,8 @@ and design tokens.
   `HuronApi` (`web/src/lib/server/huron-api.ts`) per request, which memoizes GETs by URL. Child
   loads call `api(event)`, never `parent()`.
 - An answer is read as a stream of at most 64 MiB (`MAX_ANSWER_BYTES`; more is a 502) and parsed
-  with plain `JSON.parse`. Only `catalogSchema`, `collectionSchema` and the Schema tab's
-  `exactOverride` keep the digits of integers past 2^53 (`parseExactly`); those digits live on the
+  with plain `JSON.parse`. Only `catalogSchema`, `collectionSchema`, registered schema detail reads
+  and the Schema tab's `exactOverride` keep the digits of integers past 2^53 (`parseExactly`); those digits live on the
   objects `parseExactly` returned and are lost on any spread or copy.
 - `fail(event, error)` turns a failed read into the page's outcome in fixed copy, never the API's
   `detail` or `context`; a 401 ends the session.
@@ -161,10 +174,12 @@ these bounds, and reuse them on new pages:
 
 - Collections (`web/src/lib/collections.ts`, `web/src/lib/metadata.ts`): titles `TITLE_LENGTH`
   200 (h1, `<title>`, namespace rows, search results); the header's description
-  `HEAD_DESCRIPTION_LENGTH` 5,000; on the Overview `VALUE_LENGTH` 5,000 per text within
+  `HEAD_DESCRIPTION_LENGTH` 5,000; on Metadata `VALUE_LENGTH` 5,000 per text within
   `TEXT_BUDGET` 100,000, `PROBLEM_LENGTH` 1,000 per problem, `MAX_ITEMS` 50 per array, object,
   label list and problem list, and `MAX_VALUES` 1,000 in all. A label chip links only when its key
   and its value each hold at most `MAX_LABEL_LENGTH` (100) code points.
+- Collection Overview (`web/src/lib/collection-overview.ts`): six recognized discovery fields,
+  160 code points per text and four keyword/label chips. Full metadata remains on Metadata.
 - Schema tables (`web/src/lib/schema-view.ts`): `MAX_SCHEMA_FIELDS` 200, `SCHEMA_TEXT_LENGTH`
   1,000, `MAX_ENUM_VALUES` 50, `SCHEMA_JSON_LENGTH` 262,144.
 - Search (`web/src/lib/search.ts`, reusing `MAX_LABEL_LENGTH` and `TITLE_LENGTH` from above): `q`
@@ -184,8 +199,9 @@ these bounds, and reuse them on new pages:
   that fails says "Couldn't load", with Retry once scripts run. From lg the column is sticky and
   scrolls itself (`--max-height-explorer`, in `web/src/lib/design/app.css`), bringing the page's
   node into view through its own `scrollTop`, with no `role` or `tabindex`.
-- Lists page by `next_cursor` (`web/src/lib/paging.ts`): 50 rows (`LIST_PAGE_SIZE`), 25 for
-  searches (`SEARCH_PAGE_SIZE`).
+- Lists page by `next_cursor` (`web/src/lib/paging.ts`): browse tables use 20 rows
+  (`BROWSE_PAGE_SIZE`), other lists 50 (`LIST_PAGE_SIZE`), and searches 25 (`SEARCH_PAGE_SIZE`).
+  Browse sorting is applied by the API before pagination, with a cursor bound to that ordering.
 - Crafted search addresses are an accepted residual (the longest canonical search is about
   26.6 KB; a 4.7 MB catalog search page was measured); the design's section 5 says why.
 
@@ -201,6 +217,9 @@ these bounds, and reuse them on new pages:
   endpoints carry `data-sveltekit-reload`.
 - Route parameters use the matchers in `web/src/params/` (`segment`, `dotted`, `uuid`), with no
   unmatched twin and no catch-all route: an address no route matches gets the root 404 page.
+- `/search` owns search, with organization/catalog selectors; old scoped search routes redirect there.
+  `/schemas` lists registered versions for an organization or the platform; `/schemas/[id=uuid]`
+  shows resolved fields and the authored document. These remain read-only.
 - The organization switcher keeps no query from a catalogs list, and from a search page keeps the
   search as `readSearch` reads it, bounded by `sharedSearch`. The account menu's button reads
   "Sign out", as everywhere else.

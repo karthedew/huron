@@ -196,11 +196,11 @@ def test_a_file_that_is_not_a_mapping_fails(
 @pytest.mark.parametrize(
     ("organizations", "message"),
     [
-        ([{"name": "helio"}, {"name": "helio"}], "declared twice"),
+        ([{"name": "helio"}, {"name": "helio"}], "declares organization .helio. twice"),
         ([{"name": "Bad Name"}], "naming rule"),
         ([{"name": "helio", "root": "data1"}], "absolute"),
-        ([{"name": "helio", "groups": {"org_admin": [" x"]}}], "groups.org_admin.*unpadded"),
-        ([{"name": "helio", "groups": {"reader": [""]}}], "groups.reader.*unpadded"),
+        ([{"name": "helio", "groups": {"org_admin": [" x"]}}], "groups.org_admin.*white space"),
+        ([{"name": "helio", "groups": {"reader": [""]}}], "groups.reader.*white space"),
         ([{"name": "helio", "groups": {"readers": ["x"]}}], "unknown roles: readers"),
         ([{"name": "helio", "groups": {"platform_admin": ["x"]}}], "unknown roles"),
         ([{"name": "helio", "groups": ["x"]}], "groups"),
@@ -215,4 +215,31 @@ def test_invalid_organizations_fail(
         monkeypatch.setenv(name, value)
     monkeypatch.setenv("HURON_ORGANIZATIONS", json.dumps(organizations))
     with pytest.raises(ValidationError, match=message):
+        Settings()  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    ("given", "kept"),
+    [("debug", "DEBUG"), ("Info", "INFO"), ("WARNING", "WARNING"), ("error", "ERROR")],
+)
+def test_the_log_level_is_read_in_any_case(
+    monkeypatch: pytest.MonkeyPatch, given: str, kept: str
+) -> None:
+    for name, value in REQUIRED.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("HURON_LOG_LEVEL", given)
+    assert Settings().log_level == kept  # type: ignore[call-arg]
+
+
+def test_the_file_sets_the_log_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config(tmp_path, monkeypatch, FILE + "log_level: critical\n")
+    assert Settings().log_level == "CRITICAL"  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("level", ["verbose", "WARN", "", "info "])
+def test_an_unknown_log_level_fails(monkeypatch: pytest.MonkeyPatch, level: str) -> None:
+    for name, value in REQUIRED.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("HURON_LOG_LEVEL", level)
+    with pytest.raises(ValidationError, match="log_level"):
         Settings()  # type: ignore[call-arg]

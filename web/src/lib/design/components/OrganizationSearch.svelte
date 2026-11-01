@@ -17,7 +17,17 @@
 	} from '$lib/search';
 	import { catalogSearchHref, organizationSearchHref } from '$lib/search-links';
 	import { pageTitle } from '$lib/title';
-	import type { PageProps } from './$types';
+	import type { ShellOrganization } from '$lib/organizations';
+	import type { OrganizationSearchPage } from '$lib/server/organization-search';
+	import type { SearchCatalogScope } from '$lib/search-links';
+	interface PageProps {
+		data: OrganizationSearchPage & {
+			organizationDetails: ShellOrganization;
+			scope?: SearchCatalogScope;
+		} & Record<string, unknown>;
+		params?: unknown;
+		form?: unknown;
+	}
 
 	let { data }: PageProps = $props();
 
@@ -63,6 +73,7 @@
 	pendingLabel={data.pendingLabel}
 	drafts={data.drafts}
 	{href}
+	scope={data.scope}
 />
 {#if data.truncated}
 	<Callout>

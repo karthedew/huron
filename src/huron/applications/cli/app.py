@@ -20,7 +20,7 @@ app = typer.Typer(
     cls=commands.VerbGroup,
     no_args_is_help=True,
     add_completion=False,
-    help="Catalog, organize and push raw scientific data on the Huron share.",
+    help="Record raw scientific data in catalogs, organize it and push it to the Huron share.",
     pretty_exceptions_enable=False,
 )
 
@@ -29,9 +29,12 @@ app = typer.Typer(
 def main_options(
     ctx: typer.Context,
     output: Annotated[
-        OutputFormat, typer.Option("--output", "-o", help="table, json or yaml.")
+        OutputFormat,
+        typer.Option("--output", "-o", help="The output format: `table`, `json` or `yaml`."),
     ] = OutputFormat.TABLE,
-    api_url: Annotated[str | None, typer.Option(help="Override the API URL.")] = None,
+    api_url: Annotated[
+        str | None, typer.Option(help="Use this API URL instead of the configured one.")
+    ] = None,
     catalog: Annotated[
         str | None, typer.Option(help="Resolve identifiers against this catalog.")
     ] = None,
@@ -80,7 +83,7 @@ def _failure(services: Services, error: Exception) -> int:
     if services.environ.get("HURON_DEBUG") == "1":
         raise error
     services.err.print(
-        f"error: unexpected failure: {error!r}\nhint: set HURON_DEBUG=1 to see the traceback",
+        f"error: unexpected failure: {error!r}\nhint: to see the traceback, set `HURON_DEBUG=1`",
         markup=False,
     )
     return int(ExitCode.FAILED)

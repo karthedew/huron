@@ -39,21 +39,25 @@
 	--container-auth: 440px;
 	--grid-template-columns-auth: minmax(360px, 0.85fr) 1.15fr;
 	/* A catalog's pages from lg: the explorer, then the content. */
-	--grid-template-columns-explorer: 16rem minmax(0, 1fr);
+	--grid-template-columns-explorer: 260px minmax(0, 1fr);
 	/*
-		The explorer from lg stays in view below the header (4rem, plus a rem), scrolling on its
-		own: never taller than the screen leaves it.
+		The catalog surfaces sit below the 4rem header with 0.5rem of shell background around
+		them and a narrower gap between columns. The explorer scrolls alongside long selected pages.
 	*/
-	--max-height-explorer: calc(100dvh - 6rem);
+	--spacing-workspace-gap: 0.5rem;
+	--spacing-workspace-top: 4.5rem;
+	--spacing-explorer: calc(100dvh - 5rem);
+	--max-height-explorer: var(--spacing-explorer);
+	--min-height-workspace: var(--spacing-explorer);
 	/* An activity log with room: the time, then what happened. */
 	--grid-template-columns-log: 10.5rem minmax(0, 1fr);
 	/* A collection's overview with room: its metadata, then the details beside it. */
 	--grid-template-columns-details: minmax(0, 1fr) 17rem;
 	/* Fields with room: the label, then the value. */
 	--grid-template-columns-fields: 10rem minmax(0, 1fr);
-	/* The shell: from md a rail of icons over short labels, from xl the sidebar. */
-	--spacing-rail: 72px;
-	--spacing-sidebar: 248px;
+	/* The sidebar keeps its width when floating; pinning reserves room plus its left inset. */
+	--spacing-sidebar: 208px;
+	--spacing-sidebar-offset: calc(var(--spacing-sidebar) + var(--spacing-workspace-gap));
 	/* How far a code line that wraps continues in from where the line began: two characters. */
 	--spacing-hang: 2ch;
 	/*

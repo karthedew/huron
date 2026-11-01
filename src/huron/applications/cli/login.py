@@ -41,9 +41,9 @@ class Oidc:
     def __init__(self, http: httpx.Client, issuer: str, client_id: str) -> None:
         if not issuer:
             raise CliError(
-                "no identity provider is configured",
+                "the configuration has no identity provider (`issuer`)",
                 ExitCode.USAGE,
-                hint="run: huron config set issuer <url>",
+                hint="run `huron config set issuer <url>`",
             )
         self._http = http
         self._issuer = issuer.rstrip("/")
@@ -185,7 +185,7 @@ class Session:
                 return self.login(renewed).huron_token
         if stored.expires_at > now:
             return stored.huron_token
-        raise NotLoggedIn("your Huron session has expired")
+        raise NotLoggedIn("your Huron session expired")
 
     def logout(self) -> bool:
         """Forget the stored tokens."""
@@ -223,7 +223,7 @@ class _Receiver:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
-                self.wfile.write(b"Huron login complete. You can close this window.\n")
+                self.wfile.write(b"The Huron login is complete. You can close this window.\n")
                 receiver._done.set()
 
             def log_message(self, format: str, *args: object) -> None:
@@ -238,5 +238,7 @@ class _Receiver:
         if self._server is not None:
             self._server.server_close()
         if not finished:
-            raise CliError("login timed out waiting for the browser", ExitCode.NOT_LOGGED_IN)
+            raise CliError(
+                "login failed: the browser did not answer in time", ExitCode.NOT_LOGGED_IN
+            )
         return self._params

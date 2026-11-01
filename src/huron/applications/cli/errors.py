@@ -62,7 +62,7 @@ class NotLoggedIn(CliError):
     """No usable Huron token."""
 
     def __init__(self, message: str = "you are not logged in") -> None:
-        super().__init__(message, ExitCode.NOT_LOGGED_IN, hint="run: huron login")
+        super().__init__(message, ExitCode.NOT_LOGGED_IN, hint="run `huron login`")
 
 
 class StorageFailure(CliError):
@@ -112,16 +112,16 @@ _EXACT = {
     "COMMIT_TOO_LARGE": ExitCode.VALIDATION,
 }
 _HINTS = {
-    "BASE_VERSION_CONFLICT": "run: huron pull",
-    "VERSION_CONFLICT": "run: huron pull",
-    "UNAUTHENTICATED": "run: huron login",
-    "TOKEN_INVALID": "run: huron login",
+    "BASE_VERSION_CONFLICT": "run `huron pull`",
+    "VERSION_CONFLICT": "run `huron pull`",
+    "UNAUTHENTICATED": "run `huron login`",
+    "TOKEN_INVALID": "run `huron login`",
     "ORGANIZATIONS_MANAGED": (
-        "organizations are declared in the service configuration;"
-        " prepare their directories with: huron adm provision-orgs"
+        "the service configuration declares the organizations."
+        " To prepare their directories, run `huron adm provision-orgs`"
     ),
     "ORGANIZATION_DECLARED": (
-        "the organization and its role groups (groups.<role>) are declared in the service"
-        " configuration; change them there"
+        "the service configuration declares the organization and its role groups"
+        " (`groups.<role>`). Change them there"
     ),
 }

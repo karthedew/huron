@@ -261,11 +261,17 @@ def _changed(
 ) -> list[Finding]:
     target = path.joinpath(*rel_path.split("/"))
     if size != recorded["size"]:
-        detail = f"size {size}, recorded {recorded['size']}"
+        detail = f"size {size}, but the recorded size is {recorded['size']}"
         return [Finding("file_changed", Severity.WARNING, identifier, str(target), detail)]
     if hash_files and storage.hash(target).sha256 != recorded["sha256"]:
         return [
-            Finding("file_changed", Severity.WARNING, identifier, str(target), "sha256 differs")
+            Finding(
+                "file_changed",
+                Severity.WARNING,
+                identifier,
+                str(target),
+                "sha256 is not the recorded sha256",
+            )
         ]
     return []
 
@@ -279,7 +285,7 @@ def _acl(
         return []
     if not problems:
         return []
-    return [Finding(code, Severity.WARNING, identifier, str(path), "; ".join(problems))]
+    return [Finding(code, Severity.WARNING, identifier, str(path), ", ".join(problems))]
 
 
 _RANK = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}

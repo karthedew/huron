@@ -37,21 +37,43 @@ describe('/orgs/[org] page load', () => {
 	it("returns a page of the organization's catalogs", async () => {
 		const catalogs = [catalogFixture(), catalogFixture({ id: 'c2', name: 'space-weather' })];
 		const api = fakeApi({
-			'/catalogs?organization=helio&limit=50': jsonResponse(pageFixture(catalogs, 'more'))
+			'/catalogs?organization=helio&limit=20&sort=name&order=asc': jsonResponse(
+				pageFixture(catalogs, 'more')
+			)
 		});
 		vi.stubGlobal('fetch', api.fetch);
-		expect(await load(catalogsEvent('/orgs/helio'))).toEqual({ catalogs, nextCursor: 'more' });
+		expect(await load(catalogsEvent('/orgs/helio'))).toEqual({
+			catalogs,
+			nextCursor: 'more',
+			catalogSort: { sort: 'name', order: 'asc' }
+		});
 	});
 
 	it('asks for the page the cursor names', async () => {
 		const api = fakeApi({
-			'/catalogs?organization=helio&cursor=c2&limit=50': jsonResponse(pageFixture([]))
+			'/catalogs?organization=helio&cursor=c2&limit=20&sort=name&order=asc': jsonResponse(
+				pageFixture([])
+			)
 		});
 		vi.stubGlobal('fetch', api.fetch);
 		expect(await load(catalogsEvent('/orgs/helio?cursor=c2'))).toEqual({
 			catalogs: [],
-			nextCursor: null
+			nextCursor: null,
+			catalogSort: { sort: 'name', order: 'asc' }
 		});
 		expect(api.calls).toHaveLength(1);
+	});
+	it('asks the API for the selected order across all pages', async () => {
+		vi.stubGlobal(
+			'fetch',
+			fakeApi({
+				'/catalogs?organization=helio&limit=20&sort=created_at&order=desc': jsonResponse(
+					pageFixture([])
+				)
+			}).fetch
+		);
+		expect(
+			(await load(catalogsEvent('/orgs/helio?sort=created_at&order=desc'))).catalogSort
+		).toEqual({ sort: 'created_at', order: 'desc' });
 	});
 });

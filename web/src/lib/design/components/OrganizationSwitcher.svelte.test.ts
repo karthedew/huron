@@ -93,28 +93,28 @@ describe('OrganizationSwitcher', () => {
 	});
 
 	it('keeps an organization sub-route and its query, without cursors and notices', async () => {
-		state.page.route.id = '/(app)/orgs/[org=segment]/search';
+		state.page.route.id = '/(app)/search';
 		state.page.url = new URL(
-			'http://localhost:4173/orgs/helio/search?q=wind&cursor=abc&notice=page_expired&label=a%3Db'
+			'http://localhost:4173/search?organization=helio&q=wind&cursor=abc&notice=page_expired&label=a%3Db'
 		);
 		show();
 		await open();
 		expect(screen.getByRole('link', { name: 'Earth Science geo' })).toHaveAttribute(
 			'href',
-			'/orgs/geo/search?q=wind&label=a%3Db'
+			'/search?organization=geo&q=wind&label=a%3Db'
 		);
 	});
 
 	it('keeps of the address only what the search reads, in its own order', async () => {
-		state.page.route.id = '/(app)/orgs/[org=segment]/search';
+		state.page.route.id = '/(app)/search';
 		state.page.url = new URL(
-			`http://localhost:4173/orgs/helio/search?junk=${'Z'.repeat(15_000)}&label=a:b&q=%20wind%20&state=draft`
+			`http://localhost:4173/search?organization=helio&junk=${'Z'.repeat(15_000)}&label=a:b&q=%20wind%20&state=draft`
 		);
 		show();
 		await open();
 		expect(screen.getByRole('link', { name: 'Earth Science geo' })).toHaveAttribute(
 			'href',
-			'/orgs/geo/search?q=wind&label=a%3Db&state=draft'
+			'/search?organization=geo&q=wind&label=a%3Db&state=draft'
 		);
 	});
 
@@ -124,9 +124,9 @@ describe('OrganizationSwitcher', () => {
 			organizationFixture({ id: `o-${index}`, name: `org-${index}`, display_name: '' })
 		);
 		const label = `k=${'𝕏'.repeat(100)}`;
-		state.page.route.id = '/(app)/orgs/[org=segment]/search';
+		state.page.route.id = '/(app)/search';
 		state.page.url = new URL(
-			`http://localhost:4173/orgs/org-0/search?${new URLSearchParams([
+			`http://localhost:4173/search?organization=org-0&${new URLSearchParams([
 				['q', 'wind'],
 				...Array.from({ length: 6 }, (_, index): [string, string] => ['label', `${index}${label}`])
 			])}`
@@ -136,8 +136,10 @@ describe('OrganizationSwitcher', () => {
 		const hrefs = within(screen.getByRole('list', { name: 'Organizations' }))
 			.getAllByRole('link')
 			.map((link) => link.getAttribute('href') ?? '');
-		expect(hrefs[1]).toBe('/orgs/org-1/search?q=wind');
-		expect(hrefs.every((href) => href.length <= '/orgs/org-499/search'.length + 1024)).toBe(true);
+		expect(hrefs[1]).toBe('/search?organization=org-1&q=wind');
+		expect(hrefs.every((href) => href.length <= '/search?organization=org-499'.length + 1024)).toBe(
+			true
+		);
 	});
 
 	it("goes to the other organization's overview from its catalogs list, without its query", async () => {

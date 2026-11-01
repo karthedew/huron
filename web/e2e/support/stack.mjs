@@ -11,6 +11,10 @@
  * | `HURON_E2E_API_PORT`   | 8198    | Huron API on the memory store                        |
  * | `HURON_E2E_WEB_PORT`   | 4173    | web server under test (`node build/index.js`)        |
  * | `HURON_DEMO_WEB_PORT`  | 5173    | `vite dev` of `npm run demo`                         |
+ *
+ * The web serves the documentation from `HURON_E2E_DOCS_DIR`, by default the build of
+ * `npm run docs:build` (`docs-site/dist`, relative to `web/`). `src/lib/testing/docs`, the unit
+ * tests' stand-in, serves for every docs test but the search's.
  */
 import {
 	API_AUDIENCE,
@@ -43,6 +47,7 @@ export const FAULTS_PROJECT = 'faults';
  * @property {string} apiUrl The API itself, for seeding.
  * @property {string} webOrigin The origin browsers use.
  * @property {readonly string[]} webOrigins Every origin the IdP may redirect back to.
+ * @property {string} docsDir The documentation build the web serves at `/docs`.
  */
 
 /** @typedef {Record<string, string | undefined>} Environment */
@@ -56,7 +61,7 @@ export const FAULTS_PROJECT = 'faults';
 export function e2eStack(env) {
 	const ports = backendPorts(env, port(env, 'HURON_E2E_WEB_PORT', 4173));
 	const webOrigin = `http://localhost:${ports.web}`;
-	return stack(ports, webOrigin, [webOrigin]);
+	return stack(ports, webOrigin, [webOrigin], docsDir(env));
 }
 
 /**
@@ -66,10 +71,12 @@ export function e2eStack(env) {
  */
 export function demoStack(env) {
 	const ports = backendPorts(env, port(env, 'HURON_DEMO_WEB_PORT', 5173));
-	return stack(ports, `http://localhost:${ports.web}`, [
+	return stack(
+		ports,
 		`http://localhost:${ports.web}`,
-		`http://${LOOPBACK}:${ports.web}`
-	]);
+		[`http://localhost:${ports.web}`, `http://${LOOPBACK}:${ports.web}`],
+		docsDir(env)
+	);
 }
 
 /**
@@ -175,7 +182,8 @@ export function webEnvironment(stack) {
 		HURON_WEB_OIDC_SCOPES: 'openid profile email',
 		HURON_WEB_OIDC_LOGOUT: 'true',
 		HURON_WEB_MOUNT_PREFIX: MOUNT_PREFIX,
-		HURON_WEB_API_TIMEOUT_MS: '10000'
+		HURON_WEB_API_TIMEOUT_MS: '10000',
+		HURON_WEB_DOCS_DIR: stack.docsDir
 	};
 }
 
@@ -194,19 +202,30 @@ function backendPorts(env, web) {
 }
 
 /**
+ * @param {Environment} env
+ * @returns {string}
+ */
+function docsDir(env) {
+	const configured = env.HURON_E2E_DOCS_DIR;
+	return configured === undefined || configured === '' ? 'docs-site/dist' : configured;
+}
+
+/**
  * @param {Ports} ports
  * @param {string} webOrigin
  * @param {readonly string[]} webOrigins
+ * @param {string} docs
  * @returns {Stack}
  */
-function stack(ports, webOrigin, webOrigins) {
+function stack(ports, webOrigin, webOrigins, docs) {
 	return {
 		ports,
 		issuer: `http://${LOOPBACK}:${ports.idp}`,
 		proxyUrl: `http://${LOOPBACK}:${ports.proxy}`,
 		apiUrl: `http://${LOOPBACK}:${ports.api}`,
 		webOrigin,
-		webOrigins
+		webOrigins,
+		docsDir: docs
 	};
 }
 

@@ -6,7 +6,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from huron.core.lake.audit import Action, AuditWriter, ObjectType
-from huron.core.lake.lookups import cursor_value, find_catalog, find_namespace, page_of
+from huron.core.lake.listing import ListOrder
+from huron.core.lake.lookups import find_catalog, find_namespace
 from huron.core.lake.namespaces.errors import NamespaceNotEmpty
 from huron.core.lake.namespaces.models import Namespace, NamespaceView
 from huron.core.security.rbac import Authorizer, Privilege, Scope
@@ -74,18 +75,18 @@ class Namespaces:
         parent: str = "",
         cursor: str | None = None,
         limit: int | None = None,
+        ordering: ListOrder | None = None,
     ) -> Page[NamespaceView]:
-        """Direct children of ``parent`` (empty for the catalog root), sorted by name."""
+        """Direct children of ``parent`` (empty for the catalog root), in the requested order."""
+        ordering = ordering or ListOrder()
         size = clamp_limit(limit)
-        after = cursor_value(cursor)
+        after = ordering.after(cursor)
         async with self._uow.transaction() as tx:
             found = await self._catalog(tx, actor, catalog, Privilege.CATALOG_READ)
             parent_id = (await find_namespace(tx, found, parent)).id if parent else None
-            rows = await tx.namespaces.children(
-                found.id, parent_id, None if after is None else str(after), size + 1
-            )
+            rows = await tx.namespaces.children(found.id, parent_id, after, size + 1, ordering)
             views = [await _view(tx, actor, found, namespace) for namespace in rows]
-        return page_of(views, size, lambda view: view.namespace.name)
+        return ordering.page(views, size, lambda view: view.namespace)
 
     async def configure(
         self, actor: Actor, catalog: str, path: str, collections_allowed: bool
@@ -98,7 +99,7 @@ class Namespaces:
             _, collections = await tx.namespaces.child_counts(namespace.id)
             if not collections_allowed and collections:
                 raise NamespaceNotEmpty(
-                    f"{catalog}.{path} still holds {collections} collections",
+                    f"namespace {catalog}.{path} still has {collections} collections",
                     {"collection_count": collections},
                 )
             if namespace.collections_allowed != collections_allowed:
@@ -127,7 +128,7 @@ class Namespaces:
             namespaces, collections = await tx.namespaces.child_counts(namespace.id)
             if namespaces or collections:
                 raise NamespaceNotEmpty(
-                    f"{catalog}.{path} is not empty",
+                    f"namespace {catalog}.{path} is not empty",
                     {"namespace_count": namespaces, "collection_count": collections},
                 )
             await tx.namespaces.delete(namespace.id)

@@ -64,6 +64,7 @@ def resolve_chain(documents: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 def _check_same_type(name: str, before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
     if before.get("type") != after.get("type"):
         raise SchemaIncompatible(
-            f"property {name!r} is required by the parent schema and cannot change type",
+            f"the parent schema requires property {name!r},"
+            " so the child schema cannot change its type",
             {"property": name, "parent_type": before.get("type"), "child_type": after.get("type")},
         )

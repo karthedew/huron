@@ -161,7 +161,9 @@ test('a page that fails keeps the organization the user was in', async ({ page }
 			'Organization: Heliophysics Division, switch'
 		);
 		await expect(
-			page.getByRole('complementary', { name: 'Sidebar' }).getByRole('link', { name: 'Catalogs' })
+			page
+				.getByRole('complementary', { name: 'Sidebar' })
+				.getByRole('link', { name: 'Catalog', exact: true })
 		).toHaveAttribute('href', '/orgs/helio');
 	};
 

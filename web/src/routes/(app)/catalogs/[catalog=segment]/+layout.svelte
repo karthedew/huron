@@ -38,7 +38,10 @@
 					catalog,
 					path
 				}),
-				current: current.kind === 'namespace' && current.path === path
+				current:
+					current.kind === 'namespace' &&
+					current.path === path &&
+					page.route.id === '/(app)/catalogs/[catalog=segment]/namespaces/[path=dotted]'
 			})),
 			...(current.kind === 'collection'
 				? [
@@ -61,10 +64,12 @@
 	The explorer follows the content, so the skip link and the keyboard reach the page first;
 	from lg it is drawn in its own column on the left, where it stays in view as the page scrolls.
 -->
-<div class="grid gap-x-8 gap-y-6 lg:grid-cols-explorer">
-	<div class="min-w-0 lg:col-start-2 lg:row-start-1">
-		<div class="mb-5"><Breadcrumbs {crumbs} /></div>
-		{@render children()}
+<div class="grid gap-x-1 bg-app-sidebar p-workspace-gap lg:grid-cols-explorer">
+	<div class="min-h-workspace min-w-0 rounded-card bg-app-card lg:col-start-2 lg:row-start-1">
+		<div class="flex min-h-11 items-center border-b border-app-line px-4 py-2 sm:px-6 lg:hidden">
+			<Breadcrumbs {crumbs} />
+		</div>
+		<div class="p-4 sm:p-6">{@render children()}</div>
 	</div>
 	<div class="hidden min-w-0 lg:col-start-1 lg:row-start-1 lg:block">
 		{#key data.catalog.name}

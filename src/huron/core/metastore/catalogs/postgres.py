@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from huron.core.lake.catalogs.models import Catalog
+from huron.core.lake.listing import ListOrder, Position
 from huron.core.metastore.rows import Db, unique
+from huron.core.metastore.sorting import ListingSql
 
 if TYPE_CHECKING:
     import uuid
@@ -64,21 +66,22 @@ class PostgresCatalogs:
         self,
         organization_id: uuid.UUID | None,
         visible: tuple[Collection[uuid.UUID], Collection[uuid.UUID]] | None,
-        after: str | None,
+        after: Position,
         limit: int,
+        ordering: ListOrder | None = None,
     ) -> Sequence[Catalog]:
-        """Catalogs sorted by name."""
+        """Catalogs in the requested order."""
         orgs, ids = (None, None) if visible is None else (list(visible[0]), list(visible[1]))
+        sorting = ListingSql(ordering or ListOrder(), 4)
         rows = await self._db.fetch(
             f"select {_COLUMNS} from huron.catalogs"
             " where ($1::uuid is null or organization_id = $1)"
             " and ($2::uuid[] is null or organization_id = any($2) or id = any($3::uuid[]))"
-            " and ($4::text is null or name > $4) order by name limit $5",
+            + sorting.clause(),
             organization_id,
             orgs,
             ids,
-            after,
-            limit,
+            *sorting.values(after, limit),
         )
         return [Catalog(**row) for row in rows]
 

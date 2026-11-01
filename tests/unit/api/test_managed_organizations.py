@@ -1,9 +1,9 @@
 """Managed mode through the API: declared organizations, their 409s and the share roots."""
 
-import logging
 from collections.abc import AsyncIterator
 
 import pytest
+import structlog.testing
 
 from huron.core.lake.organizations.declarations import UNMANAGED
 from huron.core.metastore.store import MemoryStore
@@ -183,23 +183,29 @@ async def test_unmanaged_services_create_organizations_without_roots(api: Servic
     assert api.runtime.declarations == UNMANAGED
 
 
-async def test_startup_warns_about_undeclared_organizations(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+async def test_startup_reports_the_reconcile_as_bootstrap_events() -> None:
     store = MemoryStore()
     async with service(store=store) as first:
         alice = await first.headers("alice")
         await first.client.post("/api/v1/organizations", json={"name": "old"}, headers=alice)
-    caplog.set_level(logging.INFO, logger="huron.api.bootstrap")
-    async with service(store=store, organizations=DECLARED):
-        pass
     renamed = [{**DECLARED[0], "display_name": "Helio"}, DECLARED[1]]
-    async with service(store=store, organizations=renamed):
-        pass
-    messages = [r.getMessage() for r in caplog.records if r.name == "huron.api.bootstrap"]
-    assert any("organization old (0 catalogs) is not declared" in m for m in messages)
-    assert any("created declared organization helio" in m for m in messages)
-    assert any("replaced the role groups of declared organization geo" in m for m in messages)
-    assert any("updated declared organization helio" in m for m in messages)
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 2
+    with structlog.testing.capture_logs() as captured:
+        async with service(store=store, organizations=DECLARED):
+            pass
+        async with service(store=store, organizations=renamed):
+            pass
+    events = [e for e in captured if e["event"].startswith("bootstrap.")]
+    undeclared = {
+        "event": "bootstrap.organization_undeclared",
+        "log_level": "warning",
+        "name": "old",
+        "catalog_count": 0,
+    }
+    assert undeclared in events
+    for event, name in [
+        ("bootstrap.organization_created", "helio"),
+        ("bootstrap.organization_regranted", "geo"),
+        ("bootstrap.organization_updated", "helio"),
+    ]:
+        assert {"event": event, "log_level": "info", "name": name} in events
+    assert [e for e in events if e["log_level"] == "warning"] == [undeclared, undeclared]

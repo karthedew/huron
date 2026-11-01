@@ -35,7 +35,7 @@ def resolve(prefix: Path, relative: str) -> Path:
     """``prefix / relative`` for a path the API returned; refuses anything escaping the prefix."""
     parts = relative.split("/")
     if any(part in {"", ".", ".."} for part in parts):
-        raise StorageError("refusing a path outside the share", {"path": relative})
+        raise StorageError("the path is outside the share", {"path": relative})
     return prefix.joinpath(*parts)
 
 

@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 
+import httpx
 import pytest
 
 from huron.applications.cli.prompts import QuestionaryPrompter
@@ -88,7 +89,7 @@ def test_get_collections_in_a_namespace_or_the_whole_catalog(browsable: Cli) -> 
     browsable.ok("catalog", "heliophysics")
     direct = browsable.ok("get", "collections", "solar-wind").stdout
     assert RUN7 in direct and DAILY not in direct
-    assert "check out one with: huron checkout <COLLECTION>" in direct
+    assert "To select a collection, run `huron checkout <COLLECTION>`" in direct
     everything = browsable.ok("get", "collections").stdout
     assert RUN7 in everything and DAILY in everything and "draft" in everything
     rows = json.loads(browsable.ok("-o", "json", "get", "collections").stdout)
@@ -107,13 +108,13 @@ def test_get_hints_fit_an_empty_listing(browsable: Cli) -> None:
     assert "huron create collection <identifier>" in collections
     assert "huron checkout" not in collections
     archive = browsable.ok("get", "collections", "heliophysics.archive").stdout
-    assert "huron checkout" not in archive and "huron tree" in archive
+    assert "huron checkout" not in archive and "huron --catalog heliophysics tree" in archive
 
 
 def test_full_identifiers_of_another_catalog_are_found(browsable: Cli) -> None:
     browsable.login_as("bob")
     browsable.ok("catalog", "spare")
-    assert f"checked out {RUN7}" in browsable.ok("checkout", RUN7).stdout
+    assert f"The current collection is now {RUN7}" in browsable.ok("checkout", RUN7).stdout
     described = json.loads(browsable.ok("-o", "json", "describe", "collection", RUN7).stdout)
     assert described["identifier"] == RUN7
     children = json.loads(browsable.ok("-o", "json", "get", "namespaces", "heliophysics").stdout)
@@ -137,6 +138,66 @@ def test_a_missing_identifier_names_what_was_tried(browsable: Cli) -> None:
     assert "relative to the current catalog spare" in missing.stderr
     nowhere = browsable.run("get", "namespaces", "nowhere")
     assert nowhere.exit_code == 5 and "spare.nowhere or nowhere" in nowhere.stderr
+    assert "huron --catalog heliophysics tree" in missing.stderr
+    assert "no catalog nowhere" not in nowhere.stderr
+
+
+def hint_of(stderr: str) -> str:
+    return next(line for line in stderr.splitlines() if line.startswith("hint: "))
+
+
+def test_a_missing_relative_identifier_hints_at_a_tree_command_that_works(
+    browsable: Cli,
+) -> None:
+    override = browsable.run("--catalog", "heliophysics", "checkout", "solar-wind.nope")
+    assert override.exit_code == 5
+    hint = hint_of(override.stderr)
+    assert "catalog heliophysics, which `--catalog` selects" in hint
+    assert "run `huron --catalog heliophysics tree`" in hint
+    browsable.ok("catalog", "heliophysics")
+    saved = hint_of(browsable.run("checkout", "solar-wind.nope").stderr)
+    assert "the current catalog heliophysics" in saved and "run `huron tree`" in saved
+    same = hint_of(browsable.run("--catalog", "heliophysics", "checkout", "x.nope").stderr)
+    assert "run `huron tree`" in same and "--catalog" not in same
+
+
+def test_a_missing_full_identifier_hints_at_its_catalog(browsable: Cli) -> None:
+    unknown = browsable.run("checkout", "nope.x.y")
+    assert unknown.exit_code == 5
+    assert hint_of(unknown.stderr) == (
+        "hint: the API found no catalog nope. To list the catalogs, run `huron get catalogs -A`"
+    )
+    known = browsable.run("describe", "collection", "heliophysics.solar-wind.nope")
+    assert known.exit_code == 5
+    assert hint_of(known.stderr) == (
+        "hint: to see catalog heliophysics, run `huron --catalog heliophysics tree`"
+    )
+    parent = browsable.run("get", "namespaces", "nope")
+    assert hint_of(parent.stderr) == "hint: to list the catalogs, run `huron get catalogs -A`"
+
+
+def test_a_failed_catalog_lookup_keeps_the_not_found_error(
+    browsable: Cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = browsable.router.handle_request
+
+    def failing(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/catalogs/heliophysics":
+            return httpx.Response(500, json={"code": "INTERNAL", "detail": "boom"})
+        return real(request)
+
+    monkeypatch.setattr(browsable.router, "handle_request", failing)
+    missing = browsable.run("checkout", "heliophysics.solar-wind.nope")
+    assert missing.exit_code == 5
+    assert "the API found no collection heliophysics.solar-wind.nope" in missing.stderr
+    assert "hint:" not in missing.stderr
+
+
+@pytest.mark.parametrize("argv", [("describe", "catalog"), ("catalog",), ("delete", "catalog")])
+def test_a_missing_catalog_hints_at_the_catalog_list(browsable: Cli, argv: tuple[str, ...]) -> None:
+    missing = browsable.run(*argv, "nope")
+    assert missing.exit_code == 5
+    assert hint_of(missing.stderr) == "hint: to list the catalogs, run `huron get catalogs -A`"
 
 
 @pytest.mark.parametrize("argv", [(), ("get",), ("describe",), ("create",), ("adm",), ("set",)])
@@ -219,8 +280,8 @@ def test_describe_namespace(browsable: Cli) -> None:
 
 def test_catalog_without_a_selection_says_how_to_choose(browsable: Cli) -> None:
     shown = browsable.ok("catalog").stdout
-    assert "No catalog is selected" in shown
-    assert "heliophysics" in shown and "switch with: huron catalog <name>" in shown
+    assert "There is no current catalog" in shown
+    assert "heliophysics" in shown and "To select a catalog, run `huron catalog <name>`" in shown
     context = json.loads(browsable.ok("-o", "json", "catalog").stdout)
     assert [row["name"] for row in context.pop("catalogs")] == ["heliophysics"]
     assert context == {
@@ -238,18 +299,18 @@ def test_catalog_without_a_selection_still_reports_the_checked_out_collection(
     browsable.ok("checkout", "solar-wind.run7")
     browsable.configure(current_catalog=None)
     shown = browsable.ok("catalog").stdout
-    assert "No catalog is selected" in shown and "huron catalog <name>" in shown
-    assert f"Checked out: {RUN7}" in shown and "in catalog heliophysics" in shown
+    assert "There is no current catalog" in shown and "huron catalog <name>" in shown
+    assert f"Current collection: {RUN7}" in shown and "in catalog heliophysics" in shown
 
 
 def test_catalog_switches_and_reports_the_checked_out_collection(browsable: Cli) -> None:
     switched = browsable.ok("catalog", "heliophysics").stdout
-    assert "Now using catalog heliophysics" in switched
-    assert "No collection is checked out" in switched
+    assert "The current catalog is now heliophysics" in switched
+    assert "There is no current collection" in switched
     shown = browsable.ok("catalog").stdout
-    assert "Using catalog heliophysics in organization helio on http://huron.test" in shown
+    assert "The current catalog is heliophysics in organization helio on http://huron.test" in shown
     browsable.ok("checkout", "solar-wind.run7")
-    assert re.search(rf"Checked out: {RUN7} \(version \d+\)", browsable.ok("catalog").stdout)
+    assert re.search(rf"Current collection: {RUN7} \(version \d+\)", browsable.ok("catalog").stdout)
     context = json.loads(browsable.ok("-o", "json", "catalog").stdout)
     assert [row["name"] for row in context.pop("catalogs")] == ["heliophysics"]
     assert context == {
@@ -259,7 +320,7 @@ def test_catalog_switches_and_reports_the_checked_out_collection(browsable: Cli)
         "collection": RUN7,
     }
     assert browsable.run("catalog", "missing").exit_code == 5
-    assert "Using catalog heliophysics" in browsable.ok("catalog").stdout
+    assert "The current catalog is heliophysics" in browsable.ok("catalog").stdout
 
 
 def test_switching_catalog_mentions_a_collection_of_another_catalog(browsable: Cli) -> None:
@@ -267,15 +328,18 @@ def test_switching_catalog_mentions_a_collection_of_another_catalog(browsable: C
     browsable.ok("catalog", "heliophysics")
     browsable.ok("checkout", "solar-wind.run7")
     switched = browsable.ok("catalog", "spare").stdout
-    assert "Now using catalog spare" in switched
-    assert f"Checked out: {RUN7}" in switched and "in catalog heliophysics" in switched
+    assert "The current catalog is now spare" in switched
+    assert f"Current collection: {RUN7}" in switched and "in catalog heliophysics" in switched
     as_json = json.loads(browsable.ok("-o", "json", "catalog", "heliophysics").stdout)
     assert as_json["catalog"] == "heliophysics" and as_json["collection"] == RUN7
 
 
 def test_status_without_a_checked_out_collection(browsable: Cli) -> None:
     nothing = browsable.ok("status").stdout
-    assert "list them with: huron catalog;" in nothing and "huron catalog <name>" in nothing
+    assert (
+        "To list the catalogs, run `huron catalog`." in nothing
+        and "huron catalog <name>" in nothing
+    )
     assert "huron checkout" not in nothing
     browsable.ok("catalog", "heliophysics")
     table = browsable.ok("status").stdout
@@ -299,7 +363,7 @@ def test_checkout_picker_descends_goes_up_and_picks(browsable: Cli) -> None:
     prompter = browsable.prompter
     prompter.answers.extend(["solar-wind/", "l0/", "..", "run7"])
     result = browsable.ok("checkout")
-    assert f"checked out {RUN7}" in result.stdout
+    assert f"The current collection is now {RUN7}" in result.stdout
     assert prompter.choices[0] == ["archive/", "solar-wind/"]
     assert prompter.choices[1] == ["..", "l0/", "run7"]
     assert prompter.choices[2] == ["..", "daily"]
@@ -311,7 +375,7 @@ def test_checkout_picker_leaves_an_empty_namespace_by_going_up(browsable: Cli) -
     browsable.ok("catalog", "heliophysics")
     prompter = browsable.prompter
     prompter.answers.extend(["archive/", "..", "solar-wind/", "l0/", "daily"])
-    assert f"checked out {DAILY}" in browsable.ok("checkout").stdout
+    assert f"The current collection is now {DAILY}" in browsable.ok("checkout").stdout
     assert prompter.choices[1] == [".."]
     assert "heliophysics.archive is empty" in prompter.asked[1]
 

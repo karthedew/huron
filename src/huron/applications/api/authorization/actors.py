@@ -18,7 +18,7 @@ async def current_actor(request: Request, runtime: RuntimeDep) -> Actor:
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
-        raise Unauthenticated("a Huron bearer token is required")
+        raise Unauthenticated("the request has no Huron bearer token")
     claims = (await runtime.verifier()).verify(token.strip())
     return Actor(claims.sub, claims.name, frozenset(claims.groups))
 

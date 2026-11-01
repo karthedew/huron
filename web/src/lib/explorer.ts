@@ -53,12 +53,12 @@ export function isFailedLevel(level: TrailLevel): level is FailedLevel {
 }
 
 /**
- * Where the page is in the catalog's tree. `overview`: the catalog's or the collection's overview
+ * Where the page is in the catalog's tree. `overview`: the catalog's, namespace's or collection's overview
  * itself rather than one of its other tabs, whose node then marks its section, not the page.
  */
 export type ExplorerCurrent =
 	| { kind: 'catalog'; overview: boolean }
-	| { kind: 'namespace'; path: string }
+	| { kind: 'namespace'; path: string; overview: boolean }
 	| { kind: 'collection'; namespace: string; name: string; overview: boolean };
 
 /** The node of a level on the way to the page, which its loaded page does not hold. */
@@ -129,7 +129,9 @@ export function explorerCurrent(
 	routeId: string | null,
 	params: { path?: string; identifier?: string }
 ): ExplorerCurrent {
-	if (routeId === NAMESPACE_ROUTE && params.path) return { kind: 'namespace', path: params.path };
+	if (routeId?.startsWith(NAMESPACE_ROUTE) && params.path) {
+		return { kind: 'namespace', path: params.path, overview: routeId === NAMESPACE_ROUTE };
+	}
 	if (routeId?.startsWith(COLLECTION_ROUTE) && params.identifier) {
 		return {
 			kind: 'collection',

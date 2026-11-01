@@ -3,7 +3,7 @@ import { drawnInsideBorder, drawnLines } from './support/cues.ts';
 import { searchMatches, titleOf, type FixtureSearch } from './support/fixture.mjs';
 import { VIEWPORTS, signIn, test } from './support/harness.ts';
 
-const HELIOPHYSICS = '/catalogs/heliophysics/search';
+const HELIOPHYSICS = '/search?catalog=heliophysics';
 
 /** The parts of a catalog's search page. */
 function searchPage(page: Page) {
@@ -44,7 +44,7 @@ test.describe('the catalog search', () => {
 		page
 	}) => {
 		await signIn(page, 'bob');
-		await page.goto(`${HELIOPHYSICS}?q=wind`);
+		await page.goto(`${HELIOPHYSICS}&q=wind`);
 		const search = searchPage(page);
 		await expect(page).toHaveTitle('“wind” · Search · Heliophysics · Huron');
 		await expect(search.text).toHaveValue('wind');
@@ -63,16 +63,12 @@ test.describe('the catalog search', () => {
 		await expect(search.hint.locator('pre code')).toHaveText(
 			'huron --catalog heliophysics search -q wind'
 		);
-		// The catalog's sub-navigation marks the page; the explorer the catalog, as its section.
-		await expect(
-			search.main.getByRole('navigation', { name: 'Catalog' }).getByRole('link', { name: 'Search' })
-		).toHaveAttribute('aria-current', 'page');
-		await expect(
-			page.getByRole('navigation', { name: 'Explorer' }).getByRole('link', { name: 'Heliophysics' })
-		).toHaveAttribute('aria-current', 'true');
+		await expect(search.main.getByRole('combobox', { name: 'Catalog' })).toHaveValue(
+			'heliophysics'
+		);
 		// Searching is a section of its own: the shell marks Search, which leads here.
 		const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
-		await expect(sidebar.getByRole('link', { name: 'Catalogs' })).not.toHaveAttribute(
+		await expect(sidebar.getByRole('link', { name: 'Catalog', exact: true })).not.toHaveAttribute(
 			'aria-current'
 		);
 		await expect(sidebar.getByRole('link', { name: 'Search' })).toHaveAttribute(
@@ -85,7 +81,7 @@ test.describe('the catalog search', () => {
 			search.main
 				.getByRole('region', { name: 'Results' })
 				.getByRole('link', { name: 'Search all of Heliophysics Division' })
-		).toHaveAttribute('href', '/orgs/helio/search?q=wind');
+		).toHaveAttribute('href', '/search?organization=helio&q=wind');
 	});
 
 	for (const [key, value] of [
@@ -95,7 +91,7 @@ test.describe('the catalog search', () => {
 		const labels = { [key]: value };
 		test(`filters by the label ${key}=${value}`, async ({ page }) => {
 			await signIn(page, 'carol');
-			await page.goto(`${HELIOPHYSICS}?label=${encodeURIComponent(`${key}=${value}`)}`);
+			await page.goto(`${HELIOPHYSICS}&label=${encodeURIComponent(`${key}=${value}`)}`);
 			const search = searchPage(page);
 			await expect(titles(search.rows)).toHaveText(expectedTitles('heliophysics', { labels }));
 			await expect(
@@ -115,7 +111,7 @@ test.describe('the catalog search', () => {
 
 	test('combines the text with label filters', async ({ page }) => {
 		await signIn(page, 'alice');
-		await page.goto(`${HELIOPHYSICS}?q=ace&label=level%3Dl2`);
+		await page.goto(`${HELIOPHYSICS}&q=ace&label=level%3Dl2`);
 		const search = searchPage(page);
 		const expected = expectedTitles('heliophysics', { q: 'ace', labels: { level: 'l2' } });
 		expect(expected).toHaveLength(1);
@@ -128,13 +124,13 @@ test.describe('the catalog search', () => {
 
 	test('takes filters away and adds labels from result chips', async ({ page }) => {
 		await signIn(page, 'bob');
-		await page.goto(`${HELIOPHYSICS}?q=wind&label=mission%3Dwind&label=level%3Dl2`);
+		await page.goto(`${HELIOPHYSICS}&q=wind&label=mission%3Dwind&label=level%3Dl2`);
 		const search = searchPage(page);
 		await expect(titles(search.rows)).toHaveText(
 			expectedTitles('heliophysics', { q: 'wind', labels: { mission: 'wind', level: 'l2' } })
 		);
 		await search.form.getByRole('link', { name: 'Remove filter level = l2' }).click();
-		await expect(page).toHaveURL(`${HELIOPHYSICS}?q=wind&label=mission%3Dwind`);
+		await expect(page).toHaveURL(`${HELIOPHYSICS}&q=wind&label=mission%3Dwind`);
 		const narrowed = expectedTitles('heliophysics', { q: 'wind', labels: { mission: 'wind' } });
 		await expect(titles(search.rows)).toHaveText(narrowed);
 		// A result's chip adds its label to the search as it is.
@@ -142,7 +138,7 @@ test.describe('the catalog search', () => {
 			.getByRole('link', { name: 'instrument: swe, add this label to the search' })
 			.click();
 		await expect(page).toHaveURL(
-			`${HELIOPHYSICS}?q=wind&label=mission%3Dwind&label=instrument%3Dswe`
+			`${HELIOPHYSICS}&q=wind&label=mission%3Dwind&label=instrument%3Dswe`
 		);
 		await expect(titles(search.rows)).toHaveText(
 			expectedTitles('heliophysics', {
@@ -163,7 +159,7 @@ test.describe('the catalog search', () => {
 			.getByRole('main')
 			.getByRole('link', { name: 'mission: ace, search the catalog for this label' })
 			.click();
-		await expect(page).toHaveURL(`${HELIOPHYSICS}?label=mission%3Dace`);
+		await expect(page).toHaveURL(`${HELIOPHYSICS}&label=mission%3Dace`);
 		const search = searchPage(page);
 		await expect(titles(search.rows)).toHaveText(
 			expectedTitles('heliophysics', { labels: { mission: 'ace' } })
@@ -178,7 +174,7 @@ test.describe('the catalog search', () => {
 		await search.addLabel.fill('mission:wind');
 		await search.submit.click();
 		// Trimmed, the label as key=value, and the default states left out.
-		await expect(page).toHaveURL(`${HELIOPHYSICS}?q=wind&label=mission%3Dwind`);
+		await expect(page).toHaveURL(`${HELIOPHYSICS}&q=wind&label=mission%3Dwind`);
 		await expect(titles(search.rows)).toHaveText(
 			expectedTitles('heliophysics', { q: 'wind', labels: { mission: 'wind' } })
 		);
@@ -188,11 +184,11 @@ test.describe('the catalog search', () => {
 
 	test('searches the incomplete collections alone', async ({ page }) => {
 		await signIn(page, 'bob');
-		await page.goto('/catalogs/space-weather/search');
+		await page.goto('/search?catalog=space-weather');
 		const search = searchPage(page);
 		await search.form.getByRole('checkbox', { name: 'Active' }).uncheck();
 		await search.submit.click();
-		await expect(page).toHaveURL('/catalogs/space-weather/search?state=incomplete');
+		await expect(page).toHaveURL('/search?catalog=space-weather&state=incomplete');
 		const expected = searchMatches('space-weather', { states: ['incomplete'] });
 		// One lacks a field the catalog's schema requires; the other's override no longer fits it.
 		expect(expected).toEqual([
@@ -211,7 +207,7 @@ test.describe('the catalog search', () => {
 	for (const username of ['dave', 'carol'] as const) {
 		test(`shows drafts to ${username}, who may create collections`, async ({ page }) => {
 			await signIn(page, username);
-			await page.goto(`${HELIOPHYSICS}?state=draft`);
+			await page.goto(`${HELIOPHYSICS}&state=draft`);
 			const search = searchPage(page);
 			await expect(search.form.getByRole('checkbox', { name: 'Draft' })).toBeChecked();
 			const drafts = searchMatches('heliophysics', { states: ['draft'] });
@@ -226,7 +222,7 @@ test.describe('the catalog search', () => {
 
 	test('never shows erin a draft, nor offers her drafts', async ({ page }) => {
 		await signIn(page, 'erin');
-		await page.goto(`${HELIOPHYSICS}?q=ace&state=draft`);
+		await page.goto(`${HELIOPHYSICS}&q=ace&state=draft`);
 		const search = searchPage(page);
 		await expect(search.form.getByRole('checkbox', { name: 'Draft' })).toHaveCount(0);
 		// The address's draft is ignored: the default states, as the form shows.
@@ -242,14 +238,14 @@ test.describe('the catalog search', () => {
 			'huron --catalog heliophysics search -q ace'
 		);
 		// Nor by its identifier: the API conceals it.
-		await page.goto(`${HELIOPHYSICS}?q=heliophysics.solar-wind.ace.mag-l1-draft`);
+		await page.goto(`${HELIOPHYSICS}&q=heliophysics.solar-wind.ace.mag-l1-draft`);
 		await expect(search.exact).toHaveCount(0);
 		await expect(search.main.getByText('No collections match this search.')).toBeVisible();
 	});
 
 	test('shows the collection a full identifier names first, and not again', async ({ page }) => {
 		await signIn(page, 'bob');
-		await page.goto(`${HELIOPHYSICS}?q=heliophysics.solar-wind.ace.mag-l2-2024`);
+		await page.goto(`${HELIOPHYSICS}&q=heliophysics.solar-wind.ace.mag-l2-2024`);
 		const search = searchPage(page);
 		await expect(search.exact.getByRole('link', { name: 'ACE MAG level 2, 2024' })).toHaveAttribute(
 			'href',
@@ -262,7 +258,7 @@ test.describe('the catalog search', () => {
 		await expect(search.rows).toHaveCount(0);
 		await expect(search.main.getByText('No other collections match this search.')).toBeVisible();
 		// Inside the catalog the identifier may leave out the catalog's name, in any case.
-		await page.goto(`${HELIOPHYSICS}?q=Solar-Wind.ACE.Mag-L2-2024`);
+		await page.goto(`${HELIOPHYSICS}&q=Solar-Wind.ACE.Mag-L2-2024`);
 		await expect(search.exact.getByRole('link', { name: 'ACE MAG level 2, 2024' })).toBeVisible();
 		await expect(search.exact.locator('mark')).toHaveText(['solar-wind.ace.mag-l2-2024']);
 	});
@@ -270,14 +266,14 @@ test.describe('the catalog search', () => {
 	test('shows a draft named exactly only when the search includes drafts', async ({ page }) => {
 		await signIn(page, 'dave');
 		const draft = 'heliophysics.solar-wind.ace.mag-l1-draft';
-		await page.goto(`${HELIOPHYSICS}?q=${draft}`);
+		await page.goto(`${HELIOPHYSICS}&q=${draft}`);
 		const search = searchPage(page);
 		await expect(search.main.getByText('No collections match this search.')).toBeVisible();
 		await expect(search.exact).toHaveCount(0);
 		await search.form.getByRole('checkbox', { name: 'Draft' }).check();
 		await search.submit.click();
 		await expect(page).toHaveURL(
-			`${HELIOPHYSICS}?q=${draft}&state=active&state=incomplete&state=draft`
+			`${HELIOPHYSICS}&q=${draft}&state=active&state=incomplete&state=draft`
 		);
 		await expect(search.exact.getByRole('link', { name: 'ACE MAG level 1 (draft)' })).toBeVisible();
 		await expect(search.exact).toContainText('Draft');
@@ -285,7 +281,7 @@ test.describe('the catalog search', () => {
 
 	test('offers ways out when nothing matches', async ({ page }) => {
 		await signIn(page, 'carol');
-		await page.goto(`${HELIOPHYSICS}?q=solar%20storm%20xyz&label=mission%3Dace`);
+		await page.goto(`${HELIOPHYSICS}&q=solar%20storm%20xyz&label=mission%3Dace`);
 		const search = searchPage(page);
 		expect(
 			searchMatches('heliophysics', { q: 'solar storm xyz', labels: { mission: 'ace' } })
@@ -300,14 +296,14 @@ test.describe('the catalog search', () => {
 			search.main.getByRole('list', { name: 'Filters', exact: true }).getByRole('link', {
 				name: 'Remove filter mission = ace'
 			})
-		).toHaveAttribute('href', `${HELIOPHYSICS}?q=solar+storm+xyz`);
+		).toHaveAttribute('href', `${HELIOPHYSICS}&q=solar+storm+xyz`);
 		const words = search.main.getByRole('list', { name: 'Words' }).getByRole('link');
 		await expect(words).toHaveText(['solar', 'storm', 'xyz']);
 		await expect(
 			search.main.getByRole('link', { name: 'Search all of Heliophysics Division' })
-		).toHaveAttribute('href', '/orgs/helio/search?q=solar+storm+xyz&label=mission%3Dace');
+		).toHaveAttribute('href', '/search?organization=helio&q=solar+storm+xyz&label=mission%3Dace');
 		await words.first().click();
-		await expect(page).toHaveURL(`${HELIOPHYSICS}?q=solar&label=mission%3Dace`);
+		await expect(page).toHaveURL(`${HELIOPHYSICS}&q=solar&label=mission%3Dace`);
 		await expect(titles(search.rows)).toHaveText(
 			expectedTitles('heliophysics', { q: 'solar', labels: { mission: 'ace' } })
 		);
@@ -315,7 +311,7 @@ test.describe('the catalog search', () => {
 
 	test('pages through many results, 25 at a time', async ({ page }) => {
 		await signIn(page, 'alice');
-		await page.goto(`${HELIOPHYSICS}?q=run`);
+		await page.goto(`${HELIOPHYSICS}&q=run`);
 		const search = searchPage(page);
 		const all = expectedTitles('heliophysics', { q: 'run' });
 		expect(all).toHaveLength(60);
@@ -323,20 +319,20 @@ test.describe('the catalog search', () => {
 		await expect(titles(search.rows)).toHaveText(all.slice(0, 25));
 		await expect(pages.getByRole('link', { name: 'First page' })).toHaveCount(0);
 		await pages.getByRole('link', { name: 'Next page' }).click();
-		await expect(page).toHaveURL(/\?q=run&cursor=/);
+		await expect(page).toHaveURL(/[?&]q=run&cursor=/);
 		await expect(titles(search.rows)).toHaveText(all.slice(25, 50));
 		await pages.getByRole('link', { name: 'Next page' }).click();
 		await expect(titles(search.rows)).toHaveText(all.slice(50));
 		await expect(pages.getByRole('link', { name: 'Next page' })).toHaveCount(0);
 		await pages.getByRole('link', { name: 'First page' }).click();
-		await expect(page).toHaveURL(`${HELIOPHYSICS}?q=run`);
+		await expect(page).toHaveURL(`${HELIOPHYSICS}&q=run`);
 		await expect(titles(search.rows)).toHaveText(all.slice(0, 25));
 	});
 
 	test('starts again at the first page when a page link expired', async ({ page }) => {
 		await signIn(page, 'bob');
-		await page.goto(`${HELIOPHYSICS}?q=run&cursor=not-a-cursor`);
-		await expect(page).toHaveURL(`${HELIOPHYSICS}?q=run&notice=page_expired`);
+		await page.goto(`${HELIOPHYSICS}&q=run&cursor=not-a-cursor`);
+		await expect(page).toHaveURL(`${HELIOPHYSICS}&q=run&notice=page_expired`);
 		const search = searchPage(page);
 		await expect(search.main.getByRole('note')).toHaveText(
 			'That page link expired; showing the first page.'
@@ -349,7 +345,7 @@ test.describe('the catalog search', () => {
 	test('explains a text longer than the API accepts at its field', async ({ page }) => {
 		await signIn(page, 'carol');
 		const long = 'w'.repeat(201);
-		await page.goto(`${HELIOPHYSICS}?q=${long}`);
+		await page.goto(`${HELIOPHYSICS}&q=${long}`);
 		const search = searchPage(page);
 		await expect(page).toHaveTitle('Error: Search · Heliophysics · Huron');
 		await expect(search.text).toHaveAttribute('aria-invalid', 'true');
@@ -364,7 +360,7 @@ test.describe('the catalog search', () => {
 
 	test('explains a label filter it cannot read at the field for adding one', async ({ page }) => {
 		await signIn(page, 'bob');
-		await page.goto(`${HELIOPHYSICS}?q=wind`);
+		await page.goto(`${HELIOPHYSICS}&q=wind`);
 		const search = searchPage(page);
 		await search.addLabel.fill('mission');
 		await search.submit.click();
@@ -376,7 +372,7 @@ test.describe('the catalog search', () => {
 		await expect(search.results).toHaveCount(0);
 		await search.addLabel.fill('mission=wind');
 		await search.submit.click();
-		await expect(page).toHaveURL(`${HELIOPHYSICS}?q=wind&label=mission%3Dwind`);
+		await expect(page).toHaveURL(`${HELIOPHYSICS}&q=wind&label=mission%3Dwind`);
 		await expect(search.addLabel).not.toHaveAttribute('aria-invalid');
 	});
 
@@ -386,7 +382,7 @@ test.describe('the catalog search', () => {
 		await signIn(page, 'alice');
 		// Longer than a label chip searches for.
 		const long = `mission=${'v'.repeat(101)}`;
-		await page.goto(`${HELIOPHYSICS}?q=wind&label=${encodeURIComponent(long)}`);
+		await page.goto(`${HELIOPHYSICS}&q=wind&label=${encodeURIComponent(long)}`);
 		const search = searchPage(page);
 		await expect(page).toHaveTitle('Error: Search · Heliophysics · Huron');
 		await expect(search.addLabel).toHaveAttribute('aria-invalid', 'true');
@@ -398,7 +394,7 @@ test.describe('the catalog search', () => {
 		// More filters than a search may have: the first ones stay, to search with.
 		const labels = Array.from({ length: 11 }, (_, index) => `k${index}=v`);
 		await page.goto(
-			`${HELIOPHYSICS}?${new URLSearchParams(labels.map((label) => ['label', label]))}`
+			`${HELIOPHYSICS}&${new URLSearchParams(labels.map((label) => ['label', label]))}`
 		);
 		await expect(search.addLabel).toHaveAccessibleDescription(
 			'Use at most 10 label filters; this search has 11.'
@@ -407,7 +403,7 @@ test.describe('the catalog search', () => {
 		await expect(search.results).toHaveCount(0);
 		await search.submit.click();
 		await expect(page).toHaveURL(
-			`${HELIOPHYSICS}?${new URLSearchParams(labels.slice(0, 10).map((label) => ['label', label]))}`
+			`${HELIOPHYSICS}&${new URLSearchParams(labels.slice(0, 10).map((label) => ['label', label]))}`
 		);
 		await expect(search.addLabel).not.toHaveAttribute('aria-invalid');
 		await expect(search.main.getByText('No collections match this search.')).toBeVisible();
@@ -417,7 +413,7 @@ test.describe('the catalog search', () => {
 		await page.setViewportSize(VIEWPORTS.phone);
 		await signIn(page, 'carol');
 		const [key, value] = ['k'.repeat(100), 'v'.repeat(100)];
-		await page.goto(`${HELIOPHYSICS}?label=${key}%3D${value}`);
+		await page.goto(`${HELIOPHYSICS}&label=${key}%3D${value}`);
 		const search = searchPage(page);
 		const name = `Remove filter ${key} = ${value}`;
 		const chip = search.form.getByRole('link', { name });
@@ -439,7 +435,7 @@ test.describe('the catalog search', () => {
 			const page = await context.newPage();
 			await signIn(page, 'bob');
 			const query = new URLSearchParams({ q: 'wind', label: 'note=two\nlines' });
-			await page.goto(`${HELIOPHYSICS}?${query}`);
+			await page.goto(`${HELIOPHYSICS}&${query}`);
 			const search = searchPage(page);
 			const command = "huron --catalog heliophysics search -q wind -l $'note=two\\nlines'";
 			await expect(search.hint.locator('pre code')).toHaveText(command);
@@ -464,7 +460,7 @@ test.describe('the catalog search', () => {
 		// Pasted as they are, Ctrl-U would erase the line typed so far and a carriage return would
 		// run what follows; a right-to-left override would redraw the label backwards.
 		const query = new URLSearchParams({ q: 'x\u0015rm -rf ~ #\ry', label: 'note=\u202eevil' });
-		await page.goto(`${HELIOPHYSICS}?${query}`);
+		await page.goto(`${HELIOPHYSICS}&${query}`);
 		const search = searchPage(page);
 		const command =
 			"huron --catalog heliophysics search -q $'x\\025rm -rf ~ #\\ry' -l $'note=\\342\\200\\256evil'";
@@ -476,18 +472,23 @@ test.describe('the catalog search', () => {
 
 	test('has the form a search needs', async ({ page }) => {
 		await signIn(page, 'carol');
-		await page.goto(`${HELIOPHYSICS}?q=wind&label=mission%3Dwind`);
+		await page.goto(`${HELIOPHYSICS}&q=wind&label=mission%3Dwind`);
 		await expect(searchPage(page).form).toMatchAriaSnapshot(`
 			- search "Catalog search":
+			  - text: Catalog
+			  - combobox "Catalog":
+			    - option "All catalogs in this organization"
+			    - option "Heliophysics" [selected]
+			    - option "Space Weather"
 			  - text: Search text
 			  - searchbox "Search text": wind
-			  - paragraph: Matches the exact text in identifiers, titles and descriptions. Use labels for exact key=value filters. Sorted by identifier.
+			  - paragraph: Search identifiers, titles and descriptions. Labels filter metadata by exact key=value. Results are sorted by identifier.
 			  - group "Labels":
 			    - text: Labels
 			    - list "Label filters":
 			      - listitem:
 			        - link "Remove filter mission = wind":
-			          - /url: /catalogs/heliophysics/search?q=wind
+			          - /url: /search?catalog=heliophysics&q=wind
 			          - text: mission = wind
 			    - text: Add a label filter
 			    - textbox "Add a label filter":
@@ -520,13 +521,13 @@ test.describe('the catalog search', () => {
 			await search.submit.click();
 			// The browser's own encoding of the form, which reads as the same search.
 			await expect(page).toHaveURL(
-				`${HELIOPHYSICS}?q=wind&label=level%3Dl2&state=active&state=incomplete`
+				'/search?organization=helio&catalog=heliophysics&q=wind&label=level%3Dl2&state=active&state=incomplete'
 			);
 			await expect(titles(search.rows)).toHaveText(
 				expectedTitles('heliophysics', { q: 'wind', labels: { level: 'l2' } })
 			);
 			await search.form.getByRole('link', { name: 'Remove filter level = l2' }).click();
-			await expect(page).toHaveURL(`${HELIOPHYSICS}?q=wind`);
+			await expect(page).toHaveURL(`${HELIOPHYSICS}&q=wind`);
 			await expect(titles(search.rows)).toHaveText(expectedTitles('heliophysics', { q: 'wind' }));
 		} finally {
 			await context.close();

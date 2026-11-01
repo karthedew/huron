@@ -49,7 +49,9 @@ Every machine that runs the CLI must mount each root at the same path.
 
 ## With Helm
 
-1. Build and push the API image from `Containerfile` (and, for the web, `web/Containerfile`).
+1. Build and push the API image from `Containerfile` (and, for the web, `web/Containerfile`, with
+   the repository's `docs/` as the build context `docs`:
+   `docker build --build-context docs=docs -f web/Containerfile web`).
 2. Create the database secret, which the chart only references:
    `oc create secret generic huron-db --from-literal=HURON_DATABASE_URL=postgresql://huron:…@postgres.example.org:5432/huron`.
 3. Write a values file. [`helm/huron/ci/example-values.yaml`](helm/huron/ci/example-values.yaml)

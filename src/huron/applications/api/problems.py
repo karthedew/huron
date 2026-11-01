@@ -17,7 +17,7 @@ __all__ = ["PROBLEM_MEDIA_TYPE", "install_problem_handlers", "problem_response"]
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 
-_log = structlog.get_logger()
+_log = structlog.get_logger(__name__)
 
 
 def problem_response(error: HuronError, request: Request) -> JSONResponse:
@@ -50,7 +50,9 @@ async def _validation(request: Request, error: Exception) -> JSONResponse:
         }
         for item in error.errors()
     ]
-    return _document(request, REQUEST_INVALID.code, "request is invalid", {"problems": problems})
+    return _document(
+        request, REQUEST_INVALID.code, "the request is not valid", {"problems": problems}
+    )
 
 
 async def _http(request: Request, error: Exception) -> JSONResponse:
@@ -63,7 +65,9 @@ async def _http(request: Request, error: Exception) -> JSONResponse:
 async def _unexpected(request: Request, error: Exception) -> JSONResponse:
     request_id = str(uuid.uuid4())
     _log.error("api.unexpected_error", request_id=request_id, error=repr(error))
-    return _document(request, INTERNAL.code, "internal error", {"request_id": request_id})
+    return _document(
+        request, INTERNAL.code, "an internal error occurred", {"request_id": request_id}
+    )
 
 
 def _document(

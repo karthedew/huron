@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { metadataView } from '$lib/metadata';
+import { overviewMetadata } from '$lib/collection-overview';
 import {
 	collectionFixture,
 	fakeApi,
@@ -89,10 +89,10 @@ function routes(overrides: Record<string, FetchAnswer> = {}) {
 }
 
 describe('/catalogs/[catalog]/collections/[identifier] load', () => {
-	it('returns the metadata against the resolved schema', async () => {
+	it('returns a small discovery summary against the resolved schema', async () => {
 		const api = routes();
 		expect(await load(overviewEvent())).toEqual({
-			metadata: metadataView(MAG.metadata, huronBase()),
+			metadata: overviewMetadata(MAG.metadata, huronBase()),
 			problems: { rows: [], more: 0 },
 			schemaResolved: true
 		});
@@ -118,9 +118,7 @@ describe('/catalogs/[catalog]/collections/[identifier] load', () => {
 			],
 			more: 0
 		});
-		expect(data.metadata.fields.find(({ key }) => key === 'mission')?.value).toEqual({
-			kind: 'missing'
-		});
+		expect(data.metadata.fields.find(({ key }) => key === 'mission')).toBeUndefined();
 	});
 
 	it("shows the fields by their keys when the collection's override no longer fits", async () => {
@@ -129,7 +127,7 @@ describe('/catalogs/[catalog]/collections/[identifier] load', () => {
 		});
 		const data = await load(overviewEvent());
 		expect(data.schemaResolved).toBe(false);
-		expect(data.metadata).toEqual(metadataView(MAG.metadata, null));
+		expect(data.metadata).toEqual(overviewMetadata(MAG.metadata, null));
 	});
 
 	it('shows the 503 page when the schema cannot be read for another reason', async () => {

@@ -44,10 +44,10 @@ def check_metadata(document: Any) -> dict[str, Any]:
     """
     if not isinstance(document, dict):
         raise MetadataInvalid(
-            "metadata must be a JSON object",
+            "the metadata must be a JSON object",
             {
                 "problems": [
-                    {"path": "/", "message": "metadata must be a JSON object", "rule": "type"}
+                    {"path": "/", "message": "the metadata must be a JSON object", "rule": "type"}
                 ]
             },
         )
@@ -55,12 +55,12 @@ def check_metadata(document: Any) -> dict[str, Any]:
         size = len(canonical_bytes(document))
     except NotCanonicalizable as error:
         raise MetadataInvalid(
-            "metadata is not valid JSON",
+            "the metadata is not valid JSON",
             {"problems": [{"path": "/", "message": str(error), "rule": "json"}]},
         ) from error
     if size > MAX_METADATA_BYTES:
         raise MetadataInvalid(
-            "metadata is larger than 1 MiB",
+            "the metadata is larger than 1 MiB",
             {"problems": [{"path": "/", "message": f"{size} bytes", "rule": "size"}]},
         )
     return document

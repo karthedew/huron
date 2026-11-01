@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from huron.core.lake.errors import NameTaken
+from huron.core.lake.listing import ListOrder, Position
 
 if TYPE_CHECKING:
     import uuid
@@ -32,7 +33,7 @@ class MemoryNamespaces:
             for c in self._state.collections.values()
         )
         if taken:
-            raise NameTaken(f"{namespace.path!r} is taken", {"name": namespace.name})
+            raise NameTaken(f"{namespace.path!r} is in use", {"name": namespace.name})
         self._state.namespaces[namespace.id] = namespace
 
     async def get(self, namespace_id: uuid.UUID) -> Namespace | None:
@@ -51,20 +52,20 @@ class MemoryNamespaces:
         )
 
     async def children(
-        self, catalog_id: uuid.UUID, parent_id: uuid.UUID | None, after: str | None, limit: int
+        self,
+        catalog_id: uuid.UUID,
+        parent_id: uuid.UUID | None,
+        after: Position,
+        limit: int,
+        ordering: ListOrder | None = None,
     ) -> Sequence[Namespace]:
-        """Direct children sorted by name."""
-        rows = sorted(
-            (
-                n
-                for n in self._state.namespaces.values()
-                if n.catalog_id == catalog_id
-                and n.parent_id == parent_id
-                and (after is None or n.name > after)
-            ),
-            key=lambda n: n.name,
+        """Direct children in the requested order."""
+        rows = (
+            n
+            for n in self._state.namespaces.values()
+            if n.catalog_id == catalog_id and n.parent_id == parent_id
         )
-        return rows[:limit]
+        return (ordering or ListOrder()).rows(rows, after, limit)
 
     async def child_counts(self, namespace_id: uuid.UUID) -> tuple[int, int]:
         """``(child namespaces, collections)``."""

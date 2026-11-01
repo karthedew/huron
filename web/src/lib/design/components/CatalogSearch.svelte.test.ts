@@ -12,7 +12,7 @@ import {
 import { collectionFixture } from '$lib/testing/api-fixtures';
 import { page, resetAppState } from '$lib/testing/app-state.svelte';
 import { catalogPageData, catalogRole } from '$lib/testing/catalog-data';
-import Page from './+page.svelte';
+import Page from './CatalogSearch.svelte';
 
 vi.mock('$app/state', () => import('$lib/testing/app-state.svelte'));
 
@@ -54,7 +54,7 @@ async function show({
 	roles?: RoleGrant[];
 	query?: string;
 } = {}) {
-	page.url = new URL(`http://localhost:4173/catalogs/heliophysics/search${query}`);
+	page.url = new URL(`http://localhost:4173/search?catalog=heliophysics${query}`);
 	page.route = { id: '/(app)/catalogs/[catalog=segment]/(overview)/search' };
 	const shown = render(Page, {
 		props: {
@@ -145,7 +145,7 @@ describe('the catalog search page', () => {
 		// The text and the labels; each catalog decides for itself who sees its drafts.
 		expect(
 			screen.getByRole('link', { name: 'Search all of Heliophysics Division' })
-		).toHaveAttribute('href', '/orgs/helio/search?q=solar+wind&label=mission%3Dwind');
+		).toHaveAttribute('href', '/search?organization=helio&q=solar+wind&label=mission%3Dwind');
 	});
 
 	it('links the search of all of the organization under its results too', async () => {
@@ -161,7 +161,7 @@ describe('the catalog search page', () => {
 			});
 		const first = await show({ search, nextCursor: 'c2' });
 		// The text and the labels, as when nothing matches.
-		expect(wider()).toHaveAttribute('href', '/orgs/helio/search?q=ace&label=mission%3Dace');
+		expect(wider()).toHaveAttribute('href', '/search?organization=helio&q=ace&label=mission%3Dace');
 		// After the results, before the page links.
 		const list = screen.getByRole('list', { name: 'Results' });
 		const pages = screen.getByRole('navigation', { name: 'Result pages' });
@@ -173,7 +173,7 @@ describe('the catalog search page', () => {
 		expect(wider()).toBeInTheDocument();
 		exactOnly.unmount();
 		await show({ search: { ...search, cursor: 'c2' }, results: [], query: '?q=ace&cursor=c2' });
-		expect(wider()).toHaveAttribute('href', '/orgs/helio/search?q=ace&label=mission%3Dace');
+		expect(wider()).toHaveAttribute('href', '/search?organization=helio&q=ace&label=mission%3Dace');
 	});
 
 	it('says that a later page is empty rather than that nothing matches', async () => {
@@ -186,7 +186,7 @@ describe('the catalog search page', () => {
 		expect(screen.queryByText('No collections match this search.')).toBeNull();
 		expect(screen.getByRole('link', { name: 'First page' })).toHaveAttribute(
 			'href',
-			'/catalogs/heliophysics/search?q=wind'
+			'/search?catalog=heliophysics&q=wind'
 		);
 	});
 
@@ -206,11 +206,11 @@ describe('the catalog search page', () => {
 		const pages = screen.getByRole('navigation', { name: 'Result pages' });
 		expect(within(pages).getByRole('link', { name: 'Next page' })).toHaveAttribute(
 			'href',
-			'/catalogs/heliophysics/search?q=run&label=mission%3Dpsp&cursor=c3'
+			'/search?catalog=heliophysics&q=run&label=mission%3Dpsp&cursor=c3'
 		);
 		expect(within(pages).getByRole('link', { name: 'First page' })).toHaveAttribute(
 			'href',
-			'/catalogs/heliophysics/search?q=run&label=mission%3Dpsp'
+			'/search?catalog=heliophysics&q=run&label=mission%3Dpsp'
 		);
 	});
 

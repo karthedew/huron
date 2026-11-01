@@ -11,6 +11,9 @@
 	function toggleTheme() {
 		dark = !dark;
 		document.documentElement.classList.toggle('dark', dark);
+		const favicon = document.querySelector<HTMLLinkElement>('#huron-favicon');
+		const icon = dark ? favicon?.dataset.dark : favicon?.dataset.light;
+		if (favicon && icon) favicon.href = icon;
 		localStorage.setItem('huron-theme', dark ? 'dark' : 'light');
 	}
 </script>

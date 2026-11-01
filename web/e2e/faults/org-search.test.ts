@@ -2,7 +2,7 @@ import { expect, type Locator, type Page } from '@playwright/test';
 import { searchMatches, titleOf } from '../support/fixture.mjs';
 import { COOKIES, faults, signIn, test, webCookie } from '../support/harness.ts';
 
-const SEARCH = '/orgs/helio/search?q=2024';
+const SEARCH = '/search?organization=helio&q=2024';
 
 test.afterEach(async () => {
 	await faults('oscar', null);
@@ -40,7 +40,7 @@ test.describe("the organization search when a catalog's search fails", () => {
 		await expect(failed.getByRole('list')).toHaveCount(0);
 		await expect(failed.getByRole('link', { name: 'Search only Heliophysics' })).toHaveAttribute(
 			'href',
-			'/catalogs/heliophysics/search?q=2024'
+			'/search?catalog=heliophysics&q=2024'
 		);
 		await expect(shown(group(page, 'Space Weather'))).toHaveText(titles('space-weather'));
 		await expect(page.getByRole('main')).not.toContainText('fault injected');
@@ -78,7 +78,7 @@ test.describe('the organization search at its deadline', () => {
 			main
 				.getByRole('list', { name: 'Catalogs that did not answer in time' })
 				.getByRole('link', { name: 'Search only Space Weather' })
-		).toHaveAttribute('href', '/catalogs/space-weather/search?q=2024');
+		).toHaveAttribute('href', '/search?catalog=space-weather&q=2024');
 		await expect(group(page, 'Space Weather')).toHaveCount(0);
 		await expect(shown(group(page, 'Heliophysics'))).toHaveText(titles('heliophysics'));
 		// The hung request was given up, not answered later: the session and the page live on.

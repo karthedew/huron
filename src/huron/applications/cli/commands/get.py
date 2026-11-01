@@ -26,6 +26,7 @@ from huron.applications.cli.commands.common import (
     show,
     show_list,
     table_mode,
+    tree_command,
 )
 from huron.applications.cli.errors import UsageError
 from huron.applications.cli.identifiers import parent_candidates
@@ -35,7 +36,7 @@ from huron.schema.naming import Identifier
 __all__ = ["ALL_STATES", "ORGANIZATION_ROLES", "get_app", "noun", "register"]
 
 get_app = typer.Typer(
-    help="List resources: get orgs, catalogs, namespaces, collections and more.",
+    help="List organizations, catalogs, namespaces, collections and other resources.",
     no_args_is_help=True,
 )
 
@@ -84,7 +85,7 @@ def noun(plural: str, singular: str | None) -> Callable[[Callable[..., None]], C
 
 @noun("orgs", "org")
 def get_orgs(ctx: typer.Context) -> None:
-    """Organizations you can see, with where each one's directory is."""
+    """List the organizations that you can see and the directory of each organization."""
     show_list(ctx, api(ctx).pages("/api/v1/organizations"), organization_columns(ctx))
 
 
@@ -93,15 +94,21 @@ def get_catalogs(
     ctx: typer.Context,
     organization: Annotated[
         str | None,
-        typer.Option("--org", help="Only this organization instead of the current one."),
+        typer.Option("--org", help="List the catalogs of this organization, not the current one."),
     ] = None,
     all_organizations: Annotated[
-        bool, typer.Option("--all-orgs", "-A", help="Every organization you can see.")
+        bool,
+        typer.Option(
+            "--all-orgs", "-A", help="List the catalogs of all organizations that you can see."
+        ),
     ] = False,
 ) -> None:
-    """Catalogs of the current organization, or every one with -A; * marks the current one."""
+    """List the catalogs of the current organization.
+
+    With `-A`, list the catalogs of all organizations. A `*` marks the current catalog.
+    """
     if organization and all_organizations:
-        raise UsageError("--org and --all-orgs cannot be combined")
+        raise UsageError("use `--org` or `--all-orgs`, not both")
     found = services(ctx)
     scope = None if all_organizations else organization or found.organization()
     columns = [current_column(found.catalog()), *CATALOG_COLUMNS]
@@ -114,9 +121,9 @@ def get_catalogs(
 @noun("namespaces", "namespace")
 def get_namespaces(
     ctx: typer.Context,
-    parent: Annotated[str | None, typer.Argument(help="catalog or catalog.namespace")] = None,
+    parent: Annotated[str | None, typer.Argument(help="`catalog` or `catalog.namespace`.")] = None,
 ) -> None:
-    """Children of a namespace, or the top level of the current catalog."""
+    """List the child namespaces of a catalog or namespace. The default is the current catalog."""
     found = services(ctx)
     if parent is None:
         target = Identifier(found.require_catalog())
@@ -129,11 +136,15 @@ def get_namespaces(
     if rows:
         say(
             ctx,
-            "list the collections in one with: huron get collections <namespace>;"
-            " see the whole tree with: huron tree",
+            "To list the collections in a namespace, run `huron get collections <namespace>`."
+            f" To see the full tree, run `{tree_command(ctx, target.catalog)}`",
         )
     else:
-        say(ctx, "no namespaces here; create one with: huron create namespace <identifier>")
+        say(
+            ctx,
+            "There are no namespaces here."
+            " To create one, run `huron create namespace <identifier>`",
+        )
 
 
 @noun("collections", "collection")
@@ -141,33 +152,37 @@ def get_collections(
     ctx: typer.Context,
     namespace: Annotated[
         str | None,
-        typer.Argument(help="catalog.namespace; every collection of the catalog when omitted."),
+        typer.Argument(
+            help="`catalog.namespace`. With no argument, list all collections of the catalog."
+        ),
     ] = None,
 ) -> None:
-    """Collections directly in a namespace, or every collection of the current catalog."""
+    """List the collections directly in a namespace, or all collections of the current catalog."""
     found = services(ctx)
     if namespace is None:
         catalog = found.require_catalog()
         rows = api(ctx).pages(f"/api/v1/catalogs/{catalog}/search", {"state": list(ALL_STATES)})
     else:
         parsed, _ = fetch_namespace(ctx, namespace)
+        catalog = parsed.catalog
         path = f"/api/v1/catalogs/{parsed.catalog}/namespaces/{parsed.namespace}/collections"
         rows = api(ctx).pages(path)
     listed = list(rows)
     show_list(ctx, listed, COLLECTION_COLUMNS)
     if listed:
-        say(ctx, "check out one with: huron checkout <COLLECTION>")
+        say(ctx, "To select a collection, run `huron checkout <COLLECTION>`")
     else:
         say(
             ctx,
-            "no collections here; see the whole catalog with: huron tree,"
-            " or create one with: huron create collection <identifier>",
+            "There are no collections here."
+            f" To see the full catalog, run `{tree_command(ctx, catalog)}`."
+            " To create a collection, run `huron create collection <identifier>`",
         )
 
 
 @noun("files", "file")
 def get_files(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
-    """Files recorded in a collection."""
+    """List the recorded files of a collection."""
     collection = fetch_collection(ctx, identifier)
     rows = api(ctx).pages(f"/api/v1/collections/{collection['id']}/files")
     show_list(ctx, rows, FILE_COLUMNS)
@@ -175,7 +190,7 @@ def get_files(ctx: typer.Context, identifier: CollectionArgument = None) -> None
 
 @noun("log", None)
 def get_log(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
-    """The audit log of a collection, newest first."""
+    """Show the audit log of a collection, newest entry first."""
     collection = fetch_collection(ctx, identifier)
     rows = api(ctx).pages(f"/api/v1/collections/{collection['id']}/log")
     show_list(ctx, rows, LOG_COLUMNS)
@@ -185,10 +200,14 @@ def get_log(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
 def get_schemas(
     ctx: typer.Context,
     organization: Annotated[
-        str | None, typer.Argument(help="Organization; the platform's when omitted.")
+        str | None,
+        typer.Argument(help="An organization. With no argument, list the platform schemas."),
     ] = None,
 ) -> None:
-    """Schemas of an organization, or the platform's when none is named."""
+    """List the schemas of an organization or of the platform.
+
+    With no organization, list the platform schemas.
+    """
     path = (
         f"/api/v1/organizations/{organization}/schemas"
         if organization
@@ -202,20 +221,23 @@ def get_grants(
     ctx: typer.Context,
     organization: Annotated[
         str | None,
-        typer.Option("--org", help="The organization-wide groups of this organization."),
+        typer.Option("--org", help="List the organization-wide groups of this organization."),
     ] = None,
     catalog: Annotated[
-        str | None, typer.Option("--catalog", help="This catalog instead of the current one.")
+        str | None,
+        typer.Option("--catalog", help="List the grants of this catalog, not the current one."),
     ] = None,
 ) -> None:
-    """Who holds each role on a catalog (the current one) and why, or an organization's groups.
+    """List who holds each role on a catalog and why, or list the groups of an organization.
 
-    For a catalog, one row per role and group with its SOURCE: platform, organization <name>
-    (inherited by every catalog of the organization) or catalog (granted on this catalog). With
-    --org, the groups of org_admin and of the catalog roles every catalog of it inherits.
+    The default catalog is the current catalog. For a catalog, the table has one row for each
+    role and group. Its `SOURCE` column shows `platform`, `organization <name>` or `catalog`.
+    `organization <name>` is a grant on the organization, which all its catalogs inherit.
+    `catalog` is a grant on this catalog. With `--org`, the table shows the groups of
+    `org_admin` and of the catalog roles that all catalogs of the organization inherit.
     """
     if organization and catalog:
-        raise UsageError("--org and --catalog cannot be combined")
+        raise UsageError("use `--org` or `--catalog`, not both")
     if organization:
         groups: dict[str, Any] = api(ctx).get(f"/api/v1/organizations/{organization}/grants")
         if not table_mode(ctx):
@@ -235,7 +257,7 @@ def get_grants(
 
 @get_app.command("meta")
 def get_meta(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
-    """A collection's metadata, its local draft and its schema override."""
+    """Show the metadata of a collection, its local draft and its schema override."""
     collection = fetch_collection(ctx, identifier)
     draft = services(ctx).state.read_draft(str(collection["id"]))
     show(

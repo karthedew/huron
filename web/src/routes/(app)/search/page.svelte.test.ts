@@ -1,141 +1,112 @@
-import { cleanup, render, screen, within } from '@testing-library/svelte';
+import { render, screen, within, fireEvent } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
-import type { Organization } from '$api/types';
-import { emptySearch, type Search, type SearchErrors } from '$lib/search';
-import { organizationFixture } from '$lib/testing/api-fixtures';
-import { fakeUser } from '$lib/testing/events';
+import { emptySearch, searchResult } from '$lib/search';
+import { catalogFixture, collectionFixture, organizationFixture } from '$lib/testing/api-fixtures';
+import { catalogPageData } from '$lib/testing/catalog-data';
 import Page from './+page.svelte';
+import type { PageData } from './$types';
 
 vi.mock('$app/state', () => import('$lib/testing/app-state.svelte'));
-
 const HELIO = organizationFixture();
 const GEO = organizationFixture({ id: 'o-geo', name: 'geo', display_name: 'Earth Science' });
-const NO_ERRORS: SearchErrors = { q: null, label: null, form: null };
-
-function show({
-	search = emptySearch(),
-	errors = NO_ERRORS,
-	organizationList = [GEO, HELIO],
-	groups = ['helio-readers']
-}: {
-	search?: Search;
-	errors?: SearchErrors;
-	organizationList?: Organization[];
-	groups?: string[];
-} = {}) {
-	return render(Page, {
-		props: {
-			data: {
-				user: fakeUser({ groups }),
-				organizations: organizationList,
-				organizationsUnavailable: false,
-				roles: [],
-				rolesUnavailable: false,
-				rememberedOrganization: null,
+const NO_ERRORS = { q: null, label: null, form: null };
+const scope = {
+	organization: 'helio',
+	catalog: null,
+	catalogs: [{ name: 'heliophysics', display_name: 'Heliophysics' }]
+};
+function show(catalog = false, noOrganizations = false) {
+	const search = { ...emptySearch(), q: 'wind' };
+	const common = {
+		...catalogPageData(),
+		organizationList: [HELIO, GEO],
+		moreOrganizations: false,
+		selectedOrganization: HELIO,
+		scope,
+		search
+	};
+	const data: PageData = noOrganizations
+		? {
+				...common,
 				organization: null,
-				organizationList,
-				search,
-				errors
-			},
-			params: {},
-			form: undefined
-		}
-	});
-}
-
-/** The organizations offered, by name and where each leads. */
-function offered(): Array<[string | null, string | null]> {
-	const list = screen.getByRole('list', { name: 'Organizations' });
-	return within(list)
-		.getAllByRole('link')
-		.map((link) => [link.textContent, link.getAttribute('href')]);
-}
-
-describe('the page that asks which organization to search', () => {
-	it("offers each organization's search for the text and its labels", () => {
-		show({
-			search: { ...emptySearch(), q: 'wind', labels: [{ key: 'mission', value: 'ace' }] }
-		});
-		expect(document.title).toBe('“wind” · Search · Huron');
-		expect(screen.getByRole('heading', { level: 1, name: 'Search' })).toBeInTheDocument();
-		expect(screen.getByText('Search “wind” with mission = ace in:')).toBeInTheDocument();
-		expect(offered()).toEqual([
-			['Earth Science', '/orgs/geo/search?q=wind&label=mission%3Dace'],
-			['Heliophysics Division', '/orgs/helio/search?q=wind&label=mission%3Dace']
-		]);
-	});
-
-	it('asks which organization to search for no text at all', () => {
-		const { unmount } = show();
-		expect(document.title).toBe('Search · Huron');
-		expect(screen.getByText('Choose the organization to search:')).toBeInTheDocument();
-		expect(offered()).toEqual([
-			['Earth Science', '/orgs/geo/search'],
-			['Heliophysics Division', '/orgs/helio/search']
-		]);
-		unmount();
-		show({ search: { ...emptySearch(), labels: [{ key: 'level', value: 'l2' }] } });
-		expect(screen.getByText('Search with level = l2 in:')).toBeInTheDocument();
-	});
-
-	it('says why it left part of the address out', () => {
-		show({ errors: { ...NO_ERRORS, q: 'Use at most 200 characters; this text has 201.' } });
-		expect(document.title).toBe('Error: Search · Huron');
-		expect(screen.getByText('Use at most 200 characters; this text has 201.')).toBeInTheDocument();
-		expect(offered()).toHaveLength(2);
-	});
-
-	it('says why for each part it left out, the text and the labels alike', () => {
-		show({
-			errors: {
-				...NO_ERRORS,
-				q: 'Use at most 200 characters; this text has 201.',
-				label: 'Write a label filter as key=value, for example mission=ace.'
+				organizationList: [],
+				selectedOrganization: null,
+				scope: null,
+				catalogSearch: null,
+				organizationSearch: null
 			}
+		: catalog
+			? {
+					...common,
+					catalogSearch: {
+						catalog: catalogFixture(),
+						scope: { ...scope, catalog: 'heliophysics' },
+						search,
+						errors: NO_ERRORS,
+						pendingLabel: '',
+						exact: null,
+						results: [searchResult(collectionFixture())],
+						nextCursor: 'c2'
+					},
+					organizationSearch: null
+				}
+			: {
+					...common,
+					catalogSearch: null,
+					organizationSearch: {
+						organizationDetails: HELIO,
+						scope,
+						search,
+						errors: NO_ERRORS,
+						pendingLabel: '',
+						drafts: false,
+						catalogCount: 1,
+						truncated: false,
+						results: null
+					}
+				};
+	return render(Page, { props: { data, params: {}, form: undefined } });
+}
+describe('the central Search workspace', () => {
+	it('has explicit organization and catalog selectors beside metadata filters', () => {
+		show();
+		expect(screen.getByRole('heading', { level: 1, name: 'Search' })).toBeInTheDocument();
+		expect(screen.getByRole('combobox', { name: 'Organization' })).toHaveValue('helio');
+		expect(screen.getByRole('combobox', { name: 'Catalog' })).toHaveValue('');
+		expect(screen.getByRole('option', { name: 'Heliophysics' })).toBeInTheDocument();
+		expect(screen.getByRole('textbox', { name: 'Add a label filter' })).toBeInTheDocument();
+		expect(screen.getByRole('checkbox', { name: 'Active' })).toBeInTheDocument();
+	});
+	it('submits selected scope with the text and label filters', async () => {
+		show();
+		const form = screen.getByRole('search', { name: 'Organization search' });
+		await fireEvent.change(within(form).getByRole('combobox', { name: 'Catalog' }), {
+			target: { value: 'heliophysics' }
 		});
-		expect(document.title).toBe('Error: Search · Huron');
-		expect(screen.getByText('Use at most 200 characters; this text has 201.')).toBeInTheDocument();
-		expect(
-			screen.getByText('Write a label filter as key=value, for example mission=ace.')
-		).toBeInTheDocument();
-		expect(screen.getByText('Choose the organization to search:')).toBeInTheDocument();
-		expect(offered()).toEqual([
-			['Earth Science', '/orgs/geo/search'],
-			['Heliophysics Division', '/orgs/helio/search']
-		]);
+		const data = new FormData(form as HTMLFormElement);
+		expect(data.get('organization')).toBe('helio');
+		expect(data.get('catalog')).toBe('heliophysics');
+		expect(data.get('q')).toBe('wind');
+		expect(form).toHaveAttribute('action', '/search');
 	});
-
-	it('repeats no more of a long search than each of many links may hold, and says so', () => {
-		const many = Array.from({ length: 500 }, (_, index) =>
-			organizationFixture({ id: `o-${index}`, name: `org-${index}`, display_name: '' })
+	it('keeps the CLI hint and pages a selected catalog', () => {
+		show(true);
+		expect(screen.getByRole('combobox', { name: 'Catalog' })).toHaveValue('heliophysics');
+		expect(screen.getByText('Run this search with the CLI')).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Next page' })).toHaveAttribute(
+			'href',
+			'/search?catalog=heliophysics&q=wind&cursor=c2'
 		);
-		const labels = Array.from({ length: 6 }, (_, index) => ({
-			key: `${index}${'𝕏'.repeat(99)}`,
-			value: '𝕏'.repeat(100)
-		}));
-		show({ search: { ...emptySearch(), q: 'wind', labels }, organizationList: many });
-		expect(
-			screen.getByText(
-				'This search is too long to repeat in a link to each organization, so the links leave out its label filters.'
-			)
-		).toBeInTheDocument();
-		// The lead says what the links search for.
-		expect(screen.getByText('Search “wind” in:')).toBeInTheDocument();
-		const links = offered();
-		expect(links).toHaveLength(500);
-		expect(links[0]).toEqual(['org-0', '/orgs/org-0/search?q=wind']);
-		// With two organizations, each link may hold the whole search.
-		cleanup();
-		show({ search: { ...emptySearch(), q: 'wind', labels } });
-		expect(screen.queryByText(/too long to repeat/)).toBeNull();
-		expect(offered()[0][1]).toMatch(/^\/orgs\/geo\/search\?q=wind(&label=[^&]+){6}$/);
 	});
-
-	it('tells someone who can see no organization why, as the start page does', () => {
-		show({ organizationList: [], groups: [] });
+	it('states the API search limits without offering unavailable schema filters', () => {
+		show();
+		expect(
+			screen.getByText(/Schema fields and other metadata properties are not searchable yet/)
+		).toBeInTheDocument();
+	});
+	it('explains why an account has no collections to search', () => {
+		show(false, true);
 		expect(screen.getByText("You don't have access to any organization yet.")).toBeInTheDocument();
-		expect(screen.getByText('Huron received no groups for your account.')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
-		expect(screen.queryByRole('list', { name: 'Organizations' })).toBeNull();
+		expect(screen.queryByRole('combobox')).toBeNull();
 	});
 });

@@ -12,6 +12,7 @@ import {
 	fileFixture,
 	hangingAnswer,
 	jsonResponse,
+	jsonTextResponse,
 	namespaceFixture,
 	organizationFixture,
 	pageFixture,
@@ -76,6 +77,37 @@ describe('HuronApi URLs', () => {
 			(api) => api.catalog('heliophysics'),
 			'/api/v1/catalogs/heliophysics',
 			catalogFixture()
+		],
+		[
+			'globally sorted catalogs',
+			(api) =>
+				api.catalogs({
+					organization: 'helio',
+					cursor: 'c2',
+					limit: 20,
+					sort: 'created_by',
+					order: 'desc'
+				}),
+			'/api/v1/catalogs?organization=helio&cursor=c2&limit=20&sort=created_by&order=desc',
+			page
+		],
+		[
+			'globally sorted namespaces',
+			(api) =>
+				api.namespaces('heliophysics', 'stations', { limit: 20, sort: 'created_at', order: 'asc' }),
+			'/api/v1/catalogs/heliophysics/namespaces?parent=stations&limit=20&sort=created_at&order=asc',
+			page
+		],
+		[
+			'globally sorted collections',
+			(api) =>
+				api.namespaceCollections('heliophysics', 'fields', {
+					limit: 20,
+					sort: 'name',
+					order: 'desc'
+				}),
+			'/api/v1/catalogs/heliophysics/namespaces/fields/collections?limit=20&sort=name&order=desc',
+			page
 		],
 		[
 			'catalogSchema',
@@ -165,7 +197,20 @@ describe('HuronApi URLs', () => {
 			'/api/v1/catalogs/heliophysics/search?q=solar+wind&label=mission%3Dace&label=level%3Dl2&state=active&state=draft&cursor=c&limit=25',
 			page
 		],
-		['schema', (api) => api.schema(ID), `/api/v1/schemas/${ID}`, schemaFixture()]
+		['schema', (api) => api.schema(ID), `/api/v1/schemas/${ID}`, schemaFixture()],
+		['resolvedSchema', (api) => api.resolvedSchema(ID), `/api/v1/schemas/${ID}/resolved`, {}],
+		[
+			'organizationSchemas',
+			(api) => api.organizationSchemas('helio', { cursor: 'next', limit: 50 }),
+			'/api/v1/organizations/helio/schemas?cursor=next&limit=50',
+			pageFixture([schemaFixture()])
+		],
+		[
+			'platformSchemas',
+			(api) => api.platformSchemas({ cursor: 'next', limit: 50 }),
+			'/api/v1/platform/schemas?cursor=next&limit=50',
+			pageFixture([schemaFixture()])
+		]
 	])('%s calls the documented URL and decodes the answer', async (_, call, path, body) => {
 		const { api, calls } = client([jsonResponse(body)]);
 		expect(await call(api)).toEqual(body);
@@ -199,6 +244,9 @@ describe('HuronApi URLs', () => {
 		['collectionByIdentifier', (api) => api.collectionByIdentifier('heliophysics', 'a/b')],
 		['collection', (api) => api.collection(`${ID}/log`)],
 		['collectionSidecar', (api) => api.collectionSidecar(`${ID}/metadata.json`)],
+		['organizationSchemas', (api) => api.organizationSchemas('helio/schemas')],
+		['schema', (api) => api.schema(`${ID}/resolved`)],
+		['resolvedSchema', (api) => api.resolvedSchema(`${ID}/resolved`)],
 		['search', (api) => api.search('heliophysics/grants', { q: 'wind' })]
 	])('refuses a segment with a slash in %s as a rejected promise', async (_, call) => {
 		const { api, calls } = client([jsonResponse({})]);
@@ -208,6 +256,40 @@ describe('HuronApi URLs', () => {
 });
 
 describe('HuronApi requests', () => {
+	it('keeps authored and resolved registry schemas exact', async () => {
+		const document = '{"properties":{"n":{"maximum":9223372036854775807}}}';
+		const entry = JSON.stringify(schemaFixture({ document: {} })).replace(
+			'"document":{}',
+			`"document":${document}`
+		);
+		const { api } = client([jsonTextResponse(entry), jsonTextResponse(document)]);
+		for (const schema of [
+			(await api.schema(ID, { exact: true })).document,
+			await api.resolvedSchema(ID)
+		]) {
+			const properties = isRecord(schema.properties) ? schema.properties : null;
+			const field = properties?.n;
+			expect(isRecord(field) ? integerDigits(field, 'maximum') : null).toBe('9223372036854775807');
+		}
+	});
+
+	it.each([
+		(api: HuronApi) => api.organizationSchemas('helio'),
+		(api: HuronApi) => api.platformSchemas()
+	])('accepts an empty registry page', async (read) => {
+		const { api } = client([jsonResponse(pageFixture([]))]);
+		expect(await read(api)).toEqual(pageFixture([]));
+	});
+
+	it.each([
+		(api: HuronApi) => api.organizationSchemas('helio'),
+		(api: HuronApi) => api.platformSchemas(),
+		(api: HuronApi) => api.resolvedSchema(ID)
+	])('refuses a malformed registry answer', async (read) => {
+		const { api } = client([jsonResponse([])]);
+		expect(await failure(read(api))).toMatchObject({ status: 502, code: 'HTTP' });
+	});
+
 	it('sends the bearer token with the global fetch options and no cookies', async () => {
 		const { api, calls } = client([jsonResponse(whoamiFixture())]);
 		await api.whoami();

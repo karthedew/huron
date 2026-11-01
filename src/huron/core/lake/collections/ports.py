@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from huron.core.lake.collections.models import Collection, Search, State
+    from huron.core.lake.listing import ListOrder, Position
 
 __all__ = ["CollectionStore"]
 
@@ -45,10 +46,11 @@ class CollectionStore(Protocol):
         self,
         namespace_id: uuid.UUID,
         states: Container[State],
-        after: str | None,
+        after: Position,
         limit: int,
+        ordering: ListOrder | None = None,
     ) -> Sequence[Collection]:
-        """Collections directly in a namespace in ``states``, sorted by name."""
+        """Collections directly in a namespace in ``states``, in the requested order."""
         ...
 
     async def list_in_catalog(

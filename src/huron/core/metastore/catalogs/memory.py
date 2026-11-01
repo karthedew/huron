@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from huron.core.lake.errors import NameTaken
+from huron.core.lake.listing import ListOrder, Position
 
 if TYPE_CHECKING:
     import uuid
@@ -40,19 +41,18 @@ class MemoryCatalogs:
         self,
         organization_id: uuid.UUID | None,
         visible: tuple[Collection[uuid.UUID], Collection[uuid.UUID]] | None,
-        after: str | None,
+        after: Position,
         limit: int,
+        ordering: ListOrder | None = None,
     ) -> Sequence[Catalog]:
-        """Catalogs sorted by name."""
-        rows = sorted(self._state.catalogs.values(), key=lambda c: c.name)
-        rows = [
+        """Catalogs in the requested order."""
+        rows = (
             c
-            for c in rows
+            for c in self._state.catalogs.values()
             if (organization_id is None or c.organization_id == organization_id)
             and (visible is None or c.organization_id in visible[0] or c.id in visible[1])
-            and (after is None or c.name > after)
-        ]
-        return rows[:limit]
+        )
+        return (ordering or ListOrder()).rows(rows, after, limit)
 
     async def update(self, catalog: Catalog) -> None:
         """Replace the stored row."""

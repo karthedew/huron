@@ -1,0 +1,13 @@
+---
+/**
+ * The link back to the Huron web (HuronWebLink.astro), before Starlight's social links
+ * (astro.config.mjs overrides `SocialIcons` with this). Starlight puts this slot left of the divider
+ * before the theme selector in the header on wide screens. On narrow screens Search.astro shows the
+ * link as an icon in the header instead.
+ */
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+import HuronWebLink from './HuronWebLink.astro';
+---
+
+<HuronWebLink />
+<Default />

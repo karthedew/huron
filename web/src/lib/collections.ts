@@ -24,6 +24,7 @@ export const HEAD_DESCRIPTION_LENGTH = 5_000;
  */
 export interface CollectionRow {
 	id: string;
+	name: string;
 	/** The full identifier, `catalog.namespace.path.name`. */
 	identifier: string;
 	catalog: string;
@@ -31,6 +32,8 @@ export interface CollectionRow {
 	/** The metadata's title, shortened to `TITLE_LENGTH`; the collection's name when it has none. */
 	title: string;
 	fileCount: number;
+	createdBy: string;
+	createdAt: string;
 	/** When the record last changed, as the API's ISO time. */
 	updatedAt: string;
 }
@@ -39,11 +42,14 @@ export interface CollectionRow {
 export function collectionRow(collection: Collection): CollectionRow {
 	return {
 		id: collection.id,
+		name: collection.name,
 		identifier: collection.identifier,
 		catalog: collection.catalog,
 		state: collection.state,
 		title: shortened(metadataTitle(collection.metadata) ?? collection.name, TITLE_LENGTH),
 		fileCount: collection.file_count,
+		createdBy: collection.created_by,
+		createdAt: collection.created_at,
 		updatedAt: collection.updated_at
 	};
 }

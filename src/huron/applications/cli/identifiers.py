@@ -37,7 +37,7 @@ def resolve_collection(text: str, catalog: str | None) -> Identifier:
     except NamingError as error:
         raise UsageError(
             f"{text!r} is not a collection identifier ({error.rule})",
-            hint="use catalog.namespace.name, or set a catalog with: huron catalog <name>",
+            hint="use `catalog.namespace.name`, or select a catalog with `huron catalog <name>`",
         ) from error
 
 
@@ -48,7 +48,7 @@ def resolve_namespace(text: str, catalog: str | None) -> Identifier:
     except NamingError as error:
         raise UsageError(
             f"{text!r} is not a namespace identifier ({error.rule})",
-            hint="use catalog.namespace, or set a catalog with: huron catalog <name>",
+            hint="use `catalog.namespace`, or select a catalog with `huron catalog <name>`",
         ) from error
 
 
@@ -76,7 +76,7 @@ def parent_candidates(text: str, catalog: str | None) -> tuple[Identifier, ...]:
     except NamingError as error:
         raise UsageError(
             f"{text!r} is not a catalog or namespace identifier ({error.rule})",
-            hint="use catalog or catalog.namespace",
+            hint="use `catalog` or `catalog.namespace`",
         ) from error
     return _candidates(first, text, _catalog_or_namespace)
 

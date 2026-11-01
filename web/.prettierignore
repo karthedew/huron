@@ -1,1 +1,4 @@
 src/lib/api/openapi.ts
+# The documentation site has its own package and tooling; its CLI reference pages are written by
+# scripts/cli_reference.py, whose --check compares them byte for byte.
+docs-site/

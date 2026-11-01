@@ -70,6 +70,8 @@ async function show(
 				namespacesNext,
 				collections,
 				collectionsNext,
+				namespaceSort: { sort: 'name', order: 'asc' },
+				collectionSort: { sort: 'name', order: 'asc' },
 				trail: []
 			},
 			params: { catalog: 'heliophysics', path: namespace.path },
@@ -93,11 +95,9 @@ describe('a namespace page', () => {
 		).toBeInTheDocument();
 	});
 
-	it('heads the page with the name, identifier, kind, contents and share path', async () => {
+	it('shows namespace kind, contents and share path in the Overview', async () => {
 		await show(ACE, { collections: [MAG, DRAFT] });
-		expect(screen.getByRole('heading', { level: 1, name: 'ace' })).toBeInTheDocument();
-		expect(screen.getByText('heliophysics.solar-wind.ace')).toBeInTheDocument();
-		const header = screen.getByRole('banner');
+		const header = document.body;
 		expect(header).toHaveTextContent('Holds collections');
 		expect(header).toHaveTextContent('3 collections');
 		expect(
@@ -116,20 +116,23 @@ describe('a namespace page', () => {
 		expect(await screen.findByText('Copied')).toBeInTheDocument();
 	});
 
-	it('lists collections in two lines with their state when it is not active', async () => {
+	it('lists collections in a table with their state when it is not active', async () => {
 		await show(ACE, { collections: [MAG, DRAFT] });
-		const [mag, draft] = within(
-			screen.getByRole('list', { name: 'Collections in ace' })
-		).getAllByRole('listitem');
-		expect(
-			within(mag).getByRole('link', { name: 'ACE magnetometer level 2, 2024' })
-		).toHaveAttribute('href', '/catalogs/heliophysics/collections/solar-wind.ace.mag-l2-2024');
-		expect(mag).toHaveTextContent('heliophysics.solar-wind.ace.mag-l2-2024');
-		expect(mag).toHaveTextContent('3 files');
-		expect(mag).toHaveTextContent('Updated 2026-10-03 09:00 UTC');
+		const [mag, draft] = within(screen.getByRole('table', { name: 'Collections in ace' }))
+			.getAllByRole('row')
+			.slice(1);
+		expect(within(mag).getByRole('link', { name: 'mag-l2-2024' })).toHaveAttribute(
+			'href',
+			'/catalogs/heliophysics/collections/solar-wind.ace.mag-l2-2024'
+		);
+		expect(within(mag).getByRole('link')).toHaveAttribute(
+			'title',
+			'ACE magnetometer level 2, 2024'
+		);
+		expect(within(mag).getAllByRole('cell')[0]).toHaveTextContent(/^3$/);
 		expect(mag).not.toHaveTextContent('Active');
 		expect(draft).toHaveTextContent('Draft');
-		expect(draft).toHaveTextContent('0 files');
+		expect(within(draft).getAllByRole('cell')[0]).toHaveTextContent(/^0$/);
 	});
 
 	it('pages each list on its own and keeps the other cursor', async () => {
@@ -145,20 +148,11 @@ describe('a namespace page', () => {
 		);
 	});
 
-	it('offers contributors the command to create a collection here', async () => {
-		await show(ACE, { collections: [MAG], roles: [catalogRole('contributor')] });
-		const hint = screen.getByRole('region', { name: 'Create a collection here' });
-		expect(within(hint).getByRole('textbox')).toHaveValue(
-			'huron --catalog heliophysics create collection heliophysics.solar-wind.ace.<name>'
-		);
-		expect(screen.queryByRole('region', { name: 'Create a namespace here' })).toBeNull();
-	});
-
-	it('says an empty namespace for collections has none yet, with the hint for contributors', async () => {
+	it('says an empty namespace for collections has none yet', async () => {
 		const empty = { ...ACE, name: 'empty', path: 'empty', collection_count: 0 };
 		await show(empty, { roles: [catalogRole('contributor')] });
 		expect(screen.getByText('No collections yet.')).toBeInTheDocument();
-		expect(screen.getByRole('region', { name: 'Create a collection here' })).toBeInTheDocument();
+		expect(screen.queryByRole('region', { name: 'Create a collection here' })).toBeNull();
 		expect(screen.queryByRole('heading', { name: 'Namespaces' })).toBeNull();
 		document.body.innerHTML = '';
 		await show(empty);
@@ -166,20 +160,20 @@ describe('a namespace page', () => {
 		expect(screen.queryByRole('region', { name: /Create/ })).toBeNull();
 	});
 
-	it('lists the namespaces of a structure-only namespace, with the hint for administrators', async () => {
+	it('lists the namespaces of a structure-only namespace', async () => {
 		await show(SOLAR_WIND, { namespaces: [ACE], roles: [catalogRole('catalog_admin')] });
-		expect(screen.getByRole('banner')).toHaveTextContent('Structure only');
-		expect(screen.getByRole('banner')).toHaveTextContent('2 namespaces');
-		const [ace] = within(
-			screen.getByRole('list', { name: 'Namespaces in solar-wind' })
-		).getAllByRole('listitem');
-		expect(ace).toHaveTextContent('Holds collections');
-		expect(ace).toHaveTextContent('3 collections');
+		expect(document.body).toHaveTextContent('Structure only');
+		expect(document.body).toHaveTextContent('2 namespaces');
+		const [ace] = within(screen.getByRole('table', { name: 'Namespaces in solar-wind' }))
+			.getAllByRole('row')
+			.slice(1);
+		expect(
+			within(ace)
+				.getAllByRole('cell')
+				.slice(0, 2)
+				.map((cell) => cell.textContent)
+		).toEqual(['0', '3']);
 		expect(screen.queryByRole('heading', { name: 'Collections' })).toBeNull();
-		const hint = screen.getByRole('region', { name: 'Create a namespace here' });
-		expect(within(hint).getByRole('textbox')).toHaveValue(
-			'huron --catalog heliophysics create namespace heliophysics.solar-wind.<name> --allow-collections'
-		);
 		expect(screen.queryByRole('region', { name: 'Create a collection here' })).toBeNull();
 	});
 
@@ -187,7 +181,7 @@ describe('a namespace page', () => {
 		const bare = { ...SOLAR_WIND, namespace_count: 0 };
 		await show(bare, { roles: [catalogRole('catalog_admin')] });
 		expect(screen.getByText('No namespaces yet.')).toBeInTheDocument();
-		expect(screen.getByRole('region', { name: 'Create a namespace here' })).toBeInTheDocument();
+		expect(screen.queryByRole('region', { name: 'Create a namespace here' })).toBeNull();
 		document.body.innerHTML = '';
 		await show(bare, { roles: [catalogRole('contributor')] });
 		expect(screen.getByText('No namespaces yet.')).toBeInTheDocument();

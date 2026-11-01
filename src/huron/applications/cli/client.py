@@ -98,7 +98,7 @@ class ApiClient:
                     raise CliError(
                         f"the Huron API at {self._base} is unreachable: {error}",
                         ExitCode.FAILED,
-                        hint="check api_url with: huron config show",
+                        hint="to check `api_url`, run `huron config show`",
                     ) from error
                 self._sleep(0.5 * (attempt + 1))
         raise AssertionError("unreachable")  # pragma: no cover

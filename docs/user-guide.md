@@ -1,5 +1,7 @@
 # User guide
 
+The [glossary](#glossary) at the end defines the Huron terms that this guide uses.
+
 ## Logging in
 
 ```bash
@@ -9,43 +11,47 @@ huron login            # device code by default; --browser on a desktop
 huron whoami           # your groups and the roles they hold
 ```
 
-Tokens are kept in `~/.local/state/huron/tokens.json` (mode 0600) and renewed automatically.
+The CLI keeps your tokens in `~/.local/state/huron/tokens.json` (mode 0600) and renews them
+automatically.
 
 ## Finding your way
 
-Huron works like `oc`: one catalog is current, as one project is current in OpenShift, and
-identifiers are relative to it. One organization is current too, and catalogs are listed and
-created in it. `huron --help` groups the commands by what they are for:
+Huron works like `oc`. One catalog is current, as one project is current in OpenShift.
+Identifiers are relative to the current catalog. One organization is current too. The CLI lists
+catalogs in the current organization and creates them there. `huron --help` groups the commands by
+their purpose:
 
-| Panel | Commands | For |
+| Panel | Commands | Purpose |
 | --- | --- | --- |
-| Catalog | `org`, `catalog`, `get`, `describe`, `tree`, `search`, `checkout` | finding your way, searching and checking a collection out |
-| Collection | `status`, `add`, `rm`, `pull`, `push`, `edit`, `validate`, `publish`, `activate` | working on the checked-out collection |
+| Catalog | `org`, `catalog`, `get`, `describe`, `tree`, `search`, `checkout` | finding your way, searching and selecting a collection |
+| Collection | `status`, `add`, `rm`, `pull`, `push`, `edit`, `validate`, `publish`, `activate` | working on the current collection |
 | Manage | `create`, `delete`, `set`, `unset` | creating, deleting and configuring organizations, catalogs, namespaces and collections |
 | Administration | `adm` | roles, directory ACLs, drift checks and schemas |
-| Settings | `login`, `logout`, `whoami`, `config` | who you are and how the CLI is set up |
+| Settings | `login`, `logout`, `whoami`, `config` | who you are and the configuration of the CLI |
 
 ```bash
 huron org                          # the organizations you can see; * marks the current one
                                    # (deleting it with huron delete org clears it)
 huron org helio                    # make helio current (clears a current catalog of another org)
 huron catalog                      # the current organization's catalogs, * on the current one,
-                                   # and which collection is checked out
+                                   # and the current collection
 huron catalog heliophysics         # make heliophysics current, and its organization too
 huron get catalogs                 # the current organization's catalogs, as a plain listing
 huron get catalogs -A              # every organization's catalogs (--org <name> for another one)
 huron tree                         # its namespaces, with every collection as a leaf
 huron get collections              # every collection in the catalog
 huron get collections solar-wind   # only those directly in solar-wind
-huron checkout                     # pick a collection namespace by namespace
-huron status                       # what is checked out and what is staged
+huron checkout                     # choose a collection namespace by namespace
+huron status                       # the current collection and what is staged
 ```
 
-`huron tree` prints each collection's full identifier, so you can copy it into
-`huron checkout <identifier>`, even while another catalog is current: an identifier that names
-nothing in the current catalog is looked up as written. Without an identifier, `huron checkout` asks you to choose, level by
-level: a namespace (shown as `name/`), a collection in it, or `..` to go back up. It needs a terminal;
-in a script, name the collection.
+`huron tree` prints the full identifier of each collection. You can copy that identifier into
+`huron checkout <identifier>`, also while another catalog is current. When an identifier names
+nothing in the current catalog, the CLI resolves it as written.
+
+Without an identifier, `huron checkout` asks you to choose, one level at a time: a namespace
+(shown as `name/`), a collection in it, or `..` for the level above. This prompt needs a terminal.
+In a script, name the collection.
 
 ## Finding things
 
@@ -58,14 +64,14 @@ huron get files solar-wind.run7
 huron get log solar-wind.run7
 ```
 
-Put `--catalog <name>` before the command, as in `huron --catalog <name> get collections`, to work
-in another catalog without switching; `huron catalog` and `huron status` then show that catalog's
-organization, and the saved one is left alone.
+To work in another catalog and keep the current one, put `--catalog <name>` before the command, as
+in `huron --catalog <name> get collections`. Then `huron catalog` and `huron status` show the
+organization of that catalog. The saved catalog does not change.
 
 ## Who has access
 
 Roles belong to LDAP groups, never to people. `huron whoami` shows your groups and the roles they
-hold; `huron get grants` shows who holds which role in a catalog:
+hold. `huron get grants` shows who holds which role in a catalog:
 
 ```bash
 huron get grants                        # the current catalog
@@ -73,42 +79,58 @@ huron get grants --catalog geoscience   # another one
 huron get grants --org helio            # the organization-wide groups of each role
 ```
 
-For a catalog it prints one row per role and group, with the group's `SOURCE`: `platform` for the
-platform admins, `organization <org>` for a group the organization holds the role through in every
-one of its catalogs, and `catalog` for a group granted on this catalog alone. A group can show twice
-for one role, once per source. A catalog's own grants add groups; they cannot take away one it
-inherits from its organization, so a catalog that must stay restricted has its own groups and no
-organization-wide readers. `huron -o json get grants` (or `-o yaml`) gives the same rows with the
-fields `role`, `group` and `scope`. `--org` prints the organization's groups for `org_admin`,
-`catalog_admin`, `contributor` and `reader`. To be given a role, ask an administrator of the catalog
-or the organization to add you to the right LDAP group; the change applies at your next
-`huron login`.
+For a catalog, the command prints one row for each role and group, with the `SOURCE` of the group:
+
+- `platform`: the group of the platform admins.
+- `organization <org>`: a group that holds the role through the organization, in every catalog of
+  that organization.
+- `catalog`: a group with a grant on this catalog only.
+
+A group can show two times for one role, one time for each source. The grants of a catalog add
+groups. They cannot exclude a group that the catalog inherits from its organization. Thus a catalog
+that must stay restricted has its own groups and no organization-wide readers.
+
+`huron -o json get grants` (or `-o yaml`) gives the same rows with the fields `role`, `group` and
+`scope`. `--org` prints the groups of the organization for `org_admin`, `catalog_admin`,
+`contributor` and `reader`.
+
+To get a role, ask an administrator of the catalog or of the organization to add you to the
+applicable LDAP group. The change applies at your next `huron login`.
 
 ## Where your files are
 
-Each organization has its own directory, often on its own NFS export: `huron org` and
-`huron get orgs` show it in the `PATH` column, such as `/data1/huron/helio`. A path marked
-`(prefix)` is under your `mount_prefix` (`huron config show`) because the organization has no root
-of its own. A collection's files are in the organization's directory, then the catalog, the
-namespaces and the collection: `/data1/huron/helio/heliophysics/solar-wind/ace/run7/`.
+Each organization has its own directory, often on its own NFS export. `huron org` and
+`huron get orgs` show this directory in the `PATH` column, for example `/data1/huron/helio`. A path
+marked `(prefix)` is under your `mount_prefix` (`huron config show`), because the organization has
+no root of its own. The files of a collection are in the directory of the organization, under the
+catalog, the namespaces and the collection: `/data1/huron/helio/heliophysics/solar-wind/ace/run7/`.
 
-The machine you work on must mount the export of every organization you write to, at that path.
-`huron adm verify-mounts` lists each organization with `ok`, or what is wrong: `missing` (not
-mounted here), `no marker`, `wrong instance` or `wrong org` (ask your storage administrator). An
-organization marked `undeclared`, with its path marked `(undeclared)` in `huron get orgs`, is no
-longer in the service configuration: its catalogs are still there, but the CLI cannot find its
-directory until your operators declare it again.
-Organizations themselves, and who administers them, are set up by your operators; `huron create org`
-is refused when they are declared in the service configuration.
+The machine that you work on must mount the export of each organization that you write to, at that
+path. `huron adm verify-mounts` lists each organization with `ok` or with the problem:
+
+- `missing`: the export is not mounted on this machine.
+- `no marker`, `wrong instance` or `wrong org`: ask your storage admin.
+
+When the service configuration no longer declares an organization, `huron adm verify-mounts` marks
+it `undeclared` and `huron get orgs` marks its path `(undeclared)`. Its catalogs are still there.
+But the CLI cannot find its directory until your operators declare the organization again.
+
+Your operators configure the organizations and who administers them. When the service
+configuration declares the organizations, the service refuses `huron create org`.
 
 ## In a browser
 
-The Huron web app shows the same catalog, read-only. Open its address (your operator has it),
-choose **Sign in with your company account** and sign in as you do for the CLI. You can switch
-between the organizations you can see, browse catalogs, namespaces and collections with their
-metadata, files, commits, activity and schema, and search a catalog or a whole organization.
-Changes are made with the CLI: where you could make one, the page shows the `huron` command to
-run. Your groups are read when you sign in, so after a change to your groups, sign out and sign in
+The Huron web app shows the same catalog, read-only. Open its address (your operators have it).
+Choose **Sign in with your company account** and use the same account as for the CLI. In the web
+app, you can:
+
+- switch between the organizations that you can see.
+- browse catalogs, namespaces and collections with their metadata, files, commits, activity and
+  schema.
+- search a catalog or a whole organization.
+
+You make changes with the CLI. Where you could make a change, the page shows the `huron` command to
+run. The web reads your groups when you sign in. After a change to your groups, sign out and sign in
 again.
 
 ## Creating a collection
@@ -117,13 +139,20 @@ again.
 huron create collection solar-wind.run7
 ```
 
-Huron reserves the name, walks you through every required metadata field of the catalog's schema
-(and offers the optional ones), creates the directory with the right permissions, activates the
-collection, writes `metadata.json` beside your files and checks the collection out. Use
-`--metadata file.json` to skip the walkthrough, or `--draft` to stop before activation and run
-`huron activate collection` later.
+Huron reserves the name. Then it does these steps:
 
-## Adding and removing files
+1. It asks for each required metadata field of the catalog schema, and it offers the optional
+   fields.
+2. It creates the directory with the applicable permissions.
+3. It activates the collection.
+4. It writes `metadata.json` next to your files.
+5. It selects the collection as the current collection.
+
+Use `--metadata file.json` to skip the questions. Use `--draft` to stop before activation. Then run
+`huron activate collection` later. With `--draft`, Huron stops after step 1, and the draft becomes
+the current collection.
+
+## Staging and pushing files
 
 ```bash
 huron add data/*.h5
@@ -141,39 +170,49 @@ On collection heliophysics.solar-wind.run7 (version 4, up to date) in catalog he
 STAGED  PATH          SIZE       FROM
 add     kp/q1.txt     179.1 KiB  /home/you/data/kp-q1.txt
 remove  old.h5        -          -
-Unrecorded on the share: stray.txt
-push with: huron push -m "<message>" · unstage with: huron rm <path>
+Unrecorded files on the share: stray.txt
+To push, run `huron push -m "<message>"`. To unstage a path, run `huron rm <path>`
 ```
 
-`Unrecorded on the share` lists files in the collection's directory that no commit recorded; it
-reads `share not mounted here` when this machine does not mount the share. When someone else
-changed the collection since you checked it out, the first line says `behind the service's
-version N` and the hint is `huron pull`. Each collection you have checked out keeps its own stage;
-`huron status --all` shows every one on this machine that has something staged, with `*` on the
-checked-out one; when none has, it shows only the checked-out one and says `nothing staged in any
-working copy`.
+`Unrecorded files on the share` lists the files in the directory of the collection that no commit
+recorded. When this machine does not mount the share, the line says
+`The share is not mounted on this machine` instead. When someone else changed the collection
+after the version of your working copy, the first line says
+`behind the service's version N` and the hint is `huron pull`.
 
-`huron rm <path>` undoes what is staged for that path: it unstages an add (`unstaged notes.txt`) or
-a removal (`unstaged removal of old.h5`). Run on a recorded file with nothing staged, it stages the
-file's removal (`staged removal of old.h5`).
+Each working copy keeps its own stage. `huron status --all` shows each working copy on this
+machine that has something staged, with `*` on the current collection. When no working copy has
+something staged, the command shows only the current collection and says
+`Nothing is staged in any working copy`.
 
-Before `push` copies anything, it asks the service whether it would accept the commit: if you may
-not write files to the collection, or it changed since your copy, the push stops with the error
-and nothing is copied onto the share. Then `push` copies each file onto the share and records the
-batch in one commit. If the push is interrupted, run it again; files already copied are not copied
-twice.
+`huron rm <path>` does one of these:
+
+- It unstages an add (`unstaged notes.txt`) or a staged removal (`unstaged removal of old.h5`).
+- On a recorded file with nothing staged, it stages the removal of the file
+  (`staged removal of old.h5`).
+
+Before `push` copies anything, it asks the service whether the service would accept the commit. In
+these cases, the push stops with the error and copies nothing onto the share:
+
+- You may not write files to the collection.
+- The collection changed after the version of your working copy.
+
+Otherwise, `push` copies each file onto the share and records the batch in one commit.
+
+If something interrupts the push, run it again. The push does not copy a file again when it copied
+that file before.
 
 ## When someone else changed the collection
 
-Every commit carries the version you checked out. If someone published metadata or pushed files
-since, the push is refused before any file is copied:
+Each commit carries the version of your working copy. If someone published metadata or pushed
+files after the version of your working copy, the push stops before the CLI copies a file:
 
 ```text
-error: … is at version 6, your copy at 5 [BASE_VERSION_CONFLICT]
-hint: run: huron pull
+error: … is at version 6, but your working copy is at version 5 [BASE_VERSION_CONFLICT]
+hint: run `huron pull`
 ```
 
-Run `huron pull`, then `huron push` again. Your staged files are kept.
+Run `huron pull`, then run `huron push` again. Your staged files stay staged.
 
 ## Editing metadata
 
@@ -189,24 +228,42 @@ huron unset override
 
 ## Deleting
 
-`huron delete collection solar-wind.run7` removes every recorded file, the collection and its
-directory. Its creator or a catalog admin may delete it. Files nobody recorded stop the delete so
-nothing of yours is lost.
+`huron delete collection solar-wind.run7` deletes every recorded file, the collection and its
+directory. Its creator or a catalog admin may delete it. Files that nobody recorded stop the
+delete, so you lose nothing of yours.
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | 0 | success |
-| 1 | failure (including findings from `huron adm check`) |
-| 2 | usage: wrong arguments, nothing checked out, no catalog selected |
+| 1 | failure (also findings from `huron adm check`) |
+| 2 | usage: wrong arguments, no current collection, no current catalog |
 | 3 | not logged in |
 | 4 | forbidden |
 | 5 | not found |
 | 6 | conflict: stale version, not empty, name taken |
 | 7 | validation: metadata, schema or names |
-| 8 | an organization's directory or the share is missing, unmarked or not writable |
+| 8 | the directory of an organization or the share is missing or not writable, or its marker is missing or names a different instance or organization |
 | 130 | cancelled |
 
-Errors print `error: <message> [<code>]` and often a `hint:`; codes are listed in
-[api-errors.md](api-errors.md).
+An error prints `error: <message> [<code>]` and often a `hint:` line.
+[api-errors.md](api-errors.md) lists the codes.
+
+## Glossary
+
+| Term | Meaning |
+| --- | --- |
+| organization | The top level of Huron. An organization holds catalogs and has its own directory on the share. LDAP groups hold its organization-wide roles. One organization is current in the CLI. |
+| catalog | A tree of namespaces and collections in one organization, with one metadata schema. One catalog is current in the CLI, and identifiers are relative to it. |
+| namespace | A level in a catalog. A namespace holds other namespaces. It can hold collections when it allows them (`--allow-collections`). |
+| collection | A set of files in one directory on the share, with its metadata, in a namespace of a catalog. A collection has a version, which `huron status` shows. |
+| identifier | The full name of a namespace or a collection: the catalog, the namespaces and the name, with dots between them, as in `heliophysics.solar-wind.run7`. |
+| working copy | The record of one collection on this machine: the version of the collection that it holds, the stage and your metadata draft. `huron checkout` records one. |
+| current collection | The working copy that the commands of the Collection panel use. `huron checkout` selects it. |
+| stage | The adds and removals that the next push holds. Each working copy has its own stage. `huron add` and `huron rm` change it. |
+| push | The command that copies the staged files onto the share and records the batch in one commit. |
+| pull | The command that updates the working copy to the current version of the collection on the service. |
+| share | The NFS exports that hold the directories of the organizations, mounted at the same path on each machine that runs the CLI. |
+| root | An absolute path that the service configuration sets for an organization. The directory of the organization is then `<root>/<name>`. Without a root, the directory is under the `mount_prefix`. |
+| marker | The `.huron` file in the directory of an organization. It names the instance of the service and the organization. The CLI touches the directory only when its marker names this instance and this organization. An organization without its own marker uses the marker at the mount prefix, which names only the instance. |

@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Copy, Terminal } from '@lucide/svelte';
+	import { BookOpen, Copy, Terminal } from '@lucide/svelte';
+	import { cliReferences } from '$lib/cli';
 	import { Clipboard } from './clipboard.svelte';
 
 	interface Props {
@@ -19,6 +20,8 @@
 	 * command never reads as the next command. The count is also the field's rows.
 	 */
 	const lines = $derived(command.split('\n').map((line) => line.split(' ')));
+	/** The reference page of each command the hint runs, in the public documentation. */
+	const references = $derived(cliReferences(command));
 	/**
 	 * Unknown until mounted, so the server and a browser without scripts render the plain code
 	 * block. Without a clipboard (an insecure origin) a field that selects itself on focus
@@ -96,4 +99,18 @@
 		This website is read-only; changes are made with the huron CLI on a machine that mounts the
 		share.
 	</p>
+	<!-- The documentation is no route of this app: its links load the page afresh. -->
+	{#if references.length > 0}
+		<p class="mt-1 mb-0 flex flex-wrap items-center gap-x-1.5 text-xs text-app-muted">
+			<BookOpen size={13} class="shrink-0" aria-hidden="true" />Reference:
+			{#each references as reference, index (reference.verb)}{#if index > 0}<span aria-hidden="true"
+						>·</span
+					>{/if}<a
+					href={reference.href}
+					data-sveltekit-reload
+					class="mono font-semibold text-brand-strong underline underline-offset-2"
+					>huron {reference.verb}</a
+				>{/each}
+		</p>
+	{/if}
 </section>

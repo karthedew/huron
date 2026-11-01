@@ -11,6 +11,7 @@ import typer
 from huron.applications.cli.client import if_match
 from huron.applications.cli.commands.common import (
     api,
+    fetch_catalog,
     fetch_collection,
     fetch_namespace,
     say,
@@ -31,12 +32,12 @@ from huron.schema.naming import rel_path_key
 __all__ = ["DECLARED_HINT", "delete_app", "register"]
 
 DECLARED_HINT = (
-    "organizations are declared in the service configuration; remove it there first,"
-    " then delete it here once it has no catalogs"
+    "the service configuration declares this organization. First delete its entry from the"
+    " service configuration. Then, when it has no catalogs, delete it here"
 )
 
 delete_app = typer.Typer(
-    help="Delete an empty org, catalog or namespace, or a collection and its files.",
+    help="Delete an empty organization, catalog or namespace, or a collection and its files.",
     no_args_is_help=True,
 )
 
@@ -48,12 +49,13 @@ def register(app: typer.Typer, panel: str) -> None:
 
 @delete_app.command("org")
 def delete_org(ctx: typer.Context, name: str) -> None:
-    """Delete an organization without catalogs, and its empty directory.
+    """Delete an organization that has no catalogs, and its empty directory.
 
-    A declared organization is refused: it is removed from the service configuration instead.
-    The directory of an organization with a configured root is left to its storage admin. One
-    the managed configuration no longer declares has no known root: its directory is removed
-    only when the mount prefix is its share, and left to whoever owns it otherwise.
+    The service refuses to delete a declared organization. Instead, delete it from the service
+    configuration. The CLI leaves the directory of an organization with a configured root to
+    its storage admin. An organization that the managed configuration no longer declares has
+    no known root. The CLI deletes its directory only when the mount prefix is its share.
+    Otherwise, the CLI leaves the directory to its owner.
     """
     found = services(ctx)
     mount = found.mount()
@@ -75,14 +77,17 @@ def delete_org(ctx: typer.Context, name: str) -> None:
             say(ctx, line.format(name=name, directory=place.directory))
     if found.organization() == name:
         found.save_config(replace(found.config, current_organization=None))
-        say(ctx, "No organization is selected now; pick one with: huron org <name>")
+        say(
+            ctx,
+            "There is no current organization now. To select one, run `huron org <name>`",
+        )
 
 
 @delete_app.command("catalog")
 def delete_catalog(ctx: typer.Context, name: str) -> None:
-    """Delete a catalog without namespaces, and its empty directory."""
+    """Delete a catalog that has no namespaces, and its empty directory."""
     mount = services(ctx).mount()
-    catalog = api(ctx).get(f"/api/v1/catalogs/{name}")
+    catalog = fetch_catalog(ctx, name)
     relative = f"{catalog['organization']}/{name}"
     mount.path(relative)  # refuse before any change when the share is not ours
     api(ctx).delete(f"/api/v1/catalogs/{name}")
@@ -107,7 +112,10 @@ def delete_collection(
     identifier: str,
     yes: Annotated[bool, typer.Option("--yes", help="Do not ask for confirmation.")] = False,
 ) -> None:
-    """Remove every file, the collection and its directory (its creator or a catalog admin)."""
+    """Delete all files of a collection, the collection and its directory.
+
+    This needs the creator of the collection or a catalog admin.
+    """
     found = services(ctx)
     collection = fetch_collection(ctx, identifier)
     if not yes and not found.prompter.confirm(
@@ -164,19 +172,19 @@ def _refuse_unrecorded(storage: Storage, directory: Path, recorded: dict[str, An
         raise CliError(
             f"{len(leftovers)} unrecorded files remain in {directory}: {', '.join(leftovers[:20])}",
             ExitCode.CONFLICT,
-            hint="move or remove them, then run the delete again",
+            hint="move or delete them. Then run `huron delete collection` again",
         )
 
 
 _KEPT = {
     "keep": (
-        "organization {name} deleted; its directory {directory} stays",
-        "its storage admin removes the directory when it is no longer needed",
+        "Organization {name} deleted. Its directory {directory} stays",
+        "Its storage admin deletes the directory when it is no longer necessary",
     ),
     "lost": (
-        "organization {name} deleted; its directory was not looked for",
-        "it is not declared in the service configuration, so its root is unknown;"
-        " remove its directory by hand where it was, if it is still there",
+        "Organization {name} deleted. The CLI did not look for its directory",
+        "The service configuration does not declare it, so its root is unknown."
+        " If its directory still exists, delete it manually where it is",
     ),
 }
 

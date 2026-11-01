@@ -14,6 +14,7 @@ const PAGES = [
 	{ path: '/orgs', heading: 'All organizations' },
 	{ path: '/orgs/helio', heading: 'Heliophysics Division' },
 	{ path: '/orgs/helio/access', heading: 'Heliophysics Division' },
+	{ path: '/orgs/helio/cli', heading: 'Heliophysics Division' },
 	{ path: '/orgs/planetary', heading: 'Planetary Science' },
 	{ path: '/orgs/astro', heading: 'Astrophysics' },
 	{ path: '/account', heading: 'Account' },
@@ -22,6 +23,8 @@ const PAGES = [
 	{ path: '/catalogs/heliophysics/access', heading: 'Heliophysics' },
 	{ path: '/catalogs/heliophysics/activity', heading: 'Heliophysics' },
 	{ path: '/catalogs/heliophysics/schema', heading: 'Heliophysics' },
+	{ path: '/catalogs/heliophysics/cli', heading: 'Heliophysics' },
+	{ path: '/catalogs/heliophysics/namespaces/solar-wind/cli', heading: 'solar-wind' },
 	{ path: '/catalogs/space-weather/schema', heading: 'Space Weather' },
 	{ path: '/catalogs/space-weather/activity', heading: 'Space Weather' },
 	{ path: '/catalogs/exoplanets', heading: 'Exoplanets' },
@@ -49,10 +52,10 @@ const PAGES = [
 		`?q=${'w'.repeat(201)}`,
 		// A label filter too long to search for, given back in the field for adding one.
 		`?label=k%3D${'v'.repeat(101)}`
-	].map((query) => ({ path: `/catalogs/heliophysics/search${query}`, heading: 'Heliophysics' })),
+	].map((query) => ({ path: `/catalogs/heliophysics/search${query}`, heading: 'Search' })),
 	// An organization without catalogs, which has nothing to search.
-	{ path: '/orgs/planetary/search?q=wind', heading: 'Planetary Science' },
-	...['', '/files', '/commits', '/activity', '/schema'].map((tab) => ({
+	{ path: '/orgs/planetary/search?q=wind', heading: 'Search' },
+	...['', '/metadata', '/files', '/commits', '/activity', '/schema', '/cli'].map((tab) => ({
 		path: `/catalogs/heliophysics/collections/solar-wind.ace.mag-l2-2024${tab}`,
 		heading: 'ACE MAG level 2, 2024'
 	})),
@@ -64,7 +67,7 @@ const PAGES = [
 		path: '/catalogs/space-weather/collections/alerts.flare-list-2024',
 		heading: 'Flare list 2024'
 	},
-	...['', '/schema'].map((tab) => ({
+	...['', '/metadata', '/schema'].map((tab) => ({
 		path: `/catalogs/heliophysics/collections/solar-wind.wind.swe-2023${tab}`,
 		heading: 'Wind SWE ion moments, 2023'
 	})),
@@ -94,8 +97,8 @@ const SEARCH_PAGES = [
 		`?label=${encodeURIComponent('faradayCupEffectiveAreaCalibrationCoefficientsRevisionForSensorUnitB=rev-7')}`,
 		`?label=${'k'.repeat(100)}%3D${'v'.repeat(100)}`,
 		`?q=${'w'.repeat(201)}`
-	].map((query) => ({ path: `/orgs/helio/search${query}`, heading: 'Heliophysics Division' })),
-	{ path: '/orgs/geo/search?q=ocean', heading: 'Earth Science' },
+	].map((query) => ({ path: `/orgs/helio/search${query}`, heading: 'Search' })),
+	{ path: '/orgs/geo/search?q=ocean', heading: 'Search' },
 	{ path: '/search?q=wind', heading: 'Search' },
 	{ path: '/search', heading: 'Search' },
 	{ path: `/search?q=${'w'.repeat(201)}&label=k%3D${'v'.repeat(100)}`, heading: 'Search' }
@@ -161,7 +164,6 @@ function sectionsDrawn(navigation: Locator) {
 /** Pages with section navigation, and the rows it takes on a phone. */
 const SECTIONS = [
 	{ path: '/orgs/helio', navigation: 'Organization', phoneRows: 1 },
-	{ path: '/orgs/helio/search', navigation: 'Organization', phoneRows: 1 },
 	{ path: '/catalogs/heliophysics/schema', navigation: 'Catalog', phoneRows: 2 },
 	{
 		path: '/catalogs/heliophysics/collections/solar-wind.ace.mag-l2-2024/schema',
@@ -191,6 +193,21 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
 		}
 	});
 }
+
+test('seven collection sections wrap as pills with a pinned sidebar at tablet width', async ({
+	page
+}) => {
+	await page.setViewportSize(VIEWPORTS.tablet);
+	await signIn(page, 'dave');
+	await page.goto('/catalogs/heliophysics/collections/solar-wind.ace.mag-l2-2024');
+	await page.getByRole('button', { name: 'Expand sidebar' }).click();
+	const navigation = page.getByRole('navigation', { name: 'Collection', exact: true });
+	await expect(navigation.getByRole('link')).toHaveCount(7);
+	await expect
+		.poll(() => sectionsDrawn(navigation))
+		.toEqual({ rows: 2, framed: true, onBorder: false });
+	expect(await horizontalOverflow(page)).toBe(0);
+});
 
 test("the error page's link back to a long-named organization wraps on a phone", async ({
 	page

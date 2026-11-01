@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
 
 import httpx
+import structlog
 
 from huron import __version__
 from huron.applications.api.settings import Settings
@@ -30,6 +30,9 @@ from huron.pkg.clock import Clock, SystemClock
 __all__ = ["VERSION", "ClosableStore", "Runtime", "build_runtime"]
 
 VERSION = __version__
+
+#: The startup reconcile report's logger: one ``bootstrap.*`` event per organization it touched.
+_bootstrap_log = structlog.get_logger("huron.api.bootstrap")
 
 
 class ClosableStore(UnitOfWork, Protocol):
@@ -134,19 +137,23 @@ async def build_runtime(
 
 
 def _report(result: BootstrapResult) -> None:
-    log = logging.getLogger("huron.api.bootstrap")
+    """Log what the reconcile of the declared organizations changed, one event per change.
+
+    Created, updated (display name or description) and regranted organizations are ``INFO``;
+    organizations the configuration no longer declares are kept and reported at ``WARNING``.
+    """
     reconciled = result.organizations
     for name in reconciled.created:
-        log.info("created declared organization %s", name)
+        _bootstrap_log.info("bootstrap.organization_created", name=name)
     for name in reconciled.updated:
-        log.info("updated declared organization %s", name)
+        _bootstrap_log.info("bootstrap.organization_updated", name=name)
     for name in reconciled.regranted:
-        log.info("replaced the role groups of declared organization %s", name)
+        _bootstrap_log.info("bootstrap.organization_regranted", name=name)
     for organization in reconciled.undeclared:
-        log.warning(
-            "organization %s (%d catalogs) is not declared in the configuration; it is kept",
-            organization.name,
-            organization.catalog_count,
+        _bootstrap_log.warning(
+            "bootstrap.organization_undeclared",
+            name=organization.name,
+            catalog_count=organization.catalog_count,
         )
 
 

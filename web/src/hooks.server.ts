@@ -3,10 +3,15 @@ import { error, json, redirect, type Handle, type HandleServerError } from '@sve
 import { dev } from '$app/environment';
 import { ConfigError, getConfig, publicOrigin, type Config } from '$lib/server/config';
 import { CookieJar } from '$lib/server/cookies';
+import { docsRoot, isDocsPath, serveDocs } from '$lib/server/docs';
 import { loginPath, safeReturnTo } from '$lib/server/return-to';
+import { setSecurityHeaders } from '$lib/server/security-headers';
 import { sessionStore } from '$lib/server/sessions';
 
-/** Paths that answer without a session; everything else requires one. */
+/**
+ * Paths that answer without a session, besides the documentation under `/docs` (`isDocsPath`);
+ * everything else requires one.
+ */
 const PUBLIC_PATHS: ReadonlySet<string> = new Set([
 	'/login',
 	'/auth/login',
@@ -22,6 +27,10 @@ const NO_STORE_PATHS: ReadonlySet<string> = new Set(['/auth/login', '/auth/callb
 const PROGRAMMATIC_HEADER = 'x-huron-fetch';
 
 export const handle: Handle = async ({ event, resolve }) => {
+	// The documentation is public and static. It is answered before anything reads the settings
+	// or the session, so a docs request needs no cookie, writes none and calls no API.
+	if (isDocsPath(event.url.pathname)) return serveDocs(event.request, event.url, docsRoot());
+
 	const origin = publicOrigin(configuration(), event.url);
 	const jar = new CookieJar(event.cookies, origin);
 	const sessionId = jar.session();
@@ -93,9 +102,7 @@ function configuration(): Config {
 }
 
 function withSecurityHeaders(response: Response, noStore: boolean): Response {
-	response.headers.set('x-content-type-options', 'nosniff');
-	response.headers.set('x-frame-options', 'DENY');
-	response.headers.set('referrer-policy', 'same-origin');
+	setSecurityHeaders(response.headers);
 	if (noStore) response.headers.set('cache-control', 'private, no-store');
 	return response;
 }

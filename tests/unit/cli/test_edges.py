@@ -115,7 +115,7 @@ def test_loopback_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(CliError, match="invalid_grant"):
         client.loopback_flow(browser)
     monkeypatch.setattr(login, "_LOOPBACK_TIMEOUT", 0.05)
-    with pytest.raises(CliError, match="timed out"):
+    with pytest.raises(CliError, match="did not answer in time"):
         client.loopback_flow(lambda url: None)
 
 

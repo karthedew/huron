@@ -13,6 +13,9 @@
 		type SearchErrors
 	} from '$lib/search';
 	import { REMOVE_CHIP } from '../chips';
+	import { resolve } from '$app/paths';
+	import { displayName } from '$lib/names';
+	import type { SearchCatalogScope } from '$lib/search-links';
 
 	interface Props {
 		/** The form's name, e.g. "Catalog search". */
@@ -27,9 +30,11 @@
 		drafts: boolean;
 		/** The address of this search page for another search. */
 		href: (search: Search) => string;
+		/** The organization and catalog choices of the central Search page. */
+		scope?: SearchCatalogScope;
 	}
 
-	let { label, action, search, errors, pendingLabel, drafts, href }: Props = $props();
+	let { label, action, search, errors, pendingLabel, drafts, href, scope }: Props = $props();
 
 	const id = $props.id();
 	const offered = $derived(SEARCH_STATES.filter((state) => state !== 'draft' || drafts));
@@ -48,7 +53,17 @@
 	 * the same search.
 	 */
 	function tidy(event: FormDataEvent) {
+		const organization = event.formData.get('organization');
+		const catalog = event.formData.get('catalog');
 		tidySearchForm(event.formData, { drafts });
+		event.formData.delete('organization');
+		event.formData.delete('catalog');
+		const fields = [...event.formData];
+		for (const key of new Set(event.formData.keys())) event.formData.delete(key);
+		if (typeof catalog === 'string' && catalog) event.formData.set('catalog', catalog);
+		else if (typeof organization === 'string' && organization)
+			event.formData.set('organization', organization);
+		for (const [key, value] of fields) event.formData.append(key, value);
 	}
 </script>
 
@@ -68,12 +83,29 @@
 		aria-label={label}
 		aria-describedby={errors.form === null ? undefined : `${id}-form-error`}
 		method="GET"
-		{action}
+		action={scope ? resolve('/(app)/search') : action}
 		onformdata={tidy}
 		class="@container rounded-card border border-app-line bg-app-card p-4"
 	>
 		{#if errors.form !== null}
 			<div class="mb-4">{@render error(errors.form, 'form')}</div>
+		{/if}
+		{#if scope}
+			<input type="hidden" name="organization" value={scope.organization} />
+			<div class="mb-4 max-w-lg">
+				<label for="{id}-catalog" class="text-sm font-semibold">Catalog</label>
+				<select
+					id="{id}-catalog"
+					name="catalog"
+					value={scope.catalog ?? ''}
+					class={[FIELD, 'mt-1.5 px-3']}
+				>
+					<option value="">All catalogs in this organization</option>
+					{#each scope.catalogs as catalog (catalog.name)}
+						<option value={catalog.name}>{displayName(catalog)}</option>
+					{/each}
+				</select>
+			</div>
 		{/if}
 		<div>
 			<label for="{id}-q" class="text-sm font-semibold">Search text</label>
@@ -97,8 +129,8 @@
 			</div>
 			{#if errors.q !== null}{@render error(errors.q, 'q')}{/if}
 			<p id="{id}-help" class="mt-1.5 mb-0 text-xs text-app-muted">
-				Matches the exact text in identifiers, titles and descriptions. Use labels for exact
-				key=value filters. Sorted by identifier.
+				Search identifiers, titles and descriptions. Labels filter metadata by exact key=value.
+				Results are sorted by identifier.
 			</p>
 		</div>
 		<div class="mt-4 grid gap-4 @2xl:grid-cols-2 @2xl:gap-6">

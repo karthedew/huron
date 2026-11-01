@@ -2,7 +2,8 @@ import { render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Collection, RoleGrant } from '$api/types';
-import { MAX_ITEMS, metadataView, type ProblemRow } from '$lib/metadata';
+import { MAX_ITEMS, type ProblemRow } from '$lib/metadata';
+import { overviewMetadata, OVERVIEW_ITEMS } from '$lib/collection-overview';
 import { collectionFixture } from '$lib/testing/api-fixtures';
 import { page, resetAppState } from '$lib/testing/app-state.svelte';
 import { catalogPageData, catalogRole, collectionOf } from '$lib/testing/catalog-data';
@@ -60,7 +61,7 @@ async function show({
 				...catalogPageData({ roles }),
 				collection: summary,
 				trail: [],
-				metadata: metadataView(collectionFixture(collection).metadata, null),
+				metadata: overviewMetadata(collectionFixture(collection).metadata, null),
 				problems: { rows: problems, more: moreProblems },
 				schemaResolved
 			},
@@ -72,28 +73,42 @@ async function show({
 }
 
 function details() {
-	return screen.getByRole('complementary', { name: 'Details' });
+	return screen.getByRole('region', { name: 'Use this collection' });
 }
 
 function detail(label: string): HTMLElement {
-	const term = within(details()).getByText(label, { selector: 'dt' });
+	const term = screen.getByText(label, { selector: 'dt' });
 	const value = term.nextElementSibling;
 	if (!(value instanceof HTMLElement)) throw new Error(`no value for ${label}`);
 	return value;
 }
 
-/** The hints of the CLI section. */
-function hints() {
-	return within(screen.getByRole('region', { name: 'With the CLI' })).getAllByRole('region');
-}
-
-/** The commands of a hint, from the field that stands in for the code block without a clipboard. */
-function command(title: string): string {
-	const field = within(screen.getByRole('region', { name: title })).getByRole('textbox');
-	return field instanceof HTMLTextAreaElement ? field.value : '';
-}
-
 describe("a collection's overview", () => {
+	it.each([
+		[
+			'draft',
+			'Draft',
+			'Reserved, not yet activated: no directory or files on the share; visible to contributors only.'
+		],
+		[
+			'incomplete',
+			'Incomplete',
+			"The catalog's schema now requires fields this collection lacks. Its files are unaffected."
+		]
+	])('keeps %s state explanations in the Overview body', async (state, label, explanation) => {
+		await show({ collection: { state } });
+		expect(screen.getByText(label)).toBeInTheDocument();
+		expect(screen.getByText(explanation)).toBeInTheDocument();
+	});
+	it('shows the description in Overview without embedded command panels', async () => {
+		await show({
+			collection: { metadata: { title: 'ACE', description: 'Vector observations.' } },
+			roles: [catalogRole('catalog_admin')]
+		});
+		expect(screen.getByText('Vector observations.')).toBeInTheDocument();
+		expect(screen.queryByRole('region', { name: 'With the CLI' })).toBeNull();
+	});
+
 	it('titles the document with the collection and its catalog', async () => {
 		await show();
 		expect(document.title).toBe('ACE MAG level 2, 2024 · Heliophysics · Huron');
@@ -101,13 +116,13 @@ describe("a collection's overview", () => {
 
 	it('shows the metadata', async () => {
 		await show({ collection: { metadata: METADATA } });
-		const metadata = screen.getByRole('region', { name: 'Metadata' });
+		const metadata = screen.getByRole('region', { name: 'At a glance' });
 		expect(within(metadata).getByText('Instrument')).toBeInTheDocument();
 		expect(
 			within(metadata).getByRole('link', {
 				name: 'mission: ace, search the catalog for this label'
 			})
-		).toHaveAttribute('href', '/catalogs/heliophysics/search?label=mission%3Dace');
+		).toHaveAttribute('href', '/search?catalog=heliophysics&label=mission%3Dace');
 		expect(
 			screen.queryByText("Its schema override no longer fits the catalog's schema", {
 				exact: false
@@ -115,38 +130,34 @@ describe("a collection's overview", () => {
 		).toBeNull();
 	});
 
-	it('says why the fields show by their keys when the schema cannot be resolved', async () => {
-		await show({ schemaResolved: false });
-		expect(
-			screen.getByText(
-				"Its schema override no longer fits the catalog's schema, so the fields show by their keys."
-			)
-		).toBeInTheDocument();
+	it('links to full metadata and leaves nested or unknown fields off the Overview', async () => {
+		await show({
+			collection: { metadata: { ...METADATA, processing: { nested: 'Details only' } } }
+		});
+		expect(screen.getByRole('link', { name: 'View all metadata' })).toHaveAttribute(
+			'href',
+			`${BASE}/metadata`
+		);
+		expect(screen.queryByText('Processing')).toBeNull();
+		expect(screen.queryByText('Details only')).toBeNull();
 	});
 
-	it('points to metadata.json for what a long metadata leaves out', async () => {
+	it('keeps preview chips short and directs readers to Metadata for the rest', async () => {
 		const keywords = Array.from({ length: MAX_ITEMS + 7 }, (_, index) => `k${index}`);
 		await show({ collection: { metadata: { ...METADATA, keywords } } });
-		const metadata = screen.getByRole('region', { name: 'Metadata' });
-		expect(within(metadata).getByText('and 7 more')).toBeInTheDocument();
-		expect(metadata).toHaveTextContent(
-			'This metadata is too long to show in full here. metadata.json holds all of it.'
-		);
-		expect(within(metadata).getByRole('link', { name: 'metadata.json' })).toHaveAttribute(
-			'href',
-			`${BASE}/metadata.json`
-		);
+		const metadata = screen.getByRole('region', { name: 'At a glance' });
+		expect(
+			within(metadata).getByText(`and ${keywords.length - OVERVIEW_ITEMS} more`)
+		).toBeInTheDocument();
+		expect(metadata).toHaveTextContent('This is a preview. The Metadata tab has more detail.');
 	});
 
-	it('says a long draft is shortened, without a metadata file to point to', async () => {
-		const keywords = Array.from({ length: MAX_ITEMS + 1 }, (_, index) => `k${index}`);
-		await show({
-			collection: { state: 'draft', path: null, metadata: { ...METADATA, keywords } },
-			roles: [catalogRole('contributor')]
-		});
-		const metadata = screen.getByRole('region', { name: 'Metadata' });
-		expect(metadata).toHaveTextContent('This metadata is too long to show in full here.');
-		expect(within(metadata).queryByRole('link', { name: 'metadata.json' })).toBeNull();
+	it('points to full metadata when a collection has no supported discovery facts', async () => {
+		await show({ collection: { metadata: { custom: { nested: true } } } });
+		expect(
+			screen.getByText("Explore the Metadata tab for this collection's recorded details.")
+		).toBeInTheDocument();
+		expect(screen.queryByText('Other fields')).toBeNull();
 	});
 
 	it('says nothing is left out of metadata that shows in full', async () => {
@@ -156,6 +167,8 @@ describe("a collection's overview", () => {
 
 	it('gives the share path, files, times, schema and metadata file of a collection', async () => {
 		await show({ collection: { schema_override: { type: 'object' } } });
+		screen.getByText('Record details').click();
+		await tick();
 		expect(
 			within(detail('Share path')).getByText(
 				'/projects/huron/helio/heliophysics/solar-wind/ace/mag-l2-2024'
@@ -177,7 +190,7 @@ describe("a collection's overview", () => {
 
 	it('keeps the record revision and the id in technical details', async () => {
 		await show({ collection: { version: 4 } });
-		const technical = within(details()).getByText('Technical details').closest('details');
+		const technical = screen.getByText('Record details').closest('details');
 		expect(technical?.open).toBe(false);
 		expect(technical).toHaveTextContent('Record revision 4');
 		expect(technical).toHaveTextContent('it is not a version of the data');
@@ -204,6 +217,8 @@ describe("a collection's overview", () => {
 		expect(within(details()).queryByText('Files')).toBeNull();
 		expect(within(details()).queryByText('Metadata file')).toBeNull();
 		expect(screen.queryByRole('link', { name: 'metadata.json' })).toBeNull();
+		screen.getByText('Record details').click();
+		await tick();
 		expect(detail('Activated')).toHaveTextContent('Not yet');
 	});
 
@@ -253,30 +268,6 @@ describe("a collection's overview", () => {
 		expect(problems).not.toHaveTextContent('Once its metadata is fixed');
 	});
 
-	it('shows contributors how to replace or remove a schema override that no longer fits', async () => {
-		await show({
-			collection: INCOMPATIBLE,
-			roles: [catalogRole('contributor')],
-			problems: [{ field: null, message: INCOMPATIBLE.problems[0].message }],
-			schemaResolved: false
-		});
-		expect(hints().map((hint) => hint.querySelector('p')?.textContent)).toEqual([
-			'Check out this collection',
-			'Replace the schema override with one that fits',
-			'Remove the schema override',
-			'Add files to this collection'
-		]);
-		expect(command('Replace the schema override with one that fits')).toBe(
-			'huron --catalog heliophysics set override <override.json> heliophysics.solar-wind.ace.mag-l2-2024'
-		);
-		expect(command('Remove the schema override')).toBe(
-			'huron --catalog heliophysics unset override heliophysics.solar-wind.ace.mag-l2-2024'
-		);
-		expect(
-			screen.queryByRole('region', { name: 'Complete the metadata, then publish it' })
-		).toBeNull();
-	});
-
 	it('tells a draft whose schema override no longer fits what activating it takes', async () => {
 		await show({
 			collection: { ...INCOMPATIBLE, state: 'draft', path: null },
@@ -293,55 +284,5 @@ describe("a collection's overview", () => {
 	it('shows no problems section for a valid collection', async () => {
 		await show();
 		expect(screen.queryByRole('region', { name: /problems? in the metadata/ })).toBeNull();
-	});
-
-	it('shows readers how to check the collection out, and only that', async () => {
-		await show({ roles: [catalogRole('reader')] });
-		expect(hints()).toHaveLength(1);
-		expect(command('Check out this collection')).toBe(
-			'huron --catalog heliophysics checkout heliophysics.solar-wind.ace.mag-l2-2024'
-		);
-	});
-
-	it('shows contributors how to add files to this collection and push them', async () => {
-		await show({ roles: [catalogRole('contributor')] });
-		// The hint checks this collection out: `add` and `push` act on the one checked out last.
-		expect(command('Add files to this collection')).toBe(
-			'huron --catalog heliophysics checkout heliophysics.solar-wind.ace.mag-l2-2024\n' +
-				'huron --catalog heliophysics add <file>…\n' +
-				'huron --catalog heliophysics push -m "<message>"'
-		);
-		expect(screen.queryByRole('region', { name: 'Activate this draft' })).toBeNull();
-	});
-
-	it('shows contributors how to activate a draft and complete its metadata', async () => {
-		await show({
-			collection: { state: 'draft', path: null },
-			roles: [catalogRole('contributor')],
-			problems: [{ field: null, message: "'description' is a required property" }]
-		});
-		expect(hints().map((hint) => hint.querySelector('p')?.textContent)).toEqual([
-			'Check out this collection',
-			'Complete the metadata, then publish it',
-			'Activate this draft'
-		]);
-		expect(command('Activate this draft')).toBe(
-			'huron --catalog heliophysics activate collection heliophysics.solar-wind.ace.mag-l2-2024'
-		);
-		expect(screen.getByRole('region', { name: '1 problem in the metadata' })).toHaveTextContent(
-			'The draft can be activated once its metadata is fixed.'
-		);
-	});
-
-	it('shows contributors how to complete the metadata of an incomplete collection', async () => {
-		await show({
-			collection: { state: 'incomplete' },
-			roles: [catalogRole('catalog_admin')],
-			problems: [{ field: null, message: "'mission' is a required property" }]
-		});
-		expect(command('Complete the metadata, then publish it')).toBe(
-			'huron --catalog heliophysics edit meta heliophysics.solar-wind.ace.mag-l2-2024\n' +
-				'huron --catalog heliophysics publish meta heliophysics.solar-wind.ace.mag-l2-2024'
-		);
 	});
 });

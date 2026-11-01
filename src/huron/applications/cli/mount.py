@@ -40,16 +40,20 @@ if TYPE_CHECKING:
 
 __all__ = ["PREFIX_MARKER_HINT", "PROVISION_HINT", "UNDECLARED_HINT", "Mount"]
 
-PROVISION_HINT = "prepare organization directories with: huron adm provision-orgs"
+PROVISION_HINT = (
+    "To prepare the organization directories, run `huron adm provision-orgs` (storage admin)"
+)
 PREFIX_MARKER_HINT = (
-    "organizations without a root live under mount_prefix: mount the share there"
-    " (huron config set mount_prefix <dir>) and mark it once with scripts/init-root.sh"
+    "Organizations without a root are below `mount_prefix`. Mount the share there."
+    " To set the prefix, run `huron config set mount_prefix <dir>`."
+    " Mark the share one time with `scripts/init-root.sh`"
 )
 UNDECLARED_HINT = (
-    "an organization the service configuration no longer declares has no known root; declare it"
-    " again with its root to reach its directory, or delete it once it has no catalogs"
+    "An organization that the service configuration no longer declares has no known root."
+    " To reach its directory, declare it again with its root."
+    " Alternatively, delete it when it has no catalogs"
 )
-_PREFIX_HINT = "run this on a machine that mounts the share, or set mount_prefix"
+_PREFIX_HINT = "run this command on a machine that mounts the share, or set `mount_prefix`"
 
 
 @dataclass
@@ -172,12 +176,14 @@ class Mount:
         target = self.path(relative)
         storage = self.storage
         if _storage_call(lambda: storage.remove_directory(target)):
-            self.report(target, "removed")
+            self.report(target, "deleted")
 
     def report(self, target: Path, what: str) -> None:
         """A ``<what>: <path>`` line on standard error, noting when only modes are applied."""
         note = (
-            "" if self.services.config.acl_backend == "posix" else " (modes only: acl_backend none)"
+            ""
+            if self.services.config.acl_backend == "posix"
+            else " (modes only, because `acl_backend` is `none`)"
         )
         self.services.err.print(f"{what}: {target}{note}", markup=False, highlight=False)
 
@@ -195,7 +201,7 @@ class Mount:
         return self._marker(
             place.directory,
             place.name,
-            f"check that {place.base} is mounted here{source}; {PROVISION_HINT} (storage admin)",
+            f"check that {place.base} is mounted on this machine{source}. {PROVISION_HINT}",
         )
 
     def _marker(self, directory: Path, organization: str | None, hint: str) -> Marker:

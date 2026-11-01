@@ -83,14 +83,6 @@ describe('the organization access tab', () => {
 		expect(document.title).toBe('Access · Heliophysics Division · Huron');
 	});
 
-	it('shows administrators of an undeclared organization how to grant a role on it', async () => {
-		await show(GROUPS, { roles: [ORG_ADMIN] });
-		const hint = screen.getByRole('region', { name: HINT });
-		expect(within(hint).getByRole('textbox')).toHaveValue(
-			'huron adm grant <role> <ldap-group> --org helio'
-		);
-	});
-
 	it('shows readers no hint', async () => {
 		await show(GROUPS, {
 			roles: [{ scope: 'organization', scope_id: HELIO.id, role: 'reader' }]

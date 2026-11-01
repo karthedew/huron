@@ -103,12 +103,12 @@ class TokenVerifier:
         try:
             header = jwt.get_unverified_header(token)
         except jwt.PyJWTError as error:
-            raise TokenInvalid("token is not a JWT") from error
+            raise TokenInvalid("the token is not a JWT") from error
         if header.get("alg") != "ES256":
-            raise TokenInvalid("token algorithm is not ES256")
+            raise TokenInvalid("the token algorithm is not ES256")
         key = self._ring.find(str(header.get("kid", "")))
         if key is None:
-            raise TokenInvalid("token was signed by an unknown key")
+            raise TokenInvalid("an unknown key signed the token")
         try:
             payload = jwt.decode(
                 token,
@@ -119,16 +119,16 @@ class TokenVerifier:
                 options={"verify_exp": False, "verify_iat": False, "require": list(_REQUIRED)},
             )
         except jwt.PyJWTError as error:
-            raise TokenInvalid(f"token rejected: {error}") from error
+            raise TokenInvalid(f"Huron rejected the token: {error}") from error
         return self._claims(payload)
 
     def _claims(self, payload: dict[str, Any]) -> HuronClaims:
         expires = datetime.fromtimestamp(payload["exp"], UTC)
         if expires <= self._clock.now():
-            raise TokenInvalid("token has expired")
+            raise TokenInvalid("the token expired")
         groups = payload["groups"]
         if not isinstance(groups, list) or not all(isinstance(g, str) for g in groups):
-            raise TokenInvalid("token groups claim is malformed")
+            raise TokenInvalid("the groups claim of the token is not a list of strings")
         return HuronClaims(
             sub=str(payload["sub"]),
             name=str(payload["name"]),

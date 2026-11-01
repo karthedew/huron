@@ -6,7 +6,7 @@ import { emptySearch, searchResult, type Search, type SearchErrors } from '$lib/
 import { collectionFixture, organizationFixture } from '$lib/testing/api-fixtures';
 import { page, resetAppState } from '$lib/testing/app-state.svelte';
 import { fakeUser } from '$lib/testing/events';
-import Page from './+page.svelte';
+import Page from './OrganizationSearch.svelte';
 
 vi.mock('$app/state', () => import('$lib/testing/app-state.svelte'));
 
@@ -62,7 +62,7 @@ async function show({
 	truncated?: boolean;
 	results?: Omit<OrganizationResults, 'refused'> | null;
 } = {}) {
-	page.url = new URL('http://localhost:4173/orgs/helio/search');
+	page.url = new URL('http://localhost:4173/search?organization=helio');
 	page.route = { id: '/(app)/orgs/[org=segment]/search' };
 	const shown = render(Page, {
 		props: {
@@ -112,7 +112,7 @@ describe('the organization search page', () => {
 		});
 		expect(screen.getByRole('search', { name: 'Organization search' })).toHaveAttribute(
 			'action',
-			'/orgs/helio/search'
+			'/search?organization=helio'
 		);
 		const helio = screen.getByRole('region', { name: 'Heliophysics' });
 		expect(within(helio).getByRole('heading', { level: 2 })).toHaveTextContent('Heliophysics');
@@ -127,11 +127,11 @@ describe('the organization search page', () => {
 		// It has more than it shows: its own search shows them all, for the same search.
 		expect(
 			within(helio).getByRole('link', { name: 'See all results in Heliophysics' })
-		).toHaveAttribute('href', '/catalogs/heliophysics/search?q=wind');
+		).toHaveAttribute('href', '/search?catalog=heliophysics&q=wind');
 		const space = screen.getByRole('region', { name: 'Space Weather' });
 		expect(within(space).getByRole('link', { name: 'Search only Space Weather' })).toHaveAttribute(
 			'href',
-			'/catalogs/space-weather/search?q=wind'
+			'/search?catalog=space-weather&q=wind'
 		);
 		expect(helio.compareDocumentPosition(space) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
@@ -196,8 +196,8 @@ describe('the organization search page', () => {
 		if (!(note instanceof HTMLElement)) throw new Error('no note');
 		const links = within(note).getAllByRole('link');
 		expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
-			['Search only Space Weather', '/catalogs/space-weather/search?q=wind'],
-			['Search only Geomagnetism', '/catalogs/geomagnetism/search?q=wind']
+			['Search only Space Weather', '/search?catalog=space-weather&q=wind'],
+			['Search only Geomagnetism', '/search?catalog=geomagnetism&q=wind']
 		]);
 		expect(
 			within(screen.getByRole('region', { name: 'Heliophysics' })).getByRole('list', {
@@ -220,7 +220,7 @@ describe('the organization search page', () => {
 		expect(within(failed).queryByRole('list')).toBeNull();
 		expect(within(failed).getByRole('link', { name: 'Search only Heliophysics' })).toHaveAttribute(
 			'href',
-			'/catalogs/heliophysics/search?q=wind'
+			'/search?catalog=heliophysics&q=wind'
 		);
 	});
 
@@ -263,11 +263,11 @@ describe('the organization search page', () => {
 		const filters = screen.getByRole('list', { name: 'Filters' });
 		expect(
 			within(filters).getByRole('link', { name: 'Remove filter mission = ace' })
-		).toHaveAttribute('href', '/orgs/helio/search?q=solar+storm');
+		).toHaveAttribute('href', '/search?organization=helio&q=solar+storm');
 		const words = within(screen.getByRole('list', { name: 'Words' })).getAllByRole('link');
 		expect(words.map((link) => link.getAttribute('href'))).toEqual([
-			'/orgs/helio/search?q=solar&label=mission%3Dace',
-			'/orgs/helio/search?q=storm&label=mission%3Dace'
+			'/search?organization=helio&q=solar&label=mission%3Dace',
+			'/search?organization=helio&q=storm&label=mission%3Dace'
 		]);
 		expect(screen.queryByRole('link', { name: /^Search all of/ })).toBeNull();
 		expect(screen.queryByText(/collections match in/)).toBeNull();

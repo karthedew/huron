@@ -187,7 +187,7 @@ def test_provision_orgs_dry_run_and_one_organization(
     assert "geo: created" in only and "helio" not in only
     assert share.exists(GEO) and not share.exists(HELIO)
     refused = cli.run("adm", "provision-orgs", "--org", "quiet")
-    assert refused.exit_code == 2 and "not declared" in refused.stderr
+    assert refused.exit_code == 2 and "does not declare organization quiet" in refused.stderr
     rows = json.loads(cli.ok("-o", "json", "adm", "provision-orgs", "--org", "geo").stdout)
     assert rows == [
         {"organization": "geo", "step": f"exists: {GEO}"},
@@ -207,7 +207,7 @@ def test_provision_orgs_never_creates_a_root(
     result = cli.run("adm", "provision-orgs")
     assert result.exit_code == 8
     assert f"error: geo: the root {GEO_ROOT} of organization geo does not exist" in result.stderr
-    assert "1 of 2 organizations could not be provisioned: geo" in result.stderr
+    assert "the CLI could not prepare 1 of 2 organizations: geo" in result.stderr
     assert "--emit-script" in result.stderr
     assert share.exists(HELIO / MARKER_FILE) and not share.exists(GEO_ROOT)
 
@@ -220,7 +220,7 @@ def test_provision_orgs_refuses_a_marker_of_another_instance(
     share.write_bytes(HELIO / MARKER_FILE, org_marker("helio", "other-instance"))
     acl = share.nodes[HELIO].acl
     result = cli.run("adm", "provision-orgs")
-    assert result.exit_code == 8 and "refusing to overwrite" in result.stderr
+    assert result.exit_code == 8 and "Huron does not overwrite it" in result.stderr
     assert share.nodes[HELIO].acl == acl
     assert read_marker(share, HELIO).instance_id == "other-instance"
     assert read_marker(share, GEO).organization == "geo"
@@ -239,7 +239,7 @@ def test_provision_orgs_emits_a_script_without_touching_the_share(
     cli.configure(acl_backend="none")
     assert "setfacl" not in cli.ok("adm", "provision-orgs", "--emit-script").stdout
     plain = cli.ok("adm", "provision-orgs").stdout
-    assert f"helio: created: {HELIO} (modes only: acl_backend none)" in plain
+    assert f"helio: created: {HELIO} (modes only, because `acl_backend` is `none`)" in plain
 
 
 def test_provision_orgs_with_nothing_declared(cli: Cli) -> None:
@@ -286,12 +286,12 @@ def test_disk_operations_need_the_organization_marker(
     refused = cli.run("create", "catalog", "spare", "--org", "helio")
     assert refused.exit_code == 8 and f"{HELIO} is not mounted" in refused.stderr
     assert "huron adm provision-orgs" in refused.stderr
-    assert f"mounted here (from nfs1:/export{HELIO_ROOT})" in refused.stderr
+    assert f"mounted on this machine (from nfs1:/export{HELIO_ROOT})" in refused.stderr
     assert cli.run("describe", "catalog", "spare").exit_code == 5
     share.ensure_directory(HELIO, plan(DirectoryKind.ORGANIZATION, EffectiveGroups()))
     share.write_bytes(HELIO / MARKER_FILE, org_marker("geo"))
     wrong = cli.run("create", "catalog", "spare", "--org", "helio")
-    assert wrong.exit_code == 8 and "marked for geo, not organization helio" in wrong.stderr
+    assert wrong.exit_code == 8 and "names organization geo, not organization helio" in wrong.stderr
     assert not share.exists(HELIO / "spare")
 
 
@@ -407,7 +407,7 @@ def test_create_org_is_refused_when_organizations_are_declared(
     cli, _ = managed
     refused = cli.run("create", "org", "astro")
     assert refused.exit_code == 6 and "[ORGANIZATIONS_MANAGED]" in refused.stderr
-    assert "declared in the service configuration" in refused.stderr
+    assert "the service configuration declares the organizations" in refused.stderr
     assert "huron adm provision-orgs" in refused.stderr
     assert share.calls == []
 
@@ -418,13 +418,16 @@ def test_declared_organizations_cannot_be_deleted_or_regranted(
     cli, _ = managed
     cli.ok("adm", "provision-orgs")
     refused = cli.run("delete", "org", "geo")
-    assert refused.exit_code == 6 and "remove it there first" in refused.stderr
+    assert (
+        refused.exit_code == 6
+        and "First delete its entry from the service configuration" in refused.stderr
+    )
     assert share.exists(GEO / MARKER_FILE)
     grant = cli.run("adm", "grant", "org_admin", "geo-admins", "--org", "geo")
-    assert grant.exit_code == 6 and "edit groups.org_admin there" in grant.stderr
+    assert grant.exit_code == 6 and "Edit `groups.org_admin` there" in grant.stderr
     assert "huron adm provision-orgs" in grant.stderr
     reader = cli.run("adm", "grant", "reader", "geo-readers", "--org", "geo")
-    assert reader.exit_code == 6 and "edit groups.reader there" in reader.stderr
+    assert reader.exit_code == 6 and "Edit `groups.reader` there" in reader.stderr
     assert "huron adm apply-acl <catalog> -R" in reader.stderr
     catalog = cli.run("adm", "grant", "reader", "x", "--catalog", "missing")
     assert catalog.exit_code == 5 and "groups." not in catalog.stderr
@@ -439,7 +442,7 @@ def test_deleting_an_organization_with_a_root_leaves_its_directory(
     share.add_root(GEO_ROOT / "quiet", owner="alice")
     cli.login_as("alice")
     deleted = cli.ok("delete", "org", "quiet").stdout
-    assert f"organization quiet deleted; its directory {GEO_ROOT / 'quiet'} stays" in deleted
+    assert f"Organization quiet deleted. Its directory {GEO_ROOT / 'quiet'} stays" in deleted
     assert share.exists(GEO_ROOT / "quiet")
 
 

@@ -156,7 +156,15 @@ describe('explorerCurrent', () => {
 			explorerCurrent('/(app)/catalogs/[catalog=segment]/namespaces/[path=dotted]', {
 				path: 'deep.a'
 			})
-		).toEqual({ kind: 'namespace', path: 'deep.a' });
+		).toEqual({ kind: 'namespace', path: 'deep.a', overview: true });
+	});
+
+	it('keeps a namespace selected on its CLI tab', () => {
+		expect(
+			explorerCurrent('/(app)/catalogs/[catalog=segment]/namespaces/[path=dotted]/cli', {
+				path: 'deep.a'
+			})
+		).toEqual({ kind: 'namespace', path: 'deep.a', overview: false });
 	});
 
 	it('finds the namespace and name of a collection page and its tabs', () => {
@@ -175,7 +183,7 @@ describe('explorerCurrent', () => {
 });
 
 describe('opening folders', () => {
-	const namespacePage: ExplorerCurrent = { kind: 'namespace', path: 'deep.a.b' };
+	const namespacePage: ExplorerCurrent = { kind: 'namespace', path: 'deep.a.b', overview: true };
 	const collectionPage: ExplorerCurrent = {
 		kind: 'collection',
 		namespace: 'solar-wind.ace',
@@ -218,7 +226,11 @@ describe('opening folders', () => {
 describe('pinnedNode', () => {
 	it('pins nothing when the loaded page holds the current node', () => {
 		expect(
-			pinnedNode(SOLAR_WIND, 'heliophysics', { kind: 'namespace', path: 'solar-wind.ace' })
+			pinnedNode(SOLAR_WIND, 'heliophysics', {
+				kind: 'namespace',
+				path: 'solar-wind.ace',
+				overview: true
+			})
 		).toBeNull();
 		expect(
 			pinnedNode(ACE, 'heliophysics', {
@@ -233,7 +245,11 @@ describe('pinnedNode', () => {
 	it('pins the current namespace when the loaded page does not hold it', () => {
 		const firstPage = { ...SOLAR_WIND, namespacesNext: 'more' };
 		expect(
-			pinnedNode(firstPage, 'heliophysics', { kind: 'namespace', path: 'solar-wind.zeta' })
+			pinnedNode(firstPage, 'heliophysics', {
+				kind: 'namespace',
+				path: 'solar-wind.zeta',
+				overview: true
+			})
 		).toEqual({
 			kind: 'namespace',
 			node: { name: 'zeta', path: 'solar-wind.zeta', empty: false }
@@ -255,7 +271,7 @@ describe('pinnedNode', () => {
 	});
 
 	it('pins the next namespace on the way when the loaded page does not hold it', () => {
-		const current: ExplorerCurrent = { kind: 'namespace', path: 'zeta.b.c' };
+		const current: ExplorerCurrent = { kind: 'namespace', path: 'zeta.b.c', overview: true };
 		const root = { ...SOLAR_WIND, parent: '', namespacesNext: 'more' };
 		expect(pinnedNode(root, 'heliophysics', current)).toEqual({
 			kind: 'namespace',
@@ -279,13 +295,13 @@ describe('pinnedNode', () => {
 
 	it('pins nothing below the current namespace', () => {
 		expect(
-			pinnedNode(ACE, 'heliophysics', { kind: 'namespace', path: 'solar-wind.ace' })
+			pinnedNode(ACE, 'heliophysics', { kind: 'namespace', path: 'solar-wind.ace', overview: true })
 		).toBeNull();
 	});
 
 	it('pins nothing into a level the current node is not in', () => {
 		const elsewhere: ExplorerCurrent[] = [
-			{ kind: 'namespace', path: 'solar-wind.wind.deeper' },
+			{ kind: 'namespace', path: 'solar-wind.wind.deeper', overview: true },
 			{ kind: 'collection', namespace: 'solar-wind', name: 'x', overview: true },
 			{ kind: 'catalog', overview: true }
 		];

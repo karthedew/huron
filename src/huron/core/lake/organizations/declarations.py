@@ -44,8 +44,8 @@ class DeclaredOrganization:
             for group in groups:
                 if not group or group != group.strip():
                     raise DeclarationInvalid(
-                        f"organization {self.name!r}: groups.{role}: LDAP group names are"
-                        " non-empty and unpadded",
+                        f"organization {self.name!r}: groups.{role}: an LDAP group name must not be"
+                        " empty or start or end with white space",
                         {"organization": self.name, "role": str(role), "ldap_group": group},
                     )
         if self.root is not None:
@@ -88,7 +88,8 @@ class Declarations:
         for entry in self.entries or ():
             if entry.name in by_name:
                 raise DeclarationInvalid(
-                    f"organization {entry.name!r} is declared twice", {"organization": entry.name}
+                    f"the service configuration declares organization {entry.name!r} twice",
+                    {"organization": entry.name},
                 )
             by_name[entry.name] = entry
         object.__setattr__(self, "_by_name", by_name)
@@ -119,14 +120,16 @@ class Declarations:
         """Raise :class:`OrganizationsManaged` in managed mode."""
         if self.managed:
             raise OrganizationsManaged(
-                "organizations are declared in the service configuration", {}
+                "the service configuration declares the organizations,"
+                " so the API cannot create an organization",
+                {},
             )
 
     def require_undeclared(self, organization: str, what: str) -> None:
         """Raise :class:`OrganizationDeclared` when ``organization`` is declared."""
         if self.get(organization) is not None:
             raise OrganizationDeclared(
-                f"organization {organization!r} is declared in the service configuration; {what}",
+                f"the service configuration declares organization {organization!r}. {what}",
                 {"organization": organization},
             )
 

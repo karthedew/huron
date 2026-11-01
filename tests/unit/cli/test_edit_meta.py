@@ -34,7 +34,7 @@ def test_edit_meta_from_a_file_stores_the_draft_without_asking(ready: Cli, tmp_p
     wanted = {"title": "From a file", "description": "No questions"}
     asked = len(ready.prompter.asked)
     edited = ready.ok("edit", "meta", "--file", str(document(tmp_path, wanted)))
-    assert edited.stdout == "draft saved (0 problems); publish with: huron publish meta\n"
+    assert edited.stdout == "Draft saved with 0 problems. To publish it, run `huron publish meta`\n"
     assert len(ready.prompter.asked) == asked
     assert ready.state.read_draft(ready.config_current()) == wanted
     ready.ok("publish", "meta")
@@ -47,10 +47,11 @@ def test_edit_meta_from_a_file_reports_problems_like_the_walkthrough(
     ready: Cli, tmp_path: Path
 ) -> None:
     edited = ready.ok("edit", "meta", "--file", str(document(tmp_path, {"title": ""})))
-    assert edited.stdout.startswith("draft saved (") and "0 problems" not in edited.stdout
-    assert edited.stdout.endswith("problems); publish with: huron publish meta\n")
+    assert edited.stdout.startswith("Draft saved with ") and "0 problems" not in edited.stdout
+    assert edited.stdout.endswith(" problems. To publish it, run `huron publish meta`\n")
     invalid = ready.run("validate", "meta")
     assert invalid.exit_code == 7 and "/title" in invalid.stderr
+    assert "the draft has " in invalid.stderr
 
 
 def test_edit_meta_from_a_file_targets_a_named_collection(ready: Cli, tmp_path: Path) -> None:
@@ -65,7 +66,7 @@ def test_edit_meta_refuses_file_with_from_scratch(ready: Cli, tmp_path: Path) ->
     path = document(tmp_path, {"title": "x"})
     refused = ready.run("edit", "meta", "--file", str(path), "--from-scratch")
     assert refused.exit_code == 2
-    assert "--file and --from-scratch cannot be combined" in refused.stderr
+    assert "use `--file` or `--from-scratch`, not both" in refused.stderr
     assert ready.state.read_draft(ready.config_current()) is None
 
 

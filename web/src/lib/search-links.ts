@@ -1,53 +1,50 @@
-/**
- * The addresses of the pages that search, for a search (see `search.ts`), and what the shell's
- * search box and its Search item search.
- */
+/** Addresses for the single collection search page and its explicit scope. */
 import { resolve } from '$app/paths';
-import { displayName, type Named } from './names';
-import { emptySearch, searchQuery, type Search } from './search';
+import type { Named } from './names';
+import { searchParams, type Search } from './search';
 
-/** The address of a catalog's search page for a search. */
+/** Catalog choices shown by the search form for its selected organization. */
+export interface SearchCatalogScope {
+	organization: string;
+	catalog: string | null;
+	catalogs: Named[];
+}
+
+/** The central search page, with an explicit organization or catalog when selected. */
+export function searchHref(
+	search: Search,
+	{ organization, catalog }: { organization?: string | null; catalog?: string | null } = {}
+): string {
+	const params = new URLSearchParams();
+	if (organization) params.set('organization', organization);
+	if (catalog) params.set('catalog', catalog);
+	for (const [key, value] of searchParams(search)) params.append(key, value);
+	const query = params.toString();
+	return `${resolve('/(app)/search')}${query === '' ? '' : `?${query}`}`;
+}
+
+/** Search one catalog from any collection or label link. */
 export function catalogSearchHref(catalog: string, search: Search): string {
-	const path = resolve('/(app)/catalogs/[catalog=segment]/(overview)/search', { catalog });
-	return `${path}${searchQuery(search)}`;
+	return searchHref(search, { catalog });
 }
 
-/** The address of an organization's search page, over its catalogs, for a search. */
+/** Search all visible catalogs in an organization. */
 export function organizationSearchHref(organization: string, search: Search): string {
-	const path = resolve('/(app)/orgs/[org=segment]/search', { org: organization });
-	return `${path}${searchQuery(search)}`;
+	return searchHref(search, { organization });
 }
 
-/** The address of the page that asks which organization to search, for a search. */
-export function chooserHref(search: Search): string {
-	return `${resolve('/search')}${searchQuery(search)}`;
-}
-
-/** What the shell's search box and its Search item search. */
-export interface SearchScope {
-	/** The search page, without a query. */
-	href: string;
-	/** The name of the catalog or organization searched; `null` where the page asks which. */
-	name: string | null;
-}
-
-/**
- * The shell's search scope: the catalog of a catalog's page; else the shell's current
- * organization, the page's or the remembered one; else the page that asks which organization
- * to search.
- */
-export function searchScope(
-	catalog: Named | null | undefined,
-	organization: Named | null
-): SearchScope {
-	if (catalog) {
-		return { href: catalogSearchHref(catalog.name, emptySearch()), name: displayName(catalog) };
+/** Preserve supported input on a legacy search URL, including text needing correction. */
+export function legacySearchHref(
+	params: URLSearchParams,
+	scope: { organization?: string; catalog?: string }
+): string {
+	const kept = new URLSearchParams();
+	if (scope.organization) kept.set('organization', scope.organization);
+	if (scope.catalog) kept.set('catalog', scope.catalog);
+	for (const [key, value] of params) {
+		if (['q', 'label', 'label_json', 'state', 'cursor', 'notice'].includes(key)) {
+			kept.append(key, value);
+		}
 	}
-	if (organization) {
-		return {
-			href: organizationSearchHref(organization.name, emptySearch()),
-			name: displayName(organization)
-		};
-	}
-	return { href: chooserHref(emptySearch()), name: null };
+	return `${resolve('/(app)/search')}?${kept.toString()}`;
 }

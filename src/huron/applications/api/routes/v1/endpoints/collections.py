@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query, Response, status
 
 from huron.applications.api.authorization import ActorDep
 from huron.applications.api.dependencies import DeclarationsDep, LakeDep, with_share_root
-from huron.applications.api.routes.pagination import Cursor, Limit
+from huron.applications.api.routes.pagination import Cursor, Limit, Order, Sort
 from huron.applications.api.routes.preconditions import IfMatch, expected_version, set_etag
 from huron.applications.api.routes.v1.schema.admin import AuditOut
 from huron.applications.api.routes.v1.schema.collections import (
@@ -19,6 +19,7 @@ from huron.applications.api.routes.v1.schema.collections import (
 )
 from huron.applications.api.routes.v1.schema.common import Page, page_of
 from huron.core.lake.collections.models import UNSET, CollectionView, Search, State, Update
+from huron.core.lake.listing import ListOrder, SortDirection, SortField
 from huron.core.lake.organizations.declarations import Declarations
 from huron.pkg.errors import Invalid
 
@@ -36,9 +37,11 @@ async def list_collections(
     declarations: DeclarationsDep,
     cursor: Cursor = None,
     limit: Limit = None,
+    sort: Sort = SortField.NAME,
+    order: Order = SortDirection.ASC,
 ) -> Page[CollectionOut]:
     """Collections directly in a namespace; drafts only for those who may create them."""
-    page = await lake.collections.list(actor, catalog, path, cursor, limit)
+    page = await lake.collections.list(actor, catalog, path, cursor, limit, ListOrder(sort, order))
     rows = [with_share_root(v.as_dict(), declarations) for v in page.items]
     return page_of(CollectionOut, rows, page.next_cursor)
 
@@ -195,5 +198,5 @@ def _label(text: str) -> tuple[str, str]:
     if not sep:
         key, sep, value = text.partition(":")
     if not sep or not key:
-        raise Invalid("labels are key=value", {"label": text})
+        raise Invalid("a label must have the form key=value", {"label": text})
     return key, value

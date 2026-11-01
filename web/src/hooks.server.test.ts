@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { isHttpError, isRedirect, type RequestEvent } from '@sveltejs/kit';
+import { fileURLToPath } from 'node:url';
 import * as devalue from 'devalue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetConfig } from '$lib/server/config';
@@ -7,6 +8,9 @@ import { sessionStore } from '$lib/server/sessions';
 import { fakeRequestEvent } from '$lib/testing/events';
 import { FakeCookies } from '$lib/testing/fake-cookies';
 import { handle, handleError } from './hooks.server';
+
+/** The stand-in for the documentation build that `src/lib/server/docs.test.ts` describes. */
+const DOCS_FIXTURE = fileURLToPath(new URL('./lib/testing/docs', import.meta.url));
 
 const environment = vi.hoisted((): Record<string, string> => ({}));
 vi.mock('$env/dynamic/private', () => ({ env: environment }));
@@ -26,7 +30,7 @@ const SETTINGS = {
 
 beforeEach(() => {
 	for (const key of Object.keys(environment)) delete environment[key];
-	Object.assign(environment, SETTINGS);
+	Object.assign(environment, SETTINGS, { HURON_WEB_DOCS_DIR: DOCS_FIXTURE });
 	resetConfig();
 });
 
@@ -77,6 +81,59 @@ describe('handle', () => {
 			expect(resolve).toHaveBeenCalledOnce();
 			expect(event.locals.user).toBeNull();
 			expect(response?.status).toBe(200);
+		}
+	);
+
+	it.each(['/docs', '/docs/', '/docs/reference/cli/checkout/', '/docs/nowhere'])(
+		'answers the public documentation at %s without reading or writing a session',
+		async (path) => {
+			const fetch = vi.spyOn(globalThis, 'fetch');
+			const cookies = new FakeCookies({ huron_session: 'gone' });
+			const event = request(path, { cookies });
+			const { response, resolve, thrown } = await run(event);
+			expect(thrown).toBeUndefined();
+			expect(resolve).not.toHaveBeenCalled();
+			expect([200, 308, 404]).toContain(response?.status);
+			expect(cookies.writes).toEqual([]);
+			expect(response?.headers.has('set-cookie')).toBe(false);
+			expect(fetch).not.toHaveBeenCalled();
+			expect(response?.headers.get('content-security-policy')).toMatch(
+				/script-src 'self' 'wasm-unsafe-eval'/
+			);
+			expect(response?.headers.get('x-frame-options')).toBe('DENY');
+		}
+	);
+
+	it('serves the documentation with its index page and its redirects', async () => {
+		const home = await run(request('/docs/'));
+		expect(home.response?.status).toBe(200);
+		expect(await home.response?.text()).toContain('<h1>Huron</h1>');
+		const bare = await run(request('/docs'));
+		expect([bare.response?.status, bare.response?.headers.get('location')]).toEqual([
+			308,
+			'/docs/'
+		]);
+		const missing = await run(request('/docs/nowhere/'));
+		expect(missing.response?.status).toBe(404);
+		expect(await missing.response?.text()).toContain('Page not found');
+	});
+
+	it('serves the documentation even when the sign-in settings are broken', async () => {
+		environment.HURON_API_URL = 'http://user:password@api';
+		resetConfig();
+		const { response, thrown } = await run(request('/docs/'));
+		expect(thrown).toBeUndefined();
+		expect(response?.status).toBe(200);
+	});
+
+	it.each(['/doc', '/docsx', '/docs-site/dist/index.html', '/catalogs', '/catalogs/docs'])(
+		'keeps %s, which is not the documentation, behind sign-in',
+		async (path) => {
+			const { thrown, resolve } = await run(request(path));
+			expect(isRedirect(thrown) && thrown.location).toBe(
+				`/login?returnTo=${encodeURIComponent(path)}`
+			);
+			expect(resolve).not.toHaveBeenCalled();
 		}
 	);
 

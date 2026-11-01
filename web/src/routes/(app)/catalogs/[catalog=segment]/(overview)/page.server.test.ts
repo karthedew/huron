@@ -49,46 +49,71 @@ describe('/catalogs/[catalog] overview load', () => {
 		vi.stubGlobal(
 			'fetch',
 			fakeApi({
-				'/catalogs/heliophysics/namespaces?limit=50': jsonResponse(pageFixture(ROOT, 'n3'))
+				'/catalogs/heliophysics/namespaces?limit=20&sort=name&order=asc': jsonResponse(
+					pageFixture(ROOT, 'n3')
+				)
 			}).fetch
 		);
-		expect(await load(overviewEvent())).toEqual({ namespaces: ROOT, nextCursor: 'n3' });
+		expect(await load(overviewEvent())).toEqual({
+			namespaces: ROOT,
+			nextCursor: 'n3',
+			namespaceSort: { sort: 'name', order: 'asc' }
+		});
 	});
 
-	it('shares its first page with the layout that loads the explorer root', async () => {
+	it('keeps its twenty rows separate from the explorer’s fifty rows', async () => {
 		const api = fakeApi({
 			'/catalogs/heliophysics': jsonResponse(catalogFixture()),
 			'/catalogs?organization=helio&limit=100': jsonResponse(pageFixture([catalogFixture()])),
-			'/catalogs/heliophysics/namespaces?limit=50': jsonResponse(pageFixture(ROOT))
+			'/catalogs/heliophysics/namespaces?limit=50': jsonResponse(pageFixture(ROOT)),
+			'/catalogs/heliophysics/namespaces?limit=20&sort=name&order=asc': jsonResponse(
+				pageFixture(ROOT)
+			)
 		});
 		vi.stubGlobal('fetch', api.fetch);
 		const event = overviewEvent();
 		await Promise.all([layoutLoad(event), load(event)]);
 		const reads = api.calls.filter(({ url }) => url.includes('/namespaces'));
-		expect(reads).toHaveLength(1);
+		expect(reads).toHaveLength(2);
 	});
 
 	it('asks for the page the cursor names', async () => {
 		const api = fakeApi({
-			'/catalogs/heliophysics/namespaces?cursor=n3&limit=50': jsonResponse(pageFixture([]))
+			'/catalogs/heliophysics/namespaces?cursor=n3&limit=20&sort=name&order=asc': jsonResponse(
+				pageFixture([])
+			)
 		});
 		vi.stubGlobal('fetch', api.fetch);
-		expect(await load(overviewEvent('?cursor=n3'))).toEqual({ namespaces: [], nextCursor: null });
+		expect(await load(overviewEvent('?cursor=n3'))).toEqual({
+			namespaces: [],
+			nextCursor: null,
+			namespaceSort: { sort: 'name', order: 'asc' }
+		});
 	});
 
 	it('restarts a list whose cursor the API no longer accepts', async () => {
 		vi.stubGlobal(
 			'fetch',
 			fakeApi({
-				'/catalogs/heliophysics/namespaces?cursor=stale&limit=50': problemResponse(
-					400,
-					'INVALID_CURSOR'
-				)
+				'/catalogs/heliophysics/namespaces?cursor=stale&limit=20&sort=name&order=asc':
+					problemResponse(400, 'INVALID_CURSOR')
 			}).fetch
 		);
 		const outcome = await load(overviewEvent('?cursor=stale')).catch((thrown: unknown) => thrown);
 		expect(isRedirect(outcome) && outcome.location).toBe(
 			'/catalogs/heliophysics?notice=page_expired'
 		);
+	});
+	it('sends the selected global ordering to the API with the cursor', async () => {
+		vi.stubGlobal(
+			'fetch',
+			fakeApi({
+				'/catalogs/heliophysics/namespaces?cursor=next&limit=20&sort=created_by&order=desc':
+					jsonResponse(pageFixture(ROOT))
+			}).fetch
+		);
+		const data = await load(overviewEvent('?sort=created_by&order=desc&cursor=next'));
+		expect(data.namespaceSort).toEqual({ sort: 'created_by', order: 'desc' });
+		expect(data.namespaces).toEqual(ROOT);
 	});
 });

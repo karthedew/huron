@@ -17,14 +17,14 @@ test.describe('the account page', () => {
 		await expect(you.getByRole('definition').nth(1)).toHaveText('dave');
 		await expect(you.locator('time')).toHaveText(TIMESTAMP);
 
-		const groups = main.getByRole('region', { name: 'Groups' });
+		const groups = main.getByRole('region', { name: 'Groups', exact: true });
 		await expect(groups.locator('time')).toHaveText(TIMESTAMP);
 		await expect(groups.getByRole('listitem')).toHaveText([...USERS.dave.groups].sort());
 		await expect(groups).toContainText(
 			'Groups are read when you sign in; if you were just added to a group, sign out and sign in again.'
 		);
 
-		const roles = main.getByRole('region', { name: 'Roles' });
+		const roles = main.getByRole('region', { name: 'Roles', exact: true });
 		// Organizations come before catalogs: helio and geo grant dave's groups organization-wide.
 		await expect(roles.getByRole('listitem').locator('p').first()).toHaveText(
 			'You are a reader of every catalog of Earth Science.'
@@ -45,7 +45,7 @@ test.describe('the account page', () => {
 		// Within a sentence, color alone would not set the link apart.
 		await expect(geoscience).toHaveCSS('text-decoration-line', 'underline');
 
-		const cli = main.getByRole('region', { name: 'Sign in and see what Huron knows about you' });
+		const cli = main.getByRole('region', { name: 'Log in, then show your name, groups and roles' });
 		await expect(cli.locator('code')).toHaveText('huron login\nhuron whoami');
 		expect(await main.textContent()).not.toContain(stack.apiUrl);
 	});
@@ -53,7 +53,7 @@ test.describe('the account page', () => {
 	test('names the scope of administrator roles', async ({ page }) => {
 		await signIn(page, 'alice');
 		await page.goto('/account');
-		const roles = page.getByRole('main').getByRole('region', { name: 'Roles' });
+		const roles = page.getByRole('main').getByRole('region', { name: 'Roles', exact: true });
 		await expect(roles.getByRole('listitem')).toHaveCount(1);
 		await expect(roles).toContainText('You are a platform administrator.');
 		await expect(roles).toContainText('You can create organizations');
@@ -62,7 +62,7 @@ test.describe('the account page', () => {
 	test("links an organization administrator's organization", async ({ page }) => {
 		await signIn(page, 'bob');
 		await page.goto('/account');
-		const roles = page.getByRole('main').getByRole('region', { name: 'Roles' });
+		const roles = page.getByRole('main').getByRole('region', { name: 'Roles', exact: true });
 		await expect(roles).toContainText(
 			'You are an organization administrator of Heliophysics Division.'
 		);

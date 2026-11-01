@@ -16,10 +16,9 @@ function nextCursor(body: unknown): string {
 	return cursor;
 }
 
-/** "N namespaces in total" as the fixture creates them. */
+/** The total namespaces shown in a catalog's count column. */
 function namespaceCount(catalog: string): string {
-	const count = NAMESPACES.filter((namespace) => namespace.catalog === catalog).length;
-	return `${count} ${count === 1 ? 'namespace' : 'namespaces'} in total`;
+	return String(NAMESPACES.filter((namespace) => namespace.catalog === catalog).length);
 }
 
 test.describe('all organizations', () => {
@@ -68,7 +67,7 @@ test.describe('all organizations', () => {
 		await signIn(page, 'mallory');
 		await page
 			.getByRole('complementary', { name: 'Sidebar' })
-			.getByRole('link', { name: 'Catalogs' })
+			.getByRole('link', { name: 'Catalog', exact: true })
 			.click();
 		await expect(page).toHaveURL('/orgs');
 		const main = page.getByRole('main');
@@ -110,34 +109,29 @@ test.describe('an organization', () => {
 		await expect(main.getByText(`${MOUNT_PREFIX}/helio`, { exact: true })).toBeVisible();
 		await expect(main.getByText('Declared in the service configuration.')).toHaveCount(0);
 		const sections = main.getByRole('navigation', { name: 'Organization' });
-		await expect(sections.getByRole('link')).toHaveText(['Catalogs2', 'Search', 'Access']);
+		await expect(sections.getByRole('link')).toHaveText(['Catalogs2', 'Access', 'CLI']);
 		await expect(sections.getByRole('link', { name: 'Catalogs' })).toHaveAttribute(
 			'aria-current',
 			'page'
 		);
 
-		const catalogs = main.getByRole('list', { name: 'Catalogs' }).getByRole('listitem');
+		const table = main.getByRole('table', { name: 'Catalogs' });
+		const catalogs = table.locator('tbody').getByRole('row');
 		const helio = CATALOGS.filter(({ organization }) => organization === 'helio');
 		await expect(catalogs).toHaveCount(helio.length);
 		for (const [index, catalog] of helio.entries()) {
 			const row = catalogs.nth(index);
-			await expect(row.getByRole('link', { name: catalog.displayName })).toHaveAttribute(
+			await expect(row.getByRole('link', { name: catalog.name, exact: true })).toHaveAttribute(
 				'href',
 				`/catalogs/${catalog.name}`
 			);
-			await expect(row).toContainText(catalog.name);
-			await expect(row).toContainText(catalog.description);
-			await expect(row).toContainText(namespaceCount(catalog.name));
+			await expect(row.getByRole('link', { name: catalog.name, exact: true })).toHaveAttribute(
+				'title',
+				catalog.displayName
+			);
+			await expect(row.getByRole('cell').nth(0)).toHaveText(namespaceCount(catalog.name));
 		}
-		await expect(catalogs.nth(0).getByRole('link', { name: 'huron-base v1' })).toHaveAttribute(
-			'href',
-			'/catalogs/heliophysics/schema'
-		);
-		await expect(catalogs.nth(1).getByRole('link', { name: 'space-weather v1' })).toHaveAttribute(
-			'href',
-			'/catalogs/space-weather/schema'
-		);
-		await expect(main.getByRole('region')).toHaveCount(0);
+		await expect(main.getByRole('region', { name: 'Catalogs table' })).toBeVisible();
 	});
 
 	test("shows the organization's groups, which every catalog of it inherits", async ({ page }) => {
@@ -190,7 +184,7 @@ test.describe('an organization', () => {
 
 	test('shows administrators of an organization how to grant a role on it', async ({ page }) => {
 		await signIn(page, 'bob');
-		await page.goto('/orgs/helio/access');
+		await page.goto('/orgs/helio/cli');
 		const hint = page.getByRole('main').getByRole('region', {
 			name: 'Grant a role on the organization'
 		});
@@ -204,6 +198,10 @@ test.describe('an organization', () => {
 		const main = page.getByRole('main');
 		await expect(main.getByRole('heading', { name: 'Planetary Science', level: 1 })).toBeVisible();
 		await expect(main.getByText('No catalogs you can see in this organization.')).toBeVisible();
+		await main
+			.getByRole('navigation', { name: 'Organization', exact: true })
+			.getByRole('link', { name: 'CLI', exact: true })
+			.click();
 		const hint = main.getByRole('region', { name: 'Create a catalog in this organization' });
 		await expect(hint.getByText('huron create catalog <name> --org planetary')).toBeVisible();
 		await expect(
@@ -229,7 +227,7 @@ test.describe('an organization', () => {
 			});
 			const page = await context.newPage();
 			await signIn(page, 'alice');
-			await page.goto('/orgs/planetary');
+			await page.goto('/orgs/planetary/cli');
 			const hint = page.getByRole('region', { name: 'Create a catalog in this organization' });
 			await expect(hint.locator('pre')).toHaveText('huron create catalog <name> --org planetary');
 			await expect(hint.getByRole('textbox')).toHaveCount(0);
@@ -264,7 +262,7 @@ test.describe('an organization', () => {
 				}
 				const page = await context.newPage();
 				await signIn(page, 'alice');
-				await page.goto('/orgs/planetary');
+				await page.goto('/orgs/planetary/cli');
 				const hint = page.getByRole('region', { name: 'Create a catalog in this organization' });
 				const command = clipboard ? hint.locator('pre') : hint.getByRole('textbox');
 				await expect(command).toBeVisible();
@@ -290,14 +288,16 @@ test.describe('an organization', () => {
 		try {
 			const page = await context.newPage();
 			await signIn(page, 'alice');
-			await page.goto('/orgs/planetary');
+			await page.goto('/orgs/planetary/cli');
 			const hint = page.getByRole('region', { name: 'Create a catalog in this organization' });
 			await expect(hint.locator('code')).toHaveText('huron create catalog <name> --org planetary');
 			await expect(hint.getByRole('button')).toHaveCount(0);
-			// The server's links are relative to the page, and Catalogs still says it leads here.
+			// The server's links are relative to the page; Catalogs marks the current section.
 			await expect(
-				page.getByRole('complementary', { name: 'Sidebar' }).getByRole('link', { name: 'Catalogs' })
-			).toHaveAttribute('aria-current', 'page');
+				page
+					.getByRole('complementary', { name: 'Sidebar' })
+					.getByRole('link', { name: 'Catalog', exact: true })
+			).toHaveAttribute('aria-current', 'true');
 		} finally {
 			await context.close();
 		}

@@ -1,12 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import CliHint from '$design/components/CliHint.svelte';
 	import EmptyState from '$design/components/EmptyState.svelte';
 	import FileTable from '$design/components/FileTable.svelte';
 	import PageExpiredNotice from '$design/components/PageExpiredNotice.svelte';
 	import Pager from '$design/components/Pager.svelte';
-	import { catalogCapabilities } from '$lib/capabilities';
-	import { addFilesHint } from '$lib/cli';
 	import { countLabel } from '$lib/format';
 	import { pageTitle } from '$lib/title';
 	import type { PageProps } from './$types';
@@ -15,9 +12,7 @@
 
 	const collection = $derived(data.collection);
 	const name = $derived(collection.title ?? collection.identifier);
-	const can = $derived(catalogCapabilities(data.roles, data.catalog, data.organizations));
 	const firstPage = $derived(!page.url.searchParams.get('cursor'));
-	const hint = $derived(addFilesHint(collection));
 </script>
 
 <svelte:head><title>{pageTitle('Files', name)}</title></svelte:head>
@@ -45,13 +40,7 @@
 			<EmptyState
 				title="No files yet."
 				detail="Files appear here once someone pushes them from a working copy."
-			>
-				{#if can.contribute}
-					<div class="mx-auto mt-4 max-w-2xl">
-						<CliHint title={hint.title} command={hint.command} />
-					</div>
-				{/if}
-			</EmptyState>
+			></EmptyState>
 		</div>
 	{/if}
 </section>

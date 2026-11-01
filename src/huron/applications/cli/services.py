@@ -79,8 +79,8 @@ class Services:
         catalog = self.catalog()
         if catalog is None:
             raise UsageError(
-                "no catalog is selected",
-                hint="list them with: huron catalog; then run: huron catalog <name>",
+                "there is no current catalog",
+                hint="to list the catalogs, run `huron catalog`. Then run `huron catalog <name>`",
             )
         return catalog
 

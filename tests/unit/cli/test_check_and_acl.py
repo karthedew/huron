@@ -58,7 +58,7 @@ def test_acl_apply_repairs_what_the_caller_owns(built: Cli, share: MemoryStorage
     assert result.exit_code == 0 and "changed: heliophysics.solar-wind.run7" in result.stdout
     assert "unchanged" in built.ok("adm", "apply-acl", "heliophysics.solar-wind.run7").stdout
     everything = built.run("adm", "apply-acl", "heliophysics", "--recursive")
-    assert everything.exit_code == 1 and "skipped (not yours" in everything.stderr
+    assert everything.exit_code == 1 and "skipped (you do not own it" in everything.stderr
     assert built.run("adm", "apply-acl", "heliophysics.nothing").exit_code == 8
 
 

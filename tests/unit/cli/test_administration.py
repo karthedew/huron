@@ -26,10 +26,10 @@ def test_catalog_roles_default_to_the_current_catalog(seeded_cli: Cli) -> None:
     assert refused.exit_code == 2 and "huron catalog <name>" in refused.stderr
     cli.ok("catalog", "heliophysics")
     granted = cli.ok("adm", "grant", "reader", "guests")
-    assert "reader: added guests; removed -" in granted.stdout and REMINDER in granted.stdout
+    assert "reader: added guests, revoked -" in granted.stdout and REMINDER in granted.stdout
     assert "guests" in groups(cli, "reader")
     revoked = cli.ok("adm", "revoke", "reader", "guests")
-    assert "removed guests" in revoked.stdout and REMINDER in revoked.stdout
+    assert "revoked guests" in revoked.stdout and REMINDER in revoked.stdout
     assert "guests" not in groups(cli, "reader")
 
 

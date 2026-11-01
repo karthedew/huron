@@ -45,12 +45,12 @@ def parse_commit_request(body: Any, *, dry_run: bool = False) -> CommitRequest:
         entries = len(body.get("adds") or []) + len(body.get("removes") or [])
         if entries > MAX_COMMIT_ENTRIES:
             raise CommitTooLarge(
-                f"a commit holds at most {MAX_COMMIT_ENTRIES} entries",
+                f"a commit can have at most {MAX_COMMIT_ENTRIES} entries",
                 {"entries": entries, "maximum": MAX_COMMIT_ENTRIES},
             )
     problems = (_DRY_RUN_VALIDATOR if dry_run else _VALIDATOR).validate(body)
     if problems:
-        raise CommitInvalid("commit request is malformed", problems_context(problems))
+        raise CommitInvalid("the commit request is not valid", problems_context(problems))
     adds = tuple(FileAdd(a["rel_path"], a["size"], a.get("sha256")) for a in body["adds"])
     removes = tuple(body["removes"])
     _check_paths([add.rel_path for add in adds], list(removes))
@@ -93,7 +93,7 @@ class Commits:
             await authz.require(actor, Privilege.COLLECTION_WRITE_FILES, Scope.catalog(catalog.id))
             if not collection.settled:
                 raise Conflict(
-                    "files can only be committed to active or incomplete collections",
+                    "you can commit files only to an active or incomplete collection",
                     {"state": str(collection.state), "allowed": ["active", "incomplete"]},
                 )
             remove_keys = [rel_path_key(path) for path in request.removes]
@@ -102,7 +102,9 @@ class Commits:
                 p for p, k in zip(request.removes, remove_keys, strict=True) if k not in recorded
             ]
             if missing:
-                raise FileNotRecorded("removed files are not recorded", {"rel_paths": missing[:20]})
+                raise FileNotRecorded(
+                    "the commit removes files that are not recorded", {"rel_paths": missing[:20]}
+                )
             if request.base_version != collection.version:
                 raise BaseVersionConflict(collection.version, request.base_version)
             await _check_tree(tx, collection.id, request, set(remove_keys))
@@ -225,7 +227,7 @@ async def _preview(
 def _hash_of(add: FileAdd) -> str:
     if add.sha256 is None:
         raise CommitInvalid(
-            f"{add.rel_path!r} has no sha256; only a dry run may leave it out",
+            f"{add.rel_path!r} has no sha256. Only a dry run may omit the sha256",
             {"rel_path": add.rel_path},
         )
     return add.sha256
@@ -262,7 +264,7 @@ async def _check_tree(
         child = min(inside - removed)
         path = next(adds[key] for key in adds if child.startswith(f"{key}/"))
         raise CommitInvalid(
-            f"{path!r} is a directory holding the recorded file {child!r}",
+            f"{path!r} is a directory that contains the recorded file {child!r}",
             {"rel_path": path, "other": child},
         )
 

@@ -1,6 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Values of the Huron chart",
+  "definitions": {
+    "logLevel": {
+      "type": "string",
+      "pattern": "^([Dd][Ee][Bb][Uu][Gg]|[Ii][Nn][Ff][Oo]|[Ww][Aa][Rr][Nn][Ii][Nn][Gg]|[Ee][Rr][Rr][Oo][Rr]|[Cc][Rr][Ii][Tt][Ii][Cc][Aa][Ll])$",
+      "description": "The lowest level the service logs: DEBUG, INFO, WARNING, ERROR or CRITICAL, in any case, as the service accepts (config.log_level or HURON_LOG_LEVEL)."
+    }
+  },
   "type": "object",
   "required": [
     "image",
@@ -114,7 +121,7 @@
           "minimum": 1
         },
         "log_level": {
-          "type": "string"
+          "$ref": "#/definitions/logLevel"
         },
         "organizations": {
           "type": "array",
@@ -210,6 +217,24 @@
           "name": {
             "type": "string",
             "minLength": 1
+          }
+        },
+        "if": {
+          "properties": {
+            "name": {
+              "const": "HURON_LOG_LEVEL"
+            }
+          },
+          "required": [
+            "name",
+            "value"
+          ]
+        },
+        "then": {
+          "properties": {
+            "value": {
+              "$ref": "#/definitions/logLevel"
+            }
           }
         }
       }

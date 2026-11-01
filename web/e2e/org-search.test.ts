@@ -3,7 +3,7 @@ import { expectMarkedCurrent } from './support/cues.ts';
 import { CATALOGS, searchMatches, titleOf } from './support/fixture.mjs';
 import { organizationSwitcher, signIn, test } from './support/harness.ts';
 
-const HELIO = '/orgs/helio/search';
+const HELIO = '/search?organization=helio';
 
 /** The parts of an organization's search page. */
 function searchPage(page: Page) {
@@ -38,7 +38,7 @@ test.describe('the organization search', () => {
 		page
 	}) => {
 		await signIn(page, 'bob');
-		await page.goto(`${HELIO}?q=run`);
+		await page.goto(`${HELIO}&q=run`);
 		const search = searchPage(page);
 		await expect(page).toHaveTitle('“run” · Search · Heliophysics Division · Huron');
 		await expect(search.text).toHaveValue('run');
@@ -53,25 +53,19 @@ test.describe('the organization search', () => {
 		// The text is marked where it matched.
 		await expect(heliophysics.locator('mark').first()).toHaveText(/^run$/i);
 		const all = heliophysics.getByRole('link', { name: 'See all results in Heliophysics' });
-		await expect(all).toHaveAttribute('href', '/catalogs/heliophysics/search?q=run');
+		await expect(all).toHaveAttribute('href', '/search?catalog=heliophysics&q=run');
 		// Space Weather found nothing, which a line says instead of an empty section.
 		expect(searchMatches('space-weather', { q: 'run' })).toEqual([]);
 		await expect(search.group('Space Weather')).toHaveCount(0);
 		await expect(search.main.getByText('No collections match in Space Weather.')).toBeVisible();
-		// Organization search is its own section: the sub-navigation and the sidebar mark it.
-		await expect(
-			search.main
-				.getByRole('navigation', { name: 'Organization' })
-				.getByRole('link', { name: 'Search' })
-		).toHaveAttribute('aria-current', 'page');
 		const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
 		await expectMarkedCurrent(
 			sidebar.getByRole('link', { name: 'Search' }),
-			sidebar.getByRole('link', { name: 'Catalogs' })
+			sidebar.getByRole('link', { name: 'Catalog', exact: true })
 		);
 
 		await all.click();
-		await expect(page).toHaveURL('/catalogs/heliophysics/search?q=run');
+		await expect(page).toHaveURL('/search?catalog=heliophysics&q=run');
 		await expect(
 			page.getByRole('main').getByRole('list', { name: 'Results' }).locator(':scope > li')
 		).toHaveCount(25);
@@ -81,7 +75,7 @@ test.describe('the organization search', () => {
 		page
 	}) => {
 		await signIn(page, 'carol');
-		await page.goto(`${HELIO}?q=2024`);
+		await page.goto(`${HELIO}&q=2024`);
 		const search = searchPage(page);
 		for (const catalog of ['heliophysics', 'space-weather']) {
 			const matches = searchMatches(catalog, { q: '2024' });
@@ -92,7 +86,7 @@ test.describe('the organization search', () => {
 			await expect(titles(group)).toHaveText(matches.map(titleOf));
 			await expect(group.getByRole('link', { name: `Search only ${name}` })).toHaveAttribute(
 				'href',
-				`/catalogs/${catalog}/search?q=2024`
+				`/search?catalog=${catalog}&q=2024`
 			);
 		}
 		// An incomplete collection says so, as in a catalog's search.
@@ -116,7 +110,7 @@ test.describe('the organization search', () => {
 	test('shows the collection a full identifier names first, and not again', async ({ page }) => {
 		await signIn(page, 'bob');
 		const identifier = 'heliophysics.solar-wind.ace.mag-l2-2024';
-		await page.goto(`${HELIO}?q=${identifier}`);
+		await page.goto(`${HELIO}&q=${identifier}`);
 		const search = searchPage(page);
 		await expect(search.exact.getByRole('link', { name: titleOf(identifier) })).toHaveAttribute(
 			'href',
@@ -134,7 +128,7 @@ test.describe('the organization search', () => {
 		await signIn(page, 'dave');
 		const geo = searchMatches('geoscience', { q: 'ocean' });
 		expect(geo).toEqual(['geoscience.ocean.sst-2024']);
-		await page.goto(`${HELIO}?q=geoscience.ocean.sst-2024`);
+		await page.goto(`${HELIO}&q=geoscience.ocean.sst-2024`);
 		const search = searchPage(page);
 		await expect(search.main.getByText('No collections match this search.')).toBeVisible();
 		await expect(search.exact).toHaveCount(0);
@@ -142,7 +136,7 @@ test.describe('the organization search', () => {
 
 	test('shows drafts to a contributor where the search asks for them', async ({ page }) => {
 		await signIn(page, 'dave');
-		await page.goto(`${HELIO}?state=draft`);
+		await page.goto(`${HELIO}&state=draft`);
 		const search = searchPage(page);
 		await expect(search.form.getByRole('checkbox', { name: 'Draft' })).toBeChecked();
 		const drafts = searchMatches('heliophysics', { states: ['draft'] });
@@ -151,12 +145,12 @@ test.describe('the organization search', () => {
 		await expect(search.group('Heliophysics')).toContainText('Draft');
 		await expect(
 			search.group('Heliophysics').getByRole('link', { name: 'Search only Heliophysics' })
-		).toHaveAttribute('href', '/catalogs/heliophysics/search?state=draft');
+		).toHaveAttribute('href', '/search?catalog=heliophysics&state=draft');
 	});
 
 	test('never offers erin drafts, nor shows her one', async ({ page }) => {
 		await signIn(page, 'erin');
-		await page.goto(`${HELIO}?q=ace&state=draft`);
+		await page.goto(`${HELIO}&q=ace&state=draft`);
 		const search = searchPage(page);
 		await expect(search.form.getByRole('checkbox', { name: 'Draft' })).toHaveCount(0);
 		await expect(search.form.getByRole('checkbox', { name: 'Active' })).toBeChecked();
@@ -170,19 +164,19 @@ test.describe('the organization search', () => {
 
 	test('offers ways out when nothing matches, all within the organization', async ({ page }) => {
 		await signIn(page, 'carol');
-		await page.goto(`${HELIO}?q=solar%20storm%20xyz&label=mission%3Dace`);
+		await page.goto(`${HELIO}&q=solar%20storm%20xyz&label=mission%3Dace`);
 		const search = searchPage(page);
 		await expect(search.main.getByText('No collections match this search.')).toBeVisible();
 		const filters = search.main.getByRole('list', { name: 'Filters', exact: true });
 		await expect(filters.getByRole('link')).toHaveText(['“solar storm xyz”', 'mission = ace']);
 		await expect(
 			filters.getByRole('link', { name: 'Remove filter mission = ace' })
-		).toHaveAttribute('href', `${HELIO}?q=solar+storm+xyz`);
+		).toHaveAttribute('href', `${HELIO}&q=solar+storm+xyz`);
 		const words = search.main.getByRole('list', { name: 'Words' }).getByRole('link');
 		await expect(words).toHaveText(['solar', 'storm', 'xyz']);
 		await expect(search.main.getByRole('link', { name: /^Search all of/ })).toHaveCount(0);
 		await words.first().click();
-		await expect(page).toHaveURL(`${HELIO}?q=solar&label=mission%3Dace`);
+		await expect(page).toHaveURL(`${HELIO}&q=solar&label=mission%3Dace`);
 		await expect(titles(search.group('Heliophysics'))).toHaveText(
 			searchMatches('heliophysics', { q: 'solar', labels: { mission: 'ace' } }).map(titleOf)
 		);
@@ -192,12 +186,12 @@ test.describe('the organization search', () => {
 		page
 	}) => {
 		await signIn(page, 'bob');
-		await page.goto('/catalogs/heliophysics/search?q=solar%20storm%20xyz&label=mission%3Dace');
+		await page.goto('/search?catalog=heliophysics&q=solar%20storm%20xyz&label=mission%3Dace');
 		await page
 			.getByRole('main')
 			.getByRole('link', { name: 'Search all of Heliophysics Division' })
 			.click();
-		await expect(page).toHaveURL(`${HELIO}?q=solar+storm+xyz&label=mission%3Dace`);
+		await expect(page).toHaveURL(`${HELIO}&q=solar+storm+xyz&label=mission%3Dace`);
 		const search = searchPage(page);
 		await expect(search.text).toHaveValue('solar storm xyz');
 		await expect(
@@ -207,7 +201,7 @@ test.describe('the organization search', () => {
 
 	test("is where a catalog's search leads from under its results too", async ({ page }) => {
 		await signIn(page, 'carol');
-		await page.goto('/catalogs/heliophysics/search?q=wind&state=active');
+		await page.goto('/search?catalog=heliophysics&q=wind&state=active');
 		const results = page.getByRole('main').getByRole('region', { name: 'Results' });
 		const found = searchMatches('heliophysics', { q: 'wind', states: ['active'] });
 		expect(found.length).toBeGreaterThan(0);
@@ -216,7 +210,7 @@ test.describe('the organization search', () => {
 		);
 		await results.getByRole('link', { name: 'Search all of Heliophysics Division' }).click();
 		// The text and labels go along; each catalog decides who sees its drafts, so not the states.
-		await expect(page).toHaveURL(`${HELIO}?q=wind`);
+		await expect(page).toHaveURL(`${HELIO}&q=wind`);
 		await expect(titles(searchPage(page).group('Heliophysics'))).toHaveText(
 			searchMatches('heliophysics', { q: 'wind' }).slice(0, 5).map(titleOf)
 		);
@@ -234,7 +228,7 @@ test.describe('the organization search', () => {
 		await search.text.fill('  wind ');
 		await search.addLabel.fill('mission:wind');
 		await search.submit.click();
-		await expect(page).toHaveURL(`${HELIO}?q=wind&label=mission%3Dwind`);
+		await expect(page).toHaveURL(`${HELIO}&q=wind&label=mission%3Dwind`);
 		await expect(titles(search.group('Heliophysics'))).toHaveText(
 			searchMatches('heliophysics', { q: 'wind', labels: { mission: 'wind' } }).map(titleOf)
 		);
@@ -242,7 +236,7 @@ test.describe('the organization search', () => {
 
 	test('explains a search it cannot run at its field, and runs none', async ({ page }) => {
 		await signIn(page, 'bob');
-		await page.goto(`${HELIO}?q=${'w'.repeat(201)}`);
+		await page.goto(`${HELIO}&q=${'w'.repeat(201)}`);
 		const search = searchPage(page);
 		await expect(page).toHaveTitle('Error: Search · Heliophysics Division · Huron');
 		await expect(search.text).toHaveAccessibleDescription(
@@ -254,16 +248,16 @@ test.describe('the organization search', () => {
 
 	test('keeps the search when switching organizations, but not a cursor', async ({ page }) => {
 		await signIn(page, 'dave');
-		await page.goto(`${HELIO}?q=wind&cursor=c2`);
+		await page.goto(`${HELIO}&q=wind&cursor=c2`);
 		await expect(searchPage(page).text).toHaveValue('wind');
 		const switcher = organizationSwitcher(page);
 		await switcher.summary.click();
 		const geo = switcher.panel.getByRole('link', { name: 'Earth Science geo' });
-		await expect(geo).toHaveAttribute('href', '/orgs/geo/search?q=wind');
+		await expect(geo).toHaveAttribute('href', '/search?organization=geo&q=wind');
 		await geo.click();
-		await expect(page).toHaveURL('/orgs/geo/search?q=wind');
+		await expect(page).toHaveURL('/search?organization=geo&q=wind');
 		const search = searchPage(page);
-		await expect(page.getByRole('heading', { name: 'Earth Science', level: 1 })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Search', level: 1 })).toBeVisible();
 		await expect(search.text).toHaveValue('wind');
 		expect(searchMatches('geoscience', { q: 'wind' })).toEqual([]);
 		await expect(search.main.getByText('No collections match this search.')).toBeVisible();
@@ -272,9 +266,9 @@ test.describe('the organization search', () => {
 
 	test('conceals an organization the user cannot see as not found', async ({ page }) => {
 		await signIn(page, 'erin');
-		const visible = await page.goto(`${HELIO}?q=wind`);
+		const visible = await page.goto(`${HELIO}&q=wind`);
 		expect(visible?.status()).toBe(200);
-		const concealed = await page.goto('/orgs/astro/search?q=wind');
+		const concealed = await page.goto('/search?organization=astro&q=wind');
 		expect(concealed?.status()).toBe(404);
 		await expect(page.getByRole('banner')).toBeVisible();
 		await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toHaveText(
@@ -282,28 +276,21 @@ test.describe('the organization search', () => {
 		);
 	});
 
-	test("is a section of the organization's pages", async ({ page }) => {
+	test('opens Search from the primary navigation and selects a catalog', async ({ page }) => {
 		await signIn(page, 'bob');
 		await page.goto('/orgs/helio');
-		const sections = page.getByRole('main').getByRole('navigation', { name: 'Organization' });
-		await expect(sections).toMatchAriaSnapshot(`
-			- navigation "Organization":
-			  - link "Catalogs 2":
-			    - /url: /orgs/helio
-			  - link "Search":
-			    - /url: /orgs/helio/search
-			  - link "Access":
-			    - /url: /orgs/helio/access
-		`);
-		await sections.getByRole('link', { name: 'Search' }).click();
-		await expect(page).toHaveURL(HELIO);
-		await expect(page).toHaveTitle('Search · Heliophysics Division · Huron');
-		await expect(sections.getByRole('link', { name: 'Search' })).toHaveAttribute(
-			'aria-current',
-			'page'
-		);
-		await expect(sections.getByRole('link', { name: /^Catalogs/ })).not.toHaveAttribute(
-			'aria-current'
+		await page
+			.getByRole('complementary', { name: 'Sidebar' })
+			.getByRole('link', { name: 'Search' })
+			.click();
+		await expect(page).toHaveURL('/search');
+		const search = searchPage(page);
+		await search.form.getByRole('combobox', { name: 'Catalog' }).selectOption('heliophysics');
+		await search.text.fill('run');
+		await search.submit.click();
+		await expect(page).toHaveURL('/search?catalog=heliophysics&q=run');
+		await expect(page.getByRole('list', { name: 'Results' }).locator(':scope > li')).toHaveCount(
+			25
 		);
 	});
 
@@ -320,12 +307,14 @@ test.describe('the organization search', () => {
 				'aria-current',
 				'page'
 			);
-			await expect(sidebar.getByRole('link', { name: 'Catalogs' })).not.toHaveAttribute(
+			await expect(sidebar.getByRole('link', { name: 'Catalog', exact: true })).not.toHaveAttribute(
 				'aria-current'
 			);
 			await search.text.fill('wind');
 			await search.submit.click();
-			await expect(page).toHaveURL(`${HELIO}?q=wind&label=&state=active&state=incomplete`);
+			await expect(page).toHaveURL(
+				'/search?organization=helio&catalog=&q=wind&label=&state=active&state=incomplete'
+			);
 			await expect(titles(search.group('Heliophysics'))).toHaveText(
 				searchMatches('heliophysics', { q: 'wind' }).slice(0, 5).map(titleOf)
 			);

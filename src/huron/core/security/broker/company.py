@@ -53,9 +53,9 @@ class CompanyTokenVerifier:
         try:
             header = jwt.get_unverified_header(token)
         except jwt.PyJWTError as error:
-            raise TokenInvalid("company token is not a JWT") from error
+            raise TokenInvalid("the company token is not a JWT") from error
         if header.get("alg") not in _ALGORITHMS:
-            raise TokenInvalid("company token algorithm is not accepted")
+            raise TokenInvalid("the company token uses an algorithm that Huron does not accept")
         key = await self._key(str(header.get("kid", "")))
         try:
             payload = jwt.decode(
@@ -67,16 +67,16 @@ class CompanyTokenVerifier:
                 options={"verify_exp": False, "verify_iat": False, "require": ["sub", "exp"]},
             )
         except jwt.PyJWTError as error:
-            raise TokenInvalid(f"company token rejected: {error}") from error
+            raise TokenInvalid(f"Huron rejected the company token: {error}") from error
         if datetime.fromtimestamp(payload["exp"], UTC) + _LEEWAY <= self._clock.now():
-            raise TokenInvalid("company token has expired")
+            raise TokenInvalid("the company token expired")
         return _identity(payload)
 
     async def _key(self, kid: str) -> Any:
         if kid not in self._keys and self._may_refresh():
             await self._refresh()
         if kid not in self._keys:
-            raise TokenInvalid("company token was signed by an unknown key")
+            raise TokenInvalid("an unknown key signed the company token")
         return self._keys[kid]
 
     def _may_refresh(self) -> bool:

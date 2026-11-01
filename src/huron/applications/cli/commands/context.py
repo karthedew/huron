@@ -14,6 +14,7 @@ from huron.applications.cli.commands.common import (
     catalog_rows,
     current_column,
     empty_organization,
+    fetch_catalog,
     organization_columns,
     say,
     services,
@@ -40,9 +41,9 @@ __all__ = [
     "unrecorded_files",
 ]
 
-CHOOSE_CATALOG = "list them with: huron catalog; then run: huron catalog <name>"
-SWITCH_ORGANIZATION = "switch with: huron org <name>"
-SWITCH_CATALOG = "switch with: huron catalog <name>"
+CHOOSE_CATALOG = "To list the catalogs, run `huron catalog`. Then run `huron catalog <name>`"
+SWITCH_ORGANIZATION = "To select an organization, run `huron org <name>`"
+SWITCH_CATALOG = "To select a catalog, run `huron catalog <name>`"
 
 
 def register(app: typer.Typer, panels: Mapping[str, str]) -> None:
@@ -62,11 +63,14 @@ def organization(
     name: Annotated[
         str | None,
         typer.Argument(
-            help="Switch to this organization; list them and the current one if omitted."
+            help=(
+                "Select this organization. With no argument, list the organizations"
+                " and mark the current one."
+            )
         ),
     ] = None,
 ) -> None:
-    """List the organizations you can see and mark the current one, or switch to another."""
+    """List the organizations that you can see and mark the current one, or select one."""
     found = services(ctx)
     if name is not None:
         _switch_organization(ctx, name)
@@ -78,14 +82,14 @@ def organization(
     if not table_mode(ctx):
         show(ctx, {"organization": current, "api_url": url, "organizations": rows})
         return
-    _listing(ctx, rows, organization_columns(ctx), current, "You can see no organizations.")
+    _listing(ctx, rows, organization_columns(ctx), current, "You can see no organizations")
     if any(row["name"] == current for row in rows):
-        say(ctx, f"Using organization {current} on {url}")
+        say(ctx, f"The current organization is {current} on {url}")
         return
     if current is None:
-        say(ctx, f"No organization is selected on {url}.")
+        say(ctx, f"There is no current organization on {url}")
     else:
-        say(ctx, f"The current organization {current} no longer exists or is hidden from you.")
+        say(ctx, f"The current organization {current} no longer exists, or you cannot see it")
     say(ctx, SWITCH_ORGANIZATION)
 
 
@@ -93,10 +97,14 @@ def catalog(
     ctx: typer.Context,
     name: Annotated[
         str | None,
-        typer.Argument(help="Switch to this catalog; list them and the current one if omitted."),
+        typer.Argument(
+            help=(
+                "Select this catalog. With no argument, list the catalogs and mark the current one."
+            )
+        ),
     ] = None,
 ) -> None:
-    """List the catalogs of the current organization and mark the current one, or switch."""
+    """List the catalogs of the current organization and mark the current one, or select one."""
     found = services(ctx)
     if name is not None:
         _switch_catalog(ctx, name)
@@ -164,21 +172,29 @@ def _switch_organization(ctx: typer.Context, name: str) -> None:
     owner = None if selected is None else _owner(ctx, selected)
     kept = selected if owner == name else None
     found.save_config(replace(found.config, current_organization=name, current_catalog=kept))
-    say(ctx, f"Now using organization {name} on {found.config.api_url}")
+    say(ctx, f"The current organization is now {name} on {found.config.api_url}")
     if selected is not None and kept is None:
-        reason = "you cannot see it" if owner is None else f"it belongs to {owner}"
-        say(ctx, f"Cleared catalog {selected} ({reason}); pick one with: huron catalog")
+        reason = (
+            f"you cannot see catalog {selected}"
+            if owner is None
+            else f"catalog {selected} belongs to {owner}"
+        )
+        say(
+            ctx,
+            f"There is no current catalog now, because {reason}."
+            " To list the catalogs, run `huron catalog`",
+        )
 
 
 def _switch_catalog(ctx: typer.Context, name: str) -> None:
     found = services(ctx)
-    view = api(ctx).get(f"/api/v1/catalogs/{name}")
+    view = fetch_catalog(ctx, name)
     owner = str(view["organization"])
     changed = owner != found.organization()
     found.save_config(replace(found.config, current_catalog=name, current_organization=owner))
-    say(ctx, f"Now using catalog {name} on {found.config.api_url}")
+    say(ctx, f"The current catalog is now {name} on {found.config.api_url}")
     if changed:
-        say(ctx, f"Switched organization to {owner}")
+        say(ctx, f"The current organization is now {owner}")
 
 
 def _owner(ctx: typer.Context, catalog_name: str) -> str | None:
@@ -212,27 +228,30 @@ def _show_catalogs(
     current: str | None,
 ) -> None:
     url = services(ctx).config.api_url
-    empty = "You can see no catalogs." if scope is None else empty_organization(scope)
+    empty = "You can see no catalogs" if scope is None else empty_organization(scope)
     _listing(ctx, rows, CATALOG_COLUMNS, current, empty)
     if current is None:
-        say(ctx, f"No catalog is selected on {url}.")
+        say(ctx, f"There is no current catalog on {url}")
         say(ctx, SWITCH_CATALOG)
         return
     owner = next((row["organization"] for row in rows if row["name"] == current), None)
     where = "" if owner is None else f" in organization {owner}"
-    say(ctx, f"Using catalog {current}{where} on {url}")
+    say(ctx, f"The current catalog is {current}{where} on {url}")
 
 
 def _report_copy(ctx: typer.Context, current: str | None, copy: WorkingCopy | None) -> None:
     if copy is None:
         if current is not None:
-            say(ctx, "No collection is checked out; pick one with: huron checkout")
+            say(ctx, "There is no current collection. To choose one, run `huron checkout`")
         return
     owner = copy.identifier.split(".")[0]
-    checked = f"Checked out: {copy.identifier} (version {copy.version})"
+    checked = f"Current collection: {copy.identifier} (version {copy.version})"
     if owner == current:
         say(ctx, checked)
     elif current is None:
         say(ctx, f"{checked}, in catalog {owner}")
     else:
-        say(ctx, f"{checked}, in catalog {owner}; pick one here with: huron checkout")
+        say(
+            ctx,
+            f"{checked}, in catalog {owner}. To choose one in this catalog, run `huron checkout`",
+        )

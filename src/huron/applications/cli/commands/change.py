@@ -36,13 +36,14 @@ __all__ = [
 ]
 
 activate_app = typer.Typer(help="Activate a draft collection.", no_args_is_help=True)
-edit_app = typer.Typer(help="Edit a collection's metadata draft.", no_args_is_help=True)
+edit_app = typer.Typer(help="Edit the metadata draft of a collection.", no_args_is_help=True)
 validate_app = typer.Typer(help="Check a metadata draft against its schema.", no_args_is_help=True)
 publish_app = typer.Typer(help="Publish a metadata draft.", no_args_is_help=True)
 set_app = typer.Typer(
-    help="Set a collection's schema override or a namespace's settings.", no_args_is_help=True
+    help="Set the schema override of a collection, or the settings of a namespace.",
+    no_args_is_help=True,
 )
-unset_app = typer.Typer(help="Remove a collection's schema override.", no_args_is_help=True)
+unset_app = typer.Typer(help="Clear the schema override of a collection.", no_args_is_help=True)
 
 
 def register(app: typer.Typer, panels: Mapping[str, str]) -> None:
@@ -60,7 +61,7 @@ def register(app: typer.Typer, panels: Mapping[str, str]) -> None:
 
 @activate_app.command("collection")
 def activate_collection(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
-    """Create the directory of a draft and activate it."""
+    """Create the directory of a draft collection and activate the collection."""
     collection = fetch_collection(ctx, identifier)
     activated = activate(ctx, collection, services(ctx).mount())
     say(ctx, f"collection {activated['identifier']} is active at {activated['path']}")
@@ -76,15 +77,16 @@ def edit_meta(
     ] = False,
     file: Annotated[
         Path | None,
-        typer.Option("--file", help="Take the draft from this JSON document instead of asking."),
+        typer.Option("--file", help="Use this JSON document as the draft. Do not ask questions."),
     ] = None,
 ) -> None:
-    """Walk through the schema, starting from the draft or the published metadata.
+    """Ask for each field of the schema. Start from the draft or the published metadata.
 
-    With --file nothing is asked: the JSON document becomes the draft as it is.
+    With `--file`, the CLI asks no questions. The JSON document becomes the draft without
+    changes.
     """
     if file is not None and from_scratch:
-        raise UsageError("--file and --from-scratch cannot be combined")
+        raise UsageError("use `--file` or `--from-scratch`, not both")
     document = None if file is None else read_document(file)
     collection = fetch_collection(ctx, identifier)
     found = services(ctx)
@@ -100,32 +102,40 @@ def edit_meta(
         draft = document
     found.state.write_draft(str(collection["id"]), draft)
     problems = review(schema, draft)
-    say(ctx, f"draft saved ({len(problems)} problems); publish with: huron publish meta")
+    say(
+        ctx,
+        f"Draft saved with {len(problems)} problems. To publish it, run `huron publish meta`",
+    )
 
 
 @validate_app.command("meta")
 def validate_meta(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
-    """Check the draft (or the published metadata) against the collection's schema."""
+    """Check the draft against the schema of the collection.
+
+    With no draft, check the published metadata.
+    """
     collection = fetch_collection(ctx, identifier)
-    document = services(ctx).state.read_draft(str(collection["id"])) or collection["metadata"]
+    draft = services(ctx).state.read_draft(str(collection["id"]))
+    document = draft or collection["metadata"]
+    checked = "the draft" if draft else "the published metadata"
     schema = api(ctx).get(f"/api/v1/collections/{collection['id']}/schema")
     problems = review(schema, document)
     if problems:
         raise CliError(
-            f"{len(problems)} problems",
+            f"{checked} has {len(problems)} problems",
             ExitCode.VALIDATION,
             problem={"context": {"problems": [p.as_dict() for p in problems]}},
         )
-    say(ctx, "metadata is valid")
+    say(ctx, "The metadata is valid")
 
 
 @publish_app.command("meta")
 def publish_meta(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
-    """Send the draft as a merge patch and rewrite ``metadata.json`` on the share."""
+    """Send the draft as a merge patch and rewrite `metadata.json` on the share."""
     collection = fetch_collection(ctx, identifier)
     draft = services(ctx).state.read_draft(str(collection["id"]))
     if draft is None:
-        raise UsageError("there is no draft", hint="run: huron edit meta")
+        raise UsageError("there is no draft", hint="run `huron edit meta`")
     updated = _patch(ctx, collection, {"metadata": merge_diff(collection["metadata"], draft)})
     services(ctx).state.delete_draft(str(collection["id"]))
     say(ctx, f"published {updated['identifier']} at version {updated['version']}")
@@ -137,7 +147,7 @@ def set_override(
     file: Annotated[Path, typer.Argument(help="A JSON Schema document.")],
     identifier: CollectionArgument = None,
 ) -> None:
-    """Set the collection's schema override, together with the metadata draft if any."""
+    """Set the schema override of the collection. Send the metadata draft too, if one exists."""
     document = read_document(file)
     try:
         check_schema_document(document)
@@ -152,19 +162,22 @@ def set_override(
         body["metadata"] = merge_diff(collection["metadata"], draft)
     updated = _patch(ctx, collection, body)
     services(ctx).state.delete_draft(str(collection["id"]))
-    say(ctx, f"override set on {updated['identifier']}")
+    say(ctx, f"schema override set on {updated['identifier']}")
 
 
 @set_app.command("namespace")
 def set_namespace(
     ctx: typer.Context,
-    identifier: Annotated[str, typer.Argument(help="catalog.namespace[.child…]")],
+    identifier: Annotated[str, typer.Argument(help="`catalog.namespace[.child…]`.")],
     allow_collections: Annotated[
         bool,
-        typer.Option("--allow-collections/--no-allow-collections", help="Allow collections here."),
+        typer.Option(
+            "--allow-collections/--no-allow-collections",
+            help="Allow or forbid collections in this namespace.",
+        ),
     ],
 ) -> None:
-    """Allow or forbid collections, and re-apply the directory's ACL plan."""
+    """Allow or forbid collections in a namespace, and re-apply the ACL plan of its directory."""
     mount = services(ctx).mount()
     parsed, before = fetch_namespace(ctx, identifier)
     mount.path(str(before["disk_path"]))  # refuse before any change when the share is not ours
@@ -179,10 +192,10 @@ def set_namespace(
 
 @unset_app.command("override")
 def unset_override(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
-    """Remove the collection's schema override."""
+    """Clear the schema override of the collection."""
     collection = fetch_collection(ctx, identifier)
     updated = _patch(ctx, collection, {"schema_override": None})
-    say(ctx, f"override cleared on {updated['identifier']}")
+    say(ctx, f"schema override cleared on {updated['identifier']}")
 
 
 def _patch(ctx: typer.Context, collection: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:

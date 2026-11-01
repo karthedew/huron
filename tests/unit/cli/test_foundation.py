@@ -151,7 +151,7 @@ def test_api_errors_map_to_exit_codes() -> None:
     for code, expected in cases.items():
         assert exit_code_for(code, 400) == expected
     error = ApiError.from_problem(409, {"code": "BASE_VERSION_CONFLICT", "detail": "pull"})
-    assert error.hint == "run: huron pull"
+    assert error.hint == "run `huron pull`"
     assert ApiError.from_problem(500, {"code": "X"}).message == "HTTP 500"
 
 

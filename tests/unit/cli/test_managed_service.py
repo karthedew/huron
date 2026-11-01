@@ -89,11 +89,14 @@ def test_the_service_refuses_changes_to_declared_organizations(managed: Cli) -> 
     created = managed.run("create", "org", "astro")
     assert created.exit_code == 6 and "huron adm provision-orgs" in created.stderr
     deleted = managed.run("delete", "org", "helio")
-    assert deleted.exit_code == 6 and "remove it there first" in deleted.stderr
+    assert (
+        deleted.exit_code == 6
+        and "First delete its entry from the service configuration" in deleted.stderr
+    )
     granted = managed.run("adm", "grant", "org_admin", "other-admins", "--org", "helio")
     assert granted.exit_code == 6 and "groups.org_admin" in granted.stderr
     reader = managed.run("adm", "revoke", "reader", "helio-readers", "--org", "helio")
-    assert reader.exit_code == 6 and "edit groups.reader there" in reader.stderr
+    assert reader.exit_code == 6 and "Edit `groups.reader` there" in reader.stderr
 
 
 def add_undeclared(cli: Cli, name: str) -> None:
@@ -134,7 +137,7 @@ def test_an_undeclared_organization_is_reported_without_failing_the_others(
     assert refused.exit_code == 8 and "declare it again with its root" in refused.stderr
 
     deleted = managed.run("delete", "org", "astro")
-    assert deleted.exit_code == 0 and "was not looked for" in deleted.stdout
+    assert deleted.exit_code == 0 and "The CLI did not look for its directory" in deleted.stdout
     assert not roots.exists(PREFIX / "astro")
 
 

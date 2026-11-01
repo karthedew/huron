@@ -156,13 +156,17 @@ function dataPath(path: string): string {
 	return `${base}/__data.json${url.search}`;
 }
 
-/** A link's path when the crawl may follow it: same origin, not signing in or out. */
+/**
+ * A link's path when the crawl may follow it: same origin, not signing in or out, and not the
+ * documentation, static pages that hold nothing of a session (e2e/docs.test.ts covers them).
+ */
 function crawlable(href: string): string | null {
 	if (href === '') return null;
 	const url = new URL(href);
 	if (url.origin !== stack.webOrigin) return null;
 	const { pathname } = url;
 	if (pathname === '/login' || pathname === '/logout' || pathname.startsWith('/auth/')) return null;
+	if (pathname === '/docs' || pathname.startsWith('/docs/')) return null;
 	return pathname + url.search;
 }
 

@@ -131,7 +131,7 @@
 		configuration.
 	</p>
 	<CliHint
-		title="Sign in and see what Huron knows about you"
+		title="Log in, then show your name, groups and roles"
 		command={'huron login\nhuron whoami'}
 	/>
 </section>

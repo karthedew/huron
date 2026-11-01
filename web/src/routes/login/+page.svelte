@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import {
 		ArrowRight,
+		BookOpen,
 		CircleAlert,
 		CircleCheck,
 		Clock,
@@ -11,6 +12,7 @@
 		Users
 	} from '@lucide/svelte';
 	import AuthShell from '$design/components/AuthShell.svelte';
+	import { DOCS_PATH } from '$lib/docs';
 	import type { PageData, PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -92,6 +94,17 @@
 		class="mt-7 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md border border-transparent bg-brand px-4 text-sm font-semibold text-brand-ink no-underline transition hover:brightness-95"
 		>Sign in with your company account <ArrowRight size={16} aria-hidden="true" /></a
 	>
+
+	<!-- The documentation is public and no route of this app: the browser loads it itself. -->
+	<p class="mt-5 flex items-center gap-2 text-sm text-app-muted">
+		<BookOpen size={16} class="shrink-0 text-brand-strong" aria-hidden="true" /><span
+			><a
+				href={DOCS_PATH}
+				data-sveltekit-reload
+				class="font-semibold text-app-fg underline underline-offset-2">Docs</a
+			> for the huron CLI and the website, no sign-in needed.</span
+		>
+	</p>
 
 	{#snippet aside()}
 		<ul class="grid gap-4 text-sm text-on-ink/85">

@@ -30,7 +30,8 @@ export type CollectionProblem = ProblemOut;
 export type FileRecord = FileOut;
 export type Commit = CommitOut;
 export type AuditEntry = AuditOut;
-export type SchemaEntry = SchemaOut;
+/** The API decoder narrows each authored schema from an arbitrary object to JSON values. */
+export type SchemaEntry = Omit<SchemaOut, 'document'> & { document: JsonSchemaDocument };
 export type SchemaRef = SchemaRefOut;
 export type GrantSource = GrantSourceOut;
 export type OrganizationGroups = OrganizationGroupsOut;

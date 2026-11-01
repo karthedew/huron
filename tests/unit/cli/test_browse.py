@@ -16,7 +16,7 @@ def test_organizations_and_grants(seeded_cli: Cli) -> None:
     grants = json.loads(cli.ok("-o", "json", "get", "grants", "--org", "helio").stdout)
     assert grants["org_admin"] == ["helio-org-admins", "more-admins"]
     revoked = cli.ok("adm", "revoke", "org_admin", "more-admins", "--org", "helio")
-    assert "removed more-admins" in revoked.stdout
+    assert "revoked more-admins" in revoked.stdout
     cli.login_as("erin")
     denied = cli.run("get", "grants", "--org", "helio")
     assert denied.exit_code == 4 and "FORBIDDEN" in denied.stderr

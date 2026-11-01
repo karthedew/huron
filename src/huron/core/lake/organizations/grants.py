@@ -86,7 +86,8 @@ class GrantAdministration:
             await Authorizer(tx.grants).require(actor, Privilege.ORGANIZATION_GRANT, PLATFORM)
             if self._platform_group not in wanted:
                 raise GrantInvalid(
-                    "the configured platform admin group cannot be removed",
+                    "you cannot revoke the Platform Admin role from the configured"
+                    " platform admin group",
                     {"ldap_group": self._platform_group},
                 )
             return await self._replace(
@@ -123,7 +124,9 @@ class GrantAdministration:
             else:
                 await authz.require(actor, Privilege.CATALOG_GRANT_ADMIN, scope)
             self._declarations.require_undeclared(
-                organization, f"its {role} groups are groups.{role} there"
+                organization,
+                f"The service configuration sets the {role} groups of this organization in "
+                f"`groups.{role}`",
             )
             return await self._replace(
                 tx, actor, scope, role, sorted(set(groups)), ObjectType.ORGANIZATION, found.id

@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any
 from huron.core.lake.audit import Action, AuditWriter, ObjectType
 from huron.core.lake.catalogs.errors import CatalogNotEmpty
 from huron.core.lake.catalogs.models import Catalog, CatalogView
-from huron.core.lake.lookups import cursor_value, find_catalog, find_organization, page_of
+from huron.core.lake.listing import ListOrder
+from huron.core.lake.lookups import find_catalog, find_organization
 from huron.core.lake.schemas.errors import SchemaScope
 from huron.core.lake.schemas.models import BASE_SCHEMA_NAME
 from huron.core.security.rbac import Authorizer, Privilege, Scope
@@ -96,10 +97,12 @@ class Catalogs:
         organization: str | None = None,
         cursor: str | None = None,
         limit: int | None = None,
+        ordering: ListOrder | None = None,
     ) -> Page[CatalogView]:
         """Catalogs the actor may see, optionally within one organization."""
+        ordering = ordering or ListOrder()
         size = clamp_limit(limit)
-        after = cursor_value(cursor)
+        after = ordering.after(cursor)
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
             visible = await authz.visibility(actor)
@@ -111,11 +114,9 @@ class Catalogs:
                 if visible.everything
                 else (visible.managed_organization_ids, visible.catalog_ids)
             )
-            rows = await tx.catalogs.list(
-                owner_id, filters, None if after is None else str(after), size + 1
-            )
+            rows = await tx.catalogs.list(owner_id, filters, after, size + 1, ordering)
             views = [await _view(tx, catalog) for catalog in rows]
-        return page_of(views, size, lambda view: view.catalog.name)
+        return ordering.page(views, size, lambda view: view.catalog)
 
     async def delete(self, actor: Actor, name: str) -> None:
         """Delete a catalog without namespaces; needs ``CATALOG_DELETE``."""
@@ -199,7 +200,7 @@ async def _schema_for(
         raise NotFound("schema not found", {"schema": str(schema_id)})
     if schema.organization_id not in (None, organization_id):
         raise SchemaScope(
-            "a catalog can only use platform schemas or its organization's",
+            "a catalog can use only platform schemas or the schemas of its organization",
             {"schema": str(schema_id)},
         )
     return schema

@@ -35,7 +35,7 @@ def set_etag(response: Response, version: int) -> None:
 def expected_version(if_match: str | None) -> int:
     """The version an ``If-Match`` header names; exactly one quoted integer."""
     if if_match is None:
-        raise PreconditionRequired("writes to a collection need an If-Match header")
+        raise PreconditionRequired("a request that writes to a collection needs an If-Match header")
     matched = _ETAG.fullmatch(if_match.strip())
     if matched is None:
         raise PreconditionRequired(
