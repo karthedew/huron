@@ -26,7 +26,11 @@ def test_repository_docs_have_no_broken_links() -> None:
 
 
 def test_broken_links_are_reported(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
-    (tmp_path / "a.md").write_text("[ok](b.md) [web](https://x) [anchor](#y) [bad](missing.md#z)")
+    (tmp_path / "a.md").write_text(
+        "[ok](b.md) [web](https://x) [anchor](#y) [site](/docs/x/) [bad](missing.md#z)"
+    )
     (tmp_path / "b.md").write_text("")
     assert checker().main([str(tmp_path)]) == 1
-    assert "missing.md#z" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "missing.md#z" in out
+    assert "/docs/x/" not in out

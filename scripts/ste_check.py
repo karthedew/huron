@@ -2,8 +2,9 @@
 
 Runs the skill's linter (``.claude/skills/asd-ste100/scripts/ste-lint.py``) over two kinds of text:
 
-1. Documentation: the user guide, the operator guide, the API error reference, the hand-written
-   pages of the docs site and the generated CLI reference pages.
+1. Documentation: the user guide, the operator guide, the API error reference, the architecture
+   guide, the concept guides under ``docs/concepts/``, the hand-written pages of the docs site and
+   the generated CLI reference pages.
 2. Strings extracted from code with ``ast`` and regular expressions:
 
    - The help text of the CLI: Typer command docstrings and ``help=``.
@@ -59,9 +60,12 @@ DOCS = (
     "docs/user-guide.md",
     "docs/operator.md",
     "docs/api-errors.md",
+    "docs/architecture.md",
     "web/docs-site/src/content/docs/index.mdx",
     "web/docs-site/src/content/docs/getting-started.md",
 )
+# Directories whose Markdown files are documentation too, so a new guide needs no entry above.
+DOC_DIRS = ("docs/concepts",)
 # Rows of these Markdown tables are strict text inside STE-flavored documentation.
 STRICT_TABLES = frozenset({"docs/api-errors.md"})
 CLI_REFERENCE = "web/docs-site/src/content/docs/reference/cli"
@@ -476,6 +480,16 @@ def read(root: Path, path: str) -> str:
     return (root / path).read_text(encoding="utf-8")
 
 
+def doc_paths(root: Path) -> list[str]:
+    """The documentation files the check reads, as repository paths."""
+    found = [
+        page.relative_to(root).as_posix()
+        for directory in DOC_DIRS
+        for page in sorted((root / directory).glob("*.md"))
+    ]
+    return [*DOCS, *found]
+
+
 def python_files(root: Path, package: str) -> list[str]:
     """The Python files of a package, as repository paths."""
     return sorted(p.relative_to(root).as_posix() for p in (root / package).rglob("*.py"))
@@ -483,7 +497,7 @@ def python_files(root: Path, package: str) -> list[str]:
 
 def sources(root: Path, words: frozenset[str]) -> Iterator[Source]:
     """Every source the check reads."""
-    for path in DOCS:
+    for path in doc_paths(root):
         text = markdown(read(root, path), words, mdx=path.endswith(".mdx"))
         yield Source("docs", path, FLAVORED, text, strict_table=path in STRICT_TABLES)
     for page in sorted((root / CLI_REFERENCE).rglob("*.md")):

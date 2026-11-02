@@ -284,6 +284,15 @@ def test_long_sentence_fails(repo: Path) -> None:
     assert places(check(repo)) == [("docs/user-guide.md", 1, "long-sentence", "hard")]
 
 
+def test_concept_guides_are_documentation(repo: Path) -> None:
+    sentence = " ".join(["word"] * 30) + "."
+    write(repo, "docs/concepts/search.md", f"{CLEAN}\n{sentence}\n")
+    findings = check(repo).findings
+    assert [(f.area, f.path, f.rule, f.level) for f in findings] == [
+        ("docs", "docs/concepts/search.md", "long-sentence", "hard")
+    ]
+
+
 def test_advisory_findings_do_not_fail(repo: Path) -> None:
     write(repo, "docs/user-guide.md", "The file is deleted by the service.\n")
     report = check(repo)

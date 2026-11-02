@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="920" viewBox="0 0 360 920" role="img" aria-labelledby="title desc">
+  <title id="title">Huron components</title>
+  <desc id="desc">The browser uses the web server. The web and CLI call the API, which stores records in PostgreSQL. At token exchange, the API checks the company token and reads the user's groups. Only the CLI accesses the NFS share.</desc>
+  <style>
+    svg { --panel: #f5f8f8; --card: #ffffff; --ink: #18282c; --muted: #4e6269; --border: #b4c7c9; --accent: #00766a; --tint: #e2faf6; font-family: system-ui, sans-serif; }
+    .panel { fill: var(--panel); stroke: var(--border); }
+    .card { fill: var(--card); stroke: var(--border); stroke-width: 1.5; }
+    .primary { fill: var(--tint); stroke: var(--accent); stroke-width: 1.5; }
+    .edge { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; marker-end: url(#arrow); }
+    .arrow { fill: var(--accent); }
+    text { fill: var(--ink); text-anchor: middle; font-size: 16px; font-weight: 600; }
+    .heading { fill: var(--accent); text-anchor: start; font-size: 12px; letter-spacing: 1px; }
+    .detail { fill: var(--muted); font-size: 13px; font-weight: 400; }
+    @media (prefers-color-scheme: dark) {
+      svg { --panel: #1b2029; --card: #242b36; --ink: #edf4f5; --muted: #bacbd0; --border: #52616c; --accent: #8ff0e2; --tint: #0e3834; }
+    }
+    @media (forced-colors: active) {
+      svg { --panel: Canvas; --card: Canvas; --ink: CanvasText; --muted: CanvasText; --border: CanvasText; --accent: LinkText; --tint: Canvas; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path class="arrow" d="M 1 1 L 9 5 L 1 9 Z" />
+    </marker>
+  </defs>
+  <rect class="panel" x="8" y="8" width="344" height="406" rx="14" />
+  <text class="heading" x="28" y="40">01 · CATALOG REQUESTS</text>
+  <path class="edge" d="M 160 94 H 198" />
+  <path class="edge" d="M 264 126 V 194" />
+  <text class="detail" x="184" y="166">Read catalog</text>
+  <path class="edge" d="M 160 228 H 198" />
+  <path class="edge" d="M 264 260 V 328" />
+  <text class="detail" x="184" y="300">Store records</text>
+  <rect class="card" x="28" y="62" width="132" height="64" rx="10" />
+  <text x="94" y="89">Browser</text>
+  <text class="detail" x="94" y="110">Session cookie</text>
+  <rect class="card" x="200" y="62" width="128" height="64" rx="10" />
+  <text x="264" y="89">Huron web</text>
+  <text class="detail" x="264" y="110">Read-only</text>
+  <rect class="card" x="28" y="196" width="132" height="64" rx="10" />
+  <text x="94" y="223">Huron CLI</text>
+  <text class="detail" x="94" y="244">Read and change</text>
+  <rect class="primary" x="200" y="196" width="128" height="64" rx="10" />
+  <text x="264" y="223">Huron API</text>
+  <text class="detail" x="264" y="244">Roles and records</text>
+  <rect class="card" x="200" y="330" width="128" height="64" rx="10" />
+  <text x="264" y="357">PostgreSQL</text>
+  <text class="detail" x="264" y="378">Catalog of record</text>
+  <rect class="panel" x="8" y="434" width="344" height="282" rx="14" />
+  <text class="heading" x="28" y="466">02 · IDENTITY AT TOKEN EXCHANGE</text>
+  <path class="edge" d="M 148 560 V 602 H 98 V 630" />
+  <path class="edge" d="M 212 560 V 602 H 262 V 630" />
+  <text class="detail" x="80" y="584">Verify token</text>
+  <text class="detail" x="280" y="584">Read groups</text>
+  <rect class="primary" x="108" y="496" width="144" height="64" rx="10" />
+  <text x="180" y="523">Huron API</text>
+  <text class="detail" x="180" y="544">Issues Huron tokens</text>
+  <rect class="card" x="24" y="632" width="148" height="64" rx="10" />
+  <text x="98" y="659">Company OIDC</text>
+  <text class="detail" x="98" y="680">Identity provider</text>
+  <rect class="card" x="188" y="632" width="148" height="64" rx="10" />
+  <text x="262" y="659">Group directory</text>
+  <text class="detail" x="262" y="680">LDAP groups</text>
+  <rect class="panel" x="8" y="736" width="344" height="176" rx="14" />
+  <text class="heading" x="28" y="768">03 · FILE ACCESS</text>
+  <path class="edge" d="M 160 832 H 198" />
+  <rect class="card" x="28" y="800" width="132" height="64" rx="10" />
+  <text x="94" y="827">Huron CLI</text>
+  <text class="detail" x="94" y="848">NFS mount</text>
+  <rect class="primary" x="200" y="800" width="128" height="64" rx="10" />
+  <text x="264" y="827">NFS share</text>
+  <text class="detail" x="264" y="848">File bytes</text>
+  <text class="detail" x="180" y="891">Files, directories, sidecars and ACLs</text>
+</svg>

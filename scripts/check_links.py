@@ -1,5 +1,8 @@
 """Fail when a Markdown file links to a relative path that does not exist.
 
+A link that starts with ``/`` is a page of the docs site (``/docs/reference/cli/push/``), not a
+repository path: the docs site build checks those links.
+
 Usage: ``python scripts/check_links.py README.md docs``.
 """
 
@@ -17,7 +20,7 @@ def broken_links(paths: list[Path]) -> Iterator[str]:
     """``file: target`` for every relative link whose target is missing."""
     for path in _markdown(paths):
         for target in LINK.findall(path.read_text()):
-            if "://" in target or target.startswith(("#", "mailto:")):
+            if "://" in target or target.startswith(("#", "/", "mailto:")):
                 continue
             relative = target.split("#", 1)[0]
             if relative and not (path.parent / relative).exists():

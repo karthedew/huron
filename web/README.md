@@ -44,7 +44,7 @@ Run from `web/`:
 | `npm run start`        | Serve the build with the settings in `.env`.                                        |
 | `npm run generate:api` | Regenerate `src/lib/api/openapi.ts` from `docs/openapi.json`.                       |
 | `npm run docs:install` | Install the documentation site's packages (`docs-site/package-lock.json`).          |
-| `npm run docs:sync`    | Write the guides of the documentation site from `docs/*.md`.                        |
+| `npm run docs:sync`    | Write the concepts and guides of the documentation site from `docs/`.               |
 | `npm run docs:build`   | Sync, then build the documentation into `docs-site/dist`, which the web serves.     |
 | `npm run docs:dev`     | Sync, then Astro's development server for the documentation alone.                  |
 
@@ -52,8 +52,8 @@ Run from `web/`:
 
 The web serves the documentation, a static [Starlight](https://starlight.astro.build/) site, at
 `/docs` to anyone: no sign-in, no cookie, no API call. Every other path stays behind sign-in. The
-site lives in `docs-site/` with its own packages. Its guides are generated from `docs/*.md`, the
-only copy of that prose (edit those files, never the generated pages), and its CLI reference
+site lives in `docs-site/` with its own packages. Its concepts and guides are generated from
+`docs/*.md` and `docs/concepts/*.md`, the only copy of that prose (edit those files, never the generated pages), and its CLI reference
 (`docs-site/src/content/docs/reference/cli/`) is written by `scripts/cli_reference.py` in the
 repository root. CLI hints link each command to its reference page, as do the sidebar and the
 sign-in page.
@@ -62,7 +62,7 @@ Once, with network access, run `npm run docs:install`. Then:
 
 - `npm run docs:build` builds the site into `docs-site/dist`. `npm run dev`, `npm run preview`
   and `npm run start` serve that build at http://localhost:5173/docs/ (or the port they use);
-  rebuild after changing `docs/*.md` or the CLI. Without a build, `/docs` answers a 404 that says
+  rebuild after changing `docs/` or the CLI. Without a build, `/docs` answers a 404 that says
   so.
 - `npm run docs:dev` previews the site alone, with live reload, at http://localhost:4321/docs/,
   while you write.

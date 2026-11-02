@@ -5,7 +5,8 @@ description: The first steps with the huron CLI, each linking to where the guide
 
 The `huron` CLI catalogs, organizes and pushes data on the share. The web shows the same catalog,
 read-only. These steps follow the [user guide](/docs/guides/user-guide/), which explains each step.
-Its [glossary](/docs/guides/user-guide/#glossary) defines the Huron terms.
+Its [glossary](/docs/guides/user-guide/#glossary) defines the Huron terms. To learn the model of
+Huron first, read [How Huron works](/docs/concepts/how-huron-works/).
 
 1. **Log in.** Set the address of your service in the CLI configuration, then log in:
    [Logging in](/docs/guides/user-guide/#logging-in), and the reference of
@@ -20,8 +21,10 @@ Its [glossary](/docs/guides/user-guide/#glossary) defines the Huron terms.
 4. **Add files and push them:**
    [Staging and pushing files](/docs/guides/user-guide/#staging-and-pushing-files), with
    [`huron add`](/docs/reference/cli/add/), [`huron status`](/docs/reference/cli/status/) and
-   [`huron push`](/docs/reference/cli/push/).
+   [`huron push`](/docs/reference/cli/push/). [How raw ingest works](/docs/concepts/raw-ingest/)
+   explains each step of a push.
 5. **Edit metadata:** [Editing metadata](/docs/guides/user-guide/#editing-metadata).
+   [Metadata and schemas](/docs/concepts/metadata-and-schemas/) explains the schemas.
 
 When a command fails, its `error:` line names a code. [API error codes](/docs/guides/api-errors/)
 explains each code. The user guide lists the [exit codes](/docs/guides/user-guide/#exit-codes).

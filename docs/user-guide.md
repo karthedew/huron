@@ -1,6 +1,8 @@
 # User guide
 
-The [glossary](#glossary) at the end defines the Huron terms that this guide uses.
+The [glossary](#glossary) at the end defines the Huron terms that this guide uses. This guide tells
+you what to do. For the reasons, read [How Huron works](concepts/how-huron-works.md) and the other
+concept pages.
 
 ## Logging in
 
@@ -68,6 +70,8 @@ To work in another catalog and keep the current one, put `--catalog <name>` befo
 in `huron --catalog <name> get collections`. Then `huron catalog` and `huron status` show the
 organization of that catalog. The saved catalog does not change.
 
+[How search works](concepts/search.md) tells what a search matches and which collections it finds.
+
 ## Who has access
 
 Roles belong to LDAP groups, never to people. `huron whoami` shows your groups and the roles they
@@ -97,6 +101,9 @@ that must stay restricted has its own groups and no organization-wide readers.
 To get a role, ask an administrator of the catalog or of the organization to add you to the
 applicable LDAP group. The change applies at your next `huron login`.
 
+[Access and roles](concepts/access-and-roles.md) explains the roles, their scopes and how they
+become directory ACLs.
+
 ## Where your files are
 
 Each organization has its own directory, often on its own NFS export. `huron org` and
@@ -117,6 +124,9 @@ But the CLI cannot find its directory until your operators declare the organizat
 
 Your operators configure the organizations and who administers them. When the service
 configuration declares the organizations, the service refuses `huron create org`.
+
+[The layout of the share](concepts/raw-ingest.md#the-layout-of-the-share) and
+[the marker](concepts/raw-ingest.md#the-marker) explain why the CLI checks each directory.
 
 ## In a browser
 
@@ -151,6 +161,9 @@ Huron reserves the name. Then it does these steps:
 Use `--metadata file.json` to skip the questions. Use `--draft` to stop before activation. Then run
 `huron activate collection` later. With `--draft`, Huron stops after step 1, and the draft becomes
 the current collection.
+
+[The collection lifecycle](concepts/how-huron-works.md#the-collection-lifecycle) explains the
+states of a collection.
 
 ## Staging and pushing files
 
@@ -202,6 +215,10 @@ Otherwise, `push` copies each file onto the share and records the batch in one c
 If something interrupts the push, run it again. The push does not copy a file again when it copied
 that file before.
 
+[The push, step by step](concepts/raw-ingest.md#the-push-step-by-step) explains what the CLI does
+at each step. [When a push stops](concepts/raw-ingest.md#when-a-push-stops) tells what stays on the
+share and in the stage.
+
 ## When someone else changed the collection
 
 Each commit carries the version of your working copy. If someone published metadata or pushed
@@ -213,6 +230,8 @@ hint: run `huron pull`
 ```
 
 Run `huron pull`, then run `huron push` again. Your staged files stay staged.
+[Base version conflicts](concepts/raw-ingest.md#base-version-conflicts-and-huron-pull) explains
+what `huron pull` changes.
 
 ## Editing metadata
 
@@ -225,6 +244,9 @@ huron publish meta       # sends the change and rewrites metadata.json
 huron set override extra-fields.json   # add fields required for this collection only
 huron unset override
 ```
+
+[Metadata and schemas](concepts/metadata-and-schemas.md) explains the schemas, the overrides and
+what Huron does when metadata does not match its schema.
 
 ## Deleting
 

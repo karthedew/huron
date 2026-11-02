@@ -1,7 +1,7 @@
-// Generates the Starlight pages of the guides from docs/*.md, which stay the only copy of their
-// prose: `npm run sync` (also the first step of `npm run build` and `npm run dev`) rewrites
-// src/content/docs/guides/ and src/content/docs/administration/ from them. Both directories are
-// generated and gitignored; edit the files under docs/ instead.
+// Generates the Starlight pages of the guides from the Markdown files under docs/, which stay the
+// only copy of their prose: `npm run sync` (also the first step of `npm run build` and `npm run
+// dev`) rewrites src/content/docs/concepts/, guides/ and administration/ from them. These
+// directories are generated and gitignored; edit the files under docs/ instead.
 //
 // The repository's docs directory is ../../../docs from this script, or HURON_DOCS_DIR.
 
@@ -14,10 +14,22 @@ import GithubSlugger from 'github-slugger';
 export const BASE = '/docs';
 
 /**
- * Every docs/ file the site shows. `section` is the content directory (and sidebar group) its
- * pages go to; `split` makes one page per `##` heading, otherwise the file is one page at `slug`.
+ * Every docs/ file the site shows, by its path under docs/. `section` is the content directory
+ * (and sidebar group) its pages go to; `split` makes one page per `##` heading, otherwise the file
+ * is one page at `slug`, titled by its `#` heading.
  */
 export const SOURCES = [
+	{ file: 'concepts/how-huron-works.md', section: 'concepts', slug: 'how-huron-works', order: 1 },
+	{ file: 'concepts/raw-ingest.md', section: 'concepts', slug: 'raw-ingest', order: 2 },
+	{ file: 'concepts/search.md', section: 'concepts', slug: 'search', order: 3 },
+	{
+		file: 'concepts/metadata-and-schemas.md',
+		section: 'concepts',
+		slug: 'metadata-and-schemas',
+		order: 4
+	},
+	{ file: 'concepts/access-and-roles.md', section: 'concepts', slug: 'access-and-roles', order: 5 },
+	{ file: 'architecture.md', section: 'concepts', slug: 'architecture', order: 6 },
 	{ file: 'user-guide.md', section: 'guides', slug: 'user-guide', order: 1 },
 	{ file: 'api-errors.md', section: 'guides', slug: 'api-errors', order: 2 },
 	{ file: 'operator.md', section: 'administration', split: true }
@@ -87,7 +99,8 @@ export function plan(sources, documents) {
 /**
  * Rewrites the links of `markdown`, written in docs/`file`: links to a synced document or one of
  * its headings point at the site, links to other repository files become their repository path,
- * and links in code stay as written. Throws on a link to a heading that does not exist.
+ * and links in code stay as written. A relative link resolves against the directory of `file`, as
+ * on GitHub. Throws on a link to a heading that does not exist.
  */
 export function rewriteLinks(markdown, file, urls) {
 	return [...scan(markdown)]
@@ -184,7 +197,10 @@ function rewriteLine(line, file, urls) {
 		if (spans.some(([start, end]) => offset >= start && offset < end)) return link;
 		if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('/')) return link;
 		const [relative, anchor] = target.split('#', 2);
-		const resolved = path.posix.normalize(path.posix.join('docs', relative || file));
+		const source = path.posix.join('docs', file);
+		const resolved = relative
+			? path.posix.normalize(path.posix.join(path.posix.dirname(source), relative))
+			: source;
 		const name = resolved.startsWith('docs/') ? resolved.slice('docs/'.length) : null;
 		if (name !== null && urls.has(name)) {
 			const key = anchor ? `${name}#${anchor}` : name;
