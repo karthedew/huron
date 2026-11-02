@@ -1,0 +1,42 @@
+/* The web's brand colours (web/src/lib/design/tokens.css) as Starlight's accent. */
+:root {
+	--sl-color-accent-low: #0e3834;
+	--sl-color-accent: #00a08b;
+	--sl-color-accent-high: #8ff0e2;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #e2faf6;
+	--sl-color-accent: #00766a;
+	--sl-color-accent-high: #062d29;
+}
+
+/* Embedded SVGs inherit this scheme, including when the site overrides the OS theme. */
+.architecture-components {
+	color-scheme: dark;
+	margin-inline: 0;
+}
+
+:root[data-theme='light'] .architecture-components {
+	color-scheme: light;
+}
+
+.architecture-components img {
+	display: block;
+	width: 100%;
+	height: auto;
+}
+
+/* Below the wide layout, sidebars leave too little space for the horizontal diagram. */
+@media (max-width: 89.99rem) {
+	.architecture-components img {
+		max-width: 24rem;
+		margin-inline: auto;
+	}
+}
+
+.architecture-components figcaption {
+	margin-block-start: 0.75rem;
+	color: var(--sl-color-gray-2);
+	font-size: var(--sl-text-sm);
+}

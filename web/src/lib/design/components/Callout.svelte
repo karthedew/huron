@@ -6,7 +6,7 @@
 	let { kind = 'note', children }: Props = $props();
 </script>
 
-<div class="callout {kind}" role={kind === 'warn' ? 'alert' : undefined}>
+<div class="callout {kind}" role="note">
 	{@render children?.()}
 </div>
 

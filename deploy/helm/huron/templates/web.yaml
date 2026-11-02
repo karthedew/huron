@@ -1,0 +1,146 @@
+{{- if .Values.web.enabled }}
+{{- $web := .Values.web }}
+{{- $name := include "huron.webName" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "huron.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ $web.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "huron.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "huron.selectorLabels" (dict "root" . "component" "web") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: web
+          image: {{ include "huron.webImage" . }}
+          imagePullPolicy: {{ $web.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: ORIGIN
+              value: {{ required "web.origin is required when web.enabled" $web.origin | quote }}
+            - name: HURON_API_URL
+              value: {{ default (printf "http://%s:%v" (include "huron.fullname" .) .Values.service.port) $web.apiUrl | quote }}
+            - name: HURON_WEB_OIDC_ISSUER
+              value: {{ required "web.oidc.issuer is required when web.enabled" $web.oidc.issuer | quote }}
+            - name: HURON_WEB_OIDC_CLIENT_ID
+              value: {{ $web.oidc.clientId | quote }}
+            - name: HURON_WEB_OIDC_SCOPES
+              value: {{ $web.oidc.scopes | quote }}
+            - name: HURON_WEB_OIDC_LOGOUT
+              value: {{ $web.oidc.logout | quote }}
+            {{- with $web.oidc.existingSecret }}
+            - name: HURON_WEB_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $web.oidc.secretKey }}
+            {{- end }}
+            - name: HURON_WEB_MOUNT_PREFIX
+              value: {{ $web.mountPrefix | quote }}
+            - name: HURON_WEB_API_TIMEOUT_MS
+              value: {{ $web.apiTimeoutMs | quote }}
+            {{- with $web.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          securityContext:
+            {{- include "huron.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          resources:
+            {{- toYaml $web.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "huron.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  selector:
+    {{- include "huron.selectorLabels" (dict "root" . "component" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $web.service.port }}
+      targetPort: http
+{{- if $web.route.enabled }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "huron.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  {{- with $web.route.host }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ $name }}
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+{{- end }}
+{{- if $web.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "huron.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  {{- with $web.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $web.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with $web.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ $web.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  name: http
+{{- end }}
+{{- end }}

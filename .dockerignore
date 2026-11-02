@@ -1,0 +1,15 @@
+# The build context of the API image (Containerfile), as an allowlist: only what the image copies.
+# Everything else stays out, among it .git, .venv, web/, node_modules, roadmap/ and caches.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!alembic.ini
+!src/
+!migrations/
+
+# Never, not even inside the directories above.
+**/__pycache__
+**/*.py[cod]
+**/.env
+**/.env.*

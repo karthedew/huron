@@ -1,29 +1,40 @@
 ---
 description: Execute a markdown implementation plan for a Python project through serial implementation and verification agents with a strict validation gate, bounded fix loops, and configurable models
-agent: build
-model: claude-fable-5
+argument-hint: <plan.md> [model] [model] [/review-command] [notes]
+model: claude-opus-5-5
+effort: high
 ---
 
-You are orchestrating a disciplined, senior-engineer implementation workflow for a Python project from the markdown implementation plan at:
+You are orchestrating a disciplined, senior-engineer implementation workflow for a Python project from the markdown implementation plan named in these arguments:
 
-`$1`
+`$ARGUMENTS`
 
 ## Inputs
 
-- Implementation plan: `$1`
-- Claude Code implementation subagent model: `${2:-anthropic/claude-sonnet-5}`
-- Claude Code verification subagent model: `${3:-anthropic/claude-opus-5}`
-- OpenCode model: `openai/gpt-6-astra`, reasoning effort `low`, for every role.
-- Codex models and reasoning effort: inherit the current session by default; explicit `$2`/`$3` select implementation/verification models only when the native tool supports them.
-- Escalation review command: `${4:-/architectural-review}`
+Read the arguments by position and form, not by positional placeholders: Claude Code numbers them from zero and OpenCode from one, so numbered placeholders would name different arguments in each runtime.
+
+- The first argument is the implementation plan path, written `<plan>` below. If it is missing or does not name an existing markdown file, stop and ask for it.
+- Optional model overrides are model identifiers; at most two are accepted.
+- An optional argument beginning with `/` is the escalation review command, written `<review-command>` below. It defaults to `/architectural-review`.
+- Any other text is operator context, such as which phase/task to resume from. Use it to choose the starting point after checking it against the plan; it never overrides models or rules.
+- Model for every role (orchestration, implementation, fixes and verification), by runtime:
+  - Claude Code: Opus 5.5 (`claude-opus-5-5`), effort `high`.
+  - OpenCode and Codex: `openai/gpt-6-astra`, reasoning effort `medium`.
+- Model overrides must be omitted or equal the runtime's model above; other models are refused.
 
 ### Runtime selection
 
 Detect the host application from its runtime/tool context, not the model's name. If uncertain, ask before delegation. Record the host and resolved settings in the ledger.
 
-- **Claude Code:** retain the frontmatter's `claude-fable-5` orchestrator and the Claude implementation/verification defaults above, with optional `$2`/`$3` overrides. Use the host's supported model identifiers and background-agent/output-status tools. Do not impose OpenCode's `low` variant on Claude. Verify the requested models are available; never silently substitute.
-- **OpenCode:** enter through `.opencode/commands/implement-markdown.md`, which selects `markdown-orchestrator`. `opencode.json` configures that agent, `markdown-implementer` (implementation and fixes), and `markdown-reviewer` for Astra Low. The project plugin enforces low reasoning effort for these agents and refuses model substitution. `$2`/`$3` must be omitted or equal `openai/gpt-6-astra` in this runtime. The Claude frontmatter does not apply to the OpenCode wrapper.
-- **Codex:** read this file as workflow instructions when the user supplies its path and a plan, for example `./.claude/commands/implement-markdown.md P3_IMPLEMENTATION_PLAN.md`. This is a prompt invocation, not a shell executable or a registered Codex slash command. Ignore the Claude frontmatter and other hosts' model defaults. Use native subagent tools exposed in the current session. Invoking this workflow authorizes its serial delegation; proceed without requesting runtime substitution approval when these capabilities are available. Keep the current orchestrator settings and inherit them for children by default. Apply explicit model or reasoning overrides only through supported native parameters, with a self-contained assignment when inheritance is incompatible with overrides. Record inherited settings as inherited; do not guess an unexposed model or reasoning value. If an explicit override is unavailable, report it rather than substitute.
+- **Claude Code:** requires Opus 5.5 with High effort for every role. The command frontmatter selects it for the orchestrator; launch every child through the Agent tool with `model: "opus"` and `effort: "high"`. Confirm the session runs Opus 5.5 and the Agent tool exposes both parameters before delegation. If either is unavailable, stop and request a supported runtime; never substitute another model or effort.
+- **OpenCode:** enter through `.opencode/commands/implement-markdown.md`, which selects `markdown-orchestrator`. `opencode.json` configures that agent, `markdown-implementer` (implementation and fixes), and `markdown-reviewer` for Astra Medium. The project plugin enforces medium reasoning effort for these agents and refuses model substitution. Model overrides must be omitted or equal `openai/gpt-6-astra` in this runtime. The Claude frontmatter does not apply to the OpenCode wrapper.
+- **Codex:** read this file as workflow instructions when the user supplies its path and a plan, for example `./.claude/commands/implement-markdown.md P3_IMPLEMENTATION_PLAN.md`. This is a prompt invocation, not a shell executable or a registered Codex slash command. Use native subagent tools exposed in the current session. Invoking this workflow authorizes its serial delegation. Confirm the orchestrator and children use Astra with Medium reasoning through exposed runtime settings or supported native parameters before delegation. Inherit settings only when they are confirmed to match. If the required settings cannot be selected or confirmed, stop and request a correctly configured session; do not guess an unexposed value or substitute another model.
+
+#### Claude Code delegation
+
+Launch each child with the Agent tool: `subagent_type: "general-purpose"`, `model: "opus"`, `effort: "high"`, a unique `description`, and the complete assignment in `prompt`. Record the returned agent ID. Children run in the background and the orchestrator is notified when one completes; do not poll in a tight loop or predict a pending child's result. Use `SendMessage` with the recorded ID to resume an existing assignment rather than launching a duplicate. Children deliver progress updates by calling `SendMessage` with `to: "main"`; every assignment names that channel, and the orchestrator relays each update when it arrives.
+
+Launch one child at a time and include an instruction against nested delegation in every assignment. While the child runs, the orchestrator maintains the ledger without editing the child's files or running competing validation. An interrupted, errored, or silent child is indeterminate, not a verification verdict; inspect `ListAgents` and any surviving tool processes before replacing it.
 
 #### Codex delegation
 
@@ -45,7 +56,7 @@ Before the first launch, confirm the selected host's tools and agent settings ar
 
 In Codex, escalation commands also name instruction files: present the equivalent prompt invocation of `.claude/commands/architectural-review.md` or `.claude/commands/design-plan.md` with the affected area and evidence paths. Read the requested command and check its own runtime requirements before executing it.
 
-Treat `$1` as the source-of-truth implementation plan. Before doing anything else, read the entire markdown file carefully. Do not begin editing until you understand the full plan, its phases, its sequencing, its stated constraints, and its acceptance criteria.
+Treat `<plan>` as the source-of-truth implementation plan. Before doing anything else, read the entire markdown file carefully. Do not begin editing until you understand the full plan, its phases, its sequencing, its stated constraints, and its acceptance criteria.
 
 ## Preflight
 
@@ -59,7 +70,7 @@ Before starting the first phase/task, do all of the following and record the res
 
 Every implementation, fix, and verification subagent runs the complete gate. The gate passes only when every command exits 0 and meets the pass conditions below. The sole findings exception is code duplication: clone findings are allowed when the duplication guard passes -- no clone growth or new clone group appears at similarity 0.80 relative to `scripts/duplication_baseline.json`; the native score is reported, not gated. All other zero-findings requirements remain strict. Partial runs, "ran the relevant subset," and skipped tools are not acceptable. Throughout this workflow, a "clean" gate means these pass conditions are met, not that clone output is empty.
 
-Configuration precedence: if `pyproject.toml` (or `ruff.toml`, `ty.toml`, `.coveragerc`) configures a tool, that configuration governs. Any thresholds stated below are fallback defaults that apply only when the project has not configured the tool. Subagents must not loosen configured thresholds, add exclusions, or introduce `# noqa`, `# type: ignore`, `# pragma: no cover`, `@pytest.mark.skip`, or `@pytest.mark.xfail` to make the gate pass.
+Configuration precedence: if `pyproject.toml` (or `ruff.toml`, `ty.toml`, `.coveragerc`) configures a tool, that configuration governs. Any thresholds stated below are fallback defaults that apply only when the project has not configured the tool. Subagents must not loosen configured thresholds, add exclusions, or introduce `# noqa`, `# type: ignore`, `# pragma: no cover`, `@pytest.mark.skip`, or `@pytest.mark.xfail` to make the gate pass; the coverage floor moves only by the re-baseline the `pytest` pass condition below defines.
 
 Run from the repository root, with `<pkg>` replaced by the resolved coverage package
 path. Static lint targets `src/`; tests and migration schema-map validation remain
@@ -87,7 +98,7 @@ Pass conditions:
 - `ty check`: zero errors.
 - `mypy`: zero errors, under the project's configured strictness. No new suppressions.
 - `lint-imports`: every import contract kept.
-- `pytest`: all tests pass, no tests skipped or xfailed that were not already skipped or xfailed at baseline, total coverage at or above the configured `fail_under` floor — that floor is a ratchet: never lower it, and raise it when coverage climbs — and every file touched in this phase/task at 100% line coverage unless the verification subagent explicitly judges a specific uncovered line to be unreachable defensive code.
+- `pytest`: all tests pass, no tests skipped or xfailed that were not already skipped or xfailed at baseline, total coverage at or above the configured `fail_under` floor, and every file touched in this phase/task at 100% line coverage unless the verification subagent explicitly judges a specific uncovered line to be unreachable defensive code. The floor is a ratchet measured on the unit run: raise it when coverage climbs. It moves down only by a re-baseline, which resets `fail_under` to the newly measured total rounded down to two decimals and is allowed only when the verification subagent confirms, from covered and total statement counts before and after the task, that the whole drop comes from deleted statements that were covered, new PostgreSQL adapter statements that `uv run pytest -m "unit or contract" --cov=<pkg>` covers in full, or both — and that every new or modified file is at 100%. The task records the before and after counts in the plan.
 - `radon cc --min C`: empty output. No function, method, or class at cyclomatic grade C or worse.
 - `radon mi --min B`: empty output. No module at maintainability grade B or worse.
 - `complexipy`: exit 0. No function above the cognitive complexity limit.
@@ -108,6 +119,8 @@ Complexity failures and the clean sweep: consolidating legacy paths often pushes
 - Tests for deleted code are deleted, not skipped, commented out, or left failing.
 - Test names describe the behavior under test in plain language. They must not reference the plan, phases, or task numbers.
 - Fixtures and parametrization are used to remove duplication; test files are held to the same quality bar as production code.
+- New tests do not duplicate existing coverage. Before writing tests, read the existing tests for the code under change and its callers; extend or parametrize an existing test rather than adding one that proves the same behavior.
+- Existing fixtures come first. Reuse a shared fixture that fits; adapt an existing fixture when a reasonable change covers the new need; add a new one only when none can. New fixtures are written for reuse by other tests: general names, no single-test assumptions, placed in the shared conftest or support module where other tests can use them.
 
 ## Serial loop
 
@@ -133,11 +146,11 @@ If verification #3 returns `FAIL`, stop the entire workflow immediately. Do not 
 On escalation, do the following and nothing else:
 
 1. Revert or clearly isolate incomplete changes if the working tree is in a broken state, so the repository builds and the full validation gate passes. If a clean revert is not possible, report the exact state of the tree.
-2. Write an escalation report as a new `## Escalation` section appended to `$1`, containing:
+2. Write an escalation report as a new `## Escalation` section appended to `<plan>`, containing:
    - The failed phase/task name and all 3 verification reports.
    - Your diagnosis of why the plan-as-written could not be implemented (ambiguous scope, wrong assumptions about the codebase, missing design decisions, underspecified contracts, irreducible complexity that conflicts with the gate, or task too large for one subagent).
    - The specific design questions that must be answered before implementation can resume.
-3. Instruct the user to run `${4:-/architectural-review}` against the affected area, seeded with the escalation report, so the architecture underlying the failed plan gets reassessed before anyone replans against it. Provide the exact command invocation they should run, with arguments filled in.
+3. Instruct the user to run `<review-command>` against the affected area, seeded with the escalation report, so the architecture underlying the failed plan gets reassessed before anyone replans against it. Provide the exact command invocation they should run, with arguments filled in.
 4. Recommend that once the architectural review completes, the user re-run `/design-plan` for the same area, passing both the escalation report and the architectural review output as escalation context, to produce a corrected design and implementation plan.
 5. End the workflow. Repeated verification failure is a signal that the plan is defective, not that more fix passes are needed.
 
@@ -198,7 +211,7 @@ When an update is overdue, inspect available task/process status and report the 
 
 Invoke one implementation subagent using the resolved runtime settings for the current phase/task. The implementation subagent must receive a self-contained assignment that includes:
 
-- The markdown file path: `$1`
+- The markdown file path: `<plan>`
 - The exact phase/task to implement
 - Any relevant acceptance criteria from the markdown
 - The resolved package path
@@ -219,7 +232,7 @@ The implementation subagent should not defer known issues to later phases unless
 Suggested implementation subagent prompt:
 
 ```text
-Read the markdown implementation plan at `$1` before starting.
+Read the markdown implementation plan at `<plan>` before starting.
 
 You are the implementation agent for the current phase/task:
 
@@ -255,7 +268,7 @@ Validation gate (every command must exit 0 and meet its pass conditions; the dup
 [PASTE_VALIDATION_GATE_VERBATIM]
 
 Process:
-1. Read `$1`.
+1. Read `<plan>`.
 2. Inspect the relevant code and tests.
 3. Implement the current phase/task completely.
 4. Write, update, or remove tests to meet the testing standard.
@@ -273,7 +286,7 @@ Process:
 
 After implementation returns, invoke one verification subagent using the resolved runtime settings for the same phase/task. The verification subagent must receive a self-contained assignment that includes:
 
-- The markdown file path: `$1`
+- The markdown file path: `<plan>`
 - The exact phase/task being verified
 - The implementation summary
 - The resolved package path
@@ -304,7 +317,7 @@ On verification attempt 3, the verification subagent must additionally state, fo
 Suggested verification subagent prompt:
 
 ```text
-Read the markdown implementation plan at `$1` before starting.
+Read the markdown implementation plan at `<plan>` before starting.
 
 You are the verification agent for the current phase/task:
 
@@ -341,7 +354,7 @@ Verification rules:
 - Confirm every file touched in this phase/task is fully covered, or state precisely which uncovered lines you judge unreachable and why.
 - Confirm obsolete code was removed where the clean-sweep change makes it unnecessary.
 - Confirm there is no backwards compatibility preservation unless explicitly required by the markdown.
-- Confirm no `# noqa`, `# type: ignore`, `# pragma: no cover`, skip or xfail markers, or tool configuration changes were introduced to satisfy the gate.
+- Confirm no `# noqa`, `# type: ignore`, `# pragma: no cover`, skip or xfail markers, or tool configuration changes were introduced to satisfy the gate. A `fail_under` reset is the one allowed configuration change: check it against the `pytest` pass condition's re-baseline rule using the recorded before and after statement counts.
 - Confirm no code comments, docstrings, test names, user-facing strings, or internal comments reference the markdown, implementation plan, phase numbers, checklist mechanics, or this orchestration process.
 - Confirm comments are senior-level and explain enduring code intent only.
 - Confirm no TODOs, debug logs, print statements, commented-out code, temporary names, partial migrations, or speculative abstractions remain.
@@ -378,7 +391,7 @@ If the verification subagent returns `FAIL` on attempt 3, do not send another fi
 Suggested fix implementation subagent prompt:
 
 ```text
-Read the markdown implementation plan at `$1` before starting.
+Read the markdown implementation plan at `<plan>` before starting.
 
 You are the implementation agent for a verification fix pass on the current phase/task:
 
@@ -413,7 +426,7 @@ Validation gate (every command must exit 0 and meet its pass conditions; clone f
 [PASTE_VALIDATION_GATE_VERBATIM]
 
 Process:
-1. Read `$1`.
+1. Read `<plan>`.
 2. Read the verification report.
 3. Inspect the relevant code and tests.
 4. Fix every issue.
@@ -453,4 +466,4 @@ At the end, provide a final summary with:
 - Coverage at baseline and at completion
 - Final risks or notes, if any
 
-Do not claim completion if any phase/task has not passed verification. If the workflow ended in escalation, say so explicitly, name the failed phase/task, and repeat the exact `${4:-/architectural-review}` invocation the user should run, followed by the recommended `/design-plan` re-run.
+Do not claim completion if any phase/task has not passed verification. If the workflow ended in escalation, say so explicitly, name the failed phase/task, and repeat the exact `<review-command>` invocation the user should run, followed by the recommended `/design-plan` re-run.

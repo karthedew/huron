@@ -1,0 +1,58 @@
+# The development service configuration (HURON_CONFIG_FILE). `make api` reads it through dev.env;
+# `make app` mounts it into the API container as /etc/huron/huron.yaml and recreates the API when
+# this file changes, so edit it and re-run `make app` (or restart `make api`) to apply it.
+#
+# Top-level keys are the API's settings (src/huron/applications/api/settings.py) plus
+# `organizations`; a HURON_* environment variable wins over this file, and dev.env sets only the
+# database URL (a secret outside development: keep database_url in the environment, never here) and
+# this file's path. An unknown key, a key given twice or `organizations:` without a list fails
+# startup. The URLs are 127.0.0.1 for both stacks: the containers of `make app` share one network.
+#
+# `organizations` present (even `[]`) is managed mode: the API creates and updates these
+# organizations at startup, sets each one's organization-wide role groups to exactly `groups`,
+# refuses `huron create org`, and never deletes an organization that disappears from the list.
+# Remove the whole key for unmanaged mode. `groups` maps the four organization-wide roles to LDAP
+# groups, each optional: org_admin, and catalog_admin, contributor and reader, which every catalog
+# of the organization inherits, existing and future; a grant on one catalog adds to them and cannot
+# remove them. Each organization's directory is `<root>/<name>`; without `root` it is
+# `<mount_prefix>/<name>` of the CLI. The API mounts nothing: prepare the directories on a machine
+# with the share, as the storage admin, with `huron adm provision-orgs`.
+#
+# helio and geo match the web's demo fixture (web/e2e/support/fixture.mjs) in name, display name,
+# description and org admin groups; the seed of `make app` loads the fixture's catalogs into them
+# with the fixture's per-catalog grants, which overlap the organization-wide groups and add to
+# them. noaa is not in the fixture, so the seed leaves it empty. The fixture's other organizations
+# (astro, planetary) are not declared, and not seeded here.
+store: postgres
+instance_id: 0192b6a0-0000-7000-8000-000000000001
+issuer: http://127.0.0.1:8080
+audience: huron
+company_issuer: http://127.0.0.1:8081/realms/company
+company_audience: huron-cli
+group_directory_url: http://127.0.0.1:8082
+platform_admin_group: huron-platform-admins
+
+organizations:
+  - name: helio
+    display_name: Heliophysics Division
+    description: The Sun, the solar wind and the space environment.
+    groups:
+      org_admin: [helio-org-admins]
+      catalog_admin: [helio-catalog-admins]
+      contributor: [helio-contributors]
+      reader: [helio-readers]
+    root: /data1/huron
+  - name: geo
+    display_name: Earth Science
+    description: Earth observation and ocean data.
+    groups:
+      org_admin: [geo-org-admins]
+      reader: [geo-readers]
+    root: /data1/huron
+  - name: noaa
+    display_name: NOAA
+    description: "National Oceanic and Atmospheric Administration data: space weather indices."
+    groups:
+      org_admin: [noaa-org-admins]
+      reader: [noaa-readers]
+    root: /data1/huron

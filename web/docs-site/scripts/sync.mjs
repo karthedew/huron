@@ -1,0 +1,258 @@
+// Generates the Starlight pages of the guides from the Markdown files under docs/, which stay the
+// only copy of their prose: `npm run sync` (also the first step of `npm run build` and `npm run
+// dev`) rewrites src/content/docs/concepts/, guides/ and administration/ from them. These
+// directories are generated and gitignored; edit the files under docs/ instead.
+//
+// The repository's docs directory is ../../../docs from this script, or HURON_DOCS_DIR.
+
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import GithubSlugger from 'github-slugger';
+
+/** The site's base path, as `base` in astro.config.mjs. */
+export const BASE = '/docs';
+
+/**
+ * Every docs/ file the site shows, by its path under docs/. `section` is the content directory
+ * (and sidebar group) its pages go to; `split` makes one page per `##` heading, otherwise the file
+ * is one page at `slug`, titled by its `#` heading.
+ */
+export const SOURCES = [
+	{ file: 'concepts/how-huron-works.md', section: 'concepts', slug: 'how-huron-works', order: 1 },
+	{ file: 'concepts/raw-ingest.md', section: 'concepts', slug: 'raw-ingest', order: 2 },
+	{ file: 'concepts/search.md', section: 'concepts', slug: 'search', order: 3 },
+	{
+		file: 'concepts/metadata-and-schemas.md',
+		section: 'concepts',
+		slug: 'metadata-and-schemas',
+		order: 4
+	},
+	{ file: 'concepts/access-and-roles.md', section: 'concepts', slug: 'access-and-roles', order: 5 },
+	{ file: 'architecture.md', section: 'concepts', slug: 'architecture', order: 6 },
+	{ file: 'user-guide.md', section: 'guides', slug: 'user-guide', order: 1 },
+	{ file: 'api-errors.md', section: 'guides', slug: 'api-errors', order: 2 },
+	{ file: 'operator.md', section: 'administration', split: true }
+];
+
+/** The content directories `sync` owns: it empties them before writing. */
+export const SECTIONS = [...new Set(SOURCES.map((source) => source.section))];
+
+/**
+ * Splits one Markdown document into its title, preamble and `##` sections, ignoring headings in
+ * fenced code. Every heading carries the anchor GitHub gives it in the whole document.
+ */
+export function parse(markdown) {
+	const slugger = new GithubSlugger();
+	const document = { title: '', preamble: [], sections: [], headings: [] };
+	let current = null;
+	for (const { line, code } of scan(markdown)) {
+		const heading = code ? null : /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+		if (heading) {
+			const level = heading[1].length;
+			const text = heading[2];
+			const anchor = slugger.slug(plain(text));
+			document.headings.push({ level, text, anchor, section: document.sections.length - 1 });
+			if (level === 1 && !document.title) {
+				document.title = plain(text);
+				continue;
+			}
+			if (level === 2) {
+				current = { title: plain(text), anchor, lines: [] };
+				document.sections.push(current);
+				document.headings.at(-1).section = document.sections.length - 1;
+				continue;
+			}
+		}
+		(current ? current.lines : document.preamble).push(line);
+	}
+	return document;
+}
+
+/**
+ * The pages of every source, and an index from each `file` and `file#anchor` to its site URL.
+ * `documents` maps each source file name to its Markdown.
+ */
+export function plan(sources, documents) {
+	const pages = [];
+	const urls = new Map();
+	for (const source of sources) {
+		const document = parse(documents[source.file]);
+		const sourcePages = source.split ? splitPages(source, document) : [wholePage(source, document)];
+		urls.set(source.file, url(sourcePages[0].slug));
+		const titles = document.headings.filter((heading) => heading.level === 1);
+		for (const heading of titles) urls.set(`${source.file}#${heading.anchor}`, urls.get(source.file));
+		for (const page of sourcePages) {
+			// Each page's headings get their anchors afresh, as Astro gives them; a heading that became
+			// the page's title links to the page itself.
+			const slugger = new GithubSlugger();
+			for (const heading of page.headings) {
+				const anchor = heading.isTitle ? '' : `#${slugger.slug(plain(heading.text))}`;
+				urls.set(`${source.file}#${heading.anchor}`, url(page.slug) + anchor);
+			}
+			pages.push({ ...page, file: source.file });
+		}
+	}
+	return { pages, urls };
+}
+
+/**
+ * Rewrites the links of `markdown`, written in docs/`file`: links to a synced document or one of
+ * its headings point at the site, links to other repository files become their repository path,
+ * and links in code stay as written. A relative link resolves against the directory of `file`, as
+ * on GitHub. Throws on a link to a heading that does not exist.
+ */
+export function rewriteLinks(markdown, file, urls) {
+	return [...scan(markdown)]
+		.map(({ line, code }) => (code ? line : rewriteLine(line, file, urls)))
+		.join('\n');
+}
+
+/** The Starlight page of `page`: frontmatter, a generated-file note and its rewritten body. */
+export function render(page, urls) {
+	const frontmatter = [
+		'---',
+		`title: ${JSON.stringify(page.title)}`,
+		'sidebar:',
+		`  order: ${page.order}`,
+		'---',
+		''
+	];
+	const note = `<!-- Generated by web/docs-site/scripts/sync.mjs from docs/${page.file}: edit that file. -->`;
+	const body = rewriteLinks(trimBlank(page.lines).join('\n'), page.file, urls);
+	return `${frontmatter.join('\n')}${note}\n\n${body}\n`;
+}
+
+/** Regenerates the section directories under `contentDir` from the files in `docsDir`. */
+export async function sync({ docsDir, contentDir, sources = SOURCES }) {
+	const documents = {};
+	for (const source of sources) {
+		documents[source.file] = await readFile(path.join(docsDir, source.file), 'utf8');
+	}
+	const { pages, urls } = plan(sources, documents);
+	for (const section of new Set(sources.map((source) => source.section))) {
+		await rm(path.join(contentDir, section), { recursive: true, force: true });
+	}
+	for (const page of pages) {
+		const target = path.join(contentDir, `${page.slug}.md`);
+		await mkdir(path.dirname(target), { recursive: true });
+		await writeFile(target, render(page, urls));
+	}
+	return pages.map((page) => page.slug);
+}
+
+function splitPages(source, document) {
+	const pages = [];
+	const preamble = trimBlank(document.preamble);
+	const inSection = (index) =>
+		document.headings.filter((heading) => heading.level > 1 && heading.section === index);
+	if (preamble.length) {
+		pages.push({
+			slug: `${source.section}/${source.file.replace(/\.md$/, '')}`,
+			title: document.title,
+			order: 0,
+			lines: preamble,
+			headings: inSection(-1)
+		});
+	}
+	document.sections.forEach((section, index) => {
+		pages.push({
+			slug: `${source.section}/${section.anchor}`,
+			title: section.title,
+			order: index + 1,
+			lines: section.lines.map(demote),
+			headings: inSection(index).map((heading) => ({ ...heading, isTitle: heading.level === 2 }))
+		});
+	});
+	return pages;
+}
+
+function wholePage(source, document) {
+	const headings = document.headings.filter((heading) => heading.level > 1);
+	const lines = [...document.preamble];
+	document.sections.forEach((section, index) => {
+		const heading = headings.find((candidate) => candidate.level === 2 && candidate.section === index);
+		lines.push(`## ${heading.text}`, ...section.lines);
+	});
+	return {
+		slug: `${source.section}/${source.slug}`,
+		title: document.title,
+		order: source.order,
+		lines,
+		headings
+	};
+}
+
+function demote(line) {
+	return line.replace(/^#(#{2,6}\s)/, '$1');
+}
+
+function url(slug) {
+	return `${BASE}/${slug}/`;
+}
+
+function rewriteLine(line, file, urls) {
+	const spans = codeSpans(line);
+	return line.replace(/\[((?:[^\]\\]|\\.)*)\]\(([^)\s]+)\)/g, (link, text, target, offset) => {
+		if (spans.some(([start, end]) => offset >= start && offset < end)) return link;
+		if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('/')) return link;
+		const [relative, anchor] = target.split('#', 2);
+		const source = path.posix.join('docs', file);
+		const resolved = relative
+			? path.posix.normalize(path.posix.join(path.posix.dirname(source), relative))
+			: source;
+		const name = resolved.startsWith('docs/') ? resolved.slice('docs/'.length) : null;
+		if (name !== null && urls.has(name)) {
+			const key = anchor ? `${name}#${anchor}` : name;
+			if (!urls.has(key)) throw new Error(`docs/${file}: no heading for the link ${target}`);
+			return `[${text}](${urls.get(key)})`;
+		}
+		return text.replace(/`/g, '') === resolved
+			? `\`${resolved}\``
+			: `${text} (\`${resolved}\` in the repository)`;
+	});
+}
+
+function codeSpans(line) {
+	const spans = [];
+	for (const match of line.matchAll(/(`+)[^`]*?\1/g)) {
+		spans.push([match.index, match.index + match[0].length]);
+	}
+	return spans;
+}
+
+function* scan(markdown) {
+	let fence = null;
+	for (const line of markdown.split('\n')) {
+		const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+		if (fence) {
+			if (opener && opener[1][0] === fence[0] && opener[1].length >= fence.length) fence = null;
+			yield { line, code: true };
+		} else if (opener) {
+			fence = opener[1];
+			yield { line, code: true };
+		} else {
+			yield { line, code: false };
+		}
+	}
+}
+
+function plain(text) {
+	return text.replace(/`([^`]*)`/g, '$1').replace(/\*\*([^*]*)\*\*/g, '$1');
+}
+
+function trimBlank(lines) {
+	let start = 0;
+	let end = lines.length;
+	while (start < end && !lines[start].trim()) start += 1;
+	while (end > start && !lines[end - 1].trim()) end -= 1;
+	return lines.slice(start, end);
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const docsDir = process.env.HURON_DOCS_DIR ?? path.resolve(here, '../../../docs');
+	const contentDir = path.resolve(here, '../src/content/docs');
+	const slugs = await sync({ docsDir, contentDir });
+	console.log(`sync: ${slugs.length} pages from ${docsDir}`);
+}

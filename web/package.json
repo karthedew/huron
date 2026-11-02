@@ -7,12 +7,19 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"start": "node --env-file-if-exists=.env build/index.js",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.tools.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"test:e2e": "playwright test",
-		"lint": "prettier --check ."
+		"test:e2e": "npm run build && npm run docs:build && playwright test",
+		"demo": "node scripts/demo.mjs",
+		"lint": "prettier --check .",
+		"generate:api": "node scripts/generate-api-types.mjs",
+		"docs:install": "npm --prefix docs-site ci --no-audit --no-fund",
+		"docs:sync": "npm --prefix docs-site run sync",
+		"docs:build": "npm --prefix docs-site run build",
+		"docs:dev": "npm --prefix docs-site run dev"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.49.0",

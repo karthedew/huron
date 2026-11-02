@@ -1,0 +1,79 @@
+{
+  "title": "Huron base metadata",
+  "description": "Fields every collection carries.",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "title": "Title",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "description": {
+      "type": "string",
+      "title": "Description",
+      "minLength": 1
+    },
+    "keywords": {
+      "type": "array",
+      "title": "Keywords",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "contacts": {
+      "type": "array",
+      "title": "Contacts",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "instrument": {
+      "type": "string",
+      "title": "Instrument"
+    },
+    "campaign": {
+      "type": "string",
+      "title": "Campaign"
+    },
+    "start_time": {
+      "type": "string",
+      "title": "Start time",
+      "format": "date-time"
+    },
+    "end_time": {
+      "type": "string",
+      "title": "End time",
+      "format": "date-time"
+    },
+    "labels": {
+      "type": "object",
+      "title": "Labels",
+      "description": "Free-form string labels used for search.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "title",
+    "description"
+  ],
+  "additionalProperties": true
+}

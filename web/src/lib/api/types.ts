@@ -1,172 +1,122 @@
 /**
- * HAND-WRITTEN DOMAIN TYPES — DELETED AT P1.
- *
- * These are a placeholder for the types generated from `openapi/v1.json`
- * (design/frontend.html §1). They are shaped to the design record, not to any
- * running endpoint, because no endpoint exists yet. Do not add convenience fields
- * the API does not promise: a field invented here becomes a field the UI silently
- * depends on and the contract never provides.
- *
- * See ./README.md.
+ * Domain types for routes and components. Routes and components import API types only from here;
+ * `openapi.ts` is generated from the contract and may change shape with it.
  */
+import type {
+	AuditOut,
+	CatalogOut,
+	CollectionOut,
+	CommitOut,
+	FileOut,
+	GrantSourceOut,
+	NamespaceOut,
+	OrganizationGroupsOut,
+	OrganizationOut,
+	Page as ApiPage,
+	ProblemOut,
+	RoleOut,
+	SchemaOut,
+	SchemaRefOut,
+	State,
+	WhoAmI as ApiWhoAmI
+} from './openapi';
 
-export type Lifecycle = 'ACTIVE' | 'RETIRED';
+export type Organization = OrganizationOut;
+export type Catalog = CatalogOut;
+export type Namespace = NamespaceOut;
+export type Collection = CollectionOut;
+export type CollectionState = State;
+export type CollectionProblem = ProblemOut;
+export type FileRecord = FileOut;
+export type Commit = CommitOut;
+export type AuditEntry = AuditOut;
+/** The API decoder narrows each authored schema from an arbitrary object to JSON values. */
+export type SchemaEntry = Omit<SchemaOut, 'document'> & { document: JsonSchemaDocument };
+export type SchemaRef = SchemaRefOut;
+export type GrantSource = GrantSourceOut;
+export type OrganizationGroups = OrganizationGroupsOut;
+export type WhoAmI = ApiWhoAmI;
+export type RoleGrant = RoleOut;
+export type Page<T> = ApiPage<T>;
 
-export type Layer = 'raw' | 'bronze' | 'silver' | 'gold';
-
-export type LayerState =
-	| { state: 'present'; detail?: string }
-	| { state: 'building'; detail?: string }
-	| { state: 'absent'; detail?: string };
-
-export type LayerAvailability = Record<Layer, LayerState>;
-
-export type Watermark =
-	{ state: 'healthy'; lagSeconds: number } | { state: 'unavailable'; lagSeconds?: undefined };
-
-/** Opaque, versioned keyset cursor. The UI never parses or constructs one. */
-export type Cursor = string;
-
-export interface Page<T> {
-	items: T[];
-	nextCursor: Cursor | null;
-	prevCursor: Cursor | null;
-}
-
-export interface Organization {
-	slug: string;
-	name: string;
-	description: string;
-	projectCount: number;
-}
-
-export interface Project {
-	slug: string;
-	orgSlug: string;
-	name: string;
-	description: string;
-	datasetCount: number;
-	/** Bytes. Raw lives on NFS; derived layers on object storage — reported separately. */
-	quota: { rawUsed: number; rawLimit: number; objectUsed: number; objectLimit: number };
-}
-
-export interface Dataset {
-	slug: string;
-	orgSlug: string;
-	projectSlug: string;
-	name: string;
-	description: string;
-	lifecycle: Lifecycle;
-	classification: string;
-	profile: string;
-	tags: string[];
-	layers: LayerAvailability;
-	releaseCount: number;
-}
-
-export interface Release {
-	slug: string;
-	datasetSlug: string;
-	projectSlug: string;
-	orgSlug: string;
-	createdAt: string;
-	layers: LayerAvailability;
-	revisionCount: number;
-	sealed: boolean;
-}
-
-export interface Revision {
-	number: number;
-	reason: string;
-	createdAt: string;
-	fileCount: number;
-	totalBytes: number;
-	sealed: boolean;
-}
-
-export interface ManifestEntry {
-	path: string;
-	bytes: number;
-	checksum: string;
-	retentionCategory: string;
-	expiresAt: string | null;
-}
-
-export interface SearchHit {
-	kind: 'dataset' | 'release' | 'product';
-	slugPath: string;
+/**
+ * An RFC 9457 problem document, the body of every API error. It is not part of the OpenAPI
+ * components, so it is written by hand from `src/huron/applications/api/problems.py`.
+ */
+export interface Problem {
+	type: string;
 	title: string;
-	snippet: string;
-	layers: LayerAvailability;
-	classification: string;
-	stale?: { reason: string };
+	status: number;
+	detail: string;
+	code: string;
+	context: Record<string, unknown>;
+	instance?: string;
 }
 
-export interface SearchResults {
-	hits: SearchHit[];
-	watermark: Watermark;
-	facets: Record<string, { value: string; count: number }[]>;
-	nextCursor: Cursor | null;
-	prevCursor: Cursor | null;
+/** Any value `JSON.parse` can produce. */
+export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
+
+export interface JsonObject {
+	[key: string]: JsonValue;
 }
 
-export interface ApiKey {
-	id: string;
-	name: string;
-	scopes: string[];
-	projectRestriction: string | null;
-	createdAt: string;
-	lastUsedAt: string | null;
-	expiresAt: string | null;
+/** A resolved JSON Schema document as the API returns it; keywords are read by narrowing. */
+export type JsonSchemaDocument = JsonObject;
+
+export const ROLE_SCOPES = ['platform', 'organization', 'catalog'] as const;
+export type RoleScope = (typeof ROLE_SCOPES)[number];
+
+export const ROLES = [
+	'platform_admin',
+	'org_admin',
+	'catalog_admin',
+	'contributor',
+	'reader'
+] as const;
+export type Role = (typeof ROLES)[number];
+
+/**
+ * The roles granted on an organization: `org_admin`, and the three catalog roles, which then hold
+ * in every catalog of the organization (`ORGANIZATION_ROLES` of
+ * `src/huron/core/security/rbac/roles.py`).
+ */
+export const ORGANIZATION_ROLES = ['org_admin', 'catalog_admin', 'contributor', 'reader'] as const;
+export type OrganizationRole = (typeof ORGANIZATION_ROLES)[number];
+
+/** The closed audit vocabulary of `src/huron/core/lake/audit/models.py`. */
+export const AUDIT_ACTIONS = [
+	'platform.grant',
+	'platform.revoke',
+	'organization.create',
+	'organization.update',
+	'organization.delete',
+	'organization.grant',
+	'organization.revoke',
+	'catalog.create',
+	'catalog.delete',
+	'catalog.grant',
+	'catalog.revoke',
+	'catalog.assign_schema',
+	'namespace.create',
+	'namespace.delete',
+	'namespace.configure',
+	'schema.publish',
+	'collection.create',
+	'collection.update_metadata',
+	'collection.set_schema_override',
+	'collection.activate',
+	'collection.mark_incomplete',
+	'collection.mark_active',
+	'collection.commit',
+	'collection.delete',
+	'signing_key.rotate'
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+export function isRole(value: string): value is Role {
+	return ROLES.some((role) => role === value);
 }
 
-export interface IngestJob {
-	id: string;
-	organization: string;
-	project: string;
-	dataset: string;
-	release: string;
-	layer: 'raw' | 'bronze';
-	status: 'queued' | 'running' | 'succeeded' | 'failed';
-	createdAt: string;
-}
-
-export interface RoleBinding {
-	principal: string;
-	role: string;
-	scope: string;
-}
-
-export interface OrganizationMember {
-	id: string;
-	displayName: string;
-	email: string;
-	kind: 'user' | 'group' | 'service_account';
-	status: 'active' | 'invited';
-	lastActiveAt: string | null;
-}
-
-export interface PermissionGrant {
-	id: string;
-	principal: string;
-	displayName: string;
-	principalKind: 'user' | 'group';
-	role: 'reader' | 'developer' | 'project_admin' | 'organization_admin' | 'platform_owner';
-	scope: string;
-	inherited: boolean;
-	inheritedFrom?: string;
-}
-
-export interface WhoAmI {
-	subject: string;
-	displayName: string;
-	bindings: RoleBinding[];
-}
-
-/** The API renders 404 for resources the principal cannot discover — never 403. */
-export class NotFound extends Error {
-	constructor(what: string) {
-		super(`${what} not found`);
-		this.name = 'NotFound';
-	}
+export function isAuditAction(value: string): value is AuditAction {
+	return AUDIT_ACTIONS.some((action) => action === value);
 }

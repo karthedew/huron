@@ -1,0 +1,141 @@
+# Values of the Huron chart. deploy/README.md walks through an install; ci/example-values.yaml is
+# a complete example. values.schema.json checks these values at install and upgrade.
+
+image:
+  # The API image built from the repository's Containerfile; migrations run from it too.
+  repository: image-registry.openshift-image-registry.svc:5000/huron/huron
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+replicaCount: 2
+
+# The PostgreSQL connection. The secret is not created by the chart: create it first, for example
+#   oc create secret generic huron-db --from-literal=HURON_DATABASE_URL=postgresql://…
+database:
+  existingSecret: huron-db
+  key: HURON_DATABASE_URL
+
+# The service configuration, rendered verbatim as huron.yaml into a ConfigMap and read through
+# HURON_CONFIG_FILE. Top-level keys are the API's settings (src/huron/applications/api/settings.py)
+# plus `organizations`; the API refuses to start on an unknown key, and HURON_* variables in
+# extraEnv win over this file. Never put database_url here: it comes from database.existingSecret.
+# Changing it rolls the API pods (checksum/config annotation), which reconcile the organizations.
+config:
+  store: postgres
+  # Required: the UUID written into the share markers (instance_id). Generate one with uuidgen.
+  # instance_id: 0192b6a0-0000-7000-8000-000000000001
+  # issuer: https://huron.apps.example.org
+  # audience: huron
+  # company_issuer: https://login.example.org/realms/company
+  # company_audience: huron-cli
+  # group_directory_url: https://groups.example.org
+  # platform_admin_group: huron-platform-admins
+  # pool_size: 10
+  log_level: INFO
+  #
+  # The declared organizations. With this key present (even as []) the service is in managed
+  # mode: it creates and updates these organizations at startup, sets their organization-wide
+  # role groups to exactly `groups`, and refuses to create others. It never deletes one removed
+  # from the list. `groups` keys are org_admin, catalog_admin, contributor and reader, each
+  # optional; the three catalog roles hold in every catalog of the organization, and a grant on
+  # one catalog adds to them (docs/operator.md, "LDAP groups and roles"). Names must be unique
+  # (the API checks; the schema cannot). Each organization's directory is <root>/<name>; without
+  # root it is <mount_prefix>/<name> of the CLI. After an upgrade that adds one, run
+  # `huron adm provision-orgs` as the storage admin.
+  # organizations:
+  #   - name: helio
+  #     display_name: Heliophysics Division
+  #     description: The Sun, the solar wind and the space environment.
+  #     groups:
+  #       org_admin: [huron-helio-admins]
+  #       catalog_admin: [huron-helio-catalog-admins]
+  #       contributor: [huron-helio-contributors]
+  #       reader: [huron-helio-readers]
+  #     root: /data1/huron
+  #     export: nfs1:/export/data1
+
+# More environment variables for the API container, as a list of EnvVar.
+extraEnv: []
+# - name: HURON_LOG_LEVEL
+#   value: DEBUG
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# An OpenShift Route to the API, edge-terminated.
+route:
+  enabled: true
+  host: ""
+  timeout: 60s
+
+# A Kubernetes Ingress to the API, for clusters without Routes.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: huron.example.org
+  tls: []
+  # - secretName: huron-tls
+  #   hosts: [huron.example.org]
+
+resources:
+  requests: {cpu: 200m, memory: 256Mi}
+  limits: {cpu: "1", memory: 512Mi}
+
+# The migration Job: a pre-install and pre-upgrade hook running `alembic upgrade head`, so a
+# release's schema is in place before its pods start. It needs only the database secret.
+migrate:
+  enabled: true
+  backoffLimit: 2
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# The read-only SvelteKit web (web/Containerfile). Off by default.
+web:
+  enabled: false
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/huron/huron-web
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  # The origin browsers use, such as https://huron-web.apps.example.org. Required when enabled.
+  origin: ""
+  # The API as the web server reaches it; defaults to this release's API service.
+  apiUrl: ""
+  oidc:
+    issuer: ""
+    clientId: huron-web
+    scopes: openid profile email
+    logout: true
+    # A secret holding the confidential client's secret, not created by the chart.
+    existingSecret: ""
+    secretKey: HURON_WEB_OIDC_CLIENT_SECRET
+  # Shown before the paths of organizations without a root: the CLI's mount_prefix.
+  mountPrefix: /projects/huron
+  apiTimeoutMs: 10000
+  extraEnv: []
+  service:
+    port: 3000
+  route:
+    enabled: true
+    host: ""
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    host: huron-web.example.org
+    tls: []
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}

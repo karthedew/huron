@@ -1,24 +1,18 @@
-# The seam
+# API seam
 
-**Everything in this directory is scaffolding with a scheduled demolition date.**
+The web is a read-only client of the Huron API (`src/huron/applications/api`); its contract is
+`docs/openapi.json`.
 
-`design/frontend.html` §1 specifies that the API client is _generated_ from `openapi/v1.json`,
-so that a contract change breaks the TypeScript build. That spec does not exist yet — the API
-lands in **P1** (`design/roadmap.html` §2), which is where `openapi/v1.json` is first published.
-
-Until then this directory is the only place in the app where a domain type is written by hand.
-Pages import from `$api/client` and never construct a shape of their own. When P1 ships:
-
-1. Generate the client from `openapi/v1.json` into `src/lib/api/generated/`.
-2. Delete `types.ts` and `fixtures.ts`.
-3. Repoint `client.ts` at the generated client, keeping its function signatures.
-
-If step 3 requires touching anything _outside_ this directory, the seam leaked and that is a
-bug worth fixing rather than working around.
-
-## Rules while the seam exists
-
-- No component or route may define a domain type. Import it from `$api/types`.
-- No component or route may import `fixtures.ts` directly — only `client.ts` may.
-- Fixture data is obviously synthetic. It is not a demo dataset and must never be
-  mistaken for one; it exists to prove layout and states render.
+- `openapi.ts` is generated from `docs/openapi.json` by `scripts/generate-api-types.mjs`: one
+  export per `components.schemas` entry, every `Page_X_` as `Page<X>`. Never edit it; run
+  `npm run generate:api` after the contract changes. A Vitest test fails when it drifts.
+- `types.ts` is what routes and components import: friendly aliases (`Organization`, `Catalog`,
+  `Collection`, …), the RFC 9457 `Problem` document (not part of the OpenAPI components), JSON and
+  JSON Schema value types, and the role, scope and audit-action unions with a test against the
+  Python vocabulary. Routes and components import domain types only from `$api/types`.
+- The client is server-only: `$lib/server/huron-api.ts`, reached through `api(event)` in
+  `$lib/server/guard.ts`. It validates every answer against these types, calls the API with the
+  session's Huron token from the global fetch without cookies, and maps failures to fixed copy
+  with `fail(event, error)`.
+- The Huron token and the session record never leave `$lib/server`: `locals.user` holds plain
+  data only, and nothing returns a client or a session from a load.

@@ -1,0 +1,458 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Values of the Huron chart",
+  "definitions": {
+    "logLevel": {
+      "type": "string",
+      "pattern": "^([Dd][Ee][Bb][Uu][Gg]|[Ii][Nn][Ff][Oo]|[Ww][Aa][Rr][Nn][Ii][Nn][Gg]|[Ee][Rr][Rr][Oo][Rr]|[Cc][Rr][Ii][Tt][Ii][Cc][Aa][Ll])$",
+      "description": "The lowest level the service logs: DEBUG, INFO, WARNING, ERROR or CRITICAL, in any case, as the service accepts (config.log_level or HURON_LOG_LEVEL)."
+    }
+  },
+  "type": "object",
+  "required": [
+    "image",
+    "database",
+    "config"
+  ],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": [
+        "repository"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array"
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "database": {
+      "type": "object",
+      "required": [
+        "existingSecret",
+        "key"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id"
+      ],
+      "description": "huron.yaml: the API's settings (src/huron/applications/api/settings.py) plus organizations. database_url is not allowed here: use database.existingSecret.",
+      "properties": {
+        "store": {
+          "enum": [
+            "postgres",
+            "memory"
+          ]
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "The UUID written into the share markers."
+        },
+        "issuer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "audience": {
+          "type": "string",
+          "minLength": 1
+        },
+        "token_ttl_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "key_overlap_hours": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "key_cache_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "company_issuer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "company_audience": {
+          "type": "string",
+          "minLength": 1
+        },
+        "group_directory_url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform_admin_group": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pool_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "log_level": {
+          "$ref": "#/definitions/logLevel"
+        },
+        "organizations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "A segment: lowercase letters, digits, '-' and '_', starting with a letter or digit, at most 63 bytes, not 'huron' or 'metadata'. Names must be unique; the API checks that at startup, the schema cannot.",
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+                "not": {
+                  "enum": [
+                    "huron",
+                    "metadata"
+                  ]
+                }
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "groups": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "The LDAP groups of each organization-wide role, exactly; every key is optional and defaults to none, and the service de-duplicates and sorts each list. The three catalog roles hold in every catalog of the organization; a grant on one catalog adds to them.",
+                "properties": {
+                  "org_admin": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "The LDAP groups holding org_admin."
+                  },
+                  "catalog_admin": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "The LDAP groups holding catalog_admin in every catalog of the organization."
+                  },
+                  "contributor": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "The LDAP groups holding contributor in every catalog of the organization."
+                  },
+                  "reader": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "The LDAP groups holding reader in every catalog of the organization."
+                  }
+                }
+              },
+              "root": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^/",
+                "description": "The parent directory of the organization's directory, <root>/<name>: absolute and normalized, without '..'. Omit to use the CLI's mount_prefix."
+              },
+              "export": {
+                "type": "string",
+                "description": "Informational NFS source, such as nfs1:/export/data1, shown in mount hints."
+              }
+            }
+          },
+          "description": "Present, even empty, means managed mode."
+        }
+      }
+    },
+    "extraEnv": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "if": {
+          "properties": {
+            "name": {
+              "const": "HURON_LOG_LEVEL"
+            }
+          },
+          "required": [
+            "name",
+            "value"
+          ]
+        },
+        "then": {
+          "properties": {
+            "value": {
+              "$ref": "#/definitions/logLevel"
+            }
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "string"
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "host": {
+          "type": "string"
+        },
+        "tls": {
+          "type": "array"
+        }
+      }
+    },
+    "resources": {
+      "type": "object"
+    },
+    "migrate": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "backoffLimit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object"
+    },
+    "podLabels": {
+      "type": "object"
+    },
+    "nodeSelector": {
+      "type": "object"
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "web": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "object",
+          "required": [
+            "repository"
+          ],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          }
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "origin": {
+          "type": "string"
+        },
+        "apiUrl": {
+          "type": "string"
+        },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "issuer": {
+              "type": "string"
+            },
+            "clientId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scopes": {
+              "type": "string"
+            },
+            "logout": {
+              "type": "boolean"
+            },
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "mountPrefix": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "apiTimeoutMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "extraEnv": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        },
+        "route": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "host": {
+              "type": "string"
+            },
+            "timeout": {
+              "type": "string"
+            }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "className": {
+              "type": "string"
+            },
+            "annotations": {
+              "type": "object"
+            },
+            "host": {
+              "type": "string"
+            },
+            "tls": {
+              "type": "array"
+            }
+          }
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

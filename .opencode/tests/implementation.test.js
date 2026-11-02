@@ -21,8 +21,8 @@ async function setup() {
         return state.statusFailure ? new Response("unavailable", { status: 503 }) : Response.json(state.statuses);
       }
       if (url.pathname === "/agent") return Response.json([
-        { name: "markdown-implementer", model: { providerID: "openai", modelID: "gpt-6-astra" }, options: { reasoningEffort: state.configured ? "low" : "high" } },
-        { name: "markdown-reviewer", model: { providerID: "openai", modelID: "gpt-6-astra" }, options: { reasoningEffort: "low" } },
+        { name: "markdown-implementer", model: { providerID: "openai", modelID: "gpt-6-astra" }, options: { reasoningEffort: state.configured ? "medium" : "low" } },
+        { name: "markdown-reviewer", model: { providerID: "openai", modelID: "gpt-6-astra" }, options: { reasoningEffort: "medium" } },
       ]);
       if (url.pathname === "/config/providers") return Response.json({
         providers: state.available ? [{ id: "openai", models: { "gpt-6-astra": {} } }] : [],
@@ -53,7 +53,7 @@ test("launch returns a pollable child with the configured model and role", async
     const { state, start } = await setup();
     const result = JSON.parse(await start(role));
     assert.equal(result.sessionID, "child");
-    assert.equal(result.reasoningEffort, "low");
+    assert.equal(result.reasoningEffort, "medium");
     const dispatched = state.calls.find((call) => call.path.endsWith("/prompt_async"));
     assert.equal(dispatched.body.agent, role === "verification" ? "markdown-reviewer" : "markdown-implementer");
     assert.deepEqual(dispatched.body.model, { providerID: "openai", modelID: "gpt-6-astra" });
@@ -159,13 +159,13 @@ test("invalid agent configuration or unavailable model prevents creation", async
   }
 });
 
-test("nested launch is refused and Astra Low is enforced only for workflow agents", async () => {
+test("nested launch is refused and Astra Medium is enforced only for workflow agents", async () => {
   const { context, start, hooks } = await setup();
   context.agent = "markdown-implementer";
   await assert.rejects(start(), /Only markdown-orchestrator/);
   const output = { options: { reasoningEffort: "high" } };
   await hooks["chat.params"]({ agent: "markdown-reviewer", model: { id: "gpt-6-astra", providerID: "openai" } }, output);
-  assert.equal(output.options.reasoningEffort, "low");
+  assert.equal(output.options.reasoningEffort, "medium");
   await assert.rejects(hooks["chat.params"]({ agent: "markdown-reviewer", model: { id: "other", providerID: "openai" } }, output), /refusing substitution/);
   output.options.reasoningEffort = "high";
   await hooks["chat.params"]({ agent: "general", model: {} }, output);

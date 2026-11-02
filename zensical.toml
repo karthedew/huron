@@ -24,7 +24,6 @@ nav = [
   ] },
   { "Backend design" = "backend-design.md" },
   { "Implementation history" = "history.md" },
-  { "Controlled cutover" = "operations/controlled-cutover.md" },
 ]
 
 extra_css = ["stylesheets/extra.css"]

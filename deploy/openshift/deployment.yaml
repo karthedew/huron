@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: huron
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: api
+    spec:
+      containers:
+        - name: api
+          image: huron
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: HURON_CONFIG_FILE
+              value: /etc/huron/huron.yaml
+          envFrom:
+            - secretRef: {name: huron}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 200m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          # The service mounts no share (D-18): only its configuration and a scratch /tmp.
+          volumeMounts:
+            - name: config
+              mountPath: /etc/huron
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap: {name: huron-config}
+        - name: tmp
+          emptyDir: {}

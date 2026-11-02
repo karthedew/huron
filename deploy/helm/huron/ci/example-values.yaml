@@ -1,0 +1,45 @@
+# A complete example, also what `helm lint` and `helm template` run with in deploy/README.md.
+image:
+  repository: image-registry.openshift-image-registry.svc:5000/huron/huron
+  tag: "1.0.0"
+database:
+  existingSecret: huron-db
+config:
+  store: postgres
+  instance_id: 0192b6a0-0000-7000-8000-000000000001
+  issuer: https://huron.apps.example.org
+  company_issuer: https://login.example.org/realms/company
+  company_audience: huron-cli
+  group_directory_url: https://groups.example.org
+  platform_admin_group: huron-platform-admins
+  organizations:
+    - name: helio
+      display_name: Heliophysics Division
+      description: The Sun, the solar wind and the space environment.
+      groups:
+        org_admin: [huron-helio-admins]
+        catalog_admin: [huron-helio-catalog-admins]
+        contributor: [huron-helio-contributors]
+        reader: [huron-helio-readers]
+      root: /data1/huron
+      export: nfs1:/export/data1
+    - name: geo
+      display_name: Earth Science
+      description: Earth observation and ocean data.
+      groups:
+        org_admin: [huron-geo-admins]
+        catalog_admin: [huron-geo-catalog-admins]
+        contributor: [huron-geo-contributors]
+        reader: [huron-geo-readers]
+      root: /data1/huron
+      export: nfs1:/export/data1
+route:
+  host: huron.apps.example.org
+web:
+  enabled: true
+  origin: https://huron-web.apps.example.org
+  oidc:
+    issuer: https://login.example.org/realms/company
+    existingSecret: huron-web-oidc
+  route:
+    host: huron-web.apps.example.org

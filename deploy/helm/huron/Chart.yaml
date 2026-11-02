@@ -1,0 +1,11 @@
+apiVersion: v2
+name: huron
+description: >-
+  The Huron data lake API (with its database migration and, optionally, the read-only web). The
+  service mounts no share; prepare the declared organizations' directories with
+  `huron adm provision-orgs` on a machine that mounts them.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://huron.dev
+keywords: [huron, data-lake, catalog]

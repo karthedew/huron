@@ -1,27 +1,22 @@
-import { fail, redirect } from '@sveltejs/kit';
-import { createPreviewSession, safeReturnTo } from '$lib/server/auth';
-import type { Actions, PageServerLoad } from './$types';
+import { redirect } from '@sveltejs/kit';
+import { getConfig, publicOrigin } from '$lib/server/config';
+import { SIGN_IN_ERROR_CODES } from '$lib/server/oidc';
+import { safeReturnTo } from '$lib/server/return-to';
+import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ url }) => ({
-	returnTo: safeReturnTo(url.searchParams.get('returnTo')),
-	signedOut: url.searchParams.get('status') === 'signed-out'
-});
+const STATUSES = ['signed-out', 'expired'] as const;
 
-export const actions: Actions = {
-	default: async ({ cookies, request, url }) => {
-		const data = await request.formData();
-		const email = String(data.get('email') ?? '').trim();
-		const password = String(data.get('password') ?? '');
-		const returnTo = safeReturnTo(String(data.get('returnTo') ?? '/'));
+export const load = (({ locals, url }) => {
+	const returnTo = safeReturnTo(url.searchParams.get('returnTo'), publicOrigin(getConfig(), url));
+	if (locals.user !== null) redirect(303, returnTo);
+	return {
+		returnTo,
+		status: known(STATUSES, url.searchParams.get('status')),
+		error: known(SIGN_IN_ERROR_CODES, url.searchParams.get('error'))
+	};
+}) satisfies PageServerLoad;
 
-		if (!email || !password) {
-			return fail(400, {
-				email,
-				message: 'Enter both your email address and password.'
-			});
-		}
-
-		createPreviewSession(cookies, url.protocol === 'https:');
-		redirect(303, returnTo);
-	}
-};
+/** The value when it is one of `codes`; query text is never echoed otherwise. */
+function known<T extends string>(codes: readonly T[], value: string | null): T | null {
+	return codes.find((code) => code === value) ?? null;
+}

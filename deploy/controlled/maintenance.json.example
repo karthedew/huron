@@ -1,4 +1,0 @@
-{
-  "controller_socket": "/run/huron-controller/controller.sock",
-  "database_url": "postgresql://huron_cutover:REPLACE_PRIVATE_PASSWORD@127.0.0.1:5432/huron"
-}

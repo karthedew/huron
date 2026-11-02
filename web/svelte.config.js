@@ -5,12 +5,27 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 const config = {
 	preprocess: vitePreprocess(),
 	kit: {
-		// Node adapter: the UI is server-rendered (design/frontend.html §1) and deployed
-		// alongside the API, not on a serverless platform.
+		// A long-running Node server: sessions and their Huron tokens live in its memory.
 		adapter: adapter(),
 		alias: {
 			$design: 'src/lib/design',
 			$api: 'src/lib/api'
+		},
+		csp: {
+			mode: 'auto',
+			// No form-action: Chromium applies it to the redirect after POST /logout, which
+			// continues to the IdP's end_session_endpoint.
+			directives: {
+				'default-src': ['self'],
+				'script-src': ['self'],
+				'style-src': ['self', 'unsafe-inline'],
+				'img-src': ['self', 'data:'],
+				'font-src': ['self'],
+				'connect-src': ['self'],
+				'object-src': ['none'],
+				'base-uri': ['self'],
+				'frame-ancestors': ['none']
+			}
 		}
 	}
 };

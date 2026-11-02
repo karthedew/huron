@@ -45,11 +45,11 @@ const plugin: Plugin = async ({ client, directory }) => {
       if (input.model.id !== model.modelID || input.model.providerID !== model.providerID) {
         throw new Error("The markdown workflow requires openai/gpt-6-astra; refusing substitution.");
       }
-      output.options.reasoningEffort = "low";
+      output.options.reasoningEffort = "medium";
     },
     tool: {
       implementation_start: tool({
-        description: "Launch one Astra Low implementation/fix/review child asynchronously. Returns its session ID immediately; poll implementation_status. Refuses overlapping or indeterminate children.",
+        description: "Launch one Astra Medium implementation/fix/review child asynchronously. Returns its session ID immediately; poll implementation_status. Refuses overlapping or indeterminate children.",
         args: {
           role: tool.schema.enum(["implementation", "fix", "verification"]),
           title: tool.schema.string().min(1),
@@ -74,8 +74,8 @@ const plugin: Plugin = async ({ client, directory }) => {
             const configured = await client.app.agents({ query, throwOnError: true });
             const selected = configured.data.find((item) => item.name === agent);
             if (selected?.model?.providerID !== model.providerID ||
-                selected.model.modelID !== model.modelID || selected.options.reasoningEffort !== "low") {
-              throw new Error(`Reload OpenCode: ${agent} must be configured for Astra Low.`);
+                selected.model.modelID !== model.modelID || selected.options.reasoningEffort !== "medium") {
+              throw new Error(`Reload OpenCode: ${agent} must be configured for Astra Medium.`);
             }
             const providers = await client.config.providers({ query, throwOnError: true });
             if (!providers.data.providers.some((provider) =>
@@ -96,7 +96,7 @@ const plugin: Plugin = async ({ client, directory }) => {
             } catch {
               return JSON.stringify({ sessionID: id, state: "dispatch-indeterminate", instruction: "Poll this session; do not launch a replacement." });
             }
-            return JSON.stringify({ sessionID: id, state: "submitted", agent, model, reasoningEffort: "low" });
+            return JSON.stringify({ sessionID: id, state: "submitted", agent, model, reasoningEffort: "medium" });
           } finally {
             launching.delete(context.sessionID);
           }

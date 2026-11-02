@@ -1,0 +1,30 @@
+---
+/**
+ * Starlight's search, then the link back to the Huron web as an icon (HuronWebLink.astro) for narrow
+ * screens (astro.config.mjs overrides `Search` with this). This header slot shows at every width
+ * and on every layout. Starlight hides the group beside the theme selector on narrow screens, and
+ * the splash home page has no menu.
+ */
+import Default from '@astrojs/starlight/components/Search.astro';
+import HuronWebLink from './HuronWebLink.astro';
+---
+
+<div class="search-and-web">
+	<Default {...Astro.props} />
+	<HuronWebLink compact />
+</div>
+
+<style>
+	.search-and-web {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	/* Wide screens: the search box fills its header column, as without this wrapper. */
+	@media (min-width: 50rem) {
+		.search-and-web {
+			width: 100%;
+		}
+	}
+</style>
