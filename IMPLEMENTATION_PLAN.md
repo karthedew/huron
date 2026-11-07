@@ -798,12 +798,14 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     --emit-script as the storage administrator`, and `huron adm check` reports
     `share_group_mismatch` until the group on disk matches.
   - `huron adm provision-catalogs [--catalog C] [--dry-run] [--emit-script [--uid U] [--gid GID]]`
-    selects every catalog with a `share_group` whose directory's group differs from it, or below
-    which a directory has `mode_drift` for the setgid bit or the group. This is the selection
-    rule of M11.9 (`provision_catalogs`); a catalog that the CLI cannot read is not selected for
-    that reason only, because the check reports it as `unreadable`. In direct mode (root on a
-    writable mount, or `U` with the right supplementary groups) it runs two lines for each
-    selected catalog: `find <catalog dir> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +`
+    selects every catalog whose directory's group differs from its expected group, or below
+    which a directory has `mode_drift` for the setgid bit or the group. The expected group is the
+    catalog's `share_group`, or `G` (by its gid) for a catalog without one, so a cleared share
+    group whose reset failed is selected too, and `<group>` below is that group. This is the
+    selection rule of M11.9 (`provision_catalogs`); a catalog that the CLI cannot read is not
+    selected for that reason only, because the check reports it as `unreadable`. In direct mode
+    (root on a writable mount, or `U` with the right supplementary groups) it runs two lines for
+    each selected catalog: `find <catalog dir> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +`
     and `find <catalog dir> -type f -exec chmod 0644 {} +`. The first line changes the group of
     directories only; files keep their group. The second line sets the file mode of section 6.2
     (it repairs the `0660` files of version 1). With `--emit-script` it prints the same lines as
@@ -1137,7 +1139,8 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
       permission bits; a missing setgid bit or a wrong directory group needs the storage
       administrator (`huron adm provision-catalogs`).
     - `share_group_mismatch` (warning): a catalog directory whose group is not the catalog's
-      `share_group`, or whose `share_group` the machine cannot resolve.
+      `share_group` (or `G`, by its gid, for a catalog without one), or whose `share_group` the
+      machine cannot resolve.
     - `unreadable` (warning, the path and the `errno`): an entry that the reader cannot list or
       `stat`. It replaces the `PermissionError` that stops the check today. `huron status` uses
       the same rule for its unrecorded files.
@@ -1794,7 +1797,7 @@ organizations of those catalogs (the `org_*` findings, since the 2026-10-31 amen
 | `incomplete` | info | A collection in state `incomplete`. |
 | `stale_draft` | info | A draft older than 30 days. |
 | `mode_drift` | warning | A directory or file whose permission bits are not the ones of section 6.2, a directory below a catalog without the setgid bit or with a group other than its parent's, or an entry whose owner is not `service_uid` (when `/healthz` reports it). `huron adm repair <identifier> --recursive` fixes permission bits only. A missing setgid bit or a wrong directory group needs `huron adm provision-catalogs`. Only the storage administrator can change the owner. The group of a file is never compared. |
-| `share_group_mismatch` | warning | A catalog directory whose group is not the catalog's `share_group`, or a `share_group` that this machine cannot resolve. The storage administrator runs `huron adm provision-catalogs`. |
+| `share_group_mismatch` | warning | A catalog directory whose group is not the catalog's `share_group` (or `G`, by its gid, for a catalog without one), or a `share_group` that this machine cannot resolve. The storage administrator runs `huron adm provision-catalogs`. |
 | `unreadable` | warning | An entry that the account running the check cannot list or stat. The detail gives the path and the errno. Run the check as `U` or as an account in `G` and in every share group. |
 
 Every finding needs the read-only mount. A complete check needs `U` (from an API pod:
@@ -3733,8 +3736,11 @@ failed inheritance visible.
   - `src/huron/core/storage/check.py`: `ExpectedDirectory`, `ExpectedCollection` and
     `ExpectedOrganization` carry `mode`, `group` and `owner` in place of `plan`. `mode_drift`
     covers the mode and the owner, and for a directory below a catalog also a missing setgid bit
-    or a group other than the catalog's share group. `share_group_mismatch` compares the catalog
-    directory's group by name through `grp.getgrnam` and reports a name it cannot resolve.
+    or a group other than the catalog directory's expected group. `share_group_mismatch`
+    compares the catalog directory's group with the catalog's share group by name through
+    `grp.getgrnam` and reports a name it cannot resolve; for a catalog without a share group it
+    compares with `G` by gid (`service_user.gid` from `/healthz`). `provision-catalogs` selects
+    and targets a catalog without a share group the same way, with `G`'s gid as its group.
     Neither finding compares the group of a file. `unreadable` (warning, the path and the
     errno) replaces the `PermissionError` for any entry the reader cannot list or stat.
     `acl_drift` and `org_acl_drift` are gone. `huron status` uses the same `unreadable` rule.
