@@ -77,6 +77,11 @@ export interface CatalogWriteOut {
 	warnings: ShareWarningOut[];
 }
 
+/** The id tusd gives the new upload: the id of the API's upload row. */
+export interface ChangeFileInfo {
+	ID: string;
+}
+
 /** A new draft collection. */
 export interface CollectionIn {
 	metadata?: Record<string, unknown> | null;
@@ -163,6 +168,12 @@ export interface ExchangeOut {
 	token_type?: string;
 }
 
+/** Why the API could not place an upload. */
+export interface FailureOut {
+	code: string;
+	message: string;
+}
+
 /** A recorded file. */
 export interface FileOut {
 	commit_id: string;
@@ -205,6 +216,18 @@ export interface GroupsOut {
 	role: string;
 }
 
+/**
+ * What tusd merges into its response to the client.
+ * 
+ * A refusal sets the status, the problem media type and the problem document as text. A
+ * finished upload adds the receipt headers and keeps tusd's status.
+ */
+export interface HTTPResponse {
+	Body?: string | null;
+	Header?: Record<string, string> | null;
+	StatusCode?: number | null;
+}
+
 export interface HTTPValidationError {
 	detail?: ValidationError[];
 }
@@ -226,6 +249,49 @@ export interface Health {
 	upload_hook_timeout: number;
 	uploads_url: string | null;
 	version: string;
+}
+
+/** What happened: the upload and the client's request. */
+export interface HookEvent {
+	HTTPRequest?: HookHTTPRequest;
+	Upload: HookUpload;
+}
+
+/** The client's request that made tusd send the hook; ``uri`` names the tus resource. */
+export interface HookHTTPRequest {
+	URI?: string;
+}
+
+/** A hook call from tusd. */
+export interface HookRequest {
+	Event: HookEvent;
+	Type: HookType;
+}
+
+/**
+ * The API's answer to a hook.
+ * 
+ * ``RejectUpload`` refuses a creation and ``RejectTermination`` a termination. A refused
+ * ``pre-finish`` has only ``HTTPResponse``: tusd still counts that upload as finished.
+ */
+export interface HookResponse {
+	ChangeFileInfo?: ChangeFileInfo | null;
+	HTTPResponse?: HTTPResponse | null;
+	RejectTermination?: boolean | null;
+	RejectUpload?: boolean | null;
+}
+
+/** The blocking hooks tusd sends to the API. */
+export type HookType = 'pre-create' | 'pre-finish' | 'pre-terminate';
+
+/** The upload a hook is about. ``id`` is empty before ``pre-create`` names it. */
+export interface HookUpload {
+	ID?: string;
+	IsFinal?: boolean;
+	IsPartial?: boolean;
+	MetaData?: Record<string, string> | null;
+	Size?: number;
+	SizeIsDeferred?: boolean;
 }
 
 /** Whether the namespace may hold collections. */
@@ -398,6 +464,18 @@ export type SortField = 'name' | 'created_by' | 'created_at';
 
 /** The lifecycle state of a collection. */
 export type State = 'draft' | 'active' | 'incomplete';
+
+/** An upload and its receipt, for its creator. */
+export interface UploadOut {
+	collection_id: string;
+	failure: FailureOut | null;
+	id: string;
+	rel_path: string;
+	sha256: string | null;
+	size: number;
+	/** pending, placed, failed, terminated or committed. */
+	state: string;
+}
 
 export interface ValidationError {
 	ctx?: Record<string, unknown>;

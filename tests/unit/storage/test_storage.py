@@ -23,6 +23,7 @@ from huron.core.storage import (
     GroupResult,
     Marker,
     Ownership,
+    Storage,
     StorageError,
     diff,
     is_reserved_entry,
@@ -500,3 +501,152 @@ def test_memory_device_follows_the_mount_points(memory: MemoryStorage) -> None:
     assert memory.device(LAKE / "geo") == memory.device(LAKE / "geo" / "cat") == 7
     with pytest.raises(StorageError, match="does not exist"):
         memory.device(LAKE / "missing")
+
+
+@pytest.fixture(params=["posix", "memory"])
+def share(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Storage, Path]:
+    """Each adapter with a setgid directory of the caller's group to work in."""
+    if request.param == "posix":
+        base = tmp_path / "share"
+        base.mkdir()
+        os.chmod(base, 0o2750)
+        return storage_for("none"), base
+    memory = MemoryStorage(LAKE, user="huron", uid=1000, gid=1000)
+    memory.nodes[LAKE / "share"] = Node(owner="huron", mode=0o2750, uid=1000, gid=1000)
+    return memory, LAKE / "share"
+
+
+def test_make_inheriting_dir_inherits_setgid_and_the_group(share: tuple[Storage, Path]) -> None:
+    storage, base = share
+    target = base / "run7"
+    assert storage.make_inheriting_dir(target) is True
+    assert storage.owner(target).mode == DIRECTORY_MODE
+    assert storage.owner(target).gid == storage.owner(base).gid
+    assert storage.make_inheriting_dir(target) is False
+
+
+def test_make_inheriting_dir_refusals(share: tuple[Storage, Path]) -> None:
+    storage, base = share
+    storage.write_bytes(base / "file", b"")
+    with pytest.raises(StorageError, match="File exists"):
+        storage.make_inheriting_dir(base / "file")
+    storage.make_directory(base / "plain", 0o750)
+    storage.set_mode(base / "plain", 0o750)
+    with pytest.raises(StorageError, match="did not inherit the setgid bit"):
+        storage.make_inheriting_dir(base / "plain" / "d")
+    assert not storage.exists(base / "plain" / "d")
+    with pytest.raises(StorageError):
+        storage.make_inheriting_dir(base / "missing" / "d")
+
+
+def test_an_open_file_reports_from_its_descriptor(share: tuple[Storage, Path]) -> None:
+    storage, base = share
+    storage.write_bytes(base / "upload", b"payload", 0o600)
+    opened = storage.open_file(base / "upload")
+    assert opened is not None
+    try:
+        assert (opened.size, opened.inode) == (7, storage.inode(base / "upload"))
+        assert opened.sha256() == hashlib.sha256(b"payload").hexdigest()
+        opened.set_mode(FILE_MODE)
+    finally:
+        opened.close()
+    assert storage.owner(base / "upload").mode == FILE_MODE
+    assert storage.open_file(base / "missing") is None
+
+
+def test_link_gives_a_file_a_new_name(share: tuple[Storage, Path]) -> None:
+    storage, base = share
+    storage.write_bytes(base / "upload", b"new")
+    assert storage.link(base / "upload", base / "a.bin", ".a.bin.1.huron-part") is True
+    assert storage.inode(base / "a.bin") == storage.inode(base / "upload")
+    assert storage.read_bytes(base / "a.bin") == b"new"
+
+
+@pytest.mark.parametrize("stale_part", [False, True], ids=["no-part", "stale-part"])
+def test_link_replaces_an_existing_file(share: tuple[Storage, Path], stale_part: bool) -> None:
+    storage, base = share
+    storage.write_bytes(base / "upload", b"new")
+    storage.write_bytes(base / "a.bin", b"old")
+    if stale_part:
+        storage.write_bytes(base / ".a.bin.1.huron-part", b"stale")
+    assert storage.link(base / "upload", base / "a.bin", ".a.bin.1.huron-part") is True
+    assert storage.read_bytes(base / "a.bin") == b"new"
+    assert storage.inode(base / "a.bin") == storage.inode(base / "upload")
+    assert not storage.exists(base / ".a.bin.1.huron-part")
+
+
+def test_link_without_a_source_is_false(share: tuple[Storage, Path]) -> None:
+    storage, base = share
+    assert storage.link(base / "missing", base / "a.bin", ".a.bin.1.huron-part") is False
+    assert not storage.exists(base / "a.bin")
+    storage.write_bytes(base / "upload", b"new")
+    with pytest.raises(StorageError):
+        storage.link(base / "upload", base / "missing" / "a.bin", ".a.bin.1.huron-part")
+
+
+def test_inode_of_a_missing_path_is_none(share: tuple[Storage, Path]) -> None:
+    storage, base = share
+    assert storage.inode(base / "missing") is None
+    assert storage.inode(base) is not None
+
+
+def test_posix_link_and_open_failures_are_storage_errors(
+    tmp_path: Path, posix: PosixStorage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "upload"
+    source.write_bytes(b"new")
+    (tmp_path / "a.bin").mkdir()
+    with pytest.raises(StorageError, match="Is a directory"):
+        posix.link(source, tmp_path / "a.bin", ".a.bin.1.huron-part")
+    with pytest.raises(StorageError, match="Not a directory"):
+        posix.inode(source / "x")
+    os.chmod(source, 0)
+    with pytest.raises(StorageError, match="permission denied"):
+        posix.open_file(source)
+    os.chmod(source, 0o600)
+    opened: list[int] = []
+    real_open, real_fstat = os.open, os.fstat
+
+    def recording_open(path: Path, flags: int) -> int:
+        opened.append(real_open(path, flags))
+        return opened[-1]
+
+    def failing_fstat(descriptor: int) -> os.stat_result:
+        if descriptor in opened:
+            raise OSError(errno.EIO, "Input/output error")
+        return real_fstat(descriptor)
+
+    monkeypatch.setattr(os, "open", recording_open)
+    monkeypatch.setattr(os, "fstat", failing_fstat)
+    with pytest.raises(StorageError, match="Input/output error"):
+        posix.open_file(source)
+    monkeypatch.undo()
+    with pytest.raises(OSError, match="Bad file descriptor"):
+        real_fstat(opened[0])  # the failed open released its descriptor
+
+
+def test_memory_open_file_refuses_a_directory_and_a_foreign_file(memory: MemoryStorage) -> None:
+    with pytest.raises(StorageError, match="Is a directory"):
+        memory.open_file(LAKE)
+    memory.nodes[LAKE / "theirs"] = Node(owner="root", mode=0o600, uid=0, gid=0, data=b"")
+    opened = memory.open_file(LAKE / "theirs")
+    assert opened is not None
+    with pytest.raises(StorageError, match="permission denied"):
+        opened.set_mode(FILE_MODE)
+
+
+def test_memory_without_inheritance_refuses_new_directories(memory: MemoryStorage) -> None:
+    memory.inherits = False
+    with pytest.raises(StorageError, match="did not inherit"):
+        memory.make_inheriting_dir(LAKE / "d")
+    memory.denied.add(LAKE)
+    memory.inherits = True
+    with pytest.raises(StorageError, match="permission denied"):
+        memory.make_inheriting_dir(LAKE / "d")
+
+
+def test_memory_link_into_a_denied_directory_is_refused(memory: MemoryStorage) -> None:
+    memory.write_bytes(LAKE / "upload", b"new")
+    memory.denied.add(LAKE)
+    with pytest.raises(StorageError, match="permission denied"):
+        memory.link(LAKE / "upload", LAKE / "a.bin", ".a.bin.1.huron-part")

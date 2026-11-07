@@ -12,7 +12,7 @@ from huron.applications.api.openapi import document, main
 from huron.core.storage import UPLOAD_DIR, LakeUnavailable
 from tests.support.api import INSTANCE_ID, Service, service
 from tests.support.clock import START, frozen
-from tests.support.disk import LAKE, StalledStorage, memory_disk, memory_lake
+from tests.support.disk import LAKE, StalledStorage, lake_disk, memory_lake
 
 
 async def test_health_reports_the_instance(api: Service) -> None:
@@ -55,7 +55,7 @@ async def test_readiness_fails_when_the_lake_is_not_writable() -> None:
     clock = frozen()
     storage = memory_lake()
     storage.denied.add(LAKE / UPLOAD_DIR)
-    async with service(disk=memory_disk(storage, clock), clock=clock, lake_path=LAKE) as running:
+    async with service(disk=lake_disk(storage, clock), clock=clock, lake_path=LAKE) as running:
         ready = await running.client.get("/readyz")
     assert ready.status_code == 503
     assert ready.json() == {
@@ -67,7 +67,7 @@ async def test_readiness_fails_when_the_lake_is_not_writable() -> None:
 async def test_readiness_fails_when_the_lake_probe_does_not_answer_in_time() -> None:
     clock = frozen()
     stalled = StalledStorage()
-    disk = memory_disk(stalled, clock, probe_timeout=0.01)
+    disk = lake_disk(stalled, clock, probe_timeout=0.01)
     try:
         async with service(disk=disk, clock=clock, lake_path=LAKE) as running:
             ready = await running.client.get("/readyz")
@@ -87,7 +87,7 @@ async def test_a_lake_the_api_cannot_write_stops_startup() -> None:
     storage = memory_lake()
     storage.denied.add(LAKE)
     with pytest.raises(LakeUnavailable, match="cannot write the lake"):
-        async with service(disk=memory_disk(storage, clock), clock=clock, lake_path=LAKE):
+        async with service(disk=lake_disk(storage, clock), clock=clock, lake_path=LAKE):
             pass
 
 

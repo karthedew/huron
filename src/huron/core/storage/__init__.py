@@ -1,4 +1,4 @@
-"""Share layout, modes, ACL plans, the storage adapters and the in-process path locks."""
+"""Share layout, modes, ACL plans, the storage adapters, placement and the in-process locks."""
 
 from huron.core.storage.aclplan import AclPlan, EffectiveGroups, diff, plan
 from huron.core.storage.errors import LakeUnavailable, OutsideLake, StorageError
@@ -26,11 +26,19 @@ from huron.core.storage.marker import (
     render_marker,
     verify_marker,
 )
+from huron.core.storage.placement import (
+    CollectionDirectoryMissing,
+    Linked,
+    Measured,
+    Placer,
+    SourceGone,
+)
 from huron.core.storage.ports import (
     SHARE_GROUP_PENDING,
     FileStamp,
     GroupOutcome,
     GroupResult,
+    OpenFile,
     Ownership,
     ShareReader,
     ShareWarning,
@@ -47,20 +55,26 @@ __all__ = [
     "UPLOAD_DIR",
     "UPLOAD_DIR_MODE",
     "AclPlan",
+    "CollectionDirectoryMissing",
     "DirectoryKind",
     "EffectiveGroups",
     "FileStamp",
     "GroupOutcome",
     "GroupResult",
     "LakeUnavailable",
+    "Linked",
     "Marker",
     "MarkerState",
+    "Measured",
+    "OpenFile",
     "OrganizationPlace",
     "OutsideLake",
     "Ownership",
     "PathLocks",
+    "Placer",
     "ShareReader",
     "ShareWarning",
+    "SourceGone",
     "Storage",
     "StorageError",
     "diff",

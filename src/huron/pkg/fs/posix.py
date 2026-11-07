@@ -17,13 +17,18 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 __all__ = [
+    "INHERITING_DIR_MODE",
     "PART_SUFFIX",
     "Entry",
+    "InheritanceError",
     "Stamp",
     "atomic_copy",
     "atomic_write",
+    "inode",
     "is_dir",
+    "link_into_place",
     "make_dir",
+    "make_inheriting_dir",
     "remove_empty_dir",
     "remove_file",
     "stat",
@@ -31,6 +36,9 @@ __all__ = [
 ]
 
 PART_SUFFIX = ".huron-part"
+#: The permission bits :func:`make_inheriting_dir` asks for; the setgid bit must come from the
+#: parent.
+INHERITING_DIR_MODE = 0o750
 
 type EntryKind = Literal["file", "dir", "other"]
 
@@ -54,6 +62,10 @@ class Entry:
     is_symlink: bool
 
 
+class InheritanceError(OSError):
+    """A new directory did not inherit the setgid bit and the group of its parent."""
+
+
 def make_dir(path: Path, mode: int) -> bool:
     """Create ``path`` with ``mode`` exactly, or fix the mode of an existing directory.
 
@@ -71,6 +83,60 @@ def make_dir(path: Path, mode: int) -> bool:
     if statmodule.S_IMODE(info.st_mode) != mode:
         os.chmod(path, mode)
     return False
+
+
+def make_inheriting_dir(path: Path) -> bool:
+    """Create ``path`` with mode ``0750`` and require the setgid bit and group of its parent.
+
+    ``mkdir`` applies only the permission bits, so the setgid bit and the group of the new
+    directory come from the filesystem's inheritance alone. The mode is never fixed with
+    ``chmod``: a caller outside the directory's group would clear the setgid bit without an
+    error. A directory that did not inherit both is removed again and :class:`InheritanceError`
+    is raised. Returns ``False`` for an existing directory, which is adopted as it is.
+    """
+    try:
+        os.mkdir(path, INHERITING_DIR_MODE)
+    except FileExistsError:
+        if is_dir(path):
+            return False
+        raise
+    made, parent = os.lstat(path), os.lstat(path.parent)
+    if not made.st_mode & statmodule.S_ISGID or made.st_gid != parent.st_gid:
+        os.rmdir(path)
+        raise InheritanceError(
+            f"{path} did not inherit the setgid bit and the group {parent.st_gid} of its parent"
+        )
+    return True
+
+
+def link_into_place(source: Path, destination: Path, part_name: str) -> None:
+    """Hard-link ``source`` to ``destination``, replacing an existing ``destination`` atomically.
+
+    A new name is one ``link``. An existing name is replaced by a link to ``part_name`` beside
+    it and a ``rename`` over it; a part file left by an earlier attempt is replaced first. The
+    directory is flushed to disk afterwards. Raises ``FileNotFoundError`` when ``source`` does
+    not exist.
+    """
+    try:
+        os.link(source, destination, follow_symlinks=False)
+    except FileExistsError:
+        part = destination.with_name(part_name)
+        try:
+            os.link(source, part, follow_symlinks=False)
+        except FileExistsError:
+            os.unlink(part)
+            os.link(source, part, follow_symlinks=False)
+        try:
+            os.rename(part, destination)
+        finally:
+            # rename does nothing when both names already link one inode; the part stays then.
+            remove_file(part)
+    _sync_directory(destination.parent)
+
+
+def inode(path: Path) -> int:
+    """The inode number of ``path``, without following a final symlink."""
+    return os.lstat(path).st_ino
 
 
 def atomic_copy(source: Path, destination: Path, part_suffix: str = PART_SUFFIX) -> tuple[int, str]:
@@ -148,6 +214,14 @@ def is_dir(path: Path) -> bool:
         return statmodule.S_ISDIR(os.lstat(path).st_mode)
     except FileNotFoundError:
         return False
+
+
+def _sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _walk(root: Path, prefix: str) -> Iterator[Entry]:

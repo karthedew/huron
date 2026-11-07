@@ -3566,7 +3566,31 @@ failed inheritance visible.
 - Verification: `make gate`; `uv run pytest tests/unit/api/test_openapi_snapshot.py
   tests/unit/test_error_contract.py`; from `web/`, `npm run check` and `npm test`.
 - Dependencies: M11.3.
-- Status: pending
+- Status: complete
+- Execution notes: measuring needs one descriptor for `fstat`, the hash and `fchmod`, so the
+  storage port gained a fourth method, `Storage.open_file(path) -> OpenFile | None` (`size`,
+  `inode`, `sha256()`, `set_mode()`, `close()`; `None` on `ENOENT`). `Storage.link` returns
+  `False` when the source is gone, `Storage.inode` returns `None` for a missing path, and
+  `make_inheriting_dir` returns whether it made the directory (an existing one is adopted); a
+  directory that did not inherit setgid and the group is removed again before
+  `pkg.fs.posix.InheritanceError` (an `OSError`, so `STORAGE_FAILED`) is raised, so a retry
+  cannot adopt it. `link_into_place` removes the part file after the `rename`, because a
+  `rename` between two links of one inode does nothing. `Placer(storage, lake_path)` also gives
+  `upload_file(id)` and `info_file(id)`. `LakeDisk.place(uploads, actor, upload, destination)`
+  takes the `Uploads` operations, the actor for the re-read and the `Upload` (its `rel_path`
+  gives the collection directory). The link, the receipt, the undo and the whole idempotent
+  branch run in one hold of the destination's path lock (`LakeDisk._hold`, which `run` now uses
+  too), so a cancelled caller still waits for the receipt. The hooks route answers a refusal for
+  every 4xx and for `CollectionDirectoryMissing`; every other 5xx is an HTTP error that tusd
+  retries. A refusal's `Body` is the problem document as JSON text (tusd's `HTTPResponse.Body`
+  is a string), with `instance` the tus request URI; a finished upload's answer sets only
+  `Header`, so tusd keeps its own status. The missing-directory hint is `run huron adm repair
+  for the collection` (the placement does not know the identifier). The auth route requires the
+  canonical lowercase UUID and answers rules 2 and 3 with one 403 (`the path names no upload`);
+  every 401 carries `WWW-Authenticate: Bearer`. `UPLOAD_SIZE_MISMATCH` now reads `but the file
+  has N bytes`. Tests: `tests/support/disk.py`'s `memory_disk` is `lake_disk` (any `Storage`,
+  `service_gid=`) with `PausingStorage`; `tests/support/tusd.py` has `FakeTusd`,
+  `UploadTarget` and `upload_target`; `tests/support/api.py` has `active_collection`.
 
 #### M11.5 Directory verbs and repair in the API
 

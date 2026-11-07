@@ -14,6 +14,7 @@ from huron.applications.api.routes.v1.endpoints import (
     namespaces,
     organizations,
     schemas,
+    uploads,
 )
 
 __all__ = ["router"]
@@ -28,6 +29,7 @@ for module in (
     namespaces,
     collections,
     files,
+    uploads,
     admin,
 ):
     router.include_router(module.router)

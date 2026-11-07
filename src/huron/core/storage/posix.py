@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import grp
+import hashlib
 import os
 import stat
 from pathlib import Path, PurePosixPath
@@ -13,7 +14,7 @@ from huron.core.storage.errors import StorageError
 from huron.core.storage.ports import FileStamp, GroupOutcome, GroupResult, Ownership
 from huron.pkg.fs import posix
 from huron.pkg.fs.acl import Acl, AclEntry, Runner, read_acl, write_acl
-from huron.pkg.hashing import sha256_file
+from huron.pkg.hashing import CHUNK_SIZE, sha256_file
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -134,6 +135,49 @@ class PosixStorage:
         if mode is not None:
             _guard(lambda: os.chmod(path, mode), path)
 
+    def make_inheriting_dir(self, path: Path) -> bool:
+        """Create ``path`` with mode ``0750``; it must inherit setgid and group from its parent."""
+        return _guard(lambda: posix.make_inheriting_dir(path), path)
+
+    def open_file(self, path: Path) -> _PosixFile | None:
+        """Open a file read-only without following a final link; ``None`` when it is absent.
+
+        Opening makes an NFS client read the file's attributes again, so the descriptor's size
+        and inode are the server's.
+        """
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise _storage_error(path, error) from error
+        try:
+            return _PosixFile(path, descriptor)
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def link(self, source: Path, destination: Path, part_name: str) -> bool:
+        """Hard-link ``source`` to ``destination``; ``False`` when ``source`` does not exist."""
+        try:
+            posix.link_into_place(source, destination, part_name)
+        except FileNotFoundError as error:
+            if not os.path.lexists(source):
+                return False
+            raise _storage_error(destination, error) from error
+        except OSError as error:
+            raise _storage_error(destination, error) from error
+        return True
+
+    def inode(self, path: Path) -> int | None:
+        """The inode number of ``path``; ``None`` when it does not exist."""
+        try:
+            return posix.inode(path)
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise _storage_error(path, error) from error
+
     def read_bytes(self, path: Path) -> bytes | None:
         """The bytes of a file, or ``None``."""
         try:
@@ -173,6 +217,37 @@ class PosixStorage:
     def owned_by_me(self, path: Path) -> bool:
         """Whether the current user owns ``path``."""
         return os.lstat(path).st_uid == os.getuid()
+
+
+class _PosixFile:
+    """A read-only descriptor of a file on the share."""
+
+    def __init__(self, path: Path, descriptor: int) -> None:
+        self._path = path
+        self._descriptor = descriptor
+        info = _guard(lambda: os.fstat(descriptor), path)
+        self.size = info.st_size
+        self.inode = info.st_ino
+
+    def sha256(self) -> str:
+        """The sha256 of the bytes, read from the start of the descriptor."""
+        return _guard(self._digest, self._path)
+
+    def set_mode(self, mode: int) -> None:
+        """Give the file exactly ``mode`` through the descriptor."""
+        _guard(lambda: os.fchmod(self._descriptor, mode), self._path)
+
+    def close(self) -> None:
+        """Release the descriptor."""
+        os.close(self._descriptor)
+
+    def _digest(self) -> str:
+        digest = hashlib.sha256()
+        offset = 0
+        while block := os.pread(self._descriptor, CHUNK_SIZE, offset):
+            digest.update(block)
+            offset += len(block)
+        return digest.hexdigest()
 
 
 def _guard[T](action: Callable[[], T], path: Path) -> T:

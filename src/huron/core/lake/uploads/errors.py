@@ -55,7 +55,7 @@ class UploadSizeMismatch(HuronError):
 
     def __init__(self, declared: int, received: int) -> None:
         super().__init__(
-            f"the upload declared {declared} bytes, but the receipt has {received} bytes",
+            f"the upload declared {declared} bytes, but the file has {received} bytes",
             {"declared": declared, "received": received},
         )
 

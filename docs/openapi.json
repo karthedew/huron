@@ -345,6 +345,20 @@
         "title": "CatalogWriteOut",
         "type": "object"
       },
+      "ChangeFileInfo": {
+        "description": "The id tusd gives the new upload: the id of the API's upload row.",
+        "properties": {
+          "ID": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ID"
+        ],
+        "title": "ChangeFileInfo",
+        "type": "object"
+      },
       "CollectionIn": {
         "description": "A new draft collection.",
         "properties": {
@@ -745,6 +759,25 @@
         "title": "ExchangeOut",
         "type": "object"
       },
+      "FailureOut": {
+        "description": "Why the API could not place an upload.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "FailureOut",
+        "type": "object"
+      },
       "FileOut": {
         "description": "A recorded file.",
         "properties": {
@@ -916,6 +949,49 @@
         "title": "GroupsOut",
         "type": "object"
       },
+      "HTTPResponse": {
+        "description": "What tusd merges into its response to the client.\n\nA refusal sets the status, the problem media type and the problem document as text. A\nfinished upload adds the receipt headers and keeps tusd's status.",
+        "properties": {
+          "Body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "Header": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Header"
+          },
+          "StatusCode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statuscode"
+          }
+        },
+        "title": "HTTPResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -984,6 +1060,156 @@
           "upload_hook_timeout"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "HookEvent": {
+        "description": "What happened: the upload and the client's request.",
+        "properties": {
+          "HTTPRequest": {
+            "$ref": "#/components/schemas/HookHTTPRequest"
+          },
+          "Upload": {
+            "$ref": "#/components/schemas/HookUpload"
+          }
+        },
+        "required": [
+          "Upload"
+        ],
+        "title": "HookEvent",
+        "type": "object"
+      },
+      "HookHTTPRequest": {
+        "description": "The client's request that made tusd send the hook; ``uri`` names the tus resource.",
+        "properties": {
+          "URI": {
+            "default": "",
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "title": "HookHTTPRequest",
+        "type": "object"
+      },
+      "HookRequest": {
+        "description": "A hook call from tusd.",
+        "properties": {
+          "Event": {
+            "$ref": "#/components/schemas/HookEvent"
+          },
+          "Type": {
+            "$ref": "#/components/schemas/HookType"
+          }
+        },
+        "required": [
+          "Type",
+          "Event"
+        ],
+        "title": "HookRequest",
+        "type": "object"
+      },
+      "HookResponse": {
+        "description": "The API's answer to a hook.\n\n``RejectUpload`` refuses a creation and ``RejectTermination`` a termination. A refused\n``pre-finish`` has only ``HTTPResponse``: tusd still counts that upload as finished.",
+        "properties": {
+          "ChangeFileInfo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChangeFileInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "HTTPResponse": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HTTPResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "RejectTermination": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejecttermination"
+          },
+          "RejectUpload": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejectupload"
+          }
+        },
+        "title": "HookResponse",
+        "type": "object"
+      },
+      "HookType": {
+        "description": "The blocking hooks tusd sends to the API.",
+        "enum": [
+          "pre-create",
+          "pre-finish",
+          "pre-terminate"
+        ],
+        "title": "HookType",
+        "type": "string"
+      },
+      "HookUpload": {
+        "description": "The upload a hook is about. ``id`` is empty before ``pre-create`` names it.",
+        "properties": {
+          "ID": {
+            "default": "",
+            "title": "Id",
+            "type": "string"
+          },
+          "IsFinal": {
+            "default": false,
+            "title": "Isfinal",
+            "type": "boolean"
+          },
+          "IsPartial": {
+            "default": false,
+            "title": "Ispartial",
+            "type": "boolean"
+          },
+          "MetaData": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "Size": {
+            "default": 0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "SizeIsDeferred": {
+            "default": false,
+            "title": "Sizeisdeferred",
+            "type": "boolean"
+          }
+        },
+        "title": "HookUpload",
         "type": "object"
       },
       "NamespaceConfigureIn": {
@@ -1843,6 +2069,64 @@
         ],
         "title": "State",
         "type": "string"
+      },
+      "UploadOut": {
+        "description": "An upload and its receipt, for its creator.",
+        "properties": {
+          "collection_id": {
+            "title": "Collection Id",
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FailureOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "rel_path": {
+            "title": "Rel Path",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "state": {
+            "description": "pending, placed, failed, terminated or committed.",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "collection_id",
+          "rel_path",
+          "size",
+          "state",
+          "sha256",
+          "failure"
+        ],
+        "title": "UploadOut",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -4698,6 +4982,145 @@
         "summary": "Get Resolved Schema",
         "tags": [
           "schemas"
+        ]
+      }
+    },
+    "/api/v1/uploads/auth": {
+      "get": {
+        "description": "Whether the upload proxy may pass a request to tusd (204), or not (401, 403).\n\nA creation (``POST /files/``) needs a bearer token, which ``pre-create`` verifies. Any\nrequest on ``/files/<id>`` needs a valid token of the user who started upload ``<id>``.",
+        "operationId": "authorize_api_v1_uploads_auth_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Original-Method",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Original-Method",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Original-URI",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Original-Uri",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No valid token"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Authorize",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/api/v1/uploads/hooks": {
+      "post": {
+        "description": "Answer one of tusd's blocking hooks: ``pre-create``, ``pre-finish`` or ``pre-terminate``.\n\n``pre-create`` starts the upload row and names the tus upload after it. ``pre-finish``\nplaces the finished upload and answers its receipt in the ``Huron-Upload-Id`` and\n``Huron-Sha256`` headers. ``pre-terminate`` ends an upload that was never placed.",
+        "operationId": "hooks_api_v1_uploads_hooks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HookResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hooks",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/api/v1/uploads/{upload_id}": {
+      "get": {
+        "description": "The state of an upload the caller started, its receipt and why it failed.",
+        "operationId": "get_upload_api_v1_uploads__upload_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Upload",
+        "tags": [
+          "uploads"
         ]
       }
     },

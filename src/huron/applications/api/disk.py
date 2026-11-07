@@ -11,33 +11,44 @@ import asyncio
 import contextlib
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 import structlog
 
+from huron.core.lake.uploads.errors import UploadNotFound, UploadStateConflict
+from huron.core.lake.uploads.models import UploadState
 from huron.core.storage import (
     MARKER_FILE,
     SHARE_GROUP_PENDING,
     UPLOAD_DIR,
     UPLOAD_DIR_MODE,
+    CollectionDirectoryMissing,
     GroupOutcome,
     GroupResult,
     LakeUnavailable,
+    Measured,
     OrganizationPlace,
     OutsideLake,
+    Placer,
     ShareWarning,
+    SourceGone,
     StorageError,
     place_of,
     verify_marker,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
     from datetime import datetime
     from pathlib import Path
 
     from huron.core.lake.organizations.declarations import Declarations
+    from huron.core.lake.uploads.models import Destination, Upload
+    from huron.core.lake.uploads.operations import Uploads
+    from huron.core.security.rbac import Actor
     from huron.core.storage import PathLocks, Storage
     from huron.pkg.clock import Clock
 
@@ -85,6 +96,7 @@ class LakeDisk:
         self._service_gid = service_gid
         self._clock = clock
         self._probe_timeout = probe_timeout
+        self._placer = Placer(storage, lake_path)
         self._pool = ThreadPoolExecutor(DISK_WORKERS, thread_name_prefix="huron-disk")
         self._probe: asyncio.Future[bool] | None = None
         self._probed: tuple[datetime, bool] | None = None
@@ -153,15 +165,7 @@ class LakeDisk:
         ``action`` raises after its caller is cancelled, the error goes to the log, because no
         caller is left.
         """
-        async with self._locks.hold(path):
-            work = asyncio.get_running_loop().run_in_executor(self._pool, action)
-            try:
-                return await asyncio.shield(work)
-            except asyncio.CancelledError:
-                await _settled(work)
-                if not work.cancelled() and (error := work.exception()) is not None:
-                    _log.error("disk.cancelled_action_failed", path=str(path), error=repr(error))
-                raise
+        return await self._hold(path, lambda: self._submit(action))
 
     async def set_share_group(self, catalog_path: str, group: str | None) -> ShareWarning | None:
         """Try to give the catalog directory its share group, or the service group for ``None``.
@@ -183,8 +187,90 @@ class LakeDisk:
             return None
         return ShareWarning(SHARE_GROUP_PENDING, f"{target}", result.reason or "")
 
+    async def place(
+        self, uploads: Uploads, actor: Actor, upload: Upload, destination: Destination
+    ) -> Upload:
+        """Place the actor's pending ``upload`` at ``destination`` and record its receipt.
+
+        The hash runs outside every lock. The link, the removal of tusd's files and the receipt
+        run under the lock of the destination path. A receipt refused because the collection or
+        the upload ended during the hash takes the placed file away again and raises the
+        refusal. A path outside the lake and a missing collection directory fail the upload.
+        When the upload's file is gone, another attempt moved it: the upload's state, or the
+        file at the destination, decides. Raises ``STORAGE_FAILED`` when neither proves the
+        placement, and ``LAKE_UNAVAILABLE`` when the lake or its marker refuses the write.
+        """
+        try:
+            path = await self.resolve(destination.path)
+        except OutsideLake as error:
+            await uploads.fail(upload.id, error.code, error.message)
+            raise
+        await self.check_marker(self.place_of(_organization(destination.path)))
+        source = self._placer.upload_file(upload.id)
+        measured = await self._call(lambda: self._placer.measure(source, upload.size))
+        depth = len(PurePosixPath(upload.rel_path).parts)
+        placement = _Placement(uploads, actor, upload, path, path.parents[depth - 1])
+        return await self._hold(path, lambda: self._settle(placement, measured))
+
+    async def _settle(self, placement: _Placement, measured: Measured | None) -> Upload:
+        if measured is None:
+            return await self._replay(placement)
+        upload, path = placement.upload, placement.path
+        source, info = self._placer.upload_file(upload.id), self._placer.info_file(upload.id)
+        try:
+            linked = await self._call(
+                lambda: self._placer.link(source, info, path, placement.collection_dir, upload.id)
+            )
+        except CollectionDirectoryMissing as error:
+            await placement.uploads.fail(upload.id, error.code, error.message)
+            raise
+        except SourceGone:
+            return await self._replay(placement)
+        try:
+            return await placement.uploads.receipt(
+                upload.id, measured.size, measured.sha256, measured.inode
+            )
+        except (UploadNotFound, UploadStateConflict):
+            await self._call(lambda: self._placer.undo(path, measured.inode, linked.made_dirs))
+            raise
+
+    async def _replay(self, placement: _Placement) -> Upload:
+        upload, path = placement.upload, placement.path
+        current = await placement.uploads.get(placement.actor, upload.id)
+        if current.state in {UploadState.PLACED, UploadState.COMMITTED}:
+            return current
+        if current.state is UploadState.PENDING:
+            measured = await self._call(lambda: self._placer.measure_destination(path, upload.size))
+            if measured is not None:
+                return await placement.uploads.receipt(
+                    upload.id, measured.size, measured.sha256, measured.inode
+                )
+        raise StorageError(
+            f"the file of upload {upload.id} is gone, and {path} does not hold its bytes",
+            {"path": str(path), "upload": str(upload.id)},
+        )
+
+    async def _hold[T](self, path: Path, start: Callable[[], Awaitable[T]]) -> T:
+        """Await the work ``start`` begins while holding the lock of ``path``.
+
+        The lock stays held until the work ends, also when the caller is cancelled; an error
+        the work then raises goes to the log.
+        """
+        async with self._locks.hold(path):
+            work = asyncio.ensure_future(start())
+            try:
+                return await asyncio.shield(work)
+            except asyncio.CancelledError:
+                await _settled(work)
+                if not work.cancelled() and (error := work.exception()) is not None:
+                    _log.error("disk.cancelled_action_failed", path=str(path), error=repr(error))
+                raise
+
+    def _submit[T](self, action: Callable[[], T]) -> asyncio.Future[T]:
+        return asyncio.get_running_loop().run_in_executor(self._pool, action)
+
     async def _call[T](self, action: Callable[[], T]) -> T:
-        return await asyncio.get_running_loop().run_in_executor(self._pool, action)
+        return await self._submit(action)
 
     def _open(self) -> None:
         self._require_lake()
@@ -240,6 +326,17 @@ class LakeDisk:
                 f"the lake {self._lake_path} is not a directory",
                 {"lake_path": str(self._lake_path)},
             )
+
+
+@dataclass(frozen=True, slots=True)
+class _Placement:
+    """One attempt to place ``upload`` at the absolute ``path`` in ``collection_dir``."""
+
+    uploads: Uploads
+    actor: Actor
+    upload: Upload
+    path: Path
+    collection_dir: Path
 
 
 def _organization(relative: str) -> str:

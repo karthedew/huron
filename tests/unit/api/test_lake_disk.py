@@ -2,6 +2,7 @@
 
 import asyncio
 import gc
+import hashlib
 import threading
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -12,6 +13,7 @@ import structlog
 
 from huron.applications.api.disk import DISK_WORKERS, PROBE_TIMEOUT, PROBE_TTL, LakeDisk
 from huron.core.lake.organizations.declarations import Declarations, DeclaredOrganization
+from huron.core.lake.uploads.models import Upload, UploadState
 from huron.core.storage import (
     MARKER_FILE,
     SHARE_GROUP_PENDING,
@@ -25,9 +27,17 @@ from huron.core.storage import (
 )
 from huron.core.storage.memory import MemoryStorage
 from huron.pkg.clock import FrozenClock
-from tests.support.api import INSTANCE_ID
+from tests.support.api import INSTANCE_ID, ROOT_MARKER
 from tests.support.clock import LoopClock, frozen
-from tests.support.disk import LAKE, SERVICE_GID, StalledStorage, memory_disk, memory_lake
+from tests.support.disk import (
+    LAKE,
+    SERVICE_GID,
+    SIGNAL_TIMEOUT,
+    StalledStorage,
+    lake_disk,
+    memory_lake,
+)
+from tests.support.lake import CONTRIBUTOR, World, make_world, seed, settled_collection
 
 ROOTS = LAKE / "roots"
 DECLARED = Declarations.of(
@@ -52,7 +62,7 @@ def clock() -> FrozenClock:
 @pytest.fixture
 async def disk(storage: MemoryStorage, clock: FrozenClock) -> AsyncIterator[LakeDisk]:
     """The disk of an unmanaged service over the in-memory lake."""
-    opened = memory_disk(storage, clock)
+    opened = lake_disk(storage, clock)
     yield opened
     opened.close()
 
@@ -60,7 +70,7 @@ async def disk(storage: MemoryStorage, clock: FrozenClock) -> AsyncIterator[Lake
 @pytest.fixture
 async def declared_disk(storage: MemoryStorage, clock: FrozenClock) -> AsyncIterator[LakeDisk]:
     """The disk of a service that declares helio (rooted in the lake), space and geo."""
-    opened = memory_disk(storage, clock, declarations=DECLARED)
+    opened = lake_disk(storage, clock, declarations=DECLARED)
     yield opened
     opened.close()
 
@@ -97,7 +107,7 @@ async def test_a_path_outside_the_lake_is_refused(declared_disk: LakeDisk, relat
 async def test_a_mount_prefix_outside_the_lake_puts_unrooted_organizations_outside(
     storage: MemoryStorage, clock: FrozenClock
 ) -> None:
-    disk = memory_disk(storage, clock, mount_prefix=Path("/projects/huron"))
+    disk = lake_disk(storage, clock, mount_prefix=Path("/projects/huron"))
     try:
         with pytest.raises(OutsideLake, match="outside the lake /lake"):
             await disk.resolve("helio/heliophysics")
@@ -126,7 +136,7 @@ async def test_a_lake_path_that_is_not_a_directory_is_unavailable(
     storage: MemoryStorage, clock: FrozenClock
 ) -> None:
     missing = Path("/unmounted")
-    disk = memory_disk(storage, clock, lake_path=missing, mount_prefix=missing)
+    disk = lake_disk(storage, clock, lake_path=missing, mount_prefix=missing)
     try:
         with pytest.raises(LakeUnavailable) as raised:
             await disk.resolve("helio/heliophysics")
@@ -211,7 +221,7 @@ async def test_a_probe_that_does_not_answer_in_time_is_not_ready(
     clock: FrozenClock, loop_clock: LoopClock
 ) -> None:
     stalled = StalledStorage()
-    disk = memory_disk(stalled, clock)
+    disk = lake_disk(stalled, clock)
 
     async def ready_after_the_timeout() -> bool:
         probing = asyncio.create_task(disk.ready())
@@ -411,3 +421,79 @@ async def test_a_share_group_needs_the_lake_and_its_marker(
     with pytest.raises(LakeUnavailable):
         await disk.set_share_group("helio/heliophysics", "helio-readers")
     assert storage.owner(catalog).gid != 2001
+
+
+class LinkPausingStorage(MemoryStorage):
+    """The in-memory lake, whose links wait until :attr:`release` is set."""
+
+    def __init__(self) -> None:
+        super().__init__(LAKE, user="huron", uid=SERVICE_GID, gid=SERVICE_GID)
+        self.write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
+        self.linking = threading.Event()
+        self.release = threading.Event()
+        self.order: list[str] = []
+
+    def link(self, source: Path, destination: Path, part_name: str) -> bool:
+        """Wait for :attr:`release`, then link."""
+        self.linking.set()
+        assert self.release.wait(SIGNAL_TIMEOUT)
+        linked = super().link(source, destination, part_name)
+        self.order.append("linked")
+        return linked
+
+
+async def received(world: World, storage: MemoryStorage, data: bytes) -> Upload:
+    """A pending upload of ``data`` to ``c.bin`` of collection run7, received by tusd."""
+    collection = await settled_collection(world.lake)
+    storage.add_root(LAKE / "helio" / "heliophysics" / "solar-wind" / "run7")
+    storage.make_directory(LAKE / UPLOAD_DIR, 0o700)
+    upload = await world.lake.uploads.begin(CONTRIBUTOR, collection, "c.bin", len(data))
+    storage.write_bytes(LAKE / UPLOAD_DIR / str(upload.id), data, 0o600)
+    return upload
+
+
+@pytest.fixture
+async def world() -> World:
+    """The seeded lake domain over the in-memory store."""
+    created = await make_world()
+    await seed(created)
+    return created
+
+
+async def test_place_links_the_upload_and_records_its_receipt(
+    world: World, disk: LakeDisk, storage: MemoryStorage
+) -> None:
+    upload = await received(world, storage, b"bytes")
+    inode = storage.inode(LAKE / UPLOAD_DIR / str(upload.id))
+    destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
+    placed = await disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+    assert (placed.state, placed.size, placed.inode) == (UploadState.PLACED, 5, inode)
+    assert placed.sha256 == hashlib.sha256(b"bytes").hexdigest()
+    assert storage.inode(LAKE / destination.path) == inode
+
+
+async def test_a_cancelled_placement_records_its_receipt_before_it_frees_the_path(
+    world: World, clock: FrozenClock, loop_errors: list[dict[str, object]]
+) -> None:
+    storage = LinkPausingStorage()
+    disk = lake_disk(storage, clock)
+    try:
+        upload = await received(world, storage, b"bytes")
+        destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
+        placing = asyncio.create_task(
+            disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+        )
+        assert await asyncio.to_thread(storage.linking.wait, SIGNAL_TIMEOUT)
+        path = LAKE / destination.path
+        after = asyncio.create_task(disk.run(path, lambda: storage.order.append("after")))
+        placing.cancel()
+        storage.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await placing
+        assert (await world.lake.uploads.get(CONTRIBUTOR, upload.id)).state is UploadState.PLACED
+        await asyncio.wait_for(after, SIGNAL_TIMEOUT)
+        assert storage.order == ["linked", "after"]
+    finally:
+        storage.release.set()
+        disk.close()
+    assert loop_errors == []

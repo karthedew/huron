@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -163,3 +164,24 @@ async def seed_service(api: Service) -> Service:
     )
     assert created.status_code == 201, created.text
     return api
+
+
+#: Valid metadata of a collection in the seeded catalog.
+COLLECTION_METADATA = {"title": "Run 7", "description": "Solar wind run seven"}
+
+
+async def active_collection(api: Service, name: str = "run7") -> dict[str, Any]:
+    """Create and activate collection ``name`` in the seeded solar-wind namespace, as dave."""
+    created = await api.client.post(
+        "/api/v1/catalogs/heliophysics/namespaces/solar-wind/collections",
+        json={"name": name, "metadata": COLLECTION_METADATA},
+        headers=await api.headers("dave"),
+    )
+    assert created.status_code == 201, created.text
+    activated = await api.client.post(
+        f"/api/v1/collections/{created.json()['id']}/activate",
+        headers=await api.headers("dave", **{"If-Match": '"1"'}),
+    )
+    assert activated.status_code == 200, activated.text
+    collection: dict[str, Any] = activated.json()
+    return collection

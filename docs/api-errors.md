@@ -38,9 +38,10 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `STORAGE_FAILED` | 500 | An operation on the share failed. The API reports it for its disk work, and the CLI reports it when it cannot use the share. The share is missing, has no marker or a marker for a different instance or organization, or is not writable, or an ACL operation failed. `context.path` names the path. |
 | `TOKEN_INVALID` | 401 | The bearer token or the company token is not valid, or it expired. |
 | `UNAUTHENTICATED` | 401 | The request has no bearer token. |
+| `UPLOADS_DISABLED` | 404 | The service has no `lake_path`, so it serves no upload route. The upload routes are `POST /api/v1/uploads/hooks`, `GET /api/v1/uploads/auth` and `GET /api/v1/uploads/{id}`. |
 | `UPLOAD_NOT_FOUND` | 404 | The upload does not exist, or the caller did not start it. |
 | `UPLOAD_RECEIPT_MISSING` | 422 | The commit adds a file that has no upload receipt. A receipt is good only for the same user, path, size and sha256, and only until `upload_ttl` ends. A later upload to the same path, by any user, cancels the receipt. `context.rel_path` names the file. |
-| `UPLOAD_SIZE_MISMATCH` | 422 | The placed file does not have the size that the upload declared. `context.declared` and `context.received` give the two sizes. |
+| `UPLOAD_SIZE_MISMATCH` | 422 | The uploaded file does not have the size that the upload declared. `context.declared` and `context.received` give the two sizes. |
 | `UPLOAD_STATE_CONFLICT` | 409 | The state of the upload does not allow the operation. `context.state` and `context.allowed` tell why. |
 | `UPLOAD_TOO_LARGE` | 413 | The upload declares more bytes than `upload_max_size`. `context.maximum` gives the limit. |
 | `VERSION_CONFLICT` | 412 | `If-Match` names an older version. `context.current_version` names the current version. |

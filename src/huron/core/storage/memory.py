@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import itertools
 import os
 import stat
 from dataclasses import dataclass, field
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING
 from huron.core.storage.errors import StorageError
 from huron.core.storage.ports import FileStamp, GroupOutcome, GroupResult, Ownership
 from huron.pkg.fs.acl import Acl
-from huron.pkg.fs.posix import Entry, Stamp
+from huron.pkg.fs.posix import INHERITING_DIR_MODE, Entry, Stamp
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -32,7 +33,8 @@ class Node:
     """A directory (``data is None``) or a file.
 
     ``owner`` and ``group`` are names for the ACL plans; ``uid`` and ``gid`` are the numbers
-    :meth:`MemoryStorage.owner` reports.
+    :meth:`MemoryStorage.owner` reports. Hard links of a file share one node, so they share its
+    ``inode`` and its mode.
     """
 
     owner: str
@@ -43,6 +45,7 @@ class Node:
     group: str | None = None
     data: bytes | None = None
     mtime_ns: int = 0
+    inode: int = 0
 
     @property
     def is_dir(self) -> bool:
@@ -56,7 +59,8 @@ class MemoryStorage:
     The caller is ``user``, with the numbers ``uid`` and ``gid``. ``groups`` is the machine's
     group database (name to gid), and ``member_of`` the gids the caller may give an entry it
     owns. A directory in ``denied`` refuses every change to its entries. ``mounts`` maps mount
-    points to the filesystem below them.
+    points to the filesystem below them. ``inherits`` is whether a new directory inherits the
+    setgid bit and the group of a setgid parent, as the server should.
     """
 
     def __init__(self, root: Path, user: str = "me", uid: int = 1000, gid: int = 1000) -> None:
@@ -68,8 +72,10 @@ class MemoryStorage:
         self.nodes: dict[Path, Node] = {root: Node(owner="root", mode=0o2771)}
         self.denied: set[Path] = set()
         self.mounts: dict[Path, int] = {}
+        self.inherits = True
         self.calls: list[tuple[str, Path]] = []
         self._clock = 0
+        self._inodes = itertools.count(2)
 
     def add_root(self, path: Path, owner: str = "root") -> None:
         """Add a directory owned by ``owner`` (and any missing parents), like a mounted root."""
@@ -93,8 +99,39 @@ class MemoryStorage:
             raise StorageError(f"{path} is not a directory", {"path": str(path)})
         self._check(path.parent)
         gid = self._new_gid(path.parent)
-        self.nodes[path] = Node(owner=self.user, uid=self.uid, gid=gid)
+        self.nodes[path] = Node(owner=self.user, uid=self.uid, gid=gid, inode=next(self._inodes))
         self.nodes[path].mode = self._settable(mode, gid)
+        self.calls.append(("mkdir", path))
+        return True
+
+    def make_inheriting_dir(self, path: Path) -> bool:
+        """Create ``path`` with mode ``0750``; setgid and the group come only from the parent.
+
+        With :attr:`inherits` off, a setgid parent passes neither on, and the new directory is
+        removed again and refused.
+        """
+        parent = self.nodes.get(path.parent)
+        if parent is None or not parent.is_dir:
+            raise StorageError(f"{path.parent} does not exist", {"path": str(path.parent)})
+        existing = self.nodes.get(path)
+        if existing is not None:
+            if existing.is_dir:
+                return False
+            raise StorageError(f"{path}: {os.strerror(errno.EEXIST)}", {"path": str(path)})
+        self._check(path.parent)
+        inherited = self.inherits and bool(parent.mode & stat.S_ISGID)
+        if not inherited:
+            raise StorageError(
+                f"{path} did not inherit the setgid bit and the group {parent.gid} of its parent",
+                {"path": str(path)},
+            )
+        self.nodes[path] = Node(
+            owner=self.user,
+            mode=INHERITING_DIR_MODE | stat.S_ISGID,
+            uid=self.uid,
+            gid=parent.gid,
+            inode=next(self._inodes),
+        )
         self.calls.append(("mkdir", path))
         return True
 
@@ -214,7 +251,44 @@ class MemoryStorage:
             gid=self._new_gid(path.parent),
             data=data,
             mtime_ns=self._clock,
+            inode=next(self._inodes),
         )
+
+    def open_file(self, path: Path) -> _MemoryFile | None:
+        """The file at ``path`` opened read-only, or ``None``."""
+        node = self.nodes.get(path)
+        if node is None:
+            return None
+        if node.is_dir:
+            raise StorageError(f"{path}: {os.strerror(errno.EISDIR)}", {"path": str(path)})
+        return _MemoryFile(self, path, node)
+
+    def link(self, source: Path, destination: Path, part_name: str) -> bool:
+        """Give the file at ``source`` the name ``destination`` too; ``False`` without a source.
+
+        An existing ``destination`` is replaced through ``part_name``, as on the server.
+        """
+        node = self.nodes.get(source)
+        if node is None:
+            return False
+        if not self.is_directory(destination.parent):
+            raise StorageError(
+                f"{destination.parent} does not exist", {"path": str(destination.parent)}
+            )
+        self._check(destination.parent)
+        if destination in self.nodes:
+            part = destination.with_name(part_name)
+            self.nodes.pop(part, None)
+            self.calls += [("link", part), ("rename", destination)]
+        else:
+            self.calls.append(("link", destination))
+        self.nodes[destination] = node
+        return True
+
+    def inode(self, path: Path) -> int | None:
+        """The inode of ``path``, or ``None``."""
+        node = self.nodes.get(path)
+        return None if node is None else node.inode
 
     def read_bytes(self, path: Path) -> bytes | None:
         """The bytes at ``path``."""
@@ -294,3 +368,28 @@ class MemoryStorage:
 
     def _settable(self, mode: int, gid: int) -> int:
         return mode if gid in self.member_of else mode & ~stat.S_ISGID
+
+
+class _MemoryFile:
+    """A file of a :class:`MemoryStorage` opened read-only."""
+
+    def __init__(self, storage: MemoryStorage, path: Path, node: Node) -> None:
+        self._storage = storage
+        self._path = path
+        self._node = node
+        self.size = len(node.data or b"")
+        self.inode = node.inode
+
+    def sha256(self) -> str:
+        """The sha256 of the file's bytes."""
+        return hashlib.sha256(self._node.data or b"").hexdigest()
+
+    def set_mode(self, mode: int) -> None:
+        """Give the file ``mode``; only its owner may."""
+        if self._node.uid != self._storage.uid:
+            raise StorageError(f"permission denied on {self._path}", {"path": str(self._path)})
+        self._node.mode = mode
+        self._storage.calls.append(("chmod", self._path))
+
+    def close(self) -> None:
+        """Nothing to release."""

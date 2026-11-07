@@ -9,7 +9,7 @@ import pytest
 from huron.core.storage import DIRECTORY_MODE, MARKER_FILE, ORGANIZATION_MODE
 from tests.support.api import Service, seed_service, service
 from tests.support.clock import frozen
-from tests.support.disk import LAKE, SERVICE_GID, memory_disk, memory_lake
+from tests.support.disk import LAKE, SERVICE_GID, lake_disk, memory_lake
 
 CATALOG = "/api/v1/catalogs/heliophysics"
 
@@ -134,7 +134,7 @@ async def test_a_cleared_share_group_gives_the_directory_the_service_group() -> 
     storage.groups["helio-readers"] = 2001
     storage.member_of.add(2001)
     directory = LAKE / "helio" / "heliophysics"
-    async with service(disk=memory_disk(storage, clock), clock=clock, lake_path=LAKE) as api:
+    async with service(disk=lake_disk(storage, clock), clock=clock, lake_path=LAKE) as api:
         await seed_service(api)
         storage.make_directory(directory.parent, ORGANIZATION_MODE)
         storage.make_directory(directory, DIRECTORY_MODE)

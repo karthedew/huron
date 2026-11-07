@@ -19,6 +19,7 @@ __all__ = [
     "FileStamp",
     "GroupOutcome",
     "GroupResult",
+    "OpenFile",
     "Ownership",
     "ShareReader",
     "ShareWarning",
@@ -81,6 +82,36 @@ class ShareWarning:
     detail: str
 
 
+class OpenFile(Protocol):
+    """A file opened read-only.
+
+    ``size`` and ``inode`` come from the open descriptor, so they describe the bytes that
+    :meth:`sha256` reads, whatever happens to the file's name meanwhile.
+    """
+
+    @property
+    def size(self) -> int:
+        """The size in bytes."""
+        ...
+
+    @property
+    def inode(self) -> int:
+        """The unsigned inode number."""
+        ...
+
+    def sha256(self) -> str:
+        """The sha256 of the bytes, read from the descriptor."""
+        ...
+
+    def set_mode(self, mode: int) -> None:
+        """Give the file exactly ``mode`` through the descriptor."""
+        ...
+
+    def close(self) -> None:
+        """Release the descriptor."""
+        ...
+
+
 class ShareReader(Protocol):
     """Read-only operations on the share."""
 
@@ -138,8 +169,32 @@ class Storage(ShareReader, Protocol):
         """
         ...
 
+    def make_inheriting_dir(self, path: Path) -> bool:
+        """Create ``path`` with mode ``0750``; ``True`` when created, an existing one is kept.
+
+        The setgid bit and the group come only from the parent's inheritance. A new directory
+        without them is removed again and refused; the mode is never fixed with ``chmod``.
+        """
+        ...
+
     def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
         """Write ``data`` atomically; with ``mode``, the file gets exactly that mode."""
+        ...
+
+    def open_file(self, path: Path) -> OpenFile | None:
+        """Open a file read-only; ``None`` when it does not exist. The caller closes it."""
+        ...
+
+    def link(self, source: Path, destination: Path, part_name: str) -> bool:
+        """Hard-link ``source`` to ``destination``, atomically replacing an existing file.
+
+        The replacement goes through ``part_name`` beside ``destination``. ``False`` when
+        ``source`` does not exist.
+        """
+        ...
+
+    def inode(self, path: Path) -> int | None:
+        """The inode number of ``path``, without following a final link; ``None`` when absent."""
         ...
 
     def remove_file(self, path: Path) -> bool:
