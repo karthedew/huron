@@ -601,6 +601,7 @@ const catalog: Decoder<Catalog> = (value, path) => {
 		namespace_count: f.integer('namespace_count'),
 		organization: f.string('organization'),
 		schema: f.get('schema', schemaRef),
+		share_group: f.nullableString('share_group'),
 		share_root: f.nullableString('share_root'),
 		version: f.integer('version')
 	};

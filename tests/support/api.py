@@ -4,14 +4,17 @@ import uuid
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
 from huron.applications.api.app import create_app
+from huron.applications.api.disk import LakeDisk
 from huron.applications.api.runtime import Runtime, build_runtime
 from huron.applications.api.settings import Settings
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.broker import TokenIssuer
+from huron.core.storage import MARKER_FILE, Marker, render_marker
 from huron.pkg.clock import FrozenClock
 from tests.fakes.groups import FakeGroups
 from tests.fakes.issuer import AUDIENCE, ISSUER, FakeIssuer
@@ -29,6 +32,17 @@ USERS: Mapping[str, list[str]] = {
     "erin": ["helio-readers"],
     "mallory": [],
 }
+
+
+#: The marker of a share or lake root that belongs to the test service.
+ROOT_MARKER = render_marker(Marker(1, "http://huron.test", str(INSTANCE_ID)))
+
+
+def mark_lake(path: Path) -> Path:
+    """Make ``path`` a lake of the test service: a directory with the service's root marker."""
+    path.mkdir(parents=True, exist_ok=True)
+    (path / MARKER_FILE).write_bytes(ROOT_MARKER)
+    return path
 
 
 def settings(**overrides: object) -> Settings:
@@ -84,20 +98,68 @@ class Service:
 
 @asynccontextmanager
 async def service(
-    *, store: MemoryStore | None = None, **overrides: object
+    *,
+    store: MemoryStore | None = None,
+    disk: LakeDisk | None = None,
+    clock: FrozenClock | None = None,
+    **overrides: object,
 ) -> AsyncIterator[Service]:
-    """Start an in-process service over ``store``, by default a fresh in-memory one."""
+    """Start an in-process service over ``store``, by default a fresh in-memory one.
+
+    ``disk`` replaces the lake's disk that ``lake_path`` would give; ``clock`` must then be the
+    clock the disk reads.
+    """
     issuer = FakeIssuer()
-    clock = frozen()
+    clock = clock or frozen()
     runtime = await build_runtime(
         settings(**overrides),
         store=store or MemoryStore(),
         http=httpx.AsyncClient(transport=issuer.transport()),
         groups=FakeGroups(USERS),
         clock=clock,
+        disk=disk,
     )
     app = create_app(runtime=runtime)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://huron.test") as client:
         yield Service(runtime, client, issuer, clock)
     await runtime.close()
+
+
+async def seed_service(api: Service) -> Service:
+    """The helio organization, catalog, grants and the solar-wind namespace, through the API."""
+    c = api.client
+    alice = await api.headers("alice")
+    bob = await api.headers("bob")
+    carol = await api.headers("carol")
+    assert (
+        await c.post("/api/v1/organizations", json={"name": "helio"}, headers=alice)
+    ).status_code == 201
+    await c.put(
+        "/api/v1/organizations/helio/grants/org_admin",
+        json={"ldap_groups": ["helio-org-admins"]},
+        headers=alice,
+    )
+    assert (
+        await c.post(
+            "/api/v1/organizations/helio/catalogs", json={"name": "heliophysics"}, headers=bob
+        )
+    ).status_code == 201
+    await c.put(
+        "/api/v1/catalogs/heliophysics/grants/catalog_admin",
+        json={"ldap_groups": ["helio-catalog-admins"]},
+        headers=bob,
+    )
+    for role, group in (("contributor", "helio-contributors"), ("reader", "helio-readers")):
+        await c.put(
+            f"/api/v1/catalogs/heliophysics/grants/{role}",
+            json={"ldap_groups": [group]},
+            headers=carol,
+        )
+    created = await c.post(
+        "/api/v1/catalogs/heliophysics/namespaces",
+        json={"name": "solar-wind", "collections_allowed": True},
+        headers=carol,
+    )
+    assert created.status_code == 201, created.text
+    return api

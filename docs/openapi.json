@@ -147,6 +147,18 @@
               }
             ],
             "title": "Schema Id"
+          },
+          "share_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The POSIX group whose members read the catalog's directory.",
+            "title": "Share Group"
           }
         },
         "required": [
@@ -194,6 +206,18 @@
           "schema": {
             "$ref": "#/components/schemas/SchemaRefOut"
           },
+          "share_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The POSIX group whose members read the catalog's directory.",
+            "title": "Share Group"
+          },
           "share_root": {
             "anyOf": [
               {
@@ -222,9 +246,103 @@
           "created_at",
           "created_by",
           "namespace_count",
-          "share_root"
+          "share_root",
+          "share_group"
         ],
         "title": "CatalogOut",
+        "type": "object"
+      },
+      "CatalogWriteOut": {
+        "description": "A catalog after a create or a change, with the warnings of its disk work.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "namespace_count": {
+            "title": "Namespace Count",
+            "type": "integer"
+          },
+          "organization": {
+            "title": "Organization",
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/SchemaRefOut"
+          },
+          "share_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The POSIX group whose members read the catalog's directory.",
+            "title": "Share Group"
+          },
+          "share_root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The configured root of the organization's directory; clients join it with the relative path, or use their own mount prefix when it is null.",
+            "title": "Share Root"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/ShareWarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "organization",
+          "display_name",
+          "description",
+          "schema",
+          "version",
+          "created_at",
+          "created_by",
+          "namespace_count",
+          "share_root",
+          "share_group",
+          "warnings"
+        ],
+        "title": "CatalogWriteOut",
         "type": "object"
       },
       "CollectionIn": {
@@ -812,7 +930,7 @@
         "type": "object"
       },
       "Health": {
-        "description": "The liveness answer.\n\n``organizations_managed`` is whether the service configuration declares the organizations:\nthe CLI then looks for an organization's directory only where its declaration puts it.",
+        "description": "The liveness answer.\n\n``organizations_managed`` is whether the service configuration declares the organizations:\nthe CLI then looks for an organization's directory only where its declaration puts it.\n``uploads_url`` is the public tus endpoint, ``null`` while uploads are off.\n``service_user`` is ``null`` without a configured service group. ``upload_hook_timeout`` is\nhow long tusd waits for a hook, in seconds.",
         "properties": {
           "instance_id": {
             "title": "Instance Id",
@@ -822,9 +940,34 @@
             "title": "Organizations Managed",
             "type": "boolean"
           },
+          "service_user": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServiceUser"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "upload_hook_timeout": {
+            "title": "Upload Hook Timeout",
+            "type": "integer"
+          },
+          "uploads_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploads Url"
           },
           "version": {
             "title": "Version",
@@ -835,7 +978,10 @@
           "status",
           "instance_id",
           "version",
-          "organizations_managed"
+          "organizations_managed",
+          "uploads_url",
+          "service_user",
+          "upload_hook_timeout"
         ],
         "title": "Health",
         "type": "object"
@@ -1558,6 +1704,78 @@
         "title": "SchemaRefOut",
         "type": "object"
       },
+      "ServiceUser": {
+        "description": "The identity that owns the lake: the service's UID, primary GID and service group.",
+        "properties": {
+          "gid": {
+            "title": "Gid",
+            "type": "integer"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "uid": {
+            "title": "Uid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "uid",
+          "gid",
+          "group"
+        ],
+        "title": "ServiceUser",
+        "type": "object"
+      },
+      "ShareGroupIn": {
+        "description": "A catalog's new share group; ``null`` clears it.",
+        "properties": {
+          "share_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The POSIX group whose members read the catalog's directory.",
+            "title": "Share Group"
+          }
+        },
+        "required": [
+          "share_group"
+        ],
+        "title": "ShareGroupIn",
+        "type": "object"
+      },
+      "ShareWarningOut": {
+        "description": "A change on disk that the storage administrator must still make.",
+        "properties": {
+          "code": {
+            "description": "SHARE_GROUP_PENDING: the directory does not have the group.",
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "group": {
+            "description": "The share group, or the gid of the service group when the share group is cleared.",
+            "title": "Group",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "group",
+          "detail"
+        ],
+        "title": "ShareWarningOut",
+        "type": "object"
+      },
       "SigningKeyOut": {
         "description": "A signing key without its private part.",
         "properties": {
@@ -2028,6 +2246,57 @@
           }
         },
         "summary": "Get Catalog",
+        "tags": [
+          "catalogs"
+        ]
+      },
+      "patch": {
+        "description": "Set or clear the catalog's share group; the catalog lock orders the changes.\n\nWith a lake, the API then tries to give the directory the share group, or the service group\nwhen the share group is cleared.",
+        "operationId": "set_catalog_share_group_api_v1_catalogs__catalog__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalog",
+            "required": true,
+            "schema": {
+              "title": "Catalog",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareGroupIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogWriteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Catalog Share Group",
         "tags": [
           "catalogs"
         ]
@@ -3872,7 +4141,7 @@
     },
     "/api/v1/organizations/{organization}/catalogs": {
       "post": {
-        "description": "Create a catalog in an organization; the default schema is the latest huron-base.",
+        "description": "Create a catalog in an organization; the default schema is the latest huron-base.\n\nWith a share group and a lake, the API then tries to give the directory that group.",
         "operationId": "create_catalog_api_v1_organizations__organization__catalogs_post",
         "parameters": [
           {
@@ -3900,7 +4169,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CatalogOut"
+                  "$ref": "#/components/schemas/CatalogWriteOut"
                 }
               }
             },
@@ -4434,7 +4703,7 @@
     },
     "/healthz": {
       "get": {
-        "description": "The service is up; reports the instance the share marker must name.",
+        "description": "The service is up; reports the instance the share marker must name and the uploads.",
         "operationId": "healthz_healthz_get",
         "responses": {
           "200": {
@@ -4480,7 +4749,7 @@
     },
     "/readyz": {
       "get": {
-        "description": "The database and the key ring are usable.",
+        "description": "The database, the key ring and, with a lake, the upload directory are usable.",
         "operationId": "readyz_readyz_get",
         "responses": {
           "200": {

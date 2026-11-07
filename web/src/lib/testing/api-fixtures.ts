@@ -41,6 +41,7 @@ export function catalogFixture(overrides: Partial<Catalog> = {}): Catalog {
 		created_at: '2026-10-01T09:00:00+00:00',
 		created_by: 'sub-bob',
 		namespace_count: 4,
+		share_group: null,
 		share_root: null,
 		...overrides
 	};

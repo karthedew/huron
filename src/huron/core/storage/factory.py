@@ -1,4 +1,4 @@
-"""Build the storage the CLI uses."""
+"""Build the POSIX storage of the mounted share, for the API and the CLI."""
 
 from __future__ import annotations
 

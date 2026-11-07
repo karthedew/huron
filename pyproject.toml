@@ -153,10 +153,10 @@ source_modules = ["huron.pkg", "huron.schema", "huron.core.lake", "huron.core.se
 forbidden_modules = ["huron.core.metastore"]
 
 [[tool.importlinter.contracts]]
-name = "the API does not import the CLI or storage"
+name = "the API does not import the CLI"
 type = "forbidden"
 source_modules = ["huron.applications.api"]
-forbidden_modules = ["huron.applications.cli", "huron.core.storage"]
+forbidden_modules = ["huron.applications.cli"]
 
 [[tool.importlinter.contracts]]
 name = "the CLI does not import the API, the metastore or the broker"
@@ -175,6 +175,7 @@ source_modules = [
     "huron.core.lake.files.models",
     "huron.core.lake.schemas.models",
     "huron.core.lake.audit.models",
+    "huron.core.lake.uploads.models",
 ]
 forbidden_modules = [
     "huron.core.lake.organizations.operations",
@@ -184,4 +185,5 @@ forbidden_modules = [
     "huron.core.lake.files.commits",
     "huron.core.lake.schemas.registry",
     "huron.core.lake.schemas.completeness",
+    "huron.core.lake.uploads.operations",
 ]

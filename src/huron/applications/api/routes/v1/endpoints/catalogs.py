@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Query, status
 
 from huron.applications.api.authorization import ActorDep
-from huron.applications.api.dependencies import DeclarationsDep, LakeDep, with_share_root
+from huron.applications.api.dependencies import (
+    DeclarationsDep,
+    DiskDep,
+    LakeDep,
+    with_share_root,
+)
 from huron.applications.api.routes.pagination import Cursor, Limit, Order, Sort
 from huron.applications.api.routes.v1.schema.admin import AuditOut
 from huron.applications.api.routes.v1.schema.catalogs import (
@@ -15,10 +21,17 @@ from huron.applications.api.routes.v1.schema.catalogs import (
     AssignOut,
     CatalogIn,
     CatalogOut,
+    CatalogWriteOut,
     RecomputeOut,
+    ShareGroupIn,
 )
 from huron.applications.api.routes.v1.schema.common import Page, page_of
 from huron.core.lake.listing import ListOrder, SortDirection, SortField
+
+if TYPE_CHECKING:
+    from huron.core.lake.catalogs.models import CatalogView
+    from huron.core.lake.organizations.declarations import Declarations
+    from huron.core.storage import ShareWarning
 
 __all__ = ["router"]
 
@@ -49,12 +62,25 @@ async def create_catalog(
     actor: ActorDep,
     lake: LakeDep,
     declarations: DeclarationsDep,
-) -> CatalogOut:
-    """Create a catalog in an organization; the default schema is the latest huron-base."""
+    disk: DiskDep,
+) -> CatalogWriteOut:
+    """Create a catalog in an organization; the default schema is the latest huron-base.
+
+    With a share group and a lake, the API then tries to give the directory that group.
+    """
     view = await lake.catalogs.create(
-        actor, organization, body.name, body.display_name, body.description, body.schema_id
+        actor,
+        organization,
+        body.name,
+        body.display_name,
+        body.description,
+        body.schema_id,
+        share_group=body.share_group,
     )
-    return CatalogOut.model_validate(with_share_root(view.as_dict(), declarations))
+    warning = None
+    if disk is not None and body.share_group is not None:
+        warning = await disk.set_share_group(view.disk_path, body.share_group)
+    return _written(view, declarations, warning)
 
 
 @router.get("/catalogs/{catalog}")
@@ -64,6 +90,27 @@ async def get_catalog(
     """One catalog."""
     view = await lake.catalogs.get(actor, catalog)
     return CatalogOut.model_validate(with_share_root(view.as_dict(), declarations))
+
+
+@router.patch("/catalogs/{catalog}")
+async def set_catalog_share_group(
+    catalog: str,
+    body: ShareGroupIn,
+    actor: ActorDep,
+    lake: LakeDep,
+    declarations: DeclarationsDep,
+    disk: DiskDep,
+) -> CatalogWriteOut:
+    """Set or clear the catalog's share group; the catalog lock orders the changes.
+
+    With a lake, the API then tries to give the directory the share group, or the service group
+    when the share group is cleared.
+    """
+    view = await lake.catalogs.set_share_group(actor, catalog, body.share_group)
+    warning = None
+    if disk is not None:
+        warning = await disk.set_share_group(view.disk_path, view.catalog.share_group)
+    return _written(view, declarations, warning)
 
 
 @router.delete("/catalogs/{catalog}", status_code=status.HTTP_204_NO_CONTENT)
@@ -101,3 +148,11 @@ async def catalog_log(
     """Audit entries within the catalog, newest first."""
     page = await lake.audit.for_catalog(actor, catalog, cursor, limit)
     return page_of(AuditOut, [e.as_dict() for e in page.items], page.next_cursor)
+
+
+def _written(
+    view: CatalogView, declarations: Declarations, warning: ShareWarning | None
+) -> CatalogWriteOut:
+    warnings = [] if warning is None else [asdict(warning)]
+    row = with_share_root(view.as_dict(), declarations)
+    return CatalogWriteOut.model_validate({**row, "warnings": warnings})

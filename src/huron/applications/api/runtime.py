@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -10,11 +11,11 @@ import httpx
 import structlog
 
 from huron import __version__
+from huron.applications.api.disk import LakeDisk
 from huron.applications.api.settings import Settings
 from huron.core.lake.bootstrap import BootstrapResult, Lake, LakeSettings, bootstrap, build_lake
 from huron.core.lake.organizations.declarations import UNMANAGED, Declarations
 from huron.core.lake.transaction import UnitOfWork
-from huron.core.lake.uploads.models import ReceiptMode
 from huron.core.metastore.postgres import PostgresStore
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.broker import (
@@ -26,6 +27,8 @@ from huron.core.security.broker import (
     TokenIssuer,
     TokenVerifier,
 )
+from huron.core.storage import PathLocks
+from huron.core.storage.factory import storage_for
 from huron.pkg.clock import Clock, SystemClock
 
 __all__ = ["VERSION", "ClosableStore", "Runtime", "build_runtime"]
@@ -46,7 +49,7 @@ class ClosableStore(UnitOfWork, Protocol):
 
 @dataclass
 class Runtime:
-    """The service's shared objects."""
+    """The service's shared objects; ``disk`` is ``None`` when the service has no lake."""
 
     settings: Settings
     store: ClosableStore
@@ -57,6 +60,7 @@ class Runtime:
     groups: GroupDirectory
     owns_http: bool = False
     declarations: Declarations = UNMANAGED
+    disk: LakeDisk | None = None
     _ring: KeyRing | None = field(default=None, repr=False)
     _ring_loaded_at: datetime | None = field(default=None, repr=False)
 
@@ -89,17 +93,22 @@ class Runtime:
         return TokenExchange(self.company, self.groups, issuer)
 
     async def ready(self) -> dict[str, bool]:
-        """Readiness of each dependency."""
+        """Readiness of each dependency; ``lake`` only when the service has a lake."""
         ping = getattr(self.store, "ping", None)
         database = True if ping is None else bool(await ping())
         try:
             keys = bool((await self.ring()).current.kid)
         except LookupError:
             keys = False
-        return {"database": database, "signing_keys": keys}
+        checks = {"database": database, "signing_keys": keys}
+        if self.disk is not None:
+            checks["lake"] = await self.disk.ready()
+        return checks
 
     async def close(self) -> None:
-        """Release the store and the HTTP client the runtime created."""
+        """Release the disk pool, the store and the HTTP client the runtime created."""
+        if self.disk is not None:
+            self.disk.close()
         await self.store.close()
         if self.owns_http:
             await self.http.aclose()
@@ -112,20 +121,33 @@ async def build_runtime(
     http: httpx.AsyncClient | None = None,
     groups: GroupDirectory | None = None,
     clock: Clock | None = None,
+    disk: LakeDisk | None = None,
 ) -> Runtime:
-    """Connect the store, bootstrap the lake and assemble the runtime."""
+    """Connect the store, bootstrap the lake, open the lake's disk and assemble the runtime.
+
+    ``disk`` stands in for the one built from ``settings.lake_path``; the runtime opens and
+    closes either.
+    """
     clock = clock or SystemClock()
     if store is None:
         store = await _store(settings)
     declarations = settings.declarations
-    # Receipts come only from upload routes, which this service does not serve.
     lake_settings = LakeSettings(
         settings.platform_admin_group,
         settings.key_overlap,
         declarations,
-        upload_receipts=ReceiptMode.OPTIONAL,
+        upload_receipts=settings.receipt_mode,
+        upload_ttl=settings.upload_ttl,
+        upload_max_size=settings.upload_max_size,
     )
     _report(await bootstrap(store, clock, lake_settings))
+    disk = disk or _disk(settings, clock)
+    if disk is not None:
+        try:
+            await disk.open()
+        except BaseException:
+            disk.close()
+            raise
     owns_http = http is None
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
     return Runtime(
@@ -140,6 +162,24 @@ async def build_runtime(
         groups=groups or HttpGroupDirectory(client, settings.group_directory_url),
         owns_http=owns_http,
         declarations=declarations,
+        disk=disk,
+    )
+
+
+def _disk(settings: Settings, clock: Clock) -> LakeDisk | None:
+    lake_path = settings.lake_path
+    if lake_path is None:
+        return None
+    return LakeDisk(
+        storage_for("none"),
+        lake_path,
+        settings.mount_prefix or lake_path,
+        str(settings.instance_id),
+        settings.declarations,
+        PathLocks(),
+        # The service group is the pod's runAsGroup, not a setting.
+        service_gid=os.getgid(),
+        clock=clock,
     )
 
 

@@ -13,10 +13,17 @@ import os
 import uuid
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -26,6 +33,7 @@ from pydantic_settings import (
 
 from huron.core.lake.organizations.declarations import Declarations, DeclaredOrganization
 from huron.core.lake.organizations.models import OrganizationGroups
+from huron.core.lake.uploads.models import ReceiptMode
 from huron.pkg.errors import HuronError
 
 if TYPE_CHECKING:
@@ -33,6 +41,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CONFIG_FILE_VARIABLE",
+    "MAX_UPLOAD_HOOK_TIMEOUT",
+    "Duration",
     "LogLevel",
     "OrganizationEntry",
     "RoleGroupsEntry",
@@ -44,6 +54,13 @@ CONFIG_FILE_VARIABLE = "HURON_CONFIG_FILE"
 
 #: The level names ``log_level`` accepts, in any case; the value is kept upper-case.
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+
+
+#: A positive duration, given in seconds or in ISO 8601 (``PT15M``).
+type Duration = Annotated[timedelta, Field(gt=timedelta(0))]
+
+#: tusd's hook timeout stays below the 3600 s of nginx and of the Route, which wait for the hook.
+MAX_UPLOAD_HOOK_TIMEOUT = timedelta(minutes=55)
 
 
 class RoleGroupsEntry(BaseModel):
@@ -122,7 +139,7 @@ class Settings(BaseSettings):
     ``organizations`` present (even an empty list) puts the service in managed mode: the
     configuration declares the organizations. ``HURON_ORGANIZATIONS`` (a JSON list) replaces
     the file's list. ``log_level`` is a standard level name in any case; another value fails
-    startup.
+    startup. Without ``mount_prefix``, organizations without a root lie below ``lake_path``.
     """
 
     model_config = SettingsConfigDict(env_prefix="HURON_", extra="ignore")
@@ -142,6 +159,19 @@ class Settings(BaseSettings):
     pool_size: int = 10
     log_level: LogLevel = "INFO"
     organizations: list[OrganizationEntry] | None = None
+    lake_path: Path | None = None
+    mount_prefix: Path | None = None
+    uploads_url: str | None = None
+    upload_receipts: ReceiptMode = ReceiptMode.REQUIRED
+    upload_ttl: Duration = timedelta(hours=24)
+    upload_max_size: int = Field(default=0, ge=0)
+    upload_hook_timeout: Annotated[Duration, Field(le=MAX_UPLOAD_HOOK_TIMEOUT)] = timedelta(
+        minutes=15
+    )
+    removal_interval: Duration = timedelta(seconds=60)
+    sweep_interval: Duration = timedelta(minutes=10)
+    service_uid: int = Field(default_factory=os.getuid, ge=0)
+    service_group: str | None = None
 
     _declarations: Declarations = PrivateAttr(default_factory=Declarations)
 
@@ -166,6 +196,34 @@ class Settings(BaseSettings):
     def _upper_case_level(cls, value: Any) -> Any:
         return value.upper() if isinstance(value, str) else value
 
+    @field_validator(
+        "upload_ttl", "upload_hook_timeout", "removal_interval", "sweep_interval", mode="before"
+    )
+    @classmethod
+    def _seconds(cls, value: Any) -> Any:
+        # An environment variable is text; pydantic reads a number of seconds only as a number.
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return value
+        return value
+
+    @field_validator("lake_path", "mount_prefix")
+    @classmethod
+    def _absolute(cls, value: Path | None) -> Path | None:
+        if value is not None and (not value.is_absolute() or ".." in value.parts):
+            raise ValueError(f"{value} is not an absolute path without ..")
+        return value
+
+    @model_validator(mode="after")
+    def _lake(self) -> Settings:
+        if self.uploads_url is not None and self.lake_path is None:
+            raise ValueError(
+                "uploads_url needs lake_path. Without lake_path, the API serves no upload route"
+            )
+        return self
+
     @model_validator(mode="after")
     def _declare(self) -> Settings:
         entries = self.organizations
@@ -180,6 +238,11 @@ class Settings(BaseSettings):
     def declarations(self) -> Declarations:
         """The declared organizations; unmanaged when ``organizations`` is absent."""
         return self._declarations
+
+    @property
+    def receipt_mode(self) -> ReceiptMode:
+        """The receipt mode commits use: ``optional`` without a lake, which issues no receipt."""
+        return self.upload_receipts if self.lake_path is not None else ReceiptMode.OPTIONAL
 
     @property
     def token_ttl(self) -> timedelta:

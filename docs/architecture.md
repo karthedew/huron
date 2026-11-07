@@ -41,9 +41,10 @@ PostgreSQL and `httpx.AsyncClient` for the OIDC provider and the group directory
 The routes are these:
 
 - `/api/v1/...`: the catalog, the grants, the schemas, the commits, search and the token exchange.
-- `/healthz`: liveness. It reports the `instance_id` that the markers on the share must name, and
-  `organizations_managed`.
-- `/readyz`: readiness. It answers 503 until the database and the signing keys are usable.
+- `/healthz`: liveness. It reports the `instance_id` that the markers on the share must name,
+  `organizations_managed`, `uploads_url`, `service_user` and `upload_hook_timeout`.
+- `/readyz`: readiness. It answers 503 until the database and the signing keys are usable. With
+  `lake_path`, the check `lake` also needs a `.tus-uploads` directory that the API can write.
 - `/.well-known/openid-configuration` and `/jwks.json`: discovery documents, so that other systems
   can check Huron tokens.
 

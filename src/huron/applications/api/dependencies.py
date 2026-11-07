@@ -6,15 +6,18 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Request
 
+from huron.applications.api.disk import LakeDisk
 from huron.applications.api.runtime import Runtime
 from huron.core.lake.bootstrap import Lake
 from huron.core.lake.organizations.declarations import Declarations
 
 __all__ = [
     "DeclarationsDep",
+    "DiskDep",
     "LakeDep",
     "RuntimeDep",
     "get_declarations",
+    "get_disk",
     "get_lake",
     "get_runtime",
     "with_share_root",
@@ -37,6 +40,11 @@ def get_declarations(runtime: Annotated[Runtime, Depends(get_runtime)]) -> Decla
     return runtime.declarations
 
 
+def get_disk(runtime: Annotated[Runtime, Depends(get_runtime)]) -> LakeDisk | None:
+    """The lake's disk, or ``None`` when the service has no lake."""
+    return runtime.disk
+
+
 def with_share_root(row: dict[str, Any], declarations: Declarations) -> dict[str, Any]:
     """``row`` with ``share_root``: the configured root of its ``organization``, or ``None``."""
     return {**row, "share_root": declarations.share_root(row["organization"])}
@@ -45,3 +53,4 @@ def with_share_root(row: dict[str, Any], declarations: Declarations) -> dict[str
 RuntimeDep = Annotated[Runtime, Depends(get_runtime)]
 LakeDep = Annotated[Lake, Depends(get_lake)]
 DeclarationsDep = Annotated[Declarations, Depends(get_declarations)]
+DiskDep = Annotated[LakeDisk | None, Depends(get_disk)]

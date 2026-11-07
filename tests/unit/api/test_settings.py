@@ -1,7 +1,9 @@
 """Service settings: the YAML configuration file, its strictness and its precedence."""
 
 import json
+import os
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ from pydantic import ValidationError
 from huron.applications.api.settings import CONFIG_FILE_VARIABLE, Settings
 from huron.core.lake.organizations.declarations import DeclaredOrganization
 from huron.core.lake.organizations.models import OrganizationGroups
+from huron.core.lake.uploads.models import ReceiptMode
 from tests.support.api import INSTANCE_ID
 
 REQUIRED = {
@@ -46,8 +49,6 @@ organizations:
 @pytest.fixture(autouse=True)
 def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """No ``HURON_*`` variable leaks into these tests."""
-    import os
-
     for name in list(os.environ):
         if name.startswith("HURON_"):
             monkeypatch.delenv(name)
@@ -243,3 +244,109 @@ def test_an_unknown_log_level_fails(monkeypatch: pytest.MonkeyPatch, level: str)
     monkeypatch.setenv("HURON_LOG_LEVEL", level)
     with pytest.raises(ValidationError, match="log_level"):
         Settings()  # type: ignore[call-arg]
+
+
+@pytest.fixture
+def required(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    """The required variables set; the test sets the lake and upload variables it needs."""
+    for name, value in REQUIRED.items():
+        monkeypatch.setenv(name, value)
+    return monkeypatch
+
+
+def test_the_lake_and_upload_settings_have_their_defaults(required: pytest.MonkeyPatch) -> None:
+    settings = Settings()  # type: ignore[call-arg]
+    assert (settings.lake_path, settings.mount_prefix, settings.uploads_url) == (None, None, None)
+    assert settings.upload_receipts is ReceiptMode.REQUIRED
+    assert settings.upload_ttl == timedelta(hours=24)
+    assert settings.upload_max_size == 0
+    assert settings.upload_hook_timeout == timedelta(minutes=15)
+    assert settings.removal_interval == timedelta(seconds=60)
+    assert settings.sweep_interval == timedelta(minutes=10)
+    assert settings.service_uid == os.getuid()
+    assert settings.service_group is None
+
+
+def test_the_lake_and_upload_settings_are_read(required: pytest.MonkeyPatch) -> None:
+    values = {
+        "HURON_LAKE_PATH": "/data1/huron",
+        "HURON_MOUNT_PREFIX": "/data1/huron/unrooted",
+        "HURON_UPLOADS_URL": "https://huron.example.org/files/",
+        "HURON_UPLOAD_RECEIPTS": "optional",
+        "HURON_UPLOAD_TTL": "PT12H",
+        "HURON_UPLOAD_MAX_SIZE": "1073741824",
+        "HURON_UPLOAD_HOOK_TIMEOUT": "1800",
+        "HURON_REMOVAL_INTERVAL": "PT30S",
+        "HURON_SWEEP_INTERVAL": "300",
+        "HURON_SERVICE_UID": "1000700000",
+        "HURON_SERVICE_GROUP": "huron-svc",
+    }
+    for name, value in values.items():
+        required.setenv(name, value)
+    settings = Settings()  # type: ignore[call-arg]
+    assert settings.lake_path == Path("/data1/huron")
+    assert settings.mount_prefix == Path("/data1/huron/unrooted")
+    assert settings.uploads_url == "https://huron.example.org/files/"
+    assert settings.upload_receipts is ReceiptMode.OPTIONAL
+    assert settings.upload_ttl == timedelta(hours=12)
+    assert settings.upload_max_size == 1 << 30
+    assert settings.upload_hook_timeout == timedelta(minutes=30)
+    assert settings.removal_interval == timedelta(seconds=30)
+    assert settings.sweep_interval == timedelta(minutes=5)
+    assert (settings.service_uid, settings.service_group) == (1000700000, "huron-svc")
+
+
+def test_the_file_sets_the_lake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config(tmp_path, monkeypatch, FILE + "lake_path: /data1/huron\nupload_hook_timeout: PT55M\n")
+    settings = Settings()  # type: ignore[call-arg]
+    assert (settings.lake_path, settings.mount_prefix) == (Path("/data1/huron"), None)
+    assert settings.upload_hook_timeout == timedelta(minutes=55)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("HURON_UPLOAD_HOOK_TIMEOUT", "3301"),
+        ("HURON_UPLOAD_HOOK_TIMEOUT", "PT1H"),
+        ("HURON_UPLOAD_HOOK_TIMEOUT", "0"),
+        ("HURON_UPLOAD_TTL", "0"),
+        ("HURON_REMOVAL_INTERVAL", "-1"),
+        ("HURON_SWEEP_INTERVAL", "0"),
+        ("HURON_UPLOAD_MAX_SIZE", "-1"),
+        ("HURON_UPLOAD_RECEIPTS", "sometimes"),
+        ("HURON_SERVICE_UID", "-1"),
+        ("HURON_LAKE_PATH", "data1/huron"),
+        ("HURON_LAKE_PATH", "/data1/../huron"),
+        ("HURON_MOUNT_PREFIX", "projects"),
+    ],
+)
+def test_an_out_of_range_lake_or_upload_setting_fails(
+    required: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    required.setenv(name, value)
+    with pytest.raises(ValidationError, match=name.removeprefix("HURON_").lower()):
+        Settings()  # type: ignore[call-arg]
+
+
+def test_uploads_url_without_lake_path_fails_startup(required: pytest.MonkeyPatch) -> None:
+    required.setenv("HURON_UPLOADS_URL", "https://huron.example.org/files/")
+    with pytest.raises(ValidationError, match="uploads_url needs lake_path"):
+        Settings()  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    ("lake_path", "configured", "effective"),
+    [
+        (None, "required", ReceiptMode.OPTIONAL),
+        (None, "optional", ReceiptMode.OPTIONAL),
+        ("/data1/huron", "required", ReceiptMode.REQUIRED),
+        ("/data1/huron", "optional", ReceiptMode.OPTIONAL),
+    ],
+)
+def test_receipts_are_optional_without_a_lake(
+    required: pytest.MonkeyPatch, lake_path: str | None, configured: str, effective: ReceiptMode
+) -> None:
+    if lake_path is not None:
+        required.setenv("HURON_LAKE_PATH", lake_path)
+    required.setenv("HURON_UPLOAD_RECEIPTS", configured)
+    assert Settings().receipt_mode is effective  # type: ignore[call-arg]

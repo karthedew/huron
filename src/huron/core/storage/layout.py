@@ -10,25 +10,48 @@ from huron.core.storage.errors import StorageError
 from huron.schema.naming import METADATA_FILE, PART_SUFFIX
 
 __all__ = [
+    "DIRECTORY_MODE",
+    "FILE_MODE",
     "MARKER_FILE",
+    "ORGANIZATION_MODE",
+    "UPLOAD_DIR",
+    "UPLOAD_DIR_MODE",
     "DirectoryKind",
     "OrganizationPlace",
     "is_reserved_entry",
+    "mode_of",
     "place_of",
     "resolve",
 ]
 
 MARKER_FILE = ".huron"
+#: tusd's filestore directory, directly below the lake path.
+UPLOAD_DIR = ".tus-uploads"
+
+#: Everyone may traverse an organization directory; nobody but its owner and group may list it.
+ORGANIZATION_MODE = 0o2751
+#: Catalog, namespace, collection and intermediate directories: the group reads, setgid passes
+#: the catalog's group down to every directory made below it.
+DIRECTORY_MODE = 0o2750
+#: A placed file and ``metadata.json``: readable by whoever may traverse the directories above.
+FILE_MODE = 0o644
+#: tusd's filestore: only the service user.
+UPLOAD_DIR_MODE = 0o700
 
 
 class DirectoryKind(StrEnum):
-    """The kinds of directory Huron creates, each with its own ACL plan."""
+    """The kinds of directory Huron creates."""
 
     ORGANIZATION = "organization"
     CATALOG = "catalog"
     NAMESPACE = "namespace"
     NAMESPACE_WITH_COLLECTIONS = "namespace_with_collections"
     COLLECTION = "collection"
+
+
+def mode_of(kind: DirectoryKind) -> int:
+    """The mode a directory of ``kind`` has on the share."""
+    return ORGANIZATION_MODE if kind is DirectoryKind.ORGANIZATION else DIRECTORY_MODE
 
 
 def resolve(prefix: Path, relative: str) -> Path:

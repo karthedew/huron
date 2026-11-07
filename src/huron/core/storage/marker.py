@@ -17,7 +17,7 @@ from huron.core.storage.layout import MARKER_FILE
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from huron.core.storage.ports import Storage
+    from huron.core.storage.ports import ShareReader
 
 __all__ = [
     "MARKER_MODE",
@@ -64,7 +64,7 @@ def render_marker(marker: Marker) -> bytes:
     return json.dumps(document, sort_keys=True).encode() + b"\n"
 
 
-def read_marker(storage: Storage, directory: Path) -> Marker:
+def read_marker(storage: ShareReader, directory: Path) -> Marker:
     """The marker in ``directory``; raises :class:`StorageError` when absent or unreadable.
 
     The error's ``context["state"]`` is the :class:`MarkerState` value of the refusal.
@@ -97,7 +97,7 @@ def read_marker(storage: Storage, directory: Path) -> Marker:
 
 
 def verify_marker(
-    storage: Storage, directory: Path, instance_id: str, organization: str | None = None
+    storage: ShareReader, directory: Path, instance_id: str, organization: str | None = None
 ) -> Marker:
     """The marker, refused unless it names ``instance_id`` and exactly ``organization``.
 
@@ -134,7 +134,7 @@ def verify_marker(
 
 
 def marker_state(
-    storage: Storage, directory: Path, instance_id: str, organization: str | None = None
+    storage: ShareReader, directory: Path, instance_id: str, organization: str | None = None
 ) -> MarkerState:
     """What :func:`verify_marker` would say, without raising."""
     try:

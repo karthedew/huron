@@ -15,7 +15,7 @@ src/huron/
     lake/          the domain: one subpackage per area (organizations, catalogs, namespaces,
                    collections, files, schemas, audit)
     metastore/     PostgreSQL adapters and in-memory fakes, one subpackage per area
-    storage/       share layout, ACL plans, POSIX storage, drift check (used by the CLI)
+    storage/       share layout, ACL plans, POSIX storage, drift check (used by the API and the CLI)
   applications/
     api/           FastAPI service; routes/v1/{endpoints,schema}
     cli/           Typer CLI; commands/ holds one module per verb group
@@ -34,8 +34,7 @@ Enforced by import-linter (`pyproject.toml`):
 - `core.security` never imports `core.lake`, `core.metastore`, `core.storage` or `applications`.
 - `core.lake` never imports `core.metastore`, `core.storage` or `applications`.
 - Only `applications` import `core.metastore`.
-- The API never imports the CLI or `core.storage`; the CLI never imports the API, the metastore or
-  the broker.
+- The API never imports the CLI; the CLI never imports the API, the metastore or the broker.
 
 ## Code conventions
 

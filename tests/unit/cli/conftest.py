@@ -5,16 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from huron.core.storage import (
-    MARKER_FILE,
-    DirectoryKind,
-    EffectiveGroups,
-    Marker,
-    plan,
-    render_marker,
-)
+from huron.core.storage import MARKER_FILE, DirectoryKind, EffectiveGroups, plan
 from huron.core.storage.memory import MemoryStorage
-from tests.support.api import INSTANCE_ID
+from tests.support.api import ROOT_MARKER
 from tests.support.cli import Cli
 from tests.support.lake import World, seed
 
@@ -25,8 +18,7 @@ PREFIX = Path("/projects/huron")
 def share() -> MemoryStorage:
     """An in-memory share rooted at the default prefix, marked for the test service."""
     storage = MemoryStorage(PREFIX, user="dave")
-    marker = Marker(1, "http://huron.test", str(INSTANCE_ID))
-    storage.write_bytes(PREFIX / MARKER_FILE, render_marker(marker))
+    storage.write_bytes(PREFIX / MARKER_FILE, ROOT_MARKER)
     return storage
 
 

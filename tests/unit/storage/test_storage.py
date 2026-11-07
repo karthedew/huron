@@ -1,22 +1,32 @@
-"""Layout, ACL plans, the marker and both storage adapters."""
+"""Layout, modes, ACL plans, the marker and both storage adapters."""
 
+import errno
 import grp
 import hashlib
 import os
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from huron.core.storage import (
+    DIRECTORY_MODE,
+    FILE_MODE,
     MARKER_FILE,
+    ORGANIZATION_MODE,
+    UPLOAD_DIR_MODE,
     DirectoryKind,
     EffectiveGroups,
     FileStamp,
+    GroupOutcome,
+    GroupResult,
     Marker,
+    Ownership,
     StorageError,
     diff,
     is_reserved_entry,
+    mode_of,
     plan,
     read_marker,
     render_marker,
@@ -24,9 +34,10 @@ from huron.core.storage import (
     verify_marker,
 )
 from huron.core.storage.factory import storage_for
-from huron.core.storage.memory import MemoryStorage
+from huron.core.storage.memory import ROOT_DEVICE, MemoryStorage, Node
 from huron.core.storage.posix import PosixStorage
 from huron.pkg.fs.acl import Acl, AclEntry, CompletedRun, SubprocessRunner, acl_supported
+from tests.support.disk import LAKE
 
 GROUPS = EffectiveGroups(
     platform_admin=("platform",),
@@ -242,31 +253,6 @@ def test_posix_storage_turns_permission_errors_into_storage_errors(
         storage.write_bytes(tmp_path / "f", b"x")
 
 
-def test_posix_storage_group_changes(tmp_path: Path, group: str, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    storage = PosixStorage("none", SubprocessRunner())
-    target = tmp_path / "d"
-    target.mkdir()
-    unknown = EffectiveGroups(catalog_admin=("no-such-group-xyz",))
-    assert storage.apply_plan(target, plan(DirectoryKind.CATALOG, unknown)) is True
-    mine = EffectiveGroups(catalog_admin=(group,))
-    storage.apply_plan(target, plan(DirectoryKind.CATALOG, mine))
-    other = next((g for g in grp.getgrall() if g.gr_gid != os.getgid()), None)
-    if other is not None:
-
-        def refuse(*args: object) -> None:
-            raise PermissionError("no")
-
-        monkeypatch.setattr(os, "chown", refuse)
-        changed = storage.apply_plan(
-            target, plan(DirectoryKind.CATALOG, EffectiveGroups(catalog_admin=(other.gr_name,)))
-        )
-        assert changed is False
-        monkeypatch.undo()
-        assert storage.apply_plan(
-            target, plan(DirectoryKind.CATALOG, EffectiveGroups(catalog_admin=(other.gr_name,)))
-        ) is (os.geteuid() == 0)
-
-
 def test_posix_acl_failures_surface(tmp_path: Path) -> None:
     class Failing:
         def run(self, argv, stdin=None):  # type: ignore[no-untyped-def]
@@ -295,3 +281,222 @@ def test_copy_in_leaves_the_mode_of_existing_subdirectories_alone(tmp_path: Path
     assert stat.S_IMODE(os.lstat(collection / "sub").st_mode) == 0o750
     assert stat.S_IMODE(os.lstat(collection / "sub" / "new").st_mode) == 0o2770
     assert (collection / "sub" / "new" / "file.txt").read_bytes() == b"data"
+
+
+@pytest.mark.parametrize(
+    ("kind", "mode"),
+    [
+        (DirectoryKind.ORGANIZATION, 0o2751),
+        (DirectoryKind.CATALOG, 0o2750),
+        (DirectoryKind.NAMESPACE, 0o2750),
+        (DirectoryKind.NAMESPACE_WITH_COLLECTIONS, 0o2750),
+        (DirectoryKind.COLLECTION, 0o2750),
+    ],
+)
+def test_each_kind_of_directory_has_its_mode(kind: DirectoryKind, mode: int) -> None:
+    assert mode_of(kind) == mode
+
+
+def test_files_and_the_upload_directory_have_their_modes() -> None:
+    assert (FILE_MODE, UPLOAD_DIR_MODE) == (0o644, 0o700)
+
+
+@pytest.fixture
+def posix() -> PosixStorage:
+    return storage_for("none")
+
+
+def test_posix_make_directory_gives_exactly_the_mode(tmp_path: Path, posix: PosixStorage) -> None:
+    target = tmp_path / "helio"
+    assert posix.make_directory(target, ORGANIZATION_MODE) is True
+    assert posix.owner(target) == Ownership(os.getuid(), os.lstat(target).st_gid, 0o2751)
+    os.chmod(target, 0o755)
+    assert posix.make_directory(target, ORGANIZATION_MODE) is False
+    assert posix.owner(target).mode == 0o755
+
+
+def test_posix_make_directory_refusals(
+    tmp_path: Path, posix: PosixStorage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "file").write_bytes(b"")
+    with pytest.raises(StorageError, match="is not a directory"):
+        posix.make_directory(tmp_path / "file", DIRECTORY_MODE)
+    with pytest.raises(StorageError, match="does not exist"):
+        posix.make_directory(tmp_path / "missing" / "d", DIRECTORY_MODE)
+
+    def refuse(*args: object) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(os, "mkdir", refuse)
+    with pytest.raises(StorageError, match="permission denied") as raised:
+        posix.make_directory(tmp_path / "d", DIRECTORY_MODE)
+    assert raised.value.context["path"] == str(tmp_path / "d")
+
+
+def test_posix_set_mode_changes_only_a_different_mode(tmp_path: Path, posix: PosixStorage) -> None:
+    target = tmp_path / "f"
+    target.write_bytes(b"")
+    os.chmod(target, 0o600)
+    assert posix.set_mode(target, FILE_MODE) is True
+    assert stat.S_IMODE(os.lstat(target).st_mode) == FILE_MODE
+    assert posix.set_mode(target, FILE_MODE) is False
+    with pytest.raises(StorageError):
+        posix.set_mode(tmp_path / "missing", FILE_MODE)
+
+
+def test_posix_set_group_keeps_a_matching_group(tmp_path: Path, posix: PosixStorage) -> None:
+    target = tmp_path / "catalog"
+    target.mkdir()
+    name = grp.getgrgid(os.lstat(target).st_gid).gr_name
+    assert posix.set_group(target, name) == GroupResult(GroupOutcome.UNCHANGED)
+
+
+def test_posix_set_group_is_pending_for_an_unknown_group(
+    tmp_path: Path, posix: PosixStorage
+) -> None:
+    result = posix.set_group(tmp_path, "no-such-group-xyz")
+    assert result == GroupResult(
+        GroupOutcome.PENDING, "this machine does not know the group no-such-group-xyz"
+    )
+
+
+@pytest.mark.parametrize("by_name", [True, False])
+def test_posix_set_group_changes_the_group(
+    tmp_path: Path, posix: PosixStorage, monkeypatch: pytest.MonkeyPatch, by_name: bool
+) -> None:
+    target = tmp_path / "catalog"
+    target.mkdir()
+    other = os.lstat(target).st_gid + 1
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=other))
+    monkeypatch.setattr(os, "chown", lambda *args, **kwargs: calls.append((*args, kwargs)))
+    group = "helio-readers" if by_name else other
+    assert posix.set_group(target, group) == GroupResult(GroupOutcome.CHANGED)
+    assert calls == [(target, -1, other, {"follow_symlinks": False})]
+
+
+def test_posix_set_group_is_pending_when_refused_or_missing(
+    tmp_path: Path, posix: PosixStorage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "catalog"
+    target.mkdir()
+    monkeypatch.setattr(grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=os.getgid() + 1))
+    missing = posix.set_group(tmp_path / "missing", "helio-readers")
+    assert missing.outcome is GroupOutcome.PENDING
+    assert missing.reason == f"{tmp_path / 'missing'}: No such file or directory"
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(os, "chown", refuse)
+    refused = posix.set_group(target, "helio-readers")
+    assert refused == GroupResult(GroupOutcome.PENDING, f"{target}: Operation not permitted")
+
+
+def test_posix_owner_and_device(tmp_path: Path, posix: PosixStorage) -> None:
+    target = tmp_path / "f"
+    target.write_bytes(b"")
+    os.chmod(target, 0o640)
+    info = os.lstat(target)
+    assert posix.owner(target) == Ownership(info.st_uid, info.st_gid, 0o640)
+    assert posix.device(target) == os.stat(tmp_path).st_dev
+    for read in (posix.owner, posix.device):
+        with pytest.raises(StorageError):
+            read(tmp_path / "missing")
+
+
+@pytest.fixture
+def memory() -> MemoryStorage:
+    """An in-memory lake whose root is a setgid directory of root's group (gid 0)."""
+    return MemoryStorage(LAKE, user="huron", uid=1000, gid=1000)
+
+
+def test_memory_make_directory_inherits_the_group_of_a_setgid_parent(
+    memory: MemoryStorage,
+) -> None:
+    memory.member_of.add(0)
+    assert memory.make_directory(LAKE / "helio", ORGANIZATION_MODE) is True
+    assert memory.owner(LAKE / "helio") == Ownership(1000, 0, 0o2751)
+    assert memory.make_directory(LAKE / "helio", DIRECTORY_MODE) is False
+    assert memory.owner(LAKE / "helio").mode == 0o2751
+
+
+def test_memory_make_directory_drops_setgid_outside_the_callers_groups(
+    memory: MemoryStorage,
+) -> None:
+    memory.make_directory(LAKE / "helio", ORGANIZATION_MODE)
+    assert memory.owner(LAKE / "helio") == Ownership(1000, 0, 0o751)
+    memory.nodes[LAKE / "plain"] = Node(owner="huron", mode=0o755, uid=1000, gid=1000)
+    memory.make_directory(LAKE / "plain" / "d", DIRECTORY_MODE)
+    assert memory.owner(LAKE / "plain" / "d") == Ownership(1000, 1000, 0o2750)
+
+
+def test_memory_make_directory_refusals(memory: MemoryStorage) -> None:
+    memory.write_bytes(LAKE / "file", b"")
+    with pytest.raises(StorageError, match="is not a directory"):
+        memory.make_directory(LAKE / "file", DIRECTORY_MODE)
+    with pytest.raises(StorageError, match="does not exist"):
+        memory.make_directory(LAKE / "file" / "d", DIRECTORY_MODE)
+    memory.denied.add(LAKE)
+    with pytest.raises(StorageError, match="permission denied"):
+        memory.make_directory(LAKE / "d", DIRECTORY_MODE)
+
+
+def test_memory_set_mode(memory: MemoryStorage) -> None:
+    memory.write_bytes(LAKE / "f", b"", 0o600)
+    assert memory.set_mode(LAKE / "f", FILE_MODE) is True
+    assert memory.set_mode(LAKE / "f", FILE_MODE) is False
+    assert memory.owner(LAKE / "f").mode == FILE_MODE
+    memory.member_of.add(0)
+    memory.make_directory(LAKE / "d", 0o750)
+    memory.member_of.discard(0)
+    assert memory.set_mode(LAKE / "d", DIRECTORY_MODE) is True
+    assert memory.owner(LAKE / "d").mode == 0o750
+    with pytest.raises(StorageError, match="permission denied"):
+        memory.set_mode(LAKE, 0o755)
+    with pytest.raises(StorageError, match="does not exist"):
+        memory.set_mode(LAKE / "missing", FILE_MODE)
+
+
+def test_memory_set_group_outcomes(memory: MemoryStorage) -> None:
+    memory.groups.update({"helio-readers": 2001, "geo-readers": 2002})
+    memory.member_of.add(2001)
+    memory.make_directory(LAKE / "cat", DIRECTORY_MODE)
+    target = LAKE / "cat"
+    assert memory.set_group(target, "unknown") == GroupResult.unknown("unknown")
+    assert memory.set_group(LAKE / "missing", "helio-readers") == GroupResult(
+        GroupOutcome.PENDING, f"{LAKE / 'missing'}: {os.strerror(errno.ENOENT)}"
+    )
+    assert memory.set_group(target, "geo-readers") == GroupResult(
+        GroupOutcome.PENDING, f"{target}: {os.strerror(errno.EPERM)}"
+    )
+    assert memory.set_group(target, "helio-readers") == GroupResult(GroupOutcome.CHANGED)
+    assert memory.owner(target).gid == 2001
+    assert memory.set_group(target, "helio-readers") == GroupResult(GroupOutcome.UNCHANGED)
+    assert memory.set_group(LAKE, "helio-readers").outcome is GroupOutcome.PENDING
+    assert memory.set_group(target, 2002).outcome is GroupOutcome.PENDING
+    assert memory.set_group(target, 1000) == GroupResult(GroupOutcome.CHANGED)
+    assert memory.owner(target).gid == 1000
+
+
+def test_memory_write_bytes_gives_a_file_the_group_of_a_setgid_parent(
+    memory: MemoryStorage,
+) -> None:
+    memory.write_bytes(LAKE / "inherited", b"")
+    assert memory.owner(LAKE / "inherited").gid == 0
+    memory.nodes[LAKE / "plain"] = Node(owner="huron", mode=0o755, uid=1000, gid=2001)
+    memory.write_bytes(LAKE / "plain" / "own", b"")
+    assert memory.owner(LAKE / "plain" / "own").gid == 1000
+    memory.nodes[LAKE / "plain"].mode = 0o2755
+    memory.write_bytes(LAKE / "plain" / "own", b"again")
+    assert memory.owner(LAKE / "plain" / "own").gid == 2001
+
+
+def test_memory_device_follows_the_mount_points(memory: MemoryStorage) -> None:
+    memory.mount(LAKE / "geo", 7)
+    memory.make_directory(LAKE / "geo" / "cat", DIRECTORY_MODE)
+    memory.make_directory(LAKE / "helio", DIRECTORY_MODE)
+    assert memory.device(LAKE) == memory.device(LAKE / "helio") == ROOT_DEVICE
+    assert memory.device(LAKE / "geo") == memory.device(LAKE / "geo" / "cat") == 7
+    with pytest.raises(StorageError, match="does not exist"):
+        memory.device(LAKE / "missing")

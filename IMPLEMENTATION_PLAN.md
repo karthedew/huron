@@ -3464,7 +3464,39 @@ failed inheritance visible.
 - Verification: `make gate`; `uv run pytest tests/unit/api/test_openapi_snapshot.py
   tests/unit/test_error_contract.py`; from `web/`, `npm run check` and `npm test`.
 - Dependencies: M11.2.
-- Status: pending
+- Status: complete
+- Execution notes: `LakeDisk` already runs every disk call, the probe included, in its own
+  `ThreadPoolExecutor` of 8 workers (`DISK_WORKERS`), as the amendment's "Lake path" requires, so
+  M11.5's change of `run` to a dedicated pool is done; `Runtime.close()` shuts the pool down.
+  `resolve`, `check_marker`, `run`, `open`, `ready` and `set_share_group` are coroutines that hop to
+  that pool. `run` keeps the path lock until its action returns, also when the caller is cancelled,
+  because a worker thread cannot be stopped, and logs `disk.cancelled_action_failed` (path and
+  error) when that action then raises; `PathLocks` forgets a cancelled waiter.
+  `set_share_group(catalog_path, group)` takes the relative `<org>/<catalog>` path, resolves it,
+  then checks the marker and runs `Storage.set_group` under the path lock; M11.5 moves the `resolve`
+  before the transaction. `group=None` gives the directory back the service group `G`
+  (`LakeDisk(..., service_gid=)`, `os.getgid()` in the runtime), which `U` can always give;
+  `Storage.set_group` takes a name or a gid. The create calls it only with a share group, since a
+  new catalog directory inherits `G`. The PATCH calls it on every change with a lake, so a clear
+  (`null`) resets the group to `G`, and a failed reset answers `SHARE_GROUP_PENDING` with `group` =
+  the gid of `G` as text. Until M11.5 makes the catalog directory, a create with a share group on a
+  lake answers `SHARE_GROUP_PENDING` with `<path>: No such file or directory`. Any refused or failed
+  `chgrp` is `PENDING` with the reason (`GroupResult.unknown(group)` for a name the machine cannot
+  resolve). `/readyz` adds `lake` only when the service has a lake; without `lake_path` the checks
+  stay `database` and `signing_keys`. The probe writes and removes
+  `.tus-uploads/.huron-ready-<uuid>`; while a hung probe still runs, `ready()` awaits it again
+  instead of starting another. A `lake_path` that is not a directory, or in which `open()` cannot
+  make `.tus-uploads`, stops startup with `LAKE_UNAVAILABLE`. `build_runtime(..., disk=)` takes a
+  `LakeDisk` in place of the one built from `lake_path` (tests use `tests/support/disk.py`:
+  `memory_lake`, `memory_disk`, `StalledStorage`). Settings: durations take seconds (a number, also
+  as text) or ISO 8601; `lake_path` and `mount_prefix` must be absolute without `..`; an unset
+  `mount_prefix` stays `None` and the runtime gives `LakeDisk` `lake_path` in its place;
+  `Settings.receipt_mode` is the effective mode. `ShareReader.owner` returns `Ownership(uid, gid,
+  mode)`. `MemoryStorage` gained `uid`, `gid`, `groups` (the group database), `member_of`, `mounts`
+  and `mount(path, device)`; its `make_directory` gives a new directory the group of a setgid parent
+  and, like `chmod`, drops setgid outside `member_of`; its `write_bytes` gives a new file the group
+  of a setgid parent too. `PosixStorage.apply_plan` sets its group through `set_group`. The web's
+  catalog decoder (`web/src/lib/server/huron-api.ts`) and `catalogFixture` carry `share_group`.
 
 #### M11.4 Placement, the hooks route and the auth route
 

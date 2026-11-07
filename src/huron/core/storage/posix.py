@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Literal
 
 from huron.core.storage.aclplan import AclPlan, diff
 from huron.core.storage.errors import StorageError
-from huron.core.storage.ports import FileStamp
+from huron.core.storage.ports import FileStamp, GroupOutcome, GroupResult, Ownership
 from huron.pkg.fs import posix
 from huron.pkg.fs.acl import Acl, AclEntry, Runner, read_acl, write_acl
 from huron.pkg.hashing import sha256_file
@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 
     from huron.pkg.fs.posix import Entry, Stamp
 
-__all__ = ["DIRECTORY_MODE", "PosixStorage"]
+__all__ = ["PosixStorage"]
 
-DIRECTORY_MODE = 0o2770
+_COPY_DIRECTORY_MODE = 0o2770
 
 
 class PosixStorage:
@@ -31,6 +31,55 @@ class PosixStorage:
     def __init__(self, acl_backend: Literal["posix", "none"], runner: Runner) -> None:
         self._acls = acl_backend == "posix"
         self._runner = runner
+
+    def make_directory(self, path: Path, mode: int) -> bool:
+        """Create ``path`` with exactly ``mode``; an existing directory is left as it is."""
+        if not posix.is_dir(path.parent):
+            raise StorageError(f"{path.parent} does not exist", {"path": str(path.parent)})
+        try:
+            os.mkdir(path, mode)
+        except FileExistsError:
+            if posix.is_dir(path):
+                return False
+            raise StorageError(f"{path} is not a directory", {"path": str(path)}) from None
+        except OSError as error:
+            raise _storage_error(path, error) from error
+        # mkdir applies the umask and never sets the setgid bit.
+        _guard(lambda: os.chmod(path, mode), path)
+        return True
+
+    def set_mode(self, path: Path, mode: int) -> bool:
+        """Give ``path`` exactly ``mode``."""
+        if self.owner(path).mode == mode:
+            return False
+        _guard(lambda: os.chmod(path, mode), path)
+        return True
+
+    def set_group(self, path: Path, group: str | int) -> GroupResult:
+        """Give ``path`` the group ``group``, a name or a gid.
+
+        An unknown name or a refusal is ``PENDING``.
+        """
+        try:
+            gid = group if isinstance(group, int) else grp.getgrnam(group).gr_gid
+        except KeyError:
+            return GroupResult.unknown(f"{group}")
+        try:
+            if os.lstat(path).st_gid == gid:
+                return GroupResult(GroupOutcome.UNCHANGED)
+            os.chown(path, -1, gid, follow_symlinks=False)
+        except OSError as error:
+            return GroupResult(GroupOutcome.PENDING, f"{path}: {error.strerror or error}")
+        return GroupResult(GroupOutcome.CHANGED)
+
+    def owner(self, path: Path) -> Ownership:
+        """The owner, the group and the mode bits of ``path``."""
+        info = _guard(lambda: os.lstat(path), path)
+        return Ownership(info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))
+
+    def device(self, path: Path) -> int:
+        """The filesystem of ``path``, following links."""
+        return _guard(lambda: os.stat(path).st_dev, path)
 
     def ensure_directory(self, path: Path, plan: AclPlan) -> bool:
         """Create ``path`` with the plan's mode and ACL; an existing one is brought in line."""
@@ -42,7 +91,8 @@ class PosixStorage:
 
     def apply_plan(self, path: Path, plan: AclPlan) -> bool:
         """Apply group, mode and ACL; returns whether anything changed."""
-        changed = self._chgrp(path, plan.owning_group)
+        group = plan.owning_group
+        changed = group is not None and self.set_group(path, group).outcome is GroupOutcome.CHANGED
         if stat.S_IMODE(os.lstat(path).st_mode) != plan.mode:
             _guard(lambda: os.chmod(path, plan.mode), path)
             changed = True
@@ -124,36 +174,24 @@ class PosixStorage:
         """Whether the current user owns ``path``."""
         return os.lstat(path).st_uid == os.getuid()
 
-    def _chgrp(self, path: Path, group: str | None) -> bool:
-        if group is None:
-            return False
-        try:
-            gid = grp.getgrnam(group).gr_gid
-        except KeyError:
-            return False
-        if os.lstat(path).st_gid == gid:
-            return False
-        try:
-            os.chown(path, -1, gid)
-        except PermissionError:
-            return False
-        return True
-
 
 def _guard[T](action: Callable[[], T], path: Path) -> T:
     try:
         return action()
-    except PermissionError as error:
-        raise StorageError(
-            f"permission denied on {path}", {"path": str(path), "error": str(error)}
-        ) from error
     except OSError as error:
-        raise StorageError(f"{path}: {error.strerror or error}", {"path": str(path)}) from error
+        raise _storage_error(path, error) from error
+
+
+def _storage_error(path: Path, error: OSError) -> StorageError:
+    if isinstance(error, PermissionError):
+        context = {"path": str(path), "error": str(error)}
+        return StorageError(f"permission denied on {path}", context)
+    return StorageError(f"{path}: {error.strerror or error}", {"path": str(path)})
 
 
 def _make_dir(path: Path) -> None:
     if not posix.is_dir(path):
-        _guard(lambda: posix.make_dir(path, DIRECTORY_MODE), path)
+        _guard(lambda: posix.make_dir(path, _COPY_DIRECTORY_MODE), path)
 
 
 def _perms(bits: int) -> str:

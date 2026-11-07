@@ -1,23 +1,94 @@
 """Health, discovery, authentication, problems and the token exchange."""
 
+import os
+import stat
+from pathlib import Path
+
 import httpx
 import pytest
 
 from huron.applications.api.app import create_app
 from huron.applications.api.openapi import document, main
+from huron.core.storage import UPLOAD_DIR, LakeUnavailable
 from tests.support.api import INSTANCE_ID, Service, service
-from tests.support.clock import START
+from tests.support.clock import START, frozen
+from tests.support.disk import LAKE, StalledStorage, memory_disk, memory_lake
 
 
 async def test_health_reports_the_instance(api: Service) -> None:
     body = (await api.client.get("/healthz")).json()
     assert body["status"] == "ok" and body["instance_id"] == str(INSTANCE_ID)
     assert body["organizations_managed"] is False
+    assert (body["uploads_url"], body["service_user"]) == (None, None)
+    assert body["upload_hook_timeout"] == 900
     ready = await api.client.get("/readyz")
     assert ready.status_code == 200 and ready.json()["checks"] == {
         "database": True,
         "signing_keys": True,
     }
+
+
+async def test_health_reports_the_uploads_and_the_service_user(lake: Path) -> None:
+    async with service(
+        lake_path=lake,
+        uploads_url="https://huron.example.org/files/",
+        upload_hook_timeout="PT55M",
+        service_uid=1000700000,
+        service_group="huron-svc",
+    ) as running:
+        body = (await running.client.get("/healthz")).json()
+    assert body["uploads_url"] == "https://huron.example.org/files/"
+    assert body["service_user"] == {"uid": 1000700000, "gid": os.getgid(), "group": "huron-svc"}
+    assert body["upload_hook_timeout"] == 3300
+
+
+async def test_readiness_checks_a_temporary_lake(lake_api: Service, lake: Path) -> None:
+    ready = await lake_api.client.get("/readyz")
+    assert ready.status_code == 200
+    assert ready.json()["checks"] == {"database": True, "signing_keys": True, "lake": True}
+    assert stat.S_IMODE(os.lstat(lake / UPLOAD_DIR).st_mode) == 0o700
+    assert sorted(p.name for p in lake.iterdir()) == [".huron", UPLOAD_DIR]
+    assert list((lake / UPLOAD_DIR).iterdir()) == []
+
+
+async def test_readiness_fails_when_the_lake_is_not_writable() -> None:
+    clock = frozen()
+    storage = memory_lake()
+    storage.denied.add(LAKE / UPLOAD_DIR)
+    async with service(disk=memory_disk(storage, clock), clock=clock, lake_path=LAKE) as running:
+        ready = await running.client.get("/readyz")
+    assert ready.status_code == 503
+    assert ready.json() == {
+        "status": "not ready",
+        "checks": {"database": True, "signing_keys": True, "lake": False},
+    }
+
+
+async def test_readiness_fails_when_the_lake_probe_does_not_answer_in_time() -> None:
+    clock = frozen()
+    stalled = StalledStorage()
+    disk = memory_disk(stalled, clock, probe_timeout=0.01)
+    try:
+        async with service(disk=disk, clock=clock, lake_path=LAKE) as running:
+            ready = await running.client.get("/readyz")
+    finally:
+        stalled.release.set()
+    assert ready.status_code == 503 and ready.json()["checks"]["lake"] is False
+
+
+async def test_a_lake_path_that_is_not_a_directory_stops_startup(tmp_path: Path) -> None:
+    with pytest.raises(LakeUnavailable, match="is not a directory"):
+        async with service(lake_path=tmp_path / "unmounted"):
+            pass
+
+
+async def test_a_lake_the_api_cannot_write_stops_startup() -> None:
+    clock = frozen()
+    storage = memory_lake()
+    storage.denied.add(LAKE)
+    with pytest.raises(LakeUnavailable, match="cannot write the lake"):
+        async with service(disk=memory_disk(storage, clock), clock=clock, lake_path=LAKE):
+            pass
 
 
 async def test_discovery_and_jwks(api: Service) -> None:

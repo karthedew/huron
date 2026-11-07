@@ -1,15 +1,22 @@
-"""Share layout, ACL plans and the storage adapters the CLI writes through."""
+"""Share layout, modes, ACL plans, the storage adapters and the in-process path locks."""
 
 from huron.core.storage.aclplan import AclPlan, EffectiveGroups, diff, plan
-from huron.core.storage.errors import StorageError
+from huron.core.storage.errors import LakeUnavailable, OutsideLake, StorageError
 from huron.core.storage.layout import (
+    DIRECTORY_MODE,
+    FILE_MODE,
     MARKER_FILE,
+    ORGANIZATION_MODE,
+    UPLOAD_DIR,
+    UPLOAD_DIR_MODE,
     DirectoryKind,
     OrganizationPlace,
     is_reserved_entry,
+    mode_of,
     place_of,
     resolve,
 )
+from huron.core.storage.locks import PathLocks
 from huron.core.storage.marker import (
     MARKER_MODE,
     Marker,
@@ -19,23 +26,47 @@ from huron.core.storage.marker import (
     render_marker,
     verify_marker,
 )
-from huron.core.storage.ports import FileStamp, Storage
+from huron.core.storage.ports import (
+    SHARE_GROUP_PENDING,
+    FileStamp,
+    GroupOutcome,
+    GroupResult,
+    Ownership,
+    ShareReader,
+    ShareWarning,
+    Storage,
+)
 
 __all__ = [
+    "DIRECTORY_MODE",
+    "FILE_MODE",
     "MARKER_FILE",
     "MARKER_MODE",
+    "ORGANIZATION_MODE",
+    "SHARE_GROUP_PENDING",
+    "UPLOAD_DIR",
+    "UPLOAD_DIR_MODE",
     "AclPlan",
     "DirectoryKind",
     "EffectiveGroups",
     "FileStamp",
+    "GroupOutcome",
+    "GroupResult",
+    "LakeUnavailable",
     "Marker",
     "MarkerState",
     "OrganizationPlace",
+    "OutsideLake",
+    "Ownership",
+    "PathLocks",
+    "ShareReader",
+    "ShareWarning",
     "Storage",
     "StorageError",
     "diff",
     "is_reserved_entry",
     "marker_state",
+    "mode_of",
     "place_of",
     "plan",
     "read_marker",

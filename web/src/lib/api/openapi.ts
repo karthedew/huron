@@ -34,6 +34,8 @@ export interface CatalogIn {
 	name: string;
 	/** Format: uuid. */
 	schema_id?: string | null;
+	/** The POSIX group whose members read the catalog's directory. */
+	share_group?: string | null;
 }
 
 /** A catalog. */
@@ -48,9 +50,31 @@ export interface CatalogOut {
 	namespace_count: number;
 	organization: string;
 	schema: SchemaRefOut;
+	/** The POSIX group whose members read the catalog's directory. */
+	share_group: string | null;
 	/** The configured root of the organization's directory; clients join it with the relative path, or use their own mount prefix when it is null. */
 	share_root: string | null;
 	version: number;
+}
+
+/** A catalog after a create or a change, with the warnings of its disk work. */
+export interface CatalogWriteOut {
+	/** Format: date-time. */
+	created_at: string;
+	created_by: string;
+	description: string;
+	display_name: string;
+	id: string;
+	name: string;
+	namespace_count: number;
+	organization: string;
+	schema: SchemaRefOut;
+	/** The POSIX group whose members read the catalog's directory. */
+	share_group: string | null;
+	/** The configured root of the organization's directory; clients join it with the relative path, or use their own mount prefix when it is null. */
+	share_root: string | null;
+	version: number;
+	warnings: ShareWarningOut[];
 }
 
 /** A new draft collection. */
@@ -190,11 +214,17 @@ export interface HTTPValidationError {
  * 
  * ``organizations_managed`` is whether the service configuration declares the organizations:
  * the CLI then looks for an organization's directory only where its declaration puts it.
+ * ``uploads_url`` is the public tus endpoint, ``null`` while uploads are off.
+ * ``service_user`` is ``null`` without a configured service group. ``upload_hook_timeout`` is
+ * how long tusd waits for a hook, in seconds.
  */
 export interface Health {
 	instance_id: string;
 	organizations_managed: boolean;
+	service_user: ServiceUser | null;
 	status: string;
+	upload_hook_timeout: number;
+	uploads_url: string | null;
 	version: string;
 }
 
@@ -326,6 +356,28 @@ export interface SchemaRefOut {
 	id: string;
 	name: string;
 	version: number;
+}
+
+/** The identity that owns the lake: the service's UID, primary GID and service group. */
+export interface ServiceUser {
+	gid: number;
+	group: string;
+	uid: number;
+}
+
+/** A catalog's new share group; ``null`` clears it. */
+export interface ShareGroupIn {
+	/** The POSIX group whose members read the catalog's directory. */
+	share_group: string | null;
+}
+
+/** A change on disk that the storage administrator must still make. */
+export interface ShareWarningOut {
+	/** SHARE_GROUP_PENDING: the directory does not have the group. */
+	code: string;
+	detail: string;
+	/** The share group, or the gid of the service group when the share group is cleared. */
+	group: string;
 }
 
 /** A signing key without its private part. */
