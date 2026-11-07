@@ -14,6 +14,7 @@ from huron.applications.api.settings import Settings
 from huron.core.lake.bootstrap import BootstrapResult, Lake, LakeSettings, bootstrap, build_lake
 from huron.core.lake.organizations.declarations import UNMANAGED, Declarations
 from huron.core.lake.transaction import UnitOfWork
+from huron.core.lake.uploads.models import ReceiptMode
 from huron.core.metastore.postgres import PostgresStore
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.broker import (
@@ -117,7 +118,13 @@ async def build_runtime(
     if store is None:
         store = await _store(settings)
     declarations = settings.declarations
-    lake_settings = LakeSettings(settings.platform_admin_group, settings.key_overlap, declarations)
+    # Receipts come only from upload routes, which this service does not serve.
+    lake_settings = LakeSettings(
+        settings.platform_admin_group,
+        settings.key_overlap,
+        declarations,
+        upload_receipts=ReceiptMode.OPTIONAL,
+    )
     _report(await bootstrap(store, clock, lake_settings))
     owns_http = http is None
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0))

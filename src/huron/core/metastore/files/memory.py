@@ -34,6 +34,13 @@ class MemoryFiles:
         """Which keys are recorded."""
         return {key for key in keys if (collection_id, key) in self._state.files}
 
+    async def get_many(
+        self, collection_id: uuid.UUID, keys: Collection[str]
+    ) -> Sequence[FileRecord]:
+        """The recorded ones of ``keys``."""
+        found = (self._state.files.get((collection_id, key)) for key in keys)
+        return [record for record in found if record is not None]
+
     async def beneath(
         self, collection_id: uuid.UUID, prefixes: Collection[str], limit: int
     ) -> set[str]:

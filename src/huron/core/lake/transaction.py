@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from huron.core.lake.namespaces.ports import NamespaceStore
     from huron.core.lake.organizations.ports import OrganizationStore
     from huron.core.lake.schemas.ports import SchemaStore
+    from huron.core.lake.uploads.ports import UploadStore
     from huron.core.security.broker.keys import KeyStore
     from huron.core.security.rbac.grants import Scope
 
@@ -62,6 +63,11 @@ class Transaction(Protocol):
     @property
     def commits(self) -> CommitStore:
         """The commits store."""
+        ...
+
+    @property
+    def uploads(self) -> UploadStore:
+        """The uploads store."""
         ...
 
     @property

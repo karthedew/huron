@@ -28,6 +28,12 @@ class FileStore(Protocol):
         """Which of ``keys`` are recorded."""
         ...
 
+    async def get_many(
+        self, collection_id: uuid.UUID, keys: Collection[str]
+    ) -> Sequence[FileRecord]:
+        """The records of those ``keys`` that are recorded."""
+        ...
+
     async def beneath(
         self, collection_id: uuid.UUID, prefixes: Collection[str], limit: int
     ) -> set[str]:

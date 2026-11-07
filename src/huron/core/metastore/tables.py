@@ -1,10 +1,12 @@
 """The shared SQLAlchemy metadata for schema ``huron``.
 
-Table definitions live beside each area's adapter; importing this module's ``all_tables``
+Table definitions live beside each area's adapter; calling :func:`load_all`
 registers every one of them, which is what Alembic and the schema-map check need.
 """
 
 from __future__ import annotations
+
+import importlib
 
 from sqlalchemy import MetaData
 
@@ -26,14 +28,20 @@ metadata = MetaData(
 
 def load_all() -> MetaData:
     """Import every area's tables and return the populated metadata."""
-    from huron.core.metastore.audit import tables as _audit  # noqa: F401
-    from huron.core.metastore.catalogs import tables as _catalogs  # noqa: F401
-    from huron.core.metastore.collections import tables as _collections  # noqa: F401
-    from huron.core.metastore.files import tables as _files  # noqa: F401
-    from huron.core.metastore.grants import tables as _grants  # noqa: F401
-    from huron.core.metastore.keys import tables as _keys  # noqa: F401
-    from huron.core.metastore.namespaces import tables as _namespaces  # noqa: F401
-    from huron.core.metastore.organizations import tables as _organizations  # noqa: F401
-    from huron.core.metastore.schemas import tables as _schemas  # noqa: F401
-
+    for area in _AREAS:
+        importlib.import_module(f"huron.core.metastore.{area}.tables")
     return metadata
+
+
+_AREAS = (
+    "audit",
+    "catalogs",
+    "collections",
+    "files",
+    "grants",
+    "keys",
+    "namespaces",
+    "organizations",
+    "schemas",
+    "uploads",
+)

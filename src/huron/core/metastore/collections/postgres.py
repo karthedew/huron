@@ -97,7 +97,7 @@ class PostgresCollections:
         )
 
     async def delete(self, collection_id: uuid.UUID) -> None:
-        """Remove a collection and its commits."""
+        """Remove a collection with its commits and uploads; its removals stay, unlinked from it."""
         await self._db.execute("delete from huron.collections where id = $1", collection_id)
 
     async def list_in_namespace(

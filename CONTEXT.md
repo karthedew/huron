@@ -47,11 +47,19 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 
 ### Write path
 
-**Volume**: The ONTAP NFS export that holds Raw bytes, mounted at the same prefix on the designated machines and on the Huron pods.
-**Mount prefix**: The configured directory, such as `/projects`, where the volume must be mounted before anything is written.
-**Push**: The CLI's upload of a working copy, in three phases: copy, commit, cleanup.
-**Partial**: A `<name>.<token>.part` file written before placement; it belongs to one staged add and only that add's push resumes it.
-**Placement**: Turning a partial into its final name: a link when the name must be new, a rename when overwriting.
+**Volume**: The ONTAP NFS export that holds Raw bytes, mounted at the same prefix on the designated machines, in the API pod and in the upload pod. Only the API pod and the upload pod mount it read-write.
+**Mount prefix**: The configured directory, such as `/projects/huron`, where the volume is mounted for organizations without a root.
+**Push**: The CLI's upload of a working copy: each staged add goes through the upload proxy to tusd, then one commit records the adds and removes.
+**Partial**: `.<name>.<upload id>.huron-part`, the link the API makes beside an existing file during an overwrite, then renames over it.
+**Placement**: The API turning a finished upload into its final name inside `pre-finish`: it hashes the upload, then makes a hard link when the name is new, or a partial and a rename when it overwrites.
+**Upload**: One tus upload of one file to one `rel_path` of a collection by one user, with a row that goes from `pending` to `placed` and `committed`, or ends `failed` or `terminated`.
+**Receipt**: The size, sha256 and inode the API records for a placed upload. A commit records an add only when the latest placement of its path is the committer's receipt.
+**Upload pod**: The Deployment of one replica that holds the upload proxy and tusd. Its init container deletes tusd's old lock files.
+**Upload proxy**: The nginx container that asks the API to authorize every request except OPTIONS before any byte reaches tusd.
+**Lake path**: `HURON_LAKE_PATH`, the volume's mount point in the API pod and in the upload pod. Every organization root that accepts uploads lies at or below it, on one filesystem.
+**Service UID**: `U`, the fixed UID of the API pod and the upload pod. It owns every directory and file of the lake. Its primary group is the service group. _Avoid_: upload user.
+**Share group**: The LDAP POSIX group a catalog names as `share_group`. Its members read the catalog's directory over the mount. Every directory below the catalog inherits it through setgid. A placed file keeps the service group, and its mode `0644` lets every member read it. _Avoid_: reader group.
+**Repair**: `huron adm repair`: the API making a directory again when it is missing, setting its permission bits, trying its group and rewriting `metadata.json`, and with `--recursive` doing the same for every directory and file below it. It never deletes, and it never sets a setgid bit or a directory group that `U` may not set.
 **Push lock**: The lock that lets one push at a time run from a working copy.
 **Working copy**: A checked-out collection's local state: its base (version and time of the pull), its staged changes and its file listing.
 **Stale staged entry**: A staged change that a later pull invalidated; push refuses while one exists.
@@ -103,6 +111,8 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 - An **Overwrite** or remove leaves the old bytes only in **ONTAP snapshots** taken before it; its audit entry gives the time that selects one.
 - A **Role mapping** grants a **Role** to a group; a request's authority is its groups mapped through the current **Role mappings**.
 - A catalog extension **Metadata schema** extends one **Org base schema** version; each **Config version** references one extension version.
+- A catalog change that needs a change on disk makes it in the same API request, after its transaction commits. A failure on disk is repaired with **Repair**.
+- An **Upload** becomes a **File** only through a **Commit** that its **Receipt** proves.
 
 ## Example dialogue
 
@@ -118,5 +128,6 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 - The walkthrough's "organization" is an affiliation value in metadata, not the Organization.
 - "check": `huron check` reads findings and Incomplete collections; the Reconciler repairs; `check-stack.sh` and `check_schema_map` are tooling.
 - "publish" applies to descriptive metadata only; files are committed.
-- `metadata.json` beside the data is written by the server from the committed row, never by the CLI.
+- `metadata.json` beside the data is written by the API from its own rendering, never by the CLI.
 - "Incomplete" covers both "a newly required field is missing" and "a field no longer conforms".
+- "Partial" meant `<name>.huron-part`, copied by the version 1 CLI. It now means the API's overwrite link.

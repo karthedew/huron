@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from huron.core.lake.namespaces.models import Namespace
     from huron.core.lake.organizations.models import Organization
     from huron.core.lake.schemas.models import SchemaEntry
+    from huron.core.lake.uploads.models import Removal, Upload
     from huron.core.security.broker.keys import SigningKey
     from huron.core.security.rbac import Role, Scope
 
@@ -35,6 +36,8 @@ class MemoryState:
     grants: dict[tuple[Scope, Role, str], str] = field(default_factory=dict)
     audit: list[AuditEntry] = field(default_factory=list)
     keys: dict[str, SigningKey] = field(default_factory=dict)
+    uploads: dict[uuid.UUID, Upload] = field(default_factory=dict)
+    removals: dict[uuid.UUID, Removal] = field(default_factory=dict)
 
     def copy(self) -> MemoryState:
         """A copy whose tables can change without touching this state."""
@@ -50,4 +53,6 @@ class MemoryState:
             grants=dict(self.grants),
             audit=list(self.audit),
             keys=dict(self.keys),
+            uploads=dict(self.uploads),
+            removals=dict(self.removals),
         )

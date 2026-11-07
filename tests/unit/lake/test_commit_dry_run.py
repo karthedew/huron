@@ -9,17 +9,15 @@ from huron.core.lake.files.commits import parse_commit_request
 from huron.core.lake.files.errors import BaseVersionConflict, CommitInvalid, FileNotRecorded
 from huron.core.lake.files.models import CommitRequest, CommitResult, FileAdd
 from huron.pkg.errors import Conflict, Forbidden
-from tests.support.lake import CONTRIBUTOR, READER, VALID_METADATA, World
+from tests.support.lake import (
+    CONTRIBUTOR,
+    READER,
+    World,
+    commit_uploaded,
+    settled_collection,
+)
 
 SHA = "b" * 64
-
-
-async def settled(world: World) -> uuid.UUID:
-    draft = await world.lake.collections.create(
-        CONTRIBUTOR, "heliophysics", "solar-wind", "run7", dict(VALID_METADATA)
-    )
-    activated = await world.lake.collections.activate(CONTRIBUTOR, draft.collection.id, 1)
-    return activated.collection.id
 
 
 async def unchanged(world: World, collection_id: uuid.UUID, version: int, files: int) -> None:
@@ -74,8 +72,9 @@ def test_a_real_commit_body_needs_hashes() -> None:
 
 async def test_a_dry_run_answers_the_would_be_result_and_writes_nothing(seeded: World) -> None:
     lake = seeded.lake
-    cid = await settled(seeded)
-    await lake.commits.commit(
+    cid = await settled_collection(seeded.lake)
+    await commit_uploaded(
+        seeded.lake,
         CONTRIBUTOR,
         cid,
         CommitRequest(2, (FileAdd("a.txt", 1, SHA), FileAdd("b.txt", 1, SHA)), (), "h"),
@@ -94,7 +93,7 @@ async def test_a_dry_run_answers_the_would_be_result_and_writes_nothing(seeded: 
 
 
 async def test_an_empty_dry_run_previews_the_next_version(seeded: World) -> None:
-    cid = await settled(seeded)
+    cid = await settled_collection(seeded.lake)
     preview = await seeded.lake.commits.commit(
         CONTRIBUTOR, cid, CommitRequest(2, (), (), "h"), dry_run=True
     )
@@ -104,7 +103,7 @@ async def test_an_empty_dry_run_previews_the_next_version(seeded: World) -> None
 
 async def test_a_dry_run_is_refused_like_a_real_commit(seeded: World) -> None:
     lake = seeded.lake
-    cid = await settled(seeded)
+    cid = await settled_collection(seeded.lake)
     unhashed = (FileAdd("a.txt", 1, None),)
     with pytest.raises(Forbidden):
         await lake.commits.commit(READER, cid, CommitRequest(2, unhashed, (), "h"), dry_run=True)
@@ -115,7 +114,9 @@ async def test_a_dry_run_is_refused_like_a_real_commit(seeded: World) -> None:
     assert raised.value.context == {"current_version": 2, "base_version": 1}
     with pytest.raises(FileNotRecorded):
         await lake.commits.commit(CONTRIBUTOR, cid, CommitRequest(2, (), ("x",), "h"), dry_run=True)
-    await lake.commits.commit(CONTRIBUTOR, cid, CommitRequest(2, (FileAdd("d", 1, SHA),), (), "h"))
+    await commit_uploaded(
+        seeded.lake, CONTRIBUTOR, cid, CommitRequest(2, (FileAdd("d", 1, SHA),), (), "h")
+    )
     with pytest.raises(CommitInvalid):
         await lake.commits.commit(
             CONTRIBUTOR, cid, CommitRequest(3, (FileAdd("d/e", 1, None),), (), "h"), dry_run=True
@@ -129,7 +130,7 @@ async def test_a_dry_run_is_refused_like_a_real_commit(seeded: World) -> None:
 
 
 async def test_a_real_commit_refuses_an_add_without_a_hash(seeded: World) -> None:
-    cid = await settled(seeded)
+    cid = await settled_collection(seeded.lake)
     with pytest.raises(CommitInvalid) as raised:
         await seeded.lake.commits.commit(
             CONTRIBUTOR, cid, CommitRequest(2, (FileAdd("a.txt", 1, None),), (), "h")

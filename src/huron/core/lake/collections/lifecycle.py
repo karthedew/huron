@@ -23,6 +23,7 @@ from huron.core.lake.collections.models import (
 from huron.core.lake.listing import ListOrder
 from huron.core.lake.lookups import (
     check_version,
+    collection_path,
     collection_view,
     cursor_value,
     find_catalog,
@@ -246,6 +247,9 @@ class Collections:
 
         With ``dry_run`` nothing changes: only the caller's right and the version are checked, so
         the CLI can learn the delete will be refused before it removes any file.
+
+        The files of its placed, uncommitted uploads are on disk with no record: the delete
+        queues their removal for the ingest sidecar and forgets every upload of the collection.
         """
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
@@ -261,6 +265,7 @@ class Collections:
                     f"collection {collection.identifier} still has {collection.file_count} files",
                     {"file_count": collection.file_count},
                 )
+            await self._queue_placed_files(tx, collection, catalog)
             await tx.collections.delete(collection.id)
             await self._audit(
                 tx,
@@ -325,6 +330,16 @@ class Collections:
             "only the collection's creator or a catalog admin may delete it",
             {"privilege": str(Privilege.COLLECTION_DELETE_ANY), "scope": "catalog"},
         )
+
+    async def _queue_placed_files(
+        self, tx: Transaction, collection: Collection, catalog: Catalog
+    ) -> None:
+        placed = await tx.uploads.placed(collection.id)
+        if not placed:
+            return
+        directory = await collection_path(tx, collection, catalog)
+        now = self._clock.now()
+        await tx.uploads.insert_removals([upload.removal(directory, now) for upload in placed])
 
     async def _visible_states(
         self, authz: Authorizer, actor: Actor, catalog: Catalog

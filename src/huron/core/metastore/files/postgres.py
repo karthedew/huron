@@ -68,6 +68,18 @@ class PostgresFiles:
         )
         return {row["rel_path_key"] for row in rows}
 
+    async def get_many(
+        self, collection_id: uuid.UUID, keys: Collection[str]
+    ) -> Sequence[FileRecord]:
+        """The recorded ones of ``keys``."""
+        rows = await self._db.fetch(
+            f"select {_FILE_COLUMNS} from huron.files where collection_id = $1"
+            " and rel_path_key = any($2)",
+            collection_id,
+            list(keys),
+        )
+        return [FileRecord(**row) for row in rows]
+
     async def beneath(
         self, collection_id: uuid.UUID, prefixes: Collection[str], limit: int
     ) -> set[str]:

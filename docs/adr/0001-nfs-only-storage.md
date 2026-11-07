@@ -1,6 +1,6 @@
 # NFS only, no service-side file access
 
-Status: accepted (2026-10-29)
+Status: superseded by [0008](0008-uploads-through-tusd.md) (2026-11-06); accepted 2026-10-29
 
 ## Context
 

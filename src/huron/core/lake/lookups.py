@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "check_version",
+    "collection_path",
     "collection_view",
     "cursor_value",
     "find_catalog",
@@ -103,6 +104,13 @@ async def collection_view(
         schema=schema.ref,
         problems=list(problems),
     )
+
+
+async def collection_path(tx: Transaction, collection: Collection, catalog: Catalog) -> str:
+    """The directory of a settled collection below its organization's base."""
+    path = (await collection_view(tx, collection, catalog)).disk_path
+    assert path is not None
+    return path
 
 
 def check_version(current: int, expected: int) -> None:

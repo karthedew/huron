@@ -1,9 +1,12 @@
 """A lake over the in-memory store, seeded actors and a seeded catalog."""
 
+import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 
 from huron.core.lake.bootstrap import Lake, LakeSettings, bootstrap, build_lake
+from huron.core.lake.files.models import CommitRequest, CommitResult
+from huron.core.lake.uploads.models import Upload
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.rbac import Actor, Role
 from huron.pkg.clock import FrozenClock
@@ -62,6 +65,35 @@ async def seed(world: World) -> None:
         CATALOG_ADMIN, "heliophysics", Role.READER, ["helio-readers"]
     )
     await lake.namespaces.create(CATALOG_ADMIN, "heliophysics", "", "solar-wind", True)
+
+
+async def settled_collection(
+    lake: Lake, name: str = "run7", namespace: str = "solar-wind"
+) -> uuid.UUID:
+    """The id of an active collection ``name`` in ``namespace``, created by the contributor."""
+    draft = await lake.collections.create(
+        CONTRIBUTOR, "heliophysics", namespace, name, dict(VALID_METADATA)
+    )
+    activated = await lake.collections.activate(CONTRIBUTOR, draft.collection.id, 1)
+    return activated.collection.id
+
+
+async def placed_upload(
+    lake: Lake, author: Actor, collection_id: uuid.UUID, rel_path: str, size: int, sha256: str
+) -> Upload:
+    """An upload of ``rel_path`` begun by ``author`` and placed with its receipt."""
+    upload = await lake.uploads.begin(author, collection_id, rel_path, size)
+    return await lake.uploads.receipt(upload.id, size, sha256)
+
+
+async def commit_uploaded(
+    lake: Lake, author: Actor, collection_id: uuid.UUID, request: CommitRequest
+) -> CommitResult:
+    """Place an upload of each add of ``request`` by ``author``, then commit ``request``."""
+    for add in request.adds:
+        assert add.sha256 is not None
+        await placed_upload(lake, author, collection_id, add.rel_path, add.size, add.sha256)
+    return await lake.commits.commit(author, collection_id, request)
 
 
 VALID_METADATA = {"title": "Run 7", "description": "Solar wind run seven"}

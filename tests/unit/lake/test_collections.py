@@ -29,6 +29,7 @@ from tests.support.lake import (
     STRANGER,
     VALID_METADATA,
     World,
+    commit_uploaded,
 )
 
 SHA = "0" * 64
@@ -239,8 +240,8 @@ async def test_deletion_rules(seeded: World) -> None:
     cid = view.collection.id
     with pytest.raises(Forbidden):
         await lake.collections.delete(OTHER_CONTRIBUTOR, cid, 2)
-    await lake.commits.commit(
-        CONTRIBUTOR, cid, CommitRequest(2, (FileAdd("a.txt", 1, SHA),), (), "host")
+    await commit_uploaded(
+        seeded.lake, CONTRIBUTOR, cid, CommitRequest(2, (FileAdd("a.txt", 1, SHA),), (), "host")
     )
     with pytest.raises(CollectionNotEmpty):
         await lake.collections.delete(CONTRIBUTOR, cid, 3)
@@ -334,8 +335,8 @@ async def test_a_dry_run_delete_checks_rights_and_version_but_changes_nothing(
     lake = seeded.lake
     view = await active(seeded)
     collection_id = view.collection.id
-    await lake.commits.commit(
-        CONTRIBUTOR, collection_id, CommitRequest(2, (FileAdd("a", 1, SHA),), (), "h")
+    await commit_uploaded(
+        seeded.lake, CONTRIBUTOR, collection_id, CommitRequest(2, (FileAdd("a", 1, SHA),), (), "h")
     )
     with pytest.raises(Forbidden):
         await lake.collections.delete(OTHER_CONTRIBUTOR, collection_id, 3, dry_run=True)

@@ -22,6 +22,7 @@ from huron.core.lake.namespaces.models import Namespace
 from huron.core.lake.organizations.models import Organization
 from huron.core.lake.schemas.models import SchemaEntry
 from huron.core.lake.transaction import UnitOfWork
+from huron.core.lake.uploads.models import Failure, Removal, Upload, UploadState
 from huron.core.security.broker.keys import generate_key
 from huron.core.security.rbac import PLATFORM, Role, Scope
 from huron.pkg.canonical import canonical_bytes
@@ -321,6 +322,8 @@ async def test_files_and_commits(uow: UnitOfWork) -> None:
         assert await tx.files.count(owner.id) == 2
         assert await tx.files.existing(owner.id, ["a.txt", "zzz"]) == {"a.txt"}
         assert await tx.files.existing(owner.id, []) == set()
+        assert await tx.files.get_many(owner.id, ["b.txt", "zzz"]) == [record("b.txt", 5, second)]
+        assert await tx.files.get_many(owner.id, []) == []
         assert await tx.files.beneath(owner.id, ["a", "b.t"], 10) == {"a.txt", "b.txt"}
         assert await tx.files.beneath(owner.id, ["a", "b"], 1) == {"a.txt"}
         assert await tx.files.beneath(owner.id, ["c/"], 10) == set()
@@ -330,6 +333,138 @@ async def test_files_and_commits(uow: UnitOfWork) -> None:
         commits = await tx.commits.list(owner.id, None, 10)
         assert [c.id for c in commits] == [second, first]
         assert [c.id for c in await tx.commits.list(owner.id, second, 10)] == [first]
+
+
+def commit(owner: Collection) -> Commit:
+    return Commit(new_id(), owner.id, 1, 2, 1, 0, "h", None, "t", START)
+
+
+def upload(owner: Collection, rel_path: str, by: str = "dave") -> Upload:
+    return Upload(
+        new_id(), owner.id, rel_path, rel_path.casefold(), 4, UploadState.PENDING, by, START
+    )
+
+
+def placed(row: Upload, minute: int = 1) -> Upload:
+    placed_at = START + timedelta(minutes=minute)
+    return replace(row, state=UploadState.PLACED, sha256=SHA, placed_at=placed_at)
+
+
+def removal(
+    owner: Collection, rel_path: str, commit_id: uuid.UUID | None = None, created: int = 0
+) -> Removal:
+    return Removal(
+        new_id(),
+        owner.id,
+        f"helio/heliophysics/solar-wind/{owner.name}/{rel_path}",
+        rel_path,
+        rel_path.casefold(),
+        SHA,
+        commit_id,
+        START + timedelta(seconds=created),
+    )
+
+
+async def test_uploads(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner, other = collection(cat, ns, "run7"), collection(cat, ns, "run8")
+    early, mine, theirs = (
+        upload(owner, "A.txt"),
+        upload(owner, "a.txt"),
+        upload(owner, "a.txt", "e"),
+    )
+    first, tied = upload(owner, "b.txt"), upload(owner, "B.txt", "e")
+    waiting, elsewhere = upload(owner, "c"), upload(other, "a.txt")
+    rows = (early, mine, theirs, first, tied, waiting, elsewhere)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.collections.insert(other)
+        for row in rows:
+            await tx.uploads.insert(row)
+    async with uow.transaction() as tx:
+        assert await tx.uploads.get(waiting.id) == waiting
+        assert await tx.uploads.lock(waiting.id) == waiting
+        assert await tx.uploads.get(new_id()) is None
+        assert await tx.uploads.lock(new_id()) is None
+        assert await tx.uploads.latest_placements(owner.id, ["a.txt"]) == []
+        assert await tx.uploads.placed(owner.id) == []
+        minutes = ((early, 3), (mine, 1), (theirs, 2), (first, 1), (tied, 1), (elsewhere, 4))
+        for row, minute in minutes:
+            await tx.uploads.update(placed(row, minute))
+        failed = replace(waiting, state=UploadState.FAILED, failure=Failure("X", "no space"))
+        await tx.uploads.update(failed)
+        await tx.uploads.update(upload(owner, "ghost.txt"))
+    async with uow.transaction() as tx:
+        assert await tx.uploads.get(waiting.id) == failed
+        latest = await tx.uploads.latest_placements(owner.id, ["a.txt", "b.txt", "zzz"])
+        assert latest == [placed(early, 3), placed(tied, 1)]
+        assert await tx.uploads.latest_placements(owner.id, []) == []
+        assert [row.id for row in await tx.uploads.placed(owner.id)] == [
+            early.id,
+            mine.id,
+            theirs.id,
+            first.id,
+            tied.id,
+        ]
+        assert await tx.uploads.placed(other.id) == [placed(elsewhere, 4)]
+        made = commit(owner)
+        await tx.commits.insert(made)
+        await tx.uploads.mark_committed([early.id, new_id()], made.id)
+        await tx.uploads.mark_committed([], made.id)
+    async with uow.transaction() as tx:
+        committed = replace(placed(early, 3), state=UploadState.COMMITTED, commit_id=made.id)
+        assert await tx.uploads.get(early.id) == committed
+        assert await tx.uploads.latest_placements(owner.id, ["a.txt"]) == [committed]
+        assert early.id not in {row.id for row in await tx.uploads.placed(owner.id)}
+        await tx.uploads.update(placed(mine, 5))
+        assert await tx.uploads.latest_placements(owner.id, ["a.txt"]) == [placed(mine, 5)]
+        await tx.collections.delete(owner.id)
+        for row in rows[:-1]:
+            assert await tx.uploads.get(row.id) is None
+        assert await tx.uploads.get(elsewhere.id) == placed(elsewhere, 4)
+
+
+async def test_removals(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner, other = collection(cat, ns, "run7"), collection(cat, ns, "run8")
+    made, gone_commit = commit(owner), commit(other)
+    first, second, third = (
+        removal(owner, "A.txt", made.id, 0),
+        removal(owner, "b", made.id, 1),
+        removal(owner, "c", None, 2),
+    )
+    gone = removal(other, "a.txt", gone_commit.id, 3)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.collections.insert(other)
+        await tx.commits.insert(made)
+        await tx.commits.insert(gone_commit)
+        await tx.uploads.insert_removals([third, first, second, gone])
+        await tx.uploads.insert_removals([])
+    async with uow.transaction() as tx:
+        assert await tx.uploads.get_removal(first.id) == first
+        assert await tx.uploads.get_removal(new_id()) is None
+        await tx.collections.delete(other.id)
+        orphan = replace(gone, collection_id=None, commit_id=None)
+        assert await tx.uploads.get_removal(gone.id) == orphan
+        now = START + timedelta(hours=1)
+        claimed = await tx.uploads.claim_removals(now, START, 2)
+        assert claimed == [replace(first, claimed_at=now), replace(second, claimed_at=now)]
+        assert await tx.uploads.get_removal(first.id) == replace(first, claimed_at=now)
+        rest = await tx.uploads.claim_removals(now, START, 10)
+        assert rest == [replace(third, claimed_at=now), replace(orphan, claimed_at=now)]
+        assert await tx.uploads.claim_removals(now, now, 10) == []
+        later = now + timedelta(hours=1)
+        reclaimed = await tx.uploads.claim_removals(later, later, 1)
+        assert reclaimed == [replace(first, claimed_at=later)]
+        await tx.uploads.delete_removals(owner.id, ["a.txt", "zzz"])
+        await tx.uploads.delete_removals(other.id, ["b"])
+        assert await tx.uploads.get_removal(first.id) is None
+        assert await tx.uploads.get_removal(second.id) is not None
+        await tx.uploads.delete_removal(second.id)
+        await tx.uploads.delete_removal(second.id)
+        assert await tx.uploads.get_removal(second.id) is None
+        assert await tx.uploads.get_removal(third.id) is not None
 
 
 async def test_schemas(uow: UnitOfWork) -> None:

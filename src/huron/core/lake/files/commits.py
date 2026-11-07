@@ -13,7 +13,9 @@ from huron.core.lake.files.errors import (
     FileNotRecorded,
 )
 from huron.core.lake.files.models import Commit, CommitRequest, CommitResult, FileAdd, FileRecord
-from huron.core.lake.lookups import cursor_value, find_collection, page_of
+from huron.core.lake.lookups import collection_path, cursor_value, find_collection, page_of
+from huron.core.lake.uploads.errors import UploadReceiptMissing
+from huron.core.lake.uploads.models import ReceiptMode, Removal
 from huron.core.security.rbac import Authorizer, Privilege, Scope
 from huron.pkg.errors import Conflict
 from huron.pkg.identifiers import new_id, parse_id
@@ -24,7 +26,10 @@ from huron.schema.validator import Validator, problems_context
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Sequence
+    from datetime import datetime, timedelta
 
+    from huron.core.lake.catalogs.models import Catalog
     from huron.core.lake.collections.models import Collection
     from huron.core.lake.transaction import Transaction, UnitOfWork
     from huron.core.security.rbac import Actor
@@ -64,11 +69,24 @@ def parse_commit_request(body: Any, *, dry_run: bool = False) -> CommitRequest:
 
 
 class Commits:
-    """Applies commits and lists recorded files and commits."""
+    """Applies commits and lists recorded files and commits.
 
-    def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
+    With ``receipts`` required, every add must be proved by the latest placement of its path:
+    a placed upload of the committer to exactly that path, with the same size and hash, placed
+    less than ``upload_ttl`` ago, that no later placement by anyone replaced on disk. Optional
+    receipts let an add without one through, but a proving receipt is still consumed.
+
+    Consuming a receipt marks it committed. Older placed uploads of the same path stay as they
+    are: they are no longer the latest placement, so they prove nothing and expire.
+    """
+
+    def __init__(
+        self, uow: UnitOfWork, clock: Clock, receipts: ReceiptMode, upload_ttl: timedelta
+    ) -> None:
         self._uow = uow
         self._clock = clock
+        self._receipts = receipts
+        self._upload_ttl = upload_ttl
 
     async def commit(
         self,
@@ -83,7 +101,10 @@ class Commits:
         With ``dry_run`` every check of a real commit runs (the caller's right, the collection's
         state, the removed files, the base version and the file tree) and the answer is the
         version and file count the commit would make, but nothing is written or audited: the CLI
-        learns a push will be refused before it copies any byte onto the share.
+        learns a push will be refused before it uploads any byte. A dry run checks no receipt.
+
+        A real commit consumes the receipts of its adds, queues the removal of each removed file
+        for the ingest sidecar and cancels the queued removals of the paths it adds again.
         """
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
@@ -97,7 +118,10 @@ class Commits:
                     {"state": str(collection.state), "allowed": ["active", "incomplete"]},
                 )
             remove_keys = [rel_path_key(path) for path in request.removes]
-            recorded = await tx.files.existing(collection.id, remove_keys)
+            recorded = {
+                record.rel_path_key: record
+                for record in await tx.files.get_many(collection.id, remove_keys)
+            }
             missing = [
                 p for p, k in zip(request.removes, remove_keys, strict=True) if k not in recorded
             ]
@@ -110,7 +134,9 @@ class Commits:
             await _check_tree(tx, collection.id, request, set(remove_keys))
             if dry_run:
                 return await _preview(tx, collection, request, remove_keys)
-            return await self._apply(tx, actor, collection, request, remove_keys)
+            return await self._apply(
+                tx, actor, collection, catalog, request, list(recorded.values())
+            )
 
     async def list_files(
         self,
@@ -159,8 +185,9 @@ class Commits:
         tx: Transaction,
         actor: Actor,
         collection: Collection,
+        catalog: Catalog,
         request: CommitRequest,
-        remove_keys: list[str],
+        removed: Sequence[FileRecord],
     ) -> CommitResult:
         now = self._clock.now()
         commit_id = new_id()
@@ -177,6 +204,7 @@ class Commits:
             )
             for add in request.adds
         ]
+        receipts = await self._proving_receipts(tx, actor, collection.id, request.adds, now)
         new_version = collection.version + 1
         await tx.commits.insert(
             Commit(
@@ -192,8 +220,10 @@ class Commits:
                 created_at=now,
             )
         )
-        await tx.files.delete_many(collection.id, remove_keys)
+        await tx.files.delete_many(collection.id, [record.rel_path_key for record in removed])
         await tx.files.upsert_many(records)
+        await tx.uploads.mark_committed(receipts, commit_id)
+        await _queue_removals(tx, collection, catalog, records, removed, commit_id, now)
         file_count = await tx.files.count(collection.id)
         updated = replace(collection, version=new_version, file_count=file_count, updated_at=now)
         await tx.collections.update(updated)
@@ -213,6 +243,34 @@ class Commits:
         )
         return CommitResult(updated.version, file_count, commit_id)
 
+    async def _proving_receipts(
+        self,
+        tx: Transaction,
+        actor: Actor,
+        collection_id: uuid.UUID,
+        adds: Sequence[FileAdd],
+        now: datetime,
+    ) -> list[uuid.UUID]:
+        keys = [rel_path_key(add.rel_path) for add in adds]
+        latest = {
+            upload.rel_path_key: upload
+            for upload in await tx.uploads.latest_placements(collection_id, keys)
+        }
+        placed_after = now - self._upload_ttl
+        proving: list[uuid.UUID] = []
+        unproven: list[str] = []
+        for key, add in zip(keys, adds, strict=True):
+            upload = latest.get(key)
+            if upload is not None and upload.proves(
+                actor.subject, add.rel_path, add.size, add.sha256, placed_after
+            ):
+                proving.append(upload.id)
+            else:
+                unproven.append(add.rel_path)
+        if unproven and self._receipts is ReceiptMode.REQUIRED:
+            raise UploadReceiptMissing(unproven[0])
+        return proving
+
 
 async def _preview(
     tx: Transaction, collection: Collection, request: CommitRequest, remove_keys: list[str]
@@ -222,6 +280,35 @@ async def _preview(
     recorded = await tx.files.count(collection.id)
     file_count = recorded - len(remove_keys) + len(add_keys) - len(replaced)
     return CommitResult(collection.version + 1, file_count, None)
+
+
+async def _queue_removals(
+    tx: Transaction,
+    collection: Collection,
+    catalog: Catalog,
+    added: Sequence[FileRecord],
+    removed: Sequence[FileRecord],
+    commit_id: uuid.UUID,
+    now: datetime,
+) -> None:
+    await tx.uploads.delete_removals(collection.id, [record.rel_path_key for record in added])
+    if not removed:
+        return
+    directory = await collection_path(tx, collection, catalog)
+    await tx.uploads.insert_removals(
+        [
+            Removal.of(
+                collection.id,
+                directory,
+                record.rel_path,
+                record.rel_path_key,
+                record.sha256,
+                commit_id=commit_id,
+                now=now,
+            )
+            for record in removed
+        ]
+    )
 
 
 def _hash_of(add: FileAdd) -> str:
