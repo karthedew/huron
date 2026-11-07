@@ -9,12 +9,17 @@ if TYPE_CHECKING:
     import uuid
     from datetime import datetime
 
+    from huron.core.lake.uploads.models import Removal
+
 __all__ = ["Commit", "CommitRequest", "CommitResult", "FileAdd", "FileRecord"]
 
 
 @dataclass(frozen=True, slots=True)
 class FileRecord:
-    """One file recorded in a collection."""
+    """One file recorded in a collection.
+
+    ``inode`` is the inode of the receipt that proved the record, ``None`` without one.
+    """
 
     collection_id: uuid.UUID
     rel_path: str
@@ -24,6 +29,7 @@ class FileRecord:
     recorded_at: datetime
     recorded_by: str
     commit_id: uuid.UUID
+    inode: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Render for the API."""
@@ -95,12 +101,15 @@ class Commit:
 class CommitResult:
     """What a successful commit answers, or what a dry run says the commit would make.
 
-    A dry run writes no commit, so its ``commit_id`` is ``None``.
+    A dry run writes no commit, so its ``commit_id`` is ``None``. ``removals`` are the removals
+    of the removed files, which the commit claimed for the request that made it; the API drains
+    them and never renders them.
     """
 
     version: int
     file_count: int
     commit_id: uuid.UUID | None
+    removals: tuple[Removal, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """Render for the API."""

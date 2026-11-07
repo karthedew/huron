@@ -899,6 +899,7 @@ Human labels for every action in the closed vocabulary (e.g. `collection.commit`
 Detail summaries per action (detail keys: platform/organization/catalog grant/revoke `{role,
 ldap_group}`; organization/catalog create/delete `{name[, schema_id]}`; `catalog.assign_schema
 {schema_id, previous}` → "Assigned schema name vN (was name vM)" via `schema(id)` lookups, deduplicated;
+`catalog.set_share_group {share_group, previous}` → "Changed the share group group (was group)" or "cleared (was group)";
 namespace `{path[, collections_allowed]}`; `schema.publish {name, version}`; collection create/delete
 `{identifier}`; update_metadata/activate/mark_* `{version}`; set_schema_override `{version, cleared}`;
 commit `{adds, removes, host, message, version}`). Collection rows link to the collection by identifier

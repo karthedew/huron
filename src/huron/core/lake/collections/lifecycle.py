@@ -15,6 +15,7 @@ from huron.core.lake.collections.metadata import check_metadata, merge_patch, re
 from huron.core.lake.collections.models import (
     Collection,
     CollectionView,
+    DeletedCollection,
     Search,
     State,
     Unset,
@@ -23,7 +24,6 @@ from huron.core.lake.collections.models import (
 from huron.core.lake.listing import ListOrder
 from huron.core.lake.lookups import (
     check_version,
-    collection_path,
     collection_view,
     cursor_value,
     find_catalog,
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from huron.core.lake.catalogs.models import Catalog
     from huron.core.lake.schemas.registry import SchemaResolver
     from huron.core.lake.transaction import Transaction, UnitOfWork
+    from huron.core.lake.uploads.models import Removal
     from huron.core.security.rbac import Actor
     from huron.pkg.clock import Clock
     from huron.schema.validator import Problem
@@ -242,14 +243,16 @@ class Collections:
         collection_id: uuid.UUID,
         expected_version: int,
         dry_run: bool = False,
-    ) -> None:
+    ) -> DeletedCollection | None:
         """Delete a collection without recorded files; its creator or a catalog admin may.
 
-        With ``dry_run`` nothing changes: only the caller's right and the version are checked, so
-        the CLI can learn the delete will be refused before it removes any file.
+        With ``dry_run`` nothing changes and the answer is ``None``: only the caller's right and
+        the version are checked, so the CLI can learn the delete will be refused before it
+        removes any file.
 
         The files of its placed, uncommitted uploads are on disk with no record: the delete
-        queues their removal for the ingest sidecar and forgets every upload of the collection.
+        queues their removal, claimed for the caller, and forgets every upload of the
+        collection. The answer carries those removals and the collection's directory.
         """
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
@@ -259,13 +262,14 @@ class Collections:
             await self._require_delete(authz, actor, collection, catalog)
             check_version(collection.version, expected_version)
             if dry_run:
-                return
+                return None
             if collection.file_count:
                 raise CollectionNotEmpty(
                     f"collection {collection.identifier} still has {collection.file_count} files",
                     {"file_count": collection.file_count},
                 )
-            await self._queue_placed_files(tx, collection, catalog)
+            disk_path = (await collection_view(tx, collection, catalog)).disk_path
+            removals = await self._queue_placed_files(tx, collection, disk_path)
             await tx.collections.delete(collection.id)
             await self._audit(
                 tx,
@@ -274,6 +278,7 @@ class Collections:
                 collection,
                 {"identifier": collection.identifier},
             )
+            return DeletedCollection(disk_path, removals)
 
     async def resolved_schema(self, actor: Actor, collection_id: uuid.UUID) -> dict[str, Any]:
         """The schema the collection's metadata validates against."""
@@ -332,14 +337,16 @@ class Collections:
         )
 
     async def _queue_placed_files(
-        self, tx: Transaction, collection: Collection, catalog: Catalog
-    ) -> None:
+        self, tx: Transaction, collection: Collection, disk_path: str | None
+    ) -> tuple[Removal, ...]:
         placed = await tx.uploads.placed(collection.id)
         if not placed:
-            return
-        directory = await collection_path(tx, collection, catalog)
+            return ()
+        assert disk_path is not None
         now = self._clock.now()
-        await tx.uploads.insert_removals([upload.removal(directory, now) for upload in placed])
+        removals = tuple(upload.removal(disk_path, now) for upload in placed)
+        await tx.uploads.insert_removals(removals)
+        return removals
 
     async def _visible_states(
         self, authz: Authorizer, actor: Actor, catalog: Catalog

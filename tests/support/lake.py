@@ -79,11 +79,17 @@ async def settled_collection(
 
 
 async def placed_upload(
-    lake: Lake, author: Actor, collection_id: uuid.UUID, rel_path: str, size: int, sha256: str
+    lake: Lake,
+    author: Actor,
+    collection_id: uuid.UUID,
+    rel_path: str,
+    size: int,
+    sha256: str,
+    inode: int = 1,
 ) -> Upload:
     """An upload of ``rel_path`` begun by ``author`` and placed with its receipt."""
     upload = await lake.uploads.begin(author, collection_id, rel_path, size)
-    return await lake.uploads.receipt(upload.id, size, sha256)
+    return await lake.uploads.receipt(upload.id, size, sha256, inode)
 
 
 async def commit_uploaded(

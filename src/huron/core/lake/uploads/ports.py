@@ -15,7 +15,7 @@ __all__ = ["UploadStore"]
 
 
 class UploadStore(Protocol):
-    """Reads and writes uploads and the removals the ingest sidecar still has to make."""
+    """Reads and writes uploads and the removals the API still has to make."""
 
     async def insert(self, upload: Upload) -> None:
         """Store a new upload."""
@@ -30,7 +30,7 @@ class UploadStore(Protocol):
         ...
 
     async def update(self, upload: Upload) -> None:
-        """Replace the state, receipt and failure of a stored upload."""
+        """Replace the state, receipt (inode included), failure and commit of a stored upload."""
         ...
 
     async def latest_placements(
@@ -52,7 +52,7 @@ class UploadStore(Protocol):
         ...
 
     async def insert_removals(self, removals: Sequence[Removal]) -> None:
-        """Store new removals."""
+        """Store new removals as they are, claimed or not."""
         ...
 
     async def delete_removals(self, collection_id: uuid.UUID, keys: Collection[str]) -> None:

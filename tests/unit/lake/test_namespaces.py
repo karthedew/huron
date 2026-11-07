@@ -55,12 +55,13 @@ async def test_a_namespace_cannot_share_a_name_with_a_sibling_collection(seeded:
         await seeded.lake.namespaces.create(CATALOG_ADMIN, "heliophysics", "solar-wind", "run7")
 
 
-async def test_non_empty_namespaces_cannot_be_deleted(seeded: World) -> None:
+async def test_only_empty_namespaces_are_deleted_and_answer_their_directory(seeded: World) -> None:
     ns = seeded.lake.namespaces
     await ns.create(CATALOG_ADMIN, "heliophysics", "solar-wind", "child")
     with pytest.raises(NamespaceNotEmpty):
         await ns.delete(CATALOG_ADMIN, "heliophysics", "solar-wind")
-    await ns.delete(CATALOG_ADMIN, "heliophysics", "solar-wind.child")
+    disk_path = await ns.delete(CATALOG_ADMIN, "heliophysics", "solar-wind.child")
+    assert disk_path == "helio/heliophysics/solar-wind/child"
     await seeded.lake.collections.create(CONTRIBUTOR, "heliophysics", "solar-wind", "draft")
     with pytest.raises(NamespaceNotEmpty) as raised:
         await ns.delete(CATALOG_ADMIN, "heliophysics", "solar-wind")

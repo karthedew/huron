@@ -1,9 +1,8 @@
-"""Uploads: begin, place, receive and end uploads, and hand the removal outbox to the sidecar.
+"""Uploads: begin, place, receive and end uploads, and drain the removal outbox.
 
-The ingest sidecar calls these on behalf of tusd. ``begin``, ``placement``, ``terminate`` and
-``get`` act for the uploading user and are authorized for them. ``receipt``, ``fail`` and the
-removal operations act for the sidecar itself, whose authority is the ingest secret the API
-checks before it calls them.
+The API calls these for tusd's hooks and for its own disk work. ``begin``, ``placement``,
+``terminate`` and ``get`` act for the uploading user and are authorized for them. ``receipt``,
+``fail`` and the removal operations record the API's own disk work, so they take no actor.
 
 Every transaction takes its row locks in one order: the collection row, then upload rows, then
 removal rows, as commits and collection deletes do. ``begin`` locks the collection before it
@@ -113,20 +112,20 @@ class Uploads:
         async with self._uow.transaction() as tx:
             upload = _owned(await tx.uploads.get(upload_id), actor, upload_id)
             _require(upload, UploadState.PENDING)
-            authz, collection, catalog = await _writable(tx, actor, upload.collection_id)
+            collection, catalog = await _writable(tx, actor, upload.collection_id)
             view = await collection_view(tx, collection, catalog)
             assert view.disk_path is not None
-            groups = await authz.effective_groups(Scope.catalog(catalog.id))
             return Destination(
                 file_path(view.disk_path, upload.rel_path),
                 self._declarations.share_root(view.organization),
-                groups,
             )
 
-    async def receipt(self, upload_id: uuid.UUID, size: int, sha256: str) -> Upload:
-        """Record that the upload's bytes are at their destination with ``size`` and ``sha256``.
+    async def receipt(self, upload_id: uuid.UUID, size: int, sha256: str, inode: int) -> Upload:
+        """Record that the upload's bytes are at their destination.
 
-        Repeating the receipt of a placed upload with the same size and hash changes nothing.
+        ``size`` and ``sha256`` describe the placed bytes, and ``inode`` is the placed file's
+        inode. Repeating the receipt of a placed upload with the same size and hash changes
+        nothing: the upload keeps its first inode.
         """
         _check_sha256(sha256)
         async with self._uow.transaction() as tx:
@@ -140,7 +139,11 @@ class Uploads:
             if size != upload.size:
                 raise UploadSizeMismatch(upload.size, size)
             placed = replace(
-                upload, state=UploadState.PLACED, sha256=sha256, placed_at=self._clock.now()
+                upload,
+                state=UploadState.PLACED,
+                sha256=sha256,
+                placed_at=self._clock.now(),
+                inode=inode,
             )
             await tx.uploads.update(placed)
             return placed
@@ -171,7 +174,7 @@ class Uploads:
             return _owned(await tx.uploads.get(upload_id), actor, upload_id)
 
     async def claim_removals(self, limit: int | None = None) -> list[ClaimedRemoval]:
-        """Claim up to ``limit`` removals for the sidecar, oldest first."""
+        """Claim up to ``limit`` removals, oldest first: unclaimed ones and stale claims."""
         now = self._clock.now()
         async with self._uow.transaction() as tx:
             removals = await tx.uploads.claim_removals(now, now - REMOVAL_LEASE, clamp_limit(limit))
@@ -181,7 +184,7 @@ class Uploads:
         ]
 
     async def removal_still_valid(self, removal_id: uuid.UUID) -> bool:
-        """Whether the sidecar may still unlink the removal's file.
+        """Whether the API may still unlink the removal's file.
 
         It may not when the removal is gone, or when the settled collection now at the removal's
         directory, whether the removal's own or one created there since, records a file at its
@@ -207,7 +210,7 @@ class Uploads:
             )
 
     async def finish_removal(self, removal_id: uuid.UUID) -> None:
-        """Forget a removal the sidecar made or gave up; a finished removal stays finished."""
+        """Forget a removal the API made or gave up; a finished removal stays finished."""
         async with self._uow.transaction() as tx:
             await tx.uploads.delete_removal(removal_id)
 
@@ -237,7 +240,7 @@ async def _collection_at(tx: Transaction, directory: str) -> uuid.UUID | None:
 
 async def _writable(
     tx: Transaction, actor: Actor, collection_id: uuid.UUID, *, lock: bool = False
-) -> tuple[Authorizer, Collection, Catalog]:
+) -> tuple[Collection, Catalog]:
     authz = Authorizer(tx.grants)
     collection, catalog = await find_collection(
         tx, authz, actor, collection_id=collection_id, lock=lock
@@ -248,7 +251,7 @@ async def _writable(
             "you can upload files only to an active or incomplete collection",
             {"state": str(collection.state), "allowed": ["active", "incomplete"]},
         )
-    return authz, collection, catalog
+    return collection, catalog
 
 
 def _found(upload: Upload | None, upload_id: uuid.UUID) -> Upload:

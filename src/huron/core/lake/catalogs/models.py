@@ -16,7 +16,11 @@ __all__ = ["Catalog", "CatalogView"]
 
 @dataclass(frozen=True, slots=True)
 class Catalog:
-    """A catalog belongs to one organization; its name is unique on the platform."""
+    """A catalog belongs to one organization; its name is unique on the platform.
+
+    ``share_group`` is the POSIX group whose members read the catalog's directory, ``None``
+    until an administrator sets it.
+    """
 
     id: uuid.UUID
     organization_id: uuid.UUID
@@ -27,6 +31,7 @@ class Catalog:
     version: int
     created_at: datetime
     created_by: str
+    share_group: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +42,11 @@ class CatalogView:
     organization: str
     schema: SchemaRef
     namespace_count: int
+
+    @property
+    def disk_path(self) -> str:
+        """The directory relative to the share prefix."""
+        return f"{self.organization}/{self.catalog.name}"
 
     def as_dict(self) -> dict[str, Any]:
         """Render for the API."""
@@ -52,4 +62,5 @@ class CatalogView:
             "created_at": catalog.created_at.isoformat(),
             "created_by": catalog.created_by,
             "namespace_count": self.namespace_count,
+            "share_group": catalog.share_group,
         }

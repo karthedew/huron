@@ -40,6 +40,7 @@ uploads = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("placed_at", DateTime(timezone=True), nullable=True),
     Column("commit_id", Uuid, ForeignKey("huron.commits.id"), nullable=True),
+    Column("inode", BigInteger, nullable=True),
     CheckConstraint(
         "state in ('pending', 'placed', 'failed', 'terminated', 'committed')", name="state"
     ),
@@ -50,6 +51,7 @@ uploads = Table(
     ),
     CheckConstraint("(state = 'committed') = (commit_id is not null)", name="commit"),
     CheckConstraint("state <> 'failed' or failure is not null", name="failure"),
+    CheckConstraint("(state in ('placed', 'committed')) = (inode is not null)", name="inode"),
     Index(None, "collection_id", "rel_path_key"),
     Index(None, "commit_id"),
 )
@@ -71,6 +73,7 @@ removals = Table(
     Column("commit_id", Uuid, ForeignKey("huron.commits.id", ondelete="SET NULL"), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("claimed_at", DateTime(timezone=True), nullable=True),
+    Column("inode", BigInteger, nullable=True),
     Index(None, "collection_id", "rel_path_key"),
     Index(None, "commit_id"),
 )

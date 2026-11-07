@@ -3259,8 +3259,8 @@ failed inheritance visible.
   `build_lake` from `LakeSettings.upload_receipts` (`ReceiptMode.REQUIRED`), `upload_ttl` (24 h)
   and `upload_max_size` (`0`, no limit). The API runtime passes `ReceiptMode.OPTIONAL` for now,
   because it serves no upload route and so cannot issue receipts (the web e2e and Docker seeds
-  commit file-less adds); M11.2 replaces that argument with `settings.upload_receipts` and threads
-  `upload_ttl` and `upload_max_size`. `Destination(path, share_root, groups)`: `path` is
+  commit file-less adds); M11.3 (v3 numbering) replaces that argument with
+  `settings.upload_receipts` and threads `upload_ttl` and `upload_max_size`. `Destination(path, share_root, groups)`: `path` is
   `<collection disk path>/<rel_path>` (the form of every API path, below the organization's
   base), `share_root` comes from `Declarations.share_root(organization)` (the same source as the
   views' `share_root`), and `groups` is the rbac `EffectiveGroups` of the catalog, the value of
@@ -3385,7 +3385,22 @@ failed inheritance visible.
     a schema assignment and against a catalog delete).
 - Verification: `make gate`; `uv run pytest -m contract`.
 - Dependencies: M11.1.
-- Status: pending
+- Status: complete
+- Execution notes: `Collections.delete` returns `DeletedCollection | None`: `None` for a dry run
+  (nothing to do on disk), and `disk_path` is `None` for a draft. The namespace delete returns
+  `NamespaceView.disk_path`; the catalog delete returns the new, unrendered `CatalogView.disk_path`
+  (`<organization>/<catalog>`). `Removal.of` always claims the row at `now`, so every removal
+  that a commit or a delete writes belongs to that request until `REMOVAL_LEASE` passes.
+  `CatalogNotFound` (a `NotFound`, code `NOT_FOUND`) in `core/lake/catalogs/errors.py` is the
+  catalog's not-found error: `find_catalog`, the re-read after `tx.lock_catalog` and both
+  `CatalogStore.update` adapters raise it. `Catalogs.set_share_group` raises the version on every
+  call, also when the group is unchanged; its audit detail is `{share_group, previous}`.
+  `Uploads.receipt` stores the inode as given (the API takes it from `fstat`). `Destination.as_dict`
+  and `ClaimedRemoval.as_dict` are gone: nothing renders them now. The PostgreSQL bulk inserts
+  build one tuple per row and transpose it with `metastore.rows.columns`. The new audit action
+  `catalog.set_share_group` is in the web's closed vocabulary (`web/src/lib/api/types.ts`, the
+  label and summary in `web/src/lib/activity.ts`, docs/web-design.md §4.4). The web's vitest run
+  passes in this worktree: 130 test files and 1646 tests.
 
 #### M11.3 Settings, LakeDisk and the storage ports
 

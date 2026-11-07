@@ -37,7 +37,7 @@ class MemoryUploads:
         return self._state.uploads.get(upload_id)
 
     async def update(self, upload: Upload) -> None:
-        """Replace the state, receipt and failure of a stored upload."""
+        """Replace the state, receipt, failure and commit of a stored upload."""
         stored = self._state.uploads.get(upload.id)
         if stored is not None:
             self._state.uploads[upload.id] = replace(
@@ -47,6 +47,7 @@ class MemoryUploads:
                 failure=upload.failure,
                 placed_at=upload.placed_at,
                 commit_id=upload.commit_id,
+                inode=upload.inode,
             )
 
     async def latest_placements(
@@ -88,7 +89,7 @@ class MemoryUploads:
                 )
 
     async def insert_removals(self, removals: Sequence[Removal]) -> None:
-        """Store new removals."""
+        """Store new removals as they are."""
         for removal in removals:
             self._state.removals[removal.id] = removal
 

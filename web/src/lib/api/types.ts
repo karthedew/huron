@@ -97,6 +97,7 @@ export const AUDIT_ACTIONS = [
 	'catalog.grant',
 	'catalog.revoke',
 	'catalog.assign_schema',
+	'catalog.set_share_group',
 	'namespace.create',
 	'namespace.delete',
 	'namespace.configure',

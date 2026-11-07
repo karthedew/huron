@@ -23,6 +23,7 @@ export const ACTION_LABELS: Readonly<Record<AuditAction, string>> = {
 	'catalog.grant': 'Granted a catalog role',
 	'catalog.revoke': 'Revoked a catalog role',
 	'catalog.assign_schema': 'Assigned schema',
+	'catalog.set_share_group': 'Changed the share group',
 	'namespace.create': 'Created a namespace',
 	'namespace.delete': 'Deleted a namespace',
 	'namespace.configure': 'Configured a namespace',
@@ -148,6 +149,8 @@ function summary(entry: AuditEntry, schemas: Readonly<Record<string, SchemaName>
 			const previous = schema('previous');
 			return join(' ', [schema('schema_id'), previous === null ? null : `(was ${previous})`]);
 		}
+		case 'catalog.set_share_group':
+			return shareGroupChange(detail);
 		case 'namespace.delete':
 			return stringField(detail, 'path') ?? '';
 		case 'namespace.configure': {
@@ -208,6 +211,15 @@ function roleChange(detail: Detail, preposition: 'to' | 'from'): string {
 	const group = stringField(detail, 'ldap_group');
 	const name = role === null ? null : isRole(role) ? ROLE_NAMES[role] : role;
 	return join(' ', [name, group === null ? null : `${preposition} ${group}`]);
+}
+
+/** A `null` share group clears it; an absent or mistyped one gives no summary. */
+function shareGroupChange(detail: Detail): string {
+	const group =
+		ownValue(detail, 'share_group') === null ? 'cleared' : stringField(detail, 'share_group');
+	if (group === null) return '';
+	const previous = stringField(detail, 'previous');
+	return join(' ', [group, previous === null ? null : `(was ${previous})`]);
 }
 
 function schemaText(

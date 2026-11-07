@@ -12,8 +12,6 @@ if TYPE_CHECKING:
     import uuid
     from datetime import datetime
 
-    from huron.core.security.rbac import EffectiveGroups
-
 __all__ = [
     "ClaimedRemoval",
     "Destination",
@@ -55,7 +53,7 @@ class ReceiptMode(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Failure:
-    """Why the ingest sidecar could not place an upload."""
+    """Why the API could not place an upload."""
 
     code: str
     message: str
@@ -69,9 +67,10 @@ class Failure:
 class Upload:
     """One upload of one file to one path of a collection, by one user.
 
-    ``sha256`` and ``placed_at`` are the receipt, set once the bytes are at their destination;
-    ``commit_id`` names the commit that consumed the receipt. ``failure`` says why a ``failed``
-    upload was never placed.
+    ``sha256``, ``placed_at`` and ``inode`` are the receipt, set once the bytes are at their
+    destination. ``inode`` is the placed file's unsigned 64-bit inode number. ``commit_id`` names
+    the commit that consumed the receipt. ``failure`` says why a ``failed`` upload was never
+    placed.
     """
 
     id: uuid.UUID
@@ -86,6 +85,7 @@ class Upload:
     failure: Failure | None = None
     placed_at: datetime | None = None
     commit_id: uuid.UUID | None = None
+    inode: int | None = None
 
     def proves(
         self, created_by: str, rel_path: str, size: int, sha256: str | None, placed_after: datetime
@@ -116,6 +116,7 @@ class Upload:
             self.rel_path_key,
             self.sha256,
             commit_id=None,
+            inode=self.inode,
             now=now,
         )
 
@@ -134,13 +135,15 @@ class Upload:
 
 @dataclass(frozen=True, slots=True)
 class Removal:
-    """A file the ingest sidecar still has to unlink.
+    """A file the API still has to unlink.
 
     A commit queues one for each file it removes, and deleting a collection queues one for each
     of its placed uploads. ``path`` is the file's path in the form of :attr:`Destination.path`, so
     a removal outlives its collection: ``collection_id`` becomes ``None`` when the collection is
     deleted. ``commit_id`` is the commit that removed the file, ``None`` once that commit is gone
-    with its collection or when no commit removed it.
+    with its collection or when no commit removed it. ``inode`` is the inode the file had when
+    Huron recorded or placed it, ``None`` when Huron never learned it. A removal unlinks only the
+    file that still has that inode.
     """
 
     id: uuid.UUID
@@ -152,6 +155,7 @@ class Removal:
     commit_id: uuid.UUID | None
     created_at: datetime
     claimed_at: datetime | None = None
+    inode: int | None = None
 
     @classmethod
     def of(
@@ -163,9 +167,14 @@ class Removal:
         sha256: str,
         *,
         commit_id: uuid.UUID | None,
+        inode: int | None,
         now: datetime,
     ) -> Removal:
-        """A new, unclaimed removal of ``rel_path`` from the collection directory ``directory``."""
+        """A new removal of ``rel_path`` from the collection directory ``directory``.
+
+        The request that makes the removal claims it at ``now``, so that request unlinks the file
+        and the background claims take the removal only after the claim goes stale.
+        """
         return cls(
             id=new_id(),
             collection_id=collection_id,
@@ -175,6 +184,8 @@ class Removal:
             sha256=sha256,
             commit_id=commit_id,
             created_at=now,
+            claimed_at=now,
+            inode=inode,
         )
 
     @property
@@ -190,38 +201,21 @@ class Removal:
 
 @dataclass(frozen=True, slots=True)
 class Destination:
-    """Where the ingest sidecar places an upload, and the groups its file ACL comes from.
+    """Where the API places an upload.
 
     ``path`` is the file's path below its organization's base, in the form the API gives every
     collection path (``<organization>/<catalog>/<namespace path>/<collection>/<rel_path>``).
-    ``share_root`` is the organization's configured root, or ``None`` when the sidecar's mount
-    prefix is the base. ``groups`` are the catalog's effective groups.
+    ``share_root`` is the organization's configured root, or ``None`` when the mount prefix is
+    the base.
     """
 
     path: str
     share_root: str | None
-    groups: EffectiveGroups
-
-    def as_dict(self) -> dict[str, Any]:
-        """Render for the API."""
-        return {"path": self.path, "share_root": self.share_root, "groups": self.groups.as_dict()}
 
 
 @dataclass(frozen=True, slots=True)
 class ClaimedRemoval:
-    """A removal the ingest sidecar claimed, with its organization's share root."""
+    """A claimed removal, with its organization's share root."""
 
     removal: Removal
     share_root: str | None
-
-    def as_dict(self) -> dict[str, Any]:
-        """Render for the API."""
-        r = self.removal
-        return {
-            "id": str(r.id),
-            "collection_id": None if r.collection_id is None else str(r.collection_id),
-            "rel_path": r.rel_path,
-            "sha256": r.sha256,
-            "path": r.path,
-            "share_root": self.share_root,
-        }

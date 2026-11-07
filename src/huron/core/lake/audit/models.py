@@ -28,6 +28,7 @@ class Action(StrEnum):
     CATALOG_GRANT = "catalog.grant"
     CATALOG_REVOKE = "catalog.revoke"
     CATALOG_ASSIGN_SCHEMA = "catalog.assign_schema"
+    CATALOG_SET_SHARE_GROUP = "catalog.set_share_group"
     NAMESPACE_CREATE = "namespace.create"
     NAMESPACE_DELETE = "namespace.delete"
     NAMESPACE_CONFIGURE = "namespace.configure"

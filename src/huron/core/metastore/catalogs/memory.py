@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from huron.core.lake.catalogs.errors import CatalogNotFound
 from huron.core.lake.errors import NameTaken
 from huron.core.lake.listing import ListOrder, Position
 
@@ -55,7 +56,9 @@ class MemoryCatalogs:
         return (ordering or ListOrder()).rows(rows, after, limit)
 
     async def update(self, catalog: Catalog) -> None:
-        """Replace the stored row."""
+        """Replace the stored row; raises :class:`CatalogNotFound` when there is none."""
+        if catalog.id not in self._state.catalogs:
+            raise CatalogNotFound(catalog.name)
         self._state.catalogs[catalog.id] = catalog
 
     async def delete(self, catalog_id: uuid.UUID) -> None:

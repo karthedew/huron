@@ -53,6 +53,7 @@ files = Table(
     Column("recorded_at", DateTime(timezone=True), nullable=False),
     Column("recorded_by", Text, nullable=False),
     Column("commit_id", Uuid, ForeignKey("huron.commits.id"), nullable=False),
+    Column("inode", BigInteger, nullable=True),
     PrimaryKeyConstraint("collection_id", "rel_path_key"),
     CheckConstraint("size >= 0", name="size"),
     Index(None, "commit_id"),

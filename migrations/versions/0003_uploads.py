@@ -1,4 +1,4 @@
-"""Uploads through tusd: the upload rows with their receipts, and the removal outbox.
+"""Uploads through tusd: upload rows, receipts, the removal outbox, inodes and share groups.
 
 Revision ID: 0003_uploads
 Revises: 0002_organization_catalog_roles
@@ -18,7 +18,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create ``uploads`` and ``removals``."""
+    """Create ``uploads`` and ``removals``; add ``files.inode`` and ``catalogs.share_group``."""
     op.create_table(
         "uploads",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -33,6 +33,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("placed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("commit_id", sa.Uuid(), nullable=True),
+        sa.Column("inode", sa.BigInteger(), nullable=True),
         sa.CheckConstraint(
             "state in ('pending', 'placed', 'failed', 'terminated', 'committed')",
             name=op.f("ck_uploads_state"),
@@ -47,6 +48,10 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "state <> 'failed' or failure is not null", name=op.f("ck_uploads_failure")
+        ),
+        sa.CheckConstraint(
+            "(state in ('placed', 'committed')) = (inode is not null)",
+            name=op.f("ck_uploads_inode"),
         ),
         sa.ForeignKeyConstraint(
             ["collection_id"],
@@ -81,6 +86,7 @@ def upgrade() -> None:
         sa.Column("commit_id", sa.Uuid(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("inode", sa.BigInteger(), nullable=True),
         sa.ForeignKeyConstraint(
             ["collection_id"],
             ["huron.collections.id"],
@@ -106,10 +112,14 @@ def upgrade() -> None:
     op.create_index(
         op.f("ix_removals_commit_id"), "removals", ["commit_id"], unique=False, schema="huron"
     )
+    op.add_column("files", sa.Column("inode", sa.BigInteger(), nullable=True), schema="huron")
+    op.add_column("catalogs", sa.Column("share_group", sa.Text(), nullable=True), schema="huron")
 
 
 def downgrade() -> None:
-    """Drop ``removals`` and ``uploads``."""
+    """Drop ``catalogs.share_group``, ``files.inode``, ``removals`` and ``uploads``."""
+    op.drop_column("catalogs", "share_group", schema="huron")
+    op.drop_column("files", "inode", schema="huron")
     op.drop_index(op.f("ix_removals_commit_id"), table_name="removals", schema="huron")
     op.drop_index(
         op.f("ix_removals_collection_id_rel_path_key"), table_name="removals", schema="huron"

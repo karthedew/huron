@@ -6,7 +6,7 @@ from dataclasses import replace
 import asyncpg
 import pytest
 
-from huron.core.lake.uploads.models import Upload, UploadState
+from huron.core.lake.uploads.models import Failure, Upload, UploadState
 from huron.core.metastore.postgres import PostgresStore
 from huron.pkg.identifiers import new_id
 from tests.contract.suite import collection, commit, placed, removal, tree, upload
@@ -25,6 +25,12 @@ pytestmark = pytest.mark.contract
         ),
         pytest.param(lambda row: replace(row, state=UploadState.FAILED), id="failed without why"),
         pytest.param(lambda row: replace(row, size=-1), id="negative size"),
+        pytest.param(lambda row: replace(placed(row), inode=None), id="placed without inode"),
+        pytest.param(lambda row: replace(row, inode=1), id="pending with inode"),
+        pytest.param(
+            lambda row: replace(row, state=UploadState.FAILED, failure=Failure("X", "x"), inode=1),
+            id="failed with inode",
+        ),
     ],
 )
 async def test_an_upload_row_keeps_its_state_and_columns_in_step(

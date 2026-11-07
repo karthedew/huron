@@ -101,6 +101,13 @@ const CASES: ReadonlyArray<readonly [string, string, JsonObject, string, string]
 		'Assigned schema',
 		'space-weather v1 (was huron-base v1)'
 	],
+	[
+		'catalog.set_share_group',
+		'catalog',
+		{ share_group: 'helio-readers', previous: 'helio-staff' },
+		'Changed the share group',
+		'helio-readers (was helio-staff)'
+	],
 	['namespace.create', 'namespace', { path: 'solar-wind.ace' }, 'Created a namespace', ''],
 	['namespace.delete', 'namespace', { path: 'old.ns' }, 'Deleted a namespace', 'old.ns'],
 	[
@@ -265,6 +272,14 @@ describe('activityRows', () => {
 	it('reads what a detail holds and skips what it lacks or mistypes', () => {
 		expect(row('collection.commit', 'collection', {}).summary).toBe('');
 		expect(row('catalog.assign_schema', 'catalog', { schema_id: 7 }).summary).toBe('');
+		expect(
+			row('catalog.set_share_group', 'catalog', { share_group: null, previous: 'g' }).summary
+		).toBe('cleared (was g)');
+		expect(row('catalog.set_share_group', 'catalog', {}).summary).toBe('');
+		expect(row('catalog.set_share_group', 'catalog', { share_group: 7 }).summary).toBe('');
+		expect(
+			row('catalog.set_share_group', 'catalog', { share_group: 'g', previous: null }).summary
+		).toBe('g');
 		expect(row('catalog.grant', 'catalog', { role: 'owner', ldap_group: 'g' }).summary).toBe(
 			'owner to g'
 		);

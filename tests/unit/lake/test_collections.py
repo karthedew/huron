@@ -1,6 +1,8 @@
 """The collection lifecycle, metadata, overrides, search and deletion."""
 
 import uuid
+from dataclasses import replace
+from datetime import timedelta
 
 import pytest
 
@@ -11,10 +13,11 @@ from huron.core.lake.collections.errors import (
     MetadataInvalid,
 )
 from huron.core.lake.collections.metadata import check_metadata, merge_patch, render_sidecar
-from huron.core.lake.collections.models import Search, State, Update
+from huron.core.lake.collections.models import DeletedCollection, Search, State, Update
 from huron.core.lake.errors import NameTaken, VersionConflict
 from huron.core.lake.files.models import CommitRequest, FileAdd
 from huron.core.lake.schemas.models import BASE_SCHEMA_NAME
+from huron.core.lake.uploads.models import Removal
 from huron.pkg.errors import Conflict, Forbidden, NotFound
 from huron.schema.composition import SchemaIncompatible
 from huron.schema.naming import NamingError
@@ -30,9 +33,11 @@ from tests.support.lake import (
     VALID_METADATA,
     World,
     commit_uploaded,
+    placed_upload,
 )
 
 SHA = "0" * 64
+RUN7 = "helio/heliophysics/solar-wind/run7"
 
 
 async def active(world: World, name: str = "run7", metadata: dict | None = None):  # type: ignore[no-untyped-def,type-arg]
@@ -255,6 +260,50 @@ async def test_deletion_rules(seeded: World) -> None:
     await lake.collections.delete(CONTRIBUTOR, other.collection.id, 2)
 
 
+async def test_a_delete_answers_the_directory_and_no_removals_without_placed_files(
+    seeded: World,
+) -> None:
+    lake = seeded.lake
+    settled = await active(seeded)
+    draft = await lake.collections.create(CONTRIBUTOR, "heliophysics", "solar-wind", "sketch")
+    assert await lake.collections.delete(
+        CONTRIBUTOR, settled.collection.id, 2
+    ) == DeletedCollection(RUN7, ())
+    assert await lake.collections.delete(CONTRIBUTOR, draft.collection.id, 1) == DeletedCollection(
+        None, ()
+    )
+    assert seeded.store.state.removals == {}
+
+
+async def test_a_delete_claims_the_removal_of_each_placed_file_with_its_inode(
+    seeded: World,
+) -> None:
+    lake = seeded.lake
+    cid = (await active(seeded)).collection.id
+    await lake.uploads.begin(CONTRIBUTOR, cid, "waiting", 1)
+    await placed_upload(lake, OTHER_CONTRIBUTOR, cid, "Data/B.txt", 3, SHA, inode=2**63 + 1)
+    failing = await lake.uploads.begin(CONTRIBUTOR, cid, "c", 1)
+    await lake.uploads.fail(failing.id, "X", "x")
+    seeded.clock.advance(timedelta(minutes=1))
+    now = seeded.clock.now()
+    deleted = await lake.collections.delete(CONTRIBUTOR, cid, 2)
+    (queued,) = seeded.store.state.removals.values()
+    assert queued == Removal(
+        queued.id,
+        None,
+        f"{RUN7}/Data/B.txt",
+        "Data/B.txt",
+        "data/b.txt",
+        SHA,
+        None,
+        now,
+        claimed_at=now,
+        inode=2**63 + 1,
+    )
+    assert deleted == DeletedCollection(RUN7, (replace(queued, collection_id=cid),))
+    assert seeded.store.state.uploads == {}
+
+
 async def test_sidecar_is_canonical_and_absent_for_drafts(seeded: World) -> None:
     lake = seeded.lake
     view = await active(seeded)
@@ -342,6 +391,6 @@ async def test_a_dry_run_delete_checks_rights_and_version_but_changes_nothing(
         await lake.collections.delete(OTHER_CONTRIBUTOR, collection_id, 3, dry_run=True)
     with pytest.raises(VersionConflict):
         await lake.collections.delete(CONTRIBUTOR, collection_id, 2, dry_run=True)
-    await lake.collections.delete(CONTRIBUTOR, collection_id, 3, dry_run=True)
-    await lake.collections.delete(CATALOG_ADMIN, collection_id, 3, dry_run=True)
+    assert await lake.collections.delete(CONTRIBUTOR, collection_id, 3, dry_run=True) is None
+    assert await lake.collections.delete(CATALOG_ADMIN, collection_id, 3, dry_run=True) is None
     assert (await lake.collections.get(READER, collection_id)).collection.file_count == 1

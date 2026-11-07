@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from huron.core.lake.catalogs.errors import CatalogNotFound
 from huron.core.lake.catalogs.models import Catalog
 from huron.core.lake.listing import ListOrder, Position
 from huron.core.metastore.rows import Db, unique
@@ -18,7 +19,7 @@ __all__ = ["PostgresCatalogs"]
 
 _COLUMNS = (
     "id, organization_id, name, display_name, description, schema_id, version,"
-    " created_at, created_by"
+    " created_at, created_by, share_group"
 )
 
 
@@ -34,7 +35,7 @@ class PostgresCatalogs:
         await unique(
             lambda: self._db.execute(
                 f"insert into huron.catalogs ({_COLUMNS})"
-                " values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                " values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                 c.id,
                 c.organization_id,
                 c.name,
@@ -44,6 +45,7 @@ class PostgresCatalogs:
                 c.version,
                 c.created_at,
                 c.created_by,
+                c.share_group,
             ),
             c.name,
         )
@@ -86,17 +88,20 @@ class PostgresCatalogs:
         return [Catalog(**row) for row in rows]
 
     async def update(self, catalog: Catalog) -> None:
-        """Replace the stored row."""
+        """Replace the stored row; raises :class:`CatalogNotFound` when there is none."""
         c = catalog
-        await self._db.execute(
+        status = await self._db.execute(
             "update huron.catalogs set display_name = $2, description = $3, schema_id = $4,"
-            " version = $5 where id = $1",
+            " version = $5, share_group = $6 where id = $1",
             c.id,
             c.display_name,
             c.description,
             c.schema_id,
             c.version,
+            c.share_group,
         )
+        if status == "UPDATE 0":
+            raise CatalogNotFound(c.name)
 
     async def delete(self, catalog_id: uuid.UUID) -> None:
         """Remove a catalog."""

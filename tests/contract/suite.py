@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from huron.core.lake.audit.models import Action, AuditEntry, ObjectType
+from huron.core.lake.catalogs.errors import CatalogNotFound
 from huron.core.lake.catalogs.models import Catalog
 from huron.core.lake.collections.models import Collection, Search, State
 from huron.core.lake.errors import NameTaken
@@ -30,6 +31,8 @@ from huron.pkg.identifiers import new_id
 from tests.support.clock import START, frozen
 
 SHA = "f" * 64
+INODES = (0, 2**63 - 1, 2**63, 2**64 - 1)
+"""Inodes at the edges of the unsigned 64-bit range and of the signed ``bigint`` that stores it."""
 
 
 def organization(name: str = "helio") -> Organization:
@@ -159,7 +162,7 @@ async def test_catalogs(uow: UnitOfWork) -> None:
         await tx.organizations.insert(other_org)
         base = await tx.schemas.latest(None, "huron-base")
         assert base is not None
-        geo = catalog(other_org, base.id, "geophysics")
+        geo = replace(catalog(other_org, base.id, "geophysics"), share_group="geo-readers")
         await tx.catalogs.insert(geo)
     async with uow.transaction() as tx:
         assert await tx.catalogs.get(cat.id) == cat
@@ -175,8 +178,15 @@ async def test_catalogs(uow: UnitOfWork) -> None:
         assert names(await tx.catalogs.list(None, None, "geophysics", 10)) == ["heliophysics"]
         assert await tx.catalogs.namespace_count(cat.id) == 1
         assert await tx.organizations.catalog_count(org.id) == 1
-        await tx.catalogs.update(replace(geo, version=2, description="d"))
-        assert (await tx.catalogs.get(geo.id)).version == 2  # type: ignore[union-attr]
+        changed = replace(geo, version=2, description="d", share_group=None)
+        await tx.catalogs.update(changed)
+        assert await tx.catalogs.get(geo.id) == changed
+        await tx.catalogs.update(replace(cat, share_group="helio-readers"))
+        assert await tx.catalogs.get(cat.id) == replace(cat, share_group="helio-readers")
+    with pytest.raises(CatalogNotFound) as missing:
+        async with uow.transaction() as tx:
+            await tx.catalogs.update(catalog(org, cat.schema_id, "ghost"))
+    assert missing.value.context == {"catalog": "ghost"}
     with pytest.raises(NameTaken):
         async with uow.transaction() as tx:
             await tx.catalogs.insert(catalog(other_org, cat.schema_id, "heliophysics"))
@@ -335,6 +345,29 @@ async def test_files_and_commits(uow: UnitOfWork) -> None:
         assert [c.id for c in await tx.commits.list(owner.id, second, 10)] == [first]
 
 
+async def test_files_keep_inodes_of_the_whole_unsigned_range(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    made = commit(owner)
+    records = [
+        FileRecord(owner.id, f"{i}.txt", f"{i}.txt", 1, SHA, START, "t", made.id, inode)
+        for i, inode in enumerate((*INODES, None))
+    ]
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.commits.insert(made)
+        await tx.files.upsert_many(records)
+    async with uow.transaction() as tx:
+        assert await tx.files.list(owner.id, None, 10) == records
+        keys = [r.rel_path_key for r in records]
+        assert sorted(await tx.files.get_many(owner.id, keys), key=lambda r: r.rel_path) == records
+        swapped = [
+            replace(r, inode=other.inode) for r, other in zip(records, records[::-1], strict=True)
+        ]
+        await tx.files.upsert_many(swapped)
+        assert await tx.files.list(owner.id, None, 10) == swapped
+
+
 def commit(owner: Collection) -> Commit:
     return Commit(new_id(), owner.id, 1, 2, 1, 0, "h", None, "t", START)
 
@@ -345,13 +378,17 @@ def upload(owner: Collection, rel_path: str, by: str = "dave") -> Upload:
     )
 
 
-def placed(row: Upload, minute: int = 1) -> Upload:
+def placed(row: Upload, minute: int = 1, inode: int = 1) -> Upload:
     placed_at = START + timedelta(minutes=minute)
-    return replace(row, state=UploadState.PLACED, sha256=SHA, placed_at=placed_at)
+    return replace(row, state=UploadState.PLACED, sha256=SHA, placed_at=placed_at, inode=inode)
 
 
 def removal(
-    owner: Collection, rel_path: str, commit_id: uuid.UUID | None = None, created: int = 0
+    owner: Collection,
+    rel_path: str,
+    commit_id: uuid.UUID | None = None,
+    created: int = 0,
+    inode: int | None = None,
 ) -> Removal:
     return Removal(
         new_id(),
@@ -362,6 +399,7 @@ def removal(
         SHA,
         commit_id,
         START + timedelta(seconds=created),
+        inode=inode,
     )
 
 
@@ -424,6 +462,33 @@ async def test_uploads(uow: UnitOfWork) -> None:
         assert await tx.uploads.get(elsewhere.id) == placed(elsewhere, 4)
 
 
+async def test_uploads_keep_inodes_of_the_whole_unsigned_range(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    made = commit(owner)
+    rows = [upload(owner, f"{i}.txt") for i in range(len(INODES))]
+    received = [placed(row, inode=inode) for row, inode in zip(rows, INODES, strict=True)]
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.commits.insert(made)
+        await tx.uploads.insert(received[0])
+        for row in rows[1:]:
+            await tx.uploads.insert(row)
+    async with uow.transaction() as tx:
+        for row in received[1:]:
+            await tx.uploads.update(row)
+        await tx.uploads.mark_committed([rows[-1].id], made.id)
+    committed = replace(received[-1], state=UploadState.COMMITTED, commit_id=made.id)
+    async with uow.transaction() as tx:
+        for row in received[:-1]:
+            assert await tx.uploads.get(row.id) == row
+            assert await tx.uploads.lock(row.id) == row
+        assert await tx.uploads.get(rows[-1].id) == committed
+        assert await tx.uploads.placed(owner.id) == received[:-1]
+        keys = [row.rel_path_key for row in rows]
+        assert await tx.uploads.latest_placements(owner.id, keys) == [*received[:-1], committed]
+
+
 async def test_removals(uow: UnitOfWork) -> None:
     _, cat, ns = await tree(uow)
     owner, other = collection(cat, ns, "run7"), collection(cat, ns, "run8")
@@ -465,6 +530,28 @@ async def test_removals(uow: UnitOfWork) -> None:
         await tx.uploads.delete_removal(second.id)
         assert await tx.uploads.get_removal(second.id) is None
         assert await tx.uploads.get_removal(third.id) is not None
+
+
+async def test_removals_keep_their_claim_and_inodes_of_the_whole_unsigned_range(
+    uow: UnitOfWork,
+) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    claimed_at = START + timedelta(minutes=1)
+    rows = [
+        replace(removal(owner, f"{i}.txt", None, i, inode), claimed_at=claimed_at)
+        for i, inode in enumerate((*INODES, None))
+    ]
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.uploads.insert_removals(rows)
+    async with uow.transaction() as tx:
+        for row in rows:
+            assert await tx.uploads.get_removal(row.id) == row
+        assert await tx.uploads.claim_removals(claimed_at, claimed_at, 10) == []
+        later = claimed_at + timedelta(hours=1)
+        reclaimed = await tx.uploads.claim_removals(later, later, 10)
+        assert reclaimed == [replace(row, claimed_at=later) for row in rows]
 
 
 async def test_schemas(uow: UnitOfWork) -> None:

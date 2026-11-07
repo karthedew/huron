@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from huron.core.lake.catalogs.errors import CatalogNotFound
 from huron.core.lake.collections.models import Collection, CollectionView
 from huron.core.lake.errors import VersionConflict
 from huron.core.security.rbac import Privilege, Scope
@@ -44,10 +45,10 @@ async def find_organization(
 
 
 async def find_catalog(tx: Transaction, authz: Authorizer, actor: Actor, name: str) -> Catalog:
-    """The catalog named ``name`` if the actor may see it; otherwise :class:`NotFound`."""
+    """The catalog named ``name`` if the actor may see it; otherwise :class:`CatalogNotFound`."""
     catalog = await tx.catalogs.get_by_name(name)
     if catalog is None or not await authz.can_see_catalog(actor, catalog.id):
-        raise NotFound(f"catalog {name!r} not found", {"catalog": name})
+        raise CatalogNotFound(name)
     return catalog
 
 

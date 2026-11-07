@@ -119,8 +119,12 @@ class Namespaces:
                 )
             return await _view(tx, actor, found, namespace)
 
-    async def delete(self, actor: Actor, catalog: str, path: str) -> None:
-        """Delete a namespace with no child namespaces and no collections (drafts included)."""
+    async def delete(self, actor: Actor, catalog: str, path: str) -> str:
+        """Delete a namespace with no child namespaces and no collections (drafts included).
+
+        The answer is the directory the namespace had, in the form of
+        :attr:`NamespaceView.disk_path`.
+        """
         async with self._uow.transaction() as tx:
             found = await self._catalog(tx, actor, catalog, Privilege.NAMESPACE_DELETE)
             await tx.lock_catalog(found.id)
@@ -131,8 +135,12 @@ class Namespaces:
                     f"namespace {catalog}.{path} is not empty",
                     {"namespace_count": namespaces, "collection_count": collections},
                 )
+            organization = await tx.organizations.get(found.organization_id)
+            assert organization is not None
+            view = NamespaceView(namespace, found.name, organization.name, namespaces, collections)
             await tx.namespaces.delete(namespace.id)
             await self._audit(tx, actor, Action.NAMESPACE_DELETE, found, namespace)
+            return view.disk_path
 
     async def _catalog(
         self, tx: Transaction, actor: Actor, name: str, privilege: Privilege

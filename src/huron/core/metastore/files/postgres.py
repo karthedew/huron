@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from huron.core.lake.files.models import Commit, FileRecord
+from huron.core.metastore.rows import columns, signed_inode, unsigned_inode
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Collection, Sequence
+
+    import asyncpg
 
     from huron.core.metastore.rows import Db
 
 __all__ = ["PostgresCommits", "PostgresFiles"]
 
 _FILE_COLUMNS = (
-    "collection_id, rel_path, rel_path_key, size, sha256, recorded_at, recorded_by, commit_id"
+    "collection_id, rel_path, rel_path_key, size, sha256, recorded_at, recorded_by, commit_id,"
+    " inode"
 )
 _COMMIT_COLUMNS = (
     "id, collection_id, base_version, new_version, adds, removes, host, message, actor, created_at"
@@ -35,19 +39,12 @@ class PostgresFiles:
         await self._db.execute(
             f"insert into huron.files ({_FILE_COLUMNS})"
             " select * from unnest($1::uuid[], $2::text[], $3::text[], $4::bigint[], $5::text[],"
-            " $6::timestamptz[], $7::text[], $8::uuid[])"
+            " $6::timestamptz[], $7::text[], $8::uuid[], $9::bigint[])"
             " on conflict (collection_id, rel_path_key) do update set"
             " rel_path = excluded.rel_path, size = excluded.size, sha256 = excluded.sha256,"
             " recorded_at = excluded.recorded_at, recorded_by = excluded.recorded_by,"
-            " commit_id = excluded.commit_id",
-            [r.collection_id for r in records],
-            [r.rel_path for r in records],
-            [r.rel_path_key for r in records],
-            [r.size for r in records],
-            [r.sha256 for r in records],
-            [r.recorded_at for r in records],
-            [r.recorded_by for r in records],
-            [r.commit_id for r in records],
+            " commit_id = excluded.commit_id, inode = excluded.inode",
+            *columns([_row(record) for record in records]),
         )
 
     async def delete_many(self, collection_id: uuid.UUID, keys: Collection[str]) -> None:
@@ -78,7 +75,7 @@ class PostgresFiles:
             collection_id,
             list(keys),
         )
-        return [FileRecord(**row) for row in rows]
+        return [_record(row) for row in rows]
 
     async def beneath(
         self, collection_id: uuid.UUID, prefixes: Collection[str], limit: int
@@ -106,7 +103,7 @@ class PostgresFiles:
             after,
             limit,
         )
-        return [FileRecord(**row) for row in rows]
+        return [_record(row) for row in rows]
 
     async def count(self, collection_id: uuid.UUID) -> int:
         """How many files are recorded."""
@@ -152,3 +149,25 @@ class PostgresCommits:
             limit,
         )
         return [Commit(**row) for row in rows]
+
+
+def _row(record: FileRecord) -> tuple[Any, ...]:
+    """The values of ``record`` in the order of ``_FILE_COLUMNS``."""
+    r = record
+    return (
+        r.collection_id,
+        r.rel_path,
+        r.rel_path_key,
+        r.size,
+        r.sha256,
+        r.recorded_at,
+        r.recorded_by,
+        r.commit_id,
+        signed_inode(r.inode),
+    )
+
+
+def _record(row: asyncpg.Record) -> FileRecord:
+    values = dict(row)
+    values["inode"] = unsigned_inode(values["inode"])
+    return FileRecord(**values)

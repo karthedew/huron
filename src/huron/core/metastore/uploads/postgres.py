@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import astuple, fields
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from huron.core.lake.uploads.models import Failure, Removal, Upload, UploadState
+from huron.core.metastore.rows import columns, signed_inode, unsigned_inode
 
 if TYPE_CHECKING:
     import uuid
@@ -20,9 +20,12 @@ __all__ = ["PostgresUploads"]
 
 _UPLOAD_COLUMNS = (
     "id, collection_id, rel_path, rel_path_key, size, state, created_by, created_at, sha256,"
-    " failure, placed_at, commit_id"
+    " failure, placed_at, commit_id, inode"
 )
-_REMOVAL_COLUMNS = ", ".join(field.name for field in fields(Removal))
+_REMOVAL_COLUMNS = (
+    "id, collection_id, path, rel_path, rel_path_key, sha256, commit_id, created_at, claimed_at,"
+    " inode"
+)
 
 
 class PostgresUploads:
@@ -36,7 +39,7 @@ class PostgresUploads:
         u = upload
         await self._db.execute(
             f"insert into huron.uploads ({_UPLOAD_COLUMNS})"
-            " values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            " values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
             u.id,
             u.collection_id,
             u.rel_path,
@@ -49,6 +52,7 @@ class PostgresUploads:
             None if u.failure is None else u.failure.as_dict(),
             u.placed_at,
             u.commit_id,
+            signed_inode(u.inode),
         )
 
     async def get(self, upload_id: uuid.UUID) -> Upload | None:
@@ -66,17 +70,18 @@ class PostgresUploads:
         return None if row is None else _upload(row)
 
     async def update(self, upload: Upload) -> None:
-        """Replace the state, receipt and failure of a stored upload."""
+        """Replace the state, receipt, failure and commit of a stored upload."""
         u = upload
         await self._db.execute(
             "update huron.uploads set state = $2, sha256 = $3, failure = $4, placed_at = $5,"
-            " commit_id = $6 where id = $1",
+            " commit_id = $6, inode = $7 where id = $1",
             u.id,
             str(u.state),
             u.sha256,
             None if u.failure is None else u.failure.as_dict(),
             u.placed_at,
             u.commit_id,
+            signed_inode(u.inode),
         )
 
     async def latest_placements(
@@ -111,16 +116,14 @@ class PostgresUploads:
         )
 
     async def insert_removals(self, removals: Sequence[Removal]) -> None:
-        """Store new removals in one statement."""
+        """Store new removals as they are, in one statement."""
         if not removals:
             return
-        # One array per field of Removal, in field order, as in _REMOVAL_COLUMNS.
-        columns = zip(*(astuple(removal) for removal in removals), strict=True)
         await self._db.execute(
             f"insert into huron.removals ({_REMOVAL_COLUMNS})"
             " select * from unnest($1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[],"
-            " $6::text[], $7::uuid[], $8::timestamptz[], $9::timestamptz[])",
-            *(list(column) for column in columns),
+            " $6::text[], $7::uuid[], $8::timestamptz[], $9::timestamptz[], $10::bigint[])",
+            *columns([_removal_row(removal) for removal in removals]),
         )
 
     async def delete_removals(self, collection_id: uuid.UUID, keys: Collection[str]) -> None:
@@ -144,14 +147,14 @@ class PostgresUploads:
             stale_before,
             limit,
         )
-        return sorted((Removal(**row) for row in rows), key=lambda r: (r.created_at, r.id))
+        return sorted((_removal(row) for row in rows), key=lambda r: (r.created_at, r.id))
 
     async def get_removal(self, removal_id: uuid.UUID) -> Removal | None:
         """The removal with ``removal_id``."""
         row = await self._db.fetchrow(
             f"select {_REMOVAL_COLUMNS} from huron.removals where id = $1", removal_id
         )
-        return None if row is None else Removal(**row)
+        return None if row is None else _removal(row)
 
     async def delete_removal(self, removal_id: uuid.UUID) -> None:
         """Forget a removal."""
@@ -162,4 +165,28 @@ def _upload(row: asyncpg.Record) -> Upload:
     values = dict(row)
     failure = values.pop("failure")
     values["state"] = UploadState(values["state"])
+    values["inode"] = unsigned_inode(values["inode"])
     return Upload(**values, failure=None if failure is None else Failure(**failure))
+
+
+def _removal_row(removal: Removal) -> tuple[Any, ...]:
+    """The values of ``removal`` in the order of ``_REMOVAL_COLUMNS``."""
+    r = removal
+    return (
+        r.id,
+        r.collection_id,
+        r.path,
+        r.rel_path,
+        r.rel_path_key,
+        r.sha256,
+        r.commit_id,
+        r.created_at,
+        r.claimed_at,
+        signed_inode(r.inode),
+    )
+
+
+def _removal(row: asyncpg.Record) -> Removal:
+    values = dict(row)
+    values["inode"] = unsigned_inode(values["inode"])
+    return Removal(**values)

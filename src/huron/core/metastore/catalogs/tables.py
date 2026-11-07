@@ -22,4 +22,5 @@ catalogs = Table(
     Column("version", Integer, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("created_by", Text, nullable=False),
+    Column("share_group", Text, nullable=True),
 )

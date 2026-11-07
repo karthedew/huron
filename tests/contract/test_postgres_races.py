@@ -2,13 +2,15 @@
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from typing import Any
 
 import asyncpg
 import pytest
 
 from huron.core.lake.bootstrap import Lake, bootstrap, build_lake
-from huron.core.lake.collections.models import State, Update
+from huron.core.lake.catalogs.models import Catalog
+from huron.core.lake.collections.models import DeletedCollection, State, Update
 from huron.core.lake.errors import NameTaken
 from huron.core.lake.files.errors import BaseVersionConflict
 from huron.core.lake.files.models import CommitRequest, FileAdd
@@ -16,6 +18,7 @@ from huron.core.lake.namespaces.errors import NamespaceNotEmpty
 from huron.core.lake.schemas.models import BASE_SCHEMA_NAME
 from huron.core.lake.uploads.errors import UploadNotFound
 from huron.core.lake.uploads.models import Upload
+from huron.core.metastore.catalogs.postgres import PostgresCatalogs
 from huron.core.metastore.collections.postgres import PostgresCollections
 from huron.core.metastore.postgres import PostgresStore
 from huron.core.metastore.uploads.postgres import PostgresUploads
@@ -37,6 +40,7 @@ from tests.support.lake import (
 
 pytestmark = pytest.mark.contract
 SHA = "e" * 64
+STRICT = {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]}
 
 
 @pytest.fixture
@@ -101,7 +105,7 @@ async def test_namespace_deletion_racing_collection_creation_leaves_no_orphan(la
         lake.collections.create(CONTRIBUTOR, "heliophysics", "doomed", "late"),
         return_exceptions=True,
     )
-    namespace_gone = results[0] is None
+    namespace_gone = results[0] == "helio/heliophysics/doomed"
     if namespace_gone:
         assert isinstance(results[1], NotFound)
     else:
@@ -204,7 +208,7 @@ async def test_a_receipt_waits_for_a_collection_delete_that_read_the_placed_uplo
         self: PostgresUploads, collection_id: uuid.UUID
     ) -> Sequence[Upload]:
         rows = await original(self, collection_id)
-        receipt = asyncio.create_task(lake.uploads.receipt(upload.id, 1, SHA))
+        receipt = asyncio.create_task(lake.uploads.receipt(upload.id, 1, SHA, 1))
         receipts.append(receipt)
         await _done_or_waiting_for_a_lock(receipt, database_url)
         return rows
@@ -248,7 +252,7 @@ async def test_an_upload_begun_with_a_collection_delete_never_fails_in_the_datab
         lake.collections.delete(CONTRIBUTOR, cid, 2),
         return_exceptions=True,
     )
-    assert deleted is None
+    assert deleted == DeletedCollection("helio/heliophysics/solar-wind/run7", ())
     if isinstance(begun, Upload):
         with pytest.raises(UploadNotFound):
             await lake.uploads.get(CONTRIBUTOR, begun.id)
@@ -256,7 +260,79 @@ async def test_an_upload_begun_with_a_collection_delete_never_fails_in_the_datab
         assert isinstance(begun, NotFound)
 
 
-async def _done_or_waiting_for_a_lock(task: asyncio.Task[Upload], database_url: str) -> None:
+@pytest.mark.parametrize("first", ["share group", "schema"])
+async def test_a_share_group_change_and_a_schema_assignment_keep_each_other(
+    lake: Lake, database_url: str, monkeypatch: pytest.MonkeyPatch, first: str
+) -> None:
+    base = (await lake.schemas.list(READER, None, None, None)).items[0].id
+    strict = await lake.schemas.publish(ORG_ADMIN, "helio", "strict", base, STRICT)
+    changes: dict[str, Callable[[], Awaitable[object]]] = {
+        "share group": lambda: lake.catalogs.set_share_group(
+            ORG_ADMIN, "heliophysics", "helio-readers"
+        ),
+        "schema": lambda: lake.catalogs.assign_schema(ORG_ADMIN, "heliophysics", strict.id),
+    }
+    (second,) = set(changes) - {first}
+    original = PostgresCatalogs.update
+    waiting: list[asyncio.Task[object]] = []
+
+    async def update_while_the_other_waits(self: PostgresCatalogs, catalog: Catalog) -> None:
+        if not waiting:
+            task = asyncio.create_task(changes[second]())
+            waiting.append(task)
+            await _done_or_waiting_for_a_lock(task, database_url)
+        await original(self, catalog)
+
+    monkeypatch.setattr(PostgresCatalogs, "update", update_while_the_other_waits)
+    await changes[first]()
+    await waiting[0]
+    view = await lake.catalogs.get(READER, "heliophysics")
+    assert (view.catalog.share_group, view.catalog.schema_id, view.catalog.version) == (
+        "helio-readers",
+        strict.id,
+        3,
+    )
+
+
+async def test_a_share_group_change_waiting_for_a_catalog_delete_finds_no_catalog(
+    lake: Lake, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await lake.catalogs.create(ORG_ADMIN, "helio", "doomed")
+    original = PostgresCatalogs.delete
+    changes: list[asyncio.Task[object]] = []
+
+    async def delete_while_the_change_waits(self: PostgresCatalogs, catalog_id: uuid.UUID) -> None:
+        change = asyncio.create_task(lake.catalogs.set_share_group(ORG_ADMIN, "doomed", "late"))
+        changes.append(change)
+        await _done_or_waiting_for_a_lock(change, database_url)
+        await original(self, catalog_id)
+
+    monkeypatch.setattr(PostgresCatalogs, "delete", delete_while_the_change_waits)
+    assert await lake.catalogs.delete(ORG_ADMIN, "doomed") == "helio/doomed"
+    with pytest.raises(NotFound) as missing:
+        await changes[0]
+    assert missing.value.context == {"catalog": "doomed"}
+
+
+async def test_a_share_group_change_with_a_catalog_delete_never_fails_in_the_database(
+    lake: Lake,
+) -> None:
+    await lake.catalogs.create(ORG_ADMIN, "helio", "doomed")
+    changed, deleted = await asyncio.gather(
+        lake.catalogs.set_share_group(ORG_ADMIN, "doomed", "late"),
+        lake.catalogs.delete(ORG_ADMIN, "doomed"),
+        return_exceptions=True,
+    )
+    assert deleted == "helio/doomed"
+    if isinstance(changed, BaseException):
+        assert isinstance(changed, NotFound)
+    else:
+        assert changed.catalog.share_group == "late"
+    with pytest.raises(NotFound):
+        await lake.catalogs.get(ORG_ADMIN, "doomed")
+
+
+async def _done_or_waiting_for_a_lock(task: asyncio.Task[Any], database_url: str) -> None:
     """Return once ``task`` is done or a transaction of this database waits for a lock.
 
     Fail the test when neither happens within 5 seconds.

@@ -11,8 +11,18 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from huron.core.lake.schemas.models import SchemaRef
+    from huron.core.lake.uploads.models import Removal
 
-__all__ = ["UNSET", "Collection", "CollectionView", "Search", "State", "Unset", "Update"]
+__all__ = [
+    "UNSET",
+    "Collection",
+    "CollectionView",
+    "DeletedCollection",
+    "Search",
+    "State",
+    "Unset",
+    "Update",
+]
 
 
 class State(StrEnum):
@@ -117,3 +127,16 @@ class CollectionView:
             "path": self.disk_path,
             "problems": self.problems,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class DeletedCollection:
+    """What deleting a collection leaves for the disk.
+
+    ``disk_path`` is the directory the collection had, in the form of
+    :attr:`CollectionView.disk_path`, ``None`` for a draft. ``removals`` are the removals of the
+    files of its placed, uncommitted uploads, claimed for the request that deleted it.
+    """
+
+    disk_path: str | None
+    removals: tuple[Removal, ...]

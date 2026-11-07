@@ -237,9 +237,9 @@ async def test_the_latest_placement_is_the_last_placed_whatever_began_first(
     lake = seeded.lake
     first = await lake.uploads.begin(CONTRIBUTOR, collection_id, "a.txt", 1)
     second = await lake.uploads.begin(CONTRIBUTOR, collection_id, "a.txt", 1)
-    await lake.uploads.receipt(second.id, 1, OTHER_SHA)
+    await lake.uploads.receipt(second.id, 1, OTHER_SHA, 2)
     seeded.clock.advance(timedelta(seconds=1))
-    await lake.uploads.receipt(first.id, 1, SHA)
+    await lake.uploads.receipt(first.id, 1, SHA, 1)
     with pytest.raises(UploadReceiptMissing):
         await lake.commits.commit(
             CONTRIBUTOR, collection_id, CommitRequest(2, (FileAdd("a.txt", 1, OTHER_SHA),), (), "h")
@@ -315,41 +315,62 @@ async def test_a_receipt_is_good_until_its_time_to_live_ends(
     assert result.file_count == 1
 
 
+async def test_a_record_keeps_the_inode_of_the_receipt_that_proved_it(
+    seeded: World, collection_id: uuid.UUID
+) -> None:
+    lake = seeded.lake
+    await placed_upload(lake, CONTRIBUTOR, collection_id, "a.txt", 1, SHA, inode=2**64 - 1)
+    await lake.commits.commit(CONTRIBUTOR, collection_id, CommitRequest(2, adds("a.txt"), (), "h"))
+    assert await _inodes(seeded, collection_id) == {"a.txt": 2**64 - 1}
+    await placed_upload(lake, CONTRIBUTOR, collection_id, "a.txt", 1, SHA, inode=5)
+    await lake.commits.commit(CONTRIBUTOR, collection_id, CommitRequest(3, adds("a.txt"), (), "h"))
+    assert await _inodes(seeded, collection_id) == {"a.txt": 5}
+
+
 async def test_optional_receipts_record_unproved_adds_and_still_consume_receipts() -> None:
     world = await make_world(replace(SETTINGS, upload_receipts=ReceiptMode.OPTIONAL))
     await seed(world)
     collection_id = await settled_collection(world.lake)
-    upload = await placed_upload(world.lake, CONTRIBUTOR, collection_id, "proved.txt", 1, SHA)
+    upload = await placed_upload(
+        world.lake, CONTRIBUTOR, collection_id, "proved.txt", 1, SHA, inode=9
+    )
     result = await world.lake.commits.commit(
         CONTRIBUTOR, collection_id, CommitRequest(2, adds("proved.txt", "unproved.txt"), (), "h")
     )
     assert result.file_count == 2
     stored = world.store.state.uploads[upload.id]
     assert (stored.state, stored.commit_id) == (UploadState.COMMITTED, result.commit_id)
+    assert await _inodes(world, collection_id) == {"proved.txt": 9, "unproved.txt": None}
 
 
-async def test_a_commit_queues_the_removal_of_each_removed_file(
+async def test_a_commit_claims_the_removal_of_each_removed_file_with_its_inode(
     seeded: World, collection_id: uuid.UUID
 ) -> None:
-    await commit_uploaded(
-        seeded.lake,
+    lake = seeded.lake
+    await placed_upload(lake, CONTRIBUTOR, collection_id, "Data/A.txt", 4, SHA, inode=2**63)
+    await placed_upload(lake, CONTRIBUTOR, collection_id, "b.txt", 1, OTHER_SHA, inode=11)
+    added = await lake.commits.commit(
         CONTRIBUTOR,
         collection_id,
         CommitRequest(2, (FileAdd("Data/A.txt", 4, SHA), FileAdd("b.txt", 1, OTHER_SHA)), (), "h"),
     )
-    result = await seeded.lake.commits.commit(
+    assert added.removals == ()
+    seeded.clock.advance(timedelta(minutes=1))
+    result = await lake.commits.commit(
         CONTRIBUTOR, collection_id, CommitRequest(3, (), ("data/a.txt", "b.txt"), "h")
     )
     queued = sorted(seeded.store.state.removals.values(), key=lambda r: r.rel_path)
     directory = "helio/heliophysics/solar-wind/run7"
-    assert [(r.path, r.rel_path, r.rel_path_key, r.sha256) for r in queued] == [
-        (f"{directory}/Data/A.txt", "Data/A.txt", "data/a.txt", SHA),
-        (f"{directory}/b.txt", "b.txt", "b.txt", OTHER_SHA),
+    assert [(r.path, r.rel_path, r.rel_path_key, r.sha256, r.inode) for r in queued] == [
+        (f"{directory}/Data/A.txt", "Data/A.txt", "data/a.txt", SHA, 2**63),
+        (f"{directory}/b.txt", "b.txt", "b.txt", OTHER_SHA, 11),
     ]
-    assert {(r.collection_id, r.commit_id, r.claimed_at) for r in queued} == {
-        (collection_id, result.commit_id, None)
+    now = seeded.clock.now()
+    assert {(r.collection_id, r.commit_id, r.created_at, r.claimed_at) for r in queued} == {
+        (collection_id, result.commit_id, now, now)
     }
-    assert {r.created_at for r in queued} == {seeded.clock.now()}
+    assert sorted(result.removals, key=lambda r: r.rel_path) == queued
+    assert result.as_dict() == {"version": 4, "file_count": 0, "commit_id": str(result.commit_id)}
 
 
 async def test_adding_a_path_again_cancels_its_queued_removal(
@@ -380,3 +401,9 @@ async def test_a_refused_commit_queues_and_consumes_nothing(
         )
     assert seeded.store.state.removals == {}
     assert seeded.store.state.uploads[upload.id].state is UploadState.PLACED
+
+
+async def _inodes(world: World, collection_id: uuid.UUID) -> dict[str, int | None]:
+    """The inode of each recorded file of the collection, by its path."""
+    page = await world.lake.commits.list_files(READER, collection_id)
+    return {record.rel_path: record.inode for record in page.items}

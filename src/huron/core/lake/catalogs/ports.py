@@ -45,7 +45,7 @@ class CatalogStore(Protocol):
         ...
 
     async def update(self, catalog: Catalog) -> None:
-        """Replace the stored row."""
+        """Replace the stored row; raises ``CatalogNotFound`` when there is none."""
         ...
 
     async def delete(self, catalog_id: uuid.UUID) -> None:
