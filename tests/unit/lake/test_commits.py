@@ -328,7 +328,7 @@ async def test_a_record_keeps_the_inode_of_the_receipt_that_proved_it(
 
 
 async def test_optional_receipts_record_unproved_adds_and_still_consume_receipts() -> None:
-    world = await make_world(replace(SETTINGS, upload_receipts=ReceiptMode.OPTIONAL))
+    world = await make_world(replace(SETTINGS, receipt_mode=ReceiptMode.OPTIONAL))
     await seed(world)
     collection_id = await settled_collection(world.lake)
     upload = await placed_upload(

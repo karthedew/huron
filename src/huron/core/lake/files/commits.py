@@ -45,7 +45,7 @@ def parse_commit_request(body: Any, *, dry_run: bool = False) -> CommitRequest:
     """Validate a commit body against ``commit-request-v1`` and the path rules.
 
     A ``dry_run`` body is checked the same way except that its adds may leave out ``sha256``:
-    the CLI asks before it copies, and a file's hash is only known once it is copied.
+    the CLI asks before it uploads, and a file's hash is only known once it is uploaded.
     """
     if isinstance(body, dict):
         entries = len(body.get("adds") or []) + len(body.get("removes") or [])

@@ -226,12 +226,6 @@ class Storage(ShareReader, Protocol):
         """The ACL of ``path``."""
         ...
 
-    def copy_in(
-        self, source: Path, directory: Path, rel_path: str, expected: FileStamp | None = None
-    ) -> FileStamp:
-        """Copy ``source`` to ``directory / rel_path`` through a part file."""
-        ...
-
     def owned_by_me(self, path: Path) -> bool:
         """Whether the current user owns ``path`` (only owners may change its ACL)."""
         ...

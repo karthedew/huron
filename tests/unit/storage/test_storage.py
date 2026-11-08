@@ -160,16 +160,14 @@ def test_memory_storage_behaves_like_a_share(tmp_path: Path) -> None:
     assert storage.ensure_directory(root / "a", planned) is False
     assert storage.apply_plan(root / "a", planned) is False
     assert storage.read_acl(root / "a") == planned.acl
-    source = tmp_path / "f.bin"
-    source.write_bytes(b"abc")
-    stamp = storage.copy_in(source, root / "a", "x/y/f.bin")
+    storage.make_directory(root / "a" / "x", 0o2750)
+    storage.make_directory(root / "a" / "x" / "y", 0o2750)
+    storage.write_bytes(root / "a" / "x" / "y" / "f.bin", b"abc")
+    stamp = storage.hash(root / "a" / "x" / "y" / "f.bin")
     assert stamp == FileStamp(3, hashlib.sha256(b"abc").hexdigest())
-    assert storage.copy_in(source, root / "a", "x/y/f.bin", stamp) == stamp
     assert [e.rel_path for e in storage.walk(root / "a")] == ["x", "x/y", "x/y/f.bin"]
     assert storage.stamp(root / "a" / "x" / "y" / "f.bin").size == 3
     assert storage.read_bytes(root / "nope") is None
-    with pytest.raises(StorageError):
-        storage.copy_in(tmp_path / "missing", root / "a", "m")
     with pytest.raises(StorageError):
         storage.remove_directory(root / "a")
     assert storage.remove_file(root / "a" / "x" / "y" / "f.bin") is True
@@ -216,24 +214,24 @@ def test_posix_storage_creates_directories_with_modes_and_acls(tmp_path: Path, g
     assert storage.owned_by_me(target)
 
 
-def test_posix_storage_copies_files_and_reports_failures(tmp_path: Path) -> None:
+def test_posix_storage_writes_files_and_reports_failures(tmp_path: Path) -> None:
     storage = PosixStorage("none", SubprocessRunner())
-    source = tmp_path / "src.bin"
-    source.write_bytes(b"payload")
     collection = tmp_path / "col"
     collection.mkdir()
-    stamp = storage.copy_in(source, collection, "a/b/f.bin")
-    assert stamp.size == 7 and stat.S_IMODE(os.lstat(collection / "a").st_mode) == 0o2770
-    assert storage.copy_in(source, collection, "a/b/f.bin", stamp) == stamp
-    assert storage.hash(collection / "a" / "b" / "f.bin") == stamp
+    (collection / "a" / "b").mkdir(parents=True)
+    storage.write_bytes(collection / "a" / "b" / "f.bin", b"payload")
+    stamp = storage.hash(collection / "a" / "b" / "f.bin")
+    assert stamp == FileStamp(7, hashlib.sha256(b"payload").hexdigest())
     assert [e.rel_path for e in storage.walk(collection)] == ["a", "a/b", "a/b/f.bin"]
     assert storage.stamp(collection / "a" / "b" / "f.bin").size == 7
-    storage.write_bytes(collection / "metadata.json", b"{}")
+    storage.write_bytes(collection / "metadata.json", b"{}", 0o640)
     assert storage.read_bytes(collection / "metadata.json") == b"{}"
+    assert stat.S_IMODE(os.lstat(collection / "metadata.json").st_mode) == 0o640
+    assert not list(collection.glob("*.huron-part"))
     assert storage.read_bytes(collection / "none") is None
     assert storage.exists(collection) and storage.is_directory(collection)
     with pytest.raises(StorageError):
-        storage.copy_in(tmp_path / "missing", collection, "m")
+        storage.write_bytes(collection / "missing" / "m", b"")
     with pytest.raises(StorageError):
         storage.remove_directory(collection)
     assert storage.remove_file(collection / "metadata.json") is True
@@ -271,19 +269,6 @@ def test_posix_acl_failures_surface(tmp_path: Path) -> None:
     storage.write_bytes(target / "x", b"x")
     with pytest.raises(StorageError):
         storage.hash(target / "missing")
-
-
-def test_copy_in_leaves_the_mode_of_existing_subdirectories_alone(tmp_path: Path) -> None:
-    storage = storage_for("none")
-    source = tmp_path / "source.txt"
-    source.write_bytes(b"data")
-    collection = tmp_path / "collection"
-    (collection / "sub").mkdir(parents=True)
-    os.chmod(collection / "sub", 0o750)
-    storage.copy_in(source, collection, "sub/new/file.txt")
-    assert stat.S_IMODE(os.lstat(collection / "sub").st_mode) == 0o750
-    assert stat.S_IMODE(os.lstat(collection / "sub" / "new").st_mode) == 0o2770
-    assert (collection / "sub" / "new" / "file.txt").read_bytes() == b"data"
 
 
 @pytest.mark.parametrize(

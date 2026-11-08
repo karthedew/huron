@@ -38,7 +38,7 @@ BOOTSTRAP_ACTOR = "huron-bootstrap"
 class LakeSettings:
     """What the lake needs from configuration; ``organizations`` are the declared ones.
 
-    ``upload_receipts`` decides whether a commit needs a receipt for each add; ``upload_ttl`` is
+    ``receipt_mode`` decides whether a commit needs a receipt for each add; ``upload_ttl`` is
     how long a receipt stays good; ``upload_max_size`` is the largest upload in bytes, ``0`` for
     no limit.
     """
@@ -46,7 +46,7 @@ class LakeSettings:
     platform_admin_group: str
     key_overlap: timedelta = timedelta(hours=24)
     organizations: Declarations = UNMANAGED
-    upload_receipts: ReceiptMode = ReceiptMode.REQUIRED
+    receipt_mode: ReceiptMode = ReceiptMode.REQUIRED
     upload_ttl: timedelta = timedelta(hours=24)
     upload_max_size: int = 0
 
@@ -90,7 +90,7 @@ def build_lake(uow: UnitOfWork, clock: Clock, settings: LakeSettings) -> Lake:
         catalogs=Catalogs(uow, clock, resolver, completeness),
         namespaces=Namespaces(uow, clock),
         collections=Collections(uow, clock, resolver),
-        commits=Commits(uow, clock, settings.upload_receipts, settings.upload_ttl),
+        commits=Commits(uow, clock, settings.receipt_mode, settings.upload_ttl),
         uploads=Uploads(
             uow,
             clock,

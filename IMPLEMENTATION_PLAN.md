@@ -4059,7 +4059,7 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
   a lake in `Settings.receipt_mode`; `grep -n "os\.walk" src/huron/applications/cli/sync.py`
   prints only the line in `_collect`; `uv run python scripts/cli_reference.py --check`.
 - Dependencies: M11.5a (both change `pkg/fs/posix.py` and the upload tests).
-- Status: pending
+- Status: complete
 
 #### M11.8a The CLI writes nothing to the lake
 

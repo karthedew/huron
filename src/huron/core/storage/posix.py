@@ -6,7 +6,6 @@ import grp
 import hashlib
 import os
 import stat
-from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
 from huron.core.storage.aclplan import AclPlan, diff
@@ -15,15 +14,15 @@ from huron.core.storage.ports import FileStamp, GroupOutcome, GroupResult, Owner
 from huron.pkg.fs import posix
 from huron.pkg.fs.acl import Acl, AclEntry, Runner, read_acl, write_acl
 from huron.pkg.hashing import CHUNK_SIZE, sha256_file
+from huron.schema.naming import PART_SUFFIX
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from pathlib import Path
 
     from huron.pkg.fs.posix import Entry, Stamp
 
 __all__ = ["PosixStorage"]
-
-_COPY_DIRECTORY_MODE = 0o2770
 
 
 class PosixStorage:
@@ -117,21 +116,9 @@ class PosixStorage:
             )
         )
 
-    def copy_in(
-        self, source: Path, directory: Path, rel_path: str, expected: FileStamp | None = None
-    ) -> FileStamp:
-        """Copy ``source`` into the collection through a part file; skip a matching copy."""
-        destination = directory.joinpath(*PurePosixPath(rel_path).parts)
-        for parent in reversed(destination.relative_to(directory).parents[:-1]):
-            _make_dir(directory / parent)
-        if expected is not None and destination.exists() and self.hash(destination) == expected:
-            return expected
-        size, digest = _guard(lambda: posix.atomic_copy(source, destination), destination)
-        return FileStamp(size, digest)
-
     def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
         """Write ``data`` atomically; with ``mode``, the file gets exactly that mode."""
-        _guard(lambda: posix.atomic_write(path, data), path)
+        _guard(lambda: posix.atomic_write(path, data, PART_SUFFIX), path)
         if mode is not None:
             _guard(lambda: os.chmod(path, mode), path)
 
@@ -267,11 +254,6 @@ def _storage_error(path: Path, error: OSError) -> StorageError:
         context = {"path": str(path), "error": str(error)}
         return StorageError(f"permission denied on {path}", context)
     return StorageError(f"{path}: {error.strerror or error}", {"path": str(path)})
-
-
-def _make_dir(path: Path) -> None:
-    if not posix.is_dir(path):
-        _guard(lambda: posix.make_dir(path, _COPY_DIRECTORY_MODE), path)
 
 
 def _perms(bits: int) -> str:

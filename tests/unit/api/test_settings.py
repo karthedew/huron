@@ -257,7 +257,7 @@ def required(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
 def test_the_lake_and_upload_settings_have_their_defaults(required: pytest.MonkeyPatch) -> None:
     settings = Settings()  # type: ignore[call-arg]
     assert (settings.lake_path, settings.mount_prefix, settings.uploads_url) == (None, None, None)
-    assert settings.upload_receipts is ReceiptMode.REQUIRED
+    assert settings.receipt_mode is ReceiptMode.OPTIONAL
     assert settings.upload_ttl == timedelta(hours=24)
     assert settings.upload_max_size == 0
     assert settings.upload_hook_timeout == timedelta(minutes=15)
@@ -272,7 +272,6 @@ def test_the_lake_and_upload_settings_are_read(required: pytest.MonkeyPatch) -> 
         "HURON_LAKE_PATH": "/data1/huron",
         "HURON_MOUNT_PREFIX": "/data1/huron/unrooted",
         "HURON_UPLOADS_URL": "https://huron.example.org/files/",
-        "HURON_UPLOAD_RECEIPTS": "optional",
         "HURON_UPLOAD_TTL": "PT12H",
         "HURON_UPLOAD_MAX_SIZE": "1073741824",
         "HURON_UPLOAD_HOOK_TIMEOUT": "1800",
@@ -287,7 +286,7 @@ def test_the_lake_and_upload_settings_are_read(required: pytest.MonkeyPatch) -> 
     assert settings.lake_path == Path("/data1/huron")
     assert settings.mount_prefix == Path("/data1/huron/unrooted")
     assert settings.uploads_url == "https://huron.example.org/files/"
-    assert settings.upload_receipts is ReceiptMode.OPTIONAL
+    assert settings.receipt_mode is ReceiptMode.REQUIRED
     assert settings.upload_ttl == timedelta(hours=12)
     assert settings.upload_max_size == 1 << 30
     assert settings.upload_hook_timeout == timedelta(minutes=30)
@@ -313,7 +312,6 @@ def test_the_file_sets_the_lake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         ("HURON_REMOVAL_INTERVAL", "-1"),
         ("HURON_SWEEP_INTERVAL", "0"),
         ("HURON_UPLOAD_MAX_SIZE", "-1"),
-        ("HURON_UPLOAD_RECEIPTS", "sometimes"),
         ("HURON_SERVICE_UID", "-1"),
         ("HURON_LAKE_PATH", "data1/huron"),
         ("HURON_LAKE_PATH", "/data1/../huron"),
@@ -334,19 +332,9 @@ def test_uploads_url_without_lake_path_fails_startup(required: pytest.MonkeyPatc
         Settings()  # type: ignore[call-arg]
 
 
-@pytest.mark.parametrize(
-    ("lake_path", "configured", "effective"),
-    [
-        (None, "required", ReceiptMode.OPTIONAL),
-        (None, "optional", ReceiptMode.OPTIONAL),
-        ("/data1/huron", "required", ReceiptMode.REQUIRED),
-        ("/data1/huron", "optional", ReceiptMode.OPTIONAL),
-    ],
-)
-def test_receipts_are_optional_without_a_lake(
-    required: pytest.MonkeyPatch, lake_path: str | None, configured: str, effective: ReceiptMode
+def test_receipts_are_required_with_a_lake_and_optional_without(
+    required: pytest.MonkeyPatch,
 ) -> None:
-    if lake_path is not None:
-        required.setenv("HURON_LAKE_PATH", lake_path)
-    required.setenv("HURON_UPLOAD_RECEIPTS", configured)
-    assert Settings().receipt_mode is effective  # type: ignore[call-arg]
+    assert Settings().receipt_mode is ReceiptMode.OPTIONAL  # type: ignore[call-arg]
+    required.setenv("HURON_LAKE_PATH", "/data1/huron")
+    assert Settings().receipt_mode is ReceiptMode.REQUIRED  # type: ignore[call-arg]

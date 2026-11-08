@@ -100,7 +100,7 @@ def push_command(
         str | None, typer.Option("-m", "--message", help="The commit message.")
     ] = None,
 ) -> None:
-    """Copy staged files onto the share and commit them."""
+    """Upload the staged files and commit them."""
     found = services(ctx)
     copy = current(found)
     if found.state.read_stage(copy.collection_id).empty:

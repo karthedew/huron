@@ -1,7 +1,6 @@
 """Canonical JSON, identifiers, clocks and hashing."""
 
 import hashlib
-import io
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,7 +10,7 @@ import rfc8785
 
 from huron.pkg.canonical import NotCanonicalizable, canonical_bytes, document_sha256
 from huron.pkg.clock import FrozenClock, SystemClock
-from huron.pkg.hashing import EMPTY_SHA256, sha256_copy, sha256_file
+from huron.pkg.hashing import EMPTY_SHA256, sha256_file
 from huron.pkg.identifiers import new_id, parse_id
 
 
@@ -86,18 +85,14 @@ def test_system_clock_is_aware() -> None:
     assert SystemClock().now().tzinfo is UTC
 
 
-def test_sha256_copy_of_empty_stream() -> None:
-    target = io.BytesIO()
-    assert sha256_copy(io.BytesIO(b""), target) == (0, EMPTY_SHA256)
-    assert target.getvalue() == b""
+def test_sha256_file_of_an_empty_file(tmp_path: Path) -> None:
+    path = tmp_path / "empty"
+    path.write_bytes(b"")
+    assert sha256_file(path) == (0, EMPTY_SHA256)
 
 
-def test_sha256_copy_streams_in_chunks(tmp_path: Path) -> None:
+def test_sha256_file_reads_in_chunks(tmp_path: Path) -> None:
     data = b"abc" * 1000
-    target = io.BytesIO()
-    expected = hashlib.sha256(data).hexdigest()
-    assert sha256_copy(io.BytesIO(data), target, chunk=7) == (3000, expected)
-    assert target.getvalue() == data
     path = tmp_path / "f"
     path.write_bytes(data)
-    assert sha256_file(path, chunk=11) == (3000, expected)
+    assert sha256_file(path, chunk=11) == (3000, hashlib.sha256(data).hexdigest())

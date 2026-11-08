@@ -162,7 +162,6 @@ class Settings(BaseSettings):
     lake_path: Path | None = None
     mount_prefix: Path | None = None
     uploads_url: str | None = None
-    upload_receipts: ReceiptMode = ReceiptMode.REQUIRED
     upload_ttl: Duration = timedelta(hours=24)
     upload_max_size: int = Field(default=0, ge=0)
     upload_hook_timeout: Annotated[Duration, Field(le=MAX_UPLOAD_HOOK_TIMEOUT)] = timedelta(
@@ -241,8 +240,12 @@ class Settings(BaseSettings):
 
     @property
     def receipt_mode(self) -> ReceiptMode:
-        """The receipt mode commits use: ``optional`` without a lake, which issues no receipt."""
-        return self.upload_receipts if self.lake_path is not None else ReceiptMode.OPTIONAL
+        """Whether a commit needs a receipt for each add.
+
+        With a lake every add needs one. Without a lake no route issues a receipt, so none is
+        needed.
+        """
+        return ReceiptMode.REQUIRED if self.lake_path is not None else ReceiptMode.OPTIONAL
 
     @property
     def token_ttl(self) -> timedelta:

@@ -296,7 +296,7 @@ def test_disk_operations_need_the_organization_marker(
 
 
 def test_directories_land_under_the_organization_root(
-    provisioned: Cli, share: MemoryStorage, tmp_path: Path
+    provisioned: Cli, share: MemoryStorage
 ) -> None:
     cli = provisioned
     assert share.is_directory(HELIO / "heliophysics" / "solar-wind")
@@ -309,11 +309,7 @@ def test_directories_land_under_the_organization_root(
     assert "is active at helio/heliophysics/solar-wind/run7" in created.stdout
     run7 = HELIO / "heliophysics" / "solar-wind" / "run7"
     assert share.exists(run7 / "metadata.json")
-    source = tmp_path / "a.txt"
-    source.write_text("alpha")
-    cli.ok("add", str(source))
-    cli.ok("push")
-    assert share.read_bytes(run7 / "a.txt") == b"alpha"
+    cli.ok("checkout", "solar-wind.run7")
     assert json.loads(cli.ok("-o", "json", "status").stdout)["unrecorded"] == []
     share.write_bytes(run7 / "stray.txt", b"x")
     assert json.loads(cli.ok("-o", "json", "status").stdout)["unrecorded"] == ["stray.txt"]

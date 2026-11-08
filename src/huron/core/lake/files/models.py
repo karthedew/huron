@@ -47,7 +47,7 @@ class FileRecord:
 class FileAdd:
     """A file a commit adds or replaces.
 
-    ``sha256`` is ``None`` only in a dry run, which may be sent before the file is copied and
+    ``sha256`` is ``None`` only in a dry run, which may be sent before the file is uploaded and
     hashed; a real commit refuses an add without one.
     """
 

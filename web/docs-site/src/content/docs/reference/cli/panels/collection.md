@@ -13,7 +13,7 @@ The commands `huron --help` lists under **Collection**.
 | [`add`](/docs/reference/cli/add/)           | Stage local files for the next push.                                            |
 | [`rm`](/docs/reference/cli/rm/)             | Unstage an add or a removal, or stage the removal of a recorded file.           |
 | [`pull`](/docs/reference/cli/pull/)         | Update the working copy to the version on the service.                          |
-| [`push`](/docs/reference/cli/push/)         | Copy staged files onto the share and commit them.                               |
+| [`push`](/docs/reference/cli/push/)         | Upload the staged files and commit them.                                        |
 | [`edit`](/docs/reference/cli/edit/)         | Edit the metadata draft of a collection.                                        |
 | [`validate`](/docs/reference/cli/validate/) | Check a metadata draft against its schema.                                      |
 | [`publish`](/docs/reference/cli/publish/)   | Publish a metadata draft.                                                       |

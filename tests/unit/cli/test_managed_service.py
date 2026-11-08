@@ -179,8 +179,18 @@ INHERITING = [
 
 @pytest.fixture
 def inheriting(tmp_path: Path, roots: MemoryStorage) -> Iterator[Cli]:
-    """helio declares org-wide contributor and reader groups; heliophysics has no grants."""
-    running = Cli(tmp_path, lambda config: roots, PREFIX, organizations=INHERITING)
+    """helio declares org-wide contributor and reader groups; heliophysics has no grants.
+
+    The service holds the helio root as its lake and takes uploads.
+    """
+    running = Cli(
+        tmp_path,
+        lambda config: roots,
+        PREFIX,
+        lake=roots,
+        lake_path=HELIO_ROOT,
+        organizations=INHERITING,
+    )
     running.login_as("alice")
     running.ok("adm", "provision-orgs")
     running.login_as("bob")

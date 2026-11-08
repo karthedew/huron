@@ -19,11 +19,14 @@ from huron.applications.cli.services import Services
 from huron.applications.cli.state import StateDir, Tokens
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.broker import TokenIssuer
+from huron.core.storage.memory import MemoryStorage
 from tests.fakes.groups import FakeGroups
 from tests.fakes.issuer import ISSUER, FakeIssuer
 from tests.fakes.prompter import ScriptedPrompter
 from tests.support.api import USERS, settings
 from tests.support.clock import START, frozen
+from tests.support.disk import lake_disk
+from tests.support.tus import TUS_URL, FakeTus
 
 API = "http://huron.test"
 
@@ -74,17 +77,21 @@ class SyncASGITransport(httpx.BaseTransport):
 
 
 class Router(httpx.BaseTransport):
-    """Send identity-provider requests to the fake issuer and the rest to the service."""
+    """Send identity-provider requests to the fake issuer, uploads to ``tus`` and the rest to
+    the service."""
 
     def __init__(self, issuer: FakeIssuer, service: httpx.BaseTransport) -> None:
         self._issuer = httpx.MockTransport(issuer.handler)
         self._service = service
+        self.tus: httpx.BaseTransport | None = None
         self.fail_commits: str | None = None
         self.observe: Callable[[httpx.Request], None] | None = None
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.host == "idp.test":
             return self._issuer.handle_request(request)
+        if request.url.host == "tusd.test" and self.tus is not None:
+            return self.tus.handle_request(request)
         if self.observe is not None:
             self.observe(request)
         if self.fail_commits and _is_commit(request):
@@ -97,31 +104,51 @@ class Router(httpx.BaseTransport):
 
 
 class Cli:
-    """A CLI wired to an in-process service; ``run`` executes one command line."""
+    """A CLI wired to an in-process service; ``run`` executes one command line.
+
+    With ``lake``, the service holds that in-memory lake at ``lake_path`` (``mount_prefix`` by
+    default) and takes uploads through :class:`FakeTus`, which ``tus`` holds.
+    """
 
     def __init__(
         self,
         home: Path,
         storage_factory: Callable[[Config], Any],
         mount_prefix: Path,
+        *,
+        lake: MemoryStorage | None = None,
+        lake_path: Path | None = None,
         **service_settings: object,
     ) -> None:
         self.loop = LoopThread()
         self.issuer = FakeIssuer()
         self.issuer.now = START.timestamp()
         self.clock = frozen()
+        disk = None
+        lake_path = lake_path or mount_prefix
+        if lake is not None:
+            service_settings = {"lake_path": lake_path, "uploads_url": TUS_URL, **service_settings}
+        configured = settings(**service_settings)
+        if lake is not None:
+            disk = lake_disk(
+                lake, self.clock, declarations=configured.declarations, lake_path=lake_path
+            )
         self.runtime: Runtime = self.loop.call(
             build_runtime(
-                settings(**service_settings),
+                configured,
                 store=MemoryStore(),
                 http=httpx.AsyncClient(transport=self.issuer.transport()),
                 groups=FakeGroups(USERS),
                 clock=self.clock,
+                disk=disk,
             )
         )
-        self.router = transport = Router(
-            self.issuer, SyncASGITransport(self.loop, create_app(runtime=self.runtime))
-        )
+        service = SyncASGITransport(self.loop, create_app(runtime=self.runtime))
+        self.router = transport = Router(self.issuer, service)
+        self.tus: FakeTus | None = None
+        if lake is not None:
+            self.tus = FakeTus(service, lake, lake_path)
+            self.router.tus = self.tus.transport
         self.http = httpx.Client(transport=transport)
         self.prompter = ScriptedPrompter()
         self.opened: list[str] = []

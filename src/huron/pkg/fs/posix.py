@@ -11,18 +11,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from huron.pkg.hashing import sha256_copy
-
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 __all__ = [
     "INHERITING_DIR_MODE",
-    "PART_SUFFIX",
     "Entry",
     "InheritanceError",
     "Stamp",
-    "atomic_copy",
     "atomic_write",
     "inode",
     "is_dir",
@@ -35,7 +31,6 @@ __all__ = [
     "walk",
 ]
 
-PART_SUFFIX = ".huron-part"
 #: The permission bits :func:`make_inheriting_dir` asks for; the setgid bit must come from the
 #: parent.
 INHERITING_DIR_MODE = 0o750
@@ -139,30 +134,11 @@ def inode(path: Path) -> int:
     return os.lstat(path).st_ino
 
 
-def atomic_copy(source: Path, destination: Path, part_suffix: str = PART_SUFFIX) -> tuple[int, str]:
-    """Copy ``source`` to ``destination`` through a part file, returning ``(size, sha256)``.
+def atomic_write(destination: Path, data: bytes, part_suffix: str) -> None:
+    """Write ``data`` to ``destination`` through a part file and a rename.
 
-    The bytes are written to ``destination`` plus ``part_suffix``, flushed to disk and renamed
-    over ``destination``. On failure the part file is removed and the error re-raised; an existing
-    ``destination`` is left untouched.
+    The part file is ``destination`` plus ``part_suffix``; it is removed when the write fails.
     """
-    part = destination.with_name(destination.name + part_suffix)
-    remove_file(part)
-    descriptor = os.open(part, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o660)
-    try:
-        with os.fdopen(descriptor, "wb") as target, source.open("rb") as origin:
-            size, digest = sha256_copy(origin, target)
-            target.flush()
-            os.fsync(target.fileno())
-        os.rename(part, destination)
-    except BaseException:
-        remove_file(part)
-        raise
-    return size, digest
-
-
-def atomic_write(destination: Path, data: bytes, part_suffix: str = PART_SUFFIX) -> None:
-    """Write ``data`` to ``destination`` through a part file and a rename."""
     part = destination.with_name(destination.name + part_suffix)
     remove_file(part)
     try:

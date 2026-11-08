@@ -24,8 +24,8 @@ def share() -> MemoryStorage:
 
 @pytest.fixture
 def cli(tmp_path: Path, share: MemoryStorage) -> Iterator[Cli]:
-    """A CLI with an in-memory share; nobody logged in."""
-    running = Cli(tmp_path, lambda config: share, PREFIX)
+    """A CLI with an in-memory share, which the service holds as its lake; nobody logged in."""
+    running = Cli(tmp_path, lambda config: share, PREFIX, lake=share)
     yield running
     running.close()
 

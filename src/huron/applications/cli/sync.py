@@ -14,7 +14,7 @@ from huron.applications.cli.errors import CliError, ExitCode, UsageError
 from huron.applications.cli.mount import Mount
 from huron.applications.cli.services import Services
 from huron.applications.cli.state import Stage, StagedAdd, WorkingCopy
-from huron.core.storage import FileStamp, StorageError
+from huron.applications.cli.uploads import Uploader, UploadService
 from huron.schema.naming import RelPathError, check_rel_path, rel_path_key
 
 __all__ = [
@@ -127,11 +127,11 @@ def pull(services: Services, copy: WorkingCopy) -> tuple[WorkingCopy, list[str]]
 
 
 def push(services: Services, copy: WorkingCopy, message: str | None) -> PushResult:
-    """Copy staged files onto the share and commit them with the version they were based on.
+    """Upload the staged files through tusd and commit them with the version they were based on.
 
     The service checks the commit with a dry run first, so a push it would refuse (no right to
     write files, a stale base version, a removed file that is not recorded) fails before any byte
-    is copied onto the share.
+    is uploaded. The stage records each upload, so a push that stops continues on the next push.
     """
     with services.state.locked(copy.collection_id):
         stage = services.state.read_stage(copy.collection_id)
@@ -151,17 +151,11 @@ def push(services: Services, copy: WorkingCopy, message: str | None) -> PushResu
                 ExitCode.CONFLICT,
                 hint="run `huron activate collection`",
             )
+        uploader = _uploader(services, api) if stage.adds else None
         _preflight(services, api, copy, stage, message)
-        mount = services.mount()
-        directory = mount.path(str(collection["path"]))
-        storage = mount.storage
-        _copy_files(services, copy, stage, storage, directory)
+        if uploader is not None:
+            _upload_files(services, copy, stage, uploader)
         result = _commit(services, api, copy, stage, message)
-        for rel_path in stage.removes:
-            try:
-                storage.remove_file(directory.joinpath(*rel_path.split("/")))
-            except StorageError as error:
-                services.err.print(f"warning: {error.message}", markup=False)
         services.state.write_stage(copy.collection_id, Stage())
         services.state.write_copy(replace(copy, version=int(result["version"])))
         return PushResult(copy.version, int(result["version"]), len(stage.adds), len(stage.removes))
@@ -235,18 +229,26 @@ def _staged(path: Path, rel_path: str) -> StagedAdd:
     return StagedAdd(rel_path, str(path.resolve()), path.stat().st_size)
 
 
-def _copy_files(
-    services: Services, copy: WorkingCopy, stage: Stage, storage: Any, directory: Path
-) -> None:
-    for add in stage.adds:
-        expected = None if add.sha256 is None else FileStamp(add.size, add.sha256)
-        try:
-            stamp = storage.copy_in(Path(add.source), directory, add.rel_path, expected)
-        except StorageError as error:
-            raise CliError(error.message, ExitCode.STORAGE, code=error.code) from error
-        add.size, add.sha256 = stamp.size, stamp.sha256
+def _uploader(services: Services, api: ApiClient) -> Uploader:
+    """The tus client for the service's upload endpoint; refuses when there is none."""
+    service = UploadService.from_health(api.get("/healthz", auth=False))
+    return Uploader(
+        services.http,
+        api,
+        services.session().token,
+        service,
+        sleep=services.sleep,
+        report=lambda line: services.err.print(line, markup=False),
+    )
+
+
+def _upload_files(services: Services, copy: WorkingCopy, stage: Stage, uploader: Uploader) -> None:
+    def save() -> None:
         services.state.write_stage(copy.collection_id, stage)
-        services.err.print(f"copied {add.rel_path} ({stamp.size} bytes)", markup=False)
+
+    for add in stage.adds:
+        uploader.upload(copy.collection_id, add, save)
+        save()
 
 
 def _preflight(
@@ -277,7 +279,11 @@ def _commit(
 def _commit_body(
     services: Services, copy: WorkingCopy, stage: Stage, message: str | None
 ) -> dict[str, Any]:
-    """The commit body; an add not yet copied has no ``sha256`` (a dry run accepts that)."""
+    """The commit body.
+
+    Each add's ``sha256`` is the ``Huron-Sha256`` receipt of its upload. An add not yet uploaded
+    has none, which a dry run accepts.
+    """
     adds: list[dict[str, Any]] = []
     for add in stage.adds:
         entry: dict[str, Any] = {"rel_path": add.rel_path, "size": add.size}

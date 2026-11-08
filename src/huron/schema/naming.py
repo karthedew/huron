@@ -25,7 +25,6 @@ __all__ = [
     "collection_identifier",
     "namespace_identifier",
     "parse_identifier",
-    "part_name",
     "rel_path_key",
 ]
 
@@ -155,11 +154,6 @@ def check_rel_path(value: str) -> str:
 def rel_path_key(value: str) -> str:
     """The case-folded key that decides whether two paths collide."""
     return unicodedata.normalize("NFC", value.casefold())
-
-
-def part_name(rel_path: str) -> str:
-    """The temporary name a file is written under before it is renamed into place."""
-    return rel_path + PART_SUFFIX
 
 
 def _check_path_segment(segment: str, value: str) -> None:

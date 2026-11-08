@@ -39,12 +39,18 @@ class WorkingCopy:
 
 @dataclass(slots=True)
 class StagedAdd:
-    """A local file to copy into the collection at ``rel_path``; the stamp once copied."""
+    """A local file to upload into the collection at ``rel_path``.
+
+    ``upload_url`` and ``upload_id`` name the tus upload once it is created, so a later push
+    continues it. ``sha256`` is the service's receipt once the service placed the file.
+    """
 
     rel_path: str
     source: str
     size: int
     sha256: str | None = None
+    upload_url: str | None = None
+    upload_id: str | None = None
 
 
 @dataclass(slots=True)

@@ -8,7 +8,6 @@ import itertools
 import os
 import stat
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from huron.core.storage.errors import SourceGone, StorageError
@@ -18,6 +17,7 @@ from huron.pkg.fs.posix import INHERITING_DIR_MODE, Entry, Stamp
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from huron.core.storage.aclplan import AclPlan
 
@@ -208,33 +208,6 @@ class MemoryStorage:
     def read_acl(self, path: Path) -> Acl:
         """The recorded ACL."""
         return self._node(path).acl
-
-    def copy_in(
-        self, source: Path, directory: Path, rel_path: str, expected: FileStamp | None = None
-    ) -> FileStamp:
-        """Copy a real local file into the in-memory share."""
-        destination = directory.joinpath(*PurePosixPath(rel_path).parts)
-        current = destination.parent
-        missing = []
-        while current not in self.nodes:
-            missing.append(current)
-            current = current.parent
-        for parent in reversed(missing):
-            self._check(parent.parent)
-            self.nodes[parent] = Node(owner=self.user, uid=self.uid, gid=self.gid)
-        if (
-            expected is not None
-            and destination in self.nodes
-            and self.hash(destination) == expected
-        ):
-            return expected
-        try:
-            data = source.read_bytes()
-        except OSError as error:
-            raise StorageError(f"cannot read {source}", {"path": str(source)}) from error
-        self.write_bytes(destination, data)
-        self.calls.append(("copy", destination))
-        return FileStamp(len(data), hashlib.sha256(data).hexdigest())
 
     def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
         """Store ``data`` at ``path`` (mode ``0660`` unless ``mode`` is given).

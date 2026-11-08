@@ -136,7 +136,7 @@ async def build_runtime(
         settings.platform_admin_group,
         settings.key_overlap,
         declarations,
-        upload_receipts=settings.receipt_mode,
+        receipt_mode=settings.receipt_mode,
         upload_ttl=settings.upload_ttl,
         upload_max_size=settings.upload_max_size,
     )

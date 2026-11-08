@@ -1,7 +1,6 @@
 """POSIX filesystem primitives on a temporary directory."""
 
 import errno
-import hashlib
 import os
 import stat
 from pathlib import Path
@@ -34,34 +33,19 @@ def test_make_dir_refuses_files_and_symlinks(tmp_path: Path) -> None:
             posix.make_dir(tmp_path / name, 0o770)
 
 
-def test_atomic_copy_writes_through_a_part_file(tmp_path: Path) -> None:
-    source = tmp_path / "src.bin"
-    source.write_bytes(b"payload")
-    destination = tmp_path / "dest.bin"
-    (tmp_path / "dest.bin.huron-part").write_bytes(b"stale")
-    size, digest = posix.atomic_copy(source, destination)
-    assert (size, digest) == (7, hashlib.sha256(b"payload").hexdigest())
-    assert destination.read_bytes() == b"payload"
-    assert not (tmp_path / "dest.bin.huron-part").exists()
-
-
-def test_failed_copy_leaves_no_part_and_keeps_the_destination(tmp_path: Path) -> None:
-    destination = tmp_path / "dest.bin"
-    destination.write_bytes(b"old")
-    with pytest.raises(FileNotFoundError):
-        posix.atomic_copy(tmp_path / "missing", destination)
-    assert destination.read_bytes() == b"old"
-    assert not (tmp_path / "dest.bin.huron-part").exists()
-
-
-def test_atomic_write_replaces_and_cleans_up(tmp_path: Path) -> None:
+def test_atomic_write_replaces_through_the_given_part_file(tmp_path: Path) -> None:
     target = tmp_path / "metadata.json"
-    posix.atomic_write(target, b"{}")
-    posix.atomic_write(target, b'{"a":1}')
+    (tmp_path / "metadata.json.part").write_bytes(b"stale")
+    posix.atomic_write(target, b"{}", ".part")
+    posix.atomic_write(target, b'{"a":1}', ".part")
     assert target.read_bytes() == b'{"a":1}'
+    assert not (tmp_path / "metadata.json.part").exists()
+
+
+def test_a_failed_atomic_write_leaves_no_part_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
-        posix.atomic_write(tmp_path / "missing" / "x", b"")
-    assert not list((tmp_path).glob("*.huron-part"))
+        posix.atomic_write(tmp_path / "missing" / "x", b"", ".part")
+    assert not list(tmp_path.rglob("*.part"))
 
 
 def test_remove_helpers_report_whether_anything_was_removed(tmp_path: Path) -> None:

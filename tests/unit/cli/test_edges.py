@@ -146,9 +146,7 @@ def ready(seeded_cli: Cli) -> Cli:
     return seeded_cli
 
 
-def test_push_and_status_edge_cases(
-    ready: Cli, share: MemoryStorage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_push_and_status_edge_cases(ready: Cli, share: MemoryStorage, tmp_path: Path) -> None:
     ready.prompter.answers.extend(BASE_ANSWERS)
     ready.ok("create", "collection", "solar-wind.draft", "--draft")
     status = json.loads(ready.ok("-o", "json", "status").stdout)
@@ -160,7 +158,8 @@ def test_push_and_status_edge_cases(
     ready.ok("activate", "collection")
     ready.ok("add", str(source))
     source.unlink()
-    assert ready.run("push").exit_code == 8
+    gone = ready.run("push")
+    assert gone.exit_code == 2 and "changed after you staged it" in gone.stderr
     source.write_text("a")
     ready.ok("push")
     ready.configure(mount_prefix="/elsewhere")
@@ -168,14 +167,9 @@ def test_push_and_status_edge_cases(
     ready.configure(mount_prefix=str(PREFIX))
     ready.ok("rm", "a.txt")
     target = PREFIX / "helio" / "heliophysics" / "solar-wind" / "draft"
-
-    def refuse(path: Path) -> bool:
-        raise StorageError("busy", {})
-
-    monkeypatch.setattr(share, "remove_file", refuse)
-    assert "warning: busy" in ready.ok("push").stderr
-    monkeypatch.undo()
-    assert share.exists(target / "a.txt")
+    share.calls.clear()
+    ready.ok("push")
+    assert share.exists(target / "a.txt") and share.calls == []
 
 
 def test_delete_reports_directories_it_cannot_remove(

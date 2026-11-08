@@ -15,7 +15,6 @@ from huron.schema.naming import (
     collection_identifier,
     namespace_identifier,
     parse_identifier,
-    part_name,
     rel_path_key,
 )
 from tests.support.naming import path_segments, segments
@@ -129,7 +128,6 @@ def test_metadata_json_below_the_root_is_an_ordinary_file() -> None:
     assert check_rel_path("metadata.json.d/x") == "metadata.json.d/x"
 
 
-def test_keys_fold_case_and_part_names_append_the_suffix() -> None:
+def test_keys_fold_case() -> None:
     assert rel_path_key("Data/File.TXT") == rel_path_key("data/file.txt")
     assert rel_path_key("Straße") == rel_path_key("STRASSE")
-    assert part_name("a/b.bin") == "a/b.bin.huron-part"

@@ -1,4 +1,4 @@
-"""``huron push`` asks the service to check the commit before it copies a byte."""
+"""``huron push`` asks the service to check the commit before it uploads a byte."""
 
 import json
 import uuid
@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from huron.core.lake.files.models import CommitRequest, FileAdd
+from huron.core.lake.files.models import CommitRequest
 from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
 from tests.support.lake import CONTRIBUTOR
@@ -36,8 +36,10 @@ def write(tmp_path: Path, name: str, text: str) -> Path:
     return path
 
 
-def copies(share: MemoryStorage) -> list[Path]:
-    return [path for kind, path in share.calls if kind == "copy"]
+def uploads(cli: Cli) -> list[tuple[str, str]]:
+    """The tus requests the CLI sent so far."""
+    assert cli.tus is not None
+    return list(cli.tus.requests)
 
 
 def watch(cli: Cli, on_dry_run: Callable[[httpx.Request], None]) -> list[httpx.Request]:
@@ -54,14 +56,14 @@ def watch(cli: Cli, on_dry_run: Callable[[httpx.Request], None]) -> list[httpx.R
     return sent
 
 
-def test_a_push_sends_a_dry_run_with_sizes_before_copying(
+def test_a_push_sends_a_dry_run_with_sizes_before_uploading(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     ready.ok("add", str(write(tmp_path, "a.txt", "alpha")))
-    copied_before: list[list[Path]] = []
-    sent = watch(ready, lambda _: copied_before.append(copies(share)))
+    uploaded_before: list[list[tuple[str, str]]] = []
+    sent = watch(ready, lambda _: uploaded_before.append(uploads(ready)))
     assert "version 3 → 4" in ready.ok("push", "-m", "first").stdout
-    assert copied_before == [[]]
+    assert uploaded_before == [[]] and uploads(ready)
     dry, real = sent
     assert dry.url.params["dry_run"] == "true" and "dry_run" not in real.url.params
     preview = json.loads(dry.content)
@@ -81,20 +83,20 @@ def test_a_readers_push_is_refused_and_leaves_the_share_untouched(
     refused = ready.run("push")
     assert refused.exit_code == 4 and "FORBIDDEN" in refused.stderr
     assert share.calls == calls and not share.exists(COLLECTION / "a.txt")
-    assert "copied" not in refused.stderr
+    assert uploads(ready) == []
     stage = ready.state.read_stage(ready.config_current())
     assert [add.rel_path for add in stage.adds] == ["a.txt"]
     assert stage.adds[0].sha256 is None
 
 
-def test_a_base_version_conflict_is_reported_before_copying(
+def test_a_base_version_conflict_is_reported_before_uploading(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     ready.ok("add", str(write(tmp_path, "a.txt", "alpha")))
     collection_id = uuid.UUID(ready.config_current())
 
     def someone_else_commits(_: httpx.Request) -> None:
-        request = CommitRequest(3, (FileAdd("other.txt", 1, "e" * 64),), (), "ws2")
+        request = CommitRequest(3, (), (), "ws2")
         ready.loop.call(ready.runtime.lake.commits.commit(CONTRIBUTOR, collection_id, request))
 
     calls = list(share.calls)
@@ -102,13 +104,13 @@ def test_a_base_version_conflict_is_reported_before_copying(
     conflict = ready.run("push")
     assert conflict.exit_code == 6 and "BASE_VERSION_CONFLICT" in conflict.stderr
     assert "huron pull" in conflict.stderr
-    assert len(sent) == 1 and share.calls == calls
+    assert len(sent) == 1 and share.calls == calls and uploads(ready) == []
     assert not share.exists(COLLECTION / "a.txt")
     copy = ready.state.read_copy(str(collection_id))
     assert copy is not None and copy.version == 3
 
 
-def test_a_push_behind_the_service_copies_nothing(
+def test_a_push_behind_the_service_uploads_nothing(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     ready.ok("add", str(write(tmp_path, "a.txt", "alpha")))
@@ -119,7 +121,7 @@ def test_a_push_behind_the_service_copies_nothing(
     calls = list(share.calls)
     behind = ready.run("push")
     assert behind.exit_code == 6 and "huron pull" in behind.stderr
-    assert share.calls == calls
+    assert share.calls == calls and uploads(ready) == []
 
 
 def test_a_resumed_push_sends_the_hashes_it_already_knows(
