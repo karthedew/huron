@@ -12,7 +12,14 @@ import httpx
 import structlog
 
 from huron import __version__
-from huron.applications.api.disk import PROBE_TIMEOUT, LakeDisk, Placements, ShareGroups
+from huron.applications.api.disk import (
+    PROBE_TIMEOUT,
+    Directories,
+    LakeDirectories,
+    LakeDisk,
+    NoLake,
+    Placements,
+)
 from huron.applications.api.settings import Settings
 from huron.core.lake.bootstrap import BootstrapResult, Lake, LakeSettings, bootstrap, build_lake
 from huron.core.lake.organizations.declarations import UNMANAGED, Declarations
@@ -29,6 +36,7 @@ from huron.core.security.broker import (
     TokenVerifier,
 )
 from huron.core.storage import (
+    DirectoryWriter,
     LakePath,
     LakeUnavailable,
     OrganizationPlace,
@@ -58,7 +66,8 @@ class ClosableStore(UnitOfWork, Protocol):
 class Runtime:
     """The service's shared objects.
 
-    ``disk``, ``placements`` and ``share_groups`` are ``None`` when the service has no lake.
+    ``disk`` and ``placements`` are ``None`` when the service has no lake, and ``directories``
+    is then :class:`NoLake`.
     """
 
     settings: Settings
@@ -72,7 +81,7 @@ class Runtime:
     declarations: Declarations = UNMANAGED
     disk: LakeDisk | None = None
     placements: Placements | None = None
-    share_groups: ShareGroups | None = None
+    directories: Directories = field(default_factory=NoLake)
     _ring: KeyRing | None = field(default=None, repr=False)
     _ring_loaded_at: datetime | None = field(default=None, repr=False)
 
@@ -155,7 +164,8 @@ async def build_runtime(
     )
     _report(await bootstrap(store, clock, lake_settings))
     lake_path = settings.lake_path
-    disk = placements = share_groups = None
+    disk = placements = None
+    directories: Directories = NoLake()
     if lake_path is not None:
         storage = storage or PosixStorage(root=lake_path)
         disk = LakeDisk(
@@ -168,7 +178,7 @@ async def build_runtime(
         await _open(disk, lake_path)
         placements = Placements(disk, Placer(storage))
         # The service group is the pod's runAsGroup, not a setting.
-        share_groups = ShareGroups(disk, storage, os.getgid())
+        directories = LakeDirectories(disk, DirectoryWriter(storage, os.getgid()))
     owns_http = http is None
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
     return Runtime(
@@ -185,7 +195,7 @@ async def build_runtime(
         declarations=declarations,
         disk=disk,
         placements=placements,
-        share_groups=share_groups,
+        directories=directories,
     )
 
 

@@ -10,7 +10,13 @@ import stat
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-from huron.core.storage.errors import LakeUnavailable, SourceGone, StorageError, SymlinkInLake
+from huron.core.storage.errors import (
+    InheritanceFailed,
+    LakeUnavailable,
+    SourceGone,
+    StorageError,
+    SymlinkInLake,
+)
 from huron.core.storage.lakepath import LakePath
 from huron.core.storage.ports import GroupOutcome, GroupResult, Outcome, Stat
 from huron.pkg.fs import posix
@@ -114,9 +120,15 @@ class PosixStorage:
             return posix.make_dir(parent, _name(location), mode)
 
     def make_inheriting_dir(self, location: LakePath) -> bool:
-        """Create a directory with mode ``0750``; it must inherit setgid and group."""
+        """Create a directory with mode ``0750``; it must inherit setgid and group.
+
+        A new directory without them is removed again and refused with ``InheritanceFailed``.
+        """
         with self._parent(location) as parent:
-            return posix.make_inheriting_dir(parent, _name(location))
+            try:
+                return posix.make_inheriting_dir(parent, _name(location))
+            except posix.InheritanceError as error:
+                raise InheritanceFailed(location, f"{error.strerror}") from error
 
     def set_mode(self, location: LakePath, mode: int) -> bool:
         """Give the entry exactly ``mode``; ``False`` when it already has it."""

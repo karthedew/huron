@@ -28,8 +28,13 @@ type Snapshot = list[tuple[str, int, bytes]]
 
 
 def memory_lake() -> MemoryStorage:
-    """An in-memory lake at :data:`LAKE`, marked for the test service, written by its user."""
+    """An in-memory lake at :data:`LAKE`, marked for the test service, written by its user.
+
+    Its root belongs to the service user and group, as ``huron adm provision-orgs`` leaves it.
+    """
     storage = MemoryStorage(LAKE, uid=SERVICE_UID, gid=SERVICE_GID)
+    root = storage.nodes[LakePath()]
+    root.uid, root.gid = SERVICE_UID, SERVICE_GID
     storage.write_bytes(LakePath.of(MARKER_FILE), ROOT_MARKER, 0o644)
     return storage
 

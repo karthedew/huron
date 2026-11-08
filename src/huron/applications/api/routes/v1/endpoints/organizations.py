@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, status
 
 from huron.applications.api.authorization import ActorDep
-from huron.applications.api.dependencies import LakeDep
+from huron.applications.api.dependencies import DirectoriesDep, LakeDep
 from huron.applications.api.routes.pagination import Cursor, Limit
 from huron.applications.api.routes.v1.schema.common import Page, page_of
 from huron.applications.api.routes.v1.schema.organizations import OrganizationIn, OrganizationOut
@@ -27,10 +27,11 @@ async def list_organizations(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_organization(
-    body: OrganizationIn, actor: ActorDep, lake: LakeDep
+    body: OrganizationIn, actor: ActorDep, lake: LakeDep, directories: DirectoriesDep
 ) -> OrganizationOut:
-    """Create an organization; Platform Admin only."""
+    """Create an organization; Platform Admin only. With a lake, the API makes its directory."""
     view = await lake.organizations.create(actor, body.name, body.display_name, body.description)
+    await directories.make(view.organization.name)
     return OrganizationOut.model_validate(view.as_dict())
 
 
@@ -42,9 +43,11 @@ async def get_organization(organization: str, actor: ActorDep, lake: LakeDep) ->
 
 
 @router.delete("/{organization}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_organization(organization: str, actor: ActorDep, lake: LakeDep) -> None:
-    """Delete an organization that has no catalogs."""
-    await lake.organizations.delete(actor, organization)
+async def delete_organization(
+    organization: str, actor: ActorDep, lake: LakeDep, directories: DirectoriesDep
+) -> None:
+    """Delete an organization that has no catalogs. With a lake, the API removes its directory."""
+    await directories.remove(await lake.organizations.delete(actor, organization))
 
 
 @router.get("/{organization}/schemas")

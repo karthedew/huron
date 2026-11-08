@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from huron.core.lake.audit import Action, AuditWriter, ObjectType
 from huron.core.lake.catalogs.errors import CatalogNotEmpty, CatalogNotFound
 from huron.core.lake.catalogs.models import Catalog, CatalogView
+from huron.core.lake.collections.models import CollectionView, SettledCollection, State
 from huron.core.lake.listing import ListOrder
 from huron.core.lake.lookups import find_catalog, find_organization
 from huron.core.lake.schemas.errors import SchemaScope
@@ -22,6 +23,7 @@ from huron.schema.naming import check_segment
 if TYPE_CHECKING:
     import uuid
 
+    from huron.core.lake.collections.models import Collection
     from huron.core.lake.schemas.completeness import Completeness, RecomputeResult
     from huron.core.lake.schemas.models import SchemaEntry
     from huron.core.lake.schemas.registry import SchemaResolver
@@ -29,7 +31,21 @@ if TYPE_CHECKING:
     from huron.core.security.rbac import Actor
     from huron.pkg.clock import Clock
 
-__all__ = ["Catalogs"]
+__all__ = ["Catalogs", "SchemaAssignment"]
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaAssignment:
+    """A catalog after a schema assignment, how it moved the collections, and its settled ones.
+
+    ``settled`` are the catalog's active and incomplete collections as the assignment left
+    them, in identifier order: the collections whose ``metadata.json`` the disk work renders
+    again.
+    """
+
+    catalog: CatalogView
+    recompute: RecomputeResult
+    settled: tuple[SettledCollection, ...]
 
 
 class Catalogs:
@@ -157,7 +173,7 @@ class Catalogs:
 
     async def assign_schema(
         self, actor: Actor, name: str, schema_id: uuid.UUID
-    ) -> tuple[CatalogView, RecomputeResult]:
+    ) -> SchemaAssignment:
         """Assign a registry entry to the catalog and re-validate its collections."""
         async with self._uow.transaction() as tx:
             catalog = await _locked(tx, actor, name, Privilege.SCHEMA_ASSIGN)
@@ -174,7 +190,8 @@ class Catalogs:
                 detail={"schema_id": str(schema.id), "previous": str(catalog.schema_id)},
             )
             result = await self._completeness.recompute(tx, actor, updated)
-            return await _view(tx, updated), result
+            view = await _view(tx, updated)
+            return SchemaAssignment(view, result, await _settled(tx, view))
 
     async def set_share_group(self, actor: Actor, name: str, group: str | None) -> CatalogView:
         """Set the catalog's share group, or clear it with ``None``; needs ``CATALOG_GRANT_ADMIN``.
@@ -240,6 +257,19 @@ async def _view(tx: Transaction, catalog: Catalog) -> CatalogView:
     assert organization is not None and schema is not None
     count = await tx.catalogs.namespace_count(catalog.id)
     return CatalogView(catalog, organization.name, schema.ref, count)
+
+
+async def _settled(tx: Transaction, view: CatalogView) -> tuple[SettledCollection, ...]:
+    catalog = view.catalog
+    paths = {n.id: n.path for n in await tx.namespaces.list_in_catalog(catalog.id)}
+    rows = await tx.collections.list_in_catalog(catalog.id, {State.ACTIVE, State.INCOMPLETE})
+    return tuple(_settled_collection(row, view, paths[row.namespace_id]) for row in rows)
+
+
+def _settled_collection(row: Collection, view: CatalogView, path: str) -> SettledCollection:
+    collection = CollectionView(row, view.organization, view.catalog.name, path, view.schema)
+    assert collection.disk_path is not None
+    return SettledCollection(row.id, collection.disk_path)
 
 
 async def _schema_for(

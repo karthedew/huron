@@ -40,6 +40,10 @@ class NamespaceStore(Protocol):
         """Direct children of ``parent_id`` (``None``: the catalog root), in the requested order."""
         ...
 
+    async def list_in_catalog(self, catalog_id: uuid.UUID) -> Sequence[Namespace]:
+        """Every namespace of a catalog, sorted by path."""
+        ...
+
     async def child_counts(self, namespace_id: uuid.UUID) -> tuple[int, int]:
         """``(child namespaces, collections)`` directly inside the namespace, drafts included."""
         ...

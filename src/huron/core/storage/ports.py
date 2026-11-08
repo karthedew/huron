@@ -76,6 +76,14 @@ class GroupResult:
         """The ``PENDING`` result for a group name the machine cannot resolve."""
         return cls(GroupOutcome.PENDING, f"this machine does not know the group {group}")
 
+    def warning(self, group: str | int) -> ShareWarning | None:
+        """The ``SHARE_GROUP_PENDING`` warning about ``group`` of a ``PENDING`` result, else
+        ``None``.
+        """
+        if self.outcome is not GroupOutcome.PENDING:
+            return None
+        return ShareWarning(SHARE_GROUP_PENDING, f"{group}", self.reason or "")
+
 
 @dataclass(frozen=True, slots=True)
 class ShareWarning:

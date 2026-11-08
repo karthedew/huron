@@ -146,7 +146,7 @@ async def test_unreachable_group_directory_is_unavailable() -> None:
         await directory.groups_for("dave")
 
 
-async def test_exchange_issues_a_huron_token_with_the_directory_groups(
+async def test_exchange_issues_a_huron_token_with_the_groups_from_the_directory(
     issuer: FakeIssuer,
 ) -> None:
     clock = frozen()

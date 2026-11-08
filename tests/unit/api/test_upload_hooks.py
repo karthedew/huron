@@ -125,7 +125,7 @@ async def test_an_upload_replaces_a_file_through_the_part_file(
     finished = await target.tusd.finish("frank", second, len(DATA))
     assert finished.json() == receipt(second, SHA)
     assert (target.directory / "c.bin").read_bytes() == DATA
-    assert sorted(p.name for p in target.directory.iterdir()) == ["c.bin"]
+    assert sorted(p.name for p in target.directory.iterdir()) == ["c.bin", "metadata.json"]
 
 
 async def test_a_retried_pre_finish_after_the_receipt_answers_it_again_without_disk_work(
@@ -211,7 +211,7 @@ async def test_a_collection_deleted_during_the_hash_takes_the_placed_file_away(
     finished = await asyncio.wait_for(finishing, SIGNAL_TIMEOUT)
     problem = problem_of(finished)
     assert (problem["status"], problem["code"]) == (404, "UPLOAD_NOT_FOUND")
-    assert list(target.directory.iterdir()) == []
+    assert not target.directory.exists()
 
 
 async def test_a_termination_during_the_hash_takes_the_placed_file_away(
@@ -226,7 +226,7 @@ async def test_a_termination_during_the_hash_takes_the_placed_file_away(
     finished = await asyncio.wait_for(finishing, SIGNAL_TIMEOUT)
     problem = problem_of(finished)
     assert (problem["status"], problem["code"]) == (409, "UPLOAD_STATE_CONFLICT")
-    assert list(target.directory.iterdir()) == []
+    assert [p.name for p in target.directory.iterdir()] == ["metadata.json"]
     assert (await state(api, upload_id))["state"] == "terminated"
 
 
@@ -313,7 +313,7 @@ async def test_a_missing_collection_directory_fails_the_upload(
     seeded_lake_api: Service, target: UploadTarget
 ) -> None:
     upload_id = await target.tusd.begin("dave", target.collection_id, "a/c.bin", DATA)
-    target.directory.rmdir()
+    shutil.rmtree(target.directory)
     finished = await target.tusd.finish("dave", upload_id, len(DATA))
     assert finished.status_code == 200
     problem = problem_of(finished)

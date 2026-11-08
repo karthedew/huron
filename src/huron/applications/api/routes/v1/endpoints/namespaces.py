@@ -7,7 +7,12 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from huron.applications.api.authorization import ActorDep
-from huron.applications.api.dependencies import DeclarationsDep, LakeDep, with_share_root
+from huron.applications.api.dependencies import (
+    DeclarationsDep,
+    DirectoriesDep,
+    LakeDep,
+    with_share_root,
+)
 from huron.applications.api.routes.pagination import Cursor, Limit, Order, Sort
 from huron.applications.api.routes.v1.schema.common import Page, page_of
 from huron.applications.api.routes.v1.schema.namespaces import (
@@ -49,11 +54,13 @@ async def create_namespace(
     actor: ActorDep,
     lake: LakeDep,
     declarations: DeclarationsDep,
+    directories: DirectoriesDep,
 ) -> NamespaceOut:
-    """Create a namespace; the parent must exist."""
+    """Create a namespace; the parent must exist. With a lake, the API makes its directory."""
     view = await lake.namespaces.create(
         actor, catalog, body.parent, body.name, body.collections_allowed
     )
+    await directories.make(view.disk_path)
     return NamespaceOut.model_validate(with_share_root(view.as_dict(), declarations))
 
 
@@ -81,6 +88,8 @@ async def configure_namespace(
 
 
 @router.delete("/{path}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_namespace(catalog: str, path: str, actor: ActorDep, lake: LakeDep) -> None:
-    """Delete an empty namespace."""
-    await lake.namespaces.delete(actor, catalog, path)
+async def delete_namespace(
+    catalog: str, path: str, actor: ActorDep, lake: LakeDep, directories: DirectoriesDep
+) -> None:
+    """Delete an empty namespace. With a lake, the API removes its directory."""
+    await directories.remove(await lake.namespaces.delete(actor, catalog, path))

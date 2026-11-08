@@ -10,7 +10,7 @@ import stat
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from huron.core.storage.errors import SourceGone, StorageError, SymlinkInLake
+from huron.core.storage.errors import InheritanceFailed, SourceGone, StorageError, SymlinkInLake
 from huron.core.storage.lakepath import LakePath
 from huron.core.storage.ports import Entry, GroupOutcome, GroupResult, Outcome, Stat
 from huron.pkg.fs.posix import INHERITING_DIR_MODE
@@ -138,10 +138,8 @@ class MemoryStorage:
             return False
         parent = self.nodes[location.parent]
         if not (self.inherits and parent.mode & stat.S_ISGID):
-            raise StorageError(
-                f"{location}: the directory did not inherit the setgid bit and the group"
-                f" {parent.gid}",
-                {"path": str(location)},
+            raise InheritanceFailed(
+                location, f"the directory did not inherit the setgid bit and the group {parent.gid}"
             )
         self.nodes[location] = Node(
             mode=INHERITING_DIR_MODE | stat.S_ISGID,

@@ -1,6 +1,13 @@
-"""The lake's layout, the storage port and adapters, placement, removal and the locks."""
+"""The lake's layout, the storage port and adapters, directories, placement, removal and locks."""
 
-from huron.core.storage.errors import LakeUnavailable, SourceGone, StorageError, SymlinkInLake
+from huron.core.storage.directories import DirectoryWriter
+from huron.core.storage.errors import (
+    InheritanceFailed,
+    LakeUnavailable,
+    SourceGone,
+    StorageError,
+    SymlinkInLake,
+)
 from huron.core.storage.lakepath import LakePath
 from huron.core.storage.layout import (
     DIRECTORY_MODE,
@@ -54,9 +61,11 @@ __all__ = [
     "UPLOAD_DIR",
     "UPLOAD_DIR_MODE",
     "CollectionDirectoryMissing",
+    "DirectoryWriter",
     "Entry",
     "GroupOutcome",
     "GroupResult",
+    "InheritanceFailed",
     "LakePath",
     "LakeUnavailable",
     "Linked",

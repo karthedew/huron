@@ -4485,7 +4485,7 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
   `uv run pytest tests/unit/api/test_openapi_snapshot.py`; from `web/`, `npm run check` and
   `npm test`.
 - Dependencies: M11.5c.
-- Status: pending
+- Status: complete
 
 #### M11.5e Repair
 

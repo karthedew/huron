@@ -2411,7 +2411,7 @@
     },
     "/api/v1/catalogs/{catalog}": {
       "delete": {
-        "description": "Delete a catalog that has no namespaces.",
+        "description": "Delete a catalog that has no namespaces. With a lake, the API removes its directory.",
         "operationId": "delete_catalog_api_v1_catalogs__catalog__delete",
         "parameters": [
           {
@@ -2895,7 +2895,7 @@
         ]
       },
       "post": {
-        "description": "Create a namespace; the parent must exist.",
+        "description": "Create a namespace; the parent must exist. With a lake, the API makes its directory.",
         "operationId": "create_namespace_api_v1_catalogs__catalog__namespaces_post",
         "parameters": [
           {
@@ -2948,7 +2948,7 @@
     },
     "/api/v1/catalogs/{catalog}/namespaces/{path}": {
       "delete": {
-        "description": "Delete an empty namespace.",
+        "description": "Delete an empty namespace. With a lake, the API removes its directory.",
         "operationId": "delete_namespace_api_v1_catalogs__catalog__namespaces__path__delete",
         "parameters": [
           {
@@ -3318,7 +3318,7 @@
         ]
       },
       "put": {
-        "description": "Assign a registry entry and re-validate the catalog's settled collections.",
+        "description": "Assign a registry entry and re-validate the catalog's settled collections.\n\nWith a lake, the API then writes the ``metadata.json`` of each settled collection whose\nbytes changed, in identifier order; the first failure ends the request.",
         "operationId": "assign_catalog_schema_api_v1_catalogs__catalog__schema_put",
         "parameters": [
           {
@@ -3509,7 +3509,7 @@
     },
     "/api/v1/collections/{collection_id}": {
       "delete": {
-        "description": "Delete a collection that has no recorded files.",
+        "description": "Delete a collection that has no recorded files.\n\nWith a lake, the API then removes what it put into a settled collection's directory, and\nthe directory when nothing else is in it. A dry run does not touch the lake.",
         "operationId": "delete_collection_api_v1_collections__collection_id__delete",
         "parameters": [
           {
@@ -3614,7 +3614,7 @@
         ]
       },
       "patch": {
-        "description": "Merge-patch the metadata and/or set the schema override (``null`` clears it).",
+        "description": "Merge-patch the metadata and/or set the schema override (``null`` clears it).\n\nWith a lake, the API then rewrites a settled collection's ``metadata.json`` when its bytes\nchanged.",
         "operationId": "update_collection_api_v1_collections__collection_id__patch",
         "parameters": [
           {
@@ -3684,7 +3684,7 @@
     },
     "/api/v1/collections/{collection_id}/activate": {
       "post": {
-        "description": "Turn a valid draft into an active collection.",
+        "description": "Turn a valid draft into an active collection.\n\nWith a lake, the API then makes the collection's directory and writes its\n``metadata.json``.",
         "operationId": "activate_collection_api_v1_collections__collection_id__activate_post",
         "parameters": [
           {
@@ -4056,7 +4056,7 @@
     },
     "/api/v1/collections/{collection_id}/metadata.json": {
       "get": {
-        "description": "The canonical ``metadata.json`` the CLI writes beside the files.",
+        "description": "The canonical ``metadata.json``, which the API writes in the collection's directory.",
         "operationId": "get_sidecar_api_v1_collections__collection_id__metadata_json_get",
         "parameters": [
           {
@@ -4214,7 +4214,7 @@
         ]
       },
       "post": {
-        "description": "Create an organization; Platform Admin only.",
+        "description": "Create an organization; Platform Admin only. With a lake, the API makes its directory.",
         "operationId": "create_organization_api_v1_organizations_post",
         "requestBody": {
           "content": {
@@ -4256,7 +4256,7 @@
     },
     "/api/v1/organizations/{organization}": {
       "delete": {
-        "description": "Delete an organization that has no catalogs.",
+        "description": "Delete an organization that has no catalogs. With a lake, the API removes its directory.",
         "operationId": "delete_organization_api_v1_organizations__organization__delete",
         "parameters": [
           {
@@ -4333,7 +4333,7 @@
     },
     "/api/v1/organizations/{organization}/catalogs": {
       "post": {
-        "description": "Create a catalog in an organization; the default schema is the latest huron-base.\n\nWith a share group and a lake, the API then tries to give the directory that group.",
+        "description": "Create a catalog in an organization; the default schema is the latest huron-base.\n\nWith a lake, the API then makes the catalog's directory and, with a share group, tries to\ngive the directory that group.",
         "operationId": "create_catalog_api_v1_organizations__organization__catalogs_post",
         "parameters": [
           {

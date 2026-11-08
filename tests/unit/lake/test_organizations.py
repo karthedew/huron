@@ -72,7 +72,7 @@ async def test_organizations_with_catalogs_cannot_be_deleted(seeded: World) -> N
         await lake.organizations.delete(
             ORG_ADMIN.__class__("x", "x", frozenset({"geo-admins"})), "geo"
         )
-    await lake.organizations.delete(PLATFORM_ADMIN, "geo")
+    assert await lake.organizations.delete(PLATFORM_ADMIN, "geo") == "geo"
     with pytest.raises(NotFound):
         await lake.organizations.get(PLATFORM_ADMIN, "geo")
     assert not [key for key in seeded.store.state.grants if key[2] == "geo-admins"]

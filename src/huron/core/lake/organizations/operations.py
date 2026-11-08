@@ -85,8 +85,11 @@ class Organizations:
             views = [self._view(o, await _visible_count(tx, authz, actor, o)) for o in rows]
         return page_of(views, size, lambda view: view.organization.name)
 
-    async def delete(self, actor: Actor, name: str) -> None:
-        """Delete an undeclared organization without catalogs; needs ``ORGANIZATION_DELETE``."""
+    async def delete(self, actor: Actor, name: str) -> str:
+        """Delete an undeclared organization without catalogs; needs ``ORGANIZATION_DELETE``.
+
+        The answer is the deleted organization's name, which is also its directory's API path.
+        """
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
             organization = await find_organization(tx, authz, actor, name)
@@ -107,6 +110,7 @@ class Organizations:
                 organization_id=organization.id,
                 detail={"name": name},
             )
+            return organization.name
 
     def _view(self, organization: Organization, catalog_count: int) -> OrganizationView:
         declaration = self._declarations.get(organization.name)

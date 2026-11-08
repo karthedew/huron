@@ -163,9 +163,11 @@ async def test_schema_assignment_checks_scope(seeded: World) -> None:
     with pytest.raises(Forbidden):
         await lake.catalogs.assign_schema(CONTRIBUTOR, "heliophysics", base)
     helio = await lake.schemas.publish(ORG_ADMIN, "helio", "helio", base, HELIO)
-    view, result = await lake.catalogs.assign_schema(CATALOG_ADMIN, "heliophysics", helio.id)
+    assignment = await lake.catalogs.assign_schema(CATALOG_ADMIN, "heliophysics", helio.id)
+    view = assignment.catalog
     assert view.schema.id == helio.id and view.catalog.version == 2
-    assert result.as_dict() == {"active": 0, "incomplete": 0, "changed": 0}
+    assert assignment.recompute.as_dict() == {"active": 0, "incomplete": 0, "changed": 0}
+    assert assignment.settled == ()
     resolved = await lake.catalogs.resolved_schema(READER, "heliophysics")
     assert "mission" in resolved["required"]
     created = await lake.catalogs.create(ORG_ADMIN, "helio", "with-schema", schema_id=helio.id)

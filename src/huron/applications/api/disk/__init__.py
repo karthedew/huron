@@ -1,6 +1,11 @@
 """The API's disk layer: the gate to the lake and the orchestrations on it."""
 
-from huron.applications.api.disk.groups import ShareGroups
+from huron.applications.api.disk.directories import (
+    Directories,
+    LakeDirectories,
+    NoLake,
+    Render,
+)
 from huron.applications.api.disk.lake import (
     DISK_WORKERS,
     HASH_WORKERS,
@@ -17,9 +22,12 @@ __all__ = [
     "HASH_WORKERS",
     "PROBE_TIMEOUT",
     "PROBE_TTL",
+    "Directories",
+    "LakeDirectories",
     "LakeDisk",
     "Located",
+    "NoLake",
     "Placements",
+    "Render",
     "Run",
-    "ShareGroups",
 ]

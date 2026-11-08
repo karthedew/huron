@@ -2,11 +2,12 @@
 
 import grp
 import os
+import shutil
 from pathlib import Path
 
 import pytest
 
-from huron.core.storage import DIRECTORY_MODE, MARKER_FILE, ORGANIZATION_MODE, LakePath
+from huron.core.storage import MARKER_FILE, LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.support.api import Service, seed_service, service
 from tests.support.clock import frozen
@@ -19,14 +20,6 @@ CATALOG = "/api/v1/catalogs/heliophysics"
 def own_group(lake: Path) -> str:
     """The group the temporary lake's directories get, which the test process may give."""
     return grp.getgrgid(os.lstat(lake).st_gid).gr_name
-
-
-@pytest.fixture
-def catalog_dir(lake: Path) -> Path:
-    """The directory of the seeded heliophysics catalog in the temporary lake."""
-    directory = lake / "helio" / "heliophysics"
-    directory.mkdir(parents=True)
-    return directory
 
 
 async def create(api: Service, body: dict[str, object]) -> dict[str, object]:
@@ -89,15 +82,13 @@ async def test_a_share_group_change_is_refused(
 
 
 async def test_a_group_the_directory_has_gives_no_warning(
-    seeded_lake_api: Service, catalog_dir: Path, own_group: str
+    seeded_lake_api: Service, own_group: str
 ) -> None:
     changed = await patch(seeded_lake_api, own_group)
     assert (changed["share_group"], changed["warnings"]) == (own_group, [])
 
 
-async def test_a_group_the_lake_cannot_set_is_pending(
-    seeded_lake_api: Service, catalog_dir: Path
-) -> None:
+async def test_a_group_the_lake_cannot_set_is_pending(seeded_lake_api: Service) -> None:
     changed = await patch(seeded_lake_api, "no-such-group-xyz")
     assert changed["warnings"] == [
         {
@@ -108,25 +99,22 @@ async def test_a_group_the_lake_cannot_set_is_pending(
     ]
 
 
-async def test_a_new_catalog_without_its_directory_is_pending(
+async def test_a_new_catalog_gets_its_share_group_on_its_new_directory(
     seeded_lake_api: Service, lake: Path, own_group: str
 ) -> None:
     created = await create(seeded_lake_api, {"name": "aurora", "share_group": own_group})
-    assert created["warnings"] == [
-        {
-            "code": "SHARE_GROUP_PENDING",
-            "group": own_group,
-            "detail": "helio/aurora does not exist",
-        }
-    ]
-
-
-async def test_a_new_catalog_without_a_share_group_does_not_touch_the_lake(
-    seeded_lake_api: Service, lake: Path
-) -> None:
-    (lake / MARKER_FILE).unlink()
-    created = await create(seeded_lake_api, {"name": "aurora"})
     assert created["warnings"] == []
+    assert grp.getgrgid(os.lstat(lake / "helio" / "aurora").st_gid).gr_name == own_group
+
+
+async def test_a_new_catalog_without_a_share_group_tries_no_group() -> None:
+    storage = memory_lake()
+    async with service(storage=storage, lake_path=LAKE) as api:
+        await seed_service(api)
+        storage.calls.clear()
+        created = await create(api, {"name": "aurora"})
+    assert created["warnings"] == []
+    assert storage.calls == [("mkdir", LakePath.of("helio", "aurora"))]
 
 
 async def test_a_cleared_share_group_gives_the_directory_the_service_group() -> None:
@@ -137,8 +125,6 @@ async def test_a_cleared_share_group_gives_the_directory_the_service_group() -> 
     directory = LakePath.of("helio", "heliophysics")
     async with service(storage=storage, clock=clock, lake_path=LAKE) as api:
         await seed_service(api)
-        storage.make_directory(directory.parent, ORGANIZATION_MODE)
-        storage.make_directory(directory, DIRECTORY_MODE)
         changed = await patch(api, "helio-readers")
         assert (changed["warnings"], gid(storage, directory)) == ([], 2001)
         cleared = await patch(api, None)
@@ -149,6 +135,7 @@ async def test_a_cleared_share_group_gives_the_directory_the_service_group() -> 
 async def test_a_service_group_the_lake_cannot_set_is_pending(
     seeded_lake_api: Service, lake: Path
 ) -> None:
+    shutil.rmtree(lake / "helio" / "heliophysics")
     cleared = await patch(seeded_lake_api, None)
     assert cleared["warnings"] == [
         {

@@ -23,8 +23,13 @@ CATALOG = ORGANIZATION.joinpath("heliophysics")
 
 @pytest.fixture
 def share() -> MemoryStorage:
-    """An in-memory share rooted at the default prefix, marked for the test service."""
+    """An in-memory share rooted at the default prefix, marked for the test service.
+
+    Its root belongs to the service user and group, as ``huron adm provision-orgs`` leaves it.
+    """
     storage = MemoryStorage(PREFIX)
+    root = storage.nodes[LakePath()]
+    root.uid, root.gid = storage.uid, storage.gid
     storage.write_bytes(LakePath.of(MARKER_FILE), ROOT_MARKER, FILE_MODE)
     return storage
 

@@ -212,6 +212,9 @@ async def test_namespaces(uow: UnitOfWork) -> None:
         assert [n.name for n in await tx.namespaces.children(cat.id, None, None, 10)] == [
             "solar-wind"
         ]
+        listed = await tx.namespaces.list_in_catalog(cat.id)
+        assert [n.path for n in listed] == ["solar-wind", "solar-wind.a", "solar-wind.b"]
+        assert list(await tx.namespaces.list_in_catalog(uuid.uuid4())) == []
         assert await tx.namespaces.child_counts(ns.id) == (2, 1)
         assert await tx.namespaces.draft_count(ns.id) == 0
         await tx.namespaces.update(replace(a, collections_allowed=False, version=2))

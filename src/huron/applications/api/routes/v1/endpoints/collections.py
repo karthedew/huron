@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import uuid
+from functools import partial
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Response, status
 
 from huron.applications.api.authorization import ActorDep
-from huron.applications.api.dependencies import DeclarationsDep, LakeDep, with_share_root
+from huron.applications.api.dependencies import (
+    DeclarationsDep,
+    DirectoriesDep,
+    LakeDep,
+    with_share_root,
+)
 from huron.applications.api.routes.pagination import Cursor, Limit, Order, Sort
 from huron.applications.api.routes.preconditions import IfMatch, expected_version, set_etag
 from huron.applications.api.routes.v1.schema.admin import AuditOut
@@ -119,16 +125,24 @@ async def update_collection(
     actor: ActorDep,
     lake: LakeDep,
     declarations: DeclarationsDep,
+    directories: DirectoriesDep,
     response: Response,
     if_match: IfMatch = None,
 ) -> CollectionOut:
-    """Merge-patch the metadata and/or set the schema override (``null`` clears it)."""
+    """Merge-patch the metadata and/or set the schema override (``null`` clears it).
+
+    With a lake, the API then rewrites a settled collection's ``metadata.json`` when its bytes
+    changed.
+    """
     sent = body.model_fields_set
     update = Update(
         metadata_patch=body.metadata or {} if "metadata" in sent else UNSET,
         schema_override=body.schema_override if "schema_override" in sent else UNSET,
     )
     view = await lake.collections.update(actor, collection_id, expected_version(if_match), update)
+    if view.disk_path is not None:
+        render = partial(lake.collections.sidecar_of, collection_id)
+        await directories.write_metadata(view.disk_path, render)
     return _out(view, response, declarations)
 
 
@@ -138,11 +152,20 @@ async def activate_collection(
     actor: ActorDep,
     lake: LakeDep,
     declarations: DeclarationsDep,
+    directories: DirectoriesDep,
     response: Response,
     if_match: IfMatch = None,
 ) -> CollectionOut:
-    """Turn a valid draft into an active collection."""
+    """Turn a valid draft into an active collection.
+
+    With a lake, the API then makes the collection's directory and writes its
+    ``metadata.json``.
+    """
     view = await lake.collections.activate(actor, collection_id, expected_version(if_match))
+    path = view.disk_path
+    assert path is not None, "an active collection has a directory"
+    await directories.make(path)
+    await directories.write_metadata(path, partial(lake.collections.sidecar_of, collection_id))
     return _out(view, response, declarations)
 
 
@@ -151,13 +174,22 @@ async def delete_collection(
     collection_id: uuid.UUID,
     actor: ActorDep,
     lake: LakeDep,
+    directories: DirectoriesDep,
     if_match: IfMatch = None,
     dry_run: Annotated[
         bool, Query(description="Check the caller may delete it; change nothing.")
     ] = False,
 ) -> None:
-    """Delete a collection that has no recorded files."""
-    await lake.collections.delete(actor, collection_id, expected_version(if_match), dry_run)
+    """Delete a collection that has no recorded files.
+
+    With a lake, the API then removes what it put into a settled collection's directory, and
+    the directory when nothing else is in it. A dry run does not touch the lake.
+    """
+    deleted = await lake.collections.delete(
+        actor, collection_id, expected_version(if_match), dry_run
+    )
+    if deleted is not None and deleted.disk_path is not None:
+        await directories.remove_collection(deleted.disk_path)
 
 
 @router.get("/collections/{collection_id}/schema")
@@ -170,7 +202,7 @@ async def get_collection_schema(
 
 @router.get("/collections/{collection_id}/metadata.json")
 async def get_sidecar(collection_id: uuid.UUID, actor: ActorDep, lake: LakeDep) -> Response:
-    """The canonical ``metadata.json`` the CLI writes beside the files."""
+    """The canonical ``metadata.json``, which the API writes in the collection's directory."""
     body = await lake.collections.sidecar(actor, collection_id)
     return Response(content=body, media_type="application/json")
 

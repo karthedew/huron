@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Query, status
@@ -10,8 +11,8 @@ from fastapi import APIRouter, Query, status
 from huron.applications.api.authorization import ActorDep
 from huron.applications.api.dependencies import (
     DeclarationsDep,
+    DirectoriesDep,
     LakeDep,
-    ShareGroupsDep,
     with_share_root,
 )
 from huron.applications.api.routes.pagination import Cursor, Limit, Order, Sort
@@ -62,11 +63,12 @@ async def create_catalog(
     actor: ActorDep,
     lake: LakeDep,
     declarations: DeclarationsDep,
-    share_groups: ShareGroupsDep,
+    directories: DirectoriesDep,
 ) -> CatalogWriteOut:
     """Create a catalog in an organization; the default schema is the latest huron-base.
 
-    With a share group and a lake, the API then tries to give the directory that group.
+    With a lake, the API then makes the catalog's directory and, with a share group, tries to
+    give the directory that group.
     """
     view = await lake.catalogs.create(
         actor,
@@ -77,9 +79,10 @@ async def create_catalog(
         body.schema_id,
         share_group=body.share_group,
     )
+    await directories.make(view.disk_path)
     warning = None
-    if share_groups is not None and body.share_group is not None:
-        warning = await share_groups.set_share_group(view.disk_path, body.share_group)
+    if view.catalog.share_group is not None:
+        warning = await directories.set_group(view.disk_path, view.catalog.share_group)
     return _written(view, declarations, warning)
 
 
@@ -99,7 +102,7 @@ async def set_catalog_share_group(
     actor: ActorDep,
     lake: LakeDep,
     declarations: DeclarationsDep,
-    share_groups: ShareGroupsDep,
+    directories: DirectoriesDep,
 ) -> CatalogWriteOut:
     """Set or clear the catalog's share group; the catalog lock orders the changes.
 
@@ -107,16 +110,16 @@ async def set_catalog_share_group(
     when the share group is cleared.
     """
     view = await lake.catalogs.set_share_group(actor, catalog, body.share_group)
-    warning = None
-    if share_groups is not None:
-        warning = await share_groups.set_share_group(view.disk_path, view.catalog.share_group)
+    warning = await directories.set_group(view.disk_path, view.catalog.share_group)
     return _written(view, declarations, warning)
 
 
 @router.delete("/catalogs/{catalog}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_catalog(catalog: str, actor: ActorDep, lake: LakeDep) -> None:
-    """Delete a catalog that has no namespaces."""
-    await lake.catalogs.delete(actor, catalog)
+async def delete_catalog(
+    catalog: str, actor: ActorDep, lake: LakeDep, directories: DirectoriesDep
+) -> None:
+    """Delete a catalog that has no namespaces. With a lake, the API removes its directory."""
+    await directories.remove(await lake.catalogs.delete(actor, catalog))
 
 
 @router.get("/catalogs/{catalog}/schema")
@@ -132,12 +135,21 @@ async def assign_catalog_schema(
     actor: ActorDep,
     lake: LakeDep,
     declarations: DeclarationsDep,
+    directories: DirectoriesDep,
 ) -> AssignOut:
-    """Assign a registry entry and re-validate the catalog's settled collections."""
-    view, result = await lake.catalogs.assign_schema(actor, catalog, body.schema_id)
+    """Assign a registry entry and re-validate the catalog's settled collections.
+
+    With a lake, the API then writes the ``metadata.json`` of each settled collection whose
+    bytes changed, in identifier order; the first failure ends the request.
+    """
+    assignment = await lake.catalogs.assign_schema(actor, catalog, body.schema_id)
+    for settled in assignment.settled:
+        render = partial(lake.collections.sidecar_of, settled.id)
+        await directories.write_metadata(settled.disk_path, render)
+    row = with_share_root(assignment.catalog.as_dict(), declarations)
     return AssignOut(
-        assigned=CatalogOut.model_validate(with_share_root(view.as_dict(), declarations)),
-        recompute=RecomputeOut.model_validate(result.as_dict()),
+        assigned=CatalogOut.model_validate(row),
+        recompute=RecomputeOut.model_validate(assignment.recompute.as_dict()),
     )
 
 

@@ -298,6 +298,20 @@ class Collections:
             )
         return render_sidecar(view)
 
+    async def sidecar_of(self, collection_id: uuid.UUID) -> bytes | None:
+        """The ``metadata.json`` of a settled collection, read from its rows now.
+
+        ``None`` for a draft and for a collection that is gone. It checks no privilege: it
+        renders the file for the disk work of a change that the caller was allowed to make.
+        """
+        async with self._uow.transaction() as tx:
+            collection = await tx.collections.get(collection_id)
+            if collection is None or not collection.settled:
+                return None
+            catalog = await tx.catalogs.get(collection.catalog_id)
+            assert catalog is not None
+            return render_sidecar(await collection_view(tx, collection, catalog))
+
     async def _readable(
         self,
         tx: Transaction,

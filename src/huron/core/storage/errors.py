@@ -9,7 +9,7 @@ from huron.pkg.errors import HuronError, register
 if TYPE_CHECKING:
     from huron.core.storage.lakepath import LakePath
 
-__all__ = ["LakeUnavailable", "SourceGone", "StorageError", "SymlinkInLake"]
+__all__ = ["InheritanceFailed", "LakeUnavailable", "SourceGone", "StorageError", "SymlinkInLake"]
 
 STORAGE_FAILED = register("STORAGE_FAILED", 500, "Storage failed")
 SYMLINK_IN_LAKE = register("SYMLINK_IN_LAKE", 409, "Symbolic link in the lake")
@@ -35,6 +35,16 @@ class SymlinkInLake(StorageError):
             f"{link} is a symbolic link. The lake must not contain symbolic links. Remove it.",
             {"path": str(link)},
         )
+
+
+class InheritanceFailed(StorageError):
+    """A new directory did not inherit the setgid bit and the group of its parent.
+
+    The directory was removed again. Only the storage administrator can fix the parent.
+    """
+
+    def __init__(self, location: LakePath, reason: str) -> None:
+        super().__init__(f"{location}: {reason}", {"path": str(location)})
 
 
 class LakeUnavailable(StorageError):

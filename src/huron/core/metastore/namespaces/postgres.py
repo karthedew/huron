@@ -82,6 +82,14 @@ class PostgresNamespaces:
         )
         return [Namespace(**row) for row in rows]
 
+    async def list_in_catalog(self, catalog_id: uuid.UUID) -> Sequence[Namespace]:
+        """Every namespace of a catalog, sorted by path."""
+        rows = await self._db.fetch(
+            f"select {_COLUMNS} from huron.namespaces where catalog_id = $1 order by path",
+            catalog_id,
+        )
+        return [Namespace(**row) for row in rows]
+
     async def child_counts(self, namespace_id: uuid.UUID) -> tuple[int, int]:
         """``(child namespaces, collections)``."""
         row = await self._db.fetchrow(

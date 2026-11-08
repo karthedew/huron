@@ -19,6 +19,7 @@ __all__ = [
     "CollectionView",
     "DeletedCollection",
     "Search",
+    "SettledCollection",
     "State",
     "Unset",
     "Update",
@@ -127,6 +128,14 @@ class CollectionView:
             "path": self.disk_path,
             "problems": self.problems,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class SettledCollection:
+    """A settled collection and its directory, in the form of :attr:`CollectionView.disk_path`."""
+
+    id: uuid.UUID
+    disk_path: str
 
 
 @dataclass(frozen=True, slots=True)

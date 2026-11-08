@@ -45,6 +45,18 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `UPLOAD_TOO_LARGE` | 413 | The upload declares more bytes than `upload_max_size`. `context.maximum` gives the limit. |
 | `VERSION_CONFLICT` | 412 | `If-Match` names an older version. `context.current_version` names the current version. |
 
+## Errors after a commit
+
+Some requests change the disk after they change the rows. These requests commit the rows first.
+After the commit, the only errors are `STORAGE_FAILED`, `LAKE_UNAVAILABLE`, `SYMLINK_IN_LAKE` and
+`NAME_INVALID`. A new directory that did not get the setgid bit and the group of its parent is
+`STORAGE_FAILED`. Without a `lake_path`, these requests change only the rows.
+
+The creates, the share group change, the activation, the metadata change and the schema assignment
+keep their rows when the disk work fails. A delete request deletes its rows before the disk work
+starts. When the disk work of a delete fails, the rows stay deleted. When the directory of a delete
+is not empty, the directory stays on the disk and the answer is 204.
+
 ## Warnings
 
 A warning is not an error. The request succeeded, but a change on disk is not complete. The

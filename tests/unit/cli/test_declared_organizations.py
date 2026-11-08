@@ -433,7 +433,7 @@ def test_an_undeclared_organization_is_deleted_through_the_api_only(
     cli, _ = managed
     assert cli.ok("delete", "org", "quiet").stdout == "organization quiet deleted\n"
     assert "quiet" not in cli.ok("get", "orgs").stdout
-    assert share.calls == []
+    assert share.calls == [("rmdir", LakePath.of("quiet"))]
 
 
 def test_an_unusable_root_from_the_service_is_refused(

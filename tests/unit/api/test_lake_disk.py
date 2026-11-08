@@ -1,4 +1,6 @@
-"""The API's hold on the lake: places, markers, the gate, locks, readiness and placements."""
+"""The API's hold on the lake: places, markers, the gate, locks, readiness, directories and
+placements.
+"""
 
 import asyncio
 import gc
@@ -19,11 +21,13 @@ from huron.applications.api.disk import (
     HASH_WORKERS,
     PROBE_TIMEOUT,
     PROBE_TTL,
+    LakeDirectories,
     LakeDisk,
     Located,
+    NoLake,
     Placements,
+    Render,
     Run,
-    ShareGroups,
 )
 from huron.core.lake.uploads.models import Failure, Upload, UploadState
 from huron.core.storage import (
@@ -31,6 +35,7 @@ from huron.core.storage import (
     SHARE_GROUP_PENDING,
     UPLOAD_DIR_MODE,
     UPLOADS,
+    DirectoryWriter,
     LakePath,
     LakeUnavailable,
     Marker,
@@ -396,16 +401,17 @@ async def test_work_passes_errors_through(disk: LakeDisk) -> None:
 
 
 CATALOG = LakePath.of("helio", "heliophysics")
+COLLECTION = CATALOG.joinpath("solar-wind", "run7")
 
 
 @pytest.fixture
-def groups(disk: LakeDisk, storage: MemoryStorage) -> ShareGroups:
-    """The share groups over the helio catalog directory; helio-readers is known."""
+def directories(disk: LakeDisk, storage: MemoryStorage) -> LakeDirectories:
+    """The directory verbs over the helio catalog directory; helio-readers is known."""
     storage.groups.update({"helio-readers": 2001, "geo-readers": 2002})
     storage.member_of.add(2001)
     storage.make_directory(LakePath.of("helio"), 0o2751)
     storage.make_directory(CATALOG, 0o2750)
-    return ShareGroups(disk, storage, SERVICE_GID)
+    return LakeDirectories(disk, DirectoryWriter(storage, SERVICE_GID))
 
 
 def gid(storage: Storage, location: LakePath) -> int:
@@ -414,21 +420,32 @@ def gid(storage: Storage, location: LakePath) -> int:
     return found.gid
 
 
+def rendered(body: bytes | None, reads: list[str] | None = None) -> Render:
+    """A render that answers ``body`` and notes each read in ``reads``."""
+
+    async def render() -> bytes | None:
+        if reads is not None:
+            reads.append("read")
+        return body
+
+    return render
+
+
 async def test_a_share_group_that_can_be_set_gives_no_warning(
-    groups: ShareGroups, storage: MemoryStorage
+    directories: LakeDirectories, storage: MemoryStorage
 ) -> None:
-    assert await groups.set_share_group("helio/heliophysics", "helio-readers") is None
+    assert await directories.set_group("helio/heliophysics", "helio-readers") is None
     assert gid(storage, CATALOG) == 2001
-    assert await groups.set_share_group("helio/heliophysics", "helio-readers") is None
+    assert await directories.set_group("helio/heliophysics", "helio-readers") is None
 
 
 async def test_a_cleared_share_group_gives_the_directory_the_service_group(
-    groups: ShareGroups, storage: MemoryStorage
+    directories: LakeDirectories, storage: MemoryStorage
 ) -> None:
-    await groups.set_share_group("helio/heliophysics", "helio-readers")
-    assert await groups.set_share_group("helio/heliophysics", None) is None
+    await directories.set_group("helio/heliophysics", "helio-readers")
+    assert await directories.set_group("helio/heliophysics", None) is None
     assert gid(storage, CATALOG) == SERVICE_GID
-    assert await groups.set_share_group("helio/heliophysics", None) is None
+    assert await directories.set_group("helio/heliophysics", None) is None
 
 
 @pytest.mark.parametrize(
@@ -451,17 +468,17 @@ async def test_a_cleared_share_group_gives_the_directory_the_service_group(
     ],
 )
 async def test_a_share_group_that_cannot_be_set_is_pending(
-    groups: ShareGroups, api_path: str, group: str | None, named: str, detail: str
+    directories: LakeDirectories, api_path: str, group: str | None, named: str, detail: str
 ) -> None:
-    warning = await groups.set_share_group(api_path, group)
+    warning = await directories.set_group(api_path, group)
     assert warning == ShareWarning(SHARE_GROUP_PENDING, named, detail)
 
 
 async def test_a_directory_the_service_does_not_own_keeps_its_group_when_cleared(
-    groups: ShareGroups, storage: MemoryStorage
+    directories: LakeDirectories, storage: MemoryStorage
 ) -> None:
     storage.nodes[CATALOG].uid, storage.nodes[CATALOG].gid = 0, 2001
-    warning = await groups.set_share_group("helio/heliophysics", None)
+    warning = await directories.set_group("helio/heliophysics", None)
     assert warning == ShareWarning(
         SHARE_GROUP_PENDING, str(SERVICE_GID), "helio/heliophysics: Operation not permitted"
     )
@@ -469,17 +486,99 @@ async def test_a_directory_the_service_does_not_own_keeps_its_group_when_cleared
 
 
 async def test_a_share_group_needs_the_marker_and_no_link_on_the_way(
-    groups: ShareGroups, storage: MemoryStorage
+    directories: LakeDirectories, storage: MemoryStorage
 ) -> None:
     storage.make_directory(LakePath.of("geo"), 0o2751)
     plant_symlink(storage, LakePath.of("geo", "catalog"))
     with pytest.raises(StorageError) as linked:
-        await groups.set_share_group("geo/catalog", "helio-readers")
+        await directories.set_group("geo/catalog", "helio-readers")
     assert linked.value.code == "SYMLINK_IN_LAKE"
     storage.remove_file(LakePath.of(MARKER_FILE))
     with pytest.raises(LakeUnavailable):
-        await groups.set_share_group("helio/heliophysics", "helio-readers")
+        await directories.set_group("helio/heliophysics", "helio-readers")
     assert gid(storage, CATALOG) != 2001
+
+
+async def test_make_gives_each_directory_its_mode(
+    directories: LakeDirectories, storage: MemoryStorage
+) -> None:
+    await directories.make("geo")
+    await directories.make("helio/heliophysics/solar-wind")
+    geo, namespace = storage.stat(LakePath.of("geo")), storage.stat(COLLECTION.parent)
+    assert geo is not None and namespace is not None
+    assert (geo.mode, namespace.mode) == (0o2751, 0o2750)
+    assert namespace.gid == gid(storage, CATALOG)
+
+
+async def test_a_verb_refuses_a_path_that_breaks_the_naming_rules(
+    directories: LakeDirectories, storage: MemoryStorage
+) -> None:
+    storage.calls.clear()
+    with pytest.raises(HuronError) as refused:
+        await directories.make("helio/..")
+    assert (refused.value.code, refused.value.status) == ("NAME_INVALID", 422)
+    assert storage.calls == []
+
+
+async def test_metadata_is_rendered_under_the_lock_and_written_when_it_differs(
+    directories: LakeDirectories, disk: LakeDisk, storage: MemoryStorage
+) -> None:
+    storage.make_directory(COLLECTION.parent, 0o2750)
+    storage.make_directory(COLLECTION, 0o2750)
+    holding, release, reads = asyncio.Event(), asyncio.Event(), []
+
+    async def held(run: Run) -> None:
+        holding.set()
+        await release.wait()
+
+    holder = asyncio.create_task(disk.hold(disk.locate(str(COLLECTION)), held))
+    await holding.wait()
+    writing = asyncio.create_task(
+        directories.write_metadata(str(COLLECTION), rendered(b"{}\n", reads))
+    )
+    await asyncio.sleep(0.01)
+    assert reads == []
+    release.set()
+    await asyncio.gather(holder, writing)
+    metadata = COLLECTION.joinpath("metadata.json")
+    assert (reads, storage.read_bytes(metadata)) == (["read"], b"{}\n")
+    storage.calls.clear()
+    await directories.write_metadata(str(COLLECTION), rendered(b"{}\n"))
+    await directories.write_metadata(str(COLLECTION), rendered(None))
+    assert storage.calls == []
+
+
+async def test_a_removal_that_keeps_the_directory_goes_to_the_log(
+    directories: LakeDirectories, storage: MemoryStorage
+) -> None:
+    storage.make_directory(COLLECTION.parent, 0o2750)
+    storage.make_directory(COLLECTION, 0o2750)
+    storage.write_bytes(COLLECTION.joinpath("stray.bin"), b"x", 0o644)
+    with structlog.testing.capture_logs() as logged:
+        await directories.remove_collection(str(COLLECTION))
+        await directories.remove(str(COLLECTION.parent))
+    assert [(e["event"], e["path"]) for e in logged] == [
+        ("disk.directory_kept", str(COLLECTION)),
+        ("disk.directory_kept", str(COLLECTION.parent)),
+    ]
+    storage.remove_file(COLLECTION.joinpath("stray.bin"))
+    with structlog.testing.capture_logs() as logged:
+        await directories.remove_collection(str(COLLECTION))
+        await directories.remove(str(COLLECTION.parent))
+        await directories.remove(str(COLLECTION.parent))
+    assert logged == []
+    assert storage.stat(COLLECTION.parent) is None
+
+
+async def test_without_a_lake_every_verb_returns_at_once() -> None:
+    reads: list[str] = []
+    no_lake = NoLake()
+    await no_lake.make("helio/..")
+    assert await no_lake.set_group("helio/heliophysics", "helio-readers") is None
+    await no_lake.write_metadata("helio/heliophysics/solar-wind/run7", rendered(b"{}", reads))
+    await no_lake.remove("helio")
+    await no_lake.remove_collection("helio/heliophysics/solar-wind/run7")
+    assert reads == []
 
 
 class LinkPausingStorage(MemoryStorage):

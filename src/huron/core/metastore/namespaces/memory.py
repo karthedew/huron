@@ -67,6 +67,11 @@ class MemoryNamespaces:
         )
         return (ordering or ListOrder()).rows(rows, after, limit)
 
+    async def list_in_catalog(self, catalog_id: uuid.UUID) -> Sequence[Namespace]:
+        """Every namespace of a catalog, sorted by path."""
+        rows = (n for n in self._state.namespaces.values() if n.catalog_id == catalog_id)
+        return sorted(rows, key=lambda n: n.path)
+
     async def child_counts(self, namespace_id: uuid.UUID) -> tuple[int, int]:
         """``(child namespaces, collections)``."""
         namespaces = sum(1 for n in self._state.namespaces.values() if n.parent_id == namespace_id)

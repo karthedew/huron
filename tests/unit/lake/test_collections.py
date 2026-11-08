@@ -13,7 +13,13 @@ from huron.core.lake.collections.errors import (
     MetadataInvalid,
 )
 from huron.core.lake.collections.metadata import check_metadata, merge_patch, render_sidecar
-from huron.core.lake.collections.models import DeletedCollection, Search, State, Update
+from huron.core.lake.collections.models import (
+    DeletedCollection,
+    Search,
+    SettledCollection,
+    State,
+    Update,
+)
 from huron.core.lake.errors import NameTaken, VersionConflict
 from huron.core.lake.files.models import CommitRequest, FileAdd
 from huron.core.lake.schemas.models import BASE_SCHEMA_NAME
@@ -175,7 +181,7 @@ async def test_assigning_a_stricter_schema_marks_collections_incomplete(seeded: 
         base,
         {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
     )
-    _, result = await lake.catalogs.assign_schema(CATALOG_ADMIN, "heliophysics", strict.id)
+    result = (await lake.catalogs.assign_schema(CATALOG_ADMIN, "heliophysics", strict.id)).recompute
     assert result.as_dict() == {"active": 1, "incomplete": 1, "changed": 1}
     marked = await lake.collections.get(READER, view.collection.id)
     assert marked.collection.state is State.INCOMPLETE and marked.collection.version == 3
@@ -186,8 +192,8 @@ async def test_assigning_a_stricter_schema_marks_collections_incomplete(seeded: 
         CONTRIBUTOR, view.collection.id, 3, Update(metadata_patch={"mission": "solo"})
     )
     assert repaired.collection.state is State.ACTIVE
-    _, back = await lake.catalogs.assign_schema(CATALOG_ADMIN, "heliophysics", base)
-    assert back.changed == 0
+    back = await lake.catalogs.assign_schema(CATALOG_ADMIN, "heliophysics", base)
+    assert back.recompute.changed == 0
     actions = [e.action for e in seeded.store.state.audit if e.object_id == view.collection.id]
     assert Action.COLLECTION_MARK_INCOMPLETE in actions
     assert Action.COLLECTION_MARK_ACTIVE in actions
@@ -208,8 +214,8 @@ async def test_incompatible_override_makes_a_collection_incomplete(seeded: World
         base,
         {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
     )
-    _, result = await lake.catalogs.assign_schema(CATALOG_ADMIN, "heliophysics", strict.id)
-    assert result.incomplete == 1
+    result = await lake.catalogs.assign_schema(CATALOG_ADMIN, "heliophysics", strict.id)
+    assert result.recompute.incomplete == 1
 
 
 async def test_search_matches_text_labels_and_states(seeded: World) -> None:
@@ -314,6 +320,39 @@ async def test_sidecar_is_canonical_and_absent_for_drafts(seeded: World) -> None
     draft = await lake.collections.create(CONTRIBUTOR, "heliophysics", "solar-wind", "d")
     with pytest.raises(Conflict):
         await lake.collections.sidecar(CONTRIBUTOR, draft.collection.id)
+
+
+async def test_the_sidecar_for_the_disk_is_read_now_without_a_privilege(seeded: World) -> None:
+    lake = seeded.lake
+    view = await active(seeded)
+    await lake.collections.update(
+        CONTRIBUTOR, view.collection.id, 2, Update(metadata_patch={"note": "later"})
+    )
+    rendered = await lake.collections.sidecar_of(view.collection.id)
+    assert rendered == await lake.collections.sidecar(READER, view.collection.id)
+    assert rendered is not None and b'"note":"later"' in rendered
+    draft = await lake.collections.create(CONTRIBUTOR, "heliophysics", "solar-wind", "d")
+    assert await lake.collections.sidecar_of(draft.collection.id) is None
+    assert await lake.collections.sidecar_of(uuid.uuid4()) is None
+
+
+async def test_a_schema_assignment_answers_the_settled_collections_in_identifier_order(
+    seeded: World,
+) -> None:
+    lake = seeded.lake
+    await lake.namespaces.create(CATALOG_ADMIN, "heliophysics", "", "aurora", True)
+    later = await active(seeded, "run7")
+    created = await lake.collections.create(
+        CONTRIBUTOR, "heliophysics", "aurora", "run1", dict(VALID_METADATA)
+    )
+    earlier = await lake.collections.activate(CONTRIBUTOR, created.collection.id, 1)
+    await lake.collections.create(CONTRIBUTOR, "heliophysics", "aurora", "draft")
+    base = (await lake.schemas.list(READER, None, None, None)).items[0].id
+    assignment = await lake.catalogs.assign_schema(CATALOG_ADMIN, "heliophysics", base)
+    assert assignment.settled == (
+        SettledCollection(earlier.collection.id, "helio/heliophysics/aurora/run1"),
+        SettledCollection(later.collection.id, RUN7),
+    )
 
 
 def test_merge_patch_follows_rfc_7396() -> None:
