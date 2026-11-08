@@ -483,8 +483,11 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   `.tus-uploads` is not a directory that `U` can write. `/readyz` runs this probe in a thread,
   waits at most 2 seconds and keeps the result for 10 seconds. A probe that does not return in
   time reports `lake: false`. The mount is `hard`, so during an NFS outage a disk call blocks
-  without end. Readiness then takes the API pods out of service. The API runs all disk work in a
-  dedicated pool of 8 threads, not in the default executor. Without `lake_path`, the API serves
+  without end. Readiness then takes the API pods out of service. The API runs disk work in two
+  dedicated pools, never in the default executor: a hash pool of 4 threads measures uploads
+  (sub-steps 4 and 7 of "Upload flow"), and a disk pool of 8 threads runs the readiness probe and
+  every other disk call. So a burst of large hashes never delays the probe or the short metadata
+  calls (decided 2026-11-07). Without `lake_path`, the API serves
   no upload route (404 `UPLOADS_DISABLED`), and the directory verbs change only their rows
   ("Directory verbs in the API").
 - **Upload flow (D-23 amended).** The CLI creates one tus upload per staged add, with
@@ -537,22 +540,29 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
         intermediate directories below the collection directory with `make_inheriting_dir`
         ("Catalog share group and directory modes"). It links the file to
         its destination with `link`. On `EEXIST` it links the file to `.<name>.<id>.huron-part`
-        beside the destination (on `EEXIST` there: unlink the part file, link again) and
-        `rename`s the part over the destination. `ENOENT` on the link source goes to sub-step 7.
+        beside the destination (on `EEXIST` there: unlink the part file, link again), links the
+        existing destination to the backup `.<name>.<id>.huron-prev` (on `EEXIST` there: unlink
+        the backup, link again), and `rename`s the part over the destination. The backup keeps
+        the bytes that the overwrite replaces until the receipt is recorded (decided 2026-11-07).
+        `ENOENT` on the link source goes to sub-step 7.
         The API unlinks `.tus-uploads/<id>` and `<id>.info`; `ENOENT` is not an error. Then,
         still under the lock, `Uploads.receipt(id, size, sha256, inode)` with the inode from
-        sub-step 4 marks the row `placed`. The answer carries the response headers
+        sub-step 4 marks the row `placed`. After the receipt the API unlinks the backup
+        (`ENOENT` is not an error). The answer carries the response headers
         `Huron-Upload-Id` and `Huron-Sha256`, which tusd adds to the final PATCH.
      6. When the receipt raises `UploadNotFound` or `UploadStateConflict` (the collection was
         deleted, or the creator terminated the upload during the hash), the API, under the same
-        lock, unlinks the destination when its inode equals the placed inode, removes the empty
-        intermediate directories that sub-step 5 made, and answers the refusal with the domain
-        error's status (404 or 409). A crash between the link and the receipt is an accepted
-        residual, which `file_unrecorded` reports.
+        lock, undoes the placement when the destination's inode equals the placed inode: with a
+        backup it `rename`s the backup over the destination, so the replaced bytes return;
+        without one it unlinks the destination. It removes the empty intermediate directories
+        that sub-step 5 made, and answers the refusal with the domain error's status (404 or
+        409). A crash between the link and the receipt is an accepted residual, which
+        `file_unrecorded` reports; a backup left by a crash is reported as `stale_part`.
      7. Idempotent branch (another attempt moved the source): the API reads the row again.
         `placed`: as sub-step 1. `pending` and the destination exists with the declared size: the
-        API opens the destination, hashes it, takes the inode with `fstat` and sends the receipt.
-        Otherwise the route answers 500 `STORAGE_FAILED`, and tusd calls the hook again.
+        API opens the destination, hashes it, takes the inode with `fstat`, sends the receipt and
+        unlinks the backup when present. Otherwise the route answers 500 `STORAGE_FAILED`, and
+        tusd calls the hook again.
 
      A receipt for a row that is already `placed` with the same `(size, sha256)` keeps the first
      inode and succeeds (M11.1's behaviour). `OUTSIDE_LAKE` and a size mismatch are definitive:
@@ -833,7 +843,7 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   | activate collection | `POST /collections/{id}/activate` | `mkdir` mode `0750` (setgid and group inherited), then `metadata.json` written atomically, mode `0644` |
   | publish metadata, set or unset the override | `PATCH /collections/{id}` | `metadata.json` rewritten when its bytes changed (settled collections only) |
   | assign a schema | `PUT /catalogs/{catalog}/schema` | `metadata.json` of each settled collection whose bytes changed |
-  | delete collection | `DELETE /collections/{id}` | drain the delete's removals ("Removals and the inode guard"), then unlink `metadata.json`, `.huron-part` files and empty subdirectories, then `rmdir` |
+  | delete collection | `DELETE /collections/{id}` | drain the delete's removals ("Removals and the inode guard"), then unlink `metadata.json`, `.huron-part` and `.huron-prev` files and empty subdirectories, then `rmdir` |
   | delete namespace, catalog | `DELETE /catalogs/{catalog}/namespaces/{path}`, `DELETE /catalogs/{catalog}` | `rmdir` |
   | delete organization (unmanaged, unrooted) | `DELETE /organizations/{org}` | `rmdir` |
 
@@ -949,7 +959,7 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   covers `<id>`, `<id>.info`, `<id>.lock`, `<id>.stop` and the temporary files of tusd's lock.
   tusd itself never cleans up. The sweep touches nothing outside `.tus-uploads`. Stale lock files
   of an unclean stop are removed before tusd starts ("Deployment"). `huron adm check` reports
-  `.huron-part` files in collections as `stale_part`.
+  `.huron-part` and `.huron-prev` files in collections as `stale_part`.
 - **Version 1 directories.** The directories and files of version 1 belong to the users who made
   them and carry the modes of version 1 (`2770` directories, `0660` files). `U` cannot `chown`.
   So the storage administrator runs two printed root scripts once, as root, on a machine with a
@@ -1152,7 +1162,8 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     the entries it cannot reach.
   - Gone: `acl_drift`, `org_acl_drift`, `disk_task_failed`, `disk_task_stale`,
     `disk_task_pending`.
-  - `stale_part` reports only `.huron-part` files older than one hour, inside collections.
+  - `stale_part` reports only `.huron-part` and `.huron-prev` files older than one hour, inside
+    collections.
     Readers cannot read `.tus-uploads` (mode `0700`), and the sweep cleans it.
   - `file_unrecorded` covers placed, uncommitted files, and a file that a crash left between the
     link and the receipt of a placement.
@@ -1748,13 +1759,15 @@ no work on disk. A row that is `failed` or `terminated` gets the refusal `UPLOAD
    `STORAGE_FAILED` in the body, the row becomes `failed` through `Uploads.fail`, and the hint is
    `huron adm repair`. It makes the missing intermediate directories below it (section 6.2
    rules) and links into place (`pkg.fs.posix.link_into_place`): `link`, or on `EEXIST` a link
-   to `.<name>.<id>.huron-part` and a `rename` over the destination. It unlinks the upload and
-   its `.info` (a missing file is not an error). Then it calls
-   `Uploads.receipt(id, size, sha256, inode)` with the inode of step 2, still under the lock.
+   to `.<name>.<id>.huron-part`, a link of the old file to the backup `.<name>.<id>.huron-prev`
+   and a `rename` over the destination. It unlinks the upload and its `.info` (a missing file is
+   not an error). Then it calls `Uploads.receipt(id, size, sha256, inode)` with the inode of step
+   2, still under the lock, and unlinks the backup.
 4. When the receipt raises `UploadNotFound` or `UploadStateConflict` (the collection was
-   deleted, or the creator terminated the upload during the hash), it unlinks the destination
-   when its inode is the placed inode, removes the empty intermediate directories it made, and
-   refuses with the domain error's status (404 or 409).
+   deleted, or the creator terminated the upload during the hash), it undoes the placement when
+   the destination's inode is the placed inode (the backup is renamed back over the destination,
+   or without a backup the destination is unlinked), removes the empty intermediate directories
+   it made, and refuses with the domain error's status (404 or 409).
 5. When the source is gone at step 2 or at the link (another attempt moved it), it reads the row
    again. A `placed` row is answered as above. A `pending` row whose destination exists with the
    declared size gets the hash and the inode of the destination, then the receipt. Anything else
@@ -1773,7 +1786,7 @@ inode guard. A missing file or a different inode finishes the row. Any other err
 claimed for the runner, and the commit keeps its answer. After an unlink, the API removes the
 empty directories from the file's parent up to the collection directory, and the collection
 directory itself when no settled collection is at it. `huron adm check` reports `.huron-part`
-files older than one hour as `stale_part`.
+and `.huron-prev` files older than one hour as `stale_part`.
 
 ### 6.4 What `huron adm check` reports
 
@@ -3602,10 +3615,10 @@ failed inheritance visible.
     existing empty directory is adopted; any other existing entry raises `STORAGE_FAILED`),
     `write_metadata(path, body)` (atomic, `0644`, equal bytes not written again),
     `remove_collection(path)` (placed files are the removals' job, so this removes
-    `metadata.json`, `.huron-part` files and empty subdirectories, then the directory, and
-    reports `kept` on `ENOTEMPTY`), `remove(path)`, and `Repairer(storage, writer)` with
-    `repair(plan) -> RepairResult(changed, warnings, failed)`. Repair fixes permission bits only.
-    A directory without the setgid bit, or with a group that is not the catalog's, puts the path
+    `metadata.json`, `.huron-part` and `.huron-prev` files and empty subdirectories, then the
+    directory, and reports `kept` on `ENOTEMPTY`), `remove(path)`, and
+    `Repairer(storage, writer)` with `repair(plan) -> RepairResult(changed, warnings, failed)`.
+    Repair fixes permission bits only. A directory without the setgid bit, or with a group that is not the catalog's, puts the path
     into `failed` with the reason `mode_drift`, for the storage administrator
     (`huron adm provision-catalogs`). `EPERM` on an entry (version 1, not owned by `U`) puts the
     path into `failed` with the reason, and the walk goes on.
@@ -3614,8 +3627,18 @@ failed inheritance visible.
     directories, the share group and the `metadata.json` files) and `Repairs.organization(actor, org)`
     (authorizes `CATALOG_GRANT_ADMIN` on the organization). `core/lake/bootstrap.py` builds it.
   - `src/huron/applications/api/disk.py`: `ensure_directory`, `write_metadata`,
-    `remove_directory`, `remove_collection`, `repair`. `run` uses a dedicated
-    `ThreadPoolExecutor` of 8 workers in place of the default executor.
+    `remove_directory`, `remove_collection`, `repair`. A second dedicated `ThreadPoolExecutor`,
+    the hash pool of 4 workers, runs `Placer.measure` and `measure_destination`; the readiness
+    probe and every other disk call stay on the disk pool of 8 workers ("Lake path"). `close()`
+    shuts both down.
+  - The overwrite backup of "Upload flow" sub-steps 5 to 7 (decided 2026-11-07, after M11.4's
+    verification): `pkg/fs/posix.link_into_place` links the existing destination to
+    `.<name>.<id>.huron-prev` before the `rename` and reports the backup it made;
+    `Placer.link` returns it in `Linked`; `Placer.undo` renames the backup over the destination
+    when the destination's inode is the placed inode, and otherwise keeps today's behaviour;
+    `LakeDisk.place` unlinks the backup after a successful receipt in sub-step 5 and in the
+    replay of sub-step 7. `Storage` gains the `rename` it needs, in `PosixStorage` and
+    `MemoryStorage`.
   - `src/huron/applications/api/routes/v1/endpoints/organizations.py`, `catalogs.py`,
     `namespaces.py`, `collections.py`: before the transaction each verb resolves its path with
     `place_of` and `resolve`, so `OUTSIDE_LAKE` 422 comes before any row changes. Then the verb
@@ -3643,7 +3666,15 @@ failed inheritance visible.
     wrong mode, a missing setgid bit reported and not changed, a stale `metadata.json`, recursive over a
     tree with `.tus-uploads` skipped, `EPERM` in `failed` while the walk goes on, the privileges,
     idempotence), `tests/unit/lake/test_repairs.py` (the plan, the privileges),
-    `tests/unit/storage/test_directories.py`.
+    `tests/unit/storage/test_directories.py`. For the backup: `tests/unit/pkg/test_posix.py`
+    and `tests/unit/storage/test_placement.py` (the backup made on an overwrite and not on a new
+    name, a stale backup replaced, undo restoring the old bytes and inode), and
+    `tests/unit/api/test_upload_hooks.py` (an overwrite of a committed file refused after the
+    link, by a collection delete and by a terminate during the hash, leaves the old bytes at the
+    destination with their inode and no backup; a successful overwrite leaves no backup; a
+    replay after a crash between the rename and the receipt removes the backup). For the pools:
+    `tests/unit/api/test_lake_disk.py` (with all 4 hash workers blocked, `ready()` answers in
+    time and a metadata call completes; deterministic, with events and bounded waits).
 - Verification: `make gate`; `uv run pytest tests/unit/api/test_openapi_snapshot.py`; from
   `web/`, `npm run check` and `npm test`.
 - Dependencies: M11.4.
