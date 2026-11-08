@@ -514,6 +514,8 @@ async def test_removals(uow: UnitOfWork) -> None:
         assert await tx.uploads.get_removal(gone.id) == orphan
         now = START + timedelta(hours=1)
         claimed = await tx.uploads.claim_removals(now, START, 2)
+        assert isinstance(claimed, list)
+        assert all(type(row) is Removal for row in claimed)
         assert claimed == [replace(first, claimed_at=now), replace(second, claimed_at=now)]
         assert await tx.uploads.get_removal(first.id) == replace(first, claimed_at=now)
         rest = await tx.uploads.claim_removals(now, START, 10)

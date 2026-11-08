@@ -104,7 +104,7 @@ class MemoryUploads:
 
     async def claim_removals(
         self, now: datetime, stale_before: datetime, limit: int
-    ) -> Sequence[Removal]:
+    ) -> list[Removal]:
         """Claim the oldest claimable removals."""
         claimable = sorted(
             (

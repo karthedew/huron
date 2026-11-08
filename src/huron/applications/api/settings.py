@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import yaml
@@ -139,7 +139,8 @@ class Settings(BaseSettings):
     ``organizations`` present (even an empty list) puts the service in managed mode: the
     configuration declares the organizations. ``HURON_ORGANIZATIONS`` (a JSON list) replaces
     the file's list. ``log_level`` is a standard level name in any case; another value fails
-    startup. Without ``mount_prefix``, organizations without a root lie below ``lake_path``.
+    startup. An organization without a root lies directly below ``lake_path``. When
+    ``lake_path`` is set, every declared root must be ``lake_path`` or lie below it.
     """
 
     model_config = SettingsConfigDict(env_prefix="HURON_", extra="ignore")
@@ -160,7 +161,6 @@ class Settings(BaseSettings):
     log_level: LogLevel = "INFO"
     organizations: list[OrganizationEntry] | None = None
     lake_path: Path | None = None
-    mount_prefix: Path | None = None
     uploads_url: str | None = None
     upload_ttl: Duration = timedelta(hours=24)
     upload_max_size: int = Field(default=0, ge=0)
@@ -208,7 +208,7 @@ class Settings(BaseSettings):
                 return value
         return value
 
-    @field_validator("lake_path", "mount_prefix")
+    @field_validator("lake_path")
     @classmethod
     def _absolute(cls, value: Path | None) -> Path | None:
         if value is not None and (not value.is_absolute() or ".." in value.parts):
@@ -231,6 +231,21 @@ class Settings(BaseSettings):
             self._declarations = Declarations.of(declared)
         except HuronError as error:
             raise ValueError(error.message) from error
+        return self
+
+    @model_validator(mode="after")
+    def _roots_in_lake(self) -> Settings:
+        lake_path = self.lake_path
+        if lake_path is None:
+            return self
+        for declared in self._declarations:
+            if declared.root is not None and not PurePosixPath(declared.root).is_relative_to(
+                lake_path
+            ):
+                raise ValueError(
+                    f"The root {declared.root} of organization {declared.name}"
+                    f" is not below lake_path {lake_path}"
+                )
         return self
 
     @property

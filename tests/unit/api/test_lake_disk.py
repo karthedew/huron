@@ -22,7 +22,7 @@ from huron.applications.api.disk import (
     LakeDisk,
 )
 from huron.core.lake.organizations.declarations import Declarations, DeclaredOrganization
-from huron.core.lake.uploads.models import Upload, UploadState
+from huron.core.lake.uploads.models import Failure, Upload, UploadState
 from huron.core.storage import (
     MARKER_FILE,
     SHARE_GROUP_PENDING,
@@ -50,6 +50,7 @@ from tests.support.disk import (
 from tests.support.lake import CONTRIBUTOR, World, make_world, seed, settled_collection
 
 ROOTS = LAKE / "roots"
+RUN7 = LAKE / "helio" / "heliophysics" / "solar-wind" / "run7"
 DECLARED = Declarations.of(
     [
         DeclaredOrganization("helio", root=str(ROOTS)),
@@ -114,17 +115,6 @@ async def test_a_path_outside_the_lake_is_refused(declared_disk: LakeDisk, relat
     assert (raised.value.code, raised.value.status) == ("OUTSIDE_LAKE", 422)
 
 
-async def test_a_mount_prefix_outside_the_lake_puts_unrooted_organizations_outside(
-    storage: MemoryStorage, clock: FrozenClock
-) -> None:
-    disk = lake_disk(storage, clock, mount_prefix=Path("/projects/huron"))
-    try:
-        with pytest.raises(OutsideLake, match="outside the lake /lake"):
-            await disk.resolve("helio/heliophysics")
-    finally:
-        disk.close()
-
-
 @pytest.mark.parametrize(
     ("mounted", "relative"),
     [
@@ -145,8 +135,7 @@ async def test_a_path_on_another_filesystem_is_refused(
 async def test_a_lake_path_that_is_not_a_directory_is_unavailable(
     storage: MemoryStorage, clock: FrozenClock
 ) -> None:
-    missing = Path("/unmounted")
-    disk = lake_disk(storage, clock, lake_path=missing, mount_prefix=missing)
+    disk = lake_disk(storage, clock, lake_path=Path("/unmounted"))
     try:
         with pytest.raises(LakeUnavailable) as raised:
             await disk.resolve("helio/heliophysics")
@@ -454,12 +443,14 @@ class LinkPausingStorage(MemoryStorage):
         return linked
 
 
-async def received(world: World, storage: MemoryStorage, data: bytes) -> Upload:
-    """A pending upload of ``data`` to ``c.bin`` of collection run7, received by tusd."""
+async def received(
+    world: World, storage: MemoryStorage, data: bytes, rel_path: str = "c.bin"
+) -> Upload:
+    """A pending upload of ``data`` to ``rel_path`` of collection run7, received by tusd."""
     collection = await settled_collection(world.lake)
-    storage.add_root(LAKE / "helio" / "heliophysics" / "solar-wind" / "run7")
+    storage.add_root(RUN7)
     storage.make_directory(LAKE / UPLOAD_DIR, 0o700)
-    upload = await world.lake.uploads.begin(CONTRIBUTOR, collection, "c.bin", len(data))
+    upload = await world.lake.uploads.begin(CONTRIBUTOR, collection, rel_path, len(data))
     storage.write_bytes(LAKE / UPLOAD_DIR / str(upload.id), data, 0o600)
     return upload
 
@@ -481,7 +472,32 @@ async def test_place_links_the_upload_and_records_its_receipt(
     placed = await disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
     assert (placed.state, placed.size, placed.inode) == (UploadState.PLACED, 5, inode)
     assert placed.sha256 == hashlib.sha256(b"bytes").hexdigest()
-    assert storage.inode(LAKE / destination.path) == inode
+    assert storage.inode(RUN7 / "c.bin") == inode
+
+
+async def test_place_puts_the_names_of_the_path_below_the_collection_directory(
+    world: World, disk: LakeDisk, storage: MemoryStorage
+) -> None:
+    upload = await received(world, storage, b"bytes", "day1/solar/c.bin")
+    storage.nodes[RUN7].mode = 0o2750
+    inode = storage.inode(LAKE / UPLOAD_DIR / str(upload.id))
+    destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
+    await disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+    assert storage.inode(RUN7 / "day1" / "solar" / "c.bin") == inode
+
+
+async def test_a_collection_directory_on_another_filesystem_fails_the_upload(
+    world: World, disk: LakeDisk, storage: MemoryStorage
+) -> None:
+    upload = await received(world, storage, b"bytes")
+    storage.mount(LAKE / "helio", 7)
+    destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
+    with pytest.raises(OutsideLake, match="different filesystem") as raised:
+        await disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+    failed = await world.lake.uploads.get(CONTRIBUTOR, upload.id)
+    assert failed.state is UploadState.FAILED
+    assert failed.failure == Failure("OUTSIDE_LAKE", raised.value.message)
+    assert storage.inode(RUN7 / "c.bin") is None
 
 
 async def test_a_cancelled_placement_records_its_receipt_before_it_frees_the_path(
@@ -496,7 +512,7 @@ async def test_a_cancelled_placement_records_its_receipt_before_it_frees_the_pat
             disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
         )
         assert await asyncio.to_thread(storage.linking.wait, SIGNAL_TIMEOUT)
-        path = LAKE / destination.path
+        path = RUN7 / "c.bin"
         after = asyncio.create_task(disk.run(path, lambda: storage.order.append("after")))
         placing.cancel()
         storage.release.set()

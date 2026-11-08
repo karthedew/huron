@@ -107,14 +107,13 @@ class UploadTarget:
     tusd: FakeTusd
 
 
-async def upload_target(api: Service, lake: Path, base: Path | None = None) -> UploadTarget:
-    """Collection ``run7`` in the seeded ``api``, its setgid directory below ``base``, and tusd.
+async def upload_target(api: Service, lake: Path) -> UploadTarget:
+    """Collection ``run7`` in the seeded ``api``, its setgid directory below ``lake``, and tusd.
 
-    ``base`` is the organizations' base, ``lake`` by default. The directory stands in for the
-    one activation makes.
+    The directory stands in for the one activation makes.
     """
     collection = await active_collection(api)
-    directory = (base or lake).joinpath(*collection["path"].split("/"))
+    directory = lake.joinpath(*collection["path"].split("/"))
     directory.mkdir(parents=True)
     os.chmod(directory, 0o2750)
     return UploadTarget(collection["id"], collection["version"], directory, FakeTusd(api, lake))

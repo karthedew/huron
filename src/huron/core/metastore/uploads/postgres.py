@@ -136,7 +136,7 @@ class PostgresUploads:
 
     async def claim_removals(
         self, now: datetime, stale_before: datetime, limit: int
-    ) -> Sequence[Removal]:
+    ) -> list[Removal]:
         """Claim the oldest claimable removals, skipping rows another claim holds locked."""
         rows = await self._db.fetch(
             "update huron.removals set claimed_at = $1 where id in ("

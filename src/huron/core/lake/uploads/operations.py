@@ -29,12 +29,11 @@ from huron.core.lake.uploads.errors import (
     UploadTooLarge,
 )
 from huron.core.lake.uploads.models import (
-    ClaimedRemoval,
     Destination,
     Failure,
+    Removal,
     Upload,
     UploadState,
-    file_path,
 )
 from huron.core.security.rbac import Authorizer, Privilege, Scope
 from huron.pkg.errors import Conflict, Invalid
@@ -47,7 +46,6 @@ if TYPE_CHECKING:
 
     from huron.core.lake.catalogs.models import Catalog
     from huron.core.lake.collections.models import Collection
-    from huron.core.lake.organizations.declarations import Declarations
     from huron.core.lake.transaction import Transaction, UnitOfWork
     from huron.core.security.rbac import Actor
     from huron.pkg.clock import Clock
@@ -72,14 +70,12 @@ class Uploads:
         self,
         uow: UnitOfWork,
         clock: Clock,
-        declarations: Declarations,
         *,
         ttl: timedelta,
         max_size: int,
     ) -> None:
         self._uow = uow
         self._clock = clock
-        self._declarations = declarations
         self._ttl = ttl
         self._max_size = max_size
 
@@ -115,10 +111,7 @@ class Uploads:
             collection, catalog = await _writable(tx, actor, upload.collection_id)
             view = await collection_view(tx, collection, catalog)
             assert view.disk_path is not None
-            return Destination(
-                file_path(view.disk_path, upload.rel_path),
-                self._declarations.share_root(view.organization),
-            )
+            return Destination(view.disk_path, upload.rel_path)
 
     async def receipt(self, upload_id: uuid.UUID, size: int, sha256: str, inode: int) -> Upload:
         """Record that the upload's bytes are at their destination.
@@ -173,15 +166,11 @@ class Uploads:
         async with self._uow.transaction() as tx:
             return _owned(await tx.uploads.get(upload_id), actor, upload_id)
 
-    async def claim_removals(self, limit: int | None = None) -> list[ClaimedRemoval]:
+    async def claim_removals(self, limit: int | None = None) -> list[Removal]:
         """Claim up to ``limit`` removals, oldest first: unclaimed ones and stale claims."""
         now = self._clock.now()
         async with self._uow.transaction() as tx:
-            removals = await tx.uploads.claim_removals(now, now - REMOVAL_LEASE, clamp_limit(limit))
-        return [
-            ClaimedRemoval(removal, self._declarations.share_root(removal.organization))
-            for removal in removals
-        ]
+            return await tx.uploads.claim_removals(now, now - REMOVAL_LEASE, clamp_limit(limit))
 
     async def removal_still_valid(self, removal_id: uuid.UUID) -> bool:
         """Whether the API may still unlink the removal's file.

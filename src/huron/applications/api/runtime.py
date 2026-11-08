@@ -173,7 +173,6 @@ def _disk(settings: Settings, clock: Clock) -> LakeDisk | None:
     return LakeDisk(
         PosixStorage(),
         lake_path,
-        settings.mount_prefix or lake_path,
         str(settings.instance_id),
         settings.declarations,
         PathLocks(),

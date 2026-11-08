@@ -6,9 +6,7 @@ from datetime import timedelta
 
 import pytest
 
-from huron.core.lake.bootstrap import build_lake
 from huron.core.lake.files.models import CommitRequest, FileAdd, FileRecord
-from huron.core.lake.organizations.declarations import Declarations, DeclaredOrganization
 from huron.core.lake.uploads.errors import (
     UploadNotFound,
     UploadSizeMismatch,
@@ -146,18 +144,21 @@ async def test_begin_needs_a_settled_collection(seeded: World) -> None:
     assert raised.value.context == {"state": "draft", "allowed": ["active", "incomplete"]}
 
 
-async def test_placement_gives_the_destination(seeded: World, pending: Upload) -> None:
-    destination = await seeded.lake.uploads.placement(CONTRIBUTOR, pending.id)
-    assert destination == Destination(f"helio/heliophysics/solar-wind/run7/{PATH}", None)
-
-
-async def test_placement_gives_the_share_root_of_a_declared_organization(
+async def test_placement_gives_the_collection_directory_and_the_path_in_it(
     seeded: World, pending: Upload
 ) -> None:
-    declared = Declarations.of([DeclaredOrganization("helio", root="/data1/huron")])
-    lake = build_lake(seeded.store, seeded.clock, replace(SETTINGS, organizations=declared))
-    destination = await lake.uploads.placement(CONTRIBUTOR, pending.id)
-    assert destination.share_root == "/data1/huron"
+    destination = await seeded.lake.uploads.placement(CONTRIBUTOR, pending.id)
+    assert destination == Destination("helio/heliophysics/solar-wind/run7", PATH)
+
+
+async def test_a_destination_and_the_removal_of_its_upload_name_the_same_file(
+    seeded: World, pending: Upload
+) -> None:
+    destination = await seeded.lake.uploads.placement(CONTRIBUTOR, pending.id)
+    placed = await seeded.lake.uploads.receipt(pending.id, 10, SHA, INODE)
+    removal = placed.removal(destination.directory, seeded.clock.now())
+    assert (removal.directory, removal.rel_path) == (destination.directory, destination.rel_path)
+    assert removal.path == f"helio/heliophysics/solar-wind/run7/{PATH}"
 
 
 async def test_placement_is_for_the_creator_of_a_pending_upload(
@@ -297,8 +298,8 @@ async def test_only_the_creator_reads_an_upload(seeded: World, pending: Upload) 
 
 async def test_claimed_removals_carry_the_file_path(seeded: World, removal_id: uuid.UUID) -> None:
     _end_the_lease(seeded)
-    (claimed,) = await seeded.lake.uploads.claim_removals(10)
-    removal = claimed.removal
+    (removal,) = await seeded.lake.uploads.claim_removals(10)
+    assert isinstance(removal, Removal)
     assert (removal.id, removal.rel_path, removal.claimed_at) == (
         removal_id,
         "a.txt",
@@ -309,17 +310,6 @@ async def test_claimed_removals_carry_the_file_path(seeded: World, removal_id: u
         "helio",
         "helio/heliophysics/solar-wind/run7",
     )
-    assert claimed.share_root is None
-
-
-async def test_claimed_removals_carry_the_share_root_of_their_organization(
-    seeded: World, removal_id: uuid.UUID
-) -> None:
-    declared = Declarations.of([DeclaredOrganization("helio", root="/data1/huron")])
-    lake = build_lake(seeded.store, seeded.clock, replace(SETTINGS, organizations=declared))
-    _end_the_lease(seeded)
-    (claimed,) = await lake.uploads.claim_removals(10)
-    assert (claimed.removal.id, claimed.share_root) == (removal_id, "/data1/huron")
 
 
 @pytest.mark.parametrize(
@@ -330,7 +320,7 @@ async def test_a_claim_takes_a_bounded_number_of_removals(
     seeded: World, backlog: list[Removal], limit: int | None, taken: int
 ) -> None:
     claimed = await seeded.lake.uploads.claim_removals(limit)
-    assert [c.removal.id for c in claimed] == [r.id for r in backlog[:taken]]
+    assert [c.id for c in claimed] == [r.id for r in backlog[:taken]]
 
 
 async def test_a_queued_removal_stays_with_its_request_until_the_lease_ends(
@@ -342,7 +332,7 @@ async def test_a_queued_removal_stays_with_its_request_until_the_lease_ends(
     assert await seeded.lake.uploads.claim_removals(10) == []
     seeded.clock.advance(timedelta(seconds=1))
     (again,) = await seeded.lake.uploads.claim_removals(10)
-    assert (again.removal.id, again.removal.claimed_at) == (removal_id, seeded.clock.now())
+    assert (again.id, again.claimed_at) == (removal_id, seeded.clock.now())
     assert await seeded.lake.uploads.claim_removals(10) == []
 
 
@@ -359,7 +349,7 @@ async def test_claims_take_the_oldest_removals_up_to_the_limit(
     _end_the_lease(seeded)
     first = await seeded.lake.uploads.claim_removals(1)
     second = await seeded.lake.uploads.claim_removals(5)
-    assert [c.removal.rel_path for c in (*first, *second)] == ["b", "a"]
+    assert [c.rel_path for c in (*first, *second)] == ["b", "a"]
     assert await seeded.lake.uploads.claim_removals(5) == []
 
 
@@ -425,7 +415,7 @@ async def test_a_removal_outlives_its_collection(seeded: World, orphan_id: uuid.
     assert await seeded.lake.uploads.removal_still_valid(orphan_id)
     _end_the_lease(seeded)
     (claimed,) = await seeded.lake.uploads.claim_removals(10)
-    assert claimed.removal == replace(removal, claimed_at=seeded.clock.now())
+    assert claimed == replace(removal, claimed_at=seeded.clock.now())
 
 
 async def test_a_collection_settled_at_the_same_directory_can_make_a_removal_invalid(

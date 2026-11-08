@@ -326,21 +326,6 @@ async def test_a_missing_collection_directory_fails_the_upload(
     assert not target.directory.exists()
 
 
-async def test_a_path_outside_the_lake_fails_the_upload(lake: Path, tmp_path: Path) -> None:
-    async with service(lake_path=lake, mount_prefix=tmp_path / "elsewhere") as api:
-        await seed_service(api)
-        target = await upload_target(api, lake, tmp_path / "elsewhere")
-        upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-        finished = await target.tusd.finish("dave", upload_id, len(DATA))
-        problem = problem_of(finished)
-        assert (problem["status"], problem["code"]) == (422, "OUTSIDE_LAKE")
-        failed = await state(api, upload_id)
-        assert (failed["state"], failed["failure"]) == (
-            "failed",
-            {"code": "OUTSIDE_LAKE", "message": problem["detail"]},
-        )
-
-
 async def test_a_wrong_marker_makes_tusd_send_the_hook_again(
     seeded_lake_api: Service, target: UploadTarget, lake: Path
 ) -> None:

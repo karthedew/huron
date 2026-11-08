@@ -71,7 +71,7 @@ _log = structlog.get_logger(__name__)
 class LakeDisk:
     """The lake mounted read-write at ``lake_path``, which this process alone writes.
 
-    Organizations without a root lie below ``mount_prefix``. Every path the lake hands out
+    Organizations without a root lie directly below ``lake_path``. Every path the lake hands out
     resolves at or below ``lake_path`` on the lake's own filesystem, because a placement links
     files and a hard link cannot cross filesystems. ``locks`` serialize the disk work of one
     path within this process. ``service_gid`` is the service group, the process's primary
@@ -82,7 +82,6 @@ class LakeDisk:
         self,
         storage: Storage,
         lake_path: Path,
-        mount_prefix: Path,
         instance_id: str,
         declarations: Declarations,
         locks: PathLocks,
@@ -93,7 +92,6 @@ class LakeDisk:
     ) -> None:
         self._storage = storage
         self._lake_path = lake_path
-        self._mount_prefix = mount_prefix
         self._instance_id = instance_id
         self._declarations = declarations
         self._locks = locks
@@ -143,13 +141,11 @@ class LakeDisk:
         return ready
 
     def place_of(self, organization: str) -> OrganizationPlace:
-        """Where ``organization``'s directory is: below its declared root, else the prefix."""
+        """Where ``organization``'s directory is: below its declared root, else ``lake_path``."""
         declared = self._declarations.get(organization)
         if declared is None:
-            return place_of(organization, None, False, self._mount_prefix)
-        return place_of(
-            organization, declared.root, True, self._mount_prefix, declared.export or None
-        )
+            return place_of(organization, None, False, self._lake_path)
+        return place_of(organization, declared.root, True, self._lake_path, declared.export or None)
 
     async def check_marker(self, place: OrganizationPlace) -> None:
         """Refuse with ``LAKE_UNAVAILABLE`` unless the marker guarding ``place`` is this lake's."""
@@ -198,6 +194,9 @@ class LakeDisk:
     ) -> Upload:
         """Place the actor's pending ``upload`` at ``destination`` and record its receipt.
 
+        The file goes to the names of ``destination.rel_path`` below the collection directory
+        ``destination.directory``.
+
         The hash runs in the hash pool, outside every lock. The link, the removal of tusd's files
         and the receipt run under the lock of the destination path. A file the placement
         replaces stays as a backup until the receipt is recorded. A receipt refused because the
@@ -209,15 +208,15 @@ class LakeDisk:
         lake or its marker refuses the write.
         """
         try:
-            path = await self.resolve(destination.path)
+            collection_dir = await self.resolve(destination.directory)
         except OutsideLake as error:
             await uploads.fail(upload.id, error.code, error.message)
             raise
-        await self.check_marker(self.place_of(_organization(destination.path)))
+        await self.check_marker(self.place_of(_organization(destination.directory)))
         source = self._placer.upload_file(upload.id)
         measured = await self._hash(lambda: self._placer.measure(source, upload.size))
-        depth = len(PurePosixPath(upload.rel_path).parts)
-        placement = _Placement(uploads, actor, upload, path, path.parents[depth - 1])
+        path = collection_dir.joinpath(*PurePosixPath(destination.rel_path).parts)
+        placement = _Placement(uploads, actor, upload, path, collection_dir)
         return await self._hold(path, lambda: self._settle(placement, measured))
 
     async def _settle(self, placement: _Placement, measured: Measured | None) -> Upload:

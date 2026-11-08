@@ -35,7 +35,6 @@ def lake_disk(
     *,
     declarations: Declarations = UNMANAGED,
     lake_path: Path = LAKE,
-    mount_prefix: Path | None = None,
     service_gid: int = SERVICE_GID,
     probe_timeout: float = PROBE_TIMEOUT,
 ) -> LakeDisk:
@@ -46,7 +45,6 @@ def lake_disk(
     return LakeDisk(
         storage,
         lake_path,
-        mount_prefix or lake_path,
         str(INSTANCE_ID),
         declarations,
         PathLocks(),

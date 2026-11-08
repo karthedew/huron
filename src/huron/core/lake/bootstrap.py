@@ -91,13 +91,7 @@ def build_lake(uow: UnitOfWork, clock: Clock, settings: LakeSettings) -> Lake:
         namespaces=Namespaces(uow, clock),
         collections=Collections(uow, clock, resolver),
         commits=Commits(uow, clock, settings.receipt_mode, settings.upload_ttl),
-        uploads=Uploads(
-            uow,
-            clock,
-            settings.organizations,
-            ttl=settings.upload_ttl,
-            max_size=settings.upload_max_size,
-        ),
+        uploads=Uploads(uow, clock, ttl=settings.upload_ttl, max_size=settings.upload_max_size),
         audit=AuditLog(uow),
         keys=SigningKeys(uow, clock, settings.key_overlap),
     )

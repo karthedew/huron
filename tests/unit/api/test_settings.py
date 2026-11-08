@@ -13,7 +13,7 @@ from huron.applications.api.settings import CONFIG_FILE_VARIABLE, Settings
 from huron.core.lake.organizations.declarations import DeclaredOrganization
 from huron.core.lake.organizations.models import OrganizationGroups
 from huron.core.lake.uploads.models import ReceiptMode
-from tests.support.api import INSTANCE_ID
+from tests.support.api import INSTANCE_ID, settings
 
 REQUIRED = {
     "HURON_INSTANCE_ID": str(INSTANCE_ID),
@@ -256,7 +256,7 @@ def required(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
 
 def test_the_lake_and_upload_settings_have_their_defaults(required: pytest.MonkeyPatch) -> None:
     settings = Settings()  # type: ignore[call-arg]
-    assert (settings.lake_path, settings.mount_prefix, settings.uploads_url) == (None, None, None)
+    assert (settings.lake_path, settings.uploads_url) == (None, None)
     assert settings.receipt_mode is ReceiptMode.OPTIONAL
     assert settings.upload_ttl == timedelta(hours=24)
     assert settings.upload_max_size == 0
@@ -270,7 +270,6 @@ def test_the_lake_and_upload_settings_have_their_defaults(required: pytest.Monke
 def test_the_lake_and_upload_settings_are_read(required: pytest.MonkeyPatch) -> None:
     values = {
         "HURON_LAKE_PATH": "/data1/huron",
-        "HURON_MOUNT_PREFIX": "/data1/huron/unrooted",
         "HURON_UPLOADS_URL": "https://huron.example.org/files/",
         "HURON_UPLOAD_TTL": "PT12H",
         "HURON_UPLOAD_MAX_SIZE": "1073741824",
@@ -284,7 +283,6 @@ def test_the_lake_and_upload_settings_are_read(required: pytest.MonkeyPatch) -> 
         required.setenv(name, value)
     settings = Settings()  # type: ignore[call-arg]
     assert settings.lake_path == Path("/data1/huron")
-    assert settings.mount_prefix == Path("/data1/huron/unrooted")
     assert settings.uploads_url == "https://huron.example.org/files/"
     assert settings.receipt_mode is ReceiptMode.REQUIRED
     assert settings.upload_ttl == timedelta(hours=12)
@@ -296,9 +294,11 @@ def test_the_lake_and_upload_settings_are_read(required: pytest.MonkeyPatch) -> 
 
 
 def test_the_file_sets_the_lake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config(tmp_path, monkeypatch, FILE + "lake_path: /data1/huron\nupload_hook_timeout: PT55M\n")
+    rooted_in_the_lake = FILE.replace("root: /data2/huron", "root: /data1/huron/geo")
+    text = rooted_in_the_lake + "lake_path: /data1/huron\nupload_hook_timeout: PT55M\n"
+    config(tmp_path, monkeypatch, text)
     settings = Settings()  # type: ignore[call-arg]
-    assert (settings.lake_path, settings.mount_prefix) == (Path("/data1/huron"), None)
+    assert settings.lake_path == Path("/data1/huron")
     assert settings.upload_hook_timeout == timedelta(minutes=55)
 
 
@@ -315,7 +315,6 @@ def test_the_file_sets_the_lake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         ("HURON_SERVICE_UID", "-1"),
         ("HURON_LAKE_PATH", "data1/huron"),
         ("HURON_LAKE_PATH", "/data1/../huron"),
-        ("HURON_MOUNT_PREFIX", "projects"),
     ],
 )
 def test_an_out_of_range_lake_or_upload_setting_fails(
@@ -338,3 +337,34 @@ def test_receipts_are_required_with_a_lake_and_optional_without(
     assert Settings().receipt_mode is ReceiptMode.OPTIONAL  # type: ignore[call-arg]
     required.setenv("HURON_LAKE_PATH", "/data1/huron")
     assert Settings().receipt_mode is ReceiptMode.REQUIRED  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("root", ["/data1/huron", "/data1/huron/geo", "/data1/huron/a/b"])
+def test_a_root_at_or_below_lake_path_loads(root: str) -> None:
+    loaded = settings(lake_path="/data1/huron", organizations=[{"name": "geo", "root": root}])
+    declared = loaded.declarations.get("geo")
+    assert declared is not None and declared.root == root
+
+
+def test_an_organization_without_a_root_loads_with_a_lake() -> None:
+    loaded = settings(lake_path="/data1/huron", organizations=[{"name": "geo"}])
+    assert loaded.declarations.share_root("geo") is None
+
+
+@pytest.mark.parametrize("root", ["/data2/huron", "/data1/huron2", "/data1", "/"])
+def test_a_root_outside_lake_path_fails_startup(root: str) -> None:
+    organizations = [{"name": "helio", "root": "/data1/huron"}, {"name": "geo", "root": root}]
+    message = f"The root {root} of organization geo is not below lake_path /data1/huron"
+    with pytest.raises(ValidationError, match=message):
+        settings(lake_path="/data1/huron", organizations=organizations)
+
+
+def test_without_lake_path_a_root_can_be_anywhere() -> None:
+    loaded = settings(organizations=[{"name": "geo", "root": "/data2/huron"}])
+    assert loaded.declarations.share_root("geo") == "/data2/huron"
+
+
+def test_mount_prefix_is_an_unknown_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config(tmp_path, monkeypatch, "mount_prefix: /projects/huron\n")
+    with pytest.raises(ValueError, match="unknown settings: mount_prefix"):
+        settings()

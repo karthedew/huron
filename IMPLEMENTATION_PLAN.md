@@ -4253,7 +4253,7 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
   keeps the CLI key); `grep -rn "\.share_root\b"
   src/huron/core/lake/uploads src/huron/applications/api/disk.py` prints nothing.
 - Dependencies: M11.9a.
-- Status: pending
+- Status: complete
 
 #### M11.5c Containment: `LakePath`, the descriptor traversal and the reduced port
 

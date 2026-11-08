@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 __all__ = [
-    "ClaimedRemoval",
     "Destination",
     "Failure",
     "ReceiptMode",
@@ -138,8 +137,8 @@ class Removal:
     """A file the API still has to unlink.
 
     A commit queues one for each file it removes, and deleting a collection queues one for each
-    of its placed uploads. ``path`` is the file's path in the form of :attr:`Destination.path`, so
-    a removal outlives its collection: ``collection_id`` becomes ``None`` when the collection is
+    of its placed uploads. ``path`` is the file's path in the API's form (:func:`file_path`), so a
+    removal outlives its collection: ``collection_id`` becomes ``None`` when the collection is
     deleted. ``commit_id`` is the commit that removed the file, ``None`` once that commit is gone
     with its collection or when no commit removed it. ``inode`` is the inode the file had when
     Huron recorded or placed it, ``None`` when Huron never learned it. A removal unlinks only the
@@ -201,21 +200,13 @@ class Removal:
 
 @dataclass(frozen=True, slots=True)
 class Destination:
-    """Where the API places an upload.
+    """Where the API places an upload: the names, not a joined path.
 
-    ``path`` is the file's path below its organization's base, in the form the API gives every
-    collection path (``<organization>/<catalog>/<namespace path>/<collection>/<rel_path>``).
-    ``share_root`` is the organization's configured root, or ``None`` when the mount prefix is
-    the base.
+    ``directory`` is the collection's ``disk_path``, in the form the API gives every collection
+    path (``<organization>/<catalog>/<namespace path>/<collection>``). ``rel_path`` is the
+    upload's path inside that directory. A :class:`Removal` names its file with the same two
+    fields.
     """
 
-    path: str
-    share_root: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class ClaimedRemoval:
-    """A claimed removal, with its organization's share root."""
-
-    removal: Removal
-    share_root: str | None
+    directory: str
+    rel_path: str

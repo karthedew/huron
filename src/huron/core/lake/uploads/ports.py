@@ -61,7 +61,7 @@ class UploadStore(Protocol):
 
     async def claim_removals(
         self, now: datetime, stale_before: datetime, limit: int
-    ) -> Sequence[Removal]:
+    ) -> list[Removal]:
         """Claim up to ``limit`` removals, oldest first, at ``now``.
 
         A removal is claimable when nobody claimed it, or when its claim is older than
