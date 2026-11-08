@@ -21,7 +21,6 @@ from huron.applications.cli.commands.common import (
     table_mode,
 )
 from huron.applications.cli.errors import ApiError, CliError, ExitCode, StorageFailure, UsageError
-from huron.applications.cli.identifiers import qualify
 from huron.applications.cli.inventory import CatalogInventory, take_inventory
 from huron.applications.cli.mount import (
     PREFIX_MARKER_HINT,
@@ -125,7 +124,6 @@ def grant(
     """
     target = _grant_target(ctx, role, organization, catalog)
     _set_role(ctx, role, target, sorted({*target.groups, group}))
-    _remind(ctx, role, target)
 
 
 @adm_app.command("revoke", rich_help_panel=ACCESS)
@@ -146,47 +144,6 @@ def revoke(
     if group not in target.groups and group in target.inherited:
         raise _inherited(ctx, role, group, target)
     _set_role(ctx, role, target, [g for g in target.groups if g != group])
-    _remind(ctx, role, target)
-
-
-@adm_app.command("apply-acl", rich_help_panel=ACCESS)
-def apply_acl(
-    ctx: typer.Context,
-    identifier: Annotated[
-        str,
-        typer.Argument(help="A catalog, a namespace (`catalog.namespace`) or a collection."),
-    ],
-    recursive: Annotated[
-        bool,
-        typer.Option("--recursive", "-R", help="Also apply the plans to all directories below it."),
-    ] = False,
-) -> None:
-    """Re-apply the ACL plans to the directories that you own.
-
-    The exit code is 1 when the CLI could not change some directories.
-    """
-    found = services(ctx)
-    target = qualify(identifier, found.catalog())
-    catalog = target.split(".")[0]
-    inventory = take_inventory(api(ctx), catalog, files=False)
-    mount = found.mount()
-    mount.verify(str(inventory.catalog["organization"]))
-    selected = _selected(inventory.directories(), target, catalog, recursive)
-    if not selected:
-        raise StorageFailure(f"{target} has no directory, so there is no ACL plan to apply")
-    skipped = 0
-    for name, disk_path, kind in selected:
-        path = mount.path(disk_path)
-        if not mount.storage.is_directory(path) or not mount.storage.owned_by_me(path):
-            found.err.print(
-                f"skipped (you do not own it, or it does not exist): {path}", markup=False
-            )
-            skipped += 1
-            continue
-        changed = mount.apply(disk_path, kind, inventory.groups)
-        say(ctx, f"{'changed' if changed else 'unchanged'}: {name}")
-    if skipped:
-        raise typer.Exit(1)
 
 
 @adm_app.command("check", rich_help_panel=SHARE)
@@ -291,16 +248,9 @@ def provision_orgs(
 
 def declared_groups_hint(role: str) -> str:
     """The hint for a 409 ``ORGANIZATION_DECLARED`` on an organization-wide ``role``."""
-    after = (
-        "To re-apply its directory ACL, run `huron adm provision-orgs`"
-        if role == "org_admin"
-        else (
-            "To re-apply the directory ACLs of its catalogs, run `huron adm apply-acl <catalog> -R`"
-        )
-    )
     return (
         "the service configuration declares the groups of this organization."
-        f" Edit `groups.{role}` there. Restart the service. {after}"
+        f" Edit `groups.{role}` there. Then restart the service"
     )
 
 
@@ -395,40 +345,6 @@ def _set_role(ctx: typer.Context, role: str, target: _GrantTarget, groups: list[
         if target.organization is not None and error.code == "ORGANIZATION_DECLARED":
             error.hint = declared_groups_hint(role)
         raise
-
-
-def _remind(ctx: typer.Context, role: str, target: _GrantTarget) -> None:
-    """Name the ``apply-acl`` runs that bring directory ACLs in line with a catalog role change.
-
-    A change on an organization concerns every catalog of it.
-    """
-    if role == "org_admin" or not table_mode(ctx):
-        return
-    if target.catalog is not None:
-        catalogs = [target.catalog]
-    else:
-        listed = api(ctx).pages("/api/v1/catalogs", {"organization": target.organization})
-        catalogs = [str(c["name"]) for c in listed]
-    for catalog in catalogs:
-        say(
-            ctx,
-            "To make the directory ACLs use the new groups,"
-            f" run `huron adm apply-acl {catalog} --recursive`",
-        )
-
-
-def _selected(
-    directories: Iterable[tuple[str, str, DirectoryKind]],
-    target: str,
-    catalog: str,
-    recursive: bool,
-) -> list[tuple[str, str, DirectoryKind]]:
-    def wanted(name: str) -> bool:
-        if name == target:
-            return True
-        return recursive and (target == catalog or name.startswith(f"{target}."))
-
-    return [item for item in directories if wanted(item[0])]
 
 
 def _drift(

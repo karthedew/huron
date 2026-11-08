@@ -19,22 +19,19 @@ huron delete [OPTIONS] COMMAND [ARGS]...
 
 ## Commands
 
-| Command                                               | Description                                                           |
-| ----------------------------------------------------- | --------------------------------------------------------------------- |
-| [`huron delete org`](#huron-delete-org)               | Delete an organization that has no catalogs, and its empty directory. |
-| [`huron delete catalog`](#huron-delete-catalog)       | Delete a catalog that has no namespaces, and its empty directory.     |
-| [`huron delete namespace`](#huron-delete-namespace)   | Delete an empty namespace and its directory.                          |
-| [`huron delete collection`](#huron-delete-collection) | Delete all files of a collection, the collection and its directory.   |
+| Command                                               | Description                                                                       |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [`huron delete org`](#huron-delete-org)               | Delete an organization that has no catalogs. The API deletes its empty directory. |
+| [`huron delete catalog`](#huron-delete-catalog)       | Delete a catalog that has no namespaces. The API deletes its empty directory.     |
+| [`huron delete namespace`](#huron-delete-namespace)   | Delete an empty namespace. The API deletes its empty directory.                   |
+| [`huron delete collection`](#huron-delete-collection) | Delete all files of a collection, the collection and its directory.               |
 
 ## `huron delete org`
 
-Delete an organization that has no catalogs, and its empty directory.
+Delete an organization that has no catalogs. The API deletes its empty directory.
 
 The service refuses to delete a declared organization. Instead, delete it from the service
-configuration. The CLI leaves the directory of an organization with a configured root to
-its storage admin. An organization that the managed configuration no longer declares has
-no known root. The CLI deletes its directory only when the mount prefix is its share.
-Otherwise, the CLI leaves the directory to its owner.
+configuration. The directory of an organization with a root stays for its storage admin.
 
 ```text
 huron delete org [OPTIONS] NAME
@@ -48,7 +45,7 @@ huron delete org [OPTIONS] NAME
 
 ## `huron delete catalog`
 
-Delete a catalog that has no namespaces, and its empty directory.
+Delete a catalog that has no namespaces. The API deletes its empty directory.
 
 ```text
 huron delete catalog [OPTIONS] NAME
@@ -62,7 +59,7 @@ huron delete catalog [OPTIONS] NAME
 
 ## `huron delete namespace`
 
-Delete an empty namespace and its directory.
+Delete an empty namespace. The API deletes its empty directory.
 
 ```text
 huron delete namespace [OPTIONS] IDENTIFIER
@@ -78,7 +75,9 @@ huron delete namespace [OPTIONS] IDENTIFIER
 
 Delete all files of a collection, the collection and its directory.
 
-This needs the creator of the collection or a catalog admin.
+This needs the creator of the collection or a catalog admin. The API deletes only the files
+that it recorded or placed. Other files stay in the directory, and `huron adm check` reports
+them as `dir_unrecorded`.
 
 ```text
 huron delete collection [OPTIONS] IDENTIFIER

@@ -12,7 +12,7 @@ from huron.applications.cli.output import OutputFormat, human_size, render
 from huron.applications.cli.state import Stage, StagedAdd, StateDir, WorkingCopy
 from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
-from tests.unit.cli.conftest import PREFIX
+from tests.unit.cli.conftest import PREFIX, make_collection
 
 BASE_ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
 RUN7 = "heliophysics.solar-wind.run7"
@@ -40,13 +40,12 @@ REPORT_KEYS = {
 @pytest.fixture
 def ready(seeded_cli: Cli) -> Cli:
     """run7 and run8 are active at version 3 with working copies; run8 is checked out."""
-    seeded_cli.login_as("carol")
-    seeded_cli.ok("create", "namespace", "heliophysics.solar-wind", "--allow-collections")
     seeded_cli.login_as("dave")
     seeded_cli.ok("catalog", "heliophysics")
     for name in ("run7", "run8"):
         seeded_cli.prompter.answers.extend(BASE_ANSWERS)
         seeded_cli.ok("create", "collection", f"solar-wind.{name}")
+        make_collection(seeded_cli, name)
     return seeded_cli
 
 

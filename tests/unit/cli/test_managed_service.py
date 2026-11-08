@@ -24,10 +24,11 @@ from huron.core.storage.memory import MemoryStorage
 from huron.pkg.identifiers import new_id
 from tests.support.api import INSTANCE_ID
 from tests.support.cli import API, Cli
-from tests.unit.cli.conftest import PREFIX
+from tests.unit.cli.conftest import PREFIX, make_collection, make_directory
 
 HELIO_ROOT = Path("/data1/huron")
 GEO_ROOT = Path("/data2/huron")
+HELIO = HELIO_ROOT / "helio"
 ORGANIZATIONS = [
     {
         "name": "helio",
@@ -81,8 +82,8 @@ def test_the_declared_organizations_are_provisioned_and_used(
 
     managed.login_as("bob")
     managed.ok("create", "catalog", "heliophysics", "--org", "helio")
-    assert roots.is_directory(HELIO_ROOT / "helio" / "heliophysics")
-    assert not roots.exists(PREFIX / "helio")
+    described = json.loads(managed.ok("-o", "json", "describe", "catalog", "heliophysics").stdout)
+    assert described["organization"] == "helio"
 
 
 def test_the_service_refuses_changes_to_declared_organizations(managed: Cli) -> None:
@@ -133,12 +134,7 @@ def test_an_undeclared_organization_is_reported_without_failing_the_others(
         ("org_undeclared", "warning", "astro")
     ]
 
-    refused = managed.run("create", "catalog", "stars", "--org", "astro")
-    assert refused.exit_code == 8 and "declare it again with its root" in refused.stderr
-
-    deleted = managed.run("delete", "org", "astro")
-    assert deleted.exit_code == 0 and "The CLI did not look for its directory" in deleted.stdout
-    assert not roots.exists(PREFIX / "astro")
+    assert managed.ok("delete", "org", "astro").stdout == "organization astro deleted\n"
 
 
 def test_an_undeclared_organization_stays_usable_under_a_marked_prefix(
@@ -151,16 +147,13 @@ def test_an_undeclared_organization_stays_usable_under_a_marked_prefix(
     managed.ok("adm", "provision-orgs")
 
     managed.ok("create", "catalog", "stars", "--org", "astro")
-    assert roots.is_directory(PREFIX / "astro" / "stars")
     rows = json.loads(managed.ok("-o", "json", "adm", "verify-mounts").stdout)
     assert {r["organization"]: r["state"] for r in rows}["astro"] == "undeclared"
     findings = json.loads(managed.run("-o", "json", "adm", "check").stdout or "[]")
     assert [f for f in findings if f["identifier"] == "astro"] == []
 
     managed.ok("delete", "catalog", "stars")
-    deleted = managed.ok("delete", "org", "astro")
-    assert "organization astro deleted" in deleted.stdout
-    assert not roots.exists(PREFIX / "astro")
+    assert managed.ok("delete", "org", "astro").stdout == "organization astro deleted\n"
 
 
 INHERITING = [
@@ -196,6 +189,10 @@ def inheriting(tmp_path: Path, roots: MemoryStorage) -> Iterator[Cli]:
     running.login_as("bob")
     running.ok("create", "catalog", "heliophysics", "--org", "helio")
     running.ok("create", "namespace", "heliophysics.solar-wind", "--allow-collections")
+    make_directory(running, "heliophysics", DirectoryKind.CATALOG, HELIO)
+    make_directory(
+        running, "heliophysics/solar-wind", DirectoryKind.NAMESPACE_WITH_COLLECTIONS, HELIO
+    )
     yield running
     running.close()
 
@@ -217,11 +214,11 @@ def test_catalogs_inherit_the_organization_wide_groups(
     cli.ok("catalog", "heliophysics")
     cli.prompter.answers.extend(["Run 7", "Solar wind run seven", *([False] * 7)])
     cli.ok("create", "collection", "solar-wind.run7")
+    run7 = make_collection(cli, "run7", HELIO)
     source = tmp_path / "a.txt"
     source.write_text("alpha")
     cli.ok("add", str(source))
     assert "+1" in cli.ok("push").stdout
-    run7 = HELIO_ROOT / "helio" / "heliophysics" / "solar-wind" / "run7"
     assert roots.read_bytes(run7 / "a.txt") == b"alpha"
 
     roots.user = "erin"

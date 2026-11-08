@@ -9,12 +9,6 @@
 	let { data }: PageProps = $props();
 	const catalog = $derived(data.catalog);
 	const can = $derived(catalogCapabilities(data.roles, catalog, data.organizations));
-	const grantCommand = $derived(
-		[
-			cliCommand({ verb: 'adm grant', catalog: catalog.name }),
-			cliCommand({ verb: 'adm apply-acl', catalog: catalog.name })
-		].join('\n')
-	);
 </script>
 
 <svelte:head><title>{pageTitle('CLI', displayName(catalog))}</title></svelte:head>
@@ -27,7 +21,10 @@
 		/>
 		{#if can.administerCatalog}
 			<NamespaceHint catalog={catalog.name} parent={catalog.name} />
-			<CliHint title="Grant a role, then apply the directory ACLs" command={grantCommand} />
+			<CliHint
+				title="Grant a role"
+				command={cliCommand({ verb: 'adm grant', catalog: catalog.name })}
+			/>
 		{/if}
 	</div>
 </section>

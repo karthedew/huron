@@ -8,10 +8,8 @@ import httpx
 import pytest
 
 from huron.applications.cli.config import Config
-from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import API, Cli
 from tests.support.lake import ORG_ADMIN, PLATFORM_ADMIN
-from tests.unit.cli.conftest import PREFIX
 
 COPY = "0192b6a0-0000-7000-8000-00000000c0de"
 
@@ -241,15 +239,12 @@ def test_get_catalogs_refuses_org_with_all_orgs(orgs: Cli) -> None:
     assert refused.exit_code == 2 and "use `--org` or `--all-orgs`, not both" in refused.stderr
 
 
-def test_create_catalog_defaults_to_the_current_organization(
-    orgs: Cli, share: MemoryStorage
-) -> None:
+def test_create_catalog_defaults_to_the_current_organization(orgs: Cli) -> None:
     refused = orgs.run("create", "catalog", "extra")
     assert refused.exit_code == 2 and "there is no current organization" in refused.stderr
     assert "use `--org <org>`, or run `huron org <name>`" in refused.stderr
     orgs.ok("org", "helio")
     assert "huron catalog extra" in orgs.ok("create", "catalog", "extra").stdout
-    assert share.is_directory(PREFIX / "helio" / "extra")
     rows = json.loads(orgs.ok("-o", "json", "get", "catalogs", "--org", "helio").stdout)
     assert "extra" in [row["name"] for row in rows]
 

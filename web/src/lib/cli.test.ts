@@ -100,10 +100,6 @@ describe('cliCommand', () => {
 			{ verb: 'adm grant', organization: 'helio' },
 			'huron adm grant <role> <ldap-group> --org helio'
 		],
-		[
-			{ verb: 'adm apply-acl', catalog: 'heliophysics' },
-			'huron --catalog heliophysics adm apply-acl heliophysics --recursive'
-		],
 		[{ verb: 'create catalog', organization: 'helio' }, 'huron create catalog <name> --org helio'],
 		[{ verb: 'search', catalog: 'heliophysics' }, 'huron --catalog heliophysics search'],
 		[
@@ -414,7 +410,6 @@ describe('cliReferences', () => {
 			{ verb: 'create namespace', catalog: 'c', parent: 'c', allowCollections: false },
 			{ verb: 'adm grant', catalog: 'c' },
 			{ verb: 'adm grant', organization: 'o' },
-			{ verb: 'adm apply-acl', catalog: 'c' },
 			{ verb: 'create catalog', organization: 'o' },
 			{ verb: 'search', catalog: 'c', q: 'solar wind' }
 		];

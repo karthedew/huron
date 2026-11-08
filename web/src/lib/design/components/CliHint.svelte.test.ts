@@ -60,14 +60,14 @@ describe('CliHint', () => {
 	it('keeps each word of the command whole, and the text the command', async () => {
 		withClipboard(() => Promise.resolve());
 		const first = 'huron --catalog helio create namespace helio.<name> --allow-collections';
-		const command = `${first}\nhuron --catalog helio adm apply-acl helio --recursive`;
+		const command = `${first}\nhuron --catalog helio adm grant <role> <ldap-group>`;
 		await show(command);
 		const code = screen.getByRole('region', { name: 'Create a catalog' }).querySelector('pre code');
 		expect(code?.textContent).toBe(command);
 		const lines = [...(code?.children ?? [])];
 		expect(lines.map((line) => line.textContent)).toEqual([
 			`${first}\n`,
-			'huron --catalog helio adm apply-acl helio --recursive'
+			'huron --catalog helio adm grant <role> <ldap-group>'
 		]);
 		// What a line wraps onto starts further in than the next line does.
 		for (const line of lines) expect(line).toHaveClass('block', 'pl-hang', '-indent-hang');

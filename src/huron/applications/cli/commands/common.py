@@ -12,11 +12,9 @@ import typer
 from huron.applications.cli.client import ApiClient, if_match
 from huron.applications.cli.errors import CliError, ExitCode, UsageError
 from huron.applications.cli.identifiers import collection_candidates, namespace_candidates
-from huron.applications.cli.mount import Mount
 from huron.applications.cli.output import Column, OutputFormat, render, render_one
 from huron.applications.cli.services import Services
-from huron.applications.cli.sync import checkout, write_sidecar
-from huron.core.storage import DirectoryKind
+from huron.applications.cli.sync import checkout
 from huron.schema.naming import Identifier
 
 __all__ = [
@@ -36,7 +34,6 @@ __all__ = [
     "fetch_collection",
     "fetch_namespace",
     "grant_sources",
-    "kind_of",
     "locate",
     "organization_columns",
     "organization_path",
@@ -263,30 +260,17 @@ def fetch_catalog(ctx: typer.Context, name: str) -> dict[str, Any]:
     return view
 
 
-def activate(ctx: typer.Context, collection: dict[str, Any], mount: Mount) -> dict[str, Any]:
-    """Create the collection's directory, activate it, write ``metadata.json`` and check it out."""
-    found = services(ctx)
-    namespace = api(ctx).get(
-        f"/api/v1/catalogs/{collection['catalog']}/namespaces/{collection['namespace']}"
-    )
-    relative = f"{namespace['disk_path']}/{collection['name']}"
-    mount.ensure(
-        relative, DirectoryKind.COLLECTION, mount.catalog_groups(str(collection["catalog"]))
-    )
+def activate(ctx: typer.Context, collection: dict[str, Any]) -> dict[str, Any]:
+    """Activate the collection through the API and check it out.
+
+    The API creates the directory and writes ``metadata.json``. The CLI writes nothing.
+    """
     activated: dict[str, Any] = api(ctx).post(
         f"/api/v1/collections/{collection['id']}/activate",
         headers=if_match(int(collection["version"])),
     )
-    write_sidecar(found, mount, activated)
-    checkout(found, activated)
+    checkout(services(ctx), activated)
     return activated
-
-
-def kind_of(view: Mapping[str, object]) -> DirectoryKind:
-    """The directory kind of a namespace."""
-    if view["collections_allowed"]:
-        return DirectoryKind.NAMESPACE_WITH_COLLECTIONS
-    return DirectoryKind.NAMESPACE
 
 
 def grant_sources(ctx: typer.Context, catalog: str) -> list[dict[str, Any]]:

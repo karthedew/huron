@@ -1,10 +1,12 @@
-"""The share as this machine sees it: each organization's directory, checked before any disk use.
+"""The share as this machine sees it: each organization's directory, checked before any read.
 
 Every API path starts with its organization (``<organization>/<catalog>/…``). The organization's
 root comes from ``GET /api/v1/organizations/{organization}`` (cached for the command); without
 one, the CLI's ``mount_prefix`` stands in. An organization with a root, or any declared one, is
 guarded by the marker in its own directory; the others by the marker at the mount prefix. Every
-path :class:`Mount` hands out has passed that check, so no disk operation can skip it.
+path :class:`Mount` hands out has passed that check, so no disk read can skip it.
+:class:`Mount` writes nothing. Only the provision commands write, through
+``huron.core.storage.provision``.
 
 When the service manages its organizations (``organizations_managed`` of ``GET /healthz``), an
 organization it does not declare (removed from the configuration, or left from unmanaged mode)
@@ -21,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 
 from huron.applications.cli.errors import StorageFailure
 from huron.core.storage import (
-    DirectoryKind,
     EffectiveGroups,
     Marker,
     MarkerState,
@@ -30,7 +31,6 @@ from huron.core.storage import (
     StorageError,
     marker_state,
     place_of,
-    plan,
     resolve,
     verify_marker,
 )
@@ -144,48 +144,12 @@ class Mount:
         place = self.verify(relative.split("/")[0])
         return _storage_call(lambda: place.resolve(relative))
 
-    def catalog_groups(self, catalog: str) -> EffectiveGroups:
-        """Effective groups of a catalog."""
-        return EffectiveGroups.from_mapping(
-            self.services.api().get(f"/api/v1/catalogs/{catalog}/grants")
-        )
-
     def organization_groups(self, organization: str) -> EffectiveGroups:
         """Platform and organization admin groups, for an organization's directory."""
         api = self.services.api()
         platform = api.get("/api/v1/platform/grants")["ldap_groups"]
         admins = api.get(f"/api/v1/organizations/{organization}/grants")["org_admin"]
         return EffectiveGroups(platform_admin=tuple(platform), org_admin=tuple(admins))
-
-    def ensure(self, relative: str, kind: DirectoryKind, groups: EffectiveGroups) -> bool:
-        """Create (or repair) a directory with its ACL plan; returns whether it was created."""
-        target = self.path(relative)
-        storage = self.storage
-        created = _storage_call(lambda: storage.ensure_directory(target, plan(kind, groups)))
-        self.report(target, "created" if created else "exists")
-        return created
-
-    def apply(self, relative: str, kind: DirectoryKind, groups: EffectiveGroups) -> bool:
-        """Re-apply a directory's ACL plan; returns whether it changed."""
-        target = self.path(relative)
-        storage = self.storage
-        return _storage_call(lambda: storage.apply_plan(target, plan(kind, groups)))
-
-    def remove(self, relative: str) -> None:
-        """Remove an empty directory."""
-        target = self.path(relative)
-        storage = self.storage
-        if _storage_call(lambda: storage.remove_directory(target)):
-            self.report(target, "deleted")
-
-    def report(self, target: Path, what: str) -> None:
-        """A ``<what>: <path>`` line on standard error, noting when only modes are applied."""
-        note = (
-            ""
-            if self.services.config.acl_backend == "posix"
-            else " (modes only, because `acl_backend` is `none`)"
-        )
-        self.services.err.print(f"{what}: {target}{note}", markup=False, highlight=False)
 
     def _service_health(self) -> Mapping[str, Any]:
         if self._health is None:

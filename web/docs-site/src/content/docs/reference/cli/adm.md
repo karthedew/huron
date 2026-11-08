@@ -21,11 +21,10 @@ huron adm [OPTIONS] COMMAND [ARGS]...
 
 **Access**
 
-| Command                                       | Description                                                                             |
-| --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| [`huron adm grant`](#huron-adm-grant)         | Give a role to an LDAP group on an organization (`--org`) or a catalog (`--catalog`).   |
-| [`huron adm revoke`](#huron-adm-revoke)       | Take a role from an LDAP group on an organization (`--org`) or a catalog (`--catalog`). |
-| [`huron adm apply-acl`](#huron-adm-apply-acl) | Re-apply the ACL plans to the directories that you own.                                 |
+| Command                                 | Description                                                                             |
+| --------------------------------------- | --------------------------------------------------------------------------------------- |
+| [`huron adm grant`](#huron-adm-grant)   | Give a role to an LDAP group on an organization (`--org`) or a catalog (`--catalog`).   |
+| [`huron adm revoke`](#huron-adm-revoke) | Take a role from an LDAP group on an organization (`--org`) or a catalog (`--catalog`). |
 
 **Share**
 
@@ -92,28 +91,6 @@ huron adm revoke [OPTIONS] ROLE GROUP
 | ----------- | ---- | ------- | ---------------------------------------------------------------------------- |
 | `--org`     | str  |         | The organization, for `org_admin` or for a catalog role in all its catalogs. |
 | `--catalog` | str  |         | The catalog, for a catalog role. The default is the current catalog.         |
-
-## `huron adm apply-acl`
-
-Re-apply the ACL plans to the directories that you own.
-
-The exit code is 1 when the CLI could not change some directories.
-
-```text
-huron adm apply-acl [OPTIONS] IDENTIFIER
-```
-
-### Arguments
-
-| Argument     | Type | Description                                                             |
-| ------------ | ---- | ----------------------------------------------------------------------- |
-| `IDENTIFIER` | str  | A catalog, a namespace (`catalog.namespace`) or a collection. Required. |
-
-### Options
-
-| Option              | Type | Default | Description                                       |
-| ------------------- | ---- | ------- | ------------------------------------------------- |
-| `--recursive`, `-R` | flag |         | Also apply the plans to all directories below it. |
 
 ## `huron adm check`
 

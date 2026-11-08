@@ -14,11 +14,10 @@ from huron.applications.cli.login import Oidc
 from huron.applications.cli.prompts import QuestionaryPrompter
 from huron.applications.cli.state import Stage, StagedAdd, WorkingCopy
 from huron.applications.cli.sync import _recover
-from huron.core.storage import StorageError
 from huron.core.storage.memory import MemoryStorage
 from tests.fakes.issuer import ISSUER, FakeIssuer
 from tests.support.cli import Cli
-from tests.unit.cli.conftest import PREFIX
+from tests.unit.cli.conftest import PREFIX, make_collection
 from tests.unit.cli.test_collections import BASE_ANSWERS
 
 
@@ -136,11 +135,6 @@ def test_recovery_refuses_when_the_files_are_not_recorded() -> None:
 
 @pytest.fixture
 def ready(seeded_cli: Cli) -> Cli:
-    seeded_cli.login_as("carol")
-    seeded_cli.ok(
-        "create", "namespace", "heliophysics.solar-wind.deep", "--parents", "--allow-collections"
-    )
-    seeded_cli.ok("set", "namespace", "heliophysics.solar-wind", "--allow-collections")
     seeded_cli.login_as("dave")
     seeded_cli.ok("catalog", "heliophysics")
     return seeded_cli
@@ -156,6 +150,7 @@ def test_push_and_status_edge_cases(ready: Cli, share: MemoryStorage, tmp_path: 
     ready.ok("add", str(source))
     assert ready.run("push").exit_code == 6
     ready.ok("activate", "collection")
+    make_collection(ready, "draft")
     ready.ok("add", str(source))
     source.unlink()
     gone = ready.run("push")
@@ -170,32 +165,3 @@ def test_push_and_status_edge_cases(ready: Cli, share: MemoryStorage, tmp_path: 
     share.calls.clear()
     ready.ok("push")
     assert share.exists(target / "a.txt") and share.calls == []
-
-
-def test_delete_reports_directories_it_cannot_remove(
-    ready: Cli, share: MemoryStorage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    ready.prompter.answers.extend(BASE_ANSWERS)
-    ready.ok("create", "collection", "solar-wind.deep.run")
-    source = tmp_path / "a.txt"
-    source.write_text("a")
-    ready.ok("add", str(source), "--as", "sub/a.txt")
-    ready.ok("push")
-
-    def refuse(path: Path) -> bool:
-        raise StorageError("busy", {})
-
-    monkeypatch.setattr(share, "remove_directory", refuse)
-    assert ready.run("delete", "collection", "solar-wind.deep.run", "--yes").exit_code == 8
-    monkeypatch.undo()
-    findings = json.loads(
-        ready.run("-o", "json", "adm", "check", "--catalog", "heliophysics").stdout
-    )
-    assert any(f["code"] == "sidecar_stale" for f in findings)
-
-
-def test_org_create_repairs_an_existing_organization(cli: Cli, share: MemoryStorage) -> None:
-    cli.login_as("alice")
-    cli.ok("create", "org", "helio")
-    share.remove_directory(PREFIX / "helio")
-    assert "created:" in cli.ok("create", "org", "helio").stderr

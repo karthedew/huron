@@ -220,6 +220,6 @@ def test_check_fails_on_stale_pages_with_a_hint_and_passes_once_written(
 
 def test_slug_matches_heading_anchors() -> None:
     cli_reference = generator()
-    assert cli_reference.slug("huron adm apply-acl") == "huron-adm-apply-acl"
+    assert cli_reference.slug("huron adm verify-mounts") == "huron-adm-verify-mounts"
     assert cli_reference.slug("Reading `huron adm check`") == "reading-huron-adm-check"
     assert cli_reference.slug("Administration") == "administration"

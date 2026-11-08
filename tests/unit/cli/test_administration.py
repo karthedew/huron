@@ -5,12 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
-from tests.unit.cli.conftest import PREFIX
 from tests.unit.cli.test_collections import BASE_ANSWERS
-
-REMINDER = "huron adm apply-acl heliophysics --recursive"
 
 
 def groups(cli: Cli, role: str) -> list[str]:
@@ -26,10 +22,10 @@ def test_catalog_roles_default_to_the_current_catalog(seeded_cli: Cli) -> None:
     assert refused.exit_code == 2 and "huron catalog <name>" in refused.stderr
     cli.ok("catalog", "heliophysics")
     granted = cli.ok("adm", "grant", "reader", "guests")
-    assert "reader: added guests, revoked -" in granted.stdout and REMINDER in granted.stdout
+    assert granted.stdout == "reader: added guests, revoked -\n"
     assert "guests" in groups(cli, "reader")
     revoked = cli.ok("adm", "revoke", "reader", "guests")
-    assert "revoked guests" in revoked.stdout and REMINDER in revoked.stdout
+    assert revoked.stdout == "reader: added -, revoked guests\n"
     assert "guests" not in groups(cli, "reader")
 
 
@@ -54,7 +50,7 @@ def test_org_admin_needs_an_organization(seeded_cli: Cli) -> None:
     both = cli.run("adm", "grant", "org_admin", "admins", "--org", "helio", "--catalog", "x")
     assert both.exit_code == 2
     granted = cli.ok("adm", "grant", "org_admin", "admins", "--org", "helio")
-    assert "org_admin: added admins" in granted.stdout and "apply-acl" not in granted.stdout
+    assert granted.stdout == "org_admin: added admins, revoked -\n"
     cli.ok("adm", "revoke", "org_admin", "admins", "--org", "helio")
     grants = json.loads(cli.ok("-o", "json", "get", "grants", "--org", "helio").stdout)
     assert grants["org_admin"] == ["helio-org-admins"]
@@ -78,7 +74,7 @@ def test_assign_schema_defaults_to_the_current_catalog(seeded_cli: Cli) -> None:
     assert cli.run("adm", "assign", "schema", base, "--catalog", "missing").exit_code == 5
 
 
-def test_create_catalog_requires_its_organization(seeded_cli: Cli, share: MemoryStorage) -> None:
+def test_create_catalog_requires_its_organization(seeded_cli: Cli) -> None:
     cli = seeded_cli
     cli.login_as("bob")
     missing = cli.run("create", "catalog", "spare")
@@ -86,23 +82,17 @@ def test_create_catalog_requires_its_organization(seeded_cli: Cli, share: Memory
     assert cli.run("create", "catalog", "helio", "spare").exit_code == 2
     created = cli.ok("create", "catalog", "spare", "--org", "helio")
     assert "huron catalog spare" in created.stdout
-    assert share.is_directory(PREFIX / "helio" / "spare")
 
 
-def test_set_namespace_allows_and_forbids_collections(
-    seeded_cli: Cli, share: MemoryStorage
-) -> None:
+def test_set_namespace_allows_and_forbids_collections(seeded_cli: Cli) -> None:
     cli = seeded_cli
     cli.login_as("carol")
     cli.ok("catalog", "heliophysics")
     cli.ok("create", "namespace", "archive")
-    target = PREFIX / "helio" / "heliophysics" / "archive"
     allowed = cli.ok("set", "namespace", "archive", "--allow-collections")
     assert "heliophysics.archive allows collections" in allowed.stdout
-    assert share.nodes[target].mode == 0o3770
     forbidden = cli.ok("set", "namespace", "archive", "--no-allow-collections")
     assert "does not allow collections" in forbidden.stdout
-    assert share.nodes[target].mode == 0o2770
     assert cli.run("set", "namespace", "archive").exit_code == 2
 
 
@@ -110,8 +100,6 @@ def test_set_namespace_allows_and_forbids_collections(
 def collection(seeded_cli: Cli) -> Cli:
     """dave has created and checked out heliophysics.solar-wind.run7."""
     cli = seeded_cli
-    cli.login_as("carol")
-    cli.ok("create", "namespace", "heliophysics.solar-wind", "--allow-collections")
     cli.login_as("dave")
     cli.ok("catalog", "heliophysics")
     cli.prompter.answers.extend(BASE_ANSWERS)

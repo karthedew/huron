@@ -33,7 +33,6 @@ export type CliCommand =
 	 * or a catalog role, which then holds in every catalog of it.
 	 */
 	| { verb: 'adm grant'; organization: string }
-	| { verb: 'adm apply-acl'; catalog: string }
 	| { verb: 'create catalog'; organization: string }
 	| {
 			verb: 'search';
@@ -79,8 +78,6 @@ export function cliCommand(command: CliCommand): string {
 				].join(' ');
 			}
 			return line(command.catalog, command.verb, '<role>', '<ldap-group>');
-		case 'adm apply-acl':
-			return line(command.catalog, command.verb, quote(command.catalog), '--recursive');
 		case 'create catalog':
 			return ['huron', command.verb, '<name>', '--org', quote(command.organization)].join(' ');
 		case 'search':

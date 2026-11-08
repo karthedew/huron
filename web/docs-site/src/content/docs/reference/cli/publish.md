@@ -19,13 +19,13 @@ huron publish [OPTIONS] COMMAND [ARGS]...
 
 ## Commands
 
-| Command                                     | Description                                                               |
-| ------------------------------------------- | ------------------------------------------------------------------------- |
-| [`huron publish meta`](#huron-publish-meta) | Send the draft as a merge patch and rewrite `metadata.json` on the share. |
+| Command                                     | Description                                                                   |
+| ------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`huron publish meta`](#huron-publish-meta) | Send the draft as a merge patch. The API writes `metadata.json` on the share. |
 
 ## `huron publish meta`
 
-Send the draft as a merge patch and rewrite `metadata.json` on the share.
+Send the draft as a merge patch. The API writes `metadata.json` on the share.
 
 ```text
 huron publish meta [OPTIONS] [IDENTIFIER]

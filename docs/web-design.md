@@ -1040,6 +1040,12 @@ Raw detail JSON in a disclosure. Timestamps fixed UTC.
   commands. Namespace navigation is Overview and CLI; no unsupported tabs are implied. Collection
   navigation now has seven tabs, using wrapping pills until there is room for a single underlined
   row. Search keeps its query-specific CLI hint alongside search results.
+- **Accepted amendment (2026-11-08, the CLI writes nothing to the lake).** `huron adm apply-acl`
+  is gone (IMPLEMENTATION_PLAN.md §9, "Amendment (2026-11-08): the CLI writes nothing to the
+  lake"), and `huron adm grant` prints no reminder to apply ACLs. The catalog CLI tab shows the hint
+  "Grant a role" with the one line `huron --catalog <c> adm grant <role> <ldap-group>`. The
+  `CliCommand` verb `'adm apply-acl'` is gone. This replaces the `apply-acl` text of §4, of the
+  organization Access tab and of the oc-style amendment above.
 
 Login: title "Sign in to Huron", lead "The catalog of raw scientific data on the Huron share.", bullets:
 browse catalogs, namespaces and collections; search metadata across your organization; see who can read

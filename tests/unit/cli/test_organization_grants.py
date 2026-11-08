@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from tests.support.cli import Cli
-from tests.support.lake import ORG_ADMIN, PLATFORM_ADMIN
+from tests.support.lake import ORG_ADMIN
 
 CATALOG_ROLES = ("catalog_admin", "contributor", "reader")
 ROLES = ("org_admin", *CATALOG_ROLES)
@@ -188,27 +188,27 @@ def test_a_catalog_without_inherited_groups_needs_no_organization_lookup(
 
 
 @pytest.mark.parametrize("role", CATALOG_ROLES)
-def test_a_catalog_role_is_granted_on_an_organization_with_a_reminder_per_catalog(
+def test_a_catalog_role_is_granted_on_an_organization_with_one_line_of_output(
     grants: tuple[Cli, GrantsService], role: str
 ) -> None:
     cli, service = grants
     before = list(service.organizations["helio"][role])
+    service.seen.clear()
     granted = cli.ok("adm", "grant", role, "helio-extra", "--org", "helio").stdout
-    assert f"{role}: added helio-extra, revoked -" in granted
-    assert "huron adm apply-acl heliophysics --recursive" in granted
-    assert "huron adm apply-acl spare --recursive" in granted
+    assert granted == f"{role}: added helio-extra, revoked -\n"
     assert service.organizations["helio"][role] == sorted({*before, "helio-extra"})
     revoked = cli.ok("adm", "revoke", role, "helio-extra", "--org", "helio").stdout
-    assert "revoked helio-extra" in revoked and "apply-acl spare" in revoked
+    assert revoked == f"{role}: added -, revoked helio-extra\n"
     assert service.organizations["helio"][role] == before
+    assert ("GET", "/api/v1/catalogs") not in service.seen
 
 
-def test_org_admin_on_an_organization_needs_no_acl_reminder(
+def test_org_admin_is_granted_on_an_organization_with_one_line_of_output(
     grants: tuple[Cli, GrantsService],
 ) -> None:
     cli, service = grants
     granted = cli.ok("adm", "grant", "org_admin", "more-admins", "--org", "helio").stdout
-    assert "org_admin: added more-admins" in granted and "apply-acl" not in granted
+    assert granted == "org_admin: added more-admins, revoked -\n"
     assert service.puts == [
         ("/api/v1/organizations/helio/grants/org_admin", ["helio-org-admins", "more-admins"])
     ]
@@ -223,26 +223,12 @@ def test_json_output_prints_nothing_and_lists_no_catalogs(
     assert ("GET", "/api/v1/catalogs") not in service.seen
 
 
-def test_an_organization_without_catalogs_gets_no_reminder(
-    seeded_cli: Cli, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cli = seeded_cli
-    cli.loop.call(cli.runtime.lake.organizations.create(PLATFORM_ADMIN, "empty", "Empty", ""))
-    cli.login_as("alice")
-    service = stand_in(cli, monkeypatch)
-    service.organizations["empty"] = {role: [] for role in ROLES}
-    granted = cli.ok("adm", "grant", "reader", "x", "--org", "empty").stdout
-    assert "reader: added x" in granted and "apply-acl" not in granted
-
-
 def test_a_catalog_grant_sends_only_the_groups_granted_on_the_catalog(
     grants: tuple[Cli, GrantsService],
 ) -> None:
     cli, service = grants
     granted = cli.ok("adm", "grant", "contributor", "solar-team", "--catalog", "heliophysics")
-    assert "contributor: added solar-team, revoked -" in granted.stdout
-    assert "huron adm apply-acl heliophysics --recursive" in granted.stdout
-    assert "apply-acl spare" not in granted.stdout
+    assert granted.stdout == "contributor: added solar-team, revoked -\n"
     assert service.puts == [("/api/v1/catalogs/heliophysics/grants/contributor", ["solar-team"])]
     assert service.organizations["helio"]["contributor"] == ["helio-contributors"]
 
@@ -283,17 +269,9 @@ def test_revoking_a_group_that_holds_nothing_changes_nothing(
     ]
 
 
-@pytest.mark.parametrize(
-    ("role", "after"),
-    [
-        ("org_admin", "huron adm provision-orgs"),
-        ("catalog_admin", "huron adm apply-acl <catalog> -R"),
-        ("contributor", "huron adm apply-acl <catalog> -R"),
-        ("reader", "huron adm apply-acl <catalog> -R"),
-    ],
-)
+@pytest.mark.parametrize("role", ROLES)
 def test_a_declared_organization_points_at_its_groups_in_the_configuration(
-    seeded_cli: Cli, monkeypatch: pytest.MonkeyPatch, role: str, after: str
+    seeded_cli: Cli, monkeypatch: pytest.MonkeyPatch, role: str
 ) -> None:
     cli = seeded_cli
     cli.login_as("alice")
@@ -301,7 +279,7 @@ def test_a_declared_organization_points_at_its_groups_in_the_configuration(
     for verb in ("grant", "revoke"):
         refused = cli.run("adm", verb, role, "helio-readers", "--org", "helio")
         assert refused.exit_code == 6 and "[ORGANIZATION_DECLARED]" in refused.stderr
-        assert f"Edit `groups.{role}` there" in refused.stderr and after in refused.stderr
+        assert f"Edit `groups.{role}` there. Then restart the service" in refused.stderr
 
 
 def test_a_catalog_conflict_keeps_its_own_hint(

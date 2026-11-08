@@ -14,8 +14,6 @@ RUN8 = "heliophysics.solar-wind.run8"
 @pytest.fixture
 def ready(seeded_cli: Cli) -> Cli:
     """run7 (version 3, checked out) and run8 are active; dave is logged in."""
-    seeded_cli.login_as("carol")
-    seeded_cli.ok("create", "namespace", "heliophysics.solar-wind", "--allow-collections")
     seeded_cli.login_as("dave")
     seeded_cli.ok("catalog", "heliophysics")
     for name in ("run8", "run7"):

@@ -15,13 +15,12 @@ from huron.applications.cli.commands.common import (
     api,
     fetch_collection,
     fetch_namespace,
-    kind_of,
     read_document,
     say,
     services,
 )
 from huron.applications.cli.errors import CliError, ExitCode, UsageError
-from huron.applications.cli.sync import checkout, write_sidecar
+from huron.applications.cli.sync import checkout
 from huron.applications.cli.walkthrough import fill, merge_diff, review
 from huron.schema.validator import SchemaInvalid, check_schema_document
 
@@ -61,9 +60,9 @@ def register(app: typer.Typer, panels: Mapping[str, str]) -> None:
 
 @activate_app.command("collection")
 def activate_collection(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
-    """Create the directory of a draft collection and activate the collection."""
+    """Activate a draft collection. The API creates its directory and writes `metadata.json`."""
     collection = fetch_collection(ctx, identifier)
-    activated = activate(ctx, collection, services(ctx).mount())
+    activated = activate(ctx, collection)
     say(ctx, f"collection {activated['identifier']} is active at {activated['path']}")
 
 
@@ -131,7 +130,7 @@ def validate_meta(ctx: typer.Context, identifier: CollectionArgument = None) -> 
 
 @publish_app.command("meta")
 def publish_meta(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
-    """Send the draft as a merge patch and rewrite `metadata.json` on the share."""
+    """Send the draft as a merge patch. The API writes `metadata.json` on the share."""
     collection = fetch_collection(ctx, identifier)
     draft = services(ctx).state.read_draft(str(collection["id"]))
     if draft is None:
@@ -177,15 +176,12 @@ def set_namespace(
         ),
     ],
 ) -> None:
-    """Allow or forbid collections in a namespace, and re-apply the ACL plan of its directory."""
-    mount = services(ctx).mount()
-    parsed, before = fetch_namespace(ctx, identifier)
-    mount.path(str(before["disk_path"]))  # refuse before any change when the share is not ours
+    """Allow or forbid collections in a namespace. The mode of its directory stays the same."""
+    parsed, _ = fetch_namespace(ctx, identifier)
     view = api(ctx).patch(
         f"/api/v1/catalogs/{parsed.catalog}/namespaces/{parsed.namespace}",
         json={"collections_allowed": allow_collections},
     )
-    mount.apply(view["disk_path"], kind_of(view), mount.catalog_groups(parsed.catalog))
     state = "allows" if allow_collections else "does not allow"
     say(ctx, f"namespace {view['identifier']} {state} collections")
 
@@ -205,8 +201,6 @@ def _patch(ctx: typer.Context, collection: dict[str, Any], body: dict[str, Any])
         json=body,
         headers=if_match(int(collection["version"])),
     )
-    if updated.get("path") is not None:
-        write_sidecar(found, found.mount(), updated)
     copy = found.state.read_copy(str(collection["id"]))
     if copy is not None and copy.version == int(collection["version"]):
         checkout(found, updated)

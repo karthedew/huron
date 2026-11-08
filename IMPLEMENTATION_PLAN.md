@@ -4116,7 +4116,7 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
   `uv run python scripts/cli_reference.py --check`; from
   `web/`, `npm run check`, `npm test` and `npm run lint`.
 - Dependencies: M11.7.
-- Status: pending
+- Status: complete
 
 #### M11.9a No ACL code
 
@@ -4472,6 +4472,10 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
     - `tests/unit/api/test_lake_disk.py`: the metadata, kept-directory and share-group cases move
       onto `LakeDirectories`. `tests/unit/api/test_catalog_share_group.py` on `LakePath`.
       `tests/unit/lake` for the new answers.
+  - Found in M11.8a's verification: the docstring of the `metadata.json` route in
+    `src/huron/applications/api/routes/v1/endpoints/collections.py` (about line 173) still says
+    the CLI writes the file beside the files. Rewrite it to the API writing it, and run
+    `make openapi`.
 - Verification: `make gate`; `uv run pytest -m contract` (`list_in_catalog`);
   `grep -rnE "DirectoryDep|LakeDirectory\b|DirectoryKind|_KINDS|directory_group|place_of\(|disk\.resolve\(" src/huron tests`
   prints nothing;
@@ -4923,6 +4927,11 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
   - Section 3, sections 4.1, 6 and 12, ADR 0008, `CONTEXT.md` and `AGENTS.md` already carry the
     revision. This task changes them only where the built system differs, with a line in its
     Execution notes.
+  - Found in M11.8a's verification: `docs/concepts/access-and-roles.md` (about line 191) and
+    `docs/concepts/raw-ingest.md` (about line 336) link to the removed anchor
+    `/docs/reference/cli/adm/#huron-adm-apply-acl`. No check validates anchors, so remove or
+    replace both links. `docs/architecture.md` (about line 199) still says the CLI writes
+    `metadata.json`.
 - Verification: `make gate` (`scripts/ste_check.py` included); `make docs-check`;
   `grep -rniE "init-root|apply-acl|acl_backend|setfacl|getfacl|OUTSIDE_LAKE|version 1 migration" docs README.md deploy/README.md --exclude-dir=adr`
   prints nothing; `grep -c "Helm: not yet delivered" docs/operator.md deploy/README.md` counts

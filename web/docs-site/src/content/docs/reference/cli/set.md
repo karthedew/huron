@@ -19,10 +19,10 @@ huron set [OPTIONS] COMMAND [ARGS]...
 
 ## Commands
 
-| Command                                       | Description                                                                             |
-| --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| [`huron set override`](#huron-set-override)   | Set the schema override of the collection. Send the metadata draft too, if one exists.  |
-| [`huron set namespace`](#huron-set-namespace) | Allow or forbid collections in a namespace, and re-apply the ACL plan of its directory. |
+| Command                                       | Description                                                                            |
+| --------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [`huron set override`](#huron-set-override)   | Set the schema override of the collection. Send the metadata draft too, if one exists. |
+| [`huron set namespace`](#huron-set-namespace) | Allow or forbid collections in a namespace. The mode of its directory stays the same.  |
 
 ## `huron set override`
 
@@ -41,7 +41,7 @@ huron set override [OPTIONS] FILE [IDENTIFIER]
 
 ## `huron set namespace`
 
-Allow or forbid collections in a namespace, and re-apply the ACL plan of its directory.
+Allow or forbid collections in a namespace. The mode of its directory stays the same.
 
 ```text
 huron set namespace [OPTIONS] IDENTIFIER

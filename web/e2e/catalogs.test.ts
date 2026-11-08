@@ -429,9 +429,7 @@ test.describe('the access tab', () => {
 				.getByRole('navigation', { name: 'Catalog', exact: true })
 				.getByRole('link', { name: 'CLI', exact: true })
 				.click();
-			const hint = main.getByRole('region', {
-				name: 'Grant a role, then apply the directory ACLs'
-			});
+			const hint = main.getByRole('region', { name: 'Grant a role' });
 			await expect(hint).toHaveCount(['carol', 'bob', 'alice'].includes(username) ? 1 : 0);
 		});
 	}
@@ -676,13 +674,13 @@ test.describe('a CLI hint', () => {
 				Object.defineProperty(Navigator.prototype, 'clipboard', { get: () => undefined });
 			});
 			const page = await context.newPage();
-			await signIn(page, 'carol');
-			await page.goto('/catalogs/heliophysics/cli');
-			const title = 'Grant a role, then apply the directory ACLs';
+			await signIn(page, 'dave');
+			await page.goto('/catalogs/space-weather/collections/alerts.flare-list-2024/cli');
+			const title = 'Complete the metadata, then publish it';
 			const hint = page.getByRole('main').getByRole('region', { name: title });
 			const command =
-				'huron --catalog heliophysics adm grant <role> <ldap-group>\n' +
-				'huron --catalog heliophysics adm apply-acl heliophysics --recursive';
+				'huron --catalog space-weather edit meta space-weather.alerts.flare-list-2024\n' +
+				'huron --catalog space-weather publish meta space-weather.alerts.flare-list-2024';
 			// On a phone the commands are read rather than run: the code block shows every word of
 			// them, where a field would cut each one off at its edge.
 			const block = hint.locator('pre');

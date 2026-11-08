@@ -31,7 +31,7 @@ from huron.pkg.fs.acl import Acl
 from tests.support.api import INSTANCE_ID
 from tests.support.cli import API, Cli
 from tests.support.lake import PLATFORM_ADMIN
-from tests.unit.cli.conftest import PREFIX
+from tests.unit.cli.conftest import PREFIX, make_collection, make_directory
 from tests.unit.cli.test_collections import BASE_ANSWERS
 
 HELIO_ROOT = Path("/data1/huron")
@@ -140,14 +140,11 @@ def managed(
 
 @pytest.fixture
 def provisioned(managed: tuple[Cli, ManagedService], share: MemoryStorage) -> Cli:
-    """The declared organizations are provisioned; carol owns heliophysics.solar-wind."""
+    """The declared organizations are provisioned; heliophysics.solar-wind is below the root."""
     cli, _ = managed
     cli.ok("adm", "provision-orgs")
-    cli.login_as("bob")
-    cli.ok("create", "catalog", "heliophysics", "--org", "helio")
-    share.user = "carol"
-    cli.login_as("carol")
-    cli.ok("create", "namespace", "heliophysics.solar-wind", "--allow-collections")
+    make_directory(cli, "heliophysics", DirectoryKind.CATALOG, HELIO)
+    make_directory(cli, "heliophysics/solar-wind", DirectoryKind.NAMESPACE_WITH_COLLECTIONS, HELIO)
     return cli
 
 
@@ -278,56 +275,49 @@ def test_verify_mounts_reports_every_organization(
     assert states()["helio"] == (str(HELIO), "no marker")
 
 
-def test_disk_operations_need_the_organization_marker(
+def test_disk_reads_need_the_organization_marker(
     managed: tuple[Cli, ManagedService], share: MemoryStorage
 ) -> None:
     cli, _ = managed
-    cli.login_as("bob")
-    refused = cli.run("create", "catalog", "spare", "--org", "helio")
-    assert refused.exit_code == 8 and f"{HELIO} is not mounted" in refused.stderr
-    assert "huron adm provision-orgs" in refused.stderr
-    assert f"mounted on this machine (from nfs1:/export{HELIO_ROOT})" in refused.stderr
-    assert cli.run("describe", "catalog", "spare").exit_code == 5
+    services, _, _ = cli.services()
+    with pytest.raises(StorageFailure) as missing:
+        services.mount().path("helio/heliophysics")
+    assert missing.value.exit_code == 8 and f"{HELIO}" in missing.value.message
+    assert f"mounted on this machine (from nfs1:/export{HELIO_ROOT})" in str(missing.value.hint)
+    assert "huron adm provision-orgs" in str(missing.value.hint)
     share.ensure_directory(HELIO, plan(DirectoryKind.ORGANIZATION, EffectiveGroups()))
     share.write_bytes(HELIO / MARKER_FILE, org_marker("geo"))
-    wrong = cli.run("create", "catalog", "spare", "--org", "helio")
-    assert wrong.exit_code == 8 and "names organization geo, not organization helio" in wrong.stderr
-    assert not share.exists(HELIO / "spare")
+    services, _, _ = cli.services()
+    with pytest.raises(StorageFailure, match="names organization geo, not organization helio"):
+        services.mount().path("helio/heliophysics")
 
 
-def test_directories_land_under_the_organization_root(
+def test_status_reads_the_collection_below_the_organization_root(
     provisioned: Cli, share: MemoryStorage
 ) -> None:
     cli = provisioned
-    assert share.is_directory(HELIO / "heliophysics" / "solar-wind")
-    assert not share.exists(PREFIX / "helio" / "heliophysics" / "solar-wind")
-    share.user = "dave"
     cli.login_as("dave")
     cli.ok("catalog", "heliophysics")
     cli.prompter.answers.extend(BASE_ANSWERS)
     created = cli.ok("create", "collection", "solar-wind.run7")
     assert "is active at helio/heliophysics/solar-wind/run7" in created.stdout
-    run7 = HELIO / "heliophysics" / "solar-wind" / "run7"
-    assert share.exists(run7 / "metadata.json")
-    cli.ok("checkout", "solar-wind.run7")
+    run7 = make_collection(cli, "run7", HELIO)
     assert json.loads(cli.ok("-o", "json", "status").stdout)["unrecorded"] == []
     share.write_bytes(run7 / "stray.txt", b"x")
     assert json.loads(cli.ok("-o", "json", "status").stdout)["unrecorded"] == ["stray.txt"]
-    share.remove_file(run7 / "stray.txt")
-    cli.ok("delete", "collection", "solar-wind.run7", "--yes")
-    assert not share.exists(run7)
 
 
 def test_the_organization_view_is_read_once_per_command(
     provisioned: Cli, managed: tuple[Cli, ManagedService], share: MemoryStorage, tmp_path: Path
 ) -> None:
     cli, service = managed
-    share.user = "dave"
     cli.login_as("dave")
     cli.ok("catalog", "heliophysics")
     cli.prompter.answers.extend(BASE_ANSWERS)
-    service.organization_reads.clear()
     cli.ok("create", "collection", "solar-wind.run8")
+    make_collection(cli, "run8", HELIO)
+    service.organization_reads.clear()
+    cli.ok("status")
     assert service.organization_reads == Counter({"helio": 1})
 
 
@@ -420,11 +410,11 @@ def test_declared_organizations_cannot_be_deleted_or_regranted(
     )
     assert share.exists(GEO / MARKER_FILE)
     grant = cli.run("adm", "grant", "org_admin", "geo-admins", "--org", "geo")
-    assert grant.exit_code == 6 and "Edit `groups.org_admin` there" in grant.stderr
-    assert "huron adm provision-orgs" in grant.stderr
+    assert grant.exit_code == 6
+    assert "Edit `groups.org_admin` there. Then restart the service" in grant.stderr
     reader = cli.run("adm", "grant", "reader", "geo-readers", "--org", "geo")
-    assert reader.exit_code == 6 and "Edit `groups.reader` there" in reader.stderr
-    assert "huron adm apply-acl <catalog> -R" in reader.stderr
+    assert reader.exit_code == 6
+    assert "Edit `groups.reader` there. Then restart the service" in reader.stderr
     catalog = cli.run("adm", "grant", "reader", "x", "--catalog", "missing")
     assert catalog.exit_code == 5 and "groups." not in catalog.stderr
 
@@ -438,17 +428,20 @@ def test_deleting_an_organization_with_a_root_leaves_its_directory(
     share.add_root(GEO_ROOT / "quiet", owner="alice")
     cli.login_as("alice")
     deleted = cli.ok("delete", "org", "quiet").stdout
-    assert f"Organization quiet deleted. Its directory {GEO_ROOT / 'quiet'} stays" in deleted
+    assert deleted.splitlines() == [
+        "organization quiet deleted",
+        f"Its directory {GEO_ROOT / 'quiet'} stays. Its storage admin deletes the directory",
+    ]
     assert share.exists(GEO_ROOT / "quiet")
 
 
-def test_undeclared_organizations_keep_the_share_root(
+def test_an_undeclared_organization_is_deleted_through_the_api_only(
     managed: tuple[Cli, ManagedService], share: MemoryStorage
 ) -> None:
     cli, _ = managed
-    assert "organization quiet deleted" in cli.ok("delete", "org", "quiet").stdout
+    assert cli.ok("delete", "org", "quiet").stdout == "organization quiet deleted\n"
     assert "quiet" not in cli.ok("get", "orgs").stdout
-    assert not share.exists(PREFIX / "quiet")
+    assert share.calls == []
 
 
 def test_an_unusable_root_from_the_service_is_refused(
@@ -457,8 +450,9 @@ def test_an_unusable_root_from_the_service_is_refused(
     cli = seeded_cli
     manage(cli, monkeypatch, {"helio": Path("relative/root")})
     cli.login_as("bob")
-    refused = cli.run("create", "catalog", "spare", "--org", "helio")
-    assert refused.exit_code == 8 and "not an absolute, normalized path" in refused.stderr
+    services, _, _ = cli.services()
+    with pytest.raises(StorageFailure, match="not an absolute, normalized path"):
+        services.mount().place("helio")
 
 
 def test_paths_escaping_the_share_are_refused_before_any_lookup(

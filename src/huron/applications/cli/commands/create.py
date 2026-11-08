@@ -1,4 +1,4 @@
-"""``huron create <noun>``: organizations, catalogs, namespaces, collections and directories."""
+"""``huron create <noun>``: organizations, catalogs, namespaces and collections, through the API."""
 
 from __future__ import annotations
 
@@ -12,22 +12,19 @@ from huron.applications.cli.commands.common import (
     activate,
     api,
     explain_missing_organization,
-    kind_of,
     read_document,
     say,
     services,
 )
-from huron.applications.cli.errors import ApiError, CliError, UsageError
+from huron.applications.cli.errors import ApiError, UsageError
 from huron.applications.cli.identifiers import resolve_collection, resolve_namespace
-from huron.applications.cli.mount import Mount
 from huron.applications.cli.sync import checkout
 from huron.applications.cli.walkthrough import fill
-from huron.core.storage import DirectoryKind, EffectiveGroups
 
 __all__ = ["create_app", "register"]
 
 create_app = typer.Typer(
-    help="Create an organization, catalog, namespace or collection, and its directory.",
+    help="Create an organization, catalog, namespace or collection.",
     no_args_is_help=True,
 )
 
@@ -44,20 +41,13 @@ def create_org(
     display_name: Annotated[str, typer.Option(help="A human-readable name.")] = "",
     description: Annotated[str, typer.Option(help="A description of the organization.")] = "",
 ) -> None:
-    """Create an organization and its directory on the share (Platform Admin).
+    """Create an organization (Platform Admin). The API creates its directory on the share.
 
     The service refuses this command when its configuration declares the organizations. In that
     case, a storage admin prepares their directories with `huron adm provision-orgs`.
     """
-    mount = services(ctx).mount()
     body = {"name": name, "display_name": display_name, "description": description}
-    try:
-        api(ctx).post("/api/v1/organizations", json=body)
-    except ApiError as error:
-        if error.code != "NAME_TAKEN":
-            raise
-        api(ctx).get(f"/api/v1/organizations/{name}")
-    mount.ensure(name, DirectoryKind.ORGANIZATION, mount.organization_groups(name))
+    api(ctx).post("/api/v1/organizations", json=body)
     say(ctx, f"organization {name} ready")
 
 
@@ -78,22 +68,13 @@ def create_catalog(
     display_name: Annotated[str, typer.Option(help="A human-readable name.")] = "",
     description: Annotated[str, typer.Option(help="A description of what the catalog holds.")] = "",
 ) -> None:
-    """Create a catalog and its directory (Org Admin).
-
-    Run the command again to repair a missing directory.
-    """
+    """Create a catalog (Org Admin). The API creates its directory on the share."""
     owner = organization or services(ctx).organization()
     if owner is None:
         raise UsageError(
             "there is no current organization",
             hint="use `--org <org>`, or run `huron org <name>`",
         )
-    mount = services(ctx).mount()
-    try:
-        mount.verify(owner)
-    except CliError as error:
-        explain_missing_organization(ctx, owner, error)
-        raise
     body = {
         "name": name,
         "schema_id": schema,
@@ -101,14 +82,10 @@ def create_catalog(
         "description": description,
     }
     try:
-        catalog = api(ctx).post(f"/api/v1/organizations/{owner}/catalogs", json=body)
+        api(ctx).post(f"/api/v1/organizations/{owner}/catalogs", json=body)
     except ApiError as error:
         explain_missing_organization(ctx, owner, error)
-        if error.code != "NAME_TAKEN":
-            raise
-        catalog = api(ctx).get(f"/api/v1/catalogs/{name}")
-    relative = f"{catalog['organization']}/{name}"
-    mount.ensure(relative, DirectoryKind.CATALOG, mount.catalog_groups(name))
+        raise
     say(ctx, f"Catalog {name} is ready. To select it, run `huron catalog {name}`")
 
 
@@ -126,22 +103,16 @@ def create_namespace(
         bool, typer.Option("--parents", help="Create missing ancestor namespaces.")
     ] = False,
 ) -> None:
-    """Create a namespace and its directory (Catalog Admin).
-
-    Run the command again to repair the directory.
-    """
+    """Create a namespace (Catalog Admin). The API creates its directory on the share."""
     parsed = resolve_namespace(identifier, services(ctx).catalog())
-    mount = services(ctx).mount()
-    mount.verify_catalog(parsed.catalog)
-    groups = mount.catalog_groups(parsed.catalog)
     segments = parsed.namespace_path
     for depth in range(1, len(segments)):
         ancestor = ".".join(segments[:depth])
         if parents:
-            _ensure(ctx, mount, parsed.catalog, ancestor, False, groups)
+            _create_ancestor(ctx, parsed.catalog, ancestor)
         else:
             api(ctx).get(f"/api/v1/catalogs/{parsed.catalog}/namespaces/{ancestor}")
-    view = _ensure(ctx, mount, parsed.catalog, parsed.namespace, allow_collections, groups)
+    view = _create(ctx, parsed.catalog, parsed.namespace, allow_collections)
     say(ctx, f"namespace {view['identifier']} ready")
 
 
@@ -159,12 +130,12 @@ def create_collection(
         bool, typer.Option("--draft", help="Stop before the CLI activates the collection.")
     ] = False,
 ) -> None:
-    """Reserve a collection, fill its metadata, then create its directory and activate it."""
+    """Reserve a collection, fill its metadata, then activate it.
+
+    The API creates the directory of the collection and writes `metadata.json` in it.
+    """
     found = services(ctx)
     parsed = resolve_collection(identifier, found.catalog())
-    mount = found.mount()
-    if not draft:
-        mount.verify_catalog(parsed.catalog)
     document = read_document(metadata) if metadata else None
     base = f"/api/v1/catalogs/{parsed.catalog}/namespaces/{parsed.namespace}"
     collection = api(ctx).post(
@@ -180,7 +151,7 @@ def create_collection(
             " To activate it, run `huron activate collection`",
         )
         return
-    activated = activate(ctx, collection, mount)
+    activated = activate(ctx, collection)
     say(ctx, f"collection {activated['identifier']} is active at {activated['path']}")
 
 
@@ -195,23 +166,19 @@ def _walk_through(ctx: typer.Context, collection: dict[str, Any]) -> dict[str, A
     return updated
 
 
-def _ensure(
-    ctx: typer.Context,
-    mount: Mount,
-    catalog: str,
-    path: str,
-    allow: bool,
-    groups: EffectiveGroups,
-) -> dict[str, object]:
+def _create(ctx: typer.Context, catalog: str, path: str, allow: bool) -> dict[str, object]:
     parent, _, name = path.rpartition(".")
-    base = f"/api/v1/catalogs/{catalog}/namespaces"
+    view: dict[str, object] = api(ctx).post(
+        f"/api/v1/catalogs/{catalog}/namespaces",
+        json={"parent": parent, "name": name, "collections_allowed": allow},
+    )
+    return view
+
+
+def _create_ancestor(ctx: typer.Context, catalog: str, path: str) -> None:
+    """Create the ancestor namespace ``path``, unless it exists."""
     try:
-        view: dict[str, object] = api(ctx).post(
-            base, json={"parent": parent, "name": name, "collections_allowed": allow}
-        )
+        _create(ctx, catalog, path, False)
     except ApiError as error:
         if error.code != "NAME_TAKEN":
             raise
-        view = api(ctx).get(f"{base}/{path}")
-    mount.ensure(str(view["disk_path"]), kind_of(view), groups)
-    return view

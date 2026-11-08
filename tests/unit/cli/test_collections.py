@@ -7,7 +7,7 @@ import pytest
 
 from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
-from tests.unit.cli.conftest import PREFIX
+from tests.unit.cli.conftest import PREFIX, make_collection
 
 COLLECTION = PREFIX / "helio" / "heliophysics" / "solar-wind" / "run7"
 BASE_ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
@@ -16,16 +16,16 @@ BASE_ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
 @pytest.fixture
 def ready(seeded_cli: Cli) -> Cli:
     """The solar-wind directory exists and dave is logged in with heliophysics selected."""
-    seeded_cli.login_as("carol")
-    seeded_cli.ok("create", "namespace", "heliophysics.solar-wind", "--allow-collections")
     seeded_cli.login_as("dave")
     seeded_cli.ok("catalog", "heliophysics")
     return seeded_cli
 
 
 def create(cli: Cli, name: str = "run7") -> None:
+    """Create the collection through the CLI, then make its directory as the API will."""
     cli.prompter.answers.extend(BASE_ANSWERS)
     cli.ok("create", "collection", f"solar-wind.{name}")
+    make_collection(cli, name)
 
 
 def files(tmp_path: Path, **contents: str) -> list[Path]:
@@ -37,16 +37,13 @@ def files(tmp_path: Path, **contents: str) -> list[Path]:
     return made
 
 
-def test_create_walks_through_metadata_and_activates(ready: Cli, share: MemoryStorage) -> None:
-    result = None
-    create(ready)
-    assert share.is_directory(COLLECTION)
-    assert share.nodes[COLLECTION].mode == 0o2770
-    sidecar = json.loads(share.read_bytes(COLLECTION / "metadata.json") or b"{}")
-    assert sidecar["metadata"]["title"] == "Run 7"
+def test_create_walks_through_metadata_and_activates(ready: Cli) -> None:
+    ready.prompter.answers.extend(BASE_ANSWERS)
+    created = ready.ok("create", "collection", "solar-wind.run7")
+    assert created.stdout.startswith("collection heliophysics.solar-wind.run7 is active at ")
     described = json.loads(ready.ok("-o", "json", "describe", "collection").stdout)
     assert described["state"] == "active" and described["version"] == 3
-    assert result is None
+    assert described["metadata"]["title"] == "Run 7"
 
 
 def test_drafts_from_a_file_activate_later(
@@ -63,7 +60,9 @@ def test_drafts_from_a_file_activate_later(
     ready.ok("validate", "meta")
     ready.ok("publish", "meta")
     ready.ok("activate", "collection")
-    assert share.is_directory(COLLECTION.with_name("run8"))
+    described = json.loads(ready.ok("-o", "json", "describe", "collection").stdout)
+    assert described["identifier"] == "heliophysics.solar-wind.run8"
+    assert described["state"] == "active"
 
 
 def test_stage_push_status_and_pull(ready: Cli, share: MemoryStorage, tmp_path: Path) -> None:
@@ -112,7 +111,7 @@ def test_a_push_behind_the_service_is_refused_until_pull(
     assert "+1" in ready.ok("push").stdout
 
 
-def test_metadata_overrides_and_publish(ready: Cli, share: MemoryStorage, tmp_path: Path) -> None:
+def test_metadata_overrides_and_publish(ready: Cli, tmp_path: Path) -> None:
     create(ready)
     override = tmp_path / "override.json"
     override.write_text(
@@ -125,8 +124,8 @@ def test_metadata_overrides_and_publish(ready: Cli, share: MemoryStorage, tmp_pa
     current = json.loads(ready.ok("-o", "json", "describe", "collection").stdout)["metadata"]
     ready.state.write_draft(ready.config_current(), {**current, "run": 7})
     ready.ok("set", "override", str(override))
-    sidecar = json.loads(share.read_bytes(COLLECTION / "metadata.json") or b"{}")
-    assert sidecar["schema_override"]["required"] == ["run"]
+    described = json.loads(ready.ok("-o", "json", "describe", "collection").stdout)
+    assert described["schema_override"]["required"] == ["run"]
     shown = json.loads(ready.ok("-o", "json", "get", "meta").stdout)
     assert shown["metadata"]["run"] == 7 and shown["draft"] is None
     bad = tmp_path / "bad.json"
@@ -171,26 +170,6 @@ def test_staging_refusals(ready: Cli, tmp_path: Path) -> None:
     assert ready.run("add", str(a), "--as", "x.huron-part").exit_code == 2
     assert ready.run("add", str(a), str(a), "--as", "x").exit_code == 2
     assert ready.run("rm", "never.txt").exit_code == 2
-
-
-def test_delete_removes_files_and_refuses_unrecorded_ones(
-    ready: Cli, share: MemoryStorage, tmp_path: Path
-) -> None:
-    create(ready)
-    (a,) = files(tmp_path, **{"a.txt": "alpha"})
-    ready.ok("add", str(a), "--as", "sub/a.txt")
-    ready.ok("push")
-    share.write_bytes(COLLECTION / "stray.txt", b"x")
-    refused = ready.run("delete", "collection", "solar-wind.run7", "--yes")
-    assert refused.exit_code == 6 and "stray.txt" in refused.stderr
-    assert share.exists(COLLECTION / "sub" / "a.txt")
-    assert json.loads(ready.ok("-o", "json", "describe", "collection").stdout)["file_count"] == 1
-    share.remove_file(COLLECTION / "stray.txt")
-    ready.prompter.answers.append(False)
-    assert ready.run("delete", "collection", "solar-wind.run7").exit_code == 130
-    ready.ok("delete", "collection", "solar-wind.run7", "--yes")
-    assert not share.exists(COLLECTION)
-    assert json.loads(ready.ok("-o", "json", "status").stdout)["collection"] is None
 
 
 def test_drafts_delete_without_touching_the_share(ready: Cli) -> None:

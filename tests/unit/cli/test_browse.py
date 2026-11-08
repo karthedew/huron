@@ -35,7 +35,7 @@ def test_catalogs_use_describe_and_roles(seeded_cli: Cli) -> None:
     sources = json.loads(cli.ok("-o", "json", "get", "grants").stdout)
     assert {"role": "reader", "group": "helio-readers", "scope": "catalog"} in sources
     granted = cli.ok("adm", "grant", "reader", "guests", "--catalog", "heliophysics")
-    assert "huron adm apply-acl heliophysics --recursive" in granted.stdout
+    assert granted.stdout == "reader: added guests, revoked -\n"
     cli.ok("adm", "revoke", "reader", "guests", "--catalog", "heliophysics")
     assert cli.run("catalog", "missing").exit_code == 5
     assert cli.run("adm", "grant", "owner", "x", "--catalog", "heliophysics").exit_code == 2

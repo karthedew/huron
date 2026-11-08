@@ -1,4 +1,4 @@
-"""What the service records about a catalog, for ``adm check``, ``adm apply-acl`` and ``tree``."""
+"""What the service records about a catalog, for ``adm check`` and ``tree``."""
 
 from __future__ import annotations
 

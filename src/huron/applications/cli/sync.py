@@ -11,7 +11,6 @@ from typing import Any
 
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.errors import CliError, ExitCode, UsageError
-from huron.applications.cli.mount import Mount
 from huron.applications.cli.services import Services
 from huron.applications.cli.state import Stage, StagedAdd, WorkingCopy
 from huron.applications.cli.uploads import Uploader, UploadService
@@ -27,7 +26,6 @@ __all__ = [
     "recorded_files",
     "stage_paths",
     "unstage_or_remove",
-    "write_sidecar",
 ]
 
 
@@ -159,13 +157,6 @@ def push(services: Services, copy: WorkingCopy, message: str | None) -> PushResu
         services.state.write_stage(copy.collection_id, Stage())
         services.state.write_copy(replace(copy, version=int(result["version"])))
         return PushResult(copy.version, int(result["version"]), len(stage.adds), len(stage.removes))
-
-
-def write_sidecar(services: Services, mount: Mount, collection: dict[str, Any]) -> None:
-    """Write the service's ``metadata.json`` rendering into the collection directory."""
-    target = mount.path(str(collection["path"])) / "metadata.json"
-    body = services.api().request("GET", f"/api/v1/collections/{collection['id']}/metadata.json")
-    mount.storage.write_bytes(target, body.content)
 
 
 def _rm_one(

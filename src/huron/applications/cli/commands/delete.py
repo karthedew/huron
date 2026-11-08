@@ -1,9 +1,8 @@
-"""``huron delete <noun>``: organizations, catalogs, namespaces, collections and directories."""
+"""``huron delete <noun>``: organizations, catalogs, namespaces and collections, through the API."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -18,16 +17,7 @@ from huron.applications.cli.commands.common import (
     services,
 )
 from huron.applications.cli.errors import ApiError, CliError, ExitCode
-from huron.applications.cli.mount import Mount
 from huron.applications.cli.sync import recorded_files
-from huron.core.storage import (
-    MarkerState,
-    OrganizationPlace,
-    Storage,
-    StorageError,
-    is_reserved_entry,
-)
-from huron.schema.naming import rel_path_key
 
 __all__ = ["DECLARED_HINT", "delete_app", "register"]
 
@@ -49,32 +39,22 @@ def register(app: typer.Typer, panel: str) -> None:
 
 @delete_app.command("org")
 def delete_org(ctx: typer.Context, name: str) -> None:
-    """Delete an organization that has no catalogs, and its empty directory.
+    """Delete an organization that has no catalogs. The API deletes its empty directory.
 
     The service refuses to delete a declared organization. Instead, delete it from the service
-    configuration. The CLI leaves the directory of an organization with a configured root to
-    its storage admin. An organization that the managed configuration no longer declares has
-    no known root. The CLI deletes its directory only when the mount prefix is its share.
-    Otherwise, the CLI leaves the directory to its owner.
+    configuration. The directory of an organization with a root stays for its storage admin.
     """
     found = services(ctx)
-    mount = found.mount()
-    place = mount.place(name)
-    directory = _organization_directory(mount, place)
-    if directory == "remove":
-        mount.verify(name)
+    directory = api(ctx).get(f"/api/v1/organizations/{name}").get("path")
     try:
         api(ctx).delete(f"/api/v1/organizations/{name}")
     except ApiError as error:
         if error.code == "ORGANIZATION_DECLARED":
             error.hint = DECLARED_HINT
         raise
-    if directory == "remove":
-        mount.remove(name)
-        say(ctx, f"organization {name} deleted")
-    else:
-        for line in _KEPT[directory]:
-            say(ctx, line.format(name=name, directory=place.directory))
+    say(ctx, f"organization {name} deleted")
+    if directory is not None:
+        say(ctx, f"Its directory {directory} stays. Its storage admin deletes the directory")
     if found.organization() == name:
         found.save_config(replace(found.config, current_organization=None))
         say(
@@ -85,24 +65,17 @@ def delete_org(ctx: typer.Context, name: str) -> None:
 
 @delete_app.command("catalog")
 def delete_catalog(ctx: typer.Context, name: str) -> None:
-    """Delete a catalog that has no namespaces, and its empty directory."""
-    mount = services(ctx).mount()
-    catalog = fetch_catalog(ctx, name)
-    relative = f"{catalog['organization']}/{name}"
-    mount.path(relative)  # refuse before any change when the share is not ours
+    """Delete a catalog that has no namespaces. The API deletes its empty directory."""
+    fetch_catalog(ctx, name)
     api(ctx).delete(f"/api/v1/catalogs/{name}")
-    mount.remove(relative)
     say(ctx, f"catalog {name} deleted")
 
 
 @delete_app.command("namespace")
 def delete_namespace(ctx: typer.Context, identifier: str) -> None:
-    """Delete an empty namespace and its directory."""
-    mount = services(ctx).mount()
+    """Delete an empty namespace. The API deletes its empty directory."""
     parsed, view = fetch_namespace(ctx, identifier)
-    mount.path(view["disk_path"])  # refuse before any change when the share is not ours
     api(ctx).delete(f"/api/v1/catalogs/{parsed.catalog}/namespaces/{parsed.namespace}")
-    mount.remove(view["disk_path"])
     say(ctx, f"namespace {view['identifier']} deleted")
 
 
@@ -114,7 +87,9 @@ def delete_collection(
 ) -> None:
     """Delete all files of a collection, the collection and its directory.
 
-    This needs the creator of the collection or a catalog admin.
+    This needs the creator of the collection or a catalog admin. The API deletes only the files
+    that it recorded or placed. Other files stay in the directory, and `huron adm check` reports
+    them as `dir_unrecorded`.
     """
     found = services(ctx)
     collection = fetch_collection(ctx, identifier)
@@ -126,73 +101,25 @@ def delete_collection(
     path = f"/api/v1/collections/{collection['id']}"
     api(ctx).delete(path, params={"dry_run": "true"}, headers=if_match(version))
     if collection.get("path") is not None:
-        version = _empty_directory(ctx, collection)
+        version = _remove_files(ctx, collection)
     api(ctx).delete(path, headers=if_match(version))
-    if collection.get("path") is not None:
-        found.mount().remove(str(collection["path"]))
     if found.config.current_collection == collection["id"]:
         found.save_config(replace(found.config, current_collection=None))
     say(ctx, f"collection {collection['identifier']} deleted")
 
 
-def _empty_directory(ctx: typer.Context, collection: dict[str, Any]) -> int:
-    found = services(ctx)
-    mount = found.mount()
-    directory = mount.path(str(collection["path"]))
-    storage = mount.storage
-    recorded = recorded_files(api(ctx), str(collection["id"]))
-    _refuse_unrecorded(storage, directory, recorded)
+def _remove_files(ctx: typer.Context, collection: dict[str, Any]) -> int:
+    """Commit the removal of every recorded file; the version of the collection after it."""
     version = int(collection["version"])
-    if recorded:
-        removes = [item["rel_path"] for item in recorded.values()]
-        body = {"base_version": version, "adds": [], "removes": removes, "host": found.hostname}
-        version = int(
-            api(ctx).post(f"/api/v1/collections/{collection['id']}/commits", json=body)["version"]
-        )
-        for rel_path in removes:
-            storage.remove_file(directory.joinpath(*rel_path.split("/")))
-    storage.remove_file(directory / "metadata.json")
-    for entry in sorted(storage.walk(directory), key=lambda e: e.rel_path, reverse=True):
-        try:
-            storage.remove_directory(directory.joinpath(*entry.rel_path.split("/")))
-        except StorageError as error:
-            raise CliError(error.message, ExitCode.STORAGE, code=error.code) from error
-    return version
-
-
-def _refuse_unrecorded(storage: Storage, directory: Path, recorded: dict[str, Any]) -> None:
-    leftovers = [
-        entry.rel_path
-        for entry in storage.walk(directory)
-        if entry.kind != "dir"
-        and not is_reserved_entry(entry.rel_path)
-        and rel_path_key(entry.rel_path) not in recorded
-    ]
-    if leftovers:
-        raise CliError(
-            f"{len(leftovers)} unrecorded files remain in {directory}: {', '.join(leftovers[:20])}",
-            ExitCode.CONFLICT,
-            hint="move or delete them. Then run `huron delete collection` again",
-        )
-
-
-_KEPT = {
-    "keep": (
-        "Organization {name} deleted. Its directory {directory} stays",
-        "Its storage admin deletes the directory when it is no longer necessary",
-    ),
-    "lost": (
-        "Organization {name} deleted. The CLI did not look for its directory",
-        "The service configuration does not declare it, so its root is unknown."
-        " If its directory still exists, delete it manually where it is",
-    ),
-}
-
-
-def _organization_directory(mount: Mount, place: OrganizationPlace) -> str:
-    """What ``delete org`` does with the directory: keep (rooted or declared), lost or remove."""
-    if place.rooted or place.declared:
-        return "keep"
-    if mount.undeclared(place) and mount.prefix_state() is not MarkerState.OK:
-        return "lost"
-    return "remove"
+    recorded = recorded_files(api(ctx), str(collection["id"]))
+    if not recorded:
+        return version
+    removes = [item["rel_path"] for item in recorded.values()]
+    body = {
+        "base_version": version,
+        "adds": [],
+        "removes": removes,
+        "host": services(ctx).hostname,
+    }
+    commit = api(ctx).post(f"/api/v1/collections/{collection['id']}/commits", json=body)
+    return int(commit["version"])

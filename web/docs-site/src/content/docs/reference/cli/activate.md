@@ -19,13 +19,13 @@ huron activate [OPTIONS] COMMAND [ARGS]...
 
 ## Commands
 
-| Command                                                   | Description                                                             |
-| --------------------------------------------------------- | ----------------------------------------------------------------------- |
-| [`huron activate collection`](#huron-activate-collection) | Create the directory of a draft collection and activate the collection. |
+| Command                                                   | Description                                                                            |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [`huron activate collection`](#huron-activate-collection) | Activate a draft collection. The API creates its directory and writes `metadata.json`. |
 
 ## `huron activate collection`
 
-Create the directory of a draft collection and activate the collection.
+Activate a draft collection. The API creates its directory and writes `metadata.json`.
 
 ```text
 huron activate collection [OPTIONS] [IDENTIFIER]

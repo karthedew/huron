@@ -55,7 +55,7 @@ Every command also takes `--help`, which prints the same reference in the termin
 
 | Command                                 | Description                                                                        |
 | --------------------------------------- | ---------------------------------------------------------------------------------- |
-| [`create`](/docs/reference/cli/create/) | Create an organization, catalog, namespace or collection, and its directory.       |
+| [`create`](/docs/reference/cli/create/) | Create an organization, catalog, namespace or collection.                          |
 | [`delete`](/docs/reference/cli/delete/) | Delete an empty organization, catalog or namespace, or a collection and its files. |
 | [`set`](/docs/reference/cli/set/)       | Set the schema override of a collection, or the settings of a namespace.           |
 | [`unset`](/docs/reference/cli/unset/)   | Clear the schema override of a collection.                                         |

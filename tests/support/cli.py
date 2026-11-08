@@ -107,7 +107,7 @@ class Cli:
     """A CLI wired to an in-process service; ``run`` executes one command line.
 
     With ``lake``, the service holds that in-memory lake at ``lake_path`` (``mount_prefix`` by
-    default) and takes uploads through :class:`FakeTus`, which ``tus`` holds.
+    default) and takes uploads through :class:`FakeTus`, which ``tus`` holds. ``lake`` keeps it.
     """
 
     def __init__(
@@ -124,6 +124,7 @@ class Cli:
         self.issuer = FakeIssuer()
         self.issuer.now = START.timestamp()
         self.clock = frozen()
+        self.lake = lake
         disk = None
         lake_path = lake_path or mount_prefix
         if lake is not None:
