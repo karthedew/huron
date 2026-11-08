@@ -109,29 +109,29 @@ def make_inheriting_dir(path: Path) -> bool:
     return True
 
 
-def link_into_place(source: Path, destination: Path, part_name: str) -> None:
+def link_into_place(
+    source: Path, destination: Path, part_name: str, backup_name: str
+) -> Path | None:
     """Hard-link ``source`` to ``destination``, replacing an existing ``destination`` atomically.
 
-    A new name is one ``link``. An existing name is replaced by a link to ``part_name`` beside
-    it and a ``rename`` over it; a part file left by an earlier attempt is replaced first. The
-    directory is flushed to disk afterwards. Raises ``FileNotFoundError`` when ``source`` does
+    A new name is one ``link``. An existing name is first linked to ``backup_name`` beside it, so
+    its bytes outlive the replacement, then replaced by a link to ``part_name`` and a ``rename``
+    over it. A part or backup file left by an earlier attempt is replaced. A ``destination`` that
+    already links the inode of ``source`` is left as it is: an earlier attempt placed it, and a
+    ``backup_name`` beside it holds the bytes that attempt replaced. The directory is flushed to
+    disk afterwards. Returns the backup, if any. Raises ``FileNotFoundError`` when ``source`` does
     not exist.
     """
+    backup: Path | None = None
     try:
         os.link(source, destination, follow_symlinks=False)
     except FileExistsError:
-        part = destination.with_name(part_name)
-        try:
-            os.link(source, part, follow_symlinks=False)
-        except FileExistsError:
-            os.unlink(part)
-            os.link(source, part, follow_symlinks=False)
-        try:
-            os.rename(part, destination)
-        finally:
-            # rename does nothing when both names already link one inode; the part stays then.
-            remove_file(part)
+        if os.path.samestat(os.lstat(source), os.lstat(destination)):
+            earlier = destination.with_name(backup_name)
+            return earlier if os.path.lexists(earlier) else None
+        backup = _replace(source, destination, part_name, backup_name)
     _sync_directory(destination.parent)
+    return backup
 
 
 def inode(path: Path) -> int:
@@ -222,6 +222,30 @@ def _sync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _replace(source: Path, destination: Path, part_name: str, backup_name: str) -> Path:
+    part = _link_afresh(source, destination.with_name(part_name))
+    try:
+        backup = _link_afresh(destination, destination.with_name(backup_name))
+        try:
+            os.rename(part, destination)
+        except BaseException:
+            remove_file(backup)
+            raise
+    except BaseException:
+        remove_file(part)
+        raise
+    return backup
+
+
+def _link_afresh(source: Path, name: Path) -> Path:
+    try:
+        os.link(source, name, follow_symlinks=False)
+    except FileExistsError:
+        os.unlink(name)
+        os.link(source, name, follow_symlinks=False)
+    return name
 
 
 def _walk(root: Path, prefix: str) -> Iterator[Entry]:

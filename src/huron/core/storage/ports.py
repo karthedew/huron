@@ -185,12 +185,21 @@ class Storage(ShareReader, Protocol):
         """Open a file read-only; ``None`` when it does not exist. The caller closes it."""
         ...
 
-    def link(self, source: Path, destination: Path, part_name: str) -> bool:
+    def link(
+        self, source: Path, destination: Path, part_name: str, backup_name: str
+    ) -> Path | None:
         """Hard-link ``source`` to ``destination``, atomically replacing an existing file.
 
-        The replacement goes through ``part_name`` beside ``destination``. ``False`` when
-        ``source`` does not exist.
+        The replaced file keeps its bytes under ``backup_name`` beside ``destination``, and the
+        replacement goes through ``part_name``. A ``destination`` that already links ``source``
+        stays as it is, and a backup an earlier attempt made for it is still the backup. Returns
+        the backup, or ``None`` when nothing was replaced. Raises ``SourceGone`` when ``source``
+        does not exist.
         """
+        ...
+
+    def rename(self, source: Path, destination: Path) -> None:
+        """Give the file at ``source`` the name ``destination``, replacing it atomically."""
         ...
 
     def inode(self, path: Path) -> int | None:

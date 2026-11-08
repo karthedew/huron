@@ -47,19 +47,22 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 
 ### Write path
 
-**Volume**: The ONTAP NFS export that holds Raw bytes, mounted at the same prefix on the designated machines, in the API pod and in the upload pod. Only the API pod and the upload pod mount it read-write.
-**Mount prefix**: The configured directory, such as `/projects/huron`, where the volume is mounted for organizations without a root.
+**Volume**: The ONTAP NFS export that holds Raw bytes. The API pod and the upload pod mount it read-write at the **Lake path**. A workstation mounts it read-only at the CLI's **Mount prefix**.
+**Mount prefix**: The CLI's configured directory, such as `/projects/huron`, where a workstation mounts the volume read-only; organizations without a root lie below it. On the machine that runs the provision commands, it is the lake path on that machine. The API has none: it uses the **Lake path**.
 **Push**: The CLI's upload of a working copy: each staged add goes through the upload proxy to tusd, then one commit records the adds and removes.
 **Partial**: `.<name>.<upload id>.huron-part`, the link the API makes beside an existing file during an overwrite, then renames over it.
-**Placement**: The API turning a finished upload into its final name inside `pre-finish`: it hashes the upload, then makes a hard link when the name is new, or a partial and a rename when it overwrites.
+**Placement**: The API turning a finished upload into its final name inside `pre-finish`: it hashes the upload, then makes a hard link when the name is new, or a partial and a rename when it overwrites. It uses hard links and `rename` only, never a symbolic link.
 **Upload**: One tus upload of one file to one `rel_path` of a collection by one user, with a row that goes from `pending` to `placed` and `committed`, or ends `failed` or `terminated`.
 **Receipt**: The size, sha256 and inode the API records for a placed upload. A commit records an add only when the latest placement of its path is the committer's receipt.
 **Upload pod**: The Deployment of one replica that holds the upload proxy and tusd. Its init container deletes tusd's old lock files.
 **Upload proxy**: The nginx container that asks the API to authorize every request except OPTIONS before any byte reaches tusd.
-**Lake path**: `HURON_LAKE_PATH`, the volume's mount point in the API pod and in the upload pod. Every organization root that accepts uploads lies at or below it, on one filesystem.
+**Lake path**: `HURON_LAKE_PATH`, the volume's mount point in the API pod and in the upload pod. It never changes. Every organization root lies at or below it, on one filesystem; startup refuses any other root.
+**LakePath**: A place on the disk as a tuple of names below the storage root, each checked by `check_lake_name` (not empty, not `.` or `..`, no `/` or NUL, at most 255 bytes). The API's disk code names places only this way, never with an absolute path. _Avoid_: path alone when the API form (`helio/sun/…`) is meant.
+**Containment**: The rule that keeps every disk operation inside the **Lake path**: every **LakePath** is opened from a descriptor of the root, one name at a time, with no follow of a symbolic link. There is no device check and no mount-point check. _Avoid_: outside-lake check.
+**Symlink in lake**: A symbolic link anywhere below the **Lake path**. It is always an error: the API refuses disk work through it with 409 `SYMLINK_IN_LAKE`, a walk reports it and never enters it, and `huron adm check` reports `symbolic_link`. Huron never makes, follows or removes one; the storage administrator removes it.
 **Service UID**: `U`, the fixed UID of the API pod and the upload pod. It owns every directory and file of the lake. Its primary group is the service group. _Avoid_: upload user.
 **Share group**: The LDAP POSIX group a catalog names as `share_group`. Its members read the catalog's directory over the mount. Every directory below the catalog inherits it through setgid. A placed file keeps the service group, and its mode `0644` lets every member read it. _Avoid_: reader group.
-**Repair**: `huron adm repair`: the API making a directory again when it is missing, setting its permission bits, trying its group and rewriting `metadata.json`, and with `--recursive` doing the same for every directory and file below it. It never deletes, and it never sets a setgid bit or a directory group that `U` may not set.
+**Repair**: `huron adm repair`: the API running one step for each directory that the rows plan (with `--recursive`, the planned namespaces and settled collections below the target too): it makes the directory when it is missing, sets its permission bits, tries the catalog's group and rewrites a settled collection's `metadata.json`. It lists no directory and changes no file mode. It never deletes, and it never sets a setgid bit or a directory group that `U` may not set. A step that meets a **Symlink in lake** fails with the reason `symbolic_link`, and the other steps run.
 **Push lock**: The lock that lets one push at a time run from a working copy.
 **Working copy**: A checked-out collection's local state: its base (version and time of the pull), its staged changes and its file listing.
 **Stale staged entry**: A staged change that a later pull invalidated; push refuses while one exists.
@@ -113,6 +116,8 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 - A catalog extension **Metadata schema** extends one **Org base schema** version; each **Config version** references one extension version.
 - A catalog change that needs a change on disk makes it in the same API request, after its transaction commits. A failure on disk is repaired with **Repair**.
 - An **Upload** becomes a **File** only through a **Commit** that its **Receipt** proves.
+- Every disk change of the API names its place as a **LakePath** and obeys **Containment**; a **Symlink in lake** stops that change and keeps its rows.
+- The CLI writes nothing to the **Volume**; it reads it through the read-only mount at its **Mount prefix**. The one exception is `huron adm provision-orgs` and `huron adm provision-catalogs` in direct mode, which the storage administrator runs.
 
 ## Example dialogue
 
@@ -130,4 +135,6 @@ owns them and what they mean; PostgreSQL holds current state and ONTAP snapshots
 - "publish" applies to descriptive metadata only; files are committed.
 - `metadata.json` beside the data is written by the API from its own rendering, never by the CLI.
 - "Incomplete" covers both "a newly required field is missing" and "a field no longer conforms".
-- "Partial" meant `<name>.huron-part`, copied by the version 1 CLI. It now means the API's overwrite link.
+- "Partial" meant `<name>.huron-part`, copied by the CLI's old NFS-copy push, which is removed. It now means the API's overwrite link.
+- "Version 1" names the first schema migration (`0001_huron`) and the old design history only. There are no version 1 directories or files: production starts from scratch, and nothing converts old data.
+- "link" in the lake always means a hard link; a symbolic link is a **Symlink in lake**.

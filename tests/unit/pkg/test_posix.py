@@ -1,5 +1,6 @@
 """POSIX filesystem primitives on a temporary directory."""
 
+import errno
 import hashlib
 import os
 import stat
@@ -134,55 +135,96 @@ def test_make_inheriting_dir_refuses_an_existing_file(setgid_dir: Path) -> None:
         posix.make_inheriting_dir(setgid_dir / "f")
 
 
-def test_link_into_place_links_a_new_name(tmp_path: Path) -> None:
+PART = ".a.bin.1.huron-part"
+BACKUP = ".a.bin.1.huron-prev"
+
+
+@pytest.fixture
+def upload(tmp_path: Path) -> Path:
+    """A finished upload with the bytes ``new``."""
     source = tmp_path / "upload"
     source.write_bytes(b"new")
+    return source
+
+
+def test_link_into_place_links_a_new_name_without_a_backup(tmp_path: Path, upload: Path) -> None:
     destination = tmp_path / "a.bin"
-    posix.link_into_place(source, destination, ".a.bin.1.huron-part")
-    assert posix.inode(destination) == posix.inode(source)
+    assert posix.link_into_place(upload, destination, PART, BACKUP) is None
+    assert posix.inode(destination) == posix.inode(upload)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.bin", "upload"]
 
 
-@pytest.mark.parametrize("stale_part", [False, True], ids=["no-part", "stale-part"])
-def test_link_into_place_replaces_an_existing_file_through_the_part(
-    tmp_path: Path, stale_part: bool
+@pytest.mark.parametrize("stale", [(), (PART,), (BACKUP,), (PART, BACKUP)])
+def test_link_into_place_replaces_an_existing_file_and_keeps_its_bytes_in_a_backup(
+    tmp_path: Path, upload: Path, stale: tuple[str, ...]
 ) -> None:
-    source = tmp_path / "upload"
-    source.write_bytes(b"new")
     destination = tmp_path / "a.bin"
     destination.write_bytes(b"old")
-    if stale_part:
-        (tmp_path / ".a.bin.1.huron-part").write_bytes(b"stale")
-    posix.link_into_place(source, destination, ".a.bin.1.huron-part")
-    assert destination.read_bytes() == b"new"
-    assert posix.inode(destination) == posix.inode(source)
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["a.bin", "upload"]
+    old_inode = posix.inode(destination)
+    for name in stale:
+        (tmp_path / name).write_bytes(b"stale")
+    backup = posix.link_into_place(upload, destination, PART, BACKUP)
+    assert backup == tmp_path / BACKUP
+    assert (destination.read_bytes(), posix.inode(destination)) == (b"new", posix.inode(upload))
+    assert (backup.read_bytes(), posix.inode(backup)) == (b"old", old_inode)
+    assert sorted(p.name for p in tmp_path.iterdir()) == [BACKUP, "a.bin", "upload"]
 
 
-def test_link_into_place_over_a_link_of_the_same_file_leaves_no_part(tmp_path: Path) -> None:
-    source = tmp_path / "upload"
-    source.write_bytes(b"new")
+def test_link_into_place_over_a_link_of_the_same_file_changes_nothing(
+    tmp_path: Path, upload: Path
+) -> None:
     destination = tmp_path / "a.bin"
-    os.link(source, destination)
-    posix.link_into_place(source, destination, ".a.bin.1.huron-part")
+    os.link(upload, destination)
+    assert posix.link_into_place(upload, destination, PART, BACKUP) is None
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.bin", "upload"]
+
+
+def test_link_into_place_after_an_interrupted_replacement_reports_its_backup(
+    tmp_path: Path, upload: Path
+) -> None:
+    destination = tmp_path / "a.bin"
+    destination.write_bytes(b"old")
+    old_inode = posix.inode(destination)
+    os.link(destination, tmp_path / BACKUP)
+    os.link(upload, tmp_path / PART)
+    os.rename(tmp_path / PART, destination)
+    backup = posix.link_into_place(upload, destination, PART, BACKUP)
+    assert backup == tmp_path / BACKUP
+    assert (backup.read_bytes(), posix.inode(backup)) == (b"old", old_inode)
+    assert posix.inode(destination) == posix.inode(upload)
 
 
 def test_link_into_place_without_a_source_changes_nothing(tmp_path: Path) -> None:
     destination = tmp_path / "a.bin"
     destination.write_bytes(b"old")
     with pytest.raises(FileNotFoundError):
-        posix.link_into_place(tmp_path / "missing", destination, ".a.bin.1.huron-part")
+        posix.link_into_place(tmp_path / "missing", destination, PART, BACKUP)
     assert destination.read_bytes() == b"old"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.bin"]
 
 
-def test_link_into_place_that_cannot_rename_removes_its_part(tmp_path: Path) -> None:
-    source = tmp_path / "upload"
-    source.write_bytes(b"new")
+def test_link_into_place_that_cannot_back_up_the_destination_removes_its_part(
+    tmp_path: Path, upload: Path
+) -> None:
     (tmp_path / "a.bin").mkdir()
-    with pytest.raises(IsADirectoryError):
-        posix.link_into_place(source, tmp_path / "a.bin", ".a.bin.1.huron-part")
+    with pytest.raises(PermissionError):
+        posix.link_into_place(upload, tmp_path / "a.bin", PART, BACKUP)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a.bin", "upload"]
+
+
+def test_link_into_place_that_cannot_rename_keeps_the_old_file_alone(
+    tmp_path: Path, upload: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "a.bin"
+    destination.write_bytes(b"old")
+
+    def refuse(source: Path, target: Path) -> None:
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(os, "rename", refuse)
+    with pytest.raises(OSError, match="I/O error"):
+        posix.link_into_place(upload, destination, PART, BACKUP)
+    assert destination.read_bytes() == b"old"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.bin", "upload"]
 
 

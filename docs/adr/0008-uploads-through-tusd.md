@@ -54,15 +54,30 @@ makes it. A placed file keeps the group `G` of its inode in `.tus-uploads`. Its 
 `2750` directories above it decide who reads it. The storage administrator sets the group of a
 catalog directory once, because `U` cannot change a group it is not a member of. The inheritance
 of the setgid bit and the group on the ONTAP export is not measured yet. The operator measures it
-before the deployment (Milestone 11, task M11.11), and the API checks each new directory with a
-`stat` after `mkdir`.
+before the production deployment (Milestone 11, task M11.13), and the API checks each new
+directory with a `stat` after `mkdir`.
 
-The directory verbs of the API (create, activate, publish, delete) resolve their path inside the
-lake before the transaction. Then they write their rows, commit, and make their change on disk in
-the same request. A failure on disk after the commit keeps the rows and is repaired with
-`huron adm repair`. Repair makes missing directories and sets permission bits. It cannot set a
-setgid bit or a directory group that `U` may not set: that is a storage-administrator step
-(`huron adm provision-catalogs`).
+One rule keeps every disk operation inside the lake (decided 2026-11-08). A place on the disk is a
+`LakePath`: a tuple of names below the storage root, each checked by
+`schema.naming.check_lake_name`. No absolute path below the lake reaches the API's disk code.
+`PosixStorage` opens the root once, opens each parent name with `O_NOFOLLOW` from the descriptor
+of the one above, and runs the last step with no follow. The kernel refuses a symbolic link at any
+step. The API then answers 409 `SYMLINK_IN_LAKE` and changes nothing. There is no device check,
+no mount-point check and no resolve of a path: the mount point never changes, and Huron adds only
+organizations, catalogs, namespaces, collections and files. Startup refuses an organization root
+that is not the lake path or below it. That is the only check on absolute paths.
+
+The lake contains no symbolic links. Huron makes none: placement uses hard links and `rename`
+only. Huron follows none, on writes and on reads. A walk reports a link and never enters it, and
+`huron adm check` reports it as an error. The storage administrator removes it. Huron never does.
+
+The directory verbs of the API (create, activate, publish, delete, schema assignment, share
+group) write their rows, commit, and then make their change on disk in the same request, through
+the one disk-access module `core.storage.Storage`. A failure on disk after the commit keeps the
+rows and is repaired with `huron adm repair`. Repair acts only on the directories that the rows
+plan, one step per directory, and lists no directory. It makes missing directories and sets
+permission bits. It cannot set a setgid bit or a directory group that `U` may not set: that is a
+storage-administrator step (`huron adm provision-catalogs`).
 
 A deleted collection's directory is not purged. Its removal removes only what Huron put there
 (recorded files, placed uploads, `metadata.json`, partial files, empty subdirectories). Any other
@@ -79,8 +94,16 @@ only when its inode is the recorded one. So on one replica, a removal cannot del
 later placement put at the same path. Across replicas a narrow window remains between the `stat`
 and the unlink.
 
-Every organization root that accepts uploads lies below `HURON_LAKE_PATH`, on one filesystem,
-because a hard link cannot cross filesystems.
+Every organization root is `HURON_LAKE_PATH` or lies below it, on one filesystem, because a hard
+link cannot cross filesystems.
+
+Production starts from scratch. There are no directories or files of the old NFS-copy design to
+convert. The storage administrator makes each organization root. Huron never makes a root. The
+storage administrator then provisions the lake path and each `<root>/<org>` once, with no
+recursive owner change, through `huron adm provision-orgs` in direct mode or its printed
+script. On that machine the CLI's `mount_prefix` is the lake path. Every later entry is made by
+`U` through the API. Apart from the provision commands, the CLI writes nothing to the lake: the
+old NFS-copy write path and the ACL code are removed, not kept for compatibility.
 
 ## Consequences
 
@@ -97,11 +120,12 @@ the catalog groups as supplementary groups (about 14 fit) and resolves their nam
 depends on the server-side setgid inheritance that the operator measures.
 
 The API pod mounts the lake and runs with a fixed UID that the export trusts, inside the
-namespace's UID range of the restricted SCC. The API now imports the storage code. Directories of
-version 1 belong to their users and carry the modes of version 1 (`2770` directories, `0660`
-files). The storage administrator runs the printed root scripts once: they give everything to
-`U` and the numeric GID of the service group, set the modes, and set the group of each catalog's
-directories. A complete `huron adm check` needs `U` or an account in `G` and in every share group.
+namespace's UID range of the restricted SCC. The API now imports the storage code, and only the
+storage code imports the filesystem primitives. The install starts from an empty lake: the
+storage administrator runs the printed root scripts once. They give the lake path and the
+organization roots to `U` and the numeric GID of the service group, set their modes and write the
+markers, and no line is recursive. Later they set the group of each catalog's directories. A
+complete `huron adm check` needs `U` or an account in `G` and in every share group.
 Any other account gets an `unreadable` finding for each entry it cannot read.
 
 The API is now necessary for any change on disk, and it was already necessary for any change at
@@ -129,3 +153,14 @@ the client with the hook's status. A hook that answers 5xx after tusd's retries,
 out, reaches the client as a bare 500. The client then reads the state and the reason from
 `GET /api/v1/uploads/{id}`. Placed bytes are visible at their final name before the commit, as
 with the version 1 push.
+
+A symbolic link in the lake stops the disk work through it. A placement through a link fails
+definitively, a directory verb answers 409 with its rows kept, and a repair step reports the link
+and the other steps run. Nothing in Huron removes or replaces the link, so the storage
+administrator must remove it before the work can succeed. In return, a link planted by root or by
+a read-write client cannot steer a write outside the lake or into another catalog, and no
+time-of-check to time-of-use gap remains, because the kernel refuses the link at the open. Every
+disk operation goes through one module on `LakePath`, so a route cannot build a path of its own.
+The descriptor traversal costs one `openat` per name of the path. The design has no data
+migration and no compatibility code for the old NFS-copy push, `metadata.json` written by the
+CLI, or ACLs.

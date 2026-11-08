@@ -134,32 +134,45 @@ Numbered so tasks can cite them. All are settled.
 - D-17 Metadata is stored in PostgreSQL as JSONB and is the source of truth. The CLI writes a
   `metadata.json` sidecar into the collection directory after activation and after every metadata
   publish, so the information survives apart from the service. `huron adm check` reports a stale sidecar.
+  (Amended 2026-11-06: the API writes `metadata.json`, and the CLI never writes it. See "Read-only
+  share and identity on disk" in the uploads amendment.)
 
 **Storage and enforcement**
 
 - D-18 Plain NFS. The share is mounted at a configurable prefix (default `/projects/huron`) on designated
   machines. The service on OpenShift mounts nothing; only the CLI touches the filesystem.
+  (Amended 2026-11-06: the API mounts the lake read-write at `lake_path`, and the CLI mounts it
+  read-only. See "Read-only share and identity on disk" in the uploads amendment.)
 - D-19 Directories are created by the CLI as the user running it, after the service has authorized and
   recorded the change. The root directory is prepared once by the storage administrator with the script
   in `scripts/init-root.sh`. (Amended 2026-10-31: the storage administrator prepares each declared or
   rooted organization's directory with `huron adm provision-orgs`; see the amendment at the end of
-  this section.)
+  this section. Amended 2026-11-06: the API creates catalog, namespace and collection directories
+  as `U`, and the CLI creates none. See "Read-only share and identity on disk" in the uploads
+  amendment.)
 - D-20 Every directory the CLI creates has setgid set and carries POSIX ACLs derived from the catalog's
   effective role groups (section 6.2). Structural directories (organization, catalog, namespace) are
   writable only by their administrators. A namespace with `collections_allowed` additionally gives the
   contributor groups write access and has the sticky bit set. Collection directories give contributors
-  write access and carry default ACLs so new files are group-writable.
+  write access and carry default ACLs so new files are group-writable. (Amended 2026-11-06: there
+  are no ACLs and no sticky bit. The mode and the group of a directory control read access.
+  See "Read-only share and identity on disk" in the uploads amendment.)
 - D-21 Platform admin groups receive an inherited `rwx` default ACL at every level, so administrators can
   remove clutter without elevated privileges. Organization admin groups receive the same within their
-  organization.
+  organization. (Amended 2026-11-06: there are no ACLs. See "Read-only share and identity on
+  disk" in the uploads amendment.)
 - D-22 Enforcement is contain-and-detect. Accepted: a scientist can write into their own collection
   directory without the CLI; the service trusts reported hashes; only a directory's owner can change its
   ACLs, so a changed group mapping is re-applied by owners running `huron adm apply-acl`, and the rest is
   reported by `huron adm check`. The upgrade path, if ever needed, is HTTP ingest to a service that mounts the
-  share, behind the same `Storage` interface the CLI uses now.
+  share, behind the same `Storage` interface the CLI uses now. (Amended 2026-11-06: the mount is
+  read-only for scientists, the API computes the hashes, and `huron adm apply-acl` is removed.
+  See "Read-only share and identity on disk" in the uploads amendment.)
 - D-23 The push write path: copy each file to `<rel_path>.huron-part` in the collection directory while
   hashing, `fsync`, rename into place, then commit. Removals are committed first and unlinked after. A
-  retried push skips files already present with the recorded size and hash.
+  retried push skips files already present with the recorded size and hash. (Amended 2026-11-06:
+  the push uploads through tusd, and the API places each file. See "Upload flow" in the uploads
+  amendment.)
 
 **Code**
 
@@ -301,7 +314,8 @@ text of D-1 to D-27 is unchanged apart from the pointers on D-9, D-10 and D-19.
   creates `<root>/<org>`, applies the organization ACL plan of section 6.2 and writes the
   per-organization marker of section 6.1; `--emit-script` prints the same steps as a shell script for
   roots that only `root` can write. Catalog, namespace and collection directories are created by the
-  CLI as the user, as before. `scripts/init-root.sh` stays, for the mount prefix of organizations
+  CLI as the user, as before (amended 2026-11-06: the API creates them as `U`, and the organization
+  ACL plan is gone, see the uploads amendment). `scripts/init-root.sh` stays, for the mount prefix of organizations
   that are neither declared nor rooted.
 - **Deployment.** The kustomize base `deploy/openshift` (M10.1) gains a `configMapGenerator` for
   `huron.yaml` with `HURON_CONFIG_FILE` and its volume, and a Helm chart, `deploy/helm/huron`, is
@@ -334,6 +348,12 @@ withdrawn for uploads: the push sends bytes over HTTPS with the tus protocol to 
 D-17, D-18, D-19, D-20, D-21, D-22 and D-23 are amended as below. The other decisions stand.
 Milestone 11 builds it. M11.1 is complete and stays as built.
 
+On 2026-11-08, after the M11.5 escalation, the containment model ("Containment in the lake")
+replaced the per-path device check. The lake contains no symbolic links, Huron places with hard
+links only, there are no version 1 directories (production starts from scratch), and the mount
+point never changes. The record is `architectural_review.md` ("S: Synthesis"). The bullets
+"Containment in the lake", "The disk-access module" and "Install order" state the result.
+
 - **Read-only share and identity on disk (D-17 to D-23 amended).** The export is NFSv3 with
   `sec=sys`, `local_lock=none` and no NFSACL (measured 2026-11-06). POSIX ACLs are not possible on
   it. Huron uses plain owners, groups and modes.
@@ -354,9 +374,9 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   - D-18: the API mounts the lake read-write at `lake_path` ("Lake path"). The web and the CLI
     mount nothing for a change.
   - D-19: the API creates catalog, namespace and collection directories as `U`, in the request.
-    An unmanaged organization's directory below the mount prefix is created by `huron create org`
-    through the API too. The directory of a declared or rooted organization stays with the storage
-    administrator (`huron adm provision-orgs`), who makes `U:G` its owner and group.
+    An unmanaged organization's directory directly below `lake_path` is created by
+    `huron create org` through the API too. The directory of a declared organization stays with
+    the storage administrator (`huron adm provision-orgs`), who makes `U:G` its owner and group.
   - D-20 and D-21: there are no ACLs. A directory's mode and group decide who reads it ("Catalog
     share group and directory modes"). The sticky bit is gone. D-11's rule stays in the API.
   - D-22: a scientist cannot write into a collection directory, because the mount is read-only.
@@ -410,8 +430,10 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     `umask 022`, run `mkdir -m 0750 t/d; touch t/f; stat -c '%a %U %G' t/d t/f`. The result must
     be `2750 U S` and `644 U S`. Then, as root, run `chgrp S t/d; chmod 2750 t/d` and
     `stat -c '%a %G' t/d`; the result must be `2750 S`. The operator records the date, the
-    `stat` lines and the security style in this bullet, in place of this line. M11.11 and M11.12
-    start only after that record exists ("Catalog share group and directory modes").
+    `stat` lines and the security style in this bullet, in place of this line. M11.13 (the Helm
+    chart and the production values) starts only after that record exists ("Catalog share group
+    and directory modes"). M11.11 runs on the local cluster, where the lake is a local Linux
+    filesystem, and does not wait for the record (decided 2026-11-07).
 - **Components.** Two Deployments.
   - `huron`, the API (two replicas, as before). It mounts the claim `huron-lake` (ReadWriteMany)
     at `HURON_LAKE_PATH`, read-write. It runs as `U:G`. It serves tusd's hooks and nginx's auth
@@ -468,17 +490,17 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     a 4xx status in the hook response, never a 5xx. After a timeout the API's call continues and
     can still record the receipt. The CLI then reads the state of the upload ("The CLI").
 - **Lake path (D-18 amended).** `lake_path` (`HURON_LAKE_PATH`) is the mount point of one
-  filesystem in the API pod and in the upload pod, at the same path in both. Every organization
-  root that accepts uploads lies at or below it, and so does the mount prefix of an unrooted
-  organization (the API setting `mount_prefix`, default `lake_path`). The API refuses an upload
-  or a directory verb whose path resolves elsewhere, or onto another filesystem
-  (`OUTSIDE_LAKE` 422). A directory verb resolves its path with `place_of` and `resolve` before
-  its transaction, so `OUTSIDE_LAKE` comes before any row changes. Before every write the API
-  checks the organization's marker (section 6.1, "The check"), as the CLI's `Mount` does before
-  a read. A marker that is missing or names another instance or organization, a `lake_path` that
-  is not a directory, or a `lake_path` that `U` cannot write answers 503 `LAKE_UNAVAILABLE`.
-  `huron adm provision-orgs` makes `lake_path` and `${lake_path}/.tus-uploads` belong to `U:G`
-  ("Version 1 directories"). At startup the API creates `${lake_path}/.tus-uploads` (owner `U`,
+  filesystem in the API pod and in the upload pod, at the same path in both. The mount point
+  never changes. Every declared organization root is `lake_path` or lies below it; startup
+  refuses any other root ("Containment in the lake"). An unrooted organization lies directly
+  below `lake_path`; the API has no `mount_prefix`. Every unit of disk work checks the
+  organization's marker first (section 6.1, "The check"), in the disk worker and under the path
+  lock (`LakeDisk.hold`, "The disk-access module"), as the CLI's `Mount` does before a read. A
+  marker that is missing or names another instance or organization, a `lake_path` that the API
+  cannot open as a directory, or a `lake_path` that `U` cannot write answers 503
+  `LAKE_UNAVAILABLE`. `huron adm provision-orgs` makes `lake_path` and
+  `${lake_path}/.tus-uploads` belong to `U:G` and writes the marker at `lake_path`
+  ("Install order"). At startup the API creates `${lake_path}/.tus-uploads` (owner `U`,
   mode `0700`) when it is missing. `/readyz` reports `lake: false` while `lake_path` is set and
   `.tus-uploads` is not a directory that `U` can write. `/readyz` runs this probe in a thread,
   waits at most 2 seconds and keeps the result for 10 seconds. A probe that does not return in
@@ -490,6 +512,107 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   calls (decided 2026-11-07). Without `lake_path`, the API serves
   no upload route (404 `UPLOADS_DISABLED`), and the directory verbs change only their rows
   ("Directory verbs in the API").
+- **Containment in the lake (decided 2026-11-08, after the M11.5 escalation).** One rule keeps
+  every disk operation inside the lake. It replaces the per-path device check.
+  - A place on the disk is a `LakePath` (`core/storage/lakepath.py`): a tuple of names below the
+    storage root. Each name passed `schema.naming.check_lake_name`: not empty, not `.` or `..`,
+    no `/` or NUL, at most 255 bytes. A refusal is `NamingError` rule `lake_name`, 422
+    `NAME_INVALID`. `LakePath` has no constructor from `Path`, no absolute form and no join that
+    skips the check. `core.lake` produces API path strings and never imports `LakePath`.
+  - No `Path` below `lake_path` exists in `core/storage` or `applications/api` outside
+    `PosixStorage`. `PosixStorage(root)` opens the root with `O_PATH | O_DIRECTORY`. It opens
+    the parent names one at a time with `openat(O_PATH | O_DIRECTORY | O_NOFOLLOW)`, and it runs
+    the last step with the `dir_fd=` form and no follow. A root that does not open is
+    `LakeUnavailable`.
+  - A symbolic link at any step is `SymlinkInLake`: 409 `SYMLINK_IN_LAKE`, with the lake path of
+    the link in `context.path`. Nothing is changed, and the link is not removed or replaced.
+    Writes (`mkdir`, `chmod`, `chgrp`, `metadata.json`, `link`, `rename`, `unlink`, `rmdir`) and
+    reads (the hash open, the marker, `metadata.json`, `stat`) refuse it the same way. `walk`
+    yields a link as `kind="symlink"` and never enters it.
+  - There is no `st_dev` compare, no mount-point check, no `OutsideLake`, no `OUTSIDE_LAKE` and
+    no `resolve`. The only check on absolute paths runs at startup: `Settings` refuses a declared
+    organization root that is not `lake_path` or below it.
+  - Placement uses `link` (hard link) and `rename` only. Huron calls `symlink` nowhere.
+    `MemoryStorage.symlink` exists for tests only: it plants the links that the refusal tests
+    need.
+  - A walker reports a link that it meets. Repair lists no directory, so it meets a link only
+    on the traversal of a step and reports `symbolic_link` in `failed`. `remove_collection`
+    keeps the directory (`KEPT`). An emptiness test counts a link as an entry, so a verb does not
+    adopt the directory. `huron adm check` reports the error finding `symbolic_link`. The
+    storage administrator removes the link. Huron never does.
+  - The API service walks no tree. Four directory listings remain. Each goes through
+    `Storage.walk` or `Storage.is_empty`, on the descriptor traversal:
+
+    | Listing | Where | Extent and reason |
+    | --- | --- | --- |
+    | `is_empty` | `DirectoryWriter.remove`, `prune` | reads at most one entry of one directory, to decide `KEPT` or the adoption of an empty directory |
+    | collection clean-up | `DirectoryWriter.remove_collection` (M11.5d) | one collection directory: `metadata.json`, part and backup files, then the empty subdirectories; a link below keeps the directory (`KEPT`) |
+    | upload sweep | `Sweeper` (M11.6) | the one directory `.tus-uploads`, not recursive, to remove expired tusd files |
+    | check and status | `huron adm check`, `context.unrecorded_files` (CLI, read-only `ShareReader` on a `ro` mount) | the organization tree, to compare it with the rows; the only recursive walk, and it writes nothing |
+
+    The repair walk, the walks of `commands/delete.py`, `walk(on_error)` and the `_empty` helpers
+    that walk are gone. The `os.walk` in `sync._collect` stays: it reads the user's local source
+    folder for push staging, not the lake.
+- **The disk-access module (decided 2026-11-08).** `core.storage.Storage` is the one
+  disk-access module. Every byte that Huron writes or reads in the lake goes through it, on
+  `LakePath`.
+  - Behind the port: the traversal, the link refusal, the inheritance check
+    (`InheritanceFailed`), emptiness, the inode guard and the mapping of `OSError` to
+    `StorageError`, `SourceGone`, `SymlinkInLake` and `LakeUnavailable`.
+  - The read side `ShareReader` has `stat(location) -> Stat | None`, `read_bytes`, `is_empty`,
+    `walk` and `open_file`. `Stat` has `kind` (`file`, `dir`, `other`), `mode`, `gid`, `inode`
+    and `size`; `stat` refuses a link. `walk` yields `Entry(names, kind, size, mtime_ns)` and
+    has no error callback; M11.9 adds `kind="unreadable"` for a directory that it cannot list.
+  - `Storage` adds `make_directory`, `make_inheriting_dir`, `set_mode`, `set_group`,
+    `write_bytes` (mode required), `link(..., inode=)`, `rename`,
+    `remove_file(..., inode=) -> Outcome`, `remove_directory -> Outcome`, and `in_group`
+    (M11.5e). `Outcome` is `REMOVED`, `MISSING` or `KEPT`. `link` makes the hard link only when
+    the source is a regular file with the measured inode, else `SourceGone`.
+  - Gone from the port and both adapters: `exists`, `is_directory`, `owner`, `inode`, `stamp`,
+    `hash`, `device`, `ensure_directory`, `apply_plan`, `read_acl`, `owned_by_me` and `copy_in`.
+  - Two adapters: `PosixStorage(root)` and `MemoryStorage(root)`. `MemoryStorage` models links,
+    not mounts. One contract suite (`tests/unit/storage/test_containment.py` and the port cases)
+    runs over both.
+  - Small synchronous rule modules sit above the port. Each is tested over both adapters without
+    asyncio, and none touches `os` or `Path`:
+
+    | Module | Rules |
+    | --- | --- |
+    | `core/storage/layout.py` | `OrganizationPlace(name, base, own_marker)`, `locate`, `mode_of(location)`, the modes, `UPLOADS` |
+    | `core/storage/marker.py` | read and verify the marker on `LakePath` |
+    | `core/storage/placement.py` | `Placer`: measure, `link(inode=)`, undo, drop the backup |
+    | `core/storage/removal.py` | `prune`, `Unlinker` and `Sweeper` (M11.6) |
+    | `core/storage/directories.py` | `DirectoryWriter(storage, service_gid)`: `make`, `set_group`, `write_metadata`, `remove`, `remove_collection` |
+    | `core/storage/repair.py` | `Repairer`, `RepairStep`, `FailureReason`, `RepairResult` |
+    | `core/storage/check.py`, `provision.py` | the read-side check; `Provisioner.provision` for the root and the organizations |
+
+    `DirectoryWriter.set_group(location, share_group)` is the one home of the rule "a catalog
+    without a share group carries the service group".
+  - The API's disk layer is the package `applications/api/disk/`. It replaces `disk.py` and
+    `routes/directories.py`. `LakeDisk` (`disk/lake.py`) holds the two pools, the `PathLocks`
+    keyed by `LakePath`, the places and the marker. Its interface: `open`, `ready`, `close`,
+    `locate(api_path) -> Located` (pure, no disk call, `NAME_INVALID` only),
+    `hold(located, unit)`, `work(located, action)` and `measure(action)`.
+    - `hold` is the one gate: the location's lock, the disk pool, and the marker verified first
+      in the worker. A unit can await rows between two checked `run` calls (the receipt, a
+      metadata render, a repair step's row read, a removal's re-check). `work` is the
+      one-action case.
+    - `measure` runs the hash in the hash pool, with no lock and no marker check. The locked
+      link step checks the marker.
+    - `Located(place, location)` is a value with no disk methods. `Located.joinpath` is used
+      only by `Placements` (the collection directory and the file's `rel_path`).
+  - The orchestrations, each with its rule object: `Placements` (`disk/placements.py`, placement
+    with `Placer`), `LakeDirectories` and `NoLake` behind the protocol `Directories`
+    (`disk/directories.py`, the verbs, with `DirectoryWriter`), `LakeRepair`
+    (`disk/repair.py`, repair with `Repairer`) and `Removals` (`disk/removals.py`, the M11.6
+    drain with `Unlinker`). `Runtime` builds them once. Without `lake_path` only `NoLake`
+    exists, and the upload, repair and removal dependencies refuse (`UPLOADS_DISABLED`,
+    `LAKE_UNAVAILABLE`).
+  - A route never builds a path, reads a row for the disk or branches on the lake. The lake
+    operation commits and returns the directory's API path; the route passes it to one verb.
+  - Direction of dependency: routes, then the `disk/` orchestrations, then `LakeDisk`, then the
+    `core.storage` rule modules, then the `Storage` port, then `PosixStorage`, then
+    `pkg.fs.posix`. The CLI holds a `ShareReader` only.
 - **Upload flow (D-23 amended).** The CLI creates one tus upload per staged add, with
   `Upload-Length` and the metadata `collection` (UUID) and `rel_path`, and sends
   `Authorization: Bearer <Huron token>` on every request. Every request reaches tusd through
@@ -522,24 +645,30 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
         success with the stored `Huron-Upload-Id` and `Huron-Sha256` and does no disk work. State
         `failed` or `terminated`: the API answers the refusal 409 `UPLOAD_STATE_CONFLICT`.
      2. `Uploads.placement(actor, id)` (a `pending` row, the collection still settled and
-        writable) returns `Destination(path, share_root)`. `LakeDisk` computes the declared path
-        from its declarations.
-     3. The API resolves the destination inside the lake (`OUTSIDE_LAKE`) and checks the
-        organization's marker.
-     4. Outside every lock, the API opens `.tus-uploads/<id>` read-only. `fstat` on the
+        writable) returns `Destination(directory, rel_path)`: the collection's `disk_path` and
+        the upload's `rel_path`.
+     3. `Placements.place` locates the collection directory with `LakeDisk.locate` (pure, no
+        disk call) and joins the names of `rel_path` to it. The marker check and the
+        traversal run in the locked step (sub-step 5), not before the hash.
+     4. Outside every lock (`LakeDisk.measure`, the hash pool), the API opens
+        `.tus-uploads/<id>` read-only through the traversal. `fstat` on the
         descriptor gives the size and the inode; the open makes the NFS client read the
         attributes again. A size other than the declared size is the refusal 422
         `UPLOAD_SIZE_MISMATCH`, and the row stays `pending`. The API hashes the file from the
         descriptor and sets mode `0644` with `fchmod` on it (`U` owns the file). `ENOENT` at the
         open goes to sub-step 7.
-     5. Under the API's in-process lock on the destination path: the collection directory must
-        exist. The placement never creates it. When it is missing, the API records
+     5. Under the API's in-process lock on the destination path (`LakeDisk.hold`, the marker
+        first): the collection directory must exist. The placement never creates it. A
+        symbolic link at the destination or on the way to it refuses the placement with
+        `SYMLINK_IN_LAKE`: the API records it with `Uploads.fail` (row `failed`) and answers
+        the 409 refusal. When the collection directory is missing, the API records
         `STORAGE_FAILED` with `Uploads.fail` (row `failed`) and answers a refusal that carries
         the 500 `STORAGE_FAILED` problem with the hint `huron adm repair`. The route itself
         answers 200, so tusd does not call the hook again. The API creates the missing
         intermediate directories below the collection directory with `make_inheriting_dir`
         ("Catalog share group and directory modes"). It links the file to
-        its destination with `link`. On `EEXIST` it links the file to `.<name>.<id>.huron-part`
+        its destination with `link`, only when the source is a regular file with the inode of
+        sub-step 4 (else sub-step 7). On `EEXIST` it links the file to `.<name>.<id>.huron-part`
         beside the destination (on `EEXIST` there: unlink the part file, link again), links the
         existing destination to the backup `.<name>.<id>.huron-prev` (on `EEXIST` there: unlink
         the backup, link again), and `rename`s the part over the destination. The backup keeps
@@ -565,22 +694,24 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
         tusd calls the hook again.
 
      A receipt for a row that is already `placed` with the same `(size, sha256)` keeps the first
-     inode and succeeds (M11.1's behaviour). `OUTSIDE_LAKE` and a size mismatch are definitive:
-     the API records `OUTSIDE_LAKE` with `Uploads.fail` (row `failed`) and answers the refusal
-     with the code's status. `LAKE_UNAVAILABLE` and the `STORAGE_FAILED` of sub-step 7 answer an
-     HTTP 503 or 500 from the route, so tusd calls the hook again, on any replica, inside the one
-     timeout. When the retries or the timeout run out, the client sees a 500 and the row stays
-     `pending`, unless the running call still records the receipt. A direct caller cannot place
+     inode and succeeds (M11.1's behaviour). `SYMLINK_IN_LAKE` and a size mismatch are
+     definitive: the API records `SYMLINK_IN_LAKE` with `Uploads.fail` (row `failed`) and answers
+     the refusal with the code's status, a 4xx, so tusd does not call the hook again. The file in
+     `.tus-uploads` stays until the sweep. `LAKE_UNAVAILABLE` and the `STORAGE_FAILED` of
+     sub-step 7 answer an HTTP 503 or 500 from the route, so tusd calls the hook again, on any
+     replica, inside the one timeout. When the retries or the timeout run out, the client sees a
+     500 and the row stays `pending`, unless the running call still records the receipt. A
+     direct caller cannot place
      anything: the file in `.tus-uploads/<id>` must exist with the declared size.
   3. `pre-terminate`: `Uploads.terminate` by the same user marks the row `terminated`. tusd then
      removes its files. A direct caller marks only their own row.
-  4. The commit (D-7 unchanged in shape). With `upload_receipts: required` (the default), every
-     add must be proved by the latest placement of its path ("Latest placement wins"), else 422
-     `UPLOAD_RECEIPT_MISSING` with `{rel_path}`. The applied commit marks those rows `committed`
-     with its `commit_id` and copies each receipt's `inode` into `files.inode`. `optional` records
-     an add without a receipt as before, with a `null` inode (development seeds commit file-less
-     fixtures). Without `lake_path` the API uses `optional`, whatever `upload_receipts` says,
-     because no route can issue a receipt ("Settings"). A dry run checks no receipt.
+  4. The commit (D-7 unchanged in shape). With `lake_path`, every add must be proved by the
+     latest placement of its path ("Latest placement wins"), else 422 `UPLOAD_RECEIPT_MISSING`
+     with `{rel_path}`. The applied commit marks those rows `committed` with its `commit_id` and
+     copies each receipt's `inode` into `files.inode`. Without `lake_path` no route can issue a
+     receipt, so the API records an add without one, with a `null` inode. There is no setting
+     for this rule. `ReceiptMode` stays a bootstrap parameter of `core.lake` for the API without
+     a lake and for the seeds. A dry run checks no receipt.
 - **Authorization in front of tusd.** tusd calls no hook for HEAD, PATCH or DELETE, so without a
   proxy the upload URL alone would be a credential between creation and finish. The `proxy`
   container uses nginx's `auth_request`: each request to `/files/`, except OPTIONS, first makes a
@@ -776,14 +907,14 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   - Setgid makes every entry below the catalog inherit the catalog's group when `U` creates it.
     So `U` needs no membership in the share group. A catalog without a share group inherits `G`,
     and nobody but `U` can read it. The storage administrator keeps `others` traverse-only
-    (`--x`) on the mount prefix and on every root.
+    (`--x`) on `lake_path` and on every root.
   - The inheritance on this export is not measured yet, so the claim in the previous bullet is
     conditional on a measurement by the operator. As `U`, not a member of a group `S`, in a
     directory `2750 root:S` on the real export: `mkdir d; touch f; stat -c '%a %U %G' d f` must
     print `2750 U S` and `644 U S`. Also, a member of `S` runs `chgrp S` on a directory, and the
     setgid bit must stay. The operator also records the volume security style (UNIX, NTFS or
-    mixed). The result goes into "Facts about the storage (measured 2026-11-06)" before M11.11
-    and M11.12 start. The code tasks do not wait: the `stat` after each `mkdir` (next bullet)
+    mixed). The result goes into "Facts about the storage (measured 2026-11-06)" before M11.13
+    starts. The code tasks do not wait: the `stat` after each `mkdir` (next bullet)
     makes a failed inheritance visible.
   - `chmod(2)` by a caller that is not in the file's group clears `S_ISGID` without an error.
     `mkdir(2)` sets only the permission bits, so the setgid bit and the group of a new directory
@@ -814,36 +945,41 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     group whose reset failed is selected too, and `<group>` below is that group. This is the
     selection rule of M11.9 (`provision_catalogs`); a catalog that the CLI cannot read is not
     selected for that reason only, because the check reports it as `unreadable`. In direct mode
-    (root on a writable mount, or `U` with the right supplementary groups) it runs two lines for
-    each selected catalog: `find <catalog dir> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +`
-    and `find <catalog dir> -type f -exec chmod 0644 {} +`. The first line changes the group of
-    directories only; files keep their group. The second line sets the file mode of section 6.2
-    (it repairs the `0660` files of version 1). With `--emit-script` it prints the same lines as
-    a shell script, for root, and changes nothing. The script quotes every name with
-    `shlex.quote`. A later change of `share_group` goes through the same command, with the same
-    two lines.
+    (root on a writable mount, or `U` with the right supplementary groups) it runs one line for
+    each selected catalog: `find <catalog dir> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +`.
+    The line changes the group of directories only; files keep their group `G` and their mode
+    `0644`. `find` keeps its default `-P`, so it follows no symbolic link. The directories below
+    the catalog need the line too, because a namespace made while the share group was pending
+    inherited the organization's group. With `--emit-script` it prints the same line as a shell
+    script, for root, and changes nothing. The script quotes every name with `shlex.quote`. A
+    later change of `share_group` goes through the same command, with the same line.
   - Documented option for small sites: list the catalog groups in the API pod's
     `supplementalGroups`. About 14 catalog groups fit: AUTH_SYS carries at most 16 groups, and
     the default `fsGroup` and `G` take two of them. The API pod must also resolve the group names
     (the API's `chgrp` looks the name up with `getgrnam`). The API's own `chgrp` then succeeds,
     and `provision-catalogs` has nothing to do.
-- **Directory verbs in the API.** Before its transaction, each verb resolves its directory with
-  `place_of` and `resolve`. A path outside `lake_path`, or on another filesystem, answers 422
-  `OUTSIDE_LAKE` before any row changes. Then the verb writes its rows, commits the transaction,
-  and does its disk work in a worker thread under the API's in-process lock on the directory path.
-  It answers when the disk work is done. The disk work checks the marker first ("Lake path"). The
-  worker threads come from a dedicated pool of 8 workers, not from the default executor.
+- **Directory verbs in the API.** Every path is built from validated names below `lake_path`
+  and opened without following a symbolic link; a link answers 409 `SYMLINK_IN_LAKE`
+  ("Containment in the lake"). The lake operation writes its rows, commits the transaction and
+  returns the directory's API path (the `disk_path` of its view). The route passes that path to
+  one verb of `Directories` ("The disk-access module"). The verb locates it with
+  `LakeDisk.locate` (pure) and does its disk work with `LakeDisk.work`: in a worker thread of
+  the disk pool, under the API's in-process lock on the directory path, with the marker checked
+  first ("Lake path"). It answers when the disk work is done. Every name in an API path passed
+  `check_segment` or `check_rel_path` when its row was written, and those rules imply
+  `check_lake_name`. A path that `locate` refuses comes only from a corrupted row: it answers
+  422 `NAME_INVALID` with the rows kept, like any other failure after the commit.
 
   | Verb | Route | Disk work after the commit |
   | --- | --- | --- |
-  | create organization (unmanaged) | `POST /organizations` | `mkdir <mount_prefix>/<org>` mode `2751` |
+  | create organization (unmanaged) | `POST /organizations` | `mkdir <lake_path>/<org>` mode `2751` |
   | create catalog | `POST /organizations/{org}/catalogs` | `mkdir` mode `0750` (setgid and group inherited), then the `chgrp` attempt |
   | set share group | `PATCH /catalogs/{catalog}` | the `chgrp` attempt |
   | create namespace | `POST /catalogs/{catalog}/namespaces` | `mkdir` mode `0750` (setgid and group inherited; the CLI's `--parents` calls the route once per missing ancestor) |
   | activate collection | `POST /collections/{id}/activate` | `mkdir` mode `0750` (setgid and group inherited), then `metadata.json` written atomically, mode `0644` |
   | publish metadata, set or unset the override | `PATCH /collections/{id}` | `metadata.json` rewritten when its bytes changed (settled collections only) |
-  | assign a schema | `PUT /catalogs/{catalog}/schema` | `metadata.json` of each settled collection whose bytes changed |
-  | delete collection | `DELETE /collections/{id}` | drain the delete's removals ("Removals and the inode guard"), then unlink `metadata.json`, `.huron-part` and `.huron-prev` files and empty subdirectories, then `rmdir` |
+  | assign a schema | `PUT /catalogs/{catalog}/schema` | `metadata.json` of each settled collection whose bytes changed, each under its own collection lock, in identifier order; the first failure ends the request |
+  | delete collection | `DELETE /collections/{id}` | drain the delete's removals ("Removals and the inode guard"), then unlink `metadata.json`, `.huron-part` and `.huron-prev` files and empty subdirectories, then `rmdir`; a symbolic link below keeps the directory |
   | delete namespace, catalog | `DELETE /catalogs/{catalog}/namespaces/{path}`, `DELETE /catalogs/{catalog}` | `rmdir` |
   | delete organization (unmanaged, unrooted) | `DELETE /organizations/{org}` | `rmdir` |
 
@@ -856,17 +992,20 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     `STORAGE_FAILED` in a verb. It is never repaired with a silent `chmod`. The existing
     `pkg/fs/posix.make_dir` (`mkdir`, then `chmod`) is not used below a catalog. The new
     `pkg/fs/posix.make_inheriting_dir` does `mkdir`, then the `stat` check.
-  - **An entry that exists.** A `mkdir` that meets an empty directory adopts it. Any other entry
-    at the path answers 500 `STORAGE_FAILED` with the rows kept.
+  - **An entry that exists.** A `mkdir` that meets an empty directory adopts it. A symbolic link
+    at the path answers 409 `SYMLINK_IN_LAKE`. Any other entry at the path answers 500
+    `STORAGE_FAILED`. The rows are kept in both cases.
   - **`metadata.json`.** Inside the path lock, the API reads the collection (and the catalog's
     schema) again in a new read. It renders `metadata.json` from those rows and writes only when
     the bytes differ. It never renders from the request's copy of the rows. So two changes that
     commit in one order cannot write the file in the other order.
   - A disk failure after the commit of a create, set, activate, publish or assign verb answers
-    500 `STORAGE_FAILED` or 503 `LAKE_UNAVAILABLE`, with the rows kept. These are the only
-    errors after the commit. The verb is repaired with `huron adm repair <identifier>
-    [--recursive]`. Running the create command again does not repair: `NAME_TAKEN` stays an
-    error.
+    500 `STORAGE_FAILED`, 503 `LAKE_UNAVAILABLE` or 409 `SYMLINK_IN_LAKE`, with the rows kept.
+    A path from a corrupted row answers 422 `NAME_INVALID` (see above). These four are the only
+    errors after the commit. No route and no verb catches or remaps them.
+    The verb is repaired with `huron adm repair <identifier> [--recursive]`. For a symbolic
+    link the storage administrator removes the link first. Running the create command again
+    does not repair: `NAME_TAKEN` stays an error.
   - For a delete verb the rows are gone when the disk work runs. `Collections.delete` returns
     `DeletedCollection(disk_path, removals)`, with the removal rows that the delete claimed. The
     namespace and catalog deletes return their `disk_path`. The collection delete drains its
@@ -876,33 +1015,44 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     Any other disk failure answers 500 `STORAGE_FAILED` with the rows gone, and `huron adm check`
     reports the directory the same way.
   - Without `lake_path` every verb changes only its rows and answers as if the disk work
-    succeeded. This keeps the web's e2e harness, which runs the API without a lake, working.
+    succeeded (`NoLake`, the one statement of this rule; the routes have no lake branch). This
+    keeps the web's e2e harness, which runs the API without a lake, working.
     `huron adm check` reports the missing directories, and `huron adm repair` makes them once a
     lake is mounted.
   - **Repair.** `POST /api/v1/catalogs/{catalog}/repair` `{target, recursive}` repairs the
     catalog, a namespace or a settled collection named by `target` (an identifier). The lake
     operation `Repairs.plan(actor, catalog, target, recursive) -> RepairPlan` authorizes
-    `NAMESPACE_CONFIGURE` on the catalog and lists the expected directories, the catalog's share
-    group and the expected `metadata.json` files. `LakeDisk` then does the disk work: `mkdir`
-    when a directory is missing (its missing ancestors inside the catalog too, with the rules of
-    "Directories below a catalog inherit"), the permission bits, the `chgrp` attempt for the
-    catalog directory, and `metadata.json` rewritten when it differs. With `recursive` it walks
-    the tree below the target: a directory whose permission bits differ gets `chmod 2750`, a file
-    whose mode differs gets `chmod 0644`, every settled collection gets its `metadata.json`, and
-    every missing namespace or collection directory is made. It skips `.tus-uploads` and entries
-    that disappear while it runs. It never deletes.
+    `NAMESPACE_CONFIGURE` on the catalog. The plan lists the planned directories from the rows,
+    outermost first (the target's chain, and with `recursive` the planned namespaces and settled
+    collections below the target), and the catalog's share group. Repair has no walk: nothing
+    lists a directory, so nothing below a planned directory is entered, changed or skipped.
+    `LakeRepair.repair(repairs, plan)` runs one step per planned directory on `LakeDisk.hold`,
+    under that directory's lock, after the marker. Each step traverses again from the root:
+    1. It makes the directory when it is missing (`DirectoryWriter.make`, with the rules of
+       "Directories below a catalog inherit").
+    2. It sets the permission bits only while `U` is in the directory's group (`in_group`, which
+       trusts only the first 16 groups), because a `chmod` by a non-member clears `S_ISGID`.
+    3. On the catalog directory only, it tries the share group (`set_group`).
+    4. For a settled collection, it writes `metadata.json` when the bytes differ.
     - Repair fixes permission bits only. A directory below the catalog without the setgid bit, or
-      with a group that is not the catalog's, goes into `failed` with the reason `mode_drift`.
-      The storage administrator fixes it with `huron adm provision-catalogs`.
-    - An entry that `U` cannot change (`EPERM`, for example a version 1 entry that `U` does not
-      own) does not stop the walk. Its path goes into `failed` with the reason.
-    - Repair reads rows only. It does the disk work of each directory under that directory's path
-      lock, and reads the rows again before each `mkdir`.
+      with a group that is not the catalog directory's, goes into `failed` with the reason
+      `mode_drift`. The storage administrator fixes it with `huron adm provision-catalogs`.
+    - A symbolic link at or above a step's directory is that step's failure with the reason
+      `symbolic_link` and the link's path. Nothing is changed. The steps after it run and
+      report the same link once. Any other `StorageError` is the step's failure with the reason
+      `storage_failed`. Only `LAKE_UNAVAILABLE` ends the repair (503). File modes and
+      directories that no row plans are `huron adm check`'s findings.
+    - Repair reads rows only. It reads the rows of each planned directory again under that
+      directory's lock (`Repairs.expected`), before the step; a directory whose row is gone is
+      skipped.
     - `POST /api/v1/organizations/{org}/repair` (`CATALOG_GRANT_ADMIN` on the organization)
       repairs the organization directory's mode (`2751`) and, for an unmanaged unrooted
       organization, makes the directory when it is missing.
     - Both routes answer 200 with `{"changed": [<path>…], "warnings": [<SHARE_GROUP_PENDING
-      warnings>], "failed": [{"path": <path>, "reason": <reason>}…]}`. A repair is idempotent.
+      warnings>], "failed": [{"path": <path>, "reason": <reason>, "detail": <detail>}…]}`.
+      `reason` is `mode_drift`, `symbolic_link` or `storage_failed`. Paths are lake paths in the
+      API form. A repair is idempotent. Without `lake_path` both routes answer 503
+      `LAKE_UNAVAILABLE`.
     - Residual: a delete and a create of the same directory on two replicas can leave the
       directory missing. `huron adm check` reports it (`*_dir_missing`), and `huron adm repair`
       makes it.
@@ -914,17 +1064,18 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   inserts one removal per `placed` uncommitted upload (`Upload.removal`, inode from the receipt)
   and returns them in `DeletedCollection.removals`. Both insert their rows with `claimed_at` =
   now, so the request that made them owns them.
-  - **The request drains its own rows** right after the commit: for each row, under the API's
-    in-process lock on the file path, it asks `Uploads.removal_still_valid`, unlinks the file
-    when the row is valid, and calls `Uploads.finish_removal`. The response waits for the
-    unlinks.
-  - **Unlink results.** `ENOENT`, or an inode on disk that differs from the row's, finishes the
-    row. Any other error (`EACCES`, `EIO`, a marker refusal) leaves the row claimed. The API logs
+  - **The request drains its own rows** right after the commit (`Removals.drain`): for each row,
+    on `LakeDisk.hold` with the API's in-process lock on the file path, it asks
+    `Uploads.removal_still_valid`, unlinks the file when the row is valid, and calls
+    `Uploads.finish_removal`. The response waits for the unlinks.
+  - **Unlink results.** `remove_file(location, inode=)` answers an `Outcome`. `MISSING`, or
+    `KEPT` for an inode on disk that differs from the row's, finishes the row. Any other error
+    (`EACCES`, `EIO`, `SYMLINK_IN_LAKE`, a marker refusal) leaves the row claimed. The API logs
     a warning, and the commit or delete keeps its 200 or 204. The runner takes the row again
     after `REMOVAL_LEASE`.
   - **Empty directories.** After a successful unlink, the drain removes the empty directories
-    from the file's parent up to the collection directory. It also removes the collection
-    directory when it is empty and no settled collection is at it.
+    from the file's parent up to the collection directory, not the collection directory itself
+    (`prune`). The collection directory belongs to the delete verb.
   - **The background runner** (an API lifespan task, started only when `lake_path` is set)
     drains the leftovers every `removal_interval` (default 60 s): `Uploads.claim_removals`
     takes rows nobody claimed and rows whose claim is older than `REMOVAL_LEASE` (15 minutes),
@@ -938,9 +1089,9 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   - **Inode guard.** A removal may race a placement of the same path on another API replica.
     So receipts record the placed file's inode (`uploads.inode`, from `fstat` on the hashed
     descriptor), the commit copies it to `files.inode`, a removal row carries the removed file's
-    `inode`, and the unlink happens only when the inode on disk matches. A `null` inode (a
-    version 1 file, or an add committed without a receipt in `optional` mode) unlinks
-    unconditionally. A file whose inode differs is left alone and the removal finishes.
+    `inode`, and the unlink happens only when the inode on disk matches. A removal without an
+    inode (a file committed by an API without a lake) is finished with no disk call. A file
+    whose inode differs is left alone and the removal finishes.
     Accepted residuals: the file system can give a freed inode number to a new file, so the
     guard is strong but not exact; and across replicas a narrow window remains between the
     `stat` and the `unlink`. `huron adm check --hash` detects both.
@@ -957,43 +1108,42 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
 - **Sweep.** Every `sweep_interval` (default 10 minutes) the runner removes every entry of
   `.tus-uploads` whose modification time is older than `upload_ttl` (default 24 hours). This
   covers `<id>`, `<id>.info`, `<id>.lock`, `<id>.stop` and the temporary files of tusd's lock.
-  tusd itself never cleans up. The sweep touches nothing outside `.tus-uploads`. Stale lock files
+  tusd itself never cleans up. The sweep (`Sweeper`) lists `.tus-uploads` with `walk`, one level,
+  not recursive, and touches nothing outside `.tus-uploads`. Stale lock files
   of an unclean stop are removed before tusd starts ("Deployment"). `huron adm check` reports
   `.huron-part` and `.huron-prev` files in collections as `stale_part`.
-- **Version 1 directories.** The directories and files of version 1 belong to the users who made
-  them and carry the modes of version 1 (`2770` directories, `0660` files). `U` cannot `chown`.
-  So the storage administrator runs two printed root scripts once, as root, on a machine with a
-  writable mount (the storage system's own shell, or a client that the export does not squash).
-  The scripts use the numeric owner `U:<gid>`, never a group name for `G`. They read `U` and
-  `<gid>` from `service_user` of `GET /healthz`. The options `--uid` and `--gid` of
-  `--emit-script` override them.
-  1. Deploy the API and the upload pod with `service_uid` and `service_group`, and without
-     `lake_path`. `/readyz` passes, uploads are off, and the directory verbs change only their
-     rows.
+- **Install order (decided 2026-11-08).** Production starts from scratch: there are no version 1
+  directories or files to convert. The storage administrator runs the printed root scripts as
+  root, on a machine with a writable mount (the storage system's own shell, or a client that the
+  export does not squash). The scripts use the numeric owner `U:<gid>`, never a group name for
+  `G`. They read `U` and `<gid>` from `service_user` of `GET /healthz`. The options `--uid` and
+  `--gid` of `--emit-script` override them.
+  1. Deploy the API and the upload pod with `service_uid`, `service_group`, `lake_path` and
+     `uploads_url`. A from-scratch install sets `lake_path` from the first deploy.
   2. Run `huron adm provision-orgs --emit-script > orgs.sh`, which only prints, and run `orgs.sh`
-     as root. For the directory that `lake_path` will name, it runs `chown U:<gid>` and
-     `chmod 2751`, and it makes `.tus-uploads` with owner `U:<gid>` and mode `0700`. For each
-     declared or rooted organization directory it runs `chown -R U:<gid>`, sets the mode `2751`
-     and writes the marker. For the organizations below the mount prefix that are neither
-     declared nor rooted, run `scripts/init-root.sh <prefix> <U> <gid> <api-url> <instance-id>`
-     as root. It runs `chown -R U:<gid>` on the prefix and sets `2751`.
-  3. Set the share group of every catalog: `huron set catalog <catalog> --share-group <group>`.
-  4. Run `huron adm provision-catalogs --emit-script > catalogs.sh` and run it as root. For each
-     catalog that the command selects ("Catalog share group and directory modes"; after step 3
-     the version 1 catalogs are selected, because their directory groups differ) it runs
-     `find <catalog dir> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +` and
-     `find <catalog dir> -type f -exec chmod 0644 {} +`. It changes the group of directories only.
-  5. Set `lake_path` and `uploads_url`, and deploy again.
-  6. Make the export read-only for every client except those of the API pod and the upload pod.
-  7. Mount the share read-only (`ro`) on the workstations.
-  8. Run `huron adm check` ("`huron adm check`" says who can run a complete check). It must
-     report no `mode_drift`, no `share_group_mismatch` and no `unreadable`.
+     as root. For `lake_path` it runs `chown U:<gid>` and `chmod 2751`, makes `.tus-uploads`
+     (owner `U:<gid>`, mode `0700`) and writes the marker at `lake_path` with no `organization`
+     field.
+     That marker guards every organization without its own marker. For each declared
+     organization it requires the root to exist (the storage administrator makes it), runs
+     `mkdir`, `chown U:<gid>` and `chmod 2751` on `<root>/<org>`, and writes its marker (`0644`).
+     No line is recursive. The work is `Provisioner.provision`
+     (`core/storage/provision.py`). An unmanaged organization needs no provisioning: the API's
+     create verb makes its directory.
+  3. Create the catalogs with their share groups (`huron create catalog --share-group
+     <group>`).
+  4. For each `SHARE_GROUP_PENDING` warning, run `huron adm provision-catalogs --emit-script >
+     catalogs.sh` and run it as root ("Catalog share group and directory modes"). It runs the
+     one `find ... -type d` line per selected catalog.
+  5. Make the export read-only for every client except those of the API pod and the upload pod.
+  6. Mount the share read-only (`ro`) on the workstations.
+  7. Run `huron adm check` ("`huron adm check`" says who can run a complete check). It must
+     report no `mode_drift`, no `share_group_mismatch`, no `symbolic_link` and no `unreadable`.
 
-  The directories of catalogs, namespaces and collections that the verbs created between steps 1
-  and 5 exist only as rows. `huron adm check` reports them, and `huron adm repair <identifier>
-  --recursive` makes them. When step 2 or step 4 is not complete, a directory verb on a directory
-  that `U` does not own answers `STORAGE_FAILED` (permission denied), a repair lists the path in
-  `failed`, and `huron adm check` reports `mode_drift` with the owner in its detail.
+  Nothing else is needed: no ACLs, no recursive owner change and no file mode repair. When step 2
+  is not complete, a directory verb answers 503 `LAKE_UNAVAILABLE` (no marker) or 500
+  `STORAGE_FAILED` (permission denied), and `huron adm repair <identifier> --recursive` makes the
+  missing directories after step 2.
 - **Latest placement wins (refined 2026-11-06, after review).** A receipt proves an add only when it
   is the latest placement of that `rel_path_key` in the collection: no other upload of the key,
   `placed` or `committed`, by anyone, has a later `placed_at` (ties broken by id). A later
@@ -1024,7 +1174,7 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   - `fail` and `terminate` lock the upload row only.
   - `claim_removals` locks removal rows only, with `for update skip locked`. `finish_removal` is a
     plain delete. `placement`, `get` and `removal_still_valid` lock nothing.
-  - Repair locks no row. It reads rows, and reads them again before each `mkdir` ("Repair").
+  - Repair locks no row. It reads rows, and reads them again before each step ("Repair").
   - A lost race surfaces as the domain's not-found or state-conflict error, never as a database
     error. Race tests on PostgreSQL cover each pair: begin against delete, receipt against delete,
     a commit's cancellation of a removal against its claim and its finish, and the share-group
@@ -1046,14 +1196,16 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
 - **Settings.** API (`HURON_*` or the configuration file). Durations accept seconds or ISO 8601.
   - `lake_path` (default unset): the lake's mount point. Uploads and the disk work of the
     directory verbs exist only when it is set. `uploads_url` without `lake_path` fails startup.
-  - `mount_prefix` (default `lake_path`): the base of the organizations without a root.
+    A declared organization root that is not `lake_path` or below it fails startup ("the root R
+    of organization O is not below lake_path L"). The API has no `mount_prefix` setting: an
+    organization without a root lies directly below `lake_path`. The CLI keeps its own
+    `mount_prefix` key for the workstation's read-only mount.
   - `uploads_url` (default unset): the public tus endpoint, such as
     `https://huron.apps.example.org/files/`. `GET /healthz` reports it as `uploads_url`, `null`
     when uploads are off.
-  - `upload_receipts` (`required` | `optional`, default `required`). Without `lake_path` the
-    runtime uses `optional`, whatever the setting says, because no route can issue a receipt.
-    With `lake_path` the setting applies. `upload_ttl` (default 24 hours), `upload_max_size`
-    (bytes, `0` = unlimited).
+  - There is no `upload_receipts` setting. With `lake_path` every add needs a receipt; without
+    it no receipt is issued ("Upload flow", step 4). `upload_ttl` (default 24 hours),
+    `upload_max_size` (bytes, `0` = unlimited).
   - `upload_hook_timeout` (default 15 minutes, at most 55 minutes): how long tusd waits for a
     hook, retries included. The deployment passes it to tusd's `-hooks-http-timeout`.
     `GET /healthz` reports it as `upload_hook_timeout`, in seconds.
@@ -1093,6 +1245,8 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   entries of commits, deletes and the new `catalog.set_share_group`.
 - **The CLI (D-23 amended).** The CLI writes nothing to the share. `huron adm provision-orgs` and
   `huron adm provision-catalogs` in direct mode are the exceptions, and their help says so.
+  For these two commands, the CLI's `mount_prefix` is the lake path on the machine that runs
+  the command (section 6.1).
   - `huron push` learns `uploads_url` from `GET /healthz`, refuses with a hint when it is
     `null`, keeps the dry-run preflight, and uploads each add with a tus client over `httpx` in
     `src/huron/applications/cli/uploads.py` (creation, `HEAD` to resume, `PATCH` in 64 MiB
@@ -1121,10 +1275,12 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
   - `huron adm provision-catalogs [--catalog C] [--dry-run] [--emit-script [--uid U] [--gid
     GID]]` ("Catalog share group and directory modes").
   - `huron adm provision-orgs [--emit-script [--uid U] [--gid GID]]` sets up the directory that
-    `lake_path` names (owner `U:<gid>`, mode `2751`) and its `.tus-uploads` (owner `U:<gid>`,
-    mode `0700`). It makes `U:<gid>` the owner of each organization directory, everything below
-    it and its marker (`chown -R`), sets the mode `2751`, and writes the marker, in direct mode
-    and in the `--emit-script` output. It reads `U` and `<gid>` from `service_user` of
+    `lake_path` names (owner `U:<gid>`, mode `2751`), its `.tus-uploads` (owner `U:<gid>`, mode
+    `0700`) and the marker at `lake_path`. For each declared organization it requires the root to
+    exist (the storage administrator makes it, section 6.1), creates `<root>/<org>` when missing,
+    makes `U:<gid>` the owner of `<root>/<org>` only (no `chown -R`), sets the mode `2751`, and
+    writes the marker, in direct mode and in the `--emit-script` output ("Install order"). Direct mode
+    runs `Provisioner.provision`. It reads `U` and `<gid>` from `service_user` of
     `GET /healthz`, and refuses without it unless `--uid` and `--gid` are given. Direct mode
     works only for a user that may `chown` (root, or `U` itself in development).
   - `huron delete collection` keeps the commit of its removes before the delete. It makes no
@@ -1135,8 +1291,9 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     `Mount.ensure`, `Mount.apply`, `Mount.remove` and `Mount.report`, `PosixStorage.owned_by_me`,
     `kind_of` and `DirectoryKind.NAMESPACE_WITH_COLLECTIONS`, `huron adm apply-acl`, the CLI
     configuration key `acl_backend`, the `_remind` text of `huron adm grant` and
-    `huron adm revoke`, and the unrecorded-file check `_refuse_unrecorded` of
-    `huron delete collection`.
+    `huron adm revoke`, the unrecorded-file check `_refuse_unrecorded` and the walks of
+    `huron delete collection` (`commands/delete.py`), and `scripts/init-root.sh`. The
+    `os.walk` in `sync._collect` stays: it reads the user's local source folder, not the lake.
   - `Mount.storage` is typed as the read-only port `ShareReader`. The CLI never calls a write
     method, except `huron adm provision-orgs` and `huron adm provision-catalogs` in direct mode,
     which build a writable `PosixStorage` themselves.
@@ -1152,8 +1309,12 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
       `share_group` (or `G`, by its gid, for a catalog without one), or whose `share_group` the
       machine cannot resolve.
     - `unreadable` (warning, the path and the `errno`): an entry that the reader cannot list or
-      `stat`. It replaces the `PermissionError` that stops the check today. `huron status` uses
-      the same rule for its unrecorded files.
+      `stat` (`walk` yields it with `kind="unreadable"` and does not enter it). It replaces the
+      `PermissionError` that stops the check today. `huron status` uses the same rule for its
+      unrecorded files.
+    - `symbolic_link` (error, the path): a symbolic link anywhere in the organization tree.
+      `walk` yields it and never enters it ("Containment in the lake"). The storage
+      administrator removes it.
   - Neither `mode_drift` nor `share_group_mismatch` compares the group of a file. A placed file
     keeps the group `G` of `.tus-uploads`, and reads depend only on the mode `0644` and the
     `2750` ancestors.
@@ -1172,10 +1333,15 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     `UPLOAD_SIZE_MISMATCH` 422, `UPLOAD_TOO_LARGE` 413, `UPLOAD_RECEIPT_MISSING` 422 (all M11.1).
   - In `applications/api/dependencies.py`: `UPLOADS_DISABLED` 404 (an upload route without
     `lake_path`).
-  - In `core/storage/errors.py`: `OUTSIDE_LAKE` 422 (a path outside `lake_path` or on another
-    filesystem; a directory verb answers it before its transaction) and `LAKE_UNAVAILABLE` 503
-    (the lake is not mounted, not writable, or its marker refuses the write). The existing
+  - In `core/storage/errors.py`: `SYMLINK_IN_LAKE` 409 (a symbolic link at any step of a lake
+    path; `context.path` is the lake path of the link; the message is "<path> is a symbolic
+    link. The lake must not contain symbolic links. Remove it") and `LAKE_UNAVAILABLE` 503 (the
+    lake is not mounted, its root does not open, it is not writable, or its marker refuses the
+    write). `SYMLINK_IN_LAKE` is never re-wrapped as `LAKE_UNAVAILABLE`. The existing
     `STORAGE_FAILED` 500 covers the other errors of the API's disk work, with `context.path`.
+    Messages name lake paths in the API form, not absolute server paths.
+  - A name that fails `check_lake_name` is the existing 422 `NAME_INVALID` (rule `lake_name`).
+  - `OUTSIDE_LAKE` does not exist.
   - An invalid share group name is the existing 422 `REQUEST_INVALID`.
   - `SHARE_GROUP_PENDING` is not an error. It is the `code` of a warning in the create and set
     catalog responses and in the repair response.
@@ -1183,45 +1349,64 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     `INGEST_*`, `PARENT_DIRECTORY_MISSING` and `DIRECTORY_NOT_EMPTY` do not exist.
 - **Package tree and contracts (section 4).**
   - Lake: `core/lake/uploads/` (M11.1, with `Upload.inode`, `Removal.inode`,
-    `Destination(path, share_root)` and `Uploads.receipt(id, size, sha256, inode)`),
+    `Destination(directory, rel_path)`, `claim_removals -> list[Removal]` and
+    `Uploads.receipt(id, size, sha256, inode)`),
     `core/lake/catalogs/` (`Catalog.share_group`, `Catalogs.set_share_group`),
     `core/lake/collections/` (`DeletedCollection(disk_path, removals)`), `core/lake/files/`
     (`FileRecord.inode`, `CommitResult.removals`), `core/lake/repairs/` (`Repairs.plan`,
-    `RepairPlan`). `Destination` has no `declared` field: `LakeDisk` finds from its
-    declarations whether the organization is declared.
-  - Storage: `core/storage/layout.py` (the modes `ORGANIZATION_MODE` `0o2751`, `DIRECTORY_MODE`
-    `0o2750`, `FILE_MODE` `0o644`, `UPLOAD_DIR_MODE` `0o700`, `DirectoryKind` without
-    `NAMESPACE_WITH_COLLECTIONS`, `mode_of(kind)`), `core/storage/ports.py` (`ShareReader` with
-    `device(path) -> int`, `Storage`, `GroupResult(outcome: GroupOutcome, reason: str | None)`
-    with `GroupOutcome` `CHANGED | UNCHANGED | PENDING`, and `ShareWarning(code, group,
-    detail)`), `core/storage/placement.py` (`Placer`, `Unlinker` with the inode guard,
-    `Sweeper`), `core/storage/directories.py` (`DirectoryWriter`: make, mode, group attempt,
-    `metadata.json`, remove, and `Repairer` for the recursive walk), `core/storage/locks.py`
-    (`PathLocks`, the in-process `asyncio` lock per absolute path), `core/storage/check.py`
-    (findings), `core/storage/provision.py` (the organization and catalog scripts).
-    `core/storage/memory.py` (`MemoryStorage`) simulates mount points for `device`.
-    `pkg/fs/posix.py` gains `make_inheriting_dir`. Gone: `core/storage/aclplan.py`,
+    `Repairs.organization`, `Repairs.expected`, `RepairPlan` of `PlannedDirectory(path, level,
+    id)`). `SchemaAssignment.settled` is a tuple of `SettledCollection(id, disk_path)`.
+    `core.lake` produces API paths and rows; it never sees a `LakePath`.
+  - Storage ("The disk-access module" has the port and the rule modules):
+    `core/storage/lakepath.py` (`LakePath`), `core/storage/layout.py` (`OrganizationPlace`,
+    `mode_of(location)`, the modes `ORGANIZATION_MODE` `0o2751`, `DIRECTORY_MODE` `0o2750`,
+    `FILE_MODE` `0o644`, `UPLOAD_DIR_MODE` `0o700`, `UPLOADS`; no `DirectoryKind`, no `resolve`,
+    no `place_of`), `core/storage/ports.py` (`ShareReader`, `Storage`, `Stat`, `Entry`,
+    `Outcome`, `GroupResult(outcome: GroupOutcome, reason: str | None)` with `GroupOutcome`
+    `CHANGED | UNCHANGED | PENDING`, and `ShareWarning(code, group, detail)`; no `device`),
+    `core/storage/errors.py` (`SymlinkInLake`; no `OutsideLake`), `core/storage/marker.py`,
+    `core/storage/placement.py` (`Placer`), `core/storage/removal.py` (`prune`, `Unlinker`,
+    `Sweeper`), `core/storage/directories.py` (`DirectoryWriter`), `core/storage/repair.py`
+    (`Repairer`, `RepairStep`, `FailureReason`, `RepairResult`), `core/storage/locks.py`
+    (`PathLocks`, the in-process `asyncio` lock per `LakePath`), `core/storage/check.py`
+    (findings), `core/storage/provision.py` (`Provisioner.provision` and the organization and
+    catalog scripts). `core/storage/memory.py` (`MemoryStorage`) models symbolic links, not
+    mounts. `pkg/fs/posix.py` holds the descriptor primitives (`open_beneath`, `entry`,
+    `make_dir`, `make_inheriting_dir`, `atomic_write`, `link_into_place`, `remove_file`,
+    `remove_empty_dir`, `walk`); its path functions go. Gone: `core/storage/aclplan.py`,
     `pkg/fs/acl.py`, `EffectiveGroups` in storage, `acl_backend`, `tests/acl`.
-  - API: `applications/api/disk.py` (`LakeDisk`: the storage adapter, the locks, the marker
-    checks, the dedicated pool of 8 worker threads, readiness, and one method per disk
-    operation), `applications/api/background.py` (the removal runner and the sweep, with the
+  - API: the package `applications/api/disk/` ("The disk-access module": `lake.py` with
+    `LakeDisk` and `Located`, `placements.py`, `directories.py`, `repair.py`, `removals.py`),
+    which replaces `applications/api/disk.py` and `routes/directories.py`,
+    `applications/api/background.py` (the removal runner and the sweep, with the
     election), `applications/api/routes/v1/endpoints/uploads.py` and `schema/uploads.py`
     (`hooks`, `auth`, `GET /uploads/{id}`), `applications/api/routes/v1/endpoints/repairs.py`
-    and `schema/repairs.py`. `schema/catalogs.py` gains `CatalogWriteOut` (the `CatalogOut`
+    and `schema/repairs.py` (`RepairFailureOut` with `reason: FailureReason` and `detail`).
+    `schema/catalogs.py` gains `CatalogWriteOut` (the `CatalogOut`
     fields and `warnings: list[ShareWarningOut]`), which the create catalog route and
     `PATCH /catalogs/{catalog}` answer. `GET` keeps `CatalogOut`, with `share_group`. The PATCH
     takes no `If-Match`, like the namespace PATCH: the catalog lock serializes it.
   - CLI: `applications/cli/uploads.py` (the tus client).
   - Deployment: `deploy/openshift/uploads.yaml`, `deploy/openshift/nginx-uploads.conf.template`
-    and its copy `deploy/helm/huron/files/nginx-uploads.conf.template`,
-    `deploy/helm/huron/templates/uploads.yaml`, `docker-compose.uploads.yml`.
+    and its copy `deploy/helm/huron/files/nginx-uploads.conf.template` (M11.13),
+    `deploy/helm/huron/templates/uploads.yaml` (M11.13), `deploy/local/` (M11.11),
+    `docker-compose.uploads.yml`.
   - There is no `applications/ingest` and no contract 9. M11.3, the task that first makes the
     API import `core.storage`, changes the contracts in `pyproject.toml` and the dependency
     rules in AGENTS.md. Contract 6 becomes "the API does not import the CLI": the API now
     imports `core.storage`, because it holds the mount. The contract "lake areas never import
     another area's operations" adds `huron.core.lake.uploads.models` to its sources and
     `huron.core.lake.uploads.operations` to its forbidden modules.
-- **Deployment.** All four targets run the API with the lake, and nginx and tusd on the same
+  - Two contracts are added (decided 2026-11-08). M11.5c adds "`core.storage` does not import
+    `applications` or `core.metastore`", so the rule modules stay testable without the API;
+    `placement.py`'s import of `core.lake.uploads.errors` stays allowed. M11.9a adds "only
+    `core.storage` imports `huron.pkg.fs`" (sources `huron.applications`, `huron.core.lake`,
+    `huron.core.security`, `huron.core.metastore` and `huron.schema`). The verifications of
+    M11.5c and M11.5d add grep rules that import-linter cannot express: no `os` disk call,
+    `shutil` or `Path(` in `applications/api/disk` and `applications/api/routes`, and
+    `symlink` in `src/huron` only as `SymlinkInLake`, `MemoryStorage.symlink`, the `kind`
+    literal and the `ELOOP` classification of `pkg/fs/posix.py`.
+- **Deployment.** Every target runs the API with the lake, and nginx and tusd on the same
   ports.
   - `make app`: the `api` service bind-mounts `HURON_LAKE_SOURCE` (default `/data1/huron`) at
     `/data1/huron` read-write and runs as the host user (`HURON_UID`, `HURON_GID` from `id -u`
@@ -1232,8 +1417,9 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     service `uploads-init` (the tusd image, `sh -c`) deletes `*.lock`, `*.lock.*` and `*.stop` in
     `.tus-uploads`. A one-shot service
     `lake-init` provisions the declared organizations of `huron.dev.yaml` with
-    `scripts/dev-provision.py` before the API starts. The seed of `make app` runs against this
-    API and writes into `HURON_LAKE_SOURCE`.
+    `scripts/dev-provision.py` before the API starts. The script calls `Provisioner.provision`
+    and writes no layout of its own. The seed of `make app` runs against this API; seeds that
+    need files on the lake upload them through tusd.
   - `make api`: the API on the host reads `lake_path: /data1/huron` from `huron.dev.yaml`.
     `make uploads` runs nginx and tusd from `docker-compose.uploads.yml` with host networking
     on the same ports, with the same lock cleanup, and `make uploads-down` stops them.
@@ -1260,7 +1446,16 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
       and `NGINX_ENVSUBST_FILTER=^HURON_API_UPSTREAM$`.
     - `nodeSelector`, `tolerations` and `affinity` place the pod on the clients that the export
       makes writable (a dedicated node pool, for example).
-  - The Helm chart: `lake.claim`, `lake.path`, `serviceUser.uid`, `serviceUser.gid`,
+  - The local cluster (M11.11, decided 2026-11-07): the kustomize overlay `deploy/local/` on the
+    base, for the kind cluster `ocp-test` on the development machine (ingress-nginx at
+    `https://127.0.0.1:18443`, the `local-path` storage class, the Route CRD without a router).
+    The overlay replaces the Routes with Ingresses, binds `huron-lake` to a `hostPath`
+    PersistentVolume, and provisions the organizations with a one-shot Job that runs
+    `Provisioner.provision` (the work of `scripts/dev-provision.py`). The lake there is a local
+    Linux filesystem, so M11.11 does not wait for the setgid measurement.
+  - The Helm chart (M11.13, after the setgid measurement in "Facts about the storage"; until
+    then `deploy/README.md` and the operator guide list it as work still to do):
+    `lake.claim`, `lake.path`, `serviceUser.uid`, `serviceUser.gid`,
     `serviceUser.group`, `uploads.enabled` (default `false`), the nginx and tusd images,
     `uploads.url`, `uploads.maxSize`, `uploads.hookTimeout` (at most 55m), `uploads.nodeSelector`,
     `uploads.tolerations`, `uploads.affinity`, Route and Ingress. `route.timeout` defaults to
@@ -1273,8 +1468,9 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
     temporary file with the PID, then `link` to `<id>.lock`). It takes no `flock` and needs no
     NLM. The export supports hard links (measured). The mount options belong to the
     PersistentVolume, which both pods share.
-  - `huron.dev.yaml` sets `lake_path: /data1/huron`, `uploads_url: http://127.0.0.1:1080/files/`
-    and `upload_receipts: optional` (the seed commits file-less adds).
+  - `huron.dev.yaml` sets `lake_path: /data1/huron` and
+    `uploads_url: http://127.0.0.1:1080/files/`. It has no `upload_receipts` and no
+    `mount_prefix`.
 
 ## 4. Architecture
 
@@ -1282,13 +1478,13 @@ Milestone 11 builds it. M11.1 is complete and stays as built.
 
 | Component | Runs | Responsibility |
 | --- | --- | --- |
-| `huron-api` | OpenShift pod, mounts the lake read-write as `U:G` | Authentication broker, authorization, catalog of organizations, catalogs, namespaces, collections, files and uploads. Schema registry, audit log, search. tusd's hooks and nginx's authorization. Places uploads, creates, repairs and removes directories, writes `metadata.json`, unlinks removed files, sweeps `.tus-uploads`. The only process that writes the share, apart from tusd's filestore. |
+| `huron-api` | OpenShift pod, mounts the lake read-write as `U:G` | Authentication broker, authorization, catalog of organizations, catalogs, namespaces, collections, files and uploads. Schema registry, audit log, search. tusd's hooks and nginx's authorization. Places uploads with hard links, creates, repairs and removes directories, writes `metadata.json`, unlinks removed files, sweeps `.tus-uploads`. Opens every lake path from the root with no follow of a symbolic link. The only process that writes the share, apart from tusd's filestore. |
 | `huron-uploads` | OpenShift pod, one replica, `Recreate`, mounts the lake read-write as `U:G` | Init container: deletes tusd's old lock files in `.tus-uploads`. `proxy` (nginx): sends OPTIONS straight to tusd, asks the API before every other request, then streams it to tusd. `tusd`: the tus endpoint, on 127.0.0.1, writing only `.tus-uploads`. |
 | PostgreSQL | OpenShift (or managed) | Schema `huron`: all tables in section 7, `uploads` and `removals` included. |
 | `huron` CLI | Any machine. Machines with the read-only mount for disk checks | Login, browsing, administration verbs, the metadata walkthrough, staging and push over HTTPS, directory verbs through the API, drift checks over the read-only mount. Writes nothing to the share, apart from `huron adm provision-orgs` and `huron adm provision-catalogs` in direct mode, run by the storage administrator. |
 | Institutional OIDC provider | External | Issues the company token the CLI exchanges. |
 | Group directory | External | `GET …/users/{username}/groups` → `{"groups": [...]}`. Mocked in development. |
-| NFS share | External | One or more NFSv3 exports (`sec=sys`) without ACL support. Every organization root that accepts uploads lies below the lake path, on one filesystem. A declared or rooted organization's directory is `<root>/<org>`, prepared by `huron adm provision-orgs`, which also prepares the lake path and `.tus-uploads`. The others are under the mount prefix, prepared by `scripts/init-root.sh`. Read-write only for the clients of the API pod and the upload pod, read-only everywhere else. |
+| NFS share | External | One NFSv3 export (`sec=sys`) without ACL support, mounted at the lake path. The mount point never changes. Every organization root is the lake path or lies below it, on one filesystem. An organization's directory is `<root>/<org>`; an unrooted organization lies directly below the lake path. `huron adm provision-orgs` prepares the lake path, `.tus-uploads`, the declared organizations and their markers. The lake contains no symbolic links; Huron places files with hard links only. Read-write only for the clients of the API pod and the upload pod, read-only everywhere else. |
 
 ### 4.2 Package tree
 
@@ -1306,7 +1502,9 @@ src/huron/
     clock.py                Clock protocol, SystemClock, FrozenClock
     hashing.py              Streaming sha256 over a file or a byte iterator
     fs/
-      posix.py              mkdir with mode, atomic copy via part file + rename, fsync, unlink, walk, stat
+      posix.py              Descriptor primitives below one root, no follow of a symbolic link:
+                            open_beneath, entry, make_dir, make_inheriting_dir, atomic_write,
+                            link_into_place, remove_file, remove_empty_dir, walk (M11.5c)
   schema/                   Document contracts. Imports pkg only. (M1)
     documents/              JSON Schema files: huron-base-v1.json, commit-request-v1.json,
                             schema-document-v1.json (the allowed subset of JSON Schema)
@@ -1345,12 +1543,20 @@ src/huron/
     storage/                Share layout, modes and groups. Imports pkg, core.lake models. Used by the
                             CLI (read-only, except the provision commands in direct mode) and
                             the API's LakeDisk. (M7, M11)
-      ports.py              Storage protocol
-      layout.py             Identifier → path, path → identifier, reserved names
-      posix.py              PosixStorage over pkg.fs
-      memory.py             MemoryStorage fake with the same contract
-      marker.py             Root and per-organization marker file (.huron) read and verify
-      check.py              Drift findings: compare the API's view with the storage's walk (M9)
+      lakepath.py           LakePath: a tuple of names that passed check_lake_name (M11.5c)
+      ports.py              ShareReader and Storage protocols on LakePath, Stat, Entry, Outcome
+      errors.py             StorageError, SourceGone, SymlinkInLake, LakeUnavailable
+      layout.py             OrganizationPlace, locate, mode_of(location), the modes, UPLOADS
+      posix.py              PosixStorage(root) over pkg.fs.posix
+      memory.py             MemoryStorage(root) fake with the same contract; models symbolic links
+      marker.py             Lake-path and per-organization marker file (.huron) read and verify
+      locks.py              PathLocks: the in-process lock per LakePath (M11.3)
+      placement.py          Placer: measure, hard link with the inode guard, undo, drop the backup
+      removal.py            prune (M11.5c), Unlinker and Sweeper (M11.6)
+      directories.py        DirectoryWriter: make, set_group, write_metadata, remove (M11.5d)
+      repair.py             Repairer, RepairStep, FailureReason, RepairResult (M11.5e)
+      check.py              Drift findings: the API's view against the storage's walk (M9, M11.9)
+      provision.py          Provisioner.provision and the organization and catalog scripts (M11.9)
   applications/
     api/                    (M5)
       main.py               uvicorn entry: `huron.applications.api.main:app`
@@ -1361,6 +1567,15 @@ src/huron/
       problems.py           problem+json responses from HuronError
       dependencies.py       Store, clock, settings providers
       openapi.py            `python -m huron.applications.api.openapi` writes docs/openapi.json
+      runtime.py            Runtime: builds LakeDisk and the disk orchestrations once (M11.3)
+      background.py         The removal runner and the sweep of .tus-uploads, elected (M11.6)
+      disk/                 The API's disk layer, in place of disk.py and routes/directories.py
+                            (M11.5c)
+        lake.py             LakeDisk (open, ready, close, locate, hold, work, measure) and Located
+        placements.py       Placements: placement with Placer
+        directories.py      Directories protocol, LakeDirectories and NoLake (M11.5d)
+        repair.py           LakeRepair: repair with Repairer (M11.5e)
+        removals.py         Removals: the drain with Unlinker (M11.6)
       authorization/
         actors.py           current_actor: Huron JWT → Actor with roles resolved from grants
       routes/
@@ -1371,7 +1586,8 @@ src/huron/
         v1/
           router.py         /api/v1 composition
           endpoints/        auth.py organizations.py catalogs.py grants.py schemas.py namespaces.py
-                            collections.py commits.py files.py search.py admin.py
+                            collections.py commits.py files.py search.py admin.py uploads.py
+                            repairs.py (M11)
           schema/           Request and response bodies, one module per endpoints module
     cli/                    (M6, M7, M8, M9)
       main.py               console entry `huron`
@@ -1383,9 +1599,10 @@ src/huron/
       client.py             httpx client: problem+json → CliError, paging, ETags
       login.py              Device grant and loopback PKCE flows, token exchange, refresh
       identifiers.py        Relative identifiers against the current catalog
-      mount.py              Absolute paths per organization (its root, else the mount prefix) and the
-                            marker checks before any disk operation
+      mount.py              Read-only ShareReader per organization (its root, else the mount prefix)
+                            and the marker check before a read
       sync.py               Stage, pull and push logic shared by the stage verbs
+      uploads.py            The tus client of huron push (M11.7)
       output.py             -o table|json|yaml rendering
       prompts.py            Prompter protocol and the questionary implementation
       walkthrough.py        JSON Schema → prompt plan → metadata document
@@ -1409,10 +1626,12 @@ tests/
   support/                  Shared fixtures and builders
 deploy/openshift/           Kustomize base: Deployment, Service, Route, ConfigMap, Secret, migration Job (M10);
                             huron.yaml from a configMapGenerator (amendment 2026-10-31)
-deploy/helm/huron/          Helm chart: the API, its huron.yaml ConfigMap, the migration hook, an optional web (M10.6)
+deploy/local/               Kustomize overlay for the local kind cluster ocp-test (M11.11)
+deploy/helm/huron/          Helm chart: the API, its huron.yaml ConfigMap, the migration hook, an optional
+                            web (M10.6); the upload pod and the production values (M11.13)
 huron.dev.yaml              The development service configuration: the declared organizations (M10.6)
-scripts/                    init-root.sh, check-stack.sh, check_schema_map.py, devgroups.py, dev-groups.yaml,
-                            e2e.sh, keycloak/company-realm.json
+scripts/                    dev-provision.py, check-stack.sh, check_schema_map.py, devgroups.py,
+                            dev-groups.yaml, e2e.sh, keycloak/company-realm.json
 docs/                       architecture.md, operator.md, user-guide.md, api-errors.md, openapi.json, adr/
 ```
 
@@ -1426,8 +1645,9 @@ schema         ← pkg
 core.security  ← pkg, schema
 core.lake      ← pkg, schema, core.security.rbac
 core.metastore ← pkg, core.lake, core.security
-core.storage   ← pkg, schema, core.lake (models only), core.security.rbac (roles)
-applications.api ← everything except applications.cli and core.storage
+core.storage   ← pkg, schema, core.lake (models and errors only), core.security.rbac (roles)
+pkg.fs         ← imported only by core.storage (M11.9a)
+applications.api ← everything except applications.cli
 applications.cli ← pkg, schema, core.storage, core.security.rbac (role names), core.lake models
 ```
 
@@ -1439,12 +1659,22 @@ Contracts:
    or `huron.applications`.
 4. `huron.core.lake` must not import `huron.core.metastore`, `huron.core.storage` or `huron.applications`.
 5. Nothing outside `huron.applications` imports `huron.core.metastore`.
-6. `huron.applications.api` must not import `huron.applications.cli` or `huron.core.storage`.
+6. `huron.applications.api` must not import `huron.applications.cli`. The API imports
+   `huron.core.storage`, because it holds the mount (M11.3).
 7. `huron.applications.cli` must not import `huron.applications.api`, `huron.core.metastore` or
    `huron.core.security.broker`.
 8. Inside `huron.core.lake`, an area package may import another area's `models`, `errors` and `ports`
    modules but never its `operations`, `lifecycle`, `registry`, `commits` or `completeness` modules;
    cross-area collaboration goes through constructor arguments (section 11 names them).
+   M11.3 adds `huron.core.lake.uploads` to its lists. M11.5e adds `huron.core.lake.repairs`.
+
+There is no contract 9 (it was the removed `applications/ingest` contract). The uploads amendment
+adds two contracts (section 3, "Package tree and contracts"):
+
+10. `huron.core.storage` must not import `huron.applications` or `huron.core.metastore` (M11.5c).
+    The import of `huron.core.lake.uploads.errors` by `placement.py` stays allowed.
+11. Only `huron.core.storage` imports `huron.pkg.fs`: `huron.applications`, `huron.core.lake`,
+    `huron.core.security`, `huron.core.metastore` and `huron.schema` must not import it (M11.9a).
 
 ### 4.4 Code conventions
 
@@ -1497,6 +1727,8 @@ Contracts:
   `rel_path_nfc`, `rel_path_length`, `rel_path_segment`, `rel_path_control`, `rel_path_separator`,
   `rel_path_reserved`. `rel_path_key(value)` is the case-folded key used for uniqueness so that two paths
   differing only in case cannot both be recorded. `part_name(rel_path)` is `<rel_path>.huron-part`.
+  (Amended 2026-11-08: M11.7 removes `part_name` with the CLI copy. Only the API makes part files,
+  named `.<name>.<id>.huron-part`, section 6.3.)
 
 ### 5.2 Roles, privileges and grants
 
@@ -1560,13 +1792,16 @@ Scopes: `platform`, `organization` (by organization id), `catalog` (by catalog i
   `collection.set_schema_override`.
 - `activate(actor, id, expected_version)`: requires valid metadata; state `active`; `activated_at`;
   audit `collection.activate`. The CLI creates the directory and ACLs before calling activate and writes
-  the sidecar after (D-17, D-19).
+  the sidecar after (D-17, D-19). (Amended 2026-11-08: the CLI writes nothing to the lake. After the
+  commit, the API creates the directory with mode `0750` and writes `metadata.json` in the same
+  request. There are no ACLs. See section 3, "Directory verbs in the API".)
 - `recompute(catalog)`: after a schema assignment, re-validates every `active`/`incomplete` collection
   (D-16).
 - `delete(actor, id, expected_version)`: `COLLECTION_DELETE_ANY`, or `COLLECTION_DELETE_OWN` when
   `created_by` matches; requires `file_count == 0` (409 `COLLECTION_NOT_EMPTY`); removes the row; audit
   `collection.delete`. The CLI removes recorded files by a commit, then deletes the row, then removes the
-  directory.
+  directory. (Amended 2026-11-08: the CLI commits the removes and calls the delete. The API unlinks
+  the files and removes the directory. See section 3, "Removals and the inode guard".)
 
 ### 5.4 Files and commits
 
@@ -1589,7 +1824,8 @@ Scopes: `platform`, `organization` (by organization id), `catalog` (by catalog i
   `{version, file_count, commit_id: null}` without applying rows, bumping `version`, inserting the
   commit or writing audit, as `DELETE /collections/{id}?dry_run=true` does for collections. A dry-run
   body may leave out an add's `sha256` (the CLI asks before it copies, and a hash is known only once
-  the file is copied); one that is present must still match the pattern. A real commit still requires
+  the file is copied; amended 2026-11-08: the CLI asks before it uploads through tusd, and the API
+  hashes the placed file for the receipt); one that is present must still match the pattern. A real commit still requires
   every hash: the schema refuses a missing one, and `Commits` raises `COMMIT_INVALID` with
   `{rel_path}` should an unhashed add reach the apply step.
 - `list_files(actor, id, cursor)` pages by `rel_path_key`.
@@ -1637,37 +1873,47 @@ newest first.
 
 - **Where an organization lives.** An organization's directory is `<root>/<org>`. `root` is the
   organization's configured root (the 2026-10-31 amendment in section 3), reported as `root` by
-  `GET /organizations/{org}`; an organization without one uses the CLI's `mount_prefix` (default
-  `/projects/huron`). Below it the layout is `<org dir>/<catalog>/<namespace…>/<collection>`. The API
+  `GET /organizations/{org}`. Every root is `lake_path` or lies below it; startup refuses any
+  other root. An organization without a root lies directly below `lake_path`. On a workstation,
+  the CLI's `mount_prefix` (default `/projects/huron`) is where the read-only mount of
+  `lake_path` is. Below it the layout is `<org dir>/<catalog>/<namespace…>/<collection>`. The API
   reports paths relative to the root, starting with the organization's name (`helio/sun/…`); the
   catalog, namespace and collection views carry `share_root`, the owning organization's root or
   `null`. A client's absolute path is `share_root + "/" + path` (a namespace's `disk_path`), or its own
   mount prefix in place of a `null` `share_root`. The CLI's `Mount` resolves every path this way, looking the organization up by
-  the first segment and caching the answer for the command; no path derivation (directory verbs,
-  inventory, `activate`, `check`, `tree`, `push`) bypasses it.
-- **Per-organization marker.** For an organization that has a root, or that is declared, the storage
-  administrator runs `huron adm provision-orgs [--org O] [--dry-run] [--emit-script]` as a user who
-  can write the root (or, with `--emit-script`, hands the printed script to `root`). For each
-  declared organization it requires `<root>` to exist (the root's own mode and owner belong to the
-  storage administrator; Huron needs only that `others` may traverse it), creates `<root>/<org>`
-  when missing, makes `U:<gid>` the owner of `<root>/<org>`, of everything below it and of the
-  marker (`chown -R`), sets the mode `2751`, and writes `<root>/<org>/.huron` containing
-  `{"huron": 1, "api_url": "<url>", "instance_id": "<uuid>", "organization": "<org>"}` (`0644`). It
-  refuses to overwrite a marker that names another instance or another organization, and is
-  idempotent. `--dry-run` prints what it would do. It also prepares the lake path: `chown U:<gid>
-  <lake_path>; chmod 2751 <lake_path>; mkdir -p <lake_path>/.tus-uploads; chown U:<gid>
-  <lake_path>/.tus-uploads; chmod 0700 <lake_path>/.tus-uploads`. `U` and `<gid>` come from
+  the first segment and caching the answer for the command; no path derivation (inventory,
+  `check`, `tree`, `status`) bypasses it. The CLI only reads through `Mount`. In the API, a place
+  on the disk is a `LakePath` of validated names below `lake_path`, never an absolute path
+  (section 3, "Containment in the lake").
+- **Per-organization marker.** For each declared organization the storage administrator runs
+  `huron adm provision-orgs [--org O] [--dry-run] [--emit-script]` as a user who can write the
+  root (or, with `--emit-script`, hands the printed script to `root`). The work is
+  `Provisioner.provision` (`core/storage/provision.py`). It requires `<root>` to exist (the
+  root's own mode and owner belong to the storage administrator; Huron needs only that `others`
+  may traverse it). It creates `<root>/<org>` when missing, makes `U:<gid>` the owner of
+  `<root>/<org>` only, sets the mode `2751`, and writes `<root>/<org>/.huron` containing
+  `{"huron": 1, "api_url": "<url>", "instance_id": "<uuid>", "organization": "<org>"}` (`0644`).
+  No step is recursive. It refuses to overwrite a marker that names another instance or another
+  organization, and is idempotent. `--dry-run` prints what it would do. `U` and `<gid>` come from
   `service_user` of `GET /healthz`, and `--uid` and `--gid` override them. The script uses the
-  numeric IDs. A declared organization without a root is provisioned at `<mount_prefix>/<org>` the
-  same way.
-- **Root marker.** An organization that is neither declared nor rooted (every organization in
-  unmanaged mode) keeps the root marker: the storage administrator runs `scripts/init-root.sh
-  <prefix> <U> <gid> <api-url> <instance-id>` once, as root: `chown -R U:<gid>` on the prefix and
-  `chmod 2751`, and writes `<prefix>/.huron` containing `{"huron": 1, "api_url": "<url>",
-  "instance_id": "<uuid>"}` (`0644`, no `organization`).
-- **The check.** Before every write, the API checks the marker of the organization it writes
-  into: the per-organization marker, or the root marker for an organization that is neither
-  declared nor rooted. The marker must exist, name the API's own `instance_id`, and for a
+  numeric IDs.
+- **Lake-path marker.** `huron adm provision-orgs` also prepares `lake_path`: `chown U:<gid>
+  <lake_path>; chmod 2751 <lake_path>; mkdir -p <lake_path>/.tus-uploads; chown U:<gid>
+  <lake_path>/.tus-uploads; chmod 0700 <lake_path>/.tus-uploads`. It writes
+  `<lake_path>/.huron` containing `{"huron": 1, "api_url": "<url>", "instance_id": "<uuid>"}`
+  (`0644`, no `organization`). This marker guards every organization without its own marker
+  (every organization in unmanaged mode). `scripts/init-root.sh` is removed (M11.9a).
+- **Where `lake_path` is for the provision commands.** `GET /healthz` does not report
+  `lake_path`. On the machine that runs `provision-orgs` or `provision-catalogs`, the CLI's
+  `mount_prefix` is the lake path. The storage administrator sets `mount_prefix` to the path
+  where that machine mounts `lake_path`. The `<lake_path>` steps, the lake-path marker and the
+  directory `<lake_path>/<org>` of an organization without a root use this path. A rooted
+  organization uses its `root` from `GET /organizations/{org}`, as on every client.
+- **The check.** Every unit of disk work in the API checks the marker of the organization it
+  writes into first, in the disk worker and under the path lock (`LakeDisk.hold`): the
+  per-organization marker, or the lake-path marker for an organization that is neither declared
+  nor rooted. The marker is read on `LakePath`, with no follow of a symbolic link. The marker
+  must exist, name the API's own `instance_id`, and for a
   per-organization marker name the organization. A refusal answers 503 `LAKE_UNAVAILABLE` for a
   directory verb. In `pre-finish` the hooks route answers an HTTP 503, so tusd sends the hook
   again within `upload_hook_timeout`. The CLI makes the same check inside `Mount.path` before it
@@ -1675,16 +1921,20 @@ newest first.
   opens `<org>/.huron` (`0644`) without listing the organization directory. The check keeps an
   API pointed at a staging database from writing into production directories, and an export
   mounted at another organization's root from being written as that organization.
-- `others` have traverse-only (`--x`) on the mount prefix, on every root and on organization
+- `others` have traverse-only (`--x`) on `lake_path`, on every root and on organization
   directories, so readers can reach a catalog they are granted without listing what else exists.
 - **Amendment (2026-10-31).** This subsection replaces "6.1 Root and marker", which had one root at
   the mount prefix, one marker there, and organization directories created by `huron create org`.
-  That text holds unchanged for organizations that are neither declared nor rooted.
+- **Amendment (2026-11-08).** The root marker of `scripts/init-root.sh` and its `chown -R` are
+  removed. The lake-path marker replaces them. The API's `mount_prefix` is removed; the CLI keeps
+  its `mount_prefix` key for the read-only mount. Production starts from scratch, so no
+  directory needs a change of owner.
 
 ### 6.2 Directory kinds, modes and groups
 
 This subsection replaces "6.2 Directory kinds and ACL plans". There are no ACLs: the export does
-not support them. `core.storage.layout.mode_of(kind)` gives the mode of each kind. The group of a directory
+not support them. `core.storage.layout.mode_of(location)` gives the mode of a `LakePath` from its
+depth below the organization directory; there is no `DirectoryKind`. The group of a directory
 comes from the catalog's `share_group` through setgid inheritance. The group of a placed file is
 the group of its inode in `.tus-uploads`.
 
@@ -1709,29 +1959,37 @@ the group of its inode in `.tus-uploads`.
   decides who reads the bytes over the mount. The operator keeps the two aligned by giving each
   catalog's readers one POSIX group and naming it with `--share-group`.
 - The owner is the user that creates the entry, `U`. Below a catalog directory the API makes a
-  directory with `mkdir(path, 0o750)` (`pkg.fs.posix.make_inheriting_dir`), and the server sets
-  its group and its setgid bit from the parent. `mkdir(2)` honours only the permission bits. The
-  API then runs `stat` on the new directory. A missing `S_ISGID` bit, or a group other than the
-  parent's, is `STORAGE_FAILED` in a verb and a `mode_drift` finding in a repair. It is never
-  fixed with a silent `chmod`.
+  directory with `mkdir` at mode `0o750` on the parent's descriptor
+  (`pkg.fs.posix.make_inheriting_dir`), and the server sets its group and its setgid bit from
+  the parent. `mkdir(2)` honours only the permission bits. The API then runs `stat` on the new
+  directory, with no follow. A missing `S_ISGID` bit, or a group other than the parent's, is
+  `InheritanceFailed`: `STORAGE_FAILED` in a verb, and a step in `failed` with the reason
+  `mode_drift` in a repair. It is never fixed with a silent `chmod`.
+- Every entry is a directory or a regular file. A symbolic link anywhere in the lake is an
+  error: a write or read through it answers 409 `SYMLINK_IN_LAKE`, and `huron adm check`
+  reports `symbolic_link` (section 3, "Containment in the lake"). Placement makes hard links
+  only.
 - Below a catalog directory the API never calls `chmod` on a directory whose permission bits are
   already right. `chmod(2)` by a caller that is not in the group of the directory clears
   `S_ISGID` without an error. `pkg.fs.posix.make_dir` (`mkdir` then `chmod`) is not used below a
-  catalog. Repair fixes permission bits only. A missing setgid bit or a wrong directory group
+  catalog. Repair fixes permission bits only, and only while `U` is in the directory's group
+  (`Storage.in_group`). A missing setgid bit or a wrong directory group
   needs the storage administrator: `huron adm provision-catalogs` selects the catalog, and its
-  script runs `find <catalog> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +` and
-  `find <catalog> -type f -exec chmod 0644 {} +` as root.
+  script runs `find <catalog> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +` as root.
+  Files keep their group `G` and the mode `0644` that placement gave them, so no line changes a
+  file. `find` keeps its default `-P` and follows no symbolic link.
 - The claim that every directory below a catalog inherits the catalog's group depends on a
   measurement on the real export (not done yet). As `U`, not in group `S`, in a directory
   `2750 root:S`: `mkdir d; touch f; stat -c '%a %U %G' d f` must print `2750 U S` and
   `644 U S`. Also, a member of `S` runs `chgrp S` on a directory, and the setgid bit must stay.
   The operator records the result and the volume security style (UNIX, NTFS or mixed) in section
-  3's bullet "Facts about the storage (measured 2026-11-06)" before M11.11 and M11.12 start.
+  3's bullet "Facts about the storage (measured 2026-11-06)" before M11.13 starts. M11.11 runs
+  on the local cluster and does not wait for it.
 - The API tries `chgrp` on a catalog directory when `share_group` is set or changed. It reports
   `SHARE_GROUP_PENDING` when `U` may not. `huron adm provision-catalogs` is the storage
   administrator's step that sets the group.
-- `PosixStorage.set_mode(path, mode)` sets permission bits, is idempotent, and reports whether it
-  changed anything. `PosixStorage.set_group(path, group)` returns
+- `Storage.set_mode(location, mode)` sets permission bits, is idempotent, and reports whether it
+  changed anything. `Storage.set_group(location, group)` returns
   `GroupResult(outcome, reason)`, with `outcome` one of `CHANGED`, `UNCHANGED` and `PENDING`
   (`GroupOutcome`, `core/storage/ports.py`).
 - The API never returns modes or groups beyond `share_group`. The CLI computes the expected mode
@@ -1745,20 +2003,25 @@ See the amendment's "Upload flow". The CLI copies nothing onto the share. The AP
 finished upload inside `pre-finish`. The hooks route first calls `Uploads.get` (creator only). A
 row that is `placed` or `committed` gets its stored `Huron-Upload-Id` and `Huron-Sha256` back, with
 no work on disk. A row that is `failed` or `terminated` gets the refusal `UPLOAD_STATE_CONFLICT`
-409. For a `pending` row, `Uploads.placement` returns `Destination(path, share_root)`, and
-`LakeDisk.place` does the disk work with the steps of `Placer` (`core/storage/placement.py`):
+409. For a `pending` row, `Uploads.placement` returns `Destination(directory, rel_path)`, and
+`Placements.place` does the disk work with the steps of `Placer` (`core/storage/placement.py`):
 
-1. It checks that the path is inside the lake path and on its filesystem (`OUTSIDE_LAKE`), and
-   checks the marker.
-2. Outside every lock, it opens `.tus-uploads/<id>` read-only. `fstat` on the descriptor gives
-   the size and the inode. A size other than the declared size is the refusal
-   `UPLOAD_SIZE_MISMATCH` 422, and the row stays `pending`. It hashes from the descriptor and
-   sets the mode `0644` with `fchmod`.
-3. Under the in-process lock on the destination path, it requires the collection directory.
+1. It locates the collection directory with `LakeDisk.locate` (pure, no disk call) and joins the
+   names of `rel_path` to it. The result is a `LakePath` of validated names below `lake_path`.
+2. Outside every lock (`LakeDisk.measure`, the hash pool), it opens `.tus-uploads/<id>`
+   read-only through the traversal. `fstat` on the descriptor gives the size and the inode. A
+   size other than the declared size is the refusal `UPLOAD_SIZE_MISMATCH` 422, and the row
+   stays `pending`. It hashes from the descriptor and sets the mode `0644` with `fchmod`.
+3. Under the in-process lock on the destination path (`LakeDisk.hold`), it checks the marker
+   first. Every step opens the path from the root with no follow. A symbolic link at the
+   destination or on the way to it is the definitive refusal 409 `SYMLINK_IN_LAKE`, and the row
+   becomes `failed`. It requires the collection directory.
    `Placer` never makes it: a missing collection directory is a definitive refusal with
    `STORAGE_FAILED` in the body, the row becomes `failed` through `Uploads.fail`, and the hint is
    `huron adm repair`. It makes the missing intermediate directories below it (section 6.2
-   rules) and links into place (`pkg.fs.posix.link_into_place`): `link`, or on `EEXIST` a link
+   rules) and links into place with a hard link (`Storage.link(..., inode=)` over
+   `pkg.fs.posix.link_into_place`), only when the source is a regular file with the inode of
+   step 2: `link`, or on `EEXIST` a link
    to `.<name>.<id>.huron-part`, a link of the old file to the backup `.<name>.<id>.huron-prev`
    and a `rename` over the destination. It unlinks the upload and its `.info` (a missing file is
    not an error). Then it calls `Uploads.receipt(id, size, sha256, inode)` with the inode of step
@@ -1781,12 +2044,15 @@ the CLI reads `GET /api/v1/uploads/{id}`: `placed` or `committed` with the local
 success, `pending` is polled every 5 seconds for at most `upload_hook_timeout`, and `failed`
 prints the failure.
 
-Removals are removal rows that the committing request drains with `Unlinker.unlink` under the
-inode guard. A missing file or a different inode finishes the row. Any other error leaves the row
-claimed for the runner, and the commit keeps its answer. After an unlink, the API removes the
-empty directories from the file's parent up to the collection directory, and the collection
-directory itself when no settled collection is at it. `huron adm check` reports `.huron-part`
-and `.huron-prev` files older than one hour as `stale_part`.
+Removals are removal rows that the committing request drains (`Removals.drain`, each row on
+`LakeDisk.hold`) with `Unlinker` under the inode guard: `remove_file(location, inode=)`
+answers an `Outcome`. `MISSING`, or `KEPT` for a different inode, finishes the row. A removal
+without an inode finishes with no disk call. Any other error (`SYMLINK_IN_LAKE` and `EACCES`
+included) leaves the row claimed for the runner, and the commit keeps its answer. After an
+unlink, `prune` removes the empty directories from the file's parent up to the collection
+directory, not the collection directory itself; that directory belongs to the delete verb.
+`huron adm check` reports `.huron-part` and `.huron-prev` files older than one hour as
+`stale_part`. No other write path exists: the CLI copies no bytes and makes no part file.
 
 ### 6.4 What `huron adm check` reports
 
@@ -1806,17 +2072,20 @@ organizations of those catalogs (the `org_*` findings, since the 2026-10-31 amen
 | `file_unrecorded` | warning | A file on disk inside a collection that no commit recorded. |
 | `dir_unrecorded` | warning | A directory under a namespace that is neither a namespace nor a collection. |
 | `sidecar_stale` | warning | `metadata.json` missing or not equal to the service's rendering. |
-| `stale_part` | info | A `.huron-part` file older than one hour. |
+| `stale_part` | info | A `.huron-part` or `.huron-prev` file inside a collection, older than one hour. |
 | `incomplete` | info | A collection in state `incomplete`. |
 | `stale_draft` | info | A draft older than 30 days. |
-| `mode_drift` | warning | A directory or file whose permission bits are not the ones of section 6.2, a directory below a catalog without the setgid bit or with a group other than its parent's, or an entry whose owner is not `service_uid` (when `/healthz` reports it). `huron adm repair <identifier> --recursive` fixes permission bits only. A missing setgid bit or a wrong directory group needs `huron adm provision-catalogs`. Only the storage administrator can change the owner. The group of a file is never compared. |
+| `mode_drift` | warning | A directory or file whose permission bits are not the ones of section 6.2, a directory below a catalog without the setgid bit or with a group other than the catalog directory's, or an entry whose owner is not `service_uid` (when `/healthz` reports it). `huron adm repair <identifier> --recursive` fixes the permission bits of the directories that the rows plan, one planned step per directory; it lists no directory and changes no file. A missing setgid bit or a wrong directory group needs `huron adm provision-catalogs`. Only the storage administrator can change the owner. The group of a file is never compared. |
 | `share_group_mismatch` | warning | A catalog directory whose group is not the catalog's `share_group` (or `G`, by its gid, for a catalog without one), or a `share_group` that this machine cannot resolve. The storage administrator runs `huron adm provision-catalogs`. |
-| `unreadable` | warning | An entry that the account running the check cannot list or stat. The detail gives the path and the errno. Run the check as `U` or as an account in `G` and in every share group. |
+| `unreadable` | warning | An entry that the account running the check cannot list or stat (`walk` yields it with `kind="unreadable"` and does not enter it). The detail gives the path and the errno. Run the check as `U` or as an account in `G` and in every share group. |
+| `symbolic_link` | error | A symbolic link anywhere in the organization tree. `walk` yields it and never enters it. The lake must not contain symbolic links; the storage administrator removes it. Huron never removes or follows it. |
 
 Every finding needs the read-only mount. A complete check needs `U` (from an API pod:
 `oc exec deploy/huron -- huron adm check`) or an account in `G` and in every share group. Any
 entry that the account cannot list or stat gives `unreadable`, never an error that stops the
-check. `huron status` uses the same rule. `stale_part` does not look into `.tus-uploads`.
+check. `huron status` uses the same rule. `stale_part` does not look into `.tus-uploads`. The
+check reads through a read-only `ShareReader` (`stat` and `walk` on `LakePath`) and writes
+nothing. There are no ACL findings: `acl_drift` and `org_acl_drift` are removed (M11.9a).
 
 Exit code 0 with no findings, 1 with findings, 2 on an error running the check.
 
@@ -1874,6 +2143,13 @@ drops the two columns and the two tables. There is no `disk_tasks` table. `st_in
 `ino >= 2**63`) and convert it back on read. A share group name matches
 `^[A-Za-z_][A-Za-z0-9_.-]{0,31}$`.
 
+Rows hold lake paths in the API form (`helio/sun/…`), never absolute server paths and never a
+`LakePath`. `removals.path` is the API path of the removed file. Every name in a stored path
+passed `check_segment` or `check_rel_path` when the row was written, so the API can locate it
+below `lake_path` without a check of the filesystem (section 3, "Containment in the lake").
+Containment adds no table and no column. There is no table for ACLs, disk tasks or repairs:
+a repair reads the rows of the planned directories and writes no row of its own.
+
 `core.metastore.store.Store` exposes one attribute per area, each a reader-and-writer object implementing
 that area's port, and `Store.transaction()` yields a `Transaction` whose area objects share one connection.
 The in-memory `Store` has the same shape over `core.metastore.memory.MemoryRoot`, with copy-on-commit so a
@@ -1904,7 +2180,7 @@ request 20 rows.
 | `GET /organizations` | visibility | Organizations the actor can see. |
 | `POST /organizations` | `ORGANIZATION_CREATE` | `{name, display_name, description}`. 409 `NAME_TAKEN`; 409 `ORGANIZATIONS_MANAGED` in managed mode (D-28). |
 | `GET /organizations/{org}` | `ORGANIZATION_READ` | Body includes `catalog_count`, and `declared` (bool), `root` (the configured root or `null`), `path` (`root/name`, `null` without a root) and `export` (or `null`); the list rows carry the same four. |
-| `POST /organizations/{org}/repair` | `CATALOG_GRANT_ADMIN` on the organization | Amendment 2026-11-06. Repairs the organization directory's mode (`2751`) and, for an unmanaged unrooted organization, makes the missing directory. Answers 200 `{changed, warnings, failed}`. |
+| `POST /organizations/{org}/repair` | `CATALOG_GRANT_ADMIN` on the organization | Amendment 2026-11-06. Repairs the organization directory's mode (`2751`) and, for an unmanaged unrooted organization, makes the missing directory. Answers 200 `{changed, warnings, failed}`; each `failed` item has `path`, `reason` (`mode_drift`, `symbolic_link` or `storage_failed`) and `detail`. 503 `LAKE_UNAVAILABLE` without `lake_path`. |
 | `DELETE /organizations/{org}` | `ORGANIZATION_DELETE` | 409 `ORGANIZATION_NOT_EMPTY` while catalogs exist; 409 `ORGANIZATION_DECLARED` for a declared organization. |
 | `GET /organizations/{org}/grants` | `ORGANIZATION_READ` | `{org_admin: [...], catalog_admin: [...], contributor: [...], reader: [...]}`: the organization-scope groups of each role. |
 | `PUT /organizations/{org}/grants/{role}` | `ORGANIZATION_GRANT` for `org_admin`; `CATALOG_GRANT_ADMIN` at the organization (Org Admin or Platform Admin) for `catalog_admin`, `contributor` and `reader` (section 5.2) | `role` is `org_admin`, `catalog_admin`, `contributor` or `reader`; body `{ldap_groups: [...]}` replaces the organization-scope set, with the same change response as the catalog `PUT`. 409 `ORGANIZATION_DECLARED` for a declared organization, whose four sets are its configured `groups`. |
@@ -1917,9 +2193,9 @@ request 20 rows.
 | `POST /organizations/{org}/catalogs` | `CATALOG_CREATE` | `{name, display_name, description, schema_id?, share_group?}`; default schema is `huron-base` latest. Answers `CatalogWriteOut` (the `CatalogOut` fields and `warnings`, with `SHARE_GROUP_PENDING` when the `chgrp` fails). 422 `REQUEST_INVALID` for a share group name that does not match `^[A-Za-z_][A-Za-z0-9_.-]{0,31}$` (amendment 2026-11-06). |
 | `GET /catalogs/{catalog}` | `CATALOG_READ` | Includes `schema` (id, name, version), counts, `share_root` (section 6.1) and `share_group` (amendment 2026-11-06). |
 | `PATCH /catalogs/{catalog}` | `CATALOG_GRANT_ADMIN` | Amendment 2026-11-06. `{share_group}`, `null` clears it. No `If-Match`: the catalog lock serializes it. Version + 1, audit action `catalog.set_share_group`, then the `chgrp` attempt. Answers `CatalogWriteOut`. 422 `REQUEST_INVALID` for an invalid name. |
-| `POST /catalogs/{catalog}/repair` | `NAMESPACE_CONFIGURE` | Amendment 2026-11-06 ("Directory verbs in the API"). `{target, recursive}`: the catalog, a namespace or a settled collection. Answers 200 `{changed, warnings, failed}`; a missing setgid bit or a wrong directory group is in `failed` with the reason `mode_drift`. Idempotent; never deletes. |
+| `POST /catalogs/{catalog}/repair` | `NAMESPACE_CONFIGURE` | Amendment 2026-11-06 ("Directory verbs in the API"). `{target, recursive}`: the catalog, a namespace or a settled collection. One step per directory that the rows plan, outermost first; nothing lists a directory. Answers 200 `{changed, warnings, failed}`; a missing setgid bit or a wrong directory group is in `failed` with the reason `mode_drift`, a symbolic link at or above a step's directory with the reason `symbolic_link`, any other storage error with `storage_failed`. Only `LAKE_UNAVAILABLE` (503) ends the repair. Idempotent; never deletes. |
 | `DELETE /catalogs/{catalog}` | `CATALOG_DELETE` | 409 `CATALOG_NOT_EMPTY` while namespaces exist. |
-| `GET /catalogs/{catalog}/grants` | `CATALOG_READ` | Effective groups by role, including inherited platform groups, the organization's `org_admin` groups and its organization-scope catalog-role groups (section 6.2). The shape is unchanged by the 2026-10-31 amendment. |
+| `GET /catalogs/{catalog}/grants` | removed (M11.9a) | Its only consumer was the ACL plan code, which is removed with it (amendment 2026-11-08). `GET /catalogs/{catalog}/grants/sources` stays. |
 | `GET /catalogs/{catalog}/grants/sources` | `CATALOG_READ` | `{items: [{role, group, scope}]}`, `scope` one of `platform`, `organization`, `catalog`: one row per (role, group, scope), sorted by role then group, so a group held both through the organization and on the catalog has two rows (amendment 2026-10-31). |
 | `PUT /catalogs/{catalog}/grants/{role}` | `CATALOG_GRANT_ADMIN` for `catalog_admin`, `CATALOG_GRANT_MEMBER` for `contributor` and `reader` | `{ldap_groups}` replaces the set. Audit `catalog.grant`/`revoke` per change. |
 | `PUT /catalogs/{catalog}/schema` | `SCHEMA_ASSIGN` | `{schema_id}`; triggers recompute; answers `{assigned, recompute: {incomplete, active}}`. |
@@ -1977,10 +2253,22 @@ views, and `CatalogWriteOut` for the create and set catalog answers. `GET /healt
 `service_user` (`{uid, gid, group}` or `null`), `uploads_url` (or `null`) and
 `upload_hook_timeout` in seconds ("Settings"). `GET /readyz` adds the check `lake` ("Lake path").
 The new codes are `UPLOAD_NOT_FOUND` 404, `UPLOAD_STATE_CONFLICT` 409, `UPLOAD_SIZE_MISMATCH` 422,
-`UPLOAD_TOO_LARGE` 413, `UPLOAD_RECEIPT_MISSING` 422, `UPLOADS_DISABLED` 404, `OUTSIDE_LAKE` 422
-and `LAKE_UNAVAILABLE` 503. The existing `STORAGE_FAILED` 500 covers the other errors of the API's
-disk work. `SHARE_GROUP_PENDING` is the `code` of a warning, not an error. `ACL_FAILED` is removed
-("Error codes").
+`UPLOAD_TOO_LARGE` 413, `UPLOAD_RECEIPT_MISSING` 422, `UPLOADS_DISABLED` 404,
+`SYMLINK_IN_LAKE` 409 and `LAKE_UNAVAILABLE` 503. The existing `STORAGE_FAILED` 500 covers the
+other errors of the API's disk work. `SHARE_GROUP_PENDING` is the `code` of a warning, not an
+error. `ACL_FAILED` is removed ("Error codes").
+
+**Amendment (2026-11-08).** Containment in the lake (section 3) changes the error codes and two
+routes. `SYMLINK_IN_LAKE` 409 replaces the planned `OUTSIDE_LAKE`, which does not exist: a
+symbolic link at any step of a lake path refuses the disk work, with the lake path of the link
+in `context.path`. A name that fails `check_lake_name` is the existing 422 `NAME_INVALID` (rule
+`lake_name`). Every route that changes a directory (create, activate, delete, metadata, schema
+assignment, share group, repair) commits its rows first and then does its disk work; a 409
+`SYMLINK_IN_LAKE`, a 503 `LAKE_UNAVAILABLE` or a 500 `STORAGE_FAILED` from the disk work keeps
+the rows. In `pre-finish`, `SYMLINK_IN_LAKE` is definitive: the upload becomes `failed`. The
+repair answers carry `reason` and `detail` for each failed path. `GET /catalogs/{catalog}/grants`
+is removed with the ACL plan code (M11.9a). Messages name lake paths in the API form, never
+absolute server paths.
 
 ## 9. CLI surface
 
@@ -2036,7 +2324,7 @@ no catalog <x>. To list the catalogs, run `huron get catalogs -A` ``. A verb typ
 | Collection | `huron validate meta [identifier]` | ✓ | | Contributor | Validates the draft against the resolved schema. |
 | Collection | `huron publish meta [identifier]` | ✓ | | Contributor | Sends the patch with `If-Match`. The API writes `metadata.json` in the same request; the CLI writes nothing to the share. A 500 `STORAGE_FAILED` or 503 `LAKE_UNAVAILABLE` gets the hint ``To make the directory again, run `huron adm repair <identifier>` ``. |
 | Collection | `huron activate collection [identifier]` | ✓ | | Contributor | For drafts created with `--draft`. The API creates the directory and writes `metadata.json`. A 500 `STORAGE_FAILED` or 503 `LAKE_UNAVAILABLE` gets the hint ``To make the directory again, run `huron adm repair <identifier>` ``; running the command again does not repair. |
-| Manage | `huron create org <name> [--display-name] [--description]` | ✓ | | Platform Admin | Unmanaged mode only: the API records the organization, then creates `<prefix>/<org>` with mode `2751`. In managed mode the API's 409 `ORGANIZATIONS_MANAGED` is exit 6 with the hint ``the service configuration declares the organizations. To prepare their directories, run `huron adm provision-orgs` ``. |
+| Manage | `huron create org <name> [--display-name] [--description]` | ✓ | | Platform Admin | Unmanaged mode only: the API records the organization, then creates `<lake_path>/<org>` with mode `2751`. In managed mode the API's 409 `ORGANIZATIONS_MANAGED` is exit 6 with the hint ``the service configuration declares the organizations. To prepare their directories, run `huron adm provision-orgs` ``. |
 | Manage | `huron create catalog <name> [--org <org>] [--schema id] [--display-name] [--description] [--share-group <group>]` | ✓ | | Org Admin | `--org` defaults to the current organization; with neither, a usage error hints `--org <org>` or `huron org <name>`; a saved organization the API no longer finds is exit 5 with the hint `huron org <name>`. The API records the row and `share_group`, creates the directory and tries the `chgrp`. A `SHARE_GROUP_PENDING` warning prints the hint ``To set the group on disk, run `huron adm provision-catalogs --emit-script` as the storage administrator``. A 500 `STORAGE_FAILED` or 503 `LAKE_UNAVAILABLE` gets the hint ``To make the directory again, run `huron adm repair <identifier>` ``. |
 | Manage | `huron create namespace <identifier> [--allow-collections] [--parents]` | ✓ | | Catalog Admin | `--parents` calls the API once for each missing ancestor. The API creates each directory. A 500 `STORAGE_FAILED` or 503 `LAKE_UNAVAILABLE` gets the hint ``To make the directory again, run `huron adm repair <identifier>` ``; running the command again does not repair (`NAME_TAKEN`). |
 | Manage | `huron create collection <identifier> [--metadata file] [--draft]` | ✓ | | Contributor | Reserves the draft, runs the walkthrough unless `--metadata`, then calls `activate`: the API creates the directory and writes `metadata.json`. `--draft` stops after the walkthrough. |
@@ -2047,14 +2335,14 @@ no catalog <x>. To list the catalogs, run `huron get catalogs -A` ``. A verb typ
 | Manage | `huron set namespace <identifier> --allow-collections/--no-allow-collections` | ✓ | | Catalog Admin | Changes `collections_allowed`. The directory's mode stays the same (section 6.2). |
 | Administration | `huron adm grant <role> <group> [--org O \| --catalog C]`, `huron adm revoke <role> <group> [...]` | ✓ | | Platform Admin for `org_admin`; Org Admin for `catalog_admin`, and for every catalog role with `--org`; Catalog Admin for `contributor` and `reader` with `--catalog` | `--org O` takes `org_admin`, `catalog_admin`, `contributor` or `reader` (the catalog roles then hold in every catalog of `O`); `org_admin` needs `--org`; otherwise the catalog roles use `--catalog`, else the global or current catalog; any other role is a usage error. For a declared organization every `--org` change is refused with 409 `ORGANIZATION_DECLARED`, and the hint says to edit `groups.<role>` in the service configuration. Edits the group set. It prints no ACL reminder: grants do not reach the disk. |
 | Administration | `huron adm check [--catalog name] [--hash]` | ✓ | ✓ | Reader | Section 6.4, including the organization findings `org_dir_missing`, `org_marker_missing`, `org_marker_mismatch` and, in managed mode, `org_undeclared` (a warning instead of a refusal when an undeclared organization's directory cannot be located). |
-| Administration | `huron adm repair <identifier> [--recursive]`, `huron adm repair --org <org>` | ✓ | | Catalog Admin; Org Admin with `--org` | Calls `POST /catalogs/{catalog}/repair` (or, with `--org`, `POST /organizations/{org}/repair`). The API makes missing directories, sets permission bits, tries the `chgrp` of the catalog directory and rewrites `metadata.json` (the amendment's "Directory verbs in the API"). The CLI prints each changed path, each warning and each failed path with its reason. A missing setgid bit or a wrong directory group is a failed path with the reason `mode_drift`, for `huron adm provision-catalogs`. |
-| Administration | `huron adm verify-mounts` | ✓ | ✓ | any | One row per organization the caller can see: `ORG`, `PATH`, `STATE` (`ok`, `missing`, `no marker`, `wrong instance`, `wrong org`, `undeclared`); checks the per-organization marker, or the root marker for an organization that is neither declared nor rooted, against `GET /healthz`. In managed mode an organization the configuration does not declare is `undeclared` (path marked `(undeclared)`) and does not count. Exit 1 when any other row is not `ok`; the hint names `provision-orgs` for organization markers and `scripts/init-root.sh` for the root marker. Replaces `adm verify-root`. |
-| Administration | `huron adm provision-orgs [--org O] [--dry-run] [--emit-script [--uid U] [--gid GID]]` | ✓ | ✓ | Platform Admin, run by the storage administrator | Section 6.1: for each declared organization (or only `O`), requires its root, creates `<root>/<org>`, makes `U:<gid>` the owner of it and of everything below it (`chown -R`), sets the mode `2751`, prepares the lake path and `.tus-uploads`, and writes the per-organization marker; refuses a marker naming another instance or organization; idempotent. `--dry-run` prints the steps; `--emit-script` prints an equivalent shell script (`mkdir`, `chown`, `chmod`, the marker write, with the numeric `U:<gid>`) for roots only `root` can write, and touches nothing. In the **Share** group of `huron adm --help`, beside `check` and `verify-mounts`. |
-| Administration | `huron adm provision-catalogs [--catalog C] [--dry-run] [--emit-script [--uid U] [--gid GID]]` | ✓ | ✓ (read-only for `--dry-run` and `--emit-script`) | Reader (it reads each catalog's `share_group` through the API), run by the storage administrator | The amendment's "Catalog share group and directory modes": selects each catalog with a `share_group` whose directory group differs, or below which a directory has `mode_drift` for the setgid bit or the group (only `C` with `--catalog`). Direct mode (root on a writable mount, or `U` with the right supplementary groups) runs `find <catalog dir> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +` and `find <catalog dir> -type f -exec chmod 0644 {} +` for each. `--dry-run` prints the steps; `--emit-script` prints the same lines as a shell script for root (`set -eu`, names quoted with `shlex.quote`) and changes nothing. |
+| Administration | `huron adm repair <identifier> [--recursive]`, `huron adm repair --org <org>` | ✓ | | Catalog Admin; Org Admin with `--org` | Calls `POST /catalogs/{catalog}/repair` (or, with `--org`, `POST /organizations/{org}/repair`). The API makes missing directories, sets permission bits, tries the `chgrp` of the catalog directory and rewrites `metadata.json` (the amendment's "Directory verbs in the API"). The API acts only on the directories that the rows plan, one step each, and lists no directory. The CLI prints each changed path, each warning and each failed path with its `reason` and `detail`. A missing setgid bit or a wrong directory group is a failed path with the reason `mode_drift`, for `huron adm provision-catalogs`. A symbolic link is a failed path with the reason `symbolic_link`; the storage administrator removes it. |
+| Administration | `huron adm verify-mounts` | ✓ | ✓ | any | One row per organization the caller can see: `ORG`, `PATH`, `STATE` (`ok`, `missing`, `no marker`, `wrong instance`, `wrong org`, `undeclared`); checks the per-organization marker, or the lake-path marker for an organization that is neither declared nor rooted, against `GET /healthz`. In managed mode an organization the configuration does not declare is `undeclared` (path marked `(undeclared)`) and does not count. Exit 1 when any other row is not `ok`; the hint names `provision-orgs` for both markers. Replaces `adm verify-root`. |
+| Administration | `huron adm provision-orgs [--org O] [--dry-run] [--emit-script [--uid U] [--gid GID]]` | ✓ | ✓ | Platform Admin, run by the storage administrator | Section 6.1: for each declared organization (or only `O`), requires its root, creates `<root>/<org>`, makes `U:<gid>` the owner of that directory only (no recursive step), sets the mode `2751`, prepares the lake path, `.tus-uploads` and the lake-path marker, and writes the per-organization marker (`Provisioner.provision`); refuses a marker naming another instance or organization; idempotent. `--dry-run` prints the steps; `--emit-script` prints an equivalent shell script (`mkdir`, `chown`, `chmod`, the marker write, with the numeric `U:<gid>`) for roots only `root` can write, and touches nothing. In the **Share** group of `huron adm --help`, beside `check` and `verify-mounts`. |
+| Administration | `huron adm provision-catalogs [--catalog C] [--dry-run] [--emit-script [--uid U] [--gid GID]]` | ✓ | ✓ (read-only for `--dry-run` and `--emit-script`) | Reader (it reads each catalog's `share_group` through the API), run by the storage administrator | The amendment's "Catalog share group and directory modes": selects each catalog with a `share_group` whose directory group differs, or below which a directory has `mode_drift` for the setgid bit or the group (only `C` with `--catalog`). Direct mode (root on a writable mount, or `U` with the right supplementary groups) runs `find <catalog dir> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +` for each; files keep their group and mode, and `find` follows no symbolic link. `--dry-run` prints the steps; `--emit-script` prints the same lines as a shell script for root (`set -eu`, names quoted with `shlex.quote`) and changes nothing. |
 | Administration | `huron adm publish schema <org\|platform> <name> <file> [--extends id]` | ✓ | | see section 8 | Publishes a new version of an organization or platform entry. |
 | Administration | `huron adm assign schema <schema_id> [--catalog C]` | ✓ | | see section 8 | Assigns the entry to the catalog (default the current one) and prints the recompute counts. |
 | Settings | `huron login [--device\|--browser]`, `logout`, `whoami` | ✓ | | any | Device grant by default; loopback PKCE with `--browser`; exchange; tokens at `$XDG_STATE_HOME/huron/tokens.json` mode 0600. |
-| Settings | `huron config show\|set <key> <value>` | | | any | `api_url`, `issuer`, `client_id`, `mount_prefix` (where organizations without a root live, and the root marker). The key `acl_backend` is gone (M11.9). |
+| Settings | `huron config show\|set <key> <value>` | | | any | `api_url`, `issuer`, `client_id`, `mount_prefix` (where the workstation's read-only mount of the lake path is; organizations without a root lie below it). The key `acl_backend` is gone (M11.9a). |
 
 Working-copy state lives in `$XDG_STATE_HOME/huron/collections/<uuid>/`: `copy.json` (identifier, version,
 path, checked_out_at), `stage.json` (adds as `{rel_path, source, size}`, removes), `metadata.draft.json`.
@@ -2090,7 +2378,7 @@ runs them.
   `edit meta --from-scratch`; `meta validate|publish` → `validate|publish meta`;
   `meta override set|clear` → `set|unset override`; `files`, `log` → `get files`, `get log`;
   `search <catalog>` → `search` over the current catalog; `check` → `adm check`; `acl apply` →
-  `adm apply-acl` (removed in M11.9); `platform verify-root` → `adm verify-root`.
+  `adm apply-acl` (removed in M11.8a); `platform verify-root` → `adm verify-root`.
 - **New commands.** `huron org` and `huron catalog` work as `oc projects` and `oc project` do:
   without a name they list the organizations, or the current organization's catalogs, with `*` on
   the current one; with a name they switch. The current organization is new config
@@ -2120,8 +2408,9 @@ runs them.
   walkthrough, then `huron publish meta` publishes it.
 - **Push preflight** (a defect found by the NOAA verifier: a Reader's `huron push` copied files onto
   the share and left them unrecorded before the service refused the commit with 403). `huron push`
-  now sends the commit as a dry run (section 5.4, section 8) before it copies anything, so a refused
-  push leaves the share untouched.
+  now sends the commit as a dry run (section 5.4, section 8) before it uploads anything, so a
+  refused push leaves the share untouched. Since M11.7 push copies nothing onto the share: it
+  uploads through tusd.
 - **Hints.** Every hint the CLI prints, and every command the web shows (`web/src/lib/cli.ts`),
   uses the new spellings.
 
@@ -2133,7 +2422,8 @@ runs them.
 - **Paths per organization.** The CLI resolves every absolute path through `Mount`, by the
   organization of the first segment: its `root` from `GET /api/v1/organizations/{org}`, cached for
   the command, or `mount_prefix` when the root is `null` (section 6.1). The marker check lives inside
-  `Mount`, so no command can skip it.
+  `Mount`, so no command can skip it. Since M11.8a `Mount` only reads. Since M11.9a its storage is
+  typed `ShareReader`.
 - **Renamed, without an alias**: `adm verify-root` → `adm verify-mounts`, which reports every
   organization instead of the one root. The old amendment's mapping `platform verify-root` →
   `adm verify-root` now ends at `adm verify-mounts`.
@@ -2143,6 +2433,25 @@ runs them.
   name the service configuration (for a grant, the `groups.<role>` key to edit) and
   `huron adm provision-orgs`; storage errors below a rooted
   organization name its path and, when configured, its `export`.
+
+### Amendment (2026-11-08): the CLI writes nothing to the lake
+
+- **Decided with the user on 2026-11-07 and 2026-11-08** (section 3, "The CLI" and "Containment in
+  the lake"). The table above carries it.
+- **No CLI disk writes.** Every directory verb calls the API only. The CLI makes no directory,
+  writes no `metadata.json`, changes no mode or group and unlinks nothing. `Mount.storage` is the
+  read-only port `ShareReader`, so a write does not type-check. `huron adm provision-orgs` and
+  `huron adm provision-catalogs` in direct mode are the only exceptions. They build a writable
+  `PosixStorage` themselves, and the storage administrator runs them.
+- **Push through tusd.** `huron push` uploads each staged add to tusd at `uploads_url`, with the
+  tus client in `applications/cli/uploads.py` (M11.7). It needs no mount. The old NFS-copy path
+  (`copy_in`, the `.huron-part` push, `write_sidecar`) is removed, not kept for compatibility.
+  The `os.walk` in `sync._collect` stays: it reads the user's local source folder for staging.
+- **No ACL verb.** `huron adm apply-acl`, the `acl_backend` key and the ACL reminder of
+  `huron adm grant` and `huron adm revoke` are removed (M11.8a, M11.9a).
+- **Reads only through the traversal.** `huron adm check`, `huron adm verify-mounts` and
+  `huron status` read the read-only mount through `ShareReader` on `LakePath`. A symbolic link
+  is reported, never followed.
 
 ## 10. Plan-wide rules
 
@@ -3239,13 +3548,38 @@ memory store in the unit tier.
 
 ### Milestone 11 — Uploads through tusd
 
-The section 3 amendment of 2026-11-06 (ADR 0008), as revised the same evening and corrected after
-review on 2026-11-07: the API holds the mount. Tasks run in order. Each task fits one implementer in
-one pass. Precondition: the operator runs the setgid measurement of "Catalog share group and
-directory modes" on the real export and records the result and the volume security style in
-section 3's bullet "Facts about the storage (measured 2026-11-06)". M11.11 and M11.12 start only
-after that record exists. The code tasks do not wait for it: the `stat` after each `mkdir` makes a
-failed inheritance visible.
+The section 3 amendment of 2026-11-06 (ADR 0008), as revised on 2026-11-07 and after the M11.5
+escalation on 2026-11-08: the API holds the mount. M11.1 to M11.4 are committed and verified. The
+other tasks run in the order of this list, not in the order of their numbers: M11.5a, M11.7,
+M11.8a, M11.9a, M11.5b, M11.5c, M11.5d, M11.5e, M11.6, M11.8, M11.9, M11.10, M11.11, M11.12 and
+M11.13. The tasks keep their old identifiers, so that the references in sections 3 to 9 stay
+correct. Each task fits one implementer in one pass and ends with `make gate` and its own grep
+checks.
+
+M11.5a records the escalated M11.5 tree on the branch `m11.5-escalated` and keeps only its two
+verified parts: the hash pool and the overwrite backup. The branch is reference material for the
+later tasks. No task deletes it. The orchestrator deletes it after M11.5e, when the user confirms.
+
+The three deletion tasks (M11.7, M11.8a and M11.9a) come before the change of the `Storage` port
+to `LakePath` (M11.5c), for two reasons. First, each CLI disk write, the copy method and each ACL
+method is a caller of the port. If they stay, M11.5c must move dead code onto `LakePath`. After
+the deletions, M11.5c is a type change plus `stat`, `is_empty`, `Outcome` and the inode guards.
+Second, the CLI and the API must not both write the same directories. M11.8a removes the CLI
+writes before the API's directory verbs come back in M11.5d, so the tree never holds two writers.
+M11.5b then changes two value shapes and the root check, which have callers today and no tie to
+the traversal. M11.5c changes the port once, with every caller: after it, no disk operation can
+follow a symbolic link or leave the lake. M11.5d builds the directory verbs and M11.5e builds
+repair, both on the final port.
+
+Two intervals change behaviour, and neither keeps code for compatibility. From M11.8a to M11.5d, a
+directory verb on a real lake changes only rows. From M11.7 to M11.6, the bytes of a removed file
+stay on the disk. There is no production lake, so neither interval puts data at risk.
+
+The setgid measurement of "Catalog share group and directory modes" gates only M11.13 (the Helm
+chart and the production values). The operator records the result and the volume security style
+in section 3's bullet "Facts about the storage (measured 2026-11-06)". M11.11 runs on the local
+cluster, where the lake is a local Linux filesystem, and does not wait for that record. The code
+tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritance visible.
 
 #### M11.1 The uploads area, its stores and receipts in commits
 
@@ -3605,276 +3939,819 @@ failed inheritance visible.
   `service_gid=`) with `PausingStorage`; `tests/support/tusd.py` has `FakeTusd`,
   `UploadTarget` and `upload_target`; `tests/support/api.py` has `active_collection`.
 
-#### M11.5 Directory verbs and repair in the API
+#### M11.5a The hash pool and the overwrite backup
 
-- Intent: the amendment's "Directory verbs in the API", with the repair routes.
+- Intent: commit the two verified parts of the escalated M11.5 tree and nothing else of it. These
+  are the separate hash pool and the overwrite backup of "Upload flow" sub-steps 5 to 7. They touch
+  no containment code. First record the whole tree on a reference branch.
 - Create or change:
-  - `src/huron/core/storage/directories.py`: `DirectoryWriter(storage)` with `make(path, kind)`
-    (the organization directory with `make_directory` and mode `2751`; below a catalog
-    `make_inheriting_dir`, never a `chmod` of a directory whose permission bits are right; an
-    existing empty directory is adopted; any other existing entry raises `STORAGE_FAILED`),
-    `write_metadata(path, body)` (atomic, `0644`, equal bytes not written again),
-    `remove_collection(path)` (placed files are the removals' job, so this removes
-    `metadata.json`, `.huron-part` and `.huron-prev` files and empty subdirectories, then the
-    directory, and reports `kept` on `ENOTEMPTY`), `remove(path)`, and
-    `Repairer(storage, writer)` with `repair(plan) -> RepairResult(changed, warnings, failed)`.
-    Repair fixes permission bits only. A directory without the setgid bit, or with a group that is not the catalog's, puts the path
-    into `failed` with the reason `mode_drift`, for the storage administrator
-    (`huron adm provision-catalogs`). `EPERM` on an entry (version 1, not owned by `U`) puts the
-    path into `failed` with the reason, and the walk goes on.
-  - `src/huron/core/lake/repairs/`: `Repairs.plan(actor, catalog, target, recursive) ->
-    RepairPlan` (authorizes `NAMESPACE_CONFIGURE` on the catalog; lists the expected
-    directories, the share group and the `metadata.json` files) and `Repairs.organization(actor, org)`
-    (authorizes `CATALOG_GRANT_ADMIN` on the organization). `core/lake/bootstrap.py` builds it.
-  - `src/huron/applications/api/disk.py`: `ensure_directory`, `write_metadata`,
-    `remove_directory`, `remove_collection`, `repair`. A second dedicated `ThreadPoolExecutor`,
-    the hash pool of 4 workers, runs `Placer.measure` and `measure_destination`; the readiness
-    probe and every other disk call stay on the disk pool of 8 workers ("Lake path"). `close()`
-    shuts both down.
-  - The overwrite backup of "Upload flow" sub-steps 5 to 7 (decided 2026-11-07, after M11.4's
-    verification): `pkg/fs/posix.link_into_place` links the existing destination to
-    `.<name>.<id>.huron-prev` before the `rename` and reports the backup it made;
-    `Placer.link` returns it in `Linked`; `Placer.undo` renames the backup over the destination
-    when the destination's inode is the placed inode, and otherwise keeps today's behaviour;
-    `LakeDisk.place` unlinks the backup after a successful receipt in sub-step 5 and in the
-    replay of sub-step 7. `Storage` gains the `rename` it needs, in `PosixStorage` and
-    `MemoryStorage`.
-  - `src/huron/applications/api/routes/v1/endpoints/organizations.py`, `catalogs.py`,
-    `namespaces.py`, `collections.py`: before the transaction each verb resolves its path with
-    `place_of` and `resolve`, so `OUTSIDE_LAKE` 422 comes before any row changes. Then the verb
-    calls its lake operation, then `LakeDisk`, and answers after the disk work. After the commit
-    only `STORAGE_FAILED` 500 and `LAKE_UNAVAILABLE` 503 remain, with the rows kept.
-    `collections.py`: `PATCH` and `activate` write `metadata.json`. Inside the path lock the API
-    reads the collection and the catalog schema again in a new read, renders from those rows and
-    writes only when the bytes differ, never from the request's copy. `catalogs.py`: the schema
-    assignment rewrites each `metadata.json` whose bytes changed (`Catalogs.assign_schema` returns the
-    settled views). The collection delete runs `remove_collection` on
-    `DeletedCollection.disk_path`. Its claimed removal rows wait for M11.6.
-  - `src/huron/applications/api/routes/v1/endpoints/repairs.py` and `routes/v1/schema/repairs.py`:
-    `POST /api/v1/catalogs/{catalog}/repair` (`{target, recursive}`) and
-    `POST /api/v1/organizations/{org}/repair`. Both answer 200 with `{changed, warnings,
-    failed}`. A repair reads rows only, does each directory's disk work under that directory's
-    path lock and checks the rows again before each `mkdir`. `routes/v1/router.py`,
-    `make openapi`, the web's `npm run generate:api`.
-  - Tests: `tests/unit/api/test_directory_verbs.py` over a temporary lake (each verb makes or
-    removes its directory with the mode, `OUTSIDE_LAKE` with no row changed, an existing empty
-    directory adopted, an existing non-empty entry answering 500 with the rows kept, a failed
-    inheritance on `MemoryStorage` answering `STORAGE_FAILED`, `metadata.json` after activate,
-    publish, override and assignment, rendered from a new read, a non-empty directory kept on
-    delete with a 204, a permission failure answering 500 with the rows kept, the verbs without
-    `lake_path` changing rows only), `tests/unit/api/test_repair.py` (a missing directory, a
-    wrong mode, a missing setgid bit reported and not changed, a stale `metadata.json`, recursive over a
-    tree with `.tus-uploads` skipped, `EPERM` in `failed` while the walk goes on, the privileges,
-    idempotence), `tests/unit/lake/test_repairs.py` (the plan, the privileges),
-    `tests/unit/storage/test_directories.py`. For the backup: `tests/unit/pkg/test_posix.py`
-    and `tests/unit/storage/test_placement.py` (the backup made on an overwrite and not on a new
-    name, a stale backup replaced, undo restoring the old bytes and inode), and
-    `tests/unit/api/test_upload_hooks.py` (an overwrite of a committed file refused after the
-    link, by a collection delete and by a terminate during the hash, leaves the old bytes at the
-    destination with their inode and no backup; a successful overwrite leaves no backup; a
-    replay after a crash between the rename and the receipt removes the backup). For the pools:
-    `tests/unit/api/test_lake_disk.py` (with all 4 hash workers blocked, `ready()` answers in
-    time and a metadata call completes; deterministic, with events and bounded waits).
-- Verification: `make gate`; `uv run pytest tests/unit/api/test_openapi_snapshot.py`; from
-  `web/`, `npm run check` and `npm test`.
+  - Record the tree: `git switch -c m11.5-escalated`, `git add -A`, then `git commit -m "Record
+    the escalated M11.5 tree (reference only)"`. Then `git switch tusd-integration`. Its working
+    tree is clean at its last commit (5800e25a). Do not delete the branch. No task deletes it; the
+    orchestrator deletes it after M11.5e, when the user confirms.
+  - Keep four files from the branch: `git checkout m11.5-escalated -- IMPLEMENTATION_PLAN.md
+    CONTEXT.md docs/adr/0008-uploads-through-tusd.md architectural_review.md`.
+  - Re-apply only these hunks of `git diff 5800e25a m11.5-escalated`. Copy hunks, not whole files:
+    - `src/huron/applications/api/disk.py`: `HASH_WORKERS = 4`, `_hash_pool`, `_hash`, both pools
+      shut down in `close()`; `Placer.measure` and `measure_destination` on the hash pool; the
+      backup drop after a successful receipt in `_settle` and in `_replay`. Where a hunk calls
+      `self.hold` or `self.call`, keep the 5800e25a names `self._hold` and `self._call`.
+    - `src/huron/pkg/fs/posix.py`: `link_into_place(source, destination, part_name, backup_name)
+      -> Path | None`, `_replace` and `_link_afresh`, with the same-inode case and the left-over
+      backup.
+    - `src/huron/core/storage/ports.py`: `Storage.link(..., backup_name)` and `Storage.rename`;
+      both in `posix.py` and `memory.py`; the backup of `MemoryStorage.link`.
+    - `src/huron/core/storage/placement.py`: `Linked` with the backup, `backup_file`,
+      `drop_backup`, `undo(destination, inode, linked)`. `SourceGone` moves to
+      `src/huron/core/storage/errors.py`.
+    - `src/huron/schema/naming.py`: `BACKUP_SUFFIX = ".huron-prev"`, reserved like the part
+      suffix. `src/huron/core/storage/layout.py`: `is_reserved_entry` counts `BACKUP_SUFFIX`.
+    - `tests/support/disk.py`: `PausingStorage.pause_next`. `tests/support/tusd.py`: what the
+      backup tests need.
+  - Facts that move here from M11.5's execution notes: `link_into_place` and `MemoryStorage.link`
+    leave a destination that already links the source's inode alone. They return the backup that
+    an interrupted earlier attempt left, so `undo` after a crash between the `rename` and the
+    cleanup still puts the replaced bytes back. `Placer.undo` also removes its backup when the
+    destination changed since the link.
+  - Not brought back (each comes back only when its later task rebuilds it on the final design):
+    `routes/directories.py`, `routes/v1/endpoints/repairs.py`, `routes/v1/schema/repairs.py`,
+    `core/lake/repairs/`, `core/storage/directories.py`, `LakeDirectory`, the async
+    `LakeDisk.locate`, `resolve` changes, `_visible`, `verify_marker` in `LakeDisk`,
+    `directory_group`, `repair*`, `walk(on_error)`, `_listing`, `_kind`, `_fail`,
+    `posix.exists`, `_lstat`, the `StorageError` mapping of each query of `PosixStorage`,
+    `in_group`, `GroupResult.warning`, `InheritanceFailed`, the new lake reads, the lines in
+    `pyproject.toml`, `temporary_mode` in `tests/conftest.py`, the tests of the verbs and repair,
+    `docs/openapi.json` and `web/src/lib/api/openapi.ts` (both stay at 5800e25a).
+  - Tests, as verified in the tree: the backup cases of `tests/unit/pkg/test_posix.py` and
+    `tests/unit/storage/test_placement.py` (a backup made on an overwrite and not on a new name, a
+    stale backup replaced, the same-inode case, undo restoring the old bytes and inode); the
+    `link` and `rename` cases of `tests/unit/storage/test_storage.py`; the backup line of
+    `tests/unit/schema/test_naming.py`; the overwrite cases of
+    `tests/unit/api/test_upload_hooks.py` (an overwrite refused after the link by a collection
+    delete and by a terminate during the hash leaves the old bytes and inode and no backup; a
+    successful overwrite leaves no backup; a replay after a crash between the `rename` and the
+    receipt removes the backup). The terminate case overwrites a committed file. A collection
+    with recorded files cannot be deleted, so the delete case overwrites a placed, uncommitted
+    upload. Both upload the first file through the hooks, and `PausingStorage.pause_next` pauses
+    the second hash. The pool case of `tests/unit/api/test_lake_disk.py`: with all 4 hash workers
+    blocked, `ready()` answers in time and a disk call completes; it queues `DISK_WORKERS + 1`
+    placements, so one shared pool would starve the probe.
+- Verification: `make gate`; `git branch --list m11.5-escalated` prints the branch;
+  `git status --short | grep -E "routes/directories\.py|repairs|core/storage/directories\.py|pyproject\.toml|tests/conftest\.py|openapi\.(json|ts)|test_directory_verbs|test_directories"`
+  prints nothing;
+  `grep -rnE "\bon_error\b|\bin_group\b|LakeDirectory|\bRepairs\b|\bdirectory_group\b|temporary_mode|InheritanceFailed|\b_lstat\b" src/huron tests`
+  prints nothing; `uv run pytest tests/unit/pkg/test_posix.py tests/unit/storage/test_placement.py
+  tests/unit/api/test_upload_hooks.py tests/unit/api/test_lake_disk.py` passes.
 - Dependencies: M11.4.
-- Status: pending
-
-#### M11.6 Removals, the background runner and the sweep
-
-- Intent: the amendment's "Removals and the inode guard" and "Sweep".
-- Create or change:
-  - `src/huron/core/storage/placement.py`: `Unlinker(storage)` with `unlink(path, inode) ->
-    Outcome` (`removed`, `missing`, `kept` when the inode differs; a `null` inode unlinks
-    unconditionally), and `Sweeper(upload_dir, ttl, clock)` with `sweep() -> list[Path]`, which
-    removes every entry of `.tus-uploads` whose modification time is older than `upload_ttl`
-    (the temporary files of tusd's lock files included).
-  - `src/huron/applications/api/disk.py`: `drain(removals)`. Per row: `removal_still_valid`,
-    the unlink under the path lock, then `finish_removal`. `ENOENT` or a different inode
-    finishes the row. Any other error (`EACCES`, `EIO`, a marker refusal) leaves the row
-    claimed and logs a warning; the runner tries again after `REMOVAL_LEASE`. After a successful
-    unlink, `drain` removes the empty directories from the file's parent up to the collection
-    directory, and the collection directory itself when no settled collection is at it.
-  - `src/huron/applications/api/routes/v1/endpoints/files.py` (the commit route): drains
-    `CommitResult.removals` after the commit. `collections.py` (the delete route): drains
-    `DeletedCollection.removals` first, then runs `remove_collection`. A failed unlink does not
-    change the 200 or 204.
-  - `src/huron/applications/api/background.py`: `Runner(runtime)` with the removal loop
-    (`claim_removals` every `removal_interval`), the sweep loop (`sweep_interval`) and the
-    election through `ClosableStore.lease_runner()` in `runtime.py`
-    (`pg_try_advisory_lock` on a dedicated connection in `core/metastore/postgres.py`, always
-    leased in `core/metastore/memory.py`). The election saves work; correctness rests on
-    `skip locked` and on unlinks that accept `ENOENT`. The election connection sets TCP
-    keepalives (`keepalives_idle=30, keepalives_interval=10, keepalives_count=3`), and the
-    runner stops when that connection drops. `app.py` starts the runner in the lifespan when
-    `lake_path` is set and stops it on shutdown.
-  - Tests: `tests/unit/api/test_removals.py` over a temporary lake (a commit's remove unlinks in
-    the request, a collection delete unlinks placed uploads and then removes the directory, a
-    re-added key cancels, the inode guard keeps a replaced file, a `null` inode unlinks, a
-    failing unlink leaves the row claimed and the commit answers 200, empty directories removed
-    after an unlink, a left-over row drained by the runner after the lease),
-    `tests/unit/api/test_background.py` (the loops with a frozen clock, the sweep removing old
-    entries only, a runner that is not elected does nothing, a runner that stops when its
-    election connection drops), `tests/unit/storage/test_placement.py` (`Unlinker`, `Sweeper`),
-    `tests/contract/test_postgres_runtime.py` (two stores, one lease).
-- Verification: `make gate`; `uv run pytest -m contract`.
-- Dependencies: M11.5.
-- Status: pending
+- Status: complete
 
 #### M11.7 Push through tusd in the CLI
 
-- Intent: the amendment's push ("The CLI").
+- Intent: the amendment's push ("The CLI"), and the removal of the NFS-copy path of version 1. After
+  this task `huron push` uploads through tusd and writes nothing to the lake.
 - Create or change:
   - `src/huron/applications/cli/uploads.py`: the tus client (create, `HEAD`, `PATCH` in 64 MiB
     chunks with a progress line, local sha256, the `Huron-Sha256` comparison, the 401 and 403
     hints). On a 500, 502 or 504 from the final PATCH it reads `GET /api/v1/uploads/{id}`.
     `placed` or `committed` with the local hash is success. `pending` is polled every 5 s for at
-    most `upload_hook_timeout` (from `GET /healthz`); then the CLI reports the upload as not
-    placed and starts a new upload on the next push. `failed` prints the failure. A zero-length
-    file finishes in the creation POST, so the CLI reads `Huron-Sha256` from the POST response.
-  - `src/huron/applications/cli/sync.py`: `push` uploads instead of copying, records
+    most `upload_hook_timeout` (from `GET /healthz`). Then the CLI reports the upload as not placed
+    and starts a new upload on the next push. `failed` prints the failure. A zero-length file
+    finishes in the creation POST, so the CLI reads `Huron-Sha256` from the POST response.
+  - `src/huron/applications/cli/sync.py`: `push` uploads instead of copying. It records
     `upload_url` and `upload_id` in the stage, skips placed uploads on a retried push, needs no
-    mount and unlinks nothing. `src/huron/applications/cli/state.py`: the `StagedAdd` fields (an
-    old stage file without them still loads).
-  - `copy_in` removed from the `Storage` port, `PosixStorage` and `MemoryStorage`, and
-    `pkg.fs.posix.atomic_copy` with it.
-  - CLI messages and hints in strict STE. `scripts/cli_reference.py` output regenerated.
-  - `tests/support/tus.py`: a shared fake tus server (`httpx.MockTransport`) that places files
-    into `MemoryStorage` and records receipts through the in-process API, so the status and
-    check tests keep their data.
+    mount and unlinks nothing. The copy step, the unlink loop, the "copied" line, the `FileStamp`
+    use and `_copy_files` go. `_commit_body` takes each add's `sha256` from `Huron-Sha256`. The
+    `os.walk` in `_collect` stays: it walks the user's local source folder for push staging, not
+    the lake. `src/huron/applications/cli/state.py`: the `StagedAdd` fields `upload_url` and
+    `upload_id`. No stage file outlives the test bed, so no old stage format is read.
+  - Gone: `Storage.copy_in` in `core/storage/ports.py`, `PosixStorage` and `MemoryStorage`;
+    `pkg.fs.posix.atomic_copy`; `pkg.hashing.sha256_copy` and its two tests in
+    `tests/unit/pkg/test_small.py`; `PosixStorage._make_dir` and `_COPY_DIRECTORY_MODE`;
+    `pkg.fs.posix.PART_SUFFIX` (`atomic_write` takes the part suffix from its caller, which passes
+    `schema.naming.PART_SUFFIX`); `schema.naming.part_name` and its test in
+    `tests/unit/schema/test_naming.py`.
+  - `src/huron/applications/api/settings.py`: the setting `upload_receipts` goes. With
+    `lake_path`, `Settings.receipt_mode` is `ReceiptMode.REQUIRED`; without it, `OPTIONAL`.
+    `ReceiptMode` stays a parameter of `core/lake/bootstrap.py` for the API without a lake and for
+    the seeds. The field `LakeSettings.upload_receipts` in `core/lake/bootstrap.py` becomes
+    `receipt_mode`. `src/huron/applications/api/runtime.py` passes `receipt_mode=`.
+    `tests/unit/lake/test_commits.py` and every seed that names the field follow.
+    `tests/unit/api/test_settings.py` follows.
+  - CLI messages and hints in strict STE. `uv run python scripts/cli_reference.py` output
+    regenerated.
+  - `tests/support/tus.py`: a shared fake tus server (`httpx.MockTransport`). It places files into
+    `MemoryStorage` and records receipts through the in-process API, so the status and check tests
+    keep their data.
   - Tests: `tests/unit/cli/test_push_tusd.py` over the fake tus server (a fresh upload, a resume
-    after a dropped PATCH, a hash mismatch, a 500, a 502 and a 504 followed by `placed`,
-    `pending` and `failed`, an empty file, a 403 and a 401 from the proxy, uploads disabled, a
-    retried push that skips placed files). Moved to the fake tus server:
-    `tests/unit/cli/test_collections.py`, `test_edges.py`, `test_managed_service.py`,
-    `test_declared_organizations.py`, `test_status.py`, `test_panels.py`,
-    `test_check_and_acl.py`, `tests/unit/storage/test_storage.py`,
-    `tests/unit/pkg/test_posix.py`. `tests/unit/cli/test_push_preflight.py` kept.
-  - `tests/integration/test_cli_end_to_end.py` marked skipped with the reason "rewritten by the
+    after a dropped PATCH, a hash mismatch, a 500, a 502 and a 504 followed by `placed`, `pending`
+    and `failed`, an empty file, a 403 and a 401 from the proxy, uploads disabled, a retried push
+    that skips placed files). Moved to the fake tus server: `tests/unit/cli/test_collections.py`,
+    `test_edges.py`, `test_managed_service.py`, `test_declared_organizations.py`,
+    `test_status.py`, `test_panels.py` and `test_check_and_acl.py`. The adapter tests
+    `tests/unit/storage/test_storage.py` and `tests/unit/pkg/test_posix.py` lose their `copy_in`
+    and `atomic_copy` cases. `tests/unit/cli/test_push_preflight.py` is kept.
+  - `tests/integration/test_cli_end_to_end.py` is marked skipped with the reason "rewritten by the
     dev-stack task". M11.10 removes the mark.
-- Verification: `make gate`.
-- Dependencies: M11.4.
+- Verification: `make gate`;
+  `grep -rnE "\bcopy_in\b|atomic_copy|sha256_copy|_make_dir\b|_COPY_DIRECTORY_MODE|\bpart_name\(|_copy_files" src tests scripts`
+  prints nothing; `grep -n "PART_SUFFIX\|huron" src/huron/pkg/fs/posix.py` prints nothing;
+  `grep -rn "upload_receipts" src tests scripts huron.dev.yaml` prints nothing; `grep -rn "ReceiptMode.OPTIONAL" src/huron/applications` prints only the line without
+  a lake in `Settings.receipt_mode`; `grep -n "os\.walk" src/huron/applications/cli/sync.py`
+  prints only the line in `_collect`; `uv run python scripts/cli_reference.py --check`.
+- Dependencies: M11.5a (both change `pkg/fs/posix.py` and the upload tests).
 - Status: pending
 
-#### M11.8 Directory verbs without disk writes in the CLI
+#### M11.8a The CLI writes nothing to the lake
 
-- Intent: the CLI calls the API for every change and writes nothing to the share.
+- Intent: the write half of the old M11.8. Every CLI directory verb, `activate`, `set meta` and
+  `delete` calls the API only. The write grep below enforces it. M11.9a types the CLI's storage as
+  the read-only `ShareReader`, because `adm check` and `provision-orgs` need the writable
+  `Storage` until their ACL code goes. This task adds no feature: the share-group options and
+  `adm repair` stay in M11.8.
 - Create or change:
   - `src/huron/applications/cli/commands/create.py`, `delete.py`, `change.py` and `common.py`
-    (`activate`): call the API only. No `Mount` write and no marker check before a change.
-    `create catalog --share-group`, `set catalog --share-group | --no-share-group` (a new
-    command on `set_app` in `change.py`), the `SHARE_GROUP_PENDING` hint, the `STORAGE_FAILED`
-    and `LAKE_UNAVAILABLE` repair hint in `errors.py`. `huron delete collection` drops
-    `_empty_directory` and `_refuse_unrecorded`, checks no unrecorded file before the delete,
-    and keeps the commit of its removes. Its help says that the API unlinks only the files that
-    it recorded or placed, and that any other file stays with a `dir_unrecorded` finding.
-  - `src/huron/applications/cli/commands/adm.py`: `repair <identifier> [--recursive] | --org
-    <org>`, which prints the `changed`, `warnings` and `failed` paths. `apply-acl` removed.
-    `grant` and `revoke` lose `_remind`.
-  - `src/huron/applications/cli/sync.py`: `write_sidecar` removed. `mount.py`: `ensure`,
-    `apply`, `remove` and `report` removed, `storage` typed as `ShareReader`. `common.py`:
-    `kind_of` removed.
-  - CLI help and messages in strict STE. `scripts/cli_reference.py` output regenerated.
+    (`activate`): call the API only, with no `Mount` write and no marker check before a change.
+    Gone: the `mount.ensure` and group arguments of `create.py`; `activate`'s `mount.ensure` and
+    `write_sidecar`; `huron set namespace`'s `mount.apply`; `common.kind_of`; in `delete.py`,
+    `_empty_directory`, `_refuse_unrecorded`, `_organization_directory`, `_KEPT`, the
+    `mount.path` pre-check and the `mount.remove` of `delete namespace`, `catalog` and `org`.
+    `huron delete collection` checks no unrecorded file and keeps the commit of its removes. Its
+    help says that the API unlinks only the files that it recorded or placed, and that any other
+    file stays with a `dir_unrecorded` finding.
+  - `src/huron/applications/cli/sync.py`: `write_sidecar` goes.
+  - `src/huron/applications/cli/inventory.py`: the module docstring (line 1 at 5800e25a) names
+    ``adm check`` and ``tree`` only, not ``adm apply-acl``. The code of the module stays until
+    M11.9a.
+  - `src/huron/applications/cli/mount.py`: `ensure`, `apply`, `remove`, `report` and
+    `catalog_groups` go. The read side stays (`path`, `verify`, `verify_catalog`, `verify_prefix`,
+    `base`, `place`, `place_of_view`, `prefix_state`). `organization_groups` stays, because the
+    ACL plans of `adm.py` (`_organization_plan`, `_target`) use it until M11.9a. `Mount.storage`
+    and `Services.storage_factory` keep the type `Storage` until M11.9a.
+  - `src/huron/applications/cli/commands/adm.py`: `apply-acl` and `_selected` go; `grant` and
+    `revoke` lose `_remind`; `declared_groups_hint` loses its ACL sentences (the 409 hint names
+    no ACL step).
+  - The web: the `adm apply-acl` hint goes from `web/src/lib/cli.ts` and from
+    `web/src/routes/(app)/catalogs/[catalog=segment]/(overview)/cli/+page.svelte`, with its cases
+    in `web/src/lib/cli.test.ts`, `CliHint.svelte.test.ts` and that page's `page.svelte.test.ts`.
+  - `tests/unit/cli/conftest.py`: the share fixture makes the directories that the status and
+    check tests need. No test seeds the share through a CLI write.
+  - CLI help and messages in strict STE. `uv run python scripts/cli_reference.py` output
+    regenerated.
   - Tests: `tests/unit/cli/test_directories.py` rewritten against a read-only fake storage that
-    fails on any write call (every directory verb, `repair`, the share-group options and hint,
-    `delete collection` with and without a mount, both without an unrecorded-file check),
-    `tests/unit/cli/test_administration.py` (`grant` and `revoke` output).
-- Verification: `make gate`.
-- Dependencies: M11.5, M11.7.
+    fails on any write call (every directory verb, `activate`, `set namespace`, `delete
+    collection` with and without a mount, none with an unrecorded-file check);
+    `tests/unit/cli/test_administration.py` (`grant` and `revoke` output without a reminder).
+    These tests assert the `huron adm apply-acl` text and change with it:
+    `tests/unit/cli/test_browse.py` (the grant output has no reminder);
+    `tests/unit/cli/test_organization_grants.py` (the grant and revoke output has no reminder, and
+    the 409 hints name no ACL step); `tests/unit/cli/test_declared_organizations.py` (the 409 hint
+    names no ACL step); `tests/unit/cli/test_check_and_acl.py` (the `apply-acl` cases go);
+    `tests/unit/test_cli_reference.py` (the slug case uses another command).
+- Verification: `make gate`;
+  `grep -rnE "mount(\(\))?\.(ensure|apply|remove|report)\(|kind_of|_empty_directory|_refuse_unrecorded|catalog_groups|apply.acl|_remind|write_sidecar" src/huron/applications/cli web/src/lib web/src/routes`
+  prints nothing;
+  `grep -rnE "\.(write_bytes|remove_file|remove_directory|make_directory|make_inheriting_dir|set_mode|set_group|link|rename)\(" src/huron/applications/cli`
+  prints nothing (the direct mode of the provision commands writes through
+  `core.storage.provision`, not through a call in the CLI);
+  `uv run python scripts/cli_reference.py --check`; from
+  `web/`, `npm run check`, `npm test` and `npm run lint`.
+- Dependencies: M11.7.
 - Status: pending
 
-#### M11.9 Modes and groups: the check, provisioning and the end of the ACL code
+#### M11.9a No ACL code
 
-- Intent: sections 6.2 and 6.4 as built, the storage-administrator commands, and the removal of
-  every ACL path.
+- Intent: the old M11.9's "Gone" list, completed. Every ACL path goes from the code, the scripts,
+  the tests and the API. `provision-orgs` writes the marker at `lake_path`, which replaces
+  `scripts/init-root.sh`. The new check findings and `provision-catalogs` stay in M11.9.
 - Create or change:
-  - `src/huron/core/storage/check.py`: `ExpectedDirectory`, `ExpectedCollection` and
-    `ExpectedOrganization` carry `mode`, `group` and `owner` in place of `plan`. `mode_drift`
-    covers the mode and the owner, and for a directory below a catalog also a missing setgid bit
-    or a group other than the catalog directory's expected group. `share_group_mismatch`
-    compares the catalog directory's group with the catalog's share group by name through
-    `grp.getgrnam` and reports a name it cannot resolve; for a catalog without a share group it
-    compares with `G` by gid (`service_user.gid` from `/healthz`). `provision-catalogs` selects
-    and targets a catalog without a share group the same way, with `G`'s gid as its group.
+  - Gone from `core.storage`: `aclplan.py` (`AclPlan`, `EffectiveGroups`, `plan`, `diff`) and its
+    exports in `__init__.py`; `factory.py` (`storage_for`; `applications/api/runtime.py` and
+    `applications/cli/main.py` construct `PosixStorage` directly); `Storage.ensure_directory`,
+    `apply_plan`, `read_acl` and `owned_by_me` in the port and both adapters;
+    `PosixStorage`'s `acl_backend` and `runner` arguments, `_acls`, `_runner` and `_perms`;
+    `MemoryStorage`'s `Node.acl`, `Node.owner`, `Node.group`, `user` and the `("acl", path)` call
+    (`uid`, `gid`, `groups`, `member_of` and `denied` stay; `add_root` takes `uid: int = 0` in
+    place of `owner`);
+    `DirectoryKind.NAMESPACE_WITH_COLLECTIONS` in `layout.py`.
+  - Gone from `pkg.fs`: `acl.py`, and "POSIX ACLs" in the package docstring. `posix.make_dir` and
+    its tests go with `ensure_directory`, its last caller.
+  - `core/storage/check.py`: the `plan` fields, `_acl`, `acl_drift`, `org_acl_drift` and
+    `AclError` go. The other findings stay.
+  - `core/storage/provision.py`: `OrganizationTarget.plan`, `acls=`, `render_acl` and the
+    owning-group `chgrp` go. Direct mode uses `make_directory(directory, ORGANIZATION_MODE)` and
+    writes the marker of each organization and the marker at `lake_path` (no `organization`
+    field). The script loses `setfacl`. `Provisioner` takes the lake path as an argument; it does
+    not read a setting.
+  - `applications/cli/commands/adm.py`: `adm check` loses `acls`, `_organization_plan` and the
+    `plan(...)` calls in `_directories`, `_collections` and `_target`. `provision-orgs` gives
+    `Provisioner` its own writable `PosixStorage` in place of `mount.storage`, with the CLI's
+    `mount_prefix` as the lake path (section 6.1). The module docstring (line 1 at 5800e25a),
+    the `adm` help (line 62) and the `provision-orgs` docstring (line 261, "the organization ACL
+    plan") say "directory modes" in place of "directory ACLs". `provision-orgs` loses its `acls`
+    variable and the `acl_backend` note. `applications/cli/inventory.py`: `groups`,
+    the kinds of `directories()` and the `/grants` fetch go; `directories()` yields
+    `(identifier, disk_path)` and the collections separately.
+  - `applications/cli/mount.py`: `organization_groups` goes. `Mount.storage` and
+    `Services.storage_factory` (`services.py`) are typed `ShareReader`. `check`,
+    `check_organization` and `marker_state` in `core.storage` take a `ShareReader`.
+  - `applications/cli/config.py`: the key `acl_backend` and its `CONFIG_KEYS` entry go.
+    `applications/cli/errors.py`: `ACL_FAILED` goes, with its row in `docs/api-errors.md`.
+  - The API: `GET /catalogs/{catalog}/grants` in `routes/v1/endpoints/grants.py`,
+    `EffectiveGroupsOut` in `routes/v1/schema/grants.py`, `Grants.catalog_groups` in
+    `core/lake/organizations/grants.py`, `Authorizer.effective_groups` and `EffectiveGroups` in
+    `core/security/rbac/authorize.py`. The organization and platform grant routes stay. Then
+    `make openapi`, and from `web/` `npm run generate:api`.
+  - Scripts: `scripts/init-root.sh` and `tests/unit/test_init_root_script.py` go. The line
+    `huron config set acl_backend none` goes from `scripts/e2e.sh` and `scripts/demo-noaa.sh`.
+  - `pyproject.toml`: the `acl` pytest marker goes. Add the import contract "only core.storage
+    imports huron.pkg.fs": a forbidden contract with the sources `huron.applications`,
+    `huron.core.lake`, `huron.core.security`, `huron.core.metastore` and `huron.schema`, and the
+    forbidden module `huron.pkg.fs`.
+  - `AGENTS.md`: the layout rows without "acl" and "ACL plans", the tests line without `acl/`.
+    `docs/user-guide.md`: the `adm` line says "directory modes". The rest of the ACL text in
+    `docs/` is M11.12's work.
+  - Tests that lose their ACL parts: `tests/acl/` and `tests/unit/pkg/test_acl.py` go;
+    `tests/unit/test_error_contract.py` (the import of the ACL module);
+    `tests/unit/cli/test_foundation.py` (`ACL_FAILED`); `tests/unit/cli/conftest.py`;
+    `tests/unit/cli/test_check_and_acl.py` loses its ACL cases;
+    `tests/unit/cli/test_declared_organizations.py`; every CLI test that builds an ACL plan;
+    `tests/unit/storage/test_check.py` and `tests/unit/storage/test_storage.py` (the `Acl`
+    imports, the `Node.acl` cases, the `storage_for` and ACL-plan cases);
+    `tests/support/disk.py` (the `SubprocessRunner` import and argument);
+    `tests/unit/cli/test_navigation.py` (the old spelling `acl apply` and the `acl ` branch of the
+    hint pattern go); `tests/unit/test_ste_check.py` (the fixture hint title uses another
+    phrase, for example "Grant a role; check the catalog").
+    These also lose their ACL parts (found at 5800e25a with `git grep` for `effective_groups`,
+    `EffectiveGroups`, `catalog_groups` and the route):
+    `tests/unit/security/test_rbac.py` (the two `effective_groups` tests, lines 181 and 219);
+    `tests/unit/cli/test_managed_service.py` (the `EffectiveGroups` and `plan` imports and the
+    `ensure_directory` plan at line 149); `tests/unit/lake/test_organizations.py` and
+    `tests/unit/lake/test_declared_organizations.py` (the `catalog_groups` cases);
+    `tests/unit/api/test_admin_routes.py` (lines 59 and 183) and
+    `tests/unit/api/test_managed_organizations.py` (line 108), which call
+    `GET /catalogs/{catalog}/grants`; `tests/unit/cli/test_administration.py` and
+    `tests/unit/cli/test_organization_grants.py`, where no assertion names `apply-acl`, not even
+    a negative one such as `"apply-acl" not in granted`.
+  - `tests/integration/test_cli_end_to_end.py`: construct `PosixStorage` directly in place of
+    `storage_for`, and remove `acl_backend`. The skip mark of M11.7 stays until M11.10. The file
+    must import without `factory.py`, because `pytest -m "not integration"` collects it.
+  - Text that names ACLs: the `STORAGE_FAILED` row of `docs/api-errors.md` loses "an ACL
+    operation failed"; the docstrings of `StorageError` in `core/storage/errors.py` and of
+    `huron set namespace` in `applications/cli/commands/change.py` name no ACL.
+    `tests/unit/storage/test_organizations.py`: direct mode writes the marker at `lake_path` and
+    the organization markers, and the rendered script equals the expected lines exactly.
+- Verification: `make gate`;
+  `grep -rniwE "acl|acls|aclplan|acl_backend|setfacl|getfacl|EffectiveGroups|effective_groups|owned_by_me|NAMESPACE_WITH_COLLECTIONS|storage_for" src scripts tests web/src docs/api-errors.md docs/openapi.json AGENTS.md pyproject.toml`
+  prints nothing; `grep -rn "organization_groups" src/huron/applications/cli` prints nothing;
+  `test ! -e scripts/init-root.sh`; `test ! -e
+  src/huron/core/storage/factory.py`; `make openapi`; `uv run pytest
+  tests/unit/api/test_openapi_snapshot.py`; from `web/`, `npm run generate:api`, `npm run
+  check` and `npm test`.
+- Dependencies: M11.8a.
+- Status: pending
+
+#### M11.5b Removal shapes and roots below `lake_path`
+
+- Intent: the pure parts of the containment model that have callers today. A destination and a
+  removal carry names, not a joined path. A declared organization root lies at `lake_path` or
+  below it, and the API has no `mount_prefix`. This task changes no disk operation.
+- Create or change:
+  - `src/huron/core/lake/uploads/models.py`: `Destination(directory, rel_path)`, the collection's
+    `disk_path` and the upload's `rel_path`, the same two fields as `Removal`.
+    `Destination.path`, `Destination.share_root` and `ClaimedRemoval` go.
+    `core/lake/uploads/operations.py`, `ports.py` and both metastore adapters
+    (`core/metastore/uploads/memory.py`, `postgres.py`): `claim_removals -> list[Removal]`.
+    `Declarations.share_root` stays for the API views (`dependencies.with_share_root`).
+  - `src/huron/applications/api/disk.py`: `place` takes the collection directory from
+    `destination.directory` and joins the `rel_path` names below it. `Uploads.placement` in
+    `core/lake/uploads/operations.py` builds the new `Destination`;
+    `endpoints/uploads._finish` passes it on unchanged. The rest of `place` is unchanged until M11.5c.
+  - `src/huron/applications/api/settings.py`: a model validator refuses a declared root that is
+    not `lake_path` or below it, with the message "The root R of organization O is not below
+    lake_path L". The validator runs only when `lake_path` is set: `huron.dev.yaml` declares
+    roots and has no `lake_path` until M11.10, and the web e2e harness runs without a lake. The
+    setting `mount_prefix` and its validator go.
+    `src/huron/applications/api/runtime.py`: `settings.mount_prefix or lake_path` goes; an
+    organization without a root lies directly below `lake_path`. The CLI key `mount_prefix`
+    stays. `src/huron/applications/api/disk.py`: the `mount_prefix` parameter of the `LakeDisk`
+    constructor and `_mount_prefix` go; `place_of` gets `lake_path` for an organization without a
+    root.
+  - `tests/support/disk.py`: the `mount_prefix` argument of `lake_disk` goes. Its call sites
+    follow: `tests/unit/api/test_lake_disk.py` (the unmounted-lake case passes only
+    `lake_path`). `test_a_path_outside_the_lake_fails_the_upload` in
+    `tests/unit/api/test_upload_hooks.py` (`service(..., mount_prefix=...)`) is deleted; the
+    symbolic-link case of M11.5c takes its place.
+  - Tests: `tests/unit/lake/test_uploads.py` for `Destination` and `Removal`;
+    `tests/unit/api/test_settings.py` (a root outside `lake_path` refuses to load, a root at
+    `lake_path` and one below it load, `mount_prefix` is unknown);
+    `tests/contract/suite.py` (`claim_removals` returns `Removal` rows);
+    `test_a_mount_prefix_outside_the_lake_puts_unrooted_organizations_outside` in
+    `tests/unit/api/test_lake_disk.py` deleted.
+- Verification: `make gate`; `uv run pytest -m contract`;
+  `grep -rnE "mount_prefix|ClaimedRemoval" src/huron/core src/huron/applications/api tests/support/disk.py tests/unit/api`
+  prints only the unknown-key test in `tests/unit/api/test_settings.py` (`tests/support/cli.py`
+  keeps the CLI key); `grep -rn "\.share_root\b"
+  src/huron/core/lake/uploads src/huron/applications/api/disk.py` prints nothing.
+- Dependencies: M11.9a.
+- Status: pending
+
+#### M11.5c Containment: `LakePath`, the descriptor traversal and the reduced port
+
+- Intent: section 3's "Containment in the lake" and "The disk-access module", as one type change.
+  Every disk operation names its place as a `LakePath` of validated names. `PosixStorage` opens
+  it one name at a time from the root's descriptor and refuses any symbolic link. After this task
+  no disk operation can follow a link or leave the lake. This is the containment fix for
+  verification 3 of the M11.5 escalation. The directory verbs (M11.5d) and repair (M11.5e) are
+  not part of it. This is the largest task. If it overruns, do not split it by layer, because
+  that leaves two path models in the tree.
+- Create or change:
+  - `src/huron/core/storage/lakepath.py`: `LakePath(names)` with `of`, `parse`, `joinpath`,
+    `parent`, `name`, `relative_to` and `__str__`, exported from `core.storage`. No constructor
+    from `Path`, no absolute form. `src/huron/schema/naming.py`: `check_lake_name` (rule
+    `lake_name`, 422 `NAME_INVALID`). `src/huron/core/storage/errors.py`: `SymlinkInLake`
+    (`SYMLINK_IN_LAKE`, 409, the message "<path> is a symbolic link. The lake must not contain
+    symbolic links. Remove it.", `context.path` the lake path of the link). `OutsideLake` and
+    `OUTSIDE_LAKE` go. `docs/api-errors.md` follows.
+  - `src/huron/pkg/fs/posix.py`: the descriptor primitives only. `open_beneath(root, names)`
+    (`O_PATH | O_DIRECTORY | O_NOFOLLOW` steps, `SymlinkError(OSError)` naming the component).
+    A link at an intermediate step fails with `ENOTDIR` on Linux, and a final non-directory
+    open with `O_NOFOLLOW` fails with `ELOOP`. Each `ENOTDIR` or `ELOOP` is classified with
+    `os.stat(name, dir_fd=, follow_symlinks=False)`: a link raises `SymlinkError`, any other
+    entry keeps its `OSError`. `remove_file`, `remove_empty_dir`, `link_into_place`,
+    `atomic_write` and `make_*` `lstat` the last name before they act, because `unlink`,
+    `rename` and `mkdir` act on a link itself. Further functions:
+    `make_dir(parent_fd, name, mode)`, `make_inheriting_dir(parent_fd, name)`,
+    `atomic_write(parent_fd, name, data, mode, part_name)`, `link_into_place(source_fd,
+    source_name, inode, parent_fd, name, part_name, backup_name)` with M11.5a's backup and the
+    type and inode check of the source, `remove_file(parent_fd, name)`,
+    `remove_empty_dir(parent_fd, name)`, `entry(parent_fd, name)` (`follow_symlinks=False`) and
+    `walk(directory_fd)` yielding `Entry(names, kind, size, mtime_ns)` with `kind` in `file`,
+    `dir`, `symlink`, `other`. `walk` is recursive and top-down: it yields a directory before
+    its entries and enters no link. Every function that takes a `Path` below the root goes in
+    the same change, with `exists`, `is_dir`, `inode`, `stat`, `_lstat`, `Entry.is_symlink` and the
+    docstring claim "Nothing here follows symbolic links".
+  - `src/huron/core/storage/ports.py`: the reduced port on `LakePath`. `ShareReader`: `stat ->
+    Stat | None`, `read_bytes`, `is_empty`, `walk` (no `on_error`; recursive and top-down, as in
+    `pkg.fs.posix`), `open_file`. `Storage` adds
+    `make_directory`, `make_inheriting_dir`, `set_mode`, `set_group`, `write_bytes` (mode
+    required), `link(source, destination, *, inode, part_name, backup_name) -> LakePath | None`,
+    `rename`, `remove_file(location, *, inode=None) -> Outcome` and `remove_directory -> Outcome`.
+    `Stat(kind, mode, gid, inode, size)`; `Outcome` (`REMOVED`, `MISSING`, `KEPT`) moves here.
+    No `in_group`: M11.5e adds it with its one caller. Gone: `exists`, `is_directory`, `owner`,
+    `inode`, `stamp`, `hash`, `device`, `Ownership`, `Stamp` and `FileStamp`.
+  - `src/huron/core/storage/posix.py`: `PosixStorage(root)` on the traversal. A root that does
+    not open is `LakeUnavailable`. A failed inheritance stays `pkg.fs.posix.InheritanceError`
+    (`STORAGE_FAILED`); M11.5d adds `InheritanceFailed`. `src/huron/core/storage/memory.py`:
+    `MemoryStorage(root)` with nodes keyed by `LakePath`, `Node.kind` (`dir`, `file`, `symlink`),
+    `Node.inode`, `symlink(location, target)` for tests only, `unreadable` (a new set of
+    `LakePath` for tests: directories that the caller cannot search), and one `_parent` that
+    raises `SymlinkInLake` for a link and `StorageError` (`STORAGE_FAILED`, `EACCES`) for a
+    directory in `unreadable`, like the POSIX traversal. `mounts`, `mount`, `ROOT_DEVICE` and
+    `device` go; `add_root(path, uid)` becomes `add_directory(location, uid: int = 0)`. It takes
+    a uid, not an owner name, because M11.9a removed `Node.owner`.
+  - `src/huron/core/storage/layout.py`: `OrganizationPlace(name, base: LakePath, own_marker)`
+    with `directory`, `marker_directory`, `locate(api_path) -> LakePath` and
+    `mode_of(location)`; `UPLOADS = LakePath.of(UPLOAD_DIR)`. `layout.resolve`, `place_of`,
+    `OrganizationPlace.rooted`, `declared`, `export` and `resolve` go.
+    `src/huron/core/storage/marker.py`: `read_marker` and `verify_marker` on `LakePath`.
+  - `src/huron/core/storage/placement.py`: `Placer(storage)` with `measure(upload_id, size)`,
+    `measure_destination(target, size)`, `link(upload_id, collection, target, inode) -> Linked`,
+    `undo(target, inode, linked)` and `drop_backup(target, upload_id)`. `Linked(made_dirs,
+    backup)` holds `LakePath` values. `link` raises `ValueError` for a target that is not below
+    its collection. The upload, `.info` and backup names are private and built on `UPLOADS`.
+    `_remove_empty` and the `_empty` helper go. `src/huron/core/storage/removal.py`:
+    `prune(storage, directories)`, innermost first, stops at the first directory that is not
+    empty and never removes the collection directory.
+  - `src/huron/applications/api/disk/` replaces `disk.py`. `disk/lake.py`: `Located(place,
+    location)` with `joinpath`, and `LakeDisk(storage, places, instance_id, *, clock,
+    probe_timeout)` with `open`, `ready`, `close`, `locate(api_path) -> Located` (pure,
+    `NAME_INVALID` only), `hold(located, unit)`, `work(located, action)` and `measure(action)`.
+    `hold` takes the lock of the location, runs the unit shielded, and verifies the marker in the
+    disk worker before each `run`. `measure` uses the hash pool with no lock and no marker check.
+    The places are built once from `settings.declarations`. `PathLocks` keys are `LakePath`.
+    `disk/placements.py`: `Placements.place(uploads, actor, upload, destination)` with `_settle`
+    and `_replay`. The marker is verified in the locked link, undo and drop-backup steps, not
+    before the hash. `SymlinkInLake` fails the upload in the branch of
+    `CollectionDirectoryMissing`. Gone: `resolve`, `_resolve`, `_visible`, `_require_lake`,
+    `upload_dir`, `place_of`, public `run`, `call` and `check_marker`, the pre-hash
+    `check_marker`, `_Placement.collection_dir` and the `depth` computation.
+  - The committed share-group call of M11.3 (`LakeDisk.set_share_group`) moves onto `work` with a
+    `LakePath`. M11.5d moves it into `LakeDirectories`.
+  - `src/huron/applications/api/runtime.py`: `PosixStorage(root=lake_path)`; `lake_path` is used
+    only for the readiness message. `tests/support/disk.py`: `memory_lake` and `lake_disk` on
+    `LakePath`, `StalledStorage` and `PausingStorage` with `LakePath` overrides, and
+    `plant_symlink(storage, location)` for both adapters.
+  - Read callers, and the writes of `provision.py`, moved to `LakePath`, last in this list so that a verifier sees them done:
+    `core/storage/check.py` (`stat`, `walk`, `read_bytes`, `open_file(...).sha256()`),
+    `core/storage/provision.py` (`stat` in place of `is_directory`, and its writes:
+    `make_directory` and the `write_bytes` of each organization marker and of the marker at
+    `lake_path`, as M11.9a left them, on `LakePath` below the writable `PosixStorage` that
+    `provision-orgs` builds at the CLI's `mount_prefix`), the CLI's `Mount` read side
+    (a `PosixStorage(root=<organization base on this machine>)` with `LakePath.parse`),
+    `applications/cli/context.py` (`unrecorded_files`) and `huron status`.
+  - `pyproject.toml`: add the import contract "`core.storage` does not import `applications` or
+    `core.metastore`". `placement.py`'s import of `core.lake.uploads.errors` stays allowed.
+  - `make openapi`; from `web/`, `npm run generate:api` (the error code changes).
+  - Tests:
+    - `tests/unit/storage/test_lakepath.py`: `parse` and `of` refuse `""`, `.`, `..`, `a//b`,
+      `/a`, `a/`, NUL and a 256-byte name with 422 `NAME_INVALID`; `relative_to` and `str` give
+      the API form.
+    - `tests/unit/pkg/test_posix.py`: for each primitive, a link planted as an intermediate
+      directory and as the last name (parametrized) raises `SymlinkError` naming the component,
+      with `outside` unchanged; `walk` yields the link as `symlink` and nothing from its target;
+      `link_into_place` refuses a source that is a link or has another inode.
+    - `tests/unit/storage/test_containment.py`: one suite parametrized over
+      `PosixStorage(root=lake)` on a real temporary filesystem and `MemoryStorage`, with
+      `plant_symlink`. For `stat`, `read_bytes`, `is_empty`, `open_file`, `make_directory`,
+      `make_inheriting_dir`, `set_mode`, `set_group`, `write_bytes`, `link`, `rename`,
+      `remove_file` and `remove_directory`, with the link intermediate and last:
+      `(code, status) == ("SYMLINK_IN_LAKE", 409)` and `context["path"]` is the link's lake path.
+      `walk` yields the link as `symlink` and does not enter it. The POSIX variant compares a
+      snapshot of `tmp_path / "outside"` (names, modes, bytes) before and after; the memory
+      variant asserts that no node changed and that `calls` holds no write.
+    - `tests/unit/storage/test_storage.py`, over both adapters: `stat` of a file, a directory and
+      a missing name; `is_empty`; `remove_directory` and `remove_file(inode=)` answering
+      `REMOVED`, `MISSING` and `KEPT`; `link(inode=)` with another inode raising `SourceGone`
+      with nothing linked. The `stamp`, `hash`, `device` and mount cases go.
+    - `tests/unit/storage/test_placement.py`: all M11.4 and M11.5a cases on `LakePath` with the
+      same assertions; a link with a replaced source (`SourceGone`, the made directories
+      pruned); a target outside its collection (`ValueError`). `tests/unit/storage/test_removal.py`:
+      `prune`.
+    - `tests/unit/api/test_lake_disk.py`: `hold` verifies the marker before each `run`; `measure`
+      holds no lock; the lock and cancellation tests on `work` and `hold` with a `Located`; the
+      M11.5a pool test unchanged. The `OUTSIDE_LAKE`, `device` and mount cases go.
+    - `tests/unit/api/test_upload_hooks.py`, on a real temporary lake: a `pre-finish` with the
+      namespace directory replaced by a link to `outside` answers the refusal 409
+      `SYMLINK_IN_LAKE`, the upload is `failed` with that code, the file in `.tus-uploads` is
+      kept and `outside` is unchanged. It replaces the `OUTSIDE_LAKE` case that M11.5b deleted.
+      The M11.5a overwrite cases pass unchanged.
+- Verification: `make gate`;
+  `grep -rnE "OUTSIDE_LAKE|OutsideLake|\.device\(|ROOT_DEVICE|is_symlink|mount_prefix|\b_visible\b|_require_lake" src/huron/core src/huron/applications/api tests/unit/api tests/unit/storage tests/support/disk.py docs/openapi.json web/src/lib/api`
+  prints only the M11.5b unknown-key test in `tests/unit/api/test_settings.py`;
+  `grep -rnE "os\.(open|stat|lstat|walk|scandir|listdir|mkdir|link|rename|replace|unlink|rmdir|chmod|chown)|shutil|Path\(" src/huron/applications/api/disk src/huron/applications/api/routes`
+  prints nothing; `grep -nE "\bPath\b" src/huron/core/storage/placement.py
+  src/huron/core/storage/removal.py` prints nothing; `grep -nE "^def [a-z]"
+  src/huron/pkg/fs/posix.py` lists no function that takes a `Path` below the root;
+  `uv run pytest tests/unit/storage/test_containment.py`; `uv run pytest
+  tests/unit/api/test_openapi_snapshot.py`; from `web/`, `npm run check`.
+- Dependencies: M11.5b.
+- Status: pending
+
+#### M11.5d Directory verbs and `metadata.json`
+
+- Intent: section 3's "Directory verbs in the API" on the final port. Each verb commits its rows,
+  takes the directory's API path from the operation's answer, and does that directory's work
+  through `LakeDisk.work`. No route builds a path, reads a row for the disk or branches on the
+  lake.
+- Create or change:
+  - The lake answers: `Organizations.delete` returns the deleted name (`str`).
+    `core/lake/collections/models.py`: `SettledCollection(id, disk_path)`.
+    `Collections.sidecar_of(id)` (no privilege, for disk work). `Catalogs.assign_schema` returns
+    `SchemaAssignment(catalog, recompute, settled)` with `settled: tuple[SettledCollection, ...]`
+    in identifier order. `NamespaceStore.list_in_catalog` in `core/lake/namespaces/ports.py` and
+    in both metastore adapters. `CollectionView` keeps `disk_path` only (no `directory` field).
+    `namespace_path` stays private in `core/lake/namespaces/operations.py`.
+  - `src/huron/core/storage/directories.py`: `DirectoryWriter(storage, service_gid)`.
+    `make(place, location) -> bool`: the organization's own directory with
+    `make_directory(location, ORGANIZATION_MODE)`, any other with `make_inheriting_dir`; an
+    existing empty directory is adopted unchanged (`False`); any other entry, a link included, is
+    refused with `STORAGE_FAILED` or `SYMLINK_IN_LAKE`. `set_group(location, share_group: str |
+    None) -> GroupResult`: `None` means the service gid; this is the one home of the rule "a
+    catalog without a share group carries the service group". `write_metadata(location, body) ->
+    bool`: equal bytes write nothing, else an atomic write with `FILE_MODE`.
+    `remove(location) -> Outcome`. `remove_collection(location) -> Outcome`: `walk`, sorted by depth
+    with the deepest entries first, removes `metadata.json`, part and backup files and the then-empty subdirectories, then the
+    directory; a link below keeps the directory (`KEPT`, log `disk.link_found`); a missing
+    collection is `MISSING` with no walk.
+  - `src/huron/core/storage/errors.py`: `InheritanceFailed` (`STORAGE_FAILED`) for a directory that
+    did not inherit setgid and the group; the directory is removed again first.
+    Add `GroupResult.warning(group)` as the one builder of `SHARE_GROUP_PENDING`. At 5800e25a
+    `LakeDisk.set_share_group` builds the `ShareWarning` itself; that code goes.
+  - `src/huron/core/storage/layout.py`: `DirectoryKind` and `mode_of(kind)` go, with their uses
+    in `check.py`, `applications/cli/inventory.py` and `applications/cli/commands/adm.py`;
+    `OrganizationPlace.mode_of(location)` decides by location.
+  - `src/huron/applications/api/disk/directories.py`: the protocol `Directories` (`make`,
+    `set_group`, `write_metadata(path, render)`, `remove`, `remove_collection`, all on API
+    paths), `LakeDirectories(disk, writer)` and `NoLake`. `write_metadata` uses `hold`: it awaits
+    the render under the lock, from a new read of the rows, and a `None` render skips the write.
+    `remove` and `remove_collection` return nothing and log `disk.directory_kept` for `KEPT`.
+    `NoLake` returns at once and `set_group` returns `None`. `LakeDisk.set_share_group` goes.
+  - `src/huron/applications/api/runtime.py` builds `LakeDirectories` or `NoLake`;
+    `dependencies.py` gives `DirectoriesDep`, never `None`.
+  - `routes/v1/endpoints/organizations.py`, `catalogs.py`, `namespaces.py`, `collections.py`: one
+    verb per answer. Create organization: `make`. Delete organization, catalog or namespace:
+    `remove`. Create catalog: `make`, then `set_group` when a share group is given. Set share
+    group: `set_group`. Create namespace: `make`. Activate: `make`, then `write_metadata`.
+    Update: `write_metadata` when `disk_path` is not `None`. Assign schema: `write_metadata` per
+    settled collection, in order, each under its own lock; the first failure ends the request.
+    Delete collection: `remove_collection` when `disk_path` is not `None`. After the commit the
+    only errors are `STORAGE_FAILED` 500, `LAKE_UNAVAILABLE` 503, `SYMLINK_IN_LAKE` 409 and, for
+    a path from a corrupted row that `locate` refuses, `NAME_INVALID` 422, with the rows kept
+    for a create, set, activate, update or assign verb. The routes' `check_segment` and
+    `namespace_path` calls, the organization read and `relative_to` in `catalogs.py` and
+    every lake branch go. `routes/directories.py` is not rebuilt.
+  - `make openapi`; from `web/`, `npm run generate:api`.
+  - Tests:
+    - `tests/unit/api/test_directory_verbs.py`, rebuilt from the branch's cases that stay: the
+      mode per verb, an adopted empty directory, a non-empty entry answering 500 with the rows
+      kept, a failed inheritance answering `STORAGE_FAILED`, `metadata.json` from a new read
+      after activate, publish, override and assignment (two settled collections in two
+      namespaces and a draft), a kept non-empty directory on delete with 204, an unmarked lake
+      answering 503 with the rows kept, every verb over `NoLake` changing rows only, a dry-run
+      delete. On a real temporary filesystem with `lake = tmp_path / "lake"` and `outside =
+      tmp_path / "outside"`, a snapshot of `outside` equal before and after: verification 3's
+      first reproduction (a settled collection directory replaced by a link to `outside`, then
+      `PUT /catalogs/{catalog}/schema`: the rows are committed, the answer is 409
+      `SYMLINK_IN_LAKE` with the link's lake path, and no `metadata.json` is in `outside`); the
+      same with the namespace above the collection replaced by a link; a link at the parent of
+      a new namespace and at an activated collection's directory (409, rows kept); a link inside
+      a deleted collection (204, directory kept).
+    - `tests/unit/storage/test_directories.py` over both adapters: the writer cases of the
+      branch on `LakePath`, a link case for `make` and for `remove_collection`, `set_group` with
+      and without a share group.
+    - `tests/unit/api/test_lake_disk.py`: the metadata, kept-directory and share-group cases move
+      onto `LakeDirectories`. `tests/unit/api/test_catalog_share_group.py` on `LakePath`.
+      `tests/unit/lake` for the new answers.
+- Verification: `make gate`; `uv run pytest -m contract` (`list_in_catalog`);
+  `grep -rnE "DirectoryDep|LakeDirectory\b|DirectoryKind|_KINDS|directory_group|place_of\(|disk\.resolve\(" src/huron tests`
+  prints nothing;
+  `grep -rnE "joinpath|disk is (not )?None|directory is not None|check_segment|namespace_path" src/huron/applications/api/routes`
+  prints nothing; `grep -nE "\bPath\b" src/huron/core/storage/directories.py` prints nothing;
+  the `os.` grep of M11.5c over `src/huron/applications/api/disk` and `routes` prints nothing;
+  `uv run pytest tests/unit/api/test_openapi_snapshot.py`; from `web/`, `npm run check` and
+  `npm test`.
+- Dependencies: M11.5c.
+- Status: pending
+
+#### M11.5e Repair
+
+- Intent: section 3's "Repair" on the final port. A repair acts on the planned directories only and
+  lists no directory. It runs one step per directory, under that directory's lock, and reports
+  one failure shape.
+- Create or change:
+  - `src/huron/core/lake/repairs/`: `Level`, `PlannedDirectory(path, level, id)`,
+    `RepairPlan(directories, share_group)` with the property `catalog`, `PlannedRow(metadata:
+    bytes | None = None)` (the `metadata.json` of a settled collection, `None` for any other
+    directory; the class `ExpectedDirectory` of `m11.5-escalated`, renamed so that it does not
+    share a name with `core.storage.check.ExpectedDirectory`), and
+    `Repairs` with `plan(actor, catalog, target, recursive) -> RepairPlan` (authorizes
+    `NAMESPACE_CONFIGURE`; refuses a target of another catalog with `REQUEST_INVALID`, an
+    unknown one with `NOT_FOUND`, a draft with `STATE_CONFLICT`), `organization(actor, name) ->
+    RepairPlan` (one directory; authorizes `CATALOG_GRANT_ADMIN`) and `expected(directory) ->
+    PlannedRow | None`. `_Tree` works on segment tuples, parents first. `Level` stays in
+    `core.lake`. `core/lake/bootstrap.py` builds `Repairs`; `pyproject.toml` adds
+    `huron.core.lake.repairs` to the contracts that list the `core.lake` packages.
+  - `src/huron/core/storage/repair.py`: `FailureReason` (`mode_drift`, `symbolic_link`,
+    `storage_failed`), `RepairFailure(path, reason, detail)`, `RepairResult(changed, warnings,
+    failed)` with `combine`, `RepairStep(place, location, catalog, share_group=None,
+    metadata=None)` and `Repairer(storage, writer).repair(step)`. The step, in order: one `stat`
+    of the location; missing is `writer.make`, a link is `symbolic_link`, any other
+    non-directory is `storage_failed`. Then the mode: `ORGANIZATION_MODE` for the organization's
+    directory, `S_ISGID` for the catalog directory, `S_ISGID` and the catalog directory's gid
+    below it. A broken setgid or group rule is `mode_drift`, unchanged. Other wrong bits get
+    `set_mode(location, place.mode_of(location))` only when `in_group(gid)`, else `mode_drift`.
+    Then `writer.set_group(location, share_group)` on the catalog step only (a refusal is the
+    `SHARE_GROUP_PENDING` warning). Then `writer.write_metadata` for a settled collection.
+    `InheritanceFailed` is `mode_drift`; `SymlinkInLake` is `symbolic_link` at the link's path;
+    `LakeUnavailable` ends the repair; any other `StorageError` is `storage_failed`. Paths are in
+    the API form, relative to the organization's base.
+  - `src/huron/core/storage/ports.py`: `Storage.in_group(gid)`. `PosixStorage`: `os.getegid()`
+    and the first 16 groups of `os.getgroups()`, because AUTH_SYS sends only 16 supplementary
+    groups. `MemoryStorage`: `member_of`.
+  - `src/huron/applications/api/disk/repair.py`: `LakeRepair(disk, repairer).repair(repairs,
+    plan)`. For each planned directory, `locate` (pure), then one `hold` whose unit awaits
+    `repairs.expected(planned)` and then runs the step; a row that is gone gives no step.
+    `Runtime` builds it only with `lake_path`.
+  - `routes/v1/endpoints/repairs.py`, `routes/v1/schema/repairs.py`, `routes/v1/router.py`:
+    `POST /api/v1/catalogs/{catalog}/repair` (`{target, recursive}`) and
+    `POST /api/v1/organizations/{org}/repair`, both 200 with `{changed, warnings, failed}`.
+    `RepairFailureOut` has `path`, `reason` (an OpenAPI enum) and `detail`. Without `lake_path`
+    both routes answer 503 `LAKE_UNAVAILABLE` after the privilege check (`require_lake`).
+    `require_lake(repair: LakeRepair | None) -> LakeRepair` is a new private function in
+    `repairs.py`. Each route calls it after the privilege check with the `LakeRepair` that
+    `Runtime` holds (`None` without `lake_path`). For `None` it raises `LakeUnavailable` with the
+    message "lake_path is not set. The API cannot repair directories." and an empty `context`.
+    `make openapi`; from `web/`, `npm run generate:api`.
+  - `tests/conftest.py`: `temporary_mode` comes back, with its first user.
+  - The branch `m11.5-escalated` stays. This task does not delete it.
+  - Tests:
+    - `tests/unit/lake/test_repairs.py`: the plan from the catalog down to the target, a
+      recursive plan with every namespace and settled collection in `directories`, the
+      privileges, a target of another catalog, an unknown target, a draft, the share group in the
+      plan and `plan.catalog`, and `solar` beside `solar-wind` (neither is in the other's plan).
+    - `tests/unit/storage/test_repair.py` over `MemoryStorage` and `PosixStorage(root=tmp)`
+      where the case needs no group membership: missing, wrong bits, right bits with no `chmod`,
+      a missing setgid bit and another group as `mode_drift` with no `chmod`, a directory outside
+      the service's groups with no `chmod`, a `chmod` that still drops setgid, the organization
+      directory, the catalog's group attempt, a non-directory at a planned path, a link at the
+      step's directory and above it (`symbolic_link`, no write in `calls`), an unreadable
+      catalog directory (`storage_failed`), a stale `metadata.json`, combine with each failure
+      once, idempotence. `tests/unit/storage/test_storage.py`: `in_group` with the 16-group
+      limit.
+    - `tests/unit/api/test_repair.py`: both routes, the privileges, 503 without a lake after the
+      privilege check, a row deleted between the plan and the step (no directory), a recursive
+      repair that makes a removed collection directory and its `metadata.json` and leaves an
+      unplanned directory and file unchanged and unreported, the siblings of a repaired
+      namespace unchanged. On a real temporary filesystem, with a snapshot of `tmp_path /
+      "outside"` equal before and after: verification 3's second reproduction (a namespace made
+      unsearchable with `temporary_mode(0o2000)` holds a collection directory replaced by a link
+      to `outside`; a recursive repair repairs the namespace, the collection step is `failed`
+      with `symbolic_link`, nothing changes in `outside`); a planned directory that is a link; a
+      link at a namespace above two planned collections (one failure, the other steps run); a
+      link at `metadata.json`.
+- Verification: `make gate`;
+  `grep -rnE "\bon_error\b|DirectoryPlan|_EntryGuard|_Report\b|\b_skipped\b|\.walks\b|walks=|\.chain\b|\.below\b|repair_organization|_repair_planned|_KINDS|VanishingStorage" src/huron tests`
+  prints nothing; `grep -rn "^MODE_DRIFT" src/huron` prints nothing; `grep -n "walk"
+  src/huron/core/storage/repair.py src/huron/core/lake/repairs/*.py` prints nothing;
+  `grep -rn "Level" src/huron/core/storage` prints nothing; `grep -n "symbolic_link"
+  docs/openapi.json` finds the reason enum; `grep -rn "symlink" src/huron/core src/huron/pkg
+  src/huron/applications/api --include=*.py | grep -v "follow_symlinks=False"` finds only
+  `MemoryStorage.symlink` and the `kind` literal `"symlink"` (the grep is case-sensitive, so it
+  does not find `SymlinkInLake` or `SymlinkError`; the `is_symlink` checks of `sync._collect` read the local source folder
+  and stay); `git branch --list m11.5-escalated` still prints the branch;
+  `uv run pytest tests/unit/api/test_openapi_snapshot.py`; from `web/`, `npm run check` and
+  `npm test`.
+- Dependencies: M11.5d.
+- Status: pending
+
+#### M11.6 Removals, the background runner and the sweep
+
+- Intent: the amendment's "Removals and the inode guard" and "Sweep", on the final port.
+- Create or change:
+  - `src/huron/core/storage/removal.py`, beside `prune`: `Unlinker(storage)` with
+    `unlink(collection, target, inode) -> Outcome`. It calls `remove_file(target, inode=inode)`:
+    `KEPT` when the inode differs, `MISSING` on `ENOENT`. After `REMOVED` it prunes the
+    directories from `target.parent` up to, not including, the collection directory. A removal
+    without an inode (a file committed by an API without a lake) is `MISSING` with no disk call.
+    `Sweeper(storage, ttl, clock)` with `sweep() -> list[LakePath]`: it walks `UPLOADS`, takes
+    only the entries with one name (one level) and removes each file whose modification time is older than `upload_ttl` (tusd's lock files
+    included). A directory or a link there is logged and kept.
+  - `src/huron/applications/api/disk/removals.py`: `Removals(disk, unlinker)` with
+    `drain(uploads, removals)`. Each row runs as one `hold` of the file's location: the unit
+    awaits `removal_still_valid`, runs the unlink, then awaits `finish_removal`. `MISSING` and
+    `KEPT` finish the row. A `StorageError` (`SymlinkInLake`, `EACCES`, `EIO`,
+    `LakeUnavailable`) leaves the row claimed and logs `disk.removal_failed` with the path and
+    the code; the runner tries again after `REMOVAL_LEASE`. The drain never removes the
+    collection directory; that is the delete verb's work (M11.5d).
+  - `src/huron/applications/api/routes/v1/endpoints/files.py` (the commit route): drains
+    `CommitResult.removals` after the commit. `collections.py` (the delete route): drains
+    `DeletedCollection.removals` first, then calls `remove_collection`. A failed unlink does not
+    change the 200 or the 204.
+  - `src/huron/applications/api/background.py`: `Runner(runtime)` with the removal loop
+    (`claim_removals` every `removal_interval`), the sweep loop (`sweep_interval`) and the
+    election through `ClosableStore.lease_runner()` in `runtime.py` (`pg_try_advisory_lock` on a
+    dedicated connection in `core/metastore/postgres.py`, always leased in
+    `core/metastore/memory.py`). The election saves work; correctness rests on `skip locked` and
+    on unlinks that accept `ENOENT`. The election connection sets TCP keepalives
+    (`keepalives_idle=30, keepalives_interval=10, keepalives_count=3`), and the runner stops when
+    that connection drops. `app.py` starts the runner in the lifespan when `lake_path` is set and
+    stops it on shutdown.
+  - Tests:
+    - `tests/unit/storage/test_removal.py` over both adapters: `Unlinker` answers `REMOVED`,
+      `MISSING` and `KEPT` and prunes only after `REMOVED`; a removal without an inode makes no
+      disk call; `Sweeper` removes old files only and keeps a planted link.
+    - `tests/unit/api/test_removals.py`: a commit's remove unlinks in the request; a collection
+      delete unlinks placed uploads and then removes the directory; a re-added key cancels; the
+      inode guard keeps a replaced file; a failing unlink leaves the row claimed and the commit
+      answers 200; empty directories pruned after an unlink, the collection directory kept; a
+      left-over row drained by the runner after the lease; after a late runner unlink the empty
+      collection directory stays and a new collection at its path adopts it. On a real temporary
+      filesystem: a removal whose namespace directory is replaced by a link to `tmp_path /
+      "outside"` leaves the row claimed, logs `disk.removal_failed`, and leaves a snapshot of
+      `outside` unchanged.
+    - `tests/unit/api/test_background.py`: the loops with a frozen clock, the sweep removing old
+      entries only, a runner that is not elected does nothing, a runner that stops when its
+      election connection drops. `tests/contract/test_postgres_runtime.py`: two stores, one
+      lease.
+- Verification: `make gate`; `uv run pytest -m contract`;
+  `grep -rnE "\b_empty\(|_remove_empty|parents\[depth|\.stamp\(|\.hash\(|\.is_directory\(|\.owner\(|Ownership|FileStamp|upload_dir|check_marker|directory_group|ClaimedRemoval" src/huron/core/storage src/huron/applications/api/disk src/huron/core/lake/uploads`
+  prints nothing; `grep -n "remove_collection\|remove_directory"
+  src/huron/applications/api/disk/removals.py` prints nothing.
+- Dependencies: M11.5d.
+- Status: pending
+
+#### M11.8 Share group, `adm repair` and the hints in the CLI
+
+- Intent: the CLI features of "The CLI" that need the API routes of M11.5d and M11.5e. The CLI
+  write half is M11.8a.
+- Create or change:
+  - `src/huron/applications/cli/commands/create.py`: `create catalog --share-group <group>`.
+    `change.py`: `set catalog <catalog> --share-group <group> | --no-share-group`, a new command
+    on `set_app`. A `SHARE_GROUP_PENDING` warning in a response prints the `provision-catalogs`
+    hint.
+  - `src/huron/applications/cli/commands/adm.py`: `repair <identifier> [--recursive] | --org
+    <org>`. It calls the catalog's or the organization's repair route and prints each changed
+    path, each warning, and each failed path with its `reason` and `detail`.
+  - `src/huron/applications/cli/errors.py`: the hints, in strict STE. `SHARE_GROUP_PENDING`: the
+    `provision-catalogs` step. `STORAGE_FAILED` and `LAKE_UNAVAILABLE` from a create, activate or
+    publish verb: `To make the directory again, run huron adm repair <identifier>`.
+    `SYMLINK_IN_LAKE`: the storage administrator removes the link, then runs `huron adm repair`.
+  - CLI help and messages in strict STE. `uv run python scripts/cli_reference.py` output
+    regenerated.
+  - Tests: `tests/unit/cli/test_directories.py` (the share-group options and hint, over the
+    read-only fake storage of M11.8a); `tests/unit/cli/test_repair.py` (both forms, `--recursive`,
+    the output of `changed`, `warnings` and `failed` with `reason` and `detail`, 503 without a
+    lake); `tests/unit/cli/test_foundation.py` (the four hints).
+- Verification: `make gate`; `uv run python scripts/cli_reference.py --check`;
+  `grep -rnE "\.(write_bytes|remove_file|remove_directory|make_directory|make_inheriting_dir|set_mode|set_group|link|rename)\(" src/huron/applications/cli`
+  prints nothing.
+- Dependencies: M11.5e.
+- Status: pending
+
+#### M11.9 The check and provisioning on modes and groups
+
+- Intent: sections 6.2 and 6.4 as built, and the storage administrator's commands, on the final
+  port. The ACL code went in M11.9a.
+- Create or change:
+  - `src/huron/pkg/fs/posix.py`, `core/storage/posix.py` and `memory.py`: `walk` yields a
+    directory that it cannot list as `Entry(kind="unreadable")`, with the `errno` in
+    `Entry.errno`, and does not enter it. `MemoryStorage.unreadable` (M11.5c) gives the same
+    entry; only the way `walk` reports it changes.
+    `Stat` gains `uid`, for the owner part of `mode_drift`.
+  - `src/huron/core/storage/check.py`: it reads through `stat` and `walk` on `LakePath`.
+    `ExpectedDirectory`, `ExpectedCollection` and `ExpectedOrganization` carry `mode`, `group`
+    and `owner`. `mode_drift` covers the mode and the owner, and for a directory below a catalog
+    also a missing setgid bit or a group other than the catalog directory's.
+    `share_group_mismatch` compares the catalog directory's group with the catalog's share group
+    by name through `grp.getgrnam` and reports a name that it cannot resolve; for a catalog
+    without a share group it compares with `G` by gid (`service_user.gid` from `/healthz`).
     Neither finding compares the group of a file. `unreadable` (warning, the path and the
-    errno) replaces the `PermissionError` for any entry the reader cannot list or stat.
-    `acl_drift` and `org_acl_drift` are gone. `huron status` uses the same `unreadable` rule.
+    `errno`) comes from the `unreadable` entries. `symbolic_link` (error, the path) comes from
+    each `symlink` entry. `huron status` (`context.unrecorded_files`) uses the same
+    `unreadable` rule.
+  - `src/huron/core/storage/provision.py`: `OrganizationTarget` with `owner_uid` and the numeric
+    `gid`; `CatalogTarget(place, location, group)`; `Provisioner.provision` and
+    `provision_script`. The organization part requires the root to exist (as at 5800e25a),
+    creates `<root>/<org>` when missing, sets `U:<gid>` on `<root>/<org>` only (no `chown -R`),
+    sets mode `2751` and writes the marker. The `lake_path` part emits
+    `chown U:<gid> <lake_path>; chmod 2751 <lake_path>; mkdir -p <lake_path>/.tus-uploads;
+    chown U:<gid> <lake_path>/.tus-uploads; chmod 0700 <lake_path>/.tus-uploads` and writes the
+    marker at `lake_path`. An organization without a root is provisioned at
+    `<lake_path>/<org>`. The caller passes the lake path: the CLI's `mount_prefix`. `provision_catalogs` selects a catalog when its directory group differs,
+    or when a directory below it has `mode_drift` for the setgid bit or the group; a catalog
+    without a share group is selected and targeted with `G`'s gid. `catalog_script` emits one
+    line, `find <catalog> -type d -exec chgrp <group> {} + -exec chmod 2750 {} +` (`find` keeps
+    its default `-P` and needs no `-xdev`), never `chgrp -R` and no line for files. Every script
+    runs `set -eu`, uses the numeric `U:<gid>` and quotes with `shlex.quote`.
   - `src/huron/applications/cli/commands/adm.py`: the check wiring from `share_group`,
     `service_user` and section 6.2, with a help line that names who can run a complete check (an
     account in `G` and in every share group, or `U` from an API pod). `provision-catalogs`
     (direct mode and `--emit-script`, `--catalog`, `--dry-run`, `--uid`, `--gid`).
-    `provision-orgs` with `chown -R U:<gid>`, mode `2751` and the `lake_path` steps, `--uid` and
-    `--gid` overriding `service_user`, refusing when neither gives the owner.
+    `provision-orgs` with the non-recursive owner change, mode `2751` and the `lake_path` steps
+    at the CLI's `mount_prefix` (section 6.1); `--uid` and `--gid` override `service_user`, and it refuses when neither gives the owner.
     `verify-mounts` unchanged.
-  - `src/huron/core/storage/provision.py`: `OrganizationTarget` with `owner_uid` and the numeric
-    `gid`, `CatalogTarget(place, path, group)`, `Provisioner.provision` and `provision_script`
-    without ACLs. The organization script also emits `chown U:<gid> <lake_path>; chmod 2751
-    <lake_path>; mkdir -p <lake_path>/.tus-uploads; chown U:<gid> <lake_path>/.tus-uploads;
-    chmod 0700 <lake_path>/.tus-uploads`. `provision_catalogs` selects a catalog when its
-    directory group differs or when any directory below it has `mode_drift` for the setgid bit
-    or the group. `catalog_script` emits `find <catalog> -type d -exec chgrp <group> {} + -exec
-    chmod 2750 {} +` and `find <catalog> -type f -exec chmod 0644 {} +`, never `chgrp -R` and
-    never `setfacl`. Every script runs `set -eu`, uses the numeric `U:<gid>` (never a group name
-    for `G`) and quotes with `shlex.quote`. `scripts/init-root.sh`: `<prefix> <uid> <gid>
-    <api-url> <instance-id>`, `chown -R`, `chmod 2751`, no ACL.
-  - Gone: `src/huron/core/storage/aclplan.py`, `src/huron/pkg/fs/acl.py`, `EffectiveGroups` in
-    `core.storage`, `DirectoryKind.NAMESPACE_WITH_COLLECTIONS` (`inventory.py` and
-    `core/storage/layout.py`), the plan methods of `Storage`, `PosixStorage` and `MemoryStorage`,
-    `PosixStorage.owned_by_me`, `core/storage/factory.py`'s `acl_backend` argument, the CLI
-    configuration key `acl_backend` (`config.py`, `CONFIG_KEYS`), `ACL_FAILED` (its use in
-    `src/huron/applications/cli/errors.py` and its row in `docs/api-errors.md`), `tests/acl/`,
-    `tests/unit/pkg/test_acl.py`, the `acl` pytest marker, and the "ACL" words of
-    `core/storage/__init__.py`. `AGENTS.md`: the layout table's storage row without "ACL plans",
-    and the tests line without `acl/`.
-  - Tests that lose their ACL parts: `tests/unit/test_error_contract.py` (the import of the ACL
-    module), `tests/unit/cli/test_foundation.py` (`ACL_FAILED`), `tests/unit/cli/conftest.py`
-    and every CLI test that builds an ACL plan.
-  - Tests: `tests/unit/storage/test_check.py` (a clean tree, each new finding, `unreadable`, the
-    owner part with and without `service_user`, a placed file of group `G` with no finding),
+  - Tests: `tests/unit/storage/test_check.py` over both adapters (a clean tree, each new
+    finding, `unreadable`, a planted link as `symbolic_link`, the owner part with and without
+    `service_user`, a placed file of group `G` with no finding);
     `tests/unit/storage/test_organizations.py` (the scripts and direct mode, the `lake_path`
-    steps, `--uid` and `--gid`), `tests/unit/storage/test_provision_catalogs.py` (the selection,
-    the `find` lines), `tests/unit/cli/test_check_and_acl.py` renamed `test_check.py` (findings
-    over the fake share, `provision-catalogs` in both modes), `tests/unit/cli/test_status.py`
-    (`unreadable`), `tests/unit/test_init_root_script.py`.
-- Verification: `make gate`; `grep -rniwE 'acl|acls|aclplan|acl_backend|setfacl|getfacl'
-  src/huron --include=*.py` prints nothing.
-- Dependencies: M11.8.
+    steps, no `chown -R`, `--uid` and `--gid`); `tests/unit/storage/test_provision_catalogs.py`
+    (the selection, the one `find` line); `tests/unit/cli/test_check_and_acl.py` renamed
+    `test_check.py` (findings over the fake share, `provision-catalogs` in both modes);
+    `tests/unit/cli/test_status.py` (`unreadable`); `tests/unit/pkg/test_posix.py` and
+    `tests/unit/storage/test_storage.py` (`walk` yields an unreadable directory and goes on).
+- Verification: `make gate`; `uv run python scripts/cli_reference.py --check`;
+  `grep -rnE "chown -R|-type f|setfacl" src/huron/core/storage/provision.py` prints nothing;
+  `grep -rn "symlink" src/huron/core src/huron/pkg --include=*.py | grep -v
+  "follow_symlinks=False"` finds only `MemoryStorage.symlink` and the `kind` literal
+  `"symlink"` (`check.py` included). The grep is case-sensitive, so it does not find
+  `SymlinkInLake` or `SymlinkError`.
+- Dependencies: M11.5c, M11.9a.
 - Status: pending
 
 #### M11.10 The development stacks and the integration tier
 
 - Intent: the amendment's `make app` and `make api`, and tests over real nginx and tusd.
 - Create or change:
-  - `deploy/openshift/nginx-uploads.conf.template` and its byte-identical copy
-    `deploy/helm/huron/files/nginx-uploads.conf.template`: the amendment's shape, with `OPTIONS`
+  - `deploy/openshift/nginx-uploads.conf.template`: the amendment's shape, with `OPTIONS`
     answered without `auth_request` (`error_page 418 = @tus_options; if ($request_method =
-    OPTIONS) { return 418; }` and `location @tus_options`), `proxy_set_header Forwarded "";` once in
-    the `server` block, which both `/files/` locations and `@tus_options` inherit because they set
-    no `proxy_set_header` of their own, `proxy_cache_key
+    OPTIONS) { return 418; }` and `location @tus_options`), `proxy_set_header Forwarded "";` once
+    in the `server` block, which both `/files/` locations and `@tus_options` inherit because they
+    set no `proxy_set_header` of their own, `proxy_cache_key
     "$request_method|$huron_upload_id|$http_authorization"`, and `map $http_authorization
-    $huron_no_auth`.
+    $huron_no_auth`. The Helm copy of this file is M11.13's work.
   - `docker-compose.app.yml`: the `api` service binds `HURON_LAKE_SOURCE` read-write at
     `/data1/huron` inside the container, runs as `user: "${HURON_UID}:${HURON_GID}"`, and sets
-    `HURON_SERVICE_UID` and `HURON_SERVICE_GROUP` to the host user and group. `uploads-proxy`
-    and `uploads` per the Deployment bullet. `uploads-proxy` uses `command:` (Compose keeps the
-    image entrypoint, so the `envsubst` step runs), with `NGINX_ENVSUBST_OUTPUT_DIR=/tmp`,
+    `HURON_SERVICE_UID` and `HURON_SERVICE_GROUP` to the host user and group. `uploads-proxy` and
+    `uploads` per the Deployment bullet. `uploads-proxy` uses `command:` (Compose keeps the image
+    entrypoint, so the `envsubst` step runs), with `NGINX_ENVSUBST_OUTPUT_DIR=/tmp`,
     `NGINX_ENVSUBST_FILTER=^HURON_API_UPSTREAM$` and the configuration
     `/tmp/nginx-uploads.conf`. A one-shot `uploads-init` (the tusd image, `sh -c`) deletes
     `*.lock`, `*.lock.*` and `*.stop` in `.tus-uploads` before `uploads` starts. `net` publishes
     127.0.0.1:1080. The one-shot `lake-init` runs `scripts/dev-provision.py` before the API.
-  - `scripts/dev-provision.py`: reads `huron.dev.yaml` and `HURON_INSTANCE_ID`, writes
-    `<root>/<org>` with mode `2751` and its marker, and `.tus-uploads` with mode `0700`.
+  - `scripts/dev-provision.py`: builds the organization targets from `huron.dev.yaml` and
+    `HURON_INSTANCE_ID` and calls `Provisioner.provision` (the code of `provision-orgs` direct
+    mode). So one module writes the organization directories, `.tus-uploads` and the markers.
+    The script writes no layout of its own.
   - `docker-compose.uploads.yml` (nginx and tusd with host networking, the lake bind mount, the
     host user, the same `command:`, environment and lock cleanup). `Makefile`: `HURON_UID`,
     `HURON_GID`, `HURON_GROUP` and `HURON_LAKE_SOURCE`, the targets `uploads` and
     `uploads-down`.
-  - `huron.dev.yaml`: `lake_path`, `uploads_url` and `upload_receipts: optional`. `make app`'s
-    seed now runs against an API with a lake and writes into `HURON_LAKE_SOURCE`. Only the web
-    e2e harness runs without a lake. `dev.env` unchanged.
-  - `scripts/e2e.sh`: pushes through the proxy. `HURON_LAKE_SOURCE` and `HURON_LAKE_PATH` are
-    one directory under its temporary directory, bound at the same path inside the container.
-    `service_uid` and `service_group` are the host user and group. The line
-    `huron config set acl_backend none` is gone.
+  - `huron.dev.yaml`: `lake_path` and `uploads_url`. `make app`'s seed runs against the API with
+    a lake. A seeded file goes through the proxy and tusd, so it has a receipt; a file-less seed
+    needs no change. Only the web e2e harness runs without a lake. `dev.env` unchanged.
+  - `scripts/e2e.sh`: pushes through the proxy. `HURON_LAKE_SOURCE` and `HURON_LAKE_PATH` are one
+    directory under its temporary directory, bound at the same path inside the container.
+    `service_uid` and `service_group` are the host user and group.
   - `tests/integration/test_uploads_tusd.py`: the API over PostgreSQL with `lake_path` set to a
     temporary lake, served by uvicorn on 127.0.0.1, and real tusd and nginx containers with host
     networking over the same directory as the host user. A push of new, overwritten and removed
@@ -3882,98 +4759,221 @@ failed inheritance visible.
     attempt, a PATCH with another user's token refused 403 by nginx with no byte in
     `.tus-uploads`, a PATCH without a token refused 401, an `OPTIONS /files/<id>` followed by a
     PATCH without a token (401) and a PATCH with another user's token (403), a client
-    `Forwarded` header that does not change tusd's `Location`, a stale `<id>.lock` removed by
-    the cleanup step, a receipt-less commit refused, directories made and removed in the
-    request, `nginx -t` on the rendered configuration. Skipped without Docker.
+    `Forwarded` header that does not change tusd's `Location`, a stale `<id>.lock` removed by the
+    cleanup step, a receipt-less commit refused, directories made and removed in the request,
+    and a namespace directory replaced by a link to a directory outside the lake before the final
+    PATCH (the hook answers 409 `SYMLINK_IN_LAKE`, the upload is `failed`, nothing is written
+    outside the lake). `nginx -t` on the rendered configuration. Skipped without Docker.
   - `tests/integration/test_cli_end_to_end.py`: the skip mark of M11.7 removed. The API with a
-    temporary lake, so directory verbs and `huron adm check` run end to end. `init-root.sh` with
-    its five arguments, no `acl_backend`.
-  - `tests/unit/test_nginx_config.py`: the two copies are equal, and the file has `listen 1080`,
-    the upstreams on 1081 and `${HURON_API_UPSTREAM}`, `auth_request` in both `/files/`
-    locations, the `OPTIONS` branch to `@tus_options` without `auth_request`,
-    `proxy_set_header Forwarded ""` in the `server` block and no `proxy_set_header` in the two
-    `/files/` locations and `@tus_options`, the cache key with
-    `$request_method`, `proxy_no_cache` and `proxy_cache_bypass` with
-    `$huron_no_cache $huron_no_auth`, `client_max_body_size 0` and `1m`,
-    `proxy_request_buffering off`, `proxy_read_timeout 3600s`, `internal`,
-    `proxy_pass_request_body off` and `proxy_cache_valid 204 30s`.
+    temporary lake, provisioned with `huron adm provision-orgs` in direct mode as the host user,
+    so the directory verbs, `huron adm repair` and `huron adm check` run end to end.
+  - `tests/unit/test_nginx_config.py`: the file has `listen 1080`, the upstreams on 1081 and
+    `${HURON_API_UPSTREAM}`, `auth_request` in both `/files/` locations, the `OPTIONS` branch to
+    `@tus_options` without `auth_request`, `proxy_set_header Forwarded ""` in the `server` block
+    and no `proxy_set_header` in the two `/files/` locations and `@tus_options`, the cache key
+    with `$request_method`, `proxy_no_cache` and `proxy_cache_bypass` with `$huron_no_cache
+    $huron_no_auth`, `client_max_body_size 0` and `1m`, `proxy_request_buffering off`,
+    `proxy_read_timeout 3600s`, `internal`, `proxy_pass_request_body off` and
+    `proxy_cache_valid 204 30s`.
 - Verification: `make gate`; `docker run --rm tusproject/tusd:v2.10.1 -help` lists every flag of
   the amendment's Components bullet (a name that differs is corrected in the bullet and in the
   stacks); `docker run --rm --entrypoint sh tusproject/tusd:v2.10.1 -c true` exits 0 (the lock
-  cleanup needs `sh`); `docker compose -f docker-compose.app.yml config --quiet`; `docker
-  compose -f docker-compose.uploads.yml config --quiet`; `bash -n scripts/e2e.sh`; `uv run
-  pytest -m integration tests/integration/test_uploads_tusd.py
+  cleanup needs `sh`); `docker compose -f docker-compose.app.yml config --quiet`; `docker compose
+  -f docker-compose.uploads.yml config --quiet`; `bash -n scripts/e2e.sh`;
+  `grep -rnE "upload_receipts|init-root|acl_backend" huron.dev.yaml scripts docker-compose.app.yml docker-compose.uploads.yml`
+  prints nothing; `uv run pytest -m integration tests/integration/test_uploads_tusd.py
   tests/integration/test_cli_end_to_end.py`.
-- Dependencies: M11.6, M11.9.
+- Dependencies: M11.6, M11.8, M11.9.
 - Status: pending
 
-#### M11.11 Kustomize and Helm
+#### M11.11 Kustomize base and the local cluster
 
-- Intent: the amendment's deployment on OpenShift and in the chart.
+- Intent: the amendment's deployment as a kustomize base, and a running stack on the developer's
+  own Kubernetes cluster: the kind cluster `ocp-test` on the development machine (one node,
+  ingress-nginx at `https://127.0.0.1:18443`, the `local-path` storage class, the Route CRD
+  without an OpenShift router; `kubectl` v1.37.1 is present, `helm` is not). The lake there is a
+  local Linux filesystem, where setgid inheritance works, so this task does not wait for the
+  measurement on the production export. The Helm chart and the production values are M11.13
+  (decided 2026-11-07).
 - Create or change:
-  - `deploy/openshift/deployment.yaml`: the `huron-lake` volume at `HURON_LAKE_PATH`,
-    `runAsUser`, `runAsGroup`, `supplementalGroups`. `deploy/openshift/route.yaml`:
-    `haproxy.router.openshift.io/timeout: 300s` (schema assignment, recursive repair and
-    collection delete run their disk work in the request).
-  - `deploy/openshift/uploads.yaml`: the Deployment (one replica, `Recreate`; an init container,
-    the tusd image with `sh -c`, that deletes `*.lock`, `*.lock.*` and `*.stop` in
-    `.tus-uploads` before tusd starts; `proxy` and `tusd` with the pinned images; the security
-    contexts; the claim; the nginx ConfigMap at `/etc/huron`; the `envsubst` environment
-    `NGINX_ENVSUBST_TEMPLATE_DIR=/etc/huron`, `NGINX_ENVSUBST_TEMPLATE_SUFFIX=.template`,
-    `NGINX_ENVSUBST_OUTPUT_DIR=/tmp`, `NGINX_ENVSUBST_FILTER=^HURON_API_UPSTREAM$` and
-    `HURON_API_UPSTREAM`; for `proxy` `args: ["nginx", "-c", "/tmp/nginx-uploads.conf", "-g",
-    "daemon off;"]` and never `command:`, which replaces the image entrypoint so that the
-    `envsubst` step does not run; an `emptyDir` with `medium: Memory` at `/tmp`; the probes;
-    `nodeSelector`, `tolerations` and `affinity`), the Service `huron-uploads` on port 1080,
-    the Route `huron-uploads` (path `/files`, timeout 3600s), the claim `huron-lake`.
-    `kustomization.yaml` (the resources, the `configMapGenerator` `huron-uploads-nginx`).
-    `huron.yaml` (`lake_path`, `uploads_url`, `service_uid`, `service_group`,
-    `upload_hook_timeout`). No NetworkPolicy.
-  - `deploy/helm/huron`: `templates/uploads.yaml` (the same init container, `args:` and
-    environment, scheduling from `uploads.nodeSelector`, `uploads.tolerations` and
-    `uploads.affinity`), its Route and Ingress, the nginx ConfigMap from
-    `files/nginx-uploads.conf.template`. `HURON_API_UPSTREAM` and tusd's `-hooks-http` use
-    `{{ include "huron.fullname" . }}:{{ .Values.service.port }}`. The Ingress takes
-    `uploads.ingress.annotations`, with defaults for ingress-nginx:
-    `nginx.ingress.kubernetes.io/proxy-body-size: "0"`,
-    `nginx.ingress.kubernetes.io/proxy-request-buffering: "off"`, and
-    `nginx.ingress.kubernetes.io/proxy-read-timeout` and `proxy-send-timeout` `"3600"`. The
-    lake volume and security context in `templates/deployment.yaml`, `route.timeout` default
-    `300s`, the upload keys added to `huron.yaml` from `lake.*`, `serviceUser.*` and
-    `uploads.*` unless `config` sets them, `values.yaml`, `values.schema.json` (uid, gid, group
-    and claim required when `uploads.enabled`, hook timeout at most 55m),
-    `ci/example-values.yaml` (uploads on), `NOTES.txt`. No NetworkPolicy template.
-  - `deploy/README.md`: the lake claim, the pinned UID range, the service group, the export
-    rules, tusd's lock files (hard links in `.tus-uploads`, removed by the init container), the
-    version 1 migration order.
-- Verification: `make gate`; `kubectl kustomize deploy/openshift`; `helm lint --strict` and
-  `helm template` with `ci/example-values.yaml` when `helm` is available.
-- Dependencies: M11.10, and the setgid measurement recorded under "Facts about the storage
-  (measured 2026-11-06)".
+  - `deploy/openshift/` (the base): `deployment.yaml` (the `huron-lake` volume at
+    `HURON_LAKE_PATH`, `runAsUser`, `runAsGroup`, `supplementalGroups`); `route.yaml`
+    (`haproxy.router.openshift.io/timeout: 300s`, because schema assignment, recursive repair and
+    collection delete run their disk work in the request); `uploads.yaml`: the Deployment (one
+    replica, `Recreate`; an init container, the tusd image with `sh -c`, that deletes `*.lock`,
+    `*.lock.*` and `*.stop` in `.tus-uploads` before tusd starts; `proxy` and `tusd` with the
+    pinned images; the security contexts; the claim; the nginx ConfigMap at `/etc/huron`; the
+    `envsubst` environment `NGINX_ENVSUBST_TEMPLATE_DIR=/etc/huron`,
+    `NGINX_ENVSUBST_TEMPLATE_SUFFIX=.template`, `NGINX_ENVSUBST_OUTPUT_DIR=/tmp`,
+    `NGINX_ENVSUBST_FILTER=^HURON_API_UPSTREAM$` and `HURON_API_UPSTREAM`; for `proxy` `args:
+    ["nginx", "-c", "/tmp/nginx-uploads.conf", "-g", "daemon off;"]` and never `command:`; an
+    `emptyDir` with `medium: Memory` at `/tmp`; the probes; `nodeSelector`, `tolerations` and
+    `affinity`), the Service `huron-uploads` on port 1080, the Route `huron-uploads` (path
+    `/files`, timeout 3600s), the claim `huron-lake`. `kustomization.yaml`: the resources and
+    the `configMapGenerator` `huron-uploads-nginx` from `nginx-uploads.conf.template`.
+    `huron.yaml`: `lake_path`, `uploads_url`, `service_uid`, `service_group`,
+    `upload_hook_timeout`. No `mount_prefix`, no NetworkPolicy.
+  - `deploy/local/`: a kustomize overlay on `deploy/openshift`. A namespace `huron`; PostgreSQL
+    as a one-replica StatefulSet on `local-path`; the claim `huron-lake` bound to a `hostPath`
+    PersistentVolume (`ReadWriteMany`, one node) at a directory of the node; an Ingress for the
+    API and one for `/files` with the ingress-nginx annotations `proxy-body-size: "0"`,
+    `proxy-request-buffering: "off"`, `proxy-read-timeout` and `proxy-send-timeout` `"3600"`. The
+    overlay removes the Routes, because no router serves them. The images are built from this
+    repository with the tag `local` and `imagePullPolicy: Never`. `service_uid` and
+    `service_group` equal the pods' `runAsUser` and `runAsGroup`. The migration Job. A one-shot
+    Job `huron-lake-init` runs before the API starts. It uses the API image, which contains
+    `scripts/dev-provision.py` and `scripts/devgroups.py` (the `Containerfile` gains
+    `COPY scripts/dev-provision.py scripts/devgroups.py ./scripts/`). It reads the overlay's
+    `deploy/local/huron.yaml` from a `configMapGenerator` of `deploy/local`. It runs
+    `scripts/dev-provision.py --config <file>` from the image. No kustomize generator reads a
+    file outside `deploy/local`. The script calls `Provisioner.provision` and writes `lake_path`
+    (owner, mode `2751`, `.tus-uploads`, marker) and the organization roots with
+    their markers. The Job runs as uid 0 in this overlay only, because it changes the owner of
+    `lake_path`. `scripts/dev-provision.py` gains `--config` (default `huron.dev.yaml`).
+    The root filesystem of the `api` container is read-only. So the overlay mounts an `emptyDir`
+    at `/var/lib/huron-cli` in the `api` container and sets `XDG_STATE_HOME=/var/lib/huron-cli`
+    there. The smoke writes `alice`'s token into that directory.
+  - The identity provider of `deploy/local`: the overlay adds two containers to the API pod.
+    Keycloak (the image of `docker-compose.yml`, `KC_HOSTNAME=http://127.0.0.1:8081`, the realm
+    `scripts/keycloak/company-realm.json`) listens on 127.0.0.1:8081. The group directory
+    (`scripts/devgroups.py` from the API image) listens on 127.0.0.1:8082. So `company_issuer`
+    and `group_directory_url` have the values of `huron.dev.yaml` in the pod. `k8s-local.sh`
+    creates the realm ConfigMap with `kubectl create configmap --from-file`, outside the
+    kustomize render.
+  - TLS of `deploy/local`: `k8s-local.sh` makes a local CA and a certificate for 127.0.0.1 with
+    `openssl`, in `.k8s-local/` (ignored by git), and stores the certificate as the TLS Secret
+    of both Ingresses. The smoke sets `SSL_CERT_FILE` (httpx) and `CURL_CA_BUNDLE` (curl) to
+    that CA. The CLI gets no TLS option.
+  - `scripts/k8s-local.sh` and the `Makefile` targets `k8s-local` (build the images, import them
+    into the node with `docker save | docker exec <node> ctr -n k8s.io images import -`, so no
+    `kind` binary is needed, apply the overlay, wait for the rollouts), `k8s-local-smoke` and
+    `k8s-local-down`. `k8s-local-smoke` refuses to start when 127.0.0.1:8081 is in use (the
+    compose stack). It runs `kubectl port-forward deploy/huron 8081:8081`, logs in with
+    `scripts/dev-login.sh` as the platform administrator `alice`, creates a catalog and a
+    collection, pushes a new, an overwritten and an empty file through
+    `https://127.0.0.1:18443/files/` and commits. Then it runs
+    `kubectl exec deploy/huron -c api -- huron adm check` as `U`, with `HURON_API_URL` set to
+    the API in the pod, `HURON_MOUNT_PREFIX` set to `lake_path` and `alice`'s token written to
+    the pod's `XDG_STATE_HOME`. The check prints no finding. Then the smoke deletes the
+    collection. `k8s-local-down` deletes the namespace and the PersistentVolume. The node
+    directory stays unless `K8S_LOCAL_PURGE=1`. The script refuses every kubectl context other
+    than `K8S_LOCAL_CONTEXT` (default `kubernetes-admin@ocp-test`).
+  - `deploy/README.md`: the base, the local overlay and its three targets, the lake claim, the
+    pinned UID range, the service group, the export rules, tusd's lock files (hard links in
+    `.tus-uploads`, removed by the init container), the install order ("Install order"), and a
+    section "Helm: not yet delivered" that lists the work of M11.13.
+  - `tests/unit/test_deploy_manifests.py`: `kubectl kustomize` of both directories renders; the
+    upload Deployment has one replica, `Recreate`, the init container, `args:` and no `command:`
+    for `proxy`; `huron.yaml` has no `mount_prefix`; the local overlay has no Route, has the four
+    ingress-nginx annotations, has the Job `huron-lake-init` and has the containers `keycloak`
+    and `groups` in the API pod. No `configMapGenerator` names a path with `..`. Skipped when
+    `kubectl` is missing.
+- Verification: `make gate`; `kubectl kustomize deploy/openshift`; `kubectl kustomize
+  deploy/local`; `grep -rnE "mount_prefix|init-root|acl_backend" deploy/openshift deploy/local`
+  prints nothing; on the development machine, `make k8s-local`, `make k8s-local-smoke` and `make
+  k8s-local-down`.
+- Dependencies: M11.10.
 - Status: pending
 
 #### M11.12 Documentation
 
-- Intent: the user and operator documentation of the system as built.
-- Create or change: `docs/operator.md` (the export rules, how to choose `U` and `G`, the
-  restricted SCC and the pinned UID range, the API's mount, the upload pod and tusd's lock files
-  with the init container, share groups and `provision-catalogs`, the `supplementalGroups`
-  option for small sites (about 14 groups, and group-name resolution in the API pod), the root
-  scripts and the order of the version 1 migration, the setgid measurement and its recorded
-  result, who runs a complete `huron adm check` (an account in `G` and in every share group, or
-  `U` with `oc exec deploy/huron -- huron adm check`), the findings table with `mode_drift`,
-  `share_group_mismatch` and `unreadable`, the sweep, the limit of AUTH_SYS (the read and write
-  claims hold only against users who are not root on a client), the `hard` mount and
-  readiness), `docs/user-guide.md` (push without the mount, resuming, the 401 and 403
-  explanations, a final PATCH that answers 500, 502 or 504, `huron adm repair`),
-  `docs/architecture.md`, `docs/concepts/raw-ingest.md` and the other concept pages where they
-  say that the CLI writes the share, `README.md`. The operator guide has no `local_lock` advice,
-  no `flock` check and no NetworkPolicy. `docs/api-errors.md` is complete. Section 3, sections
-  4.1, 6 and 12 (the risk register), ADR 0008, `CONTEXT.md` and `AGENTS.md` already carry the
-  revision. This task changes them only where the built system differs, with a line in its
-  Execution notes.
-- Verification: `make gate` (`scripts/ste_check.py` included); `make docs-check`.
-- Dependencies: M11.11, and the setgid measurement recorded under "Facts about the storage
+- Intent: the user and operator documentation of the system as built, with the local cluster. The
+  Helm chart and the production storage values are not delivered yet; the documentation says so
+  and points to M11.13.
+- Create or change:
+  - `docs/operator.md`: the export rules; how to choose `U` and `G`; the restricted SCC and the
+    pinned UID range; the API's mount; the upload pod and tusd's lock files with the init
+    container; share groups and `provision-catalogs`; the `supplementalGroups` option for small
+    sites (about 14 groups, and group-name resolution in the API pod); the install order
+    ("Install order") with `provision-orgs` for `lake_path` and the organizations; the rule that
+    the lake holds no symbolic link, with the `SYMLINK_IN_LAKE` answer and what the storage
+    administrator does; who runs a complete `huron adm check` (an account in `G` and in every
+    share group, or `U` with `oc exec deploy/huron -- huron adm check`); the findings table with
+    `mode_drift`, `share_group_mismatch`, `unreadable` and `symbolic_link`; the sweep; the limit
+    of AUTH_SYS (the read and write claims hold only against users who are not root on a client);
+    the `hard` mount and readiness. No `local_lock` advice, no `flock` check, no NetworkPolicy.
+  - `docs/operator.md`, section "Setgid measurement (pending)": the measurement is not recorded
+    yet. The section gives the procedure of "Facts about the storage (measured 2026-11-06)": as
+    root, make `t` on the real export with owner `U`, group `S` and mode `2750`, where `U` is not
+    in `S`; as `U`, with `umask 022`, run `mkdir -m 0750 t/d; touch t/f; stat -c '%a %U %G' t/d
+    t/f`, and expect `2750 U S` and `644 U S`; as root, run `chgrp S t/d; chmod 2750 t/d` and
+    `stat -c '%a %G' t/d`, and expect `2750 S`; record the date, the `stat` lines and the volume
+    security style (UNIX, NTFS or mixed) in that plan bullet.
+  - `docs/operator.md`, section "Local cluster": `make k8s-local`, `make k8s-local-smoke` and
+    `make k8s-local-down` on the kind cluster `ocp-test`, `K8S_LOCAL_CONTEXT` and
+    `K8S_LOCAL_PURGE`, the `hostPath` lake and the Job `huron-lake-init`.
+  - `docs/operator.md` and `deploy/README.md`, section "Helm: not yet delivered": the chart has
+    no upload pod, lake volume or upload keys yet. The notes list what M11.13 adds (the values
+    and their schema, the Route and the Ingress with the ingress-nginx defaults, the nginx
+    ConfigMap, the lake volume and security context) and its gate, the recorded setgid
+    measurement.
+  - `docs/user-guide.md` (push without the mount, resuming, the 401 and 403 explanations, a final
+    PATCH that answers 500, 502 or 504, `huron adm repair` with `reason` and `detail`, the
+    share-group options), `docs/architecture.md`, `docs/concepts/raw-ingest.md`,
+    `docs/concepts/how-huron-works.md`, `docs/concepts/access-and-roles.md`,
+    `docs/web-design.md` and the other pages
+    that say that the CLI writes the share or that the lake has ACLs, and `README.md`.
+    `docs/api-errors.md` is complete (`SYMLINK_IN_LAKE` included, no `OUTSIDE_LAKE`, no
+    `ACL_FAILED`).
+  - The server side of an organization without a root is `<lake_path>/<name>`, not
+    `<mount_prefix>/<name>`: `docs/operator.md` (the organization rules and the provisioning
+    text) and `docs/architecture.md` (the organization directory). The CLI's `mount_prefix`
+    stays only where a page describes the workstation's read-only mount or the provision
+    commands (section 6.1).
+  - Section 3, sections 4.1, 6 and 12, ADR 0008, `CONTEXT.md` and `AGENTS.md` already carry the
+    revision. This task changes them only where the built system differs, with a line in its
+    Execution notes.
+- Verification: `make gate` (`scripts/ste_check.py` included); `make docs-check`;
+  `grep -rniE "init-root|apply-acl|acl_backend|setfacl|getfacl|OUTSIDE_LAKE|version 1 migration" docs README.md deploy/README.md --exclude-dir=adr`
+  prints nothing; `grep -c "Helm: not yet delivered" docs/operator.md deploy/README.md` counts
+  at least 1 in each file; `grep -n "Setgid measurement (pending)" docs/operator.md` finds the
+  section; `grep -nE "<mount_prefix>/<(name|org)>" docs/operator.md docs/architecture.md` prints
+  nothing.
+- Dependencies: M11.11.
+- Status: pending
+
+#### M11.13 The Helm chart and the production values
+
+- Intent: the chart part of the old M11.11 and the production storage settings, after the setgid
+  measurement on the production export is recorded.
+- Create or change:
+  - `deploy/helm/huron` (the chart of M10.6): `templates/uploads.yaml` with the init container,
+    the `args:` and the environment of the base, and scheduling from `uploads.nodeSelector`,
+    `uploads.tolerations` and `uploads.affinity`; its Route and its Ingress; the nginx ConfigMap
+    from `files/nginx-uploads.conf.template`, a byte-identical copy of
+    `deploy/openshift/nginx-uploads.conf.template`. `HURON_API_UPSTREAM` and tusd's
+    `-hooks-http` use `{{ include "huron.fullname" . }}:{{ .Values.service.port }}`. The Ingress
+    takes `uploads.ingress.annotations`, with the ingress-nginx defaults
+    `nginx.ingress.kubernetes.io/proxy-body-size: "0"`,
+    `nginx.ingress.kubernetes.io/proxy-request-buffering: "off"`, and
+    `nginx.ingress.kubernetes.io/proxy-read-timeout` and `proxy-send-timeout` `"3600"`.
+  - `templates/deployment.yaml`: the lake volume and the security context. `route.timeout`
+    defaults to `300s`. The upload keys go into `huron.yaml` from `lake.*`, `serviceUser.*` and
+    `uploads.*` unless `config` sets them. `values.yaml`; `values.schema.json` (uid, gid, group
+    and claim required when `uploads.enabled`; hook timeout at most 55m);
+    `ci/example-values.yaml` (uploads on); `NOTES.txt`. No NetworkPolicy template.
+  - The chart text of the old layout: `NOTES.txt` names `huron adm provision-orgs` for
+    `lake_path` and the organizations in place of `scripts/init-root.sh`. The `organizations`
+    comment of `values.yaml` and the `root` description of `values.schema.json` say that an
+    organization without a root lies directly below `lake_path`. The comment of `web.mountPrefix`
+    in `values.yaml` says that it is where clients mount `lake_path`; the key stays, because the
+    web shows client paths.
+  - The production values follow the recorded measurement: when setgid inheritance or the
+    `chgrp` step failed on the export, this task stops and the plan gets an escalation; it does
+    not change the modes of "Catalog share group and directory modes".
+  - `docs/operator.md`: the Helm and production storage sections, with the recorded result in
+    place of "Setgid measurement (pending)". `docs/operator.md` and `deploy/README.md`: the
+    sections "Helm: not yet delivered" go.
+  - `tests/unit/test_nginx_config.py`: the two copies are equal.
+- Verification: `make gate`; `helm lint --strict deploy/helm/huron -f
+  deploy/helm/huron/ci/example-values.yaml` and `helm template huron deploy/helm/huron -f
+  deploy/helm/huron/ci/example-values.yaml` (`helm` v3; where it is not installed, the same
+  commands in `docker run --rm -v "$PWD:/w" -w /w alpine/helm:3.16.4`); `kubectl kustomize
+  deploy/openshift`; `grep -rn "Helm: not yet delivered\|Setgid measurement (pending)" docs
+  deploy` prints nothing; `grep -rnE "init-root|acl_backend|<mount_prefix>/|the CLI's mount_prefix"
+  deploy/helm` prints nothing; `cmp deploy/openshift/nginx-uploads.conf.template
+  deploy/helm/huron/files/nginx-uploads.conf.template`.
+- Dependencies: M11.11, M11.12, and the setgid measurement recorded under "Facts about the storage
   (measured 2026-11-06)".
 - Status: pending
 
@@ -3991,18 +4991,19 @@ failed inheritance visible.
 | Loopback or device login unavailable on a cluster node. | No way to log in. | Both flows exist; `tokens.json` can be copied between machines of the same user (documented, mode checked). |
 | The export trusts UIDs (AUTH_SYS). | Any process on a read-write client that claims `U` can write the lake. Root on any client can read every file, whatever the share groups say. | Read-write only for the clients of the API pod and the upload pod. The claim is bound to Huron's namespace. The restricted SCC keeps other namespaces out of `U`'s range. Kerberos (`sec=krb5`) is the upgrade path. |
 | tusd runs one replica. | A rollout or a crash interrupts uploads. | `Recreate`, because tusd's test that a lock file's PID is alive works only inside one PID namespace. tus clients resume from the last offset. |
-| The API holds the writable mount. A bug in the API, or a compromised API pod, can change any file of the lake. | Data loss that only ONTAP snapshots undo. | The API writes only through `LakeDisk`, which checks the lake path, the filesystem and the marker before every write and never deletes outside a collection's own entries. Snapshots stay the only history. The upload pod writes only `.tus-uploads`. |
+| The API holds the writable mount. A bug in the API, or a compromised API pod, can change any file of the lake. | Data loss that only ONTAP snapshots undo. | The API writes only through `core.storage.Storage` on `LakePath`, under `LakeDisk.hold`, which checks the marker first. Every path is built from validated names and opened from the root with no follow of a symbolic link, so no write leaves the lake. The API never deletes outside a collection's own entries. Snapshots stay the only history. The upload pod writes only `.tus-uploads`. |
+| A symbolic link appears in the lake (made by root, or by a process on a read-write client). | A write or read through it could leave the lake, or reach another catalog's data. | The no-follow traversal (section 3, "Containment in the lake"): every lake path is opened one name at a time with `O_NOFOLLOW` from a descriptor of the root, so the kernel refuses a link at any step. The API answers 409 `SYMLINK_IN_LAKE` and changes nothing; repair reports `symbolic_link`; `huron adm check` reports the error finding `symbolic_link`. Huron calls `symlink` nowhere and places with hard links only. The storage administrator removes the link. |
 | The API hashes each upload inside `pre-finish`, in the request. | A large file holds a disk worker and the client's final PATCH for minutes. tusd waits at most `upload_hook_timeout` for the hook, retries included, then answers the final PATCH with 500 while the API call continues. | `upload_hook_timeout` sized for the largest file (at most 55 minutes), nginx and Route timeouts of 3600 s, the hash outside the path lock, idempotent placement, the CLI's read of `GET /api/v1/uploads/{id}` after a 500, 502 or 504, and `huron adm check --hash`. |
 | The receipt fails after the link (the collection was deleted, or the creator terminated the upload during the hash), or the API stops between the link and the receipt. | A placed file without a row that removes it. | A failed receipt unlinks the destination when its inode is the placed inode and removes the empty directories that the placement made. A stop between the link and the receipt is an accepted residual that `huron adm check` reports as `file_unrecorded`. |
 | A removal races a placement of the same path on another API replica. | The removal unlinks the file the placement just linked. | The inode guard: a removal unlinks only the inode it recorded, which the receipt read with `fstat` on the hashed file. On one replica the path lock closes the race. Across replicas a narrow window between the `stat` and the unlink remains, and `huron adm check --hash` detects its result. |
-| The inode guard compares numbers, and the filesystem can give a deleted file's inode number to a new file. A `null` inode unlinks unconditionally: every version 1 file and every add committed in `optional` mode (the development default) has one. | A removal can unlink a newer file at the same path. | Accepted: the guard is strong, not exact. `huron adm check` reports `file_missing` for a recorded file that a removal unlinked. Production uses `upload_receipts: required`, so there only version 1 files have a `null` inode. |
-| Setgid inheritance of the group on the ONTAP export over NFSv3 is not measured. | New directories below a catalog do not get the share group, and readers cannot reach them. | The measurement of section 6.2, recorded before M11.11 and M11.12 start. The API runs `stat` after each `mkdir`: a failed inheritance is `STORAGE_FAILED` or `mode_drift`, never silent. |
+| The inode guard compares numbers, and the filesystem can give a deleted file's inode number to a new file. | A removal can unlink a newer file at the same path. | Accepted: the guard is strong, not exact. `huron adm check` reports `file_missing` for a recorded file that a removal unlinked. A removal without an inode (a file committed by an API without a lake) finishes with no disk call (M11.6), so no unlink is unconditional. |
+| Setgid inheritance of the group on the ONTAP export over NFSv3 is not measured. | New directories below a catalog do not get the share group, and readers cannot reach them. | The measurement of section 6.2, recorded before M11.13 starts. The API runs `stat` after each `mkdir`: a failed inheritance is `STORAGE_FAILED` or `mode_drift`, never silent. |
 | tusd stops uncleanly. Its lock files (`<id>.lock`, which holds tusd's PID, and `<id>.stop`) stay in `.tus-uploads`. tusd is PID 1 in its container, so the new tusd sees its own PID as alive. | Every HEAD or PATCH of an affected upload ends in a lock timeout. | An init container of the upload pod (the tusd image, `sh -c`) deletes `*.lock`, `*.lock.*` and `*.stop` in `.tus-uploads` before tusd starts. This is safe with one replica. The sweep removes every entry older than `upload_ttl`. |
 | An evicted upload pod's replacement starts while the old pod is still terminating. | The init container deletes a lock that the old tusd still holds, and an in-flight PATCH of the old pod can overlap a new request for the same upload. | Accepted. The old pod is out of the Service, so only a PATCH that was already in flight can overlap. tus clients resume from the offset that tusd reports. |
 | An NFS outage on the `hard` mount. | Disk calls block without end, in the API and in the upload pod. | `/readyz` runs the lake probe in a thread with a 2 s limit and keeps the result for 10 s, so the API pods leave the Service. Browsing stops too. Disk work runs in its own pool of 8 workers, so blocked disk calls do not take the default executor. |
 | Directory verbs on two API replicas race: a delete and a create of the same name. | A directory is missing for a row that exists. | A `mkdir` that meets an existing empty directory adopts it, and any other existing entry is `STORAGE_FAILED` with the rows kept. Repair reads rows only and checks them again before each `mkdir`, under each directory's path lock. A residual case reports `namespace_dir_missing` or `collection_dir_missing`, and `huron adm repair` fixes it. |
 | `U` cannot `chgrp` a catalog directory to its share group. | New catalogs are readable by nobody until the group is set. | The create and set responses carry `SHARE_GROUP_PENDING`, `huron adm check` reports `share_group_mismatch`, and `huron adm provision-catalogs --emit-script` prints the root step. Small sites list the groups in the API pod's `supplementalGroups` (about 14 fit) and make the group names resolvable in the pod. |
-| Directories and files of version 1 belong to their users and carry the modes of version 1 (`2770` directories, `0660` files). | Directory verbs on them fail with `STORAGE_FAILED`. A repair puts each such entry into `failed` and continues. | The one-time root scripts ("Version 1 directories"): `chown -R U:<gid>`, the catalog groups on directories (`find <catalog> -type d -exec chgrp <group> {} +`), and the modes. `huron adm check` reports `mode_drift` and `share_group_mismatch` until they ran. |
+| Production starts from scratch (decided 2026-11-07). The test-bed lake has entries that Huron did not make. | An install that reuses old data has entries with other owners and modes, which the plan does not convert. | The install order of section 3 ("Install order") starts from an empty `lake_path`: `provision-orgs` changes the owner of the lake path and the organization roots only, with no recursive step. Every later entry is made by `U` through the API. `huron adm check` reports `mode_drift`, `share_group_mismatch` and `symbolic_link` for any entry that does not fit. |
 | The upload pod is down. | Uploads fail. Nothing else waits. | One replica with `Recreate`, readiness through `/readyz`. tus clients resume from the last offset. |
 | The namespace's UID range changes (the namespace is created again). | Both pods run as another UID and cannot write the lake. | The cluster administrator pins `openshift.io/sa.scc.uid-range`. `/readyz` fails when `.tus-uploads` is not writable. |
 | A cached allow of the upload proxy outlives a token or an upload. | For at most 30 seconds, a request passes nginx that the API would refuse. | Allows only, 30 s, cached in a memory-backed `emptyDir` that only nginx reads. The cache key holds the method, the upload id and the `Authorization` value, and a request without `Authorization` never uses the cache. nginx sends OPTIONS to tusd without a subrequest, so no OPTIONS answer is cached. The cache holds the token value for at most 60 seconds after the last request of that upload and token. tusd refuses an upload whose files are gone. |
@@ -4152,3 +5153,147 @@ coverage with the five pre-existing missed lines, 48 contract tests; the tree un
 index files and the plan). M11.1 is complete. The remaining design decisions of 2026-11-06 (the
 read-only share, per-request authorization in front of tusd) are recorded in the amendment's dated
 bullets below this section's date, and the revised tasks M11.2 onward follow from them.
+
+## Escalation (M11.5, 2026-11-07)
+
+M11.5 "Directory verbs and repair in the API" failed verification 3 of 3. The workflow stopped
+there, as the iteration cap requires. The working tree holds the uncommitted M11.5 code on top of
+commit 5800e25a; the full gate passes on it (`make gate` exit 0, 1487 tests, 99.96% coverage, 59
+contract tests, web check/test/lint), so no revert was needed. M11.1 to M11.4 are committed and
+verified.
+
+### Verification reports
+
+**Verification 1 — FAIL** (gate green). Four medium and seven small defects, each reproduced with
+a probe: (1) a recursive repair walked outside its target (a sibling namespace's directory went
+from `2770` to `2750`); (2) repair ran `chmod 2750` on directories outside the service's groups,
+which silently clears setgid under AUTH_SYS; (3) repair hid a failed `metadata.json` create; (4)
+the `.huron-prev` backup was lost on a crash between the rename and the cleanup, then a refused
+receipt; (5) organization repair did not restore `2751`; (6) `..` answered `OUTSIDE_LAKE` with a
+lake and `NAME_INVALID` without; (7) a dry-run delete needed the lake; (8) the backup hook test did
+not overwrite a committed file; (9) `LakeDirectory` used private members of `LakeDisk`; (10)
+organization repair did not re-read the row before `mkdir`; (11) the pool test also passed with
+one shared pool. All eleven were fixed in the next pass and confirmed fixed by verification 2.
+
+**Verification 2 — FAIL** (gate green; all eleven items of verification 1 confirmed fixed). Two
+medium and three small defects: (1) one unreadable directory stopped a whole recursive repair; (2)
+a raw `PermissionError` from a walk escaped the verbs as 500 `INTERNAL`; (3) repair ran `chmod` on
+a regular file at a planned directory path; (4) `organization_directory` did not read the
+organization row (`%2E%2E` answered `OUTSIDE_LAKE` with a lake, 404 without); (5) `in_group`
+trusted more than the 16 groups AUTH_SYS carries. All five were fixed in the last pass, which also
+mapped every filesystem query of `PosixStorage` to `StorageError` (a same-class residual it had
+reported itself). Verification 3 confirmed all five fixed.
+
+**Verification 3 — FAIL** (gate green; verification 2's items and a spot check of verification 1's
+items confirmed). One finding with two paths, both reproduced on real filesystems (the lake on one
+tmpfs, a target on another):
+1. medium — Schema assignment writes `metadata.json` through a symlink onto another filesystem.
+   `assign_catalog_schema` locates only the catalog directory; each settled collection's write
+   goes to `directory.joinpath(...)`, which nothing resolves or checks. A `PATCH` of the same
+   collection answers 422 `OUTSIDE_LAKE`, but `PUT /catalogs/{catalog}/schema` answers 200 and
+   rewrites the file on the other filesystem. Verifier: fixable within the plan (a filesystem
+   check before each write, in the worker under the path lock; a mismatch after the commit
+   answers `STORAGE_FAILED`).
+2. small to medium — A recursive repair can `chmod` an unsearchable ancestor (`0o2000` to `2750`)
+   and then, in a later step, write below it onto another filesystem: every planned directory is
+   located once, before any disk work, and a path below an unsearchable directory is checked only
+   at its nearest visible ancestor. Verifier: fixable within the plan (re-run the check for each
+   step's path in the worker, under the lock, after `verify_marker`). The old `os.path.lexists`
+   behaved the same way.
+Residual risks noted, not failures: the recursive walk does not compare `st_dev`, so it would
+enter a mount point below its target; a symlink to another organization on the same filesystem
+passes the device check.
+
+### Diagnosis
+
+The defects of the three rounds share one cause: the plan states containment ("the API refuses a
+path that resolves outside `lake_path` or onto another filesystem") as a single check before the
+transaction, but M11.5's disk work is not a single write. Schema assignment writes many files, and
+a recursive repair changes permissions and then writes below the directories it changed. A check
+made once at the start does not hold for later writes (a time-of-check to time-of-use gap), and
+the plan has no policy for symbolic links inside the lake. The version 1 directories make this a
+real exposure, not a theoretical one: until the storage administrator's `chown` step, they belong
+to the users who made them, so a user can plant a symlink or a mount point there. Each fix closed
+the instance a verifier found, and the next verifier found another instance of the same gap.
+
+A second cause is size. M11.5 grew to three parts in one pass (directory verbs and repair, the
+separate hash pool, and the overwrite backup, the last two added on 2026-11-07), and the repair
+walker alone needed rules for unreadable, unsearchable, vanishing, non-directory and
+foreign-group entries that the plan specified only in outline.
+
+### Design questions to answer before M11.5 resumes
+
+1. Containment model: is the filesystem check made at every write, under the path lock, in the
+   disk worker (per-write check), or does all disk work open paths component by component from a
+   directory descriptor of `lake_path` with `O_NOFOLLOW` (or Linux `openat2` with `RESOLVE_BENEATH
+   | RESOLVE_NO_XDEV`), so that a symlink or a mount point is refused by the kernel?
+2. Symbolic links in the lake: refused everywhere (every write and every walk), refused only
+   when they leave `lake_path` or the filesystem, or reported by `huron adm check` as a new
+   finding?
+3. Version 1 trees: may repair act at all on a directory that `U` does not own (before the
+   storage administrator's step 2), or does it only report such directories, so that no repair
+   can be steered through a user-controlled tree?
+4. Mount points: does the recursive walk stop at a change of `st_dev`, and does any write refuse
+   one?
+5. Task size: should M11.5 be split (for example: directory verbs and `metadata.json`; repair and
+   its walker; the overwrite backup and the hash pool), each verified on its own?
+
+### Resolution input (2026-11-07, the user's answers to the design questions)
+
+- Symbolic links: Huron never creates one. Placement uses hard links only (it "moves" a tus upload
+  into its collection under its final name). No symbolic link is allowed anywhere in the lake: the
+  API must not follow one, and data must never be outside the lake. The old NFS-copy write path of
+  version 1 (the CLI copying bytes over the mount: `copy_in`, `.huron-part` pushes,
+  `write_sidecar`, the CLI-side directory writes) is no longer used and is to be removed, not kept
+  for compatibility.
+- Version 1 directories: there are none. The current lake is test-bed data, and production is
+  deployed from scratch. The plan's "Version 1 directories" migration (directories owned by
+  their users, the `chown -R` root step for them, the `0660` file repair, the order of a version 1
+  migration) is to be dropped.
+- Mount point: the lake's mount point for a deployment does not change. Huron adds organizations,
+  catalogs, namespaces, collections and files in collections, and nothing else. No mount-point or
+  `st_dev` check per write is needed; containment comes from building every path from validated
+  names below `lake_path` and refusing symbolic links.
+- Task size: yes, split M11.5.
+- Process: run the next steps under the workflow's rules (`/architectural-review`, then
+  `/design-plan`), seeded with this section.
+
+### Resolution (2026-11-08)
+
+The user answered the design questions in "Resolution input (2026-11-07, the user's answers to the
+design questions)". The architectural review then ran, and its record is `architectural_review.md`
+at the repository root; its section "S: Synthesis" is binding where it resolves a conflict between
+R1 to R6. On 2026-11-08 the user chose to save the whole uncommitted M11.5 tree on the branch
+`m11.5-escalated` and to rebuild M11.5 from commit 5800e25a. No task deletes that branch. The
+orchestrator deletes it only after the rebuild, and only when the user confirms.
+
+Three statements of `architectural_review.md` are wrong, and this plan overrides them:
+
+- "S: Synthesis", row 8, and the deletion list say that M11.5e deletes the branch
+  `m11.5-escalated` and that `git branch --list m11.5-escalated` prints nothing. No task deletes
+  the branch. M11.5e verifies that the branch still exists.
+- The review says that the `os.walk` of `src/huron/applications/cli/sync.py` goes and that it is
+  in `_copy_files`. The only `os.walk` in `sync.py` is in `_collect`. It walks the user's local
+  source folder for push staging, and it stays.
+- The review names the log event `disk.symlink_found`. The event is `disk.link_found` (M11.5d).
+
+The new task list
+of Milestone 11, M11.5a to M11.13, answers the questions:
+
+1. Containment model: no per-write check. Every disk operation opens its `LakePath` from a
+   descriptor of the root, one name at a time, with `O_NOFOLLOW` (section 3, "Containment in the
+   lake"; M11.5c).
+2. Symbolic links: refused everywhere. A write or read through a link answers 409
+   `SYMLINK_IN_LAKE`; a walk reports a link and never enters it; `huron adm check` reports
+   `symbolic_link`. Huron makes none and places with hard links only.
+3. Version 1 trees: there are none. Production starts from scratch ("Install order"), and repair
+   acts only on the directories that the rows plan, with no walk (M11.5e).
+4. Mount points: the mount point never changes. No walk or write compares `st_dev`, and
+   `OUTSIDE_LAKE` does not exist.
+5. Task size: M11.5 is split into M11.5a to M11.5e. The removal of the NFS-copy path (M11.7), of
+   the CLI's lake writes (M11.8a) and of the ACL code (M11.9a) runs before M11.5b. M11.11 is the
+   kustomize base and the local-cluster overlay; M11.13 holds the Helm chart and the production
+   values and waits for the setgid measurement.
+
+The old text of M11.5 "Directory verbs and repair in the API", with its execution notes, is
+replaced by these tasks. This escalation is resolved by the split.

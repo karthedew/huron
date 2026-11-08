@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from huron.core.lake.uploads.errors import UploadSizeMismatch
-from huron.core.storage.errors import StorageError
+from huron.core.storage.errors import SourceGone, StorageError
 from huron.core.storage.layout import FILE_MODE, UPLOAD_DIR
-from huron.schema.naming import PART_SUFFIX
+from huron.schema.naming import BACKUP_SUFFIX, PART_SUFFIX
 
 if TYPE_CHECKING:
     import uuid
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from huron.core.storage.ports import OpenFile, Storage
 
-__all__ = ["CollectionDirectoryMissing", "Linked", "Measured", "Placer", "SourceGone"]
+__all__ = ["CollectionDirectoryMissing", "Linked", "Measured", "Placer"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,16 +36,14 @@ class Measured:
 
 @dataclass(frozen=True, slots=True)
 class Linked:
-    """A file linked to its destination, and the directories made for it, outermost first."""
+    """A file linked to its destination.
+
+    ``made_dirs`` are the directories made for it, outermost first. ``backup`` keeps the bytes
+    of the file it replaced, ``None`` when the name was new.
+    """
 
     made_dirs: tuple[Path, ...]
-
-
-class SourceGone(StorageError):
-    """The upload's file is no longer in ``.tus-uploads``: another attempt may have placed it."""
-
-    def __init__(self, source: Path) -> None:
-        super().__init__(f"the upload file {source} does not exist", {"path": str(source)})
+    backup: Path | None
 
 
 class CollectionDirectoryMissing(StorageError):
@@ -99,6 +97,10 @@ class Placer:
         with closing(opened):
             return _measured(opened) if opened.size == size else None
 
+    def backup_file(self, destination: Path, upload_id: uuid.UUID) -> Path:
+        """The backup ``.<name>.<upload id>.huron-prev`` of the file an upload replaces."""
+        return destination.with_name(f".{destination.name}.{upload_id}{BACKUP_SUFFIX}")
+
     def link(
         self,
         source: Path,
@@ -111,9 +113,10 @@ class Placer:
 
         The collection directory must exist. The directories between it and ``destination`` are
         made with :meth:`Storage.make_inheriting_dir`. An existing file is replaced through the
-        part file ``.<name>.<upload id>.huron-part``. Raises :class:`CollectionDirectoryMissing`
-        without the collection directory, and :class:`SourceGone`, after removing the
-        directories it made, when ``source`` does not exist.
+        part file ``.<name>.<upload id>.huron-part`` and keeps its bytes in the backup
+        :meth:`backup_file` until the caller drops it. Raises :class:`CollectionDirectoryMissing`
+        without the collection directory, and ``SourceGone``, after removing the directories it
+        made, when ``source`` does not exist.
         """
         if not self._storage.is_directory(collection_dir):
             raise CollectionDirectoryMissing(collection_dir)
@@ -123,21 +126,35 @@ class Placer:
             if self._storage.make_inheriting_dir(directory := collection_dir / parent)
         )
         part_name = f".{destination.name}.{upload_id}{PART_SUFFIX}"
-        if not self._storage.link(source, destination, part_name):
+        backup_name = self.backup_file(destination, upload_id).name
+        try:
+            backup = self._storage.link(source, destination, part_name, backup_name)
+        except SourceGone:
             self._remove_empty(made)
-            raise SourceGone(source)
+            raise
         self._storage.remove_file(source)
         self._storage.remove_file(info_file)
-        return Linked(made)
+        return Linked(made, backup)
 
-    def undo(self, destination: Path, inode: int, made_dirs: tuple[Path, ...]) -> None:
-        """Remove a placed file again, but only while ``destination`` is still that inode.
+    def drop_backup(self, destination: Path, upload_id: uuid.UUID) -> None:
+        """Remove the backup of the file the upload replaced, once its receipt is recorded."""
+        self._storage.remove_file(self.backup_file(destination, upload_id))
 
-        Then the directories in ``made_dirs`` that are empty are removed, innermost first.
+    def undo(self, destination: Path, inode: int, linked: Linked) -> None:
+        """Take a placed file away again, but only while ``destination`` is still that inode.
+
+        With a backup, the replaced file returns to ``destination``; without one, the placed
+        file is removed. A backup of a destination that changed since is removed. Then the
+        directories ``link`` made that are empty are removed, innermost first.
         """
-        if self._storage.inode(destination) == inode:
+        if self._storage.inode(destination) != inode:
+            if linked.backup is not None:
+                self._storage.remove_file(linked.backup)
+        elif linked.backup is not None:
+            self._storage.rename(linked.backup, destination)
+        else:
             self._storage.remove_file(destination)
-        self._remove_empty(made_dirs)
+        self._remove_empty(linked.made_dirs)
 
     def _remove_empty(self, directories: tuple[Path, ...]) -> None:
         for directory in reversed(directories):

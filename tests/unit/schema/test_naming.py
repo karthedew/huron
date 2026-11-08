@@ -115,6 +115,7 @@ def test_valid_relative_paths_are_accepted(parts: list[str]) -> None:
         (".huron", "rel_path_reserved"),
         ("x/.huronstate", "rel_path_reserved"),
         ("x.bin.huron-part", "rel_path_reserved"),
+        ("x/.y.bin.huron-prev", "rel_path_reserved"),
     ],
 )
 def test_invalid_relative_paths_name_the_broken_rule(value: str, rule: str) -> None:

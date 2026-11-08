@@ -7,7 +7,7 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 
 from huron.core.storage.errors import StorageError
-from huron.schema.naming import METADATA_FILE, PART_SUFFIX
+from huron.schema.naming import BACKUP_SUFFIX, METADATA_FILE, PART_SUFFIX
 
 __all__ = [
     "DIRECTORY_MODE",
@@ -126,4 +126,8 @@ def place_of(
 def is_reserved_entry(rel_path: str) -> bool:
     """Whether an entry inside a collection belongs to Huron rather than to the user."""
     name = PurePosixPath(rel_path).name
-    return rel_path == METADATA_FILE or name.startswith(MARKER_FILE) or name.endswith(PART_SUFFIX)
+    return (
+        rel_path == METADATA_FILE
+        or name.startswith(MARKER_FILE)
+        or name.endswith((PART_SUFFIX, BACKUP_SUFFIX))
+    )

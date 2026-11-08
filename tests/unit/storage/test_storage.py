@@ -23,6 +23,7 @@ from huron.core.storage import (
     GroupResult,
     Marker,
     Ownership,
+    SourceGone,
     Storage,
     StorageError,
     diff,
@@ -64,6 +65,7 @@ def test_resolve_refuses_escapes() -> None:
 def test_reserved_entries() -> None:
     assert is_reserved_entry("metadata.json")
     assert is_reserved_entry("x/a.bin.huron-part")
+    assert is_reserved_entry("x/.a.bin.0192.huron-prev")
     assert is_reserved_entry(".huron")
     assert not is_reserved_entry("sub/metadata.json")
 
@@ -554,34 +556,58 @@ def test_an_open_file_reports_from_its_descriptor(share: tuple[Storage, Path]) -
     assert storage.open_file(base / "missing") is None
 
 
+PART = ".a.bin.1.huron-part"
+BACKUP = ".a.bin.1.huron-prev"
+
+
 def test_link_gives_a_file_a_new_name(share: tuple[Storage, Path]) -> None:
     storage, base = share
     storage.write_bytes(base / "upload", b"new")
-    assert storage.link(base / "upload", base / "a.bin", ".a.bin.1.huron-part") is True
+    assert storage.link(base / "upload", base / "a.bin", PART, BACKUP) is None
     assert storage.inode(base / "a.bin") == storage.inode(base / "upload")
     assert storage.read_bytes(base / "a.bin") == b"new"
+    assert storage.link(base / "upload", base / "a.bin", PART, BACKUP) is None
+    assert not storage.exists(base / BACKUP)
 
 
 @pytest.mark.parametrize("stale_part", [False, True], ids=["no-part", "stale-part"])
-def test_link_replaces_an_existing_file(share: tuple[Storage, Path], stale_part: bool) -> None:
+def test_link_replaces_an_existing_file_and_keeps_a_backup(
+    share: tuple[Storage, Path], stale_part: bool
+) -> None:
     storage, base = share
     storage.write_bytes(base / "upload", b"new")
     storage.write_bytes(base / "a.bin", b"old")
+    old_inode = storage.inode(base / "a.bin")
     if stale_part:
-        storage.write_bytes(base / ".a.bin.1.huron-part", b"stale")
-    assert storage.link(base / "upload", base / "a.bin", ".a.bin.1.huron-part") is True
+        storage.write_bytes(base / PART, b"stale")
+        storage.write_bytes(base / BACKUP, b"stale")
+    assert storage.link(base / "upload", base / "a.bin", PART, BACKUP) == base / BACKUP
     assert storage.read_bytes(base / "a.bin") == b"new"
     assert storage.inode(base / "a.bin") == storage.inode(base / "upload")
-    assert not storage.exists(base / ".a.bin.1.huron-part")
+    assert (storage.read_bytes(base / BACKUP), storage.inode(base / BACKUP)) == (b"old", old_inode)
+    assert not storage.exists(base / PART)
 
 
-def test_link_without_a_source_is_false(share: tuple[Storage, Path]) -> None:
+def test_link_without_a_source_raises_source_gone(share: tuple[Storage, Path]) -> None:
     storage, base = share
-    assert storage.link(base / "missing", base / "a.bin", ".a.bin.1.huron-part") is False
+    with pytest.raises(SourceGone):
+        storage.link(base / "missing", base / "a.bin", PART, BACKUP)
     assert not storage.exists(base / "a.bin")
     storage.write_bytes(base / "upload", b"new")
     with pytest.raises(StorageError):
-        storage.link(base / "upload", base / "missing" / "a.bin", ".a.bin.1.huron-part")
+        storage.link(base / "upload", base / "missing" / "a.bin", PART, BACKUP)
+
+
+def test_rename_replaces_the_destination(share: tuple[Storage, Path]) -> None:
+    storage, base = share
+    storage.write_bytes(base / BACKUP, b"old")
+    storage.write_bytes(base / "a.bin", b"new")
+    inode = storage.inode(base / BACKUP)
+    storage.rename(base / BACKUP, base / "a.bin")
+    assert (storage.read_bytes(base / "a.bin"), storage.inode(base / "a.bin")) == (b"old", inode)
+    assert not storage.exists(base / BACKUP)
+    with pytest.raises(StorageError, match="No such file or directory"):
+        storage.rename(base / BACKUP, base / "a.bin")
 
 
 def test_inode_of_a_missing_path_is_none(share: tuple[Storage, Path]) -> None:
@@ -596,8 +622,8 @@ def test_posix_link_and_open_failures_are_storage_errors(
     source = tmp_path / "upload"
     source.write_bytes(b"new")
     (tmp_path / "a.bin").mkdir()
-    with pytest.raises(StorageError, match="Is a directory"):
-        posix.link(source, tmp_path / "a.bin", ".a.bin.1.huron-part")
+    with pytest.raises(StorageError, match="permission denied"):
+        posix.link(source, tmp_path / "a.bin", PART, BACKUP)
     with pytest.raises(StorageError, match="Not a directory"):
         posix.inode(source / "x")
     os.chmod(source, 0)
@@ -645,8 +671,12 @@ def test_memory_without_inheritance_refuses_new_directories(memory: MemoryStorag
         memory.make_inheriting_dir(LAKE / "d")
 
 
-def test_memory_link_into_a_denied_directory_is_refused(memory: MemoryStorage) -> None:
+def test_memory_link_and_rename_into_a_denied_directory_are_refused(
+    memory: MemoryStorage,
+) -> None:
     memory.write_bytes(LAKE / "upload", b"new")
     memory.denied.add(LAKE)
     with pytest.raises(StorageError, match="permission denied"):
-        memory.link(LAKE / "upload", LAKE / "a.bin", ".a.bin.1.huron-part")
+        memory.link(LAKE / "upload", LAKE / "a.bin", PART, BACKUP)
+    with pytest.raises(StorageError, match="permission denied"):
+        memory.rename(LAKE / "upload", LAKE / "a.bin")

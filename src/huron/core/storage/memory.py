@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from huron.core.storage.errors import StorageError
+from huron.core.storage.errors import SourceGone, StorageError
 from huron.core.storage.ports import FileStamp, GroupOutcome, GroupResult, Ownership
 from huron.pkg.fs.acl import Acl
 from huron.pkg.fs.posix import INHERITING_DIR_MODE, Entry, Stamp
@@ -263,27 +263,44 @@ class MemoryStorage:
             raise StorageError(f"{path}: {os.strerror(errno.EISDIR)}", {"path": str(path)})
         return _MemoryFile(self, path, node)
 
-    def link(self, source: Path, destination: Path, part_name: str) -> bool:
-        """Give the file at ``source`` the name ``destination`` too; ``False`` without a source.
+    def link(
+        self, source: Path, destination: Path, part_name: str, backup_name: str
+    ) -> Path | None:
+        """Give the file at ``source`` the name ``destination`` too, and return the backup.
 
-        An existing ``destination`` is replaced through ``part_name``, as on the server.
+        An existing ``destination`` keeps its node under ``backup_name`` and is replaced through
+        ``part_name``, as on the server. A ``destination`` that already is the source's node
+        stays, with the backup an earlier attempt left. Raises ``SourceGone`` without a source.
         """
         node = self.nodes.get(source)
         if node is None:
-            return False
+            raise SourceGone(source)
         if not self.is_directory(destination.parent):
             raise StorageError(
                 f"{destination.parent} does not exist", {"path": str(destination.parent)}
             )
         self._check(destination.parent)
-        if destination in self.nodes:
-            part = destination.with_name(part_name)
-            self.nodes.pop(part, None)
-            self.calls += [("link", part), ("rename", destination)]
-        else:
-            self.calls.append(("link", destination))
+        existing = self.nodes.get(destination)
+        part, backup = destination.with_name(part_name), destination.with_name(backup_name)
+        if existing is node:
+            return backup if backup in self.nodes else None
         self.nodes[destination] = node
-        return True
+        if existing is None:
+            self.calls.append(("link", destination))
+            return None
+        self.nodes.pop(part, None)
+        self.nodes[backup] = existing
+        self.calls += [("link", part), ("link", backup)]
+        self.calls.append(("rename", destination))
+        return backup
+
+    def rename(self, source: Path, destination: Path) -> None:
+        """Give the node at ``source`` the name ``destination``."""
+        if source not in self.nodes:
+            raise StorageError(f"{source}: {os.strerror(errno.ENOENT)}", {"path": str(source)})
+        self._check(destination.parent)
+        self.nodes[destination] = self.nodes.pop(source)
+        self.calls.append(("rename", destination))
 
     def inode(self, path: Path) -> int | None:
         """The inode of ``path``, or ``None``."""

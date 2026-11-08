@@ -1,7 +1,7 @@
 """Share layout, modes, ACL plans, the storage adapters, placement and the in-process locks."""
 
 from huron.core.storage.aclplan import AclPlan, EffectiveGroups, diff, plan
-from huron.core.storage.errors import LakeUnavailable, OutsideLake, StorageError
+from huron.core.storage.errors import LakeUnavailable, OutsideLake, SourceGone, StorageError
 from huron.core.storage.layout import (
     DIRECTORY_MODE,
     FILE_MODE,
@@ -31,7 +31,6 @@ from huron.core.storage.placement import (
     Linked,
     Measured,
     Placer,
-    SourceGone,
 )
 from huron.core.storage.ports import (
     SHARE_GROUP_PENDING,

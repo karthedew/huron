@@ -4,14 +4,23 @@ import asyncio
 import gc
 import hashlib
 import threading
-from collections.abc import AsyncIterator
+import uuid
+from collections.abc import AsyncIterator, Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 import structlog
 
-from huron.applications.api.disk import DISK_WORKERS, PROBE_TIMEOUT, PROBE_TTL, LakeDisk
+from huron.applications.api.disk import (
+    DISK_WORKERS,
+    HASH_WORKERS,
+    PROBE_TIMEOUT,
+    PROBE_TTL,
+    LakeDisk,
+)
 from huron.core.lake.organizations.declarations import Declarations, DeclaredOrganization
 from huron.core.lake.uploads.models import Upload, UploadState
 from huron.core.storage import (
@@ -20,6 +29,7 @@ from huron.core.storage import (
     UPLOAD_DIR,
     LakeUnavailable,
     Marker,
+    OpenFile,
     OrganizationPlace,
     OutsideLake,
     ShareWarning,
@@ -433,11 +443,13 @@ class LinkPausingStorage(MemoryStorage):
         self.release = threading.Event()
         self.order: list[str] = []
 
-    def link(self, source: Path, destination: Path, part_name: str) -> bool:
+    def link(
+        self, source: Path, destination: Path, part_name: str, backup_name: str
+    ) -> Path | None:
         """Wait for :attr:`release`, then link."""
         self.linking.set()
         assert self.release.wait(SIGNAL_TIMEOUT)
-        linked = super().link(source, destination, part_name)
+        linked = super().link(source, destination, part_name, backup_name)
         self.order.append("linked")
         return linked
 
@@ -497,3 +509,147 @@ async def test_a_cancelled_placement_records_its_receipt_before_it_frees_the_pat
         storage.release.set()
         disk.close()
     assert loop_errors == []
+
+
+class HashBlockingStorage(MemoryStorage):
+    """The in-memory lake, whose hashes wait until :attr:`release` is set.
+
+    :attr:`full` is set once :data:`HASH_WORKERS` hashes wait at the same time.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(LAKE, user="huron", uid=SERVICE_GID, gid=SERVICE_GID)
+        self.write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
+        self.full = threading.Event()
+        self.release = threading.Event()
+        self.waiting = 0
+        self.counting = threading.Lock()
+
+    def open_file(self, path: Path) -> OpenFile | None:
+        """Open ``path``; its hash waits for :attr:`release`."""
+        opened = super().open_file(path)
+        return None if opened is None else BlockedHash(opened, self)
+
+
+class BlockedHash:
+    """A file of a :class:`HashBlockingStorage`, whose hash waits for the storage's release."""
+
+    def __init__(self, opened: OpenFile, storage: HashBlockingStorage) -> None:
+        self._opened = opened
+        self._storage = storage
+        self.size = opened.size
+        self.inode = opened.inode
+
+    def sha256(self) -> str:
+        storage = self._storage
+        with storage.counting:
+            storage.waiting += 1
+            if storage.waiting == HASH_WORKERS:
+                storage.full.set()
+        if not storage.release.wait(SIGNAL_TIMEOUT):
+            raise TimeoutError("the test never released the blocked hashes")
+        return self._opened.sha256()
+
+    def set_mode(self, mode: int) -> None:
+        self._opened.set_mode(mode)
+
+    def close(self) -> None:
+        self._opened.close()
+
+
+async def start_placements(
+    world: World, disk: LakeDisk, storage: MemoryStorage, count: int
+) -> tuple[uuid.UUID, list[asyncio.Task[Upload]]]:
+    """Start ``count`` placements of received five-byte uploads; returns run7's id and them."""
+    first = await received(world, storage, b"bytes")
+    uploads = [first]
+    for n in range(count - 1):
+        upload = await world.lake.uploads.begin(CONTRIBUTOR, first.collection_id, f"{n}", 5)
+        storage.write_bytes(LAKE / UPLOAD_DIR / str(upload.id), b"bytes", 0o600)
+        uploads.append(upload)
+    placing = []
+    for upload in uploads:
+        destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
+        placing.append(
+            asyncio.create_task(disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination))
+        )
+    return first.collection_id, placing
+
+
+async def test_blocked_hash_workers_delay_neither_readiness_nor_other_disk_calls(
+    world: World, clock: FrozenClock
+) -> None:
+    storage = HashBlockingStorage()
+    disk = lake_disk(storage, clock)
+    try:
+        await disk.open()
+        # More placements than the disk pool has workers: one pool for both would be full.
+        _, placing = await start_placements(world, disk, storage, DISK_WORKERS + 1)
+        assert await asyncio.to_thread(storage.full.wait, SIGNAL_TIMEOUT)
+        assert await asyncio.wait_for(disk.ready(), SIGNAL_TIMEOUT) is True
+        note = LAKE / "helio" / "note"
+        await asyncio.wait_for(
+            disk.run(note, lambda: storage.write_bytes(note, b"written")), SIGNAL_TIMEOUT
+        )
+        assert storage.read_bytes(note) == b"written"
+        assert storage.waiting == HASH_WORKERS
+        storage.release.set()
+        placed = await asyncio.wait_for(asyncio.gather(*placing), SIGNAL_TIMEOUT)
+        assert {upload.state for upload in placed} == {UploadState.PLACED}
+    finally:
+        storage.release.set()
+        disk.close()
+
+
+class RecordingExecutor(ThreadPoolExecutor):
+    """A thread pool that records the name prefix of its threads at every submission."""
+
+    submitted: ClassVar[list[str]] = []
+
+    def __init__(self, max_workers: int, thread_name_prefix: str = "") -> None:
+        super().__init__(max_workers, thread_name_prefix=thread_name_prefix)
+        self.prefix = thread_name_prefix
+
+    def submit[**P, T](self, fn: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs) -> Future[T]:
+        """Submit ``fn`` and record the submission."""
+        future = super().submit(fn, *args, **kwargs)
+        self.submitted.append(self.prefix)
+        return future
+
+
+async def test_close_drops_a_queued_hash_and_refuses_later_disk_work(
+    world: World, clock: FrozenClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("huron.applications.api.disk.ThreadPoolExecutor", RecordingExecutor)
+    monkeypatch.setattr(RecordingExecutor, "submitted", [])
+    storage = HashBlockingStorage()
+    disk = lake_disk(storage, clock)
+    try:
+        await disk.open()
+        collection_id, placing = await start_placements(world, disk, storage, HASH_WORKERS + 1)
+
+        async def queued() -> None:
+            while RecordingExecutor.submitted.count("huron-hash") <= HASH_WORKERS:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(queued(), SIGNAL_TIMEOUT)
+        assert await asyncio.to_thread(storage.full.wait, SIGNAL_TIMEOUT)
+        disk.close()
+        storage.release.set()
+        ended = await asyncio.wait_for(
+            asyncio.gather(*placing, return_exceptions=True), SIGNAL_TIMEOUT
+        )
+        assert sorted(type(outcome).__name__ for outcome in ended) == [
+            "CancelledError",
+            *["RuntimeError"] * HASH_WORKERS,
+        ]
+        assert storage.waiting == HASH_WORKERS
+        with pytest.raises(RuntimeError, match="after shutdown"):
+            await disk.run(LAKE / "helio", lambda: None)
+        late = await world.lake.uploads.begin(CONTRIBUTOR, collection_id, "late", 5)
+        destination = await world.lake.uploads.placement(CONTRIBUTOR, late.id)
+        with pytest.raises(RuntimeError, match="after shutdown"):
+            await disk.place(world.lake.uploads, CONTRIBUTOR, late, destination)
+    finally:
+        storage.release.set()
+        disk.close()

@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
 from huron.core.storage.aclplan import AclPlan, diff
-from huron.core.storage.errors import StorageError
+from huron.core.storage.errors import SourceGone, StorageError
 from huron.core.storage.ports import FileStamp, GroupOutcome, GroupResult, Ownership
 from huron.pkg.fs import posix
 from huron.pkg.fs.acl import Acl, AclEntry, Runner, read_acl, write_acl
@@ -157,17 +157,22 @@ class PosixStorage:
             os.close(descriptor)
             raise
 
-    def link(self, source: Path, destination: Path, part_name: str) -> bool:
-        """Hard-link ``source`` to ``destination``; ``False`` when ``source`` does not exist."""
+    def link(
+        self, source: Path, destination: Path, part_name: str, backup_name: str
+    ) -> Path | None:
+        """Hard-link ``source`` to ``destination``; the replaced file stays as ``backup_name``."""
         try:
-            posix.link_into_place(source, destination, part_name)
+            return posix.link_into_place(source, destination, part_name, backup_name)
         except FileNotFoundError as error:
             if not os.path.lexists(source):
-                return False
+                raise SourceGone(source) from error
             raise _storage_error(destination, error) from error
         except OSError as error:
             raise _storage_error(destination, error) from error
-        return True
+
+    def rename(self, source: Path, destination: Path) -> None:
+        """Give the file at ``source`` the name ``destination``, replacing it atomically."""
+        _guard(lambda: os.rename(source, destination), destination)
 
     def inode(self, path: Path) -> int | None:
         """The inode number of ``path``; ``None`` when it does not exist."""

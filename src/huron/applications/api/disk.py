@@ -1,8 +1,10 @@
 """The API's hold on the lake: where paths are, which marker guards them, and the disk work.
 
 The lake is a ``hard`` NFS mount, so a disk call can block without end during an outage. All
-disk work therefore runs in a dedicated pool of worker threads, never in the event loop or the
-default executor, and readiness waits for its probe only for a bounded time.
+disk work therefore runs in dedicated pools of worker threads, never in the event loop or the
+default executor, and readiness waits for its probe only for a bounded time. The hashes of
+uploads run in a pool of their own, so a burst of large uploads never delays the probe or the
+short directory and metadata calls.
 """
 
 from __future__ import annotations
@@ -52,10 +54,12 @@ if TYPE_CHECKING:
     from huron.core.storage import PathLocks, Storage
     from huron.pkg.clock import Clock
 
-__all__ = ["DISK_WORKERS", "PROBE_TIMEOUT", "PROBE_TTL", "LakeDisk"]
+__all__ = ["DISK_WORKERS", "HASH_WORKERS", "PROBE_TIMEOUT", "PROBE_TTL", "LakeDisk"]
 
-#: The worker threads of the disk pool.
+#: The worker threads of the disk pool, which runs every disk call but the hashes of uploads.
 DISK_WORKERS = 8
+#: The worker threads of the hash pool, which measures uploads.
+HASH_WORKERS = 4
 #: How long readiness waits for the lake probe, in seconds.
 PROBE_TIMEOUT = 2.0
 #: How long readiness keeps the probe's answer.
@@ -98,6 +102,7 @@ class LakeDisk:
         self._probe_timeout = probe_timeout
         self._placer = Placer(storage, lake_path)
         self._pool = ThreadPoolExecutor(DISK_WORKERS, thread_name_prefix="huron-disk")
+        self._hash_pool = ThreadPoolExecutor(HASH_WORKERS, thread_name_prefix="huron-hash")
         self._probe: asyncio.Future[bool] | None = None
         self._probed: tuple[datetime, bool] | None = None
 
@@ -115,8 +120,9 @@ class LakeDisk:
         await self._call(self._open)
 
     def close(self) -> None:
-        """Stop the disk pool; work that has not started is dropped."""
+        """Stop the disk pool and the hash pool; work that has not started is dropped."""
         self._pool.shutdown(wait=False, cancel_futures=True)
+        self._hash_pool.shutdown(wait=False, cancel_futures=True)
 
     async def ready(self) -> bool:
         """Whether this process can write the upload directory.
@@ -192,13 +198,15 @@ class LakeDisk:
     ) -> Upload:
         """Place the actor's pending ``upload`` at ``destination`` and record its receipt.
 
-        The hash runs outside every lock. The link, the removal of tusd's files and the receipt
-        run under the lock of the destination path. A receipt refused because the collection or
-        the upload ended during the hash takes the placed file away again and raises the
-        refusal. A path outside the lake and a missing collection directory fail the upload.
-        When the upload's file is gone, another attempt moved it: the upload's state, or the
-        file at the destination, decides. Raises ``STORAGE_FAILED`` when neither proves the
-        placement, and ``LAKE_UNAVAILABLE`` when the lake or its marker refuses the write.
+        The hash runs in the hash pool, outside every lock. The link, the removal of tusd's files
+        and the receipt run under the lock of the destination path. A file the placement
+        replaces stays as a backup until the receipt is recorded. A receipt refused because the
+        collection or the upload ended during the hash takes the placed file away again, puts a
+        replaced file back, and raises the refusal. A path outside the lake and a missing
+        collection directory fail the upload. When the upload's file is gone, another attempt
+        moved it: the upload's state, or the file at the destination, decides. Raises
+        ``STORAGE_FAILED`` when neither proves the placement, and ``LAKE_UNAVAILABLE`` when the
+        lake or its marker refuses the write.
         """
         try:
             path = await self.resolve(destination.path)
@@ -207,7 +215,7 @@ class LakeDisk:
             raise
         await self.check_marker(self.place_of(_organization(destination.path)))
         source = self._placer.upload_file(upload.id)
-        measured = await self._call(lambda: self._placer.measure(source, upload.size))
+        measured = await self._hash(lambda: self._placer.measure(source, upload.size))
         depth = len(PurePosixPath(upload.rel_path).parts)
         placement = _Placement(uploads, actor, upload, path, path.parents[depth - 1])
         return await self._hold(path, lambda: self._settle(placement, measured))
@@ -227,12 +235,14 @@ class LakeDisk:
         except SourceGone:
             return await self._replay(placement)
         try:
-            return await placement.uploads.receipt(
+            placed = await placement.uploads.receipt(
                 upload.id, measured.size, measured.sha256, measured.inode
             )
         except (UploadNotFound, UploadStateConflict):
-            await self._call(lambda: self._placer.undo(path, measured.inode, linked.made_dirs))
+            await self._call(lambda: self._placer.undo(path, measured.inode, linked))
             raise
+        await self._call(lambda: self._placer.drop_backup(path, upload.id))
+        return placed
 
     async def _replay(self, placement: _Placement) -> Upload:
         upload, path = placement.upload, placement.path
@@ -240,11 +250,13 @@ class LakeDisk:
         if current.state in {UploadState.PLACED, UploadState.COMMITTED}:
             return current
         if current.state is UploadState.PENDING:
-            measured = await self._call(lambda: self._placer.measure_destination(path, upload.size))
+            measured = await self._hash(lambda: self._placer.measure_destination(path, upload.size))
             if measured is not None:
-                return await placement.uploads.receipt(
+                placed = await placement.uploads.receipt(
                     upload.id, measured.size, measured.sha256, measured.inode
                 )
+                await self._call(lambda: self._placer.drop_backup(path, upload.id))
+                return placed
         raise StorageError(
             f"the file of upload {upload.id} is gone, and {path} does not hold its bytes",
             {"path": str(path), "upload": str(upload.id)},
@@ -271,6 +283,9 @@ class LakeDisk:
 
     async def _call[T](self, action: Callable[[], T]) -> T:
         return await self._submit(action)
+
+    async def _hash[T](self, action: Callable[[], T]) -> T:
+        return await asyncio.get_running_loop().run_in_executor(self._hash_pool, action)
 
     def _open(self) -> None:
         self._require_lake()

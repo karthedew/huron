@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from huron.pkg.errors import HuronError, Invalid, register
 
 __all__ = [
+    "BACKUP_SUFFIX",
     "IDENTIFIER_MAX_BYTES",
     "METADATA_FILE",
     "PART_SUFFIX",
@@ -35,6 +36,8 @@ REL_PATH_SEGMENT_MAX_BYTES = 255
 RESERVED_SEGMENTS = frozenset({"huron", "metadata"})
 METADATA_FILE = "metadata.json"
 PART_SUFFIX = ".huron-part"
+#: The suffix of the link that keeps a replaced file's bytes until its replacement is recorded.
+BACKUP_SUFFIX = ".huron-prev"
 
 NAME_INVALID = register("NAME_INVALID", 422, "Name invalid")
 
@@ -164,5 +167,5 @@ def _check_path_segment(segment: str, value: str) -> None:
         raise RelPathError("rel_path_separator", value)
     if len(segment.encode()) > REL_PATH_SEGMENT_MAX_BYTES:
         raise RelPathError("rel_path_segment", value)
-    if segment.startswith(".huron") or segment.endswith(PART_SUFFIX):
+    if segment.startswith(".huron") or segment.endswith((PART_SUFFIX, BACKUP_SUFFIX)):
         raise RelPathError("rel_path_reserved", value)

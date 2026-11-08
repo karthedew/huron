@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import httpx
 import pytest
 
 from huron.core.storage import MARKER_FILE, Marker, render_marker
@@ -27,6 +28,8 @@ from tests.support.tusd import (
 
 DATA = b"solar wind, run seven"
 SHA = hashlib.sha256(DATA).hexdigest()
+OLD = b"old bytes"
+OLD_SHA = hashlib.sha256(OLD).hexdigest()
 
 
 def receipt(upload_id: str, sha256: str) -> dict[str, object]:
@@ -55,6 +58,32 @@ async def pausing(lake: Path) -> AsyncIterator[tuple[Service, PausingStorage, Up
 
 async def hashing(storage: PausingStorage) -> None:
     assert await asyncio.to_thread(storage.hashing.wait, SIGNAL_TIMEOUT)
+
+
+async def delete_collection(api: Service, target: UploadTarget) -> httpx.Response:
+    return await api.client.delete(
+        f"/api/v1/collections/{target.collection_id}",
+        headers=await api.headers("dave", **{"If-Match": f'"{target.version}"'}),
+    )
+
+
+async def commit(api: Service, target: UploadTarget, rel_path: str, data: bytes) -> None:
+    """Commit the placed upload of ``data`` to ``rel_path`` as dave."""
+    body = {
+        "base_version": target.version,
+        "adds": [
+            {"rel_path": rel_path, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        ],
+        "removes": [],
+        "host": "ws1",
+        "message": "first",
+    }
+    committed = await api.client.post(
+        f"/api/v1/collections/{target.collection_id}/commits",
+        json=body,
+        headers=await api.headers("dave"),
+    )
+    assert committed.status_code == 200, committed.text
 
 
 async def test_a_fresh_upload_is_placed_and_received(
@@ -88,8 +117,8 @@ async def test_a_fresh_upload_is_placed_and_received(
 async def test_an_upload_replaces_a_file_through_the_part_file(
     target: UploadTarget, stale_part: bool
 ) -> None:
-    first = await target.tusd.begin("dave", target.collection_id, "c.bin", b"old bytes")
-    await target.tusd.finish("dave", first, 9)
+    first = await target.tusd.begin("dave", target.collection_id, "c.bin", OLD)
+    await target.tusd.finish("dave", first, len(OLD))
     second = await target.tusd.begin("frank", target.collection_id, "c.bin", DATA)
     if stale_part:
         (target.directory / f".c.bin.{second}.huron-part").write_bytes(b"stale")
@@ -108,19 +137,7 @@ async def test_a_retried_pre_finish_after_the_receipt_answers_it_again_without_d
     again = await target.tusd.finish("dave", upload_id, len(DATA))
     assert again.json() == first.json() == receipt(upload_id, SHA)
     assert not (target.directory / "c.bin").exists()
-    commit = {
-        "base_version": target.version,
-        "adds": [{"rel_path": "c.bin", "size": len(DATA), "sha256": SHA}],
-        "removes": [],
-        "host": "ws1",
-        "message": "first",
-    }
-    committed = await seeded_lake_api.client.post(
-        f"/api/v1/collections/{target.collection_id}/commits",
-        json=commit,
-        headers=await seeded_lake_api.headers("dave"),
-    )
-    assert committed.status_code == 200, committed.text
+    await commit(seeded_lake_api, target, "c.bin", DATA)
     assert (await state(seeded_lake_api, upload_id))["state"] == "committed"
     late = await target.tusd.finish("dave", upload_id, len(DATA))
     assert late.json() == receipt(upload_id, SHA)
@@ -189,11 +206,7 @@ async def test_a_collection_deleted_during_the_hash_takes_the_placed_file_away(
     upload_id = await target.tusd.begin("dave", target.collection_id, "a/b/c.bin", DATA)
     finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
     await hashing(storage)
-    deleted = await api.client.delete(
-        f"/api/v1/collections/{target.collection_id}",
-        headers=await api.headers("dave", **{"If-Match": f'"{target.version}"'}),
-    )
-    assert deleted.status_code == 204, deleted.text
+    assert (await delete_collection(api, target)).status_code == 204
     storage.release.set()
     finished = await asyncio.wait_for(finishing, SIGNAL_TIMEOUT)
     problem = problem_of(finished)
@@ -215,6 +228,85 @@ async def test_a_termination_during_the_hash_takes_the_placed_file_away(
     assert (problem["status"], problem["code"]) == (409, "UPLOAD_STATE_CONFLICT")
     assert list(target.directory.iterdir()) == []
     assert (await state(api, upload_id))["state"] == "terminated"
+
+
+async def uploaded_first(
+    api: Service, storage: PausingStorage, target: UploadTarget, *, committed: bool
+) -> tuple[Path, int]:
+    """Place an upload of ``OLD`` to ``c.bin``, committed or not; the next hash pauses.
+
+    Returns the placed file and its inode.
+    """
+    storage.release.set()
+    first = await target.tusd.begin("dave", target.collection_id, "c.bin", OLD)
+    assert (await target.tusd.finish("dave", first, len(OLD))).json() == receipt(first, OLD_SHA)
+    if committed:
+        await commit(api, target, "c.bin", OLD)
+    storage.pause_next()
+    placed = target.directory / "c.bin"
+    return placed, os.lstat(placed).st_ino
+
+
+@pytest.mark.parametrize(
+    ("refusal", "status", "code"),
+    [("delete", 404, "UPLOAD_NOT_FOUND"), ("terminate", 409, "UPLOAD_STATE_CONFLICT")],
+)
+async def test_an_overwrite_refused_after_the_link_restores_the_replaced_file(
+    pausing: tuple[Service, PausingStorage, UploadTarget], refusal: str, status: int, code: str
+) -> None:
+    api, storage, target = pausing
+    # A collection with recorded files cannot be deleted, so the delete replaces a placed file.
+    replaced, inode = await uploaded_first(api, storage, target, committed=refusal == "terminate")
+    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
+    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
+    await hashing(storage)
+    if refusal == "delete":
+        assert (await delete_collection(api, target)).status_code == 204
+    else:
+        assert (await target.tusd.terminate("dave", upload_id)).json() == {}
+    storage.release.set()
+    problem = problem_of(await asyncio.wait_for(finishing, SIGNAL_TIMEOUT))
+    assert (problem["status"], problem["code"]) == (status, code)
+    assert (replaced.read_bytes(), os.lstat(replaced).st_ino) == (OLD, inode)
+    assert not (target.directory / f".c.bin.{upload_id}.huron-prev").exists()
+
+
+async def test_a_termination_after_a_crash_between_the_rename_and_the_cleanup_restores_the_file(
+    pausing: tuple[Service, PausingStorage, UploadTarget],
+) -> None:
+    api, storage, target = pausing
+    replaced, inode = await uploaded_first(api, storage, target, committed=True)
+    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
+    # An earlier attempt renamed its part over c.bin and stopped before it removed tusd's files.
+    backup = target.directory / f".c.bin.{upload_id}.huron-prev"
+    part = target.directory / f".c.bin.{upload_id}.huron-part"
+    os.link(replaced, backup)
+    os.link(target.tusd.upload_dir / upload_id, part)
+    os.rename(part, replaced)
+    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
+    await hashing(storage)
+    assert (await target.tusd.terminate("dave", upload_id)).json() == {}
+    storage.release.set()
+    problem = problem_of(await asyncio.wait_for(finishing, SIGNAL_TIMEOUT))
+    assert (problem["status"], problem["code"]) == (409, "UPLOAD_STATE_CONFLICT")
+    assert (replaced.read_bytes(), os.lstat(replaced).st_ino) == (OLD, inode)
+    assert not backup.exists()
+
+
+async def test_a_replay_after_a_crash_between_the_rename_and_the_receipt_drops_the_backup(
+    seeded_lake_api: Service, target: UploadTarget
+) -> None:
+    destination = target.directory / "c.bin"
+    destination.write_bytes(OLD)
+    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
+    backup = target.directory / f".c.bin.{upload_id}.huron-prev"
+    os.link(destination, backup)
+    os.replace(target.tusd.upload_dir / upload_id, destination)
+    finished = await target.tusd.finish("dave", upload_id, len(DATA))
+    assert finished.json() == receipt(upload_id, SHA)
+    assert destination.read_bytes() == DATA
+    assert not backup.exists()
+    assert (await state(seeded_lake_api, upload_id))["state"] == "placed"
 
 
 async def test_a_missing_collection_directory_fails_the_upload(

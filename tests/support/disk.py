@@ -83,13 +83,19 @@ class PausingStorage(PosixStorage):
     """POSIX storage whose first hash waits until :attr:`release` is set.
 
     :attr:`hashing` is set once that hash waits, so a test can act while a placement hashes.
-    Later hashes do not wait.
+    Later hashes do not wait, until :meth:`pause_next`.
     """
 
     def __init__(self) -> None:
         super().__init__("none", SubprocessRunner())
         self.hashing = threading.Event()
         self.release = threading.Event()
+        self._paused = False
+
+    def pause_next(self) -> None:
+        """Make the next hash wait as the first one did, with both signals cleared."""
+        self.hashing.clear()
+        self.release.clear()
         self._paused = False
 
     def open_file(self, path: Path) -> OpenFile | None:
