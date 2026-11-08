@@ -10,14 +10,16 @@ from pathlib import Path
 import pytest
 
 from huron.core.storage import (
+    DIRECTORY_MODE,
     MARKER_FILE,
     MARKER_MODE,
     ORGANIZATION_MODE,
+    LakePath,
     Marker,
     MarkerState,
+    OrganizationPlace,
     StorageError,
     marker_state,
-    place_of,
     read_marker,
     render_marker,
     verify_marker,
@@ -30,26 +32,39 @@ from huron.core.storage.check import (
 )
 from huron.core.storage.memory import MemoryStorage
 from huron.core.storage.posix import PosixStorage
-from huron.core.storage.provision import OrganizationTarget, Provisioner, provision_script
+from huron.core.storage.provision import (
+    OrganizationTarget,
+    Provisioner,
+    absolute,
+    provision_script,
+)
+from huron.pkg.errors import HuronError
 
-PREFIX = Path("/projects/huron")
-ROOT = Path("/data1/huron")
+PREFIX = "/projects/huron"
+#: The root of the declared organizations, below the lake path.
+ROOT = LakePath.of("data1")
+HELIO = ROOT.joinpath("helio")
 INSTANCE = "id-1"
+
+
+def shown(location: LakePath) -> str:
+    """Where ``location`` is on this machine."""
+    return absolute(PREFIX, location)
 
 
 def helio_marker(instance: str = INSTANCE, organization: str | None = "helio") -> Marker:
     return Marker(1, "http://huron.test", instance, organization)
 
 
-def target(root: Path = ROOT, name: str = "helio") -> OrganizationTarget:
+def target(root: LakePath = ROOT, name: str = "helio") -> OrganizationTarget:
     return OrganizationTarget(
-        place_of(name, str(root), True, PREFIX), helio_marker(organization=name)
+        OrganizationPlace(name, root, own_marker=True), helio_marker(organization=name)
     )
 
 
 def share() -> MemoryStorage:
-    storage = MemoryStorage(PREFIX)
-    storage.add_root(ROOT, uid=storage.uid)
+    storage = MemoryStorage(Path(PREFIX))
+    storage.add_directory(ROOT, uid=storage.uid)
     return storage
 
 
@@ -57,86 +72,97 @@ def provisioner(storage: MemoryStorage) -> Provisioner:
     return Provisioner(storage, PREFIX)
 
 
-def test_an_organization_without_a_root_lives_under_the_prefix() -> None:
-    place = place_of("helio", None, False, PREFIX)
-    assert place.directory == PREFIX / "helio"
-    assert not place.own_marker and place.marker_directory == PREFIX
-    assert place.resolve("helio/sun/wind") == PREFIX / "helio" / "sun" / "wind"
+def test_an_organization_without_its_own_marker_shares_the_marker_at_its_base() -> None:
+    place = OrganizationPlace("helio", LakePath(), own_marker=False)
+    assert place.directory == LakePath.of("helio")
+    assert place.marker_directory == LakePath()
+    assert place.locate("helio/sun/wind") == LakePath.of("helio", "sun", "wind")
 
 
-def test_a_declared_organization_without_a_root_carries_its_own_marker() -> None:
-    place = place_of("helio", None, True, PREFIX)
-    assert place.directory == PREFIX / "helio"
-    assert place.own_marker and place.marker_directory == PREFIX / "helio"
+def test_an_organization_with_its_own_marker_lives_below_its_root() -> None:
+    place = OrganizationPlace("geo", LakePath.of("data2"), own_marker=True)
+    assert place.directory == LakePath.of("data2", "geo") == place.marker_directory
+    assert place.locate("geo/terra") == LakePath.of("data2", "geo", "terra")
 
 
-def test_an_organization_with_a_root_lives_under_it() -> None:
-    place = place_of("geo", "/data2/huron/", True, PREFIX)
-    assert place.base == Path("/data2/huron") and place.rooted
-    assert place.directory == Path("/data2/huron/geo") == place.marker_directory
-    assert place.resolve("geo/terra") == Path("/data2/huron/geo/terra")
-    assert place_of("geo", "/", True, PREFIX).directory == Path("/geo")
-    assert place_of("geo", None, True, PREFIX, "nfs1:/geo").export == "nfs1:/geo"
-    assert place_of("geo", "/data2/huron", True, PREFIX).export is None
+def test_absolute_names_a_lake_path_on_this_machine() -> None:
+    assert absolute("/lake/", LakePath.of("a", "b")) == "/lake/a/b"
+    assert absolute("/lake", LakePath()) == "/lake"
 
 
-@pytest.mark.parametrize("root", ["data2/huron", "/data2/../etc", "/data2//huron", "/a/./b", ""])
-def test_roots_that_are_not_absolute_and_normalized_are_refused(root: str) -> None:
-    with pytest.raises(StorageError, match="not an absolute, normalized path"):
-        place_of("geo", root, True, PREFIX)
+@pytest.mark.parametrize("api_path", ["geo/terra", "helio/../geo", "", "helio//x"])
+def test_a_place_refuses_paths_of_other_organizations_and_escapes(api_path: str) -> None:
+    place = OrganizationPlace("helio", ROOT, own_marker=True)
+    with pytest.raises(HuronError) as refused:
+        place.locate(api_path)
+    assert (refused.value.code, refused.value.context["rule"]) == ("NAME_INVALID", "lake_name")
 
 
-def test_a_place_refuses_paths_of_other_organizations_and_escapes() -> None:
-    place = place_of("helio", str(ROOT), True, PREFIX)
-    with pytest.raises(StorageError, match="not in organization helio"):
-        place.resolve("geo/terra")
-    with pytest.raises(StorageError):
-        place.resolve("helio/../geo")
+def test_each_directory_of_an_organization_has_its_mode() -> None:
+    place = OrganizationPlace("helio", ROOT, own_marker=True)
+    assert place.mode_of(HELIO) == ORGANIZATION_MODE
+    assert place.mode_of(HELIO.joinpath("cat")) == DIRECTORY_MODE
+    assert place.mode_of(HELIO.joinpath("cat", "ns", "run7")) == DIRECTORY_MODE
+    with pytest.raises(ValueError, match="not below"):
+        place.mode_of(LakePath.of("geo"))
+
+
+def write(storage: MemoryStorage, location: LakePath, data: bytes) -> None:
+    storage.write_bytes(location, data, 0o644)
 
 
 def test_organization_markers_round_trip() -> None:
     storage = share()
     assert b'"organization"' not in render_marker(helio_marker(organization=None))
-    storage.write_bytes(ROOT / MARKER_FILE, render_marker(helio_marker()))
+    write(storage, ROOT.joinpath(MARKER_FILE), render_marker(helio_marker()))
     assert read_marker(storage, ROOT) == helio_marker()
     assert verify_marker(storage, ROOT, INSTANCE, "helio").organization == "helio"
 
 
 def test_a_marker_must_name_exactly_the_expected_organization() -> None:
     storage = share()
-    storage.write_bytes(ROOT / MARKER_FILE, render_marker(helio_marker()))
+    write(storage, ROOT.joinpath(MARKER_FILE), render_marker(helio_marker()))
     with pytest.raises(StorageError, match="names organization helio, not organization geo"):
         verify_marker(storage, ROOT, INSTANCE, "geo")
-    with pytest.raises(StorageError, match="names organization helio, not the share root"):
+    with pytest.raises(StorageError, match="names organization helio, not the lake path"):
         verify_marker(storage, ROOT, INSTANCE)
-    storage.write_bytes(ROOT / MARKER_FILE, render_marker(helio_marker(organization=None)))
+    write(storage, ROOT.joinpath(MARKER_FILE), render_marker(helio_marker(organization=None)))
     with pytest.raises(StorageError, match="names no organization, not organization helio"):
         verify_marker(storage, ROOT, INSTANCE, "helio")
 
 
 def test_marker_states_name_every_refusal() -> None:
     storage = share()
-    assert marker_state(storage, ROOT / "absent", INSTANCE, "helio") is MarkerState.MISSING
+    assert marker_state(storage, ROOT.joinpath("absent"), INSTANCE, "helio") is MarkerState.MISSING
     assert marker_state(storage, ROOT, INSTANCE, "helio") is MarkerState.NO_MARKER
-    storage.write_bytes(ROOT / MARKER_FILE, b"[1, 2]")
+    write(storage, ROOT.joinpath(MARKER_FILE), b"[1, 2]")
     assert marker_state(storage, ROOT, INSTANCE, "helio") is MarkerState.NO_MARKER
-    storage.write_bytes(ROOT / MARKER_FILE, render_marker(helio_marker("id-2")))
+    write(storage, ROOT.joinpath(MARKER_FILE), render_marker(helio_marker("id-2")))
     assert marker_state(storage, ROOT, INSTANCE, "helio") is MarkerState.WRONG_INSTANCE
     assert marker_state(storage, ROOT, INSTANCE, "geo") is MarkerState.WRONG_INSTANCE
-    storage.write_bytes(ROOT / MARKER_FILE, render_marker(helio_marker()))
+    write(storage, ROOT.joinpath(MARKER_FILE), render_marker(helio_marker()))
     assert marker_state(storage, ROOT, INSTANCE, "geo") is MarkerState.WRONG_ORG
     assert marker_state(storage, ROOT, INSTANCE, "helio") is MarkerState.OK
     assert str(MarkerState.WRONG_ORG) == "wrong org"
 
 
+def test_a_marker_state_raises_a_refusal_that_is_no_marker_state() -> None:
+    storage = share()
+    storage.symlink(ROOT.joinpath("link"), "/outside")
+    with pytest.raises(StorageError) as refused:
+        marker_state(storage, ROOT.joinpath("link"), INSTANCE, "helio")
+    assert refused.value.code == "SYMLINK_IN_LAKE"
+
+
 def test_provisioning_creates_the_directory_with_its_mode_and_marks_it() -> None:
     storage = share()
     steps = provisioner(storage).provision(target())
-    directory = ROOT / "helio"
-    assert steps == [f"created: {directory}", f"marker written: {directory / MARKER_FILE}"]
-    assert storage.nodes[directory].mode == ORGANIZATION_MODE
-    assert storage.nodes[directory / MARKER_FILE].mode == MARKER_MODE
-    assert read_marker(storage, directory) == helio_marker()
+    marker = HELIO.joinpath(MARKER_FILE)
+    assert steps == [f"created: {shown(HELIO)}", f"marker written: {shown(marker)}"]
+    assert steps[0] == "created: /projects/huron/data1/helio"
+    assert storage.nodes[HELIO].mode == ORGANIZATION_MODE
+    assert storage.nodes[marker].mode == MARKER_MODE
+    assert read_marker(storage, HELIO) == helio_marker()
 
 
 def test_provisioning_again_changes_nothing() -> None:
@@ -144,31 +170,31 @@ def test_provisioning_again_changes_nothing() -> None:
     provisioner(storage).provision(target())
     before = list(storage.calls)
     again = provisioner(storage).provision(target())
-    assert again == [f"exists: {ROOT / 'helio'}", f"marker ok: {ROOT / 'helio' / MARKER_FILE}"]
+    marker = HELIO.joinpath(MARKER_FILE)
+    assert again == [f"exists: {shown(HELIO)}", f"marker ok: {shown(marker)}"]
     assert storage.calls == before
 
 
 def test_provisioning_repairs_an_existing_directory_without_a_marker() -> None:
     storage = share()
-    directory = ROOT / "helio"
-    storage.make_directory(directory, 0o2750)
+    storage.make_directory(HELIO, 0o2750)
     steps = provisioner(storage).provision(target())
     assert steps == [
-        f"exists: {directory}",
-        f"mode set to 2751: {directory}",
-        f"marker written: {directory / MARKER_FILE}",
+        f"exists: {shown(HELIO)}",
+        f"mode set to 2751: {shown(HELIO)}",
+        f"marker written: {shown(HELIO.joinpath(MARKER_FILE))}",
     ]
-    assert storage.nodes[directory].mode == ORGANIZATION_MODE
-    assert read_marker(storage, directory).organization == "helio"
+    assert storage.nodes[HELIO].mode == ORGANIZATION_MODE
+    assert read_marker(storage, HELIO).organization == "helio"
 
 
 def test_a_dry_run_reports_and_changes_nothing() -> None:
     storage = share()
-    directory, marker = ROOT / "helio", ROOT / "helio" / MARKER_FILE
+    directory, marker = shown(HELIO), shown(HELIO.joinpath(MARKER_FILE))
     planned = provisioner(storage).provision(target(), dry_run=True)
     assert planned == [f"would create: {directory}", f"would write marker: {marker}"]
-    assert storage.calls == [] and not storage.exists(directory)
-    storage.make_directory(directory, 0o2750)
+    assert storage.calls == [] and storage.stat(HELIO) is None
+    storage.make_directory(HELIO, 0o2750)
     calls = list(storage.calls)
     assert provisioner(storage).provision(target(), dry_run=True) == [
         f"exists: {directory}",
@@ -183,11 +209,12 @@ def test_a_dry_run_reports_and_changes_nothing() -> None:
 
 def test_the_root_itself_is_never_created() -> None:
     storage = share()
+    geo = target(LakePath.of("data2"), "geo")
+    with pytest.raises(StorageError, match="the root /projects/huron/data2 of organization geo"):
+        provisioner(storage).provision(geo)
     with pytest.raises(StorageError, match="The storage admin creates it"):
-        provisioner(storage).provision(target(Path("/data2/huron"), "geo"))
-    with pytest.raises(StorageError, match="does not exist"):
-        provisioner(storage).provision(target(Path("/data2/huron"), "geo"), dry_run=True)
-    assert not storage.exists(Path("/data2/huron"))
+        provisioner(storage).provision(geo, dry_run=True)
+    assert storage.stat(LakePath.of("data2")) is None
 
 
 @pytest.mark.parametrize(
@@ -204,51 +231,63 @@ def test_the_root_itself_is_never_created() -> None:
 )
 def test_a_foreign_marker_is_never_overwritten(data: bytes, reason: str) -> None:
     storage = share()
-    storage.make_directory(ROOT / "helio", 0o2750)
-    storage.write_bytes(ROOT / "helio" / MARKER_FILE, data)
+    storage.make_directory(HELIO, 0o2750)
+    write(storage, HELIO.joinpath(MARKER_FILE), data)
     before = list(storage.calls)
     for dry_run in (False, True):
         with pytest.raises(StorageError, match="Huron does not overwrite it") as refused:
             provisioner(storage).provision(target(), dry_run=dry_run)
         assert reason in refused.value.message
-    assert storage.calls == before and storage.nodes[ROOT / "helio"].mode == 0o2750
-    assert storage.read_bytes(ROOT / "helio" / MARKER_FILE) == data
+        assert refused.value.context["path"] == shown(HELIO)
+    assert storage.calls == before and storage.nodes[HELIO].mode == 0o2750
+    assert storage.read_bytes(HELIO.joinpath(MARKER_FILE)) == data
 
 
 def test_provisioning_a_directory_owned_by_someone_else_fails_cleanly() -> None:
     storage = share()
-    storage.add_root(ROOT / "helio", uid=0)
+    storage.add_directory(HELIO, uid=0)
     with pytest.raises(StorageError, match="permission denied"):
         provisioner(storage).provision(target())
-    assert not storage.exists(ROOT / "helio" / MARKER_FILE)
+    assert storage.stat(HELIO.joinpath(MARKER_FILE)) is None
 
 
 def test_the_lake_path_gets_the_marker_of_the_service() -> None:
     storage = share()
-    marker = PREFIX / MARKER_FILE
+    marker, location = shown(LakePath.of(MARKER_FILE)), LakePath.of(MARKER_FILE)
     lake = helio_marker(organization=None)
     assert provisioner(storage).mark_lake(lake, dry_run=True) == [f"would write marker: {marker}"]
-    assert storage.calls == [] and not storage.exists(marker)
+    assert storage.calls == [] and storage.stat(location) is None
     assert provisioner(storage).mark_lake(lake) == [f"marker written: {marker}"]
-    assert read_marker(storage, PREFIX) == lake
-    assert storage.nodes[marker].mode == MARKER_MODE
+    assert marker == "/projects/huron/.huron"
+    assert read_marker(storage, LakePath()) == lake
+    assert storage.nodes[location].mode == MARKER_MODE
     assert provisioner(storage).mark_lake(lake) == [f"marker ok: {marker}"]
     assert provisioner(storage).mark_lake(lake, dry_run=True) == [f"marker ok: {marker}"]
 
 
-def test_the_lake_path_marker_is_never_overwritten_and_the_path_never_created() -> None:
+def test_the_lake_path_marker_is_never_overwritten_and_the_path_never_created(
+    tmp_path: Path,
+) -> None:
     storage = share()
-    storage.write_bytes(PREFIX / MARKER_FILE, render_marker(helio_marker()))
+    write(storage, LakePath.of(MARKER_FILE), render_marker(helio_marker()))
     with pytest.raises(StorageError, match="names service id-1 and organization helio"):
         provisioner(storage).mark_lake(helio_marker(organization=None))
-    with pytest.raises(StorageError, match="the lake path /lake does not exist"):
-        Provisioner(storage, Path("/lake")).mark_lake(helio_marker(organization=None))
-    assert not storage.exists(Path("/lake"))
+    missing = PosixStorage(tmp_path / "lake")
+    with pytest.raises(StorageError, match=f"the lake path {tmp_path / 'lake'} does not exist"):
+        Provisioner(missing, str(tmp_path / "lake")).mark_lake(helio_marker(organization=None))
+    assert not (tmp_path / "lake").exists()
+
+
+def test_a_root_that_is_a_file_is_refused_as_missing() -> None:
+    storage = share()
+    write(storage, LakePath.of("file"), b"")
+    with pytest.raises(StorageError, match="does not exist"):
+        provisioner(storage).provision(target(LakePath.of("file")))
 
 
 def test_the_script_does_what_provisioning_does() -> None:
     script = provision_script(PREFIX, helio_marker(organization=None), [target()])
-    lake, helio = f"{PREFIX / MARKER_FILE}", f"{ROOT / 'helio'}"
+    lake, helio, root = f"{PREFIX}/{MARKER_FILE}", shown(HELIO), shown(ROOT)
     service = """'"instance_id": "id-1"'"""
     rendered = render_marker(helio_marker(organization=None)).decode().rstrip()
     assert script.splitlines() == [
@@ -270,8 +309,8 @@ def test_the_script_does_what_provisioning_does() -> None:
         f"chmod 644 {lake}",
         "",
         "# organization helio",
-        f"test -d {ROOT} || {{",
-        f"  printf 'error: the root %s does not exist\\n' {ROOT} >&2; exit 1; }}",
+        f"test -d {root} || {{",
+        f"  printf 'error: the root %s does not exist\\n' {root} >&2; exit 1; }}",
         f"if [ -e {helio}/.huron ]; then",
         f"  grep -qF {service} {helio}/.huron"
         f' && grep -qF \'"organization": "helio"\' {helio}/.huron || {{',
@@ -294,21 +333,21 @@ def run_script(path: Path, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSIX shell")
 def test_the_script_runs_and_is_idempotent(tmp_path: Path) -> None:
-    lake, root = tmp_path / "lake", tmp_path / "root"
-    lake.mkdir()
-    root.mkdir()
-    organization = OrganizationTarget(place_of("helio", str(root), True, lake), helio_marker())
+    lake = tmp_path / "lake"
+    root = lake / "root"
+    root.mkdir(parents=True)
+    organization = target(LakePath.of("root"))
     script = tmp_path / "provision.sh"
-    script.write_text(provision_script(lake, helio_marker(organization=None), [organization]))
+    script.write_text(provision_script(str(lake), helio_marker(organization=None), [organization]))
     for _ in range(2):
         done = run_script(script, tmp_path)
         assert done.returncode == 0, done.stderr
     directory = root / "helio"
     assert stat.S_IMODE(os.lstat(directory).st_mode) == ORGANIZATION_MODE
     assert stat.S_IMODE(os.lstat(directory / MARKER_FILE).st_mode) == MARKER_MODE
-    storage = PosixStorage()
-    assert verify_marker(storage, directory, INSTANCE, "helio") == helio_marker()
-    assert verify_marker(storage, lake, INSTANCE) == helio_marker(organization=None)
+    storage = PosixStorage(lake)
+    assert verify_marker(storage, LakePath.of("root", "helio"), INSTANCE, "helio") == helio_marker()
+    assert verify_marker(storage, LakePath(), INSTANCE) == helio_marker(organization=None)
     (directory / MARKER_FILE).write_text(json.dumps({"instance_id": "other"}))
     refused = run_script(script, tmp_path)
     assert refused.returncode == 1 and "names another service" in refused.stderr
@@ -327,10 +366,11 @@ def test_the_script_runs_and_is_idempotent(tmp_path: Path) -> None:
 def test_the_script_never_expands_a_path(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
     lake.mkdir()
-    root = tmp_path / "$(touch pwned)`touch pwned`"
-    organization = OrganizationTarget(place_of("helio", str(root), True, lake), helio_marker())
+    name = "$(touch pwned)`touch pwned`"
+    root = lake / name
+    organization = target(LakePath.of(name))
     script = tmp_path / "provision.sh"
-    script.write_text(provision_script(lake, helio_marker(organization=None), [organization]))
+    script.write_text(provision_script(str(lake), helio_marker(organization=None), [organization]))
     missing = run_script(script, tmp_path)
     assert missing.returncode == 1 and f"the root {root} does not exist" in missing.stderr
     root.mkdir()
@@ -342,16 +382,13 @@ def test_the_script_never_expands_a_path(tmp_path: Path) -> None:
 
 
 def test_posix_storage_writes_files_with_the_mode_asked_for(tmp_path: Path) -> None:
-    storage = PosixStorage()
-    storage.write_bytes(tmp_path / "m", b"x", MARKER_MODE)
+    storage = PosixStorage(tmp_path)
+    storage.write_bytes(LakePath.of("m"), b"x", MARKER_MODE)
     assert stat.S_IMODE(os.lstat(tmp_path / "m").st_mode) == MARKER_MODE
-    memory = MemoryStorage(tmp_path)
-    memory.write_bytes(tmp_path / "plain", b"x")
-    assert memory.nodes[tmp_path / "plain"].mode == 0o660
 
 
 def expected(storage: MemoryStorage, own_marker: bool = True) -> list[Finding]:
-    organization = ExpectedOrganization("helio", ROOT / "helio", INSTANCE, own_marker)
+    organization = ExpectedOrganization("helio", HELIO, INSTANCE, own_marker)
     return check_organization(storage, organization)
 
 
@@ -359,13 +396,15 @@ def test_organization_findings() -> None:
     storage = share()
     missing = expected(storage)
     assert [(f.code, f.severity, f.path) for f in missing] == [
-        ("org_dir_missing", Severity.ERROR, str(ROOT / "helio"))
+        ("org_dir_missing", Severity.ERROR, "data1/helio")
     ]
     provisioner(storage).provision(target())
     assert expected(storage) == []
-    storage.remove_file(ROOT / "helio" / MARKER_FILE)
-    assert [f.code for f in expected(storage)] == ["org_marker_missing"]
+    storage.remove_file(HELIO.joinpath(MARKER_FILE))
+    assert [(f.code, f.path) for f in expected(storage)] == [
+        ("org_marker_missing", "data1/helio/.huron")
+    ]
     assert expected(storage, own_marker=False) == []
-    storage.write_bytes(ROOT / "helio" / MARKER_FILE, render_marker(helio_marker("id-2")))
+    write(storage, HELIO.joinpath(MARKER_FILE), render_marker(helio_marker("id-2")))
     mismatch = expected(storage)
     assert [(f.code, f.detail) for f in mismatch] == [("org_marker_mismatch", "wrong instance")]

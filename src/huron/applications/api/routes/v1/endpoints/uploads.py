@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Header, Request, Response, status
 
 from huron.applications.api.authorization import ActorDep, bearer_token, current_actor
 from huron.applications.api.dependencies import LakeDep, RuntimeDep, UploadsDep, require_uploads
-from huron.applications.api.disk import LakeDisk
+from huron.applications.api.disk import Placements
 from huron.applications.api.problems import PROBLEM_MEDIA_TYPE, problem_response
 from huron.applications.api.routes.v1.schema.uploads import (
     ChangeFileInfo,
@@ -49,7 +49,7 @@ _UNPLACED = frozenset({UploadState.FAILED, UploadState.TERMINATED})
 
 @router.post("/hooks", response_model_exclude_none=True)
 async def hooks(
-    hook: HookRequest, request: Request, runtime: RuntimeDep, lake: LakeDep, disk: UploadsDep
+    hook: HookRequest, request: Request, runtime: RuntimeDep, lake: LakeDep, placements: UploadsDep
 ) -> HookResponse:
     """Answer one of tusd's blocking hooks: ``pre-create``, ``pre-finish`` or ``pre-terminate``.
 
@@ -63,7 +63,7 @@ async def hooks(
             case HookType.PRE_CREATE:
                 return await _create(lake, actor, hook.event.upload)
             case HookType.PRE_FINISH:
-                return _receipt(await _finish(lake, disk, actor, hook.event.upload))
+                return _receipt(await _finish(lake, placements, actor, hook.event.upload))
             case HookType.PRE_TERMINATE:
                 await lake.uploads.terminate(actor, _upload_id(hook.event.upload))
                 return HookResponse()
@@ -145,7 +145,7 @@ async def _create(lake: Lake, actor: Actor, upload: HookUpload) -> HookResponse:
     return HookResponse(change_file_info=ChangeFileInfo(id=str(begun.id)))
 
 
-async def _finish(lake: Lake, disk: LakeDisk, actor: Actor, upload: HookUpload) -> Upload:
+async def _finish(lake: Lake, placements: Placements, actor: Actor, upload: HookUpload) -> Upload:
     upload_id = _upload_id(upload)
     current = await lake.uploads.get(actor, upload_id)
     if current.state in _UNPLACED:
@@ -155,7 +155,7 @@ async def _finish(lake: Lake, disk: LakeDisk, actor: Actor, upload: HookUpload) 
     if current.state is not UploadState.PENDING:
         return current
     destination = await lake.uploads.placement(actor, upload_id)
-    return await disk.place(lake.uploads, actor, current, destination)
+    return await placements.place(lake.uploads, actor, current, destination)
 
 
 def _receipt(upload: Upload) -> HookResponse:

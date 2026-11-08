@@ -5,13 +5,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 import httpx
 import structlog
 
 from huron import __version__
-from huron.applications.api.disk import LakeDisk
+from huron.applications.api.disk import PROBE_TIMEOUT, LakeDisk, Placements, ShareGroups
 from huron.applications.api.settings import Settings
 from huron.core.lake.bootstrap import BootstrapResult, Lake, LakeSettings, bootstrap, build_lake
 from huron.core.lake.organizations.declarations import UNMANAGED, Declarations
@@ -27,7 +28,13 @@ from huron.core.security.broker import (
     TokenIssuer,
     TokenVerifier,
 )
-from huron.core.storage import PathLocks
+from huron.core.storage import (
+    LakePath,
+    LakeUnavailable,
+    OrganizationPlace,
+    Placer,
+    Storage,
+)
 from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import Clock, SystemClock
 
@@ -49,7 +56,10 @@ class ClosableStore(UnitOfWork, Protocol):
 
 @dataclass
 class Runtime:
-    """The service's shared objects; ``disk`` is ``None`` when the service has no lake."""
+    """The service's shared objects.
+
+    ``disk``, ``placements`` and ``share_groups`` are ``None`` when the service has no lake.
+    """
 
     settings: Settings
     store: ClosableStore
@@ -61,6 +71,8 @@ class Runtime:
     owns_http: bool = False
     declarations: Declarations = UNMANAGED
     disk: LakeDisk | None = None
+    placements: Placements | None = None
+    share_groups: ShareGroups | None = None
     _ring: KeyRing | None = field(default=None, repr=False)
     _ring_loaded_at: datetime | None = field(default=None, repr=False)
 
@@ -121,12 +133,13 @@ async def build_runtime(
     http: httpx.AsyncClient | None = None,
     groups: GroupDirectory | None = None,
     clock: Clock | None = None,
-    disk: LakeDisk | None = None,
+    storage: Storage | None = None,
+    probe_timeout: float = PROBE_TIMEOUT,
 ) -> Runtime:
     """Connect the store, bootstrap the lake, open the lake's disk and assemble the runtime.
 
-    ``disk`` stands in for the one built from ``settings.lake_path``; the runtime opens and
-    closes either.
+    With ``lake_path``, ``storage`` stands in for the POSIX storage rooted there, and
+    ``probe_timeout`` bounds the readiness probe of the lake's disk.
     """
     clock = clock or SystemClock()
     if store is None:
@@ -141,13 +154,21 @@ async def build_runtime(
         upload_max_size=settings.upload_max_size,
     )
     _report(await bootstrap(store, clock, lake_settings))
-    disk = disk or _disk(settings, clock)
-    if disk is not None:
-        try:
-            await disk.open()
-        except BaseException:
-            disk.close()
-            raise
+    lake_path = settings.lake_path
+    disk = placements = share_groups = None
+    if lake_path is not None:
+        storage = storage or PosixStorage(root=lake_path)
+        disk = LakeDisk(
+            storage,
+            _places(declarations, lake_path),
+            str(settings.instance_id),
+            clock=clock,
+            probe_timeout=probe_timeout,
+        )
+        await _open(disk, lake_path)
+        placements = Placements(disk, Placer(storage))
+        # The service group is the pod's runAsGroup, not a setting.
+        share_groups = ShareGroups(disk, storage, os.getgid())
     owns_http = http is None
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
     return Runtime(
@@ -163,23 +184,38 @@ async def build_runtime(
         owns_http=owns_http,
         declarations=declarations,
         disk=disk,
+        placements=placements,
+        share_groups=share_groups,
     )
 
 
-def _disk(settings: Settings, clock: Clock) -> LakeDisk | None:
-    lake_path = settings.lake_path
-    if lake_path is None:
-        return None
-    return LakeDisk(
-        PosixStorage(),
-        lake_path,
-        str(settings.instance_id),
-        settings.declarations,
-        PathLocks(),
-        # The service group is the pod's runAsGroup, not a setting.
-        service_gid=os.getgid(),
-        clock=clock,
-    )
+def _places(declarations: Declarations, lake_path: Path) -> dict[str, OrganizationPlace]:
+    """The place of each declared organization: its root as a lake path, with its own marker."""
+    return {
+        declared.name: OrganizationPlace(
+            declared.name,
+            LakePath()
+            if declared.root is None
+            else LakePath.of(*PurePosixPath(declared.root).relative_to(lake_path).parts),
+            own_marker=True,
+        )
+        for declared in declarations
+    }
+
+
+async def _open(disk: LakeDisk, lake_path: Path) -> None:
+    """Open the lake's disk; a refusal names ``lake_path``, and the disk is closed again."""
+    try:
+        await disk.open()
+    except LakeUnavailable as error:
+        disk.close()
+        raise LakeUnavailable(
+            f"the lake at {lake_path} is not available: {error.message}",
+            {**error.context, "lake_path": str(lake_path)},
+        ) from error
+    except BaseException:
+        disk.close()
+        raise
 
 
 def _report(result: BootstrapResult) -> None:

@@ -16,13 +16,15 @@ from huron.applications.cli.errors import CliError
 from huron.applications.cli.state import Stage, StagedAdd
 from huron.applications.cli.uploads import Uploader, UploadService
 from huron.core.lake.files.models import CommitRequest
+from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
+from tests.fakes.storage import rooted
 from tests.support.cli import Cli
 from tests.support.lake import CONTRIBUTOR
 from tests.support.tus import TUS_URL, FakeTus
 from tests.unit.cli.conftest import PREFIX, make_collection
 
-COLLECTION = PREFIX / "helio" / "heliophysics" / "solar-wind" / "run7"
+COLLECTION = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
 ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
 #: The service's hook timeout here: three reads of a pending upload, five seconds apart.
 HOOK_TIMEOUT = 10
@@ -33,7 +35,7 @@ def cli(tmp_path: Path, share: MemoryStorage) -> Iterator[Cli]:
     """The CLI over a service that holds ``share`` as its lake and takes uploads of 1000 bytes."""
     running = Cli(
         tmp_path,
-        lambda config: share,
+        rooted(share),
         PREFIX,
         lake=share,
         upload_hook_timeout=timedelta(seconds=HOOK_TIMEOUT),
@@ -89,7 +91,7 @@ def test_a_push_uploads_through_tusd_and_commits_the_receipt(
     assert "version 3 → 4, +1 −0 files" in pushed.stdout
     assert "uploaded a.txt (5 bytes)" in pushed.stderr
     assert [method for method, _ in tus(ready).requests] == ["POST", "PATCH"]
-    assert share.read_bytes(COLLECTION / "a.txt") == b"alpha"
+    assert share.read_bytes(COLLECTION.joinpath("a.txt")) == b"alpha"
     assert recorded(ready) == {"a.txt": sha(b"alpha")}
     assert stage(ready).empty
 
@@ -100,7 +102,7 @@ def test_an_empty_file_finishes_in_the_creation_request(
     staged(ready, tmp_path, "empty.txt", b"")
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["POST"]
-    assert share.read_bytes(COLLECTION / "empty.txt") == b""
+    assert share.read_bytes(COLLECTION.joinpath("empty.txt")) == b""
     assert recorded(ready) == {"empty.txt": sha(b"")}
 
 
@@ -118,7 +120,7 @@ def test_a_dropped_patch_continues_on_the_next_push(
     tus(ready).requests.clear()
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["HEAD", "PATCH"]
-    assert share.read_bytes(COLLECTION / "a.txt") == b"alphabet"
+    assert share.read_bytes(COLLECTION.joinpath("a.txt")) == b"alphabet"
     assert recorded(ready) == {"a.txt": sha(b"alphabet")}
 
 
@@ -132,7 +134,7 @@ def test_an_upload_that_tusd_lost_starts_again(
     tus(ready).requests.clear()
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["HEAD", "POST", "PATCH"]
-    assert share.read_bytes(COLLECTION / "a.txt") == b"alphabet"
+    assert share.read_bytes(COLLECTION.joinpath("a.txt")) == b"alphabet"
 
 
 def test_an_upload_unknown_to_the_service_starts_again(ready: Cli, tmp_path: Path) -> None:
@@ -173,7 +175,7 @@ def test_an_unclear_final_answer_reads_the_placed_upload(
     tus(ready).finish_status = status
     pushed = ready.ok("push")
     assert "uploaded a.txt (5 bytes)" in pushed.stderr
-    assert share.read_bytes(COLLECTION / "a.txt") == b"alpha"
+    assert share.read_bytes(COLLECTION.joinpath("a.txt")) == b"alpha"
     assert recorded(ready) == {"a.txt": sha(b"alpha")}
 
 
@@ -200,8 +202,9 @@ def test_a_failed_upload_prints_the_failure(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
+    depth = len(COLLECTION.names)
     saved = {
-        path: node for path, node in share.nodes.items() if COLLECTION in (path, *path.parents)
+        path: node for path, node in share.nodes.items() if path.names[:depth] == COLLECTION.names
     }
     for path in saved:
         del share.nodes[path]
@@ -212,7 +215,7 @@ def test_a_failed_upload_prints_the_failure(
     tus(ready).requests.clear()
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["POST", "PATCH"]
-    assert share.read_bytes(COLLECTION / "a.txt") == b"alpha"
+    assert share.read_bytes(COLLECTION.joinpath("a.txt")) == b"alpha"
 
 
 @pytest.mark.parametrize(
@@ -288,7 +291,7 @@ def test_a_file_changed_after_its_upload_is_uploaded_again(
     tus(ready).requests.clear()
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["POST", "PATCH"]
-    assert share.read_bytes(COLLECTION / "a.txt") == b"bravo"
+    assert share.read_bytes(COLLECTION.joinpath("a.txt")) == b"bravo"
     assert recorded(ready) == {"a.txt": sha(b"bravo")}
 
 

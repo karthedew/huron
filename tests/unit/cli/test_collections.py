@@ -5,11 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
-from tests.unit.cli.conftest import PREFIX, make_collection
+from tests.unit.cli.conftest import make_collection
 
-COLLECTION = PREFIX / "helio" / "heliophysics" / "solar-wind" / "run7"
+COLLECTION = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
 BASE_ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
 
 
@@ -52,7 +53,7 @@ def test_drafts_from_a_file_activate_later(
     metadata = tmp_path / "meta.json"
     metadata.write_text(json.dumps({"title": "Run 8"}))
     ready.ok("create", "collection", "solar-wind.run8", "--metadata", str(metadata), "--draft")
-    assert not share.exists(COLLECTION.with_name("run8"))
+    assert share.stat(COLLECTION.parent.joinpath("run8")) is None
     refused = ready.run("activate", "collection")
     assert refused.exit_code == 7 and "METADATA_INVALID" in refused.stderr
     ready.prompter.answers.extend(["Run 8", "desc", *([False] * 7)])
@@ -79,7 +80,7 @@ def test_stage_push_status_and_pull(ready: Cli, share: MemoryStorage, tmp_path: 
     ready.ok("rm", "renamed/a.txt")
     pushed = ready.ok("push", "-m", "first data")
     assert "version 3 → 4, +3 −0 files" in pushed.stdout
-    assert share.read_bytes(COLLECTION / "deep" / "c.txt") == b"charlie"
+    assert share.read_bytes(COLLECTION.joinpath("deep", "c.txt")) == b"charlie"
     assert "There is nothing to push" in ready.ok("push").stdout
     listing = ready.ok("get", "files").stdout
     assert "deep/c.txt" in listing
@@ -87,8 +88,8 @@ def test_stage_push_status_and_pull(ready: Cli, share: MemoryStorage, tmp_path: 
     ready.ok("push")
     assert "b.txt" not in ready.ok("get", "files").stdout
     # The CLI unlinks nothing: the bytes of a removed file stay until the service removes them.
-    assert share.read_bytes(COLLECTION / "b.txt") == b"bravo"
-    share.write_bytes(COLLECTION / "stray.txt", b"x")
+    assert share.read_bytes(COLLECTION.joinpath("b.txt")) == b"bravo"
+    share.write_bytes(COLLECTION.joinpath("stray.txt"), b"x", 0o644)
     status = json.loads(ready.ok("-o", "json", "status").stdout)
     assert status["unrecorded"] == ["b.txt", "stray.txt"] and status["behind"] is False
     assert "commit" in ready.ok("get", "log").stdout
@@ -186,7 +187,7 @@ def test_others_cannot_delete_or_push(ready: Cli, share: MemoryStorage, tmp_path
     ready.ok("push")
     ready.login_as("frank")
     assert ready.run("delete", "collection", "solar-wind.run7", "--yes").exit_code == 4
-    assert share.exists(COLLECTION / "kept.txt")
+    assert share.stat(COLLECTION.joinpath("kept.txt")) is not None
     ready.login_as("erin")
     ready.ok("checkout", "solar-wind.run7")
     (a,) = files(tmp_path, **{"a.txt": "alpha"})

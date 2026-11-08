@@ -11,6 +11,7 @@ from huron.pkg.errors import HuronError, Invalid, register
 __all__ = [
     "BACKUP_SUFFIX",
     "IDENTIFIER_MAX_BYTES",
+    "LAKE_NAME_MAX_BYTES",
     "METADATA_FILE",
     "PART_SUFFIX",
     "REL_PATH_MAX_BYTES",
@@ -20,6 +21,7 @@ __all__ = [
     "Identifier",
     "NamingError",
     "RelPathError",
+    "check_lake_name",
     "check_rel_path",
     "check_segment",
     "collection_identifier",
@@ -32,6 +34,8 @@ SEGMENT_MAX_BYTES = 63
 IDENTIFIER_MAX_BYTES = 255
 REL_PATH_MAX_BYTES = 1024
 REL_PATH_SEGMENT_MAX_BYTES = 255
+#: The most bytes one name of a path on the lake may have, the limit of the filesystem.
+LAKE_NAME_MAX_BYTES = 255
 RESERVED_SEGMENTS = frozenset({"huron", "metadata"})
 METADATA_FILE = "metadata.json"
 PART_SUFFIX = ".huron-part"
@@ -148,6 +152,21 @@ def check_rel_path(value: str) -> str:
         _check_path_segment(segment, value)
     if value == METADATA_FILE:
         raise RelPathError("rel_path_reserved", value)
+    return value
+
+
+def check_lake_name(value: str) -> str:
+    """Return ``value`` when it can be one name of a path on the lake; raises :class:`NamingError`.
+
+    The name is not empty, not ``.`` or ``..``, has no ``/`` or NUL and has at most
+    :data:`LAKE_NAME_MAX_BYTES` bytes in the filesystem encoding. The rule is ``lake_name``.
+    """
+    try:
+        size = len(value.encode("utf-8", "surrogateescape"))
+    except UnicodeEncodeError:
+        size = LAKE_NAME_MAX_BYTES + 1
+    if value in {"", ".", ".."} or "/" in value or "\0" in value or size > LAKE_NAME_MAX_BYTES:
+        raise NamingError("lake_name", value)
     return value
 
 

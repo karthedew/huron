@@ -1,0 +1,230 @@
+"""The API's hold on the lake: where API paths are, which marker guards them, and the gate.
+
+The lake is a ``hard`` NFS mount, so a disk call can block without end during an outage. All
+disk work therefore runs in dedicated pools of worker threads, never in the event loop or the
+default executor, and readiness waits for its probe only for a bounded time. The hashes of
+uploads run in a pool of their own, so a burst of large uploads never delays the probe or the
+short directory and metadata calls.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import TYPE_CHECKING, Protocol
+
+import structlog
+
+from huron.core.storage import (
+    FILE_MODE,
+    MARKER_FILE,
+    UPLOAD_DIR_MODE,
+    UPLOADS,
+    LakePath,
+    LakeUnavailable,
+    OrganizationPlace,
+    PathLocks,
+    StorageError,
+    SymlinkInLake,
+    verify_marker,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
+    from datetime import datetime
+
+    from huron.core.storage import Storage
+    from huron.pkg.clock import Clock
+
+__all__ = [
+    "DISK_WORKERS",
+    "HASH_WORKERS",
+    "PROBE_TIMEOUT",
+    "PROBE_TTL",
+    "LakeDisk",
+    "Located",
+    "Run",
+]
+
+#: The worker threads of the disk pool, which runs every disk call but the hashes of uploads.
+DISK_WORKERS = 8
+#: The worker threads of the hash pool, which measures uploads.
+HASH_WORKERS = 4
+#: How long readiness waits for the lake probe, in seconds.
+PROBE_TIMEOUT = 2.0
+#: How long readiness keeps the probe's answer.
+PROBE_TTL = timedelta(seconds=10)
+
+_log = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class Located:
+    """A place on the lake and the organization it belongs to; a value with no disk methods."""
+
+    place: OrganizationPlace
+    location: LakePath
+
+    def joinpath(self, *names: str) -> Located:
+        """The place of ``names`` below this one, in the same organization."""
+        return Located(self.place, self.location.joinpath(*names))
+
+
+class Run(Protocol):
+    """Run one action in the disk pool, after the marker of the held place is verified."""
+
+    def __call__[T](self, action: Callable[[], T]) -> Awaitable[T]:
+        """The action's result."""
+        ...
+
+
+class LakeDisk:
+    """The lake that this process alone writes, behind the one gate :meth:`hold`.
+
+    ``places`` are the declared organizations; any other organization lies directly below the
+    root and shares the marker there. The locks serialize the disk work of one place within
+    this process.
+    """
+
+    def __init__(
+        self,
+        storage: Storage,
+        places: Mapping[str, OrganizationPlace],
+        instance_id: str,
+        *,
+        clock: Clock,
+        probe_timeout: float = PROBE_TIMEOUT,
+    ) -> None:
+        self._storage = storage
+        self._places = dict(places)
+        self._instance_id = instance_id
+        self._clock = clock
+        self._probe_timeout = probe_timeout
+        self._locks = PathLocks()
+        self._pool = ThreadPoolExecutor(DISK_WORKERS, thread_name_prefix="huron-disk")
+        self._hash_pool = ThreadPoolExecutor(HASH_WORKERS, thread_name_prefix="huron-hash")
+        self._probe: asyncio.Future[bool] | None = None
+        self._probed: tuple[datetime, bool] | None = None
+
+    async def open(self) -> None:
+        """Create the upload directory with mode ``0700`` when it is missing.
+
+        Raises ``LAKE_UNAVAILABLE`` when the root does not open or this process cannot write it.
+        """
+        await self._submit(self._open)
+
+    def close(self) -> None:
+        """Stop the disk pool and the hash pool; work that has not started is dropped."""
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        self._hash_pool.shutdown(wait=False, cancel_futures=True)
+
+    async def ready(self) -> bool:
+        """Whether this process can write the upload directory.
+
+        The answer is kept for :data:`PROBE_TTL`. A probe that does not answer within the
+        timeout counts as ``False``; while it still runs, no second probe starts.
+        """
+        now = self._clock.now()
+        if self._probed is not None and now - self._probed[0] < PROBE_TTL:
+            return self._probed[1]
+        if self._probe is None or self._probe.done():
+            self._probe = self._submit(self._writable)
+        try:
+            ready = await asyncio.wait_for(asyncio.shield(self._probe), self._probe_timeout)
+        except TimeoutError:
+            ready = False
+        self._probed = (now, ready)
+        return ready
+
+    def locate(self, api_path: str) -> Located:
+        """The place of an API path (``<organization>/…``); no disk call.
+
+        Raises ``NAME_INVALID`` for a name that breaks the rule ``lake_name``.
+        """
+        organization = api_path.split("/")[0]
+        place = self._places.get(organization) or OrganizationPlace(
+            organization, LakePath.of(), own_marker=False
+        )
+        return Located(place, place.locate(api_path))
+
+    async def hold[T](self, located: Located, unit: Callable[[Run], Awaitable[T]]) -> T:
+        """Await ``unit`` while holding the lock of ``located``.
+
+        ``unit`` gets a :class:`Run`, which verifies the organization's marker in the disk
+        worker before each action. Between two actions the unit may await rows. The lock stays
+        held until the unit ends, also when the caller is cancelled: a worker thread cannot be
+        stopped, so the next unit on the place waits for it. An error the unit raises after its
+        caller is cancelled goes to the log, because no caller is left.
+        """
+        place = located.place
+
+        def run[R](action: Callable[[], R]) -> Awaitable[R]:
+            return self._submit(lambda: self._checked(place, action))
+
+        async with self._locks.hold(located.location):
+            work = asyncio.ensure_future(unit(run))
+            try:
+                return await asyncio.shield(work)
+            except asyncio.CancelledError:
+                await _settled(work)
+                if not work.cancelled() and (error := work.exception()) is not None:
+                    _log.error(
+                        "disk.cancelled_action_failed",
+                        path=str(located.location),
+                        error=repr(error),
+                    )
+                raise
+
+    async def work[T](self, located: Located, action: Callable[[], T]) -> T:
+        """Run one ``action`` on :meth:`hold`."""
+        return await self.hold(located, lambda run: run(action))
+
+    async def measure[T](self, action: Callable[[], T]) -> T:
+        """Run ``action`` in the hash pool, with no lock and no marker check."""
+        return await asyncio.get_running_loop().run_in_executor(self._hash_pool, action)
+
+    def _submit[T](self, action: Callable[[], T]) -> asyncio.Future[T]:
+        return asyncio.get_running_loop().run_in_executor(self._pool, action)
+
+    def _checked[T](self, place: OrganizationPlace, action: Callable[[], T]) -> T:
+        organization = place.name if place.own_marker else None
+        try:
+            verify_marker(self._storage, place.marker_directory, self._instance_id, organization)
+        except SymlinkInLake:
+            raise
+        except StorageError as error:
+            raise LakeUnavailable(error.message, error.context) from error
+        return action()
+
+    def _open(self) -> None:
+        try:
+            self._storage.make_directory(UPLOADS, UPLOAD_DIR_MODE)
+        except (LakeUnavailable, SymlinkInLake):
+            raise
+        except StorageError as error:
+            raise LakeUnavailable(
+                f"the API cannot write the lake: {error.message}", error.context
+            ) from error
+
+    def _writable(self) -> bool:
+        probe = UPLOADS.joinpath(f"{MARKER_FILE}-ready-{uuid.uuid4().hex}")
+        try:
+            found = self._storage.stat(UPLOADS)
+            if found is None or found.kind != "dir":
+                return False
+            self._storage.write_bytes(probe, b"", FILE_MODE)
+            self._storage.remove_file(probe)
+        except StorageError:
+            return False
+        return True
+
+
+async def _settled[T](work: asyncio.Future[T]) -> None:
+    # A second cancellation must not end the wait either: the work still runs in its thread.
+    while not work.done():
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait([work])

@@ -11,20 +11,20 @@ import httpx
 import pytest
 
 from huron.applications.cli.errors import StorageFailure
-from huron.core.storage import MARKER_FILE, Marker, render_marker
+from huron.core.storage import MARKER_FILE, LakePath, Marker, render_marker
 from huron.core.storage.memory import MemoryStorage
-from tests.fakes.storage import ReadOnlyShare
+from tests.fakes.storage import ReadOnlyShare, rooted
 from tests.support.cli import Cli
 from tests.unit.cli.conftest import CATALOG, PREFIX, make_collection
 from tests.unit.cli.test_collections import BASE_ANSWERS
 
-RUN7 = CATALOG / "solar-wind" / "run7"
+RUN7 = CATALOG.joinpath("solar-wind", "run7")
 
 
 @pytest.fixture
 def cli(tmp_path: Path, share: MemoryStorage) -> Iterator[Cli]:
     """The CLI over the service, which holds ``share`` as its lake; the CLI only reads it."""
-    running = Cli(tmp_path, lambda config: ReadOnlyShare(share), PREFIX, lake=share)
+    running = Cli(tmp_path, lambda base: ReadOnlyShare(rooted(share)(base)), PREFIX, lake=share)
     yield running
     running.close()
 
@@ -55,12 +55,14 @@ def test_verify_mounts_checks_the_share_root_marker(cli: Cli, share: MemoryStora
     assert mounts(cli) == [
         {"organization": "helio", "path": f"{PREFIX}/helio (prefix)", "state": "ok"}
     ]
-    share.write_bytes(PREFIX / MARKER_FILE, render_marker(Marker(1, "http://other", "other-id")))
+    share.write_bytes(
+        LakePath.of(MARKER_FILE), render_marker(Marker(1, "http://other", "other-id")), 0o644
+    )
     refused = cli.run("adm", "verify-mounts")
     assert refused.exit_code == 1 and "wrong instance" in refused.stdout
     assert "To write the marker, run `huron adm provision-orgs`" in refused.stdout
     assert "To prepare the organization directories" not in refused.stdout
-    share.remove_file(PREFIX / MARKER_FILE)
+    share.remove_file(LakePath.of(MARKER_FILE))
     assert mounts(cli)[0]["state"] == "no marker"
     cli.configure(mount_prefix="/not/mounted")
     assert mounts(cli)[0]["state"] == "missing"
@@ -97,7 +99,7 @@ def test_create_and_delete_call_the_api_without_a_mount(cli: Cli, share: MemoryS
         "organization helio deleted",
         "There is no current organization now. To select one, run `huron org <name>`",
     ]
-    assert not share.exists(PREFIX / "helio")
+    assert share.stat(LakePath.of("helio")) is None
 
 
 def test_running_a_create_again_is_refused(seeded_cli: Cli) -> None:
@@ -208,7 +210,7 @@ def test_delete_collection_commits_the_removals_and_checks_no_unrecorded_file(
     source.write_text("alpha")
     cli.ok("add", str(source), "--as", "sub/a.txt")
     cli.ok("push")
-    share.write_bytes(RUN7 / "stray.txt", b"x")
+    share.write_bytes(RUN7.joinpath("stray.txt"), b"x", 0o644)
     if not mounted:
         cli.configure(mount_prefix="/not/mounted")
     collection = f"/api/v1/collections/{cli.config_current()}"
@@ -221,7 +223,7 @@ def test_delete_collection_commits_the_removals_and_checks_no_unrecorded_file(
     (commit,) = commits
     assert json.loads(commit.content)["removes"] == ["sub/a.txt"]
     assert commit.url.path == f"{collection}/commits"
-    assert share.read_bytes(RUN7 / "stray.txt") == b"x"
+    assert share.read_bytes(RUN7.joinpath("stray.txt")) == b"x"
     assert cli.run("describe", "collection", "solar-wind.run7").exit_code == 5
     assert json.loads(cli.ok("-o", "json", "status").stdout)["collection"] is None
 
@@ -280,7 +282,7 @@ def test_verify_catalog_checks_the_marker_of_the_catalogs_organization(
     seeded_cli.login_as("dave")
     services, _, _ = seeded_cli.services()
     assert services.mount().verify_catalog("heliophysics").base == PREFIX
-    share.remove_file(PREFIX / MARKER_FILE)
+    share.remove_file(LakePath.of(MARKER_FILE))
     services, _, _ = seeded_cli.services()
     with pytest.raises(StorageFailure):
         services.mount().verify_catalog("heliophysics")

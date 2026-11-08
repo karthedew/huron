@@ -199,3 +199,9 @@ source_modules = [
 ]
 forbidden_modules = ["huron.pkg.fs"]
 allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "core.storage does not import applications or core.metastore"
+type = "forbidden"
+source_modules = ["huron.core.storage"]
+forbidden_modules = ["huron.applications", "huron.core.metastore"]

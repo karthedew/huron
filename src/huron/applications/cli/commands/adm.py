@@ -28,10 +28,12 @@ from huron.applications.cli.mount import (
     PROVISION_HINT,
     UNDECLARED_HINT,
     Mount,
+    Site,
 )
 from huron.applications.cli.output import Column
 from huron.applications.cli.services import Services
 from huron.core.storage import (
+    LakePath,
     Marker,
     MarkerState,
     OrganizationPlace,
@@ -186,8 +188,8 @@ def verify_mounts(ctx: typer.Context) -> None:
     Its state is `undeclared`, and it does not make the check fail.
     """
     mount = services(ctx).mount()
-    places = [mount.place_of_view(view) for view in api(ctx).pages("/api/v1/organizations")]
-    rows = [_mount_row(mount, place) for place in places]
+    sites = [mount.site_of_view(view) for view in api(ctx).pages("/api/v1/organizations")]
+    rows = [_mount_row(mount, site) for site in sites]
     if not rows:
         prefix = {"organization": "-", "path": f"{mount.prefix} (prefix)"}
         rows.append(("prefix", {**prefix, "state": str(mount.prefix_state())}))
@@ -225,10 +227,10 @@ def provision_orgs(
     lake = Marker(1, found.config.api_url, mount.instance_id())
     targets = [_target(lake, mount, view) for view in _declared(ctx, organization)]
     if emit_script:
-        script = provision_script(mount.prefix, lake, targets)
+        script = provision_script(str(mount.prefix), lake, targets)
         found.out.print(script, markup=False, highlight=False, end="", soft_wrap=True)
         return
-    provisioner = Provisioner(found.provision_storage(), mount.prefix)
+    provisioner = Provisioner(found.provision_storage(mount.prefix), str(mount.prefix))
     rows, failed = _provision(found.err, provisioner, lake, targets, dry_run)
     if table_mode(ctx):
         for row in rows:
@@ -359,15 +361,23 @@ def _drift(
         organization = str(inventory.catalog["organization"])
         if organization in blocked:
             continue
-        findings += check(
-            mount.storage,
-            mount.base(organization),
-            _directories(inventory),
-            _collections(inventory),
-            found.clock.now(),
-            hash_files=hash_files,
+        base = mount.verify(organization).base
+        findings += _shown(
+            base,
+            check(
+                mount.reader(base),
+                _directories(inventory),
+                _collections(inventory),
+                found.clock.now(),
+                hash_files=hash_files,
+            ),
         )
     return findings
+
+
+def _shown(base: Path, findings: Iterable[Finding]) -> list[Finding]:
+    """``findings`` with their lake paths shown as paths on this machine."""
+    return [replace(f, path=str(base / f.path)) if f.path else f for f in findings]
 
 
 def _organizations_pass(
@@ -390,23 +400,23 @@ def _organization_findings(mount: Mount, organization: str) -> tuple[list[Findin
     An organization without its own marker needs the mount prefix's marker; one the managed
     configuration does not declare gets a warning instead when the prefix is not its share.
     """
-    place = mount.place(organization)
-    if not place.own_marker:
-        if mount.undeclared(place) and mount.prefix_state() is not MarkerState.OK:
+    site = mount.site(organization)
+    if not site.own_marker:
+        if mount.undeclared(site) and mount.prefix_state() is not MarkerState.OK:
             detail = (
                 "the service configuration does not declare it,"
                 " so the CLI cannot find its directory"
             )
             warning = Finding(
-                "org_undeclared", Severity.WARNING, organization, str(place.directory), detail
+                "org_undeclared", Severity.WARNING, organization, str(site.directory), detail
             )
             return [warning], True
         mount.verify_prefix()
     expected = ExpectedOrganization(
-        organization, place.directory, mount.instance_id(), place.own_marker
+        organization, LakePath.of(organization), mount.instance_id(), site.own_marker
     )
-    found = check_organization(mount.storage, expected)
-    return found, place.own_marker and _has_error(found)
+    found = _shown(site.base, check_organization(mount.reader(site.base), expected))
+    return found, site.own_marker and _has_error(found)
 
 
 def _has_error(findings: Iterable[Finding]) -> bool:
@@ -425,13 +435,14 @@ def _mount_verdict(ctx: typer.Context, rows: Iterable[tuple[str, dict[str, str]]
     return not failed
 
 
-def _mount_row(mount: Mount, place: OrganizationPlace) -> tuple[str, dict[str, str]]:
+def _mount_row(mount: Mount, site: Site) -> tuple[str, dict[str, str]]:
     """One organization's row, after the kind of check it got: own, prefix or undeclared."""
-    name, directory = place.name, place.directory
-    if place.own_marker:
-        state = marker_state(mount.storage, directory, mount.instance_id(), name)
+    name, directory = site.name, site.directory
+    if site.own_marker:
+        reader = mount.reader(site.base)
+        state = marker_state(reader, LakePath.of(name), mount.instance_id(), name)
         return "own", {"organization": name, "path": str(directory), "state": str(state)}
-    if mount.undeclared(place):
+    if mount.undeclared(site):
         row = {"organization": name, "path": f"{directory} (undeclared)", "state": UNDECLARED}
         return UNDECLARED, row
     prefix = str(mount.prefix_state())
@@ -452,8 +463,17 @@ def _declared(ctx: typer.Context, organization: str | None) -> list[dict[str, An
 
 
 def _target(lake: Marker, mount: Mount, view: dict[str, Any]) -> OrganizationTarget:
-    place = mount.place_of_view(view)
-    return OrganizationTarget(place, replace(lake, organization=place.name))
+    """The provisioning of a declared organization, whose root lies below the lake path."""
+    site = mount.site_of_view(view)
+    if not site.base.is_relative_to(mount.prefix):
+        raise UsageError(
+            f"the root {site.base} of organization {site.name} is not below the lake path"
+            f" {mount.prefix}",
+            hint="set `mount_prefix` to the directory where this machine mounts `lake_path`",
+        )
+    base = LakePath.of(*site.base.relative_to(mount.prefix).parts)
+    place = OrganizationPlace(site.name, base, own_marker=True)
+    return OrganizationTarget(place, replace(lake, organization=site.name))
 
 
 def _provision(

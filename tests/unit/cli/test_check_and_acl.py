@@ -34,9 +34,9 @@ def test_a_consistent_share_checks_clean(built: Cli, tmp_path) -> None:  # type:
 
 
 def test_drift_is_reported(built: Cli, share: MemoryStorage) -> None:
-    run7 = CATALOG / "solar-wind" / "run7"
-    share.write_bytes(run7 / "stray.txt", b"x")
-    share.remove_file(run7 / "metadata.json")
+    run7 = CATALOG.joinpath("solar-wind", "run7")
+    share.write_bytes(run7.joinpath("stray.txt"), b"x", 0o644)
+    share.remove_file(run7.joinpath("metadata.json"))
     findings = json.loads(
         built.run("-o", "json", "adm", "check", "--catalog", "heliophysics").stdout
     )
@@ -57,7 +57,7 @@ def test_a_sidecar_with_integers_of_any_size_checks_fresh(
     )
     built.ok("create", "collection", "solar-wind.huge", "--metadata", str(metadata))
     make_collection(built, "huge")
-    sidecar = share.read_bytes(CATALOG / "solar-wind" / "huge" / "metadata.json")
+    sidecar = share.read_bytes(CATALOG.joinpath("solar-wind", "huge", "metadata.json"))
     assert b'"fill":-10000000000000000000000000000000' in (sidecar or b"")
     findings = json.loads(
         built.run("-o", "json", "adm", "check", "--catalog", "heliophysics").stdout or "[]"

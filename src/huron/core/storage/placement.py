@@ -13,13 +13,14 @@ from typing import TYPE_CHECKING
 
 from huron.core.lake.uploads.errors import UploadSizeMismatch
 from huron.core.storage.errors import SourceGone, StorageError
-from huron.core.storage.layout import FILE_MODE, UPLOAD_DIR
+from huron.core.storage.layout import FILE_MODE, UPLOADS
+from huron.core.storage.removal import prune
 from huron.schema.naming import BACKUP_SUFFIX, PART_SUFFIX
 
 if TYPE_CHECKING:
     import uuid
-    from pathlib import Path
 
+    from huron.core.storage.lakepath import LakePath
     from huron.core.storage.ports import OpenFile, Storage
 
 __all__ = ["CollectionDirectoryMissing", "Linked", "Measured", "Placer"]
@@ -42,14 +43,14 @@ class Linked:
     of the file it replaced, ``None`` when the name was new.
     """
 
-    made_dirs: tuple[Path, ...]
-    backup: Path | None
+    made_dirs: tuple[LakePath, ...]
+    backup: LakePath | None
 
 
 class CollectionDirectoryMissing(StorageError):
     """The collection directory of a placement does not exist; a placement never makes it."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: LakePath) -> None:
         super().__init__(
             f"the collection directory {directory} does not exist."
             " To make the directory again, run huron adm repair for the collection",
@@ -58,28 +59,19 @@ class CollectionDirectoryMissing(StorageError):
 
 
 class Placer:
-    """The disk steps of a placement on the lake at ``lake_path``."""
+    """The disk steps of a placement on the lake."""
 
-    def __init__(self, storage: Storage, lake_path: Path) -> None:
+    def __init__(self, storage: Storage) -> None:
         self._storage = storage
-        self._upload_dir = lake_path / UPLOAD_DIR
 
-    def upload_file(self, upload_id: uuid.UUID) -> Path:
-        """tusd's file of the upload's bytes."""
-        return self._upload_dir / str(upload_id)
-
-    def info_file(self, upload_id: uuid.UUID) -> Path:
-        """tusd's description of the upload, beside its bytes."""
-        return self._upload_dir / f"{upload_id}.info"
-
-    def measure(self, upload_file: Path, size: int) -> Measured | None:
+    def measure(self, upload_id: uuid.UUID, size: int) -> Measured | None:
         """Measure a finished upload and make it readable as a placed file (mode ``0644``).
 
         The size and the inode come from the open descriptor, which the hash reads too. A size
         other than ``size`` raises ``UPLOAD_SIZE_MISMATCH`` before the hash. ``None`` when the
         file does not exist.
         """
-        opened = self._storage.open_file(upload_file)
+        opened = self._storage.open_file(_upload_file(upload_id))
         if opened is None:
             return None
         with closing(opened):
@@ -89,82 +81,88 @@ class Placer:
             opened.set_mode(FILE_MODE)
             return measured
 
-    def measure_destination(self, destination: Path, size: int) -> Measured | None:
+    def measure_destination(self, target: LakePath, size: int) -> Measured | None:
         """Measure a file another attempt already placed; ``None`` unless it has ``size`` bytes."""
-        opened = self._storage.open_file(destination)
+        opened = self._storage.open_file(target)
         if opened is None:
             return None
         with closing(opened):
             return _measured(opened) if opened.size == size else None
 
-    def backup_file(self, destination: Path, upload_id: uuid.UUID) -> Path:
-        """The backup ``.<name>.<upload id>.huron-prev`` of the file an upload replaces."""
-        return destination.with_name(f".{destination.name}.{upload_id}{BACKUP_SUFFIX}")
-
     def link(
-        self,
-        source: Path,
-        info_file: Path,
-        destination: Path,
-        collection_dir: Path,
-        upload_id: uuid.UUID,
+        self, upload_id: uuid.UUID, collection: LakePath, target: LakePath, inode: int
     ) -> Linked:
-        """Link ``source`` to ``destination`` inside ``collection_dir``, then remove tusd's files.
+        """Link the upload's file to ``target`` inside ``collection``, then remove tusd's files.
 
-        The collection directory must exist. The directories between it and ``destination`` are
-        made with :meth:`Storage.make_inheriting_dir`. An existing file is replaced through the
-        part file ``.<name>.<upload id>.huron-part`` and keeps its bytes in the backup
-        :meth:`backup_file` until the caller drops it. Raises :class:`CollectionDirectoryMissing`
-        without the collection directory, and ``SourceGone``, after removing the directories it
-        made, when ``source`` does not exist.
+        The collection directory must exist. The directories between it and ``target`` are
+        made with :meth:`Storage.make_inheriting_dir`. The upload's file must still have the
+        measured ``inode``. An existing file is replaced through the part file
+        ``.<name>.<upload id>.huron-part`` and keeps its bytes in the backup
+        ``.<name>.<upload id>.huron-prev`` until :meth:`drop_backup`. Raises
+        :class:`CollectionDirectoryMissing` without the collection directory, ``SourceGone``,
+        after removing the empty directories it made, when the upload's file is gone or
+        replaced, and ``ValueError`` for a ``target`` that is not below ``collection``.
         """
-        if not self._storage.is_directory(collection_dir):
-            raise CollectionDirectoryMissing(collection_dir)
+        depth = len(collection.names)
+        if len(target.names) <= depth or target.names[:depth] != collection.names:
+            raise ValueError(f"{target} is not below the collection directory {collection}")
+        found = self._storage.stat(collection)
+        if found is None:
+            raise CollectionDirectoryMissing(collection)
+        if found.kind != "dir":
+            raise StorageError(f"{collection} is not a directory", {"path": str(collection)})
         made = tuple(
             directory
-            for parent in reversed(destination.relative_to(collection_dir).parents[:-1])
-            if self._storage.make_inheriting_dir(directory := collection_dir / parent)
+            for size in range(depth + 1, len(target.names))
+            if self._storage.make_inheriting_dir(
+                directory := collection.joinpath(*target.names[depth:size])
+            )
         )
-        part_name = f".{destination.name}.{upload_id}{PART_SUFFIX}"
-        backup_name = self.backup_file(destination, upload_id).name
+        source = _upload_file(upload_id)
         try:
-            backup = self._storage.link(source, destination, part_name, backup_name)
+            backup = self._storage.link(
+                source,
+                target,
+                inode=inode,
+                part_name=f".{target.name}.{upload_id}{PART_SUFFIX}",
+                backup_name=_backup_name(target, upload_id),
+            )
         except SourceGone:
-            self._remove_empty(made)
+            prune(self._storage, made)
             raise
         self._storage.remove_file(source)
-        self._storage.remove_file(info_file)
+        self._storage.remove_file(UPLOADS.joinpath(f"{upload_id}.info"))
         return Linked(made, backup)
 
-    def drop_backup(self, destination: Path, upload_id: uuid.UUID) -> None:
+    def drop_backup(self, target: LakePath, upload_id: uuid.UUID) -> None:
         """Remove the backup of the file the upload replaced, once its receipt is recorded."""
-        self._storage.remove_file(self.backup_file(destination, upload_id))
+        self._storage.remove_file(target.parent.joinpath(_backup_name(target, upload_id)))
 
-    def undo(self, destination: Path, inode: int, linked: Linked) -> None:
-        """Take a placed file away again, but only while ``destination`` is still that inode.
+    def undo(self, target: LakePath, inode: int, linked: Linked) -> None:
+        """Take a placed file away again, but only while ``target`` is still that inode.
 
-        With a backup, the replaced file returns to ``destination``; without one, the placed
-        file is removed. A backup of a destination that changed since is removed. Then the
-        directories ``link`` made that are empty are removed, innermost first.
+        With a backup, the replaced file returns to ``target``; without one, the placed file is
+        removed. A backup of a target that changed since is removed. Then the directories
+        ``link`` made that are empty are removed, innermost first.
         """
-        if self._storage.inode(destination) != inode:
-            if linked.backup is not None:
-                self._storage.remove_file(linked.backup)
-        elif linked.backup is not None:
-            self._storage.rename(linked.backup, destination)
+        if linked.backup is None:
+            self._storage.remove_file(target, inode=inode)
         else:
-            self._storage.remove_file(destination)
-        self._remove_empty(linked.made_dirs)
+            found = self._storage.stat(target)
+            if found is not None and found.inode == inode:
+                self._storage.rename(linked.backup, target)
+            else:
+                self._storage.remove_file(linked.backup)
+        prune(self._storage, linked.made_dirs)
 
-    def _remove_empty(self, directories: tuple[Path, ...]) -> None:
-        for directory in reversed(directories):
-            if self._storage.is_directory(directory) and _empty(self._storage, directory):
-                self._storage.remove_directory(directory)
+
+def _upload_file(upload_id: uuid.UUID) -> LakePath:
+    return UPLOADS.joinpath(str(upload_id))
+
+
+def _backup_name(target: LakePath, upload_id: uuid.UUID) -> str:
+    return f".{target.name}.{upload_id}{BACKUP_SUFFIX}"
 
 
 def _measured(opened: OpenFile) -> Measured:
     return Measured(opened.size, opened.sha256(), opened.inode)
-
-
-def _empty(storage: Storage, directory: Path) -> bool:
-    return next(iter(storage.walk(directory)), None) is None

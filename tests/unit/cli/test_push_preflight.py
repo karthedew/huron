@@ -9,12 +9,13 @@ import httpx
 import pytest
 
 from huron.core.lake.files.models import CommitRequest
+from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
 from tests.support.lake import CONTRIBUTOR
-from tests.unit.cli.conftest import PREFIX, make_collection
+from tests.unit.cli.conftest import make_collection
 
-COLLECTION = PREFIX / "helio" / "heliophysics" / "solar-wind" / "run7"
+COLLECTION = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
 ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
 
 
@@ -69,7 +70,7 @@ def test_a_push_sends_a_dry_run_with_sizes_before_uploading(
     assert preview["adds"] == [{"rel_path": "a.txt", "size": 5}]
     assert preview["base_version"] == 3 and preview["message"] == "first"
     assert json.loads(real.content)["adds"][0]["sha256"]
-    assert share.exists(COLLECTION / "a.txt")
+    assert share.stat(COLLECTION.joinpath("a.txt")) is not None
 
 
 def test_a_readers_push_is_refused_and_leaves_the_share_untouched(
@@ -81,7 +82,7 @@ def test_a_readers_push_is_refused_and_leaves_the_share_untouched(
     calls = list(share.calls)
     refused = ready.run("push")
     assert refused.exit_code == 4 and "FORBIDDEN" in refused.stderr
-    assert share.calls == calls and not share.exists(COLLECTION / "a.txt")
+    assert share.calls == calls and share.stat(COLLECTION.joinpath("a.txt")) is None
     assert uploads(ready) == []
     stage = ready.state.read_stage(ready.config_current())
     assert [add.rel_path for add in stage.adds] == ["a.txt"]
@@ -104,7 +105,7 @@ def test_a_base_version_conflict_is_reported_before_uploading(
     assert conflict.exit_code == 6 and "BASE_VERSION_CONFLICT" in conflict.stderr
     assert "huron pull" in conflict.stderr
     assert len(sent) == 1 and share.calls == calls and uploads(ready) == []
-    assert not share.exists(COLLECTION / "a.txt")
+    assert share.stat(COLLECTION.joinpath("a.txt")) is None
     copy = ready.state.read_copy(str(collection_id))
     assert copy is not None and copy.version == 3
 

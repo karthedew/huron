@@ -6,10 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from huron.core.storage import DIRECTORY_MODE, MARKER_FILE, ORGANIZATION_MODE
+from huron.core.storage import DIRECTORY_MODE, MARKER_FILE, ORGANIZATION_MODE, LakePath
+from huron.core.storage.memory import MemoryStorage
 from tests.support.api import Service, seed_service, service
 from tests.support.clock import frozen
-from tests.support.disk import LAKE, SERVICE_GID, lake_disk, memory_lake
+from tests.support.disk import LAKE, memory_lake
 
 CATALOG = "/api/v1/catalogs/heliophysics"
 
@@ -115,7 +116,7 @@ async def test_a_new_catalog_without_its_directory_is_pending(
         {
             "code": "SHARE_GROUP_PENDING",
             "group": own_group,
-            "detail": f"{lake / 'helio' / 'aurora'}: No such file or directory",
+            "detail": "helio/aurora does not exist",
         }
     ]
 
@@ -132,17 +133,17 @@ async def test_a_cleared_share_group_gives_the_directory_the_service_group() -> 
     clock = frozen()
     storage = memory_lake()
     storage.groups["helio-readers"] = 2001
-    storage.member_of.add(2001)
-    directory = LAKE / "helio" / "heliophysics"
-    async with service(disk=lake_disk(storage, clock), clock=clock, lake_path=LAKE) as api:
+    storage.member_of |= {2001, os.getgid()}
+    directory = LakePath.of("helio", "heliophysics")
+    async with service(storage=storage, clock=clock, lake_path=LAKE) as api:
         await seed_service(api)
         storage.make_directory(directory.parent, ORGANIZATION_MODE)
         storage.make_directory(directory, DIRECTORY_MODE)
         changed = await patch(api, "helio-readers")
-        assert (changed["warnings"], storage.owner(directory).gid) == ([], 2001)
+        assert (changed["warnings"], gid(storage, directory)) == ([], 2001)
         cleared = await patch(api, None)
     assert (cleared["share_group"], cleared["warnings"]) == (None, [])
-    assert storage.owner(directory).gid == SERVICE_GID
+    assert gid(storage, directory) == os.getgid()
 
 
 async def test_a_service_group_the_lake_cannot_set_is_pending(
@@ -153,7 +154,7 @@ async def test_a_service_group_the_lake_cannot_set_is_pending(
         {
             "code": "SHARE_GROUP_PENDING",
             "group": str(os.getgid()),
-            "detail": f"{lake / 'helio' / 'heliophysics'}: No such file or directory",
+            "detail": "helio/heliophysics does not exist",
         }
     ]
 
@@ -171,3 +172,9 @@ async def test_an_unmarked_lake_keeps_the_rows_and_answers_unavailable(
     assert (response.status_code, response.json()["code"]) == (503, "LAKE_UNAVAILABLE")
     read = await seeded_lake_api.client.get(CATALOG, headers=headers)
     assert read.json()["share_group"] == share_group
+
+
+def gid(storage: MemoryStorage, location: LakePath) -> int:
+    found = storage.stat(location)
+    assert found is not None
+    return found.gid

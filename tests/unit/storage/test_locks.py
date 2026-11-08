@@ -1,13 +1,12 @@
 """In-process locks per path."""
 
 import asyncio
-from pathlib import Path
 
 import pytest
 
-from huron.core.storage import PathLocks
+from huron.core.storage import LakePath, PathLocks
 
-TARGET = Path("/lake/helio/heliophysics")
+TARGET = LakePath.of("helio", "heliophysics")
 
 
 async def test_holders_of_one_path_take_turns() -> None:

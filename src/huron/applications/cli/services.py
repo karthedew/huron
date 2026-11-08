@@ -28,8 +28,9 @@ __all__ = ["Services"]
 class Services:
     """Everything a command needs; ``main`` builds the real ones, tests build fakes.
 
-    ``storage_factory`` gives the read-only storage of :class:`Mount`. ``provision_storage``
-    gives the writable storage of the provision commands, which the storage admin runs.
+    ``storage_factory`` gives the read-only storage of :class:`Mount` rooted at a directory of
+    this machine. ``provision_storage`` gives the writable storage of the provision commands,
+    which the storage admin runs, rooted at the mount prefix.
     """
 
     environ: Mapping[str, str]
@@ -44,8 +45,8 @@ class Services:
     sleep: Callable[[float], None]
     open_browser: Callable[[str], object]
     hostname: str
-    storage_factory: Callable[[Config], ShareReader]
-    provision_storage: Callable[[], Storage] = PosixStorage
+    storage_factory: Callable[[Path], ShareReader]
+    provision_storage: Callable[[Path], Storage] = PosixStorage
     output: OutputFormat = OutputFormat.TABLE
     catalog_override: str | None = None
     _session: Session | None = field(default=None, repr=False)

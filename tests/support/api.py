@@ -10,12 +10,12 @@ from typing import Any
 import httpx
 
 from huron.applications.api.app import create_app
-from huron.applications.api.disk import LakeDisk
+from huron.applications.api.disk import PROBE_TIMEOUT
 from huron.applications.api.runtime import Runtime, build_runtime
 from huron.applications.api.settings import Settings
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.broker import TokenIssuer
-from huron.core.storage import MARKER_FILE, Marker, render_marker
+from huron.core.storage import MARKER_FILE, Marker, Storage, render_marker
 from huron.pkg.clock import FrozenClock
 from tests.fakes.groups import FakeGroups
 from tests.fakes.issuer import AUDIENCE, ISSUER, FakeIssuer
@@ -101,14 +101,15 @@ class Service:
 async def service(
     *,
     store: MemoryStore | None = None,
-    disk: LakeDisk | None = None,
+    storage: Storage | None = None,
+    probe_timeout: float = PROBE_TIMEOUT,
     clock: FrozenClock | None = None,
     **overrides: object,
 ) -> AsyncIterator[Service]:
     """Start an in-process service over ``store``, by default a fresh in-memory one.
 
-    ``disk`` replaces the lake's disk that ``lake_path`` would give; ``clock`` must then be the
-    clock the disk reads.
+    With ``lake_path``, ``storage`` replaces the POSIX storage rooted there, and
+    ``probe_timeout`` bounds the lake's readiness probe.
     """
     issuer = FakeIssuer()
     clock = clock or frozen()
@@ -118,7 +119,8 @@ async def service(
         http=httpx.AsyncClient(transport=issuer.transport()),
         groups=FakeGroups(USERS),
         clock=clock,
-        disk=disk,
+        storage=storage,
+        probe_timeout=probe_timeout,
     )
     app = create_app(runtime=runtime)
     transport = httpx.ASGITransport(app=app)

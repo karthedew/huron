@@ -44,6 +44,6 @@ def main() -> None:
             sleep=time.sleep,
             open_browser=webbrowser.open,
             hostname=socket.gethostname(),
-            storage_factory=lambda config: PosixStorage(),
+            storage_factory=PosixStorage,
         )
         raise SystemExit(run(services, sys.argv[1:]))

@@ -23,9 +23,9 @@ from huron.core.storage.memory import MemoryStorage
 from tests.fakes.groups import FakeGroups
 from tests.fakes.issuer import ISSUER, FakeIssuer
 from tests.fakes.prompter import ScriptedPrompter
+from tests.fakes.storage import rooted
 from tests.support.api import USERS, settings
 from tests.support.clock import START, frozen
-from tests.support.disk import lake_disk
 from tests.support.tus import TUS_URL, FakeTus
 
 API = "http://huron.test"
@@ -106,15 +106,16 @@ class Router(httpx.BaseTransport):
 class Cli:
     """A CLI wired to an in-process service; ``run`` executes one command line.
 
-    With ``lake``, the service holds that in-memory lake at ``lake_path`` (``mount_prefix`` by
+    With ``lake``, the service holds that in-memory share at ``lake_path`` (``mount_prefix`` by
     default) and takes uploads through :class:`FakeTus`, which ``tus`` holds. ``lake`` keeps it.
-    The provision commands write to the share that ``storage_factory`` gives.
+    ``storage_factory`` gives the share rooted at a directory of this machine; the provision
+    commands write to the one it gives for the mount prefix.
     """
 
     def __init__(
         self,
         home: Path,
-        storage_factory: Callable[[Config], Any],
+        storage_factory: Callable[[Path], Any],
         mount_prefix: Path,
         *,
         lake: MemoryStorage | None = None,
@@ -126,15 +127,12 @@ class Cli:
         self.issuer.now = START.timestamp()
         self.clock = frozen()
         self.lake = lake
-        disk = None
+        storage = None
         lake_path = lake_path or mount_prefix
         if lake is not None:
             service_settings = {"lake_path": lake_path, "uploads_url": TUS_URL, **service_settings}
+            storage = rooted(lake)(lake_path)
         configured = settings(**service_settings)
-        if lake is not None:
-            disk = lake_disk(
-                lake, self.clock, declarations=configured.declarations, lake_path=lake_path
-            )
         self.runtime: Runtime = self.loop.call(
             build_runtime(
                 configured,
@@ -142,14 +140,14 @@ class Cli:
                 http=httpx.AsyncClient(transport=self.issuer.transport()),
                 groups=FakeGroups(USERS),
                 clock=self.clock,
-                disk=disk,
+                storage=storage,
             )
         )
         service = SyncASGITransport(self.loop, create_app(runtime=self.runtime))
         self.router = transport = Router(self.issuer, service)
         self.tus: FakeTus | None = None
-        if lake is not None:
-            self.tus = FakeTus(service, lake, lake_path)
+        if storage is not None:
+            self.tus = FakeTus(service, storage)
             self.router.tus = self.tus.transport
         self.http = httpx.Client(transport=transport)
         self.prompter = ScriptedPrompter()
@@ -180,7 +178,7 @@ class Cli:
             open_browser=self.opened.append,
             hostname="ws1",
             storage_factory=self.storage_factory,
-            provision_storage=lambda: self.storage_factory(config),
+            provision_storage=self.storage_factory,
         )
         return services, out, err
 

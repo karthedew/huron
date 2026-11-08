@@ -1,6 +1,7 @@
-"""Share layout, modes, the storage adapters, placement and the in-process locks."""
+"""The lake's layout, the storage port and adapters, placement, removal and the locks."""
 
-from huron.core.storage.errors import LakeUnavailable, OutsideLake, SourceGone, StorageError
+from huron.core.storage.errors import LakeUnavailable, SourceGone, StorageError, SymlinkInLake
+from huron.core.storage.lakepath import LakePath
 from huron.core.storage.layout import (
     DIRECTORY_MODE,
     FILE_MODE,
@@ -8,12 +9,9 @@ from huron.core.storage.layout import (
     ORGANIZATION_MODE,
     UPLOAD_DIR,
     UPLOAD_DIR_MODE,
-    DirectoryKind,
+    UPLOADS,
     OrganizationPlace,
     is_reserved_entry,
-    mode_of,
-    place_of,
-    resolve,
 )
 from huron.core.storage.locks import PathLocks
 from huron.core.storage.marker import (
@@ -33,15 +31,17 @@ from huron.core.storage.placement import (
 )
 from huron.core.storage.ports import (
     SHARE_GROUP_PENDING,
-    FileStamp,
+    Entry,
     GroupOutcome,
     GroupResult,
     OpenFile,
-    Ownership,
+    Outcome,
     ShareReader,
     ShareWarning,
+    Stat,
     Storage,
 )
+from huron.core.storage.removal import prune
 
 __all__ = [
     "DIRECTORY_MODE",
@@ -50,13 +50,14 @@ __all__ = [
     "MARKER_MODE",
     "ORGANIZATION_MODE",
     "SHARE_GROUP_PENDING",
+    "UPLOADS",
     "UPLOAD_DIR",
     "UPLOAD_DIR_MODE",
     "CollectionDirectoryMissing",
-    "DirectoryKind",
-    "FileStamp",
+    "Entry",
     "GroupOutcome",
     "GroupResult",
+    "LakePath",
     "LakeUnavailable",
     "Linked",
     "Marker",
@@ -64,21 +65,20 @@ __all__ = [
     "Measured",
     "OpenFile",
     "OrganizationPlace",
-    "OutsideLake",
-    "Ownership",
+    "Outcome",
     "PathLocks",
     "Placer",
     "ShareReader",
     "ShareWarning",
     "SourceGone",
+    "Stat",
     "Storage",
     "StorageError",
+    "SymlinkInLake",
     "is_reserved_entry",
     "marker_state",
-    "mode_of",
-    "place_of",
+    "prune",
     "read_marker",
     "render_marker",
-    "resolve",
     "verify_marker",
 ]

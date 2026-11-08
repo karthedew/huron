@@ -1,4 +1,4 @@
-"""Placing a finished upload on an in-memory lake: measure, link, undo."""
+"""Placing a finished upload: measure, link, undo, on both adapters."""
 
 import hashlib
 import uuid
@@ -10,256 +10,271 @@ from huron.core.lake.uploads.errors import UploadSizeMismatch
 from huron.core.storage import (
     DIRECTORY_MODE,
     FILE_MODE,
-    UPLOAD_DIR,
+    UPLOAD_DIR_MODE,
+    UPLOADS,
     CollectionDirectoryMissing,
+    LakePath,
     Linked,
     Measured,
     Placer,
     SourceGone,
+    Storage,
+    StorageError,
 )
 from huron.core.storage.memory import MemoryStorage
-from tests.support.disk import LAKE, memory_lake
+from huron.core.storage.posix import PosixStorage
+from tests.support.disk import memory_lake
 
 UPLOAD_ID = uuid.UUID("0192b6a0-0000-7000-8000-0000000000aa")
 DATA = b"solar wind"
 SHA = hashlib.sha256(DATA).hexdigest()
-COLLECTION = LAKE / "helio" / "heliophysics" / "solar-wind" / "run7"
-PART = f".c.bin.{UPLOAD_ID}.huron-part"
-BACKUP = f".c.bin.{UPLOAD_ID}.huron-prev"
+COLLECTION = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
+SOURCE = UPLOADS.joinpath(str(UPLOAD_ID))
+INFO = UPLOADS.joinpath(f"{UPLOAD_ID}.info")
+PART = COLLECTION.joinpath(f".c.bin.{UPLOAD_ID}.huron-part")
+BACKUP = COLLECTION.joinpath(f".c.bin.{UPLOAD_ID}.huron-prev")
+TARGET = COLLECTION.joinpath("c.bin")
+
+
+def prepared(storage: Storage) -> Storage:
+    """``storage`` with tusd's directory, a received upload and a collection directory."""
+    storage.make_directory(UPLOADS, UPLOAD_DIR_MODE)
+    storage.write_bytes(SOURCE, DATA, 0o600)
+    storage.write_bytes(INFO, b"{}", 0o600)
+    for size in range(1, len(COLLECTION.names) + 1):
+        storage.make_directory(LakePath(COLLECTION.names[:size]), DIRECTORY_MODE)
+    return storage
+
+
+@pytest.fixture(params=["posix", "memory"])
+def storage(request: pytest.FixtureRequest, tmp_path: Path) -> Storage:
+    if request.param == "posix":
+        (tmp_path / "lake").mkdir()
+        return prepared(PosixStorage(tmp_path / "lake"))
+    return prepared(memory_lake())
 
 
 @pytest.fixture
-def storage() -> MemoryStorage:
-    """The in-memory lake with tusd's directory, a received upload and a collection directory."""
+def memory() -> MemoryStorage:
     lake = memory_lake()
-    lake.make_directory(LAKE / UPLOAD_DIR, 0o700)
-    lake.write_bytes(LAKE / UPLOAD_DIR / str(UPLOAD_ID), DATA, 0o600)
-    lake.write_bytes(LAKE / UPLOAD_DIR / f"{UPLOAD_ID}.info", b"{}", 0o600)
-    lake.add_root(COLLECTION.parent)
-    lake.nodes[COLLECTION.parent].mode = DIRECTORY_MODE
-    lake.make_inheriting_dir(COLLECTION)
+    prepared(lake)
     return lake
 
 
-@pytest.fixture
-def placer(storage: MemoryStorage) -> Placer:
-    return Placer(storage, LAKE)
+def inode(storage: Storage, location: LakePath) -> int:
+    found = storage.stat(location)
+    assert found is not None
+    return found.inode
 
 
-def source(placer: Placer) -> Path:
-    return placer.upload_file(UPLOAD_ID)
+def link(storage: Storage, target: LakePath = TARGET, measured: int | None = None) -> Linked:
+    source = inode(storage, SOURCE) if measured is None else measured
+    return Placer(storage).link(UPLOAD_ID, COLLECTION, target, source)
 
 
-def link(placer: Placer, destination: Path) -> Linked:
-    return placer.link(
-        source(placer), placer.info_file(UPLOAD_ID), destination, COLLECTION, UPLOAD_ID
-    )
+def measure(storage: Storage) -> Measured:
+    measured = Placer(storage).measure(UPLOAD_ID, len(DATA))
+    assert measured is not None
+    return measured
 
 
-def test_tusds_files_lie_in_the_upload_directory(placer: Placer) -> None:
-    assert placer.upload_file(UPLOAD_ID) == LAKE / UPLOAD_DIR / str(UPLOAD_ID)
-    assert placer.info_file(UPLOAD_ID) == LAKE / UPLOAD_DIR / f"{UPLOAD_ID}.info"
+def test_measure_reads_size_hash_and_inode_and_makes_the_file_readable(storage: Storage) -> None:
+    measured = measure(storage)
+    assert measured == Measured(len(DATA), SHA, inode(storage, SOURCE))
+    found = storage.stat(SOURCE)
+    assert found is not None and found.mode == FILE_MODE
+    assert measure(storage) == measured
 
 
-def test_measure_reads_size_hash_and_inode_and_makes_the_file_readable(
-    storage: MemoryStorage, placer: Placer
-) -> None:
-    inode = storage.inode(source(placer))
-    assert inode is not None
-    measured = placer.measure(source(placer), len(DATA))
-    assert measured == Measured(len(DATA), SHA, inode)
-    assert storage.owner(source(placer)).mode == FILE_MODE
-    assert placer.measure(source(placer), len(DATA)) == measured
-
-
-def test_measure_refuses_another_size_before_the_hash(
-    storage: MemoryStorage, placer: Placer
-) -> None:
+def test_measure_refuses_another_size_before_the_hash(storage: Storage) -> None:
     with pytest.raises(UploadSizeMismatch) as raised:
-        placer.measure(source(placer), len(DATA) + 1)
+        Placer(storage).measure(UPLOAD_ID, len(DATA) + 1)
     assert raised.value.context == {"declared": len(DATA) + 1, "received": len(DATA)}
-    assert storage.owner(source(placer)).mode == 0o600
+    found = storage.stat(SOURCE)
+    assert found is not None and found.mode == 0o600
 
 
-def test_measure_of_a_missing_upload_is_none(storage: MemoryStorage, placer: Placer) -> None:
-    storage.remove_file(source(placer))
-    assert placer.measure(source(placer), len(DATA)) is None
+def test_measure_of_a_missing_upload_is_none(storage: Storage) -> None:
+    storage.remove_file(SOURCE)
+    assert Placer(storage).measure(UPLOAD_ID, len(DATA)) is None
 
 
-def test_an_inode_above_two_to_the_63_survives_measure_and_undo(
-    storage: MemoryStorage, placer: Placer
-) -> None:
-    storage.nodes[source(placer)].inode = 2**64 - 3
-    measured = placer.measure(source(placer), len(DATA))
-    assert measured is not None and measured.inode == 2**64 - 3
-    destination = COLLECTION / "c.bin"
-    linked = link(placer, destination)
-    assert storage.inode(destination) == 2**64 - 3
-    placer.undo(destination, measured.inode, linked)
-    assert not storage.exists(destination)
+def test_an_inode_above_two_to_the_63_survives_measure_and_undo(memory: MemoryStorage) -> None:
+    memory.nodes[SOURCE].inode = 2**64 - 3
+    measured = measure(memory)
+    assert measured.inode == 2**64 - 3
+    linked = link(memory)
+    assert inode(memory, TARGET) == 2**64 - 3
+    Placer(memory).undo(TARGET, measured.inode, linked)
+    assert memory.stat(TARGET) is None
 
 
-def test_link_makes_inheriting_directories_and_removes_tusds_files(
-    storage: MemoryStorage, placer: Placer
-) -> None:
-    inode = storage.inode(source(placer))
-    destination = COLLECTION / "a" / "b" / "c.bin"
-    linked = link(placer, destination)
-    assert linked == Linked((COLLECTION / "a", COLLECTION / "a" / "b"), None)
+def test_link_makes_inheriting_directories_and_removes_tusds_files(storage: Storage) -> None:
+    source = inode(storage, SOURCE)
+    target = COLLECTION.joinpath("a", "b", "c.bin")
+    linked = link(storage, target)
+    assert linked == Linked((COLLECTION.joinpath("a"), COLLECTION.joinpath("a", "b")), None)
     for directory in linked.made_dirs:
-        assert storage.owner(directory).mode == DIRECTORY_MODE
-    assert storage.inode(destination) == inode
-    assert storage.read_bytes(destination) == DATA
-    assert not storage.exists(source(placer))
-    assert not storage.exists(placer.info_file(UPLOAD_ID))
+        found = storage.stat(directory)
+        assert found is not None and found.mode == DIRECTORY_MODE
+    assert inode(storage, target) == source
+    assert storage.read_bytes(target) == DATA
+    assert storage.stat(SOURCE) is None
+    assert storage.stat(INFO) is None
 
 
-def test_link_into_existing_directories_makes_none(storage: MemoryStorage, placer: Placer) -> None:
-    storage.make_inheriting_dir(COLLECTION / "a")
-    assert link(placer, COLLECTION / "a" / "c.bin") == Linked((), None)
+def test_link_into_existing_directories_makes_none(storage: Storage) -> None:
+    storage.make_inheriting_dir(COLLECTION.joinpath("a"))
+    assert link(storage, COLLECTION.joinpath("a", "c.bin")) == Linked((), None)
 
 
 @pytest.mark.parametrize("stale", [False, True], ids=["fresh", "stale-backup"])
 def test_link_replaces_an_existing_file_and_keeps_its_bytes_in_the_backup(
-    storage: MemoryStorage, placer: Placer, stale: bool
+    storage: Storage, stale: bool
 ) -> None:
-    destination = COLLECTION / "c.bin"
-    storage.write_bytes(destination, b"old")
-    old_inode = storage.inode(destination)
-    storage.write_bytes(COLLECTION / PART, b"stale")
+    storage.write_bytes(TARGET, b"old", 0o644)
+    old_inode = inode(storage, TARGET)
+    storage.write_bytes(PART, b"stale", 0o644)
     if stale:
-        storage.write_bytes(COLLECTION / BACKUP, b"stale")
-    linked = link(placer, destination)
-    assert linked == Linked((), COLLECTION / BACKUP)
-    assert placer.backup_file(destination, UPLOAD_ID) == COLLECTION / BACKUP
-    assert storage.read_bytes(destination) == DATA
-    assert (storage.read_bytes(COLLECTION / BACKUP), storage.inode(COLLECTION / BACKUP)) == (
-        b"old",
-        old_inode,
-    )
-    assert ("rename", destination) in storage.calls
-    assert not storage.exists(COLLECTION / PART)
+        storage.write_bytes(BACKUP, b"stale", 0o644)
+    assert link(storage) == Linked((), BACKUP)
+    assert storage.read_bytes(TARGET) == DATA
+    assert (storage.read_bytes(BACKUP), inode(storage, BACKUP)) == (b"old", old_inode)
+    assert storage.stat(PART) is None
 
 
-def test_drop_backup_removes_the_backup_once(storage: MemoryStorage, placer: Placer) -> None:
-    destination = COLLECTION / "c.bin"
-    storage.write_bytes(destination, b"old")
-    link(placer, destination)
-    placer.drop_backup(destination, UPLOAD_ID)
-    assert not storage.exists(COLLECTION / BACKUP)
-    placer.drop_backup(destination, UPLOAD_ID)
-    assert storage.read_bytes(destination) == DATA
+def test_drop_backup_removes_the_backup_once(storage: Storage) -> None:
+    storage.write_bytes(TARGET, b"old", 0o644)
+    link(storage)
+    Placer(storage).drop_backup(TARGET, UPLOAD_ID)
+    assert storage.stat(BACKUP) is None
+    Placer(storage).drop_backup(TARGET, UPLOAD_ID)
+    assert storage.read_bytes(TARGET) == DATA
 
 
-def test_link_without_tusds_info_file_still_succeeds(
-    storage: MemoryStorage, placer: Placer
-) -> None:
-    storage.remove_file(placer.info_file(UPLOAD_ID))
-    link(placer, COLLECTION / "c.bin")
-    assert storage.read_bytes(COLLECTION / "c.bin") == DATA
+def test_link_without_tusds_info_file_still_succeeds(storage: Storage) -> None:
+    storage.remove_file(INFO)
+    link(storage)
+    assert storage.read_bytes(TARGET) == DATA
 
 
-def test_link_never_makes_the_collection_directory(storage: MemoryStorage, placer: Placer) -> None:
+def test_link_never_makes_the_collection_directory(storage: Storage) -> None:
     storage.remove_directory(COLLECTION)
     with pytest.raises(CollectionDirectoryMissing, match="huron adm repair") as raised:
-        link(placer, COLLECTION / "a" / "c.bin")
+        link(storage, COLLECTION.joinpath("a", "c.bin"))
     assert (raised.value.code, raised.value.context) == (
         "STORAGE_FAILED",
         {"path": str(COLLECTION)},
     )
-    assert not storage.exists(COLLECTION)
-    assert storage.exists(source(placer))
+    assert storage.stat(COLLECTION) is None
+    assert storage.stat(SOURCE) is not None
 
 
-def test_link_of_a_gone_source_removes_the_directories_it_made(
-    storage: MemoryStorage, placer: Placer
+def test_link_refuses_a_collection_that_is_a_file(storage: Storage) -> None:
+    storage.remove_directory(COLLECTION)
+    storage.write_bytes(COLLECTION, b"", 0o644)
+    with pytest.raises(StorageError, match="is not a directory") as raised:
+        link(storage)
+    assert raised.value.code == "STORAGE_FAILED"
+    assert storage.stat(SOURCE) is not None
+
+
+@pytest.mark.parametrize(
+    "target", [COLLECTION, COLLECTION.parent.joinpath("c.bin"), LakePath.of("geo", "c.bin")]
+)
+def test_link_refuses_a_target_that_is_not_below_its_collection(
+    storage: Storage, target: LakePath
 ) -> None:
-    link(placer, COLLECTION / "c.bin")
+    with pytest.raises(ValueError, match="is not below the collection directory"):
+        link(storage, target)
+    assert storage.stat(SOURCE) is not None
+
+
+def test_link_of_a_gone_source_removes_the_directories_it_made(storage: Storage) -> None:
+    measured = inode(storage, SOURCE)
+    link(storage)
     with pytest.raises(SourceGone) as raised:
-        link(placer, COLLECTION / "a" / "b" / "c.bin")
-    assert raised.value.context == {"path": str(source(placer))}
-    assert not storage.exists(COLLECTION / "a")
-    assert storage.read_bytes(COLLECTION / "c.bin") == DATA
+        link(storage, COLLECTION.joinpath("a", "b", "c.bin"), measured)
+    assert raised.value.context == {"path": str(SOURCE)}
+    assert storage.stat(COLLECTION.joinpath("a")) is None
+    assert storage.read_bytes(TARGET) == DATA
 
 
-def test_undo_removes_the_placed_file_and_the_directories_link_made(
-    storage: MemoryStorage, placer: Placer
-) -> None:
-    measured = placer.measure(source(placer), len(DATA))
-    assert measured is not None
-    destination = COLLECTION / "a" / "b" / "c.bin"
-    linked = link(placer, destination)
-    placer.undo(destination, measured.inode, linked)
-    assert not storage.exists(COLLECTION / "a")
-    assert storage.is_directory(COLLECTION)
-    placer.undo(destination, measured.inode, linked)
+def test_link_of_a_replaced_source_links_nothing_and_prunes(storage: Storage) -> None:
+    measured = inode(storage, SOURCE)
+    storage.remove_file(SOURCE)
+    storage.write_bytes(SOURCE, DATA, 0o600)
+    with pytest.raises(SourceGone):
+        link(storage, COLLECTION.joinpath("a", "c.bin"), measured)
+    assert storage.stat(COLLECTION.joinpath("a")) is None
+    assert storage.stat(SOURCE) is not None
+    assert storage.is_empty(COLLECTION)
 
 
-def test_undo_of_an_overwrite_restores_the_old_bytes_and_inode(
-    storage: MemoryStorage, placer: Placer
-) -> None:
-    measured = placer.measure(source(placer), len(DATA))
-    assert measured is not None
-    destination = COLLECTION / "c.bin"
-    storage.write_bytes(destination, b"old")
-    old_inode = storage.inode(destination)
-    placer.undo(destination, measured.inode, link(placer, destination))
-    assert (storage.read_bytes(destination), storage.inode(destination)) == (b"old", old_inode)
-    assert not storage.exists(COLLECTION / BACKUP)
+def test_undo_removes_the_placed_file_and_the_directories_link_made(storage: Storage) -> None:
+    measured = measure(storage)
+    target = COLLECTION.joinpath("a", "b", "c.bin")
+    linked = link(storage, target)
+    Placer(storage).undo(target, measured.inode, linked)
+    assert storage.stat(COLLECTION.joinpath("a")) is None
+    assert storage.is_empty(COLLECTION)
+    Placer(storage).undo(target, measured.inode, linked)
+
+
+def test_undo_of_an_overwrite_restores_the_old_bytes_and_inode(storage: Storage) -> None:
+    measured = measure(storage)
+    storage.write_bytes(TARGET, b"old", 0o644)
+    old_inode = inode(storage, TARGET)
+    Placer(storage).undo(TARGET, measured.inode, link(storage))
+    assert (storage.read_bytes(TARGET), inode(storage, TARGET)) == (b"old", old_inode)
+    assert storage.stat(BACKUP) is None
 
 
 def test_undo_after_an_interrupted_overwrite_restores_the_old_bytes_and_inode(
-    storage: MemoryStorage, placer: Placer
+    memory: MemoryStorage,
 ) -> None:
-    measured = placer.measure(source(placer), len(DATA))
-    assert measured is not None
-    destination = COLLECTION / "c.bin"
-    storage.write_bytes(destination, b"old")
-    old_inode = storage.inode(destination)
+    measured = measure(memory)
+    memory.write_bytes(TARGET, b"old", 0o644)
+    old_inode = inode(memory, TARGET)
     # An earlier attempt stopped after its rename, before it removed tusd's files.
-    storage.nodes[COLLECTION / BACKUP] = storage.nodes[destination]
-    storage.nodes[destination] = storage.nodes[source(placer)]
-    linked = link(placer, destination)
-    assert linked == Linked((), COLLECTION / BACKUP)
-    placer.undo(destination, measured.inode, linked)
-    assert (storage.read_bytes(destination), storage.inode(destination)) == (b"old", old_inode)
-    assert not storage.exists(COLLECTION / BACKUP)
+    memory.nodes[BACKUP] = memory.nodes[TARGET]
+    memory.nodes[TARGET] = memory.nodes[SOURCE]
+    linked = link(memory)
+    assert linked == Linked((), BACKUP)
+    Placer(memory).undo(TARGET, measured.inode, linked)
+    assert (memory.read_bytes(TARGET), inode(memory, TARGET)) == (b"old", old_inode)
+    assert memory.stat(BACKUP) is None
 
 
 def test_undo_keeps_a_later_placement_and_directories_that_are_not_empty(
-    storage: MemoryStorage, placer: Placer
+    storage: Storage,
 ) -> None:
-    measured = placer.measure(source(placer), len(DATA))
-    assert measured is not None
-    destination = COLLECTION / "a" / "c.bin"
-    linked = link(placer, destination)
-    storage.write_bytes(destination, b"a later upload")
-    placer.undo(destination, measured.inode, linked)
-    assert storage.read_bytes(destination) == b"a later upload"
-    assert storage.is_directory(COLLECTION / "a")
+    measured = measure(storage)
+    target = COLLECTION.joinpath("a", "c.bin")
+    linked = link(storage, target)
+    storage.write_bytes(target, b"a later upload", 0o644)
+    Placer(storage).undo(target, measured.inode, linked)
+    assert storage.read_bytes(target) == b"a later upload"
+    assert storage.stat(COLLECTION.joinpath("a")) is not None
 
 
 def test_undo_of_an_overwrite_that_a_later_placement_replaced_drops_the_backup(
-    storage: MemoryStorage, placer: Placer
+    storage: Storage,
 ) -> None:
-    measured = placer.measure(source(placer), len(DATA))
-    assert measured is not None
-    destination = COLLECTION / "c.bin"
-    storage.write_bytes(destination, b"old")
-    linked = link(placer, destination)
-    storage.write_bytes(destination, b"a later upload")
-    placer.undo(destination, measured.inode, linked)
-    assert storage.read_bytes(destination) == b"a later upload"
-    assert not storage.exists(COLLECTION / BACKUP)
+    measured = measure(storage)
+    storage.write_bytes(TARGET, b"old", 0o644)
+    linked = link(storage)
+    storage.write_bytes(TARGET, b"a later upload", 0o644)
+    Placer(storage).undo(TARGET, measured.inode, linked)
+    assert storage.read_bytes(TARGET) == b"a later upload"
+    assert storage.stat(BACKUP) is None
 
 
-def test_measure_destination_reads_a_file_another_attempt_placed(
-    storage: MemoryStorage, placer: Placer
-) -> None:
-    destination = COLLECTION / "c.bin"
-    link(placer, destination)
-    inode = storage.inode(destination)
-    assert inode is not None
-    assert placer.measure_destination(destination, len(DATA)) == Measured(len(DATA), SHA, inode)
-    assert placer.measure_destination(destination, len(DATA) + 1) is None
-    assert placer.measure_destination(COLLECTION / "missing", len(DATA)) is None
+def test_measure_destination_reads_a_file_another_attempt_placed(storage: Storage) -> None:
+    link(storage)
+    placer = Placer(storage)
+    assert placer.measure_destination(TARGET, len(DATA)) == Measured(
+        len(DATA), SHA, inode(storage, TARGET)
+    )
+    assert placer.measure_destination(TARGET, len(DATA) + 1) is None
+    assert placer.measure_destination(COLLECTION.joinpath("missing"), len(DATA)) is None

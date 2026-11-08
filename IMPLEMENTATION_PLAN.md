@@ -4395,7 +4395,7 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
   `uv run pytest tests/unit/storage/test_containment.py`; `uv run pytest
   tests/unit/api/test_openapi_snapshot.py`; from `web/`, `npm run check`.
 - Dependencies: M11.5b.
-- Status: pending
+- Status: complete
 
 #### M11.5d Directory verbs and `metadata.json`
 
@@ -4563,6 +4563,23 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
       with `symbolic_link`, nothing changes in `outside`); a planned directory that is a link; a
       link at a namespace above two planned collections (one failure, the other steps run); a
       link at `metadata.json`.
+  - Found in M11.5c's verification (binding):
+    - `PosixStorage.set_mode` changes a mode through `open_entry`, which opens the entry for
+      reading. So it cannot change a directory that `U` cannot read (mode `000`, `02000`, `0300`,
+      `0100`): it raises `STORAGE_FAILED` (EACCES), while `MemoryStorage.set_mode` on an
+      unreadable directory succeeds. The repair test that makes a namespace unsearchable with
+      mode `02000` fails until this changes. Change `change_mode` to
+      `os.chmod(name, mode, dir_fd=parent_fd, follow_symlinks=False)` (fchmodat with
+      `AT_SYMLINK_NOFOLLOW`; it refuses a link in one step with `ValueError`, which an lstat
+      classifies as `SymlinkError`). Use `os.chown(name, -1, gid, dir_fd=parent_fd,
+      follow_symlinks=False)` for `change_group`. Keep the race tests in
+      `tests/unit/storage/test_races.py` and add an unreadable-directory case to the contract
+      suite over both adapters.
+    - `pkg/fs/posix.py` (about line 389) uses `item.is_symlink()`, which the symlink grep below
+      finds. Use `stat.S_ISLNK(info.st_mode)`.
+    - A `rel_path` segment longer than about 206 bytes makes the part or backup name longer than
+      255 bytes. Placement then fails with `NAME_INVALID`, and the directories it made are not
+      pruned. Refuse such a segment at `begin` (`check_rel_path`) so no directory is made.
 - Verification: `make gate`;
   `grep -rnE "\bon_error\b|DirectoryPlan|_EntryGuard|_Report\b|\b_skipped\b|\.walks\b|walks=|\.chain\b|\.below\b|repair_organization|_repair_planned|_KINDS|VanishingStorage" src/huron tests`
   prints nothing; `grep -rn "^MODE_DRIFT" src/huron` prints nothing; `grep -n "walk"

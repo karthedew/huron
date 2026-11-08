@@ -9,10 +9,11 @@ import pytest
 
 from huron.applications.api.app import create_app
 from huron.applications.api.openapi import document, main
-from huron.core.storage import UPLOAD_DIR, LakeUnavailable
+from huron.core.storage import UPLOAD_DIR, UPLOADS, LakePath, LakeUnavailable, StorageError
+from huron.core.storage.memory import MemoryStorage
 from tests.support.api import INSTANCE_ID, Service, service
 from tests.support.clock import START, frozen
-from tests.support.disk import LAKE, StalledStorage, lake_disk, memory_lake
+from tests.support.disk import LAKE, StalledStorage, memory_lake
 
 
 async def test_health_reports_the_instance(api: Service) -> None:
@@ -54,8 +55,8 @@ async def test_readiness_checks_a_temporary_lake(lake_api: Service, lake: Path) 
 async def test_readiness_fails_when_the_lake_is_not_writable() -> None:
     clock = frozen()
     storage = memory_lake()
-    storage.denied.add(LAKE / UPLOAD_DIR)
-    async with service(disk=lake_disk(storage, clock), clock=clock, lake_path=LAKE) as running:
+    storage.denied.add(UPLOADS)
+    async with service(storage=storage, clock=clock, lake_path=LAKE) as running:
         ready = await running.client.get("/readyz")
     assert ready.status_code == 503
     assert ready.json() == {
@@ -67,9 +68,10 @@ async def test_readiness_fails_when_the_lake_is_not_writable() -> None:
 async def test_readiness_fails_when_the_lake_probe_does_not_answer_in_time() -> None:
     clock = frozen()
     stalled = StalledStorage()
-    disk = lake_disk(stalled, clock, probe_timeout=0.01)
     try:
-        async with service(disk=disk, clock=clock, lake_path=LAKE) as running:
+        async with service(
+            storage=stalled, probe_timeout=0.01, clock=clock, lake_path=LAKE
+        ) as running:
             ready = await running.client.get("/readyz")
     finally:
         stalled.release.set()
@@ -77,17 +79,42 @@ async def test_readiness_fails_when_the_lake_probe_does_not_answer_in_time() -> 
 
 
 async def test_a_lake_path_that_is_not_a_directory_stops_startup(tmp_path: Path) -> None:
-    with pytest.raises(LakeUnavailable, match="is not a directory"):
+    with pytest.raises(LakeUnavailable, match="does not open as a directory") as raised:
         async with service(lake_path=tmp_path / "unmounted"):
             pass
+    assert raised.value.message.startswith(f"the lake at {tmp_path / 'unmounted'} is not available")
+    assert raised.value.context["lake_path"] == str(tmp_path / "unmounted")
 
 
 async def test_a_lake_the_api_cannot_write_stops_startup() -> None:
     clock = frozen()
     storage = memory_lake()
-    storage.denied.add(LAKE)
+    storage.denied.add(LakePath())
     with pytest.raises(LakeUnavailable, match="cannot write the lake"):
-        async with service(disk=lake_disk(storage, clock), clock=clock, lake_path=LAKE):
+        async with service(storage=storage, clock=clock, lake_path=LAKE):
+            pass
+
+
+async def test_a_link_at_the_upload_directory_stops_startup_as_a_link(lake: Path) -> None:
+    (lake.parent / "outside").mkdir()
+    (lake / UPLOAD_DIR).symlink_to(lake.parent / "outside")
+    with pytest.raises(StorageError) as raised:
+        async with service(lake_path=lake):
+            pass
+    assert raised.value.code == "SYMLINK_IN_LAKE"
+
+
+class BrokenStorage(MemoryStorage):
+    """An in-memory lake whose directories cannot be made, with an error that is no refusal."""
+
+    def make_directory(self, location: LakePath, mode: int) -> bool:
+        raise RuntimeError("the disk driver crashed")
+
+
+async def test_a_lake_that_fails_to_open_stops_startup_with_its_error() -> None:
+    storage = BrokenStorage(LAKE)
+    with pytest.raises(RuntimeError, match="the disk driver crashed"):
+        async with service(storage=storage, lake_path=LAKE):
             pass
 
 

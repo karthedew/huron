@@ -10,14 +10,15 @@ from rich.console import Console
 from huron.applications.cli.commands.status import STAGED_COLUMNS
 from huron.applications.cli.output import OutputFormat, human_size, render
 from huron.applications.cli.state import Stage, StagedAdd, StateDir, WorkingCopy
+from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
-from tests.unit.cli.conftest import PREFIX, make_collection
+from tests.unit.cli.conftest import make_collection
 
 BASE_ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
 RUN7 = "heliophysics.solar-wind.run7"
 RUN8 = "heliophysics.solar-wind.run8"
-RUN7_DIR = PREFIX / "helio" / "heliophysics" / "solar-wind" / "run7"
+RUN7_DIR = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
 WHERE = "in catalog heliophysics, organization helio"
 NOTHING_STAGED = "Nothing is staged. To stage files, run `huron add <file>`"
 PUSH_HINT = 'To push, run `huron push -m "<message>"`. To unstage a path, run `huron rm <path>`'
@@ -97,8 +98,9 @@ def test_status_lists_staged_adds_and_removes_in_a_table(staged: Cli, tmp_path: 
 
 
 def test_status_names_unrecorded_files_on_the_share(staged: Cli, share: MemoryStorage) -> None:
-    share.write_bytes(RUN7_DIR / "stray.txt", b"x")
-    share.write_bytes(RUN7_DIR / "deep" / "other.txt", b"y")
+    share.write_bytes(RUN7_DIR.joinpath("stray.txt"), b"x", 0o644)
+    share.make_directory(RUN7_DIR.joinpath("deep"), 0o2750)
+    share.write_bytes(RUN7_DIR.joinpath("deep", "other.txt"), b"y", 0o644)
     shown = lines(staged, "status")
     assert "Unrecorded files on the share: deep/other.txt, stray.txt" in shown
     assert shown[-1] == PUSH_HINT

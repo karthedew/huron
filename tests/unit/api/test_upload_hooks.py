@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import os
+import shutil
 import stat
 import uuid
 from collections.abc import AsyncIterator
@@ -15,7 +16,7 @@ from huron.core.storage import MARKER_FILE, Marker, render_marker
 from huron.pkg.hashing import EMPTY_SHA256
 from tests.support.api import Service, seed_service, service
 from tests.support.clock import frozen
-from tests.support.disk import SIGNAL_TIMEOUT, PausingStorage, lake_disk
+from tests.support.disk import SIGNAL_TIMEOUT, PausingStorage, snapshot
 from tests.support.lake import CONTRIBUTOR
 from tests.support.tusd import (
     HOOKS,
@@ -45,11 +46,10 @@ async def state(api: Service, upload_id: str, user: str = "dave") -> dict[str, o
 @pytest.fixture
 async def pausing(lake: Path) -> AsyncIterator[tuple[Service, PausingStorage, UploadTarget]]:
     """A service whose lake pauses in its first hash, with collection ``run7`` ready."""
-    storage = PausingStorage()
+    storage = PausingStorage(lake)
     clock = frozen()
-    disk = lake_disk(storage, clock, lake_path=lake, service_gid=os.getgid())
     try:
-        async with service(disk=disk, clock=clock) as api:
+        async with service(storage=storage, clock=clock, lake_path=lake) as api:
             await seed_service(api)
             yield api, storage, await upload_target(api, lake)
     finally:
@@ -324,6 +324,29 @@ async def test_a_missing_collection_directory_fails_the_upload(
     assert failed["state"] == "failed"
     assert failed["failure"] == {"code": "STORAGE_FAILED", "message": problem["detail"]}
     assert not target.directory.exists()
+
+
+async def test_a_namespace_replaced_by_a_link_fails_the_upload_and_changes_nothing_outside(
+    seeded_lake_api: Service, target: UploadTarget, lake: Path
+) -> None:
+    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
+    outside = lake.parent / "outside"
+    (outside / "run7").mkdir(parents=True)
+    os.chmod(outside / "run7", 0o2750)
+    namespace = target.directory.parent
+    shutil.rmtree(namespace)
+    namespace.symlink_to(outside)
+    before = snapshot(outside)
+    finished = await target.tusd.finish("dave", upload_id, len(DATA))
+    assert finished.status_code == 200
+    problem = problem_of(finished)
+    assert (problem["status"], problem["code"]) == (409, "SYMLINK_IN_LAKE")
+    assert problem["context"] == {"path": "helio/heliophysics/solar-wind"}
+    failed = await state(seeded_lake_api, upload_id)
+    assert failed["state"] == "failed"
+    assert failed["failure"] == {"code": "SYMLINK_IN_LAKE", "message": problem["detail"]}
+    assert (target.tusd.upload_dir / upload_id).read_bytes() == DATA
+    assert snapshot(outside) == before
 
 
 async def test_a_wrong_marker_makes_tusd_send_the_hook_again(

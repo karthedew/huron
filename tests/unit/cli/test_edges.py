@@ -14,6 +14,7 @@ from huron.applications.cli.login import Oidc
 from huron.applications.cli.prompts import QuestionaryPrompter
 from huron.applications.cli.state import Stage, StagedAdd, WorkingCopy
 from huron.applications.cli.sync import _recover
+from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.fakes.issuer import ISSUER, FakeIssuer
 from tests.support.cli import Cli
@@ -161,7 +162,7 @@ def test_push_and_status_edge_cases(ready: Cli, share: MemoryStorage, tmp_path: 
     assert json.loads(ready.ok("-o", "json", "status").stdout)["unrecorded"] is None
     ready.configure(mount_prefix=str(PREFIX))
     ready.ok("rm", "a.txt")
-    target = PREFIX / "helio" / "heliophysics" / "solar-wind" / "draft"
+    target = LakePath.of("helio", "heliophysics", "solar-wind", "draft")
     share.calls.clear()
     ready.ok("push")
-    assert share.exists(target / "a.txt") and share.calls == []
+    assert share.stat(target.joinpath("a.txt")) is not None and share.calls == []

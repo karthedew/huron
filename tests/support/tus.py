@@ -7,13 +7,11 @@ places the file in the lake and records its receipt.
 
 import base64
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import httpx
 
-from huron.core.storage import UPLOAD_DIR
-from huron.core.storage.memory import MemoryStorage
+from huron.core.storage import UPLOADS, Storage
 from tests.support.tusd import HOOKS, hook_body, upload_body
 
 #: The public tus endpoint the fake serves, as ``uploads_url`` names it.
@@ -33,7 +31,7 @@ class TusUpload:
 
 
 class FakeTus:
-    """nginx and tusd in front of ``service``, with the uploads in ``lake`` at ``lake_path``.
+    """nginx and tusd in front of ``service``, with the uploads in the lake ``lake``.
 
     The fault fields act once each, on the next request that they apply to:
 
@@ -48,7 +46,7 @@ class FakeTus:
     ``PATCH`` whose ``Content-Type`` is not ``application/offset+octet-stream``.
     """
 
-    def __init__(self, service: httpx.BaseTransport, lake: MemoryStorage, lake_path: Path) -> None:
+    def __init__(self, service: httpx.BaseTransport, lake: Storage) -> None:
         self.transport = httpx.MockTransport(self.handle)
         self.uploads: dict[str, TusUpload] = {}
         self.requests: list[tuple[str, str]] = []
@@ -59,7 +57,7 @@ class FakeTus:
         self.corrupt = False
         self._service = service
         self._lake = lake
-        self._upload_dir = lake_path / UPLOAD_DIR
+        self._upload_dir = UPLOADS
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         """Answer one tus request as nginx and tusd do."""
@@ -105,7 +103,7 @@ class FakeTus:
             return _merged(httpx.Response(201), answer)
         upload_id = answer["ChangeFileInfo"]["ID"]
         self.uploads[upload_id] = TusUpload(length)
-        self._lake.write_bytes(self._upload_dir / upload_id, b"", 0o600)
+        self._lake.write_bytes(self._upload_dir.joinpath(upload_id), b"", 0o600)
         created = httpx.Response(201, headers={"Location": f"{TUS_URL}{upload_id}"})
         if length == 0:
             return self._finish(request, upload_id, created)
@@ -118,7 +116,7 @@ class FakeTus:
         dropped, self.drop_after = self.drop_after, None
         if dropped is not None:
             body = body[:dropped]
-        source = self._upload_dir / upload_id
+        source = self._upload_dir.joinpath(upload_id)
         self._lake.write_bytes(source, (self._lake.read_bytes(source) or b"") + body, 0o600)
         upload.offset += len(body)
         if dropped is not None:
@@ -131,7 +129,7 @@ class FakeTus:
     def _finish(
         self, request: httpx.Request, upload_id: str, answer: httpx.Response
     ) -> httpx.Response:
-        source = self._upload_dir / upload_id
+        source = self._upload_dir.joinpath(upload_id)
         if self.corrupt:
             self.corrupt = False
             data = self._lake.read_bytes(source) or b""

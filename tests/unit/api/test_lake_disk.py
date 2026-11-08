@@ -1,4 +1,4 @@
-"""The API's hold on the lake: places, markers, paths inside the lake, locks and readiness."""
+"""The API's hold on the lake: places, markers, the gate, locks, readiness and placements."""
 
 import asyncio
 import gc
@@ -20,23 +20,32 @@ from huron.applications.api.disk import (
     PROBE_TIMEOUT,
     PROBE_TTL,
     LakeDisk,
+    Located,
+    Placements,
+    Run,
+    ShareGroups,
 )
-from huron.core.lake.organizations.declarations import Declarations, DeclaredOrganization
 from huron.core.lake.uploads.models import Failure, Upload, UploadState
 from huron.core.storage import (
     MARKER_FILE,
     SHARE_GROUP_PENDING,
-    UPLOAD_DIR,
+    UPLOAD_DIR_MODE,
+    UPLOADS,
+    LakePath,
     LakeUnavailable,
     Marker,
     OpenFile,
     OrganizationPlace,
-    OutsideLake,
+    Placer,
     ShareWarning,
+    Storage,
+    StorageError,
     render_marker,
 )
 from huron.core.storage.memory import MemoryStorage
+from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import FrozenClock
+from huron.pkg.errors import HuronError
 from tests.support.api import INSTANCE_ID, ROOT_MARKER
 from tests.support.clock import LoopClock, frozen
 from tests.support.disk import (
@@ -46,18 +55,16 @@ from tests.support.disk import (
     StalledStorage,
     lake_disk,
     memory_lake,
+    plant_symlink,
 )
 from tests.support.lake import CONTRIBUTOR, World, make_world, seed, settled_collection
 
-ROOTS = LAKE / "roots"
-RUN7 = LAKE / "helio" / "heliophysics" / "solar-wind" / "run7"
-DECLARED = Declarations.of(
-    [
-        DeclaredOrganization("helio", root=str(ROOTS)),
-        DeclaredOrganization("space"),
-        DeclaredOrganization("geo", root="/data2/huron", export="nfs2:/export/geo"),
-    ]
-)
+ROOTS = LakePath.of("roots")
+RUN7 = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
+PLACES = {
+    "helio": OrganizationPlace("helio", ROOTS, own_marker=True),
+    "space": OrganizationPlace("space", LakePath(), own_marker=True),
+}
 
 
 @pytest.fixture
@@ -80,67 +87,53 @@ async def disk(storage: MemoryStorage, clock: FrozenClock) -> AsyncIterator[Lake
 
 @pytest.fixture
 async def declared_disk(storage: MemoryStorage, clock: FrozenClock) -> AsyncIterator[LakeDisk]:
-    """The disk of a service that declares helio (rooted in the lake), space and geo."""
-    opened = lake_disk(storage, clock, declarations=DECLARED)
+    """The disk of a service that declares helio (rooted in the lake) and space."""
+    opened = lake_disk(storage, clock, places=PLACES)
     yield opened
     opened.close()
 
 
-def mark(storage: MemoryStorage, directory: Path, organization: str | None) -> None:
-    storage.add_root(directory)
+def mark(storage: MemoryStorage, directory: LakePath, organization: str | None) -> None:
+    storage.add_directory(directory)
     marker = Marker(1, "http://huron.test", str(INSTANCE_ID), organization)
-    storage.write_bytes(directory / MARKER_FILE, render_marker(marker))
+    storage.write_bytes(directory.joinpath(MARKER_FILE), render_marker(marker), 0o644)
 
 
-def test_places_follow_the_declarations(declared_disk: LakeDisk) -> None:
-    assert declared_disk.place_of("helio") == OrganizationPlace(
-        "helio", ROOTS, rooted=True, declared=True
+def test_locate_follows_the_declared_places(declared_disk: LakeDisk) -> None:
+    assert declared_disk.locate("other/heliophysics") == Located(
+        OrganizationPlace("other", LakePath(), own_marker=False),
+        LakePath.of("other", "heliophysics"),
     )
-    assert declared_disk.place_of("space") == OrganizationPlace(
-        "space", LAKE, rooted=False, declared=True
+    assert declared_disk.locate("helio/heliophysics/a") == Located(
+        PLACES["helio"], LakePath.of("roots", "helio", "heliophysics", "a")
     )
-    assert declared_disk.place_of("geo").export == "nfs2:/export/geo"
-    assert declared_disk.place_of("other") == OrganizationPlace("other", LAKE, rooted=False)
+    assert declared_disk.locate("space/x").location == LakePath.of("space", "x")
+    located = declared_disk.locate("helio/heliophysics")
+    assert located.joinpath("a", "b") == Located(
+        PLACES["helio"], LakePath.of("roots", "helio", "heliophysics", "a", "b")
+    )
 
 
-async def test_a_path_resolves_inside_the_lake(declared_disk: LakeDisk) -> None:
-    assert await declared_disk.resolve("other/heliophysics") == LAKE / "other" / "heliophysics"
-    assert await declared_disk.resolve("helio/heliophysics/a") == ROOTS / "helio/heliophysics/a"
-
-
-@pytest.mark.parametrize("relative", ["geo/catalog", "other/../geo", "other//x", ""])
-async def test_a_path_outside_the_lake_is_refused(declared_disk: LakeDisk, relative: str) -> None:
-    with pytest.raises(OutsideLake) as raised:
-        await declared_disk.resolve(relative)
-    assert (raised.value.code, raised.value.status) == ("OUTSIDE_LAKE", 422)
-
-
-@pytest.mark.parametrize(
-    ("mounted", "relative"),
-    [
-        (LAKE / "helio", "helio/heliophysics/solar-wind"),
-        (LAKE / "helio" / "heliophysics", "helio/heliophysics"),
-    ],
-)
-async def test_a_path_on_another_filesystem_is_refused(
-    disk: LakeDisk, storage: MemoryStorage, mounted: Path, relative: str
+@pytest.mark.parametrize("api_path", ["other/../geo", "other//x", "", "/other", "other/."])
+def test_locate_refuses_a_name_that_is_not_a_lake_name(
+    declared_disk: LakeDisk, storage: MemoryStorage, api_path: str
 ) -> None:
-    storage.mount(mounted, 7)
-    with pytest.raises(OutsideLake, match="different filesystem") as raised:
-        await disk.resolve(relative)
-    assert raised.value.context == {"path": relative, "lake_path": str(LAKE)}
-    assert await disk.resolve("geo/catalog") == LAKE / "geo" / "catalog"
+    before = list(storage.calls)
+    with pytest.raises(HuronError) as raised:
+        declared_disk.locate(api_path)
+    assert (raised.value.code, raised.value.status) == ("NAME_INVALID", 422)
+    assert storage.calls == before
 
 
-async def test_a_lake_path_that_is_not_a_directory_is_unavailable(
-    storage: MemoryStorage, clock: FrozenClock
+async def test_a_lake_root_that_does_not_open_is_unavailable(
+    tmp_path: Path, clock: FrozenClock
 ) -> None:
-    disk = lake_disk(storage, clock, lake_path=Path("/unmounted"))
+    disk = lake_disk(PosixStorage(tmp_path / "unmounted"), clock)
     try:
         with pytest.raises(LakeUnavailable) as raised:
-            await disk.resolve("helio/heliophysics")
+            await disk.work(disk.locate("helio/heliophysics"), lambda: None)
         assert (raised.value.code, raised.value.status) == ("LAKE_UNAVAILABLE", 503)
-        with pytest.raises(LakeUnavailable, match="not a directory"):
+        with pytest.raises(LakeUnavailable, match="does not open"):
             await disk.open()
     finally:
         disk.close()
@@ -149,48 +142,109 @@ async def test_a_lake_path_that_is_not_a_directory_is_unavailable(
 async def test_the_shared_marker_guards_unrooted_organizations(
     disk: LakeDisk, storage: MemoryStorage
 ) -> None:
-    place = disk.place_of("helio")
-    await disk.check_marker(place)
-    mark(storage, LAKE, "helio")
-    with pytest.raises(LakeUnavailable, match="names organization helio, not the share root"):
-        await disk.check_marker(place)
-    storage.remove_file(LAKE / MARKER_FILE)
+    located = disk.locate("helio")
+    assert await disk.work(located, lambda: "done") == "done"
+    mark(storage, LakePath(), "helio")
+    with pytest.raises(LakeUnavailable, match="names organization helio, not the lake path"):
+        await disk.work(located, lambda: None)
+    storage.remove_file(LakePath.of(MARKER_FILE))
     with pytest.raises(LakeUnavailable, match=r"no \.huron marker") as raised:
-        await disk.check_marker(place)
+        await disk.work(located, lambda: None)
     assert raised.value.context["state"] == "no marker"
 
 
 async def test_a_declared_organization_has_its_own_marker(
     declared_disk: LakeDisk, storage: MemoryStorage
 ) -> None:
-    place = declared_disk.place_of("helio")
-    with pytest.raises(LakeUnavailable, match="not mounted"):
-        await declared_disk.check_marker(place)
-    mark(storage, ROOTS / "helio", "helio")
-    await declared_disk.check_marker(place)
-    storage.write_bytes(
-        ROOTS / "helio" / MARKER_FILE, render_marker(Marker(1, "http://other", "other"))
-    )
+    located = declared_disk.locate("helio/heliophysics")
+    with pytest.raises(LakeUnavailable, match="roots/helio is not mounted"):
+        await declared_disk.work(located, lambda: None)
+    mark(storage, ROOTS.joinpath("helio"), "helio")
+    await declared_disk.work(located, lambda: None)
+    other = render_marker(Marker(1, "http://other", "other"))
+    storage.write_bytes(ROOTS.joinpath("helio", MARKER_FILE), other, 0o644)
     with pytest.raises(LakeUnavailable, match="another Huron service"):
-        await declared_disk.check_marker(place)
+        await declared_disk.work(located, lambda: None)
+
+
+async def test_a_link_on_the_way_to_the_marker_is_refused_as_a_link(
+    declared_disk: LakeDisk, storage: MemoryStorage
+) -> None:
+    plant_symlink(storage, ROOTS)
+    ran: list[str] = []
+    with pytest.raises(StorageError) as raised:
+        await declared_disk.work(declared_disk.locate("helio/x"), lambda: ran.append("ran"))
+    assert (raised.value.code, raised.value.context["path"]) == ("SYMLINK_IN_LAKE", "roots")
+    assert ran == []
+
+
+async def test_hold_verifies_the_marker_before_each_run(
+    disk: LakeDisk, storage: MemoryStorage
+) -> None:
+    ran: list[str] = []
+
+    async def unit(run: Run) -> None:
+        await run(lambda: ran.append("first"))
+        storage.remove_file(LakePath.of(MARKER_FILE))
+        await run(lambda: ran.append("second"))
+
+    with pytest.raises(LakeUnavailable, match="marker"):
+        await disk.hold(disk.locate("helio/x"), unit)
+    assert ran == ["first"]
+
+
+async def test_measure_holds_no_lock_and_checks_no_marker(
+    disk: LakeDisk, storage: MemoryStorage
+) -> None:
+    started, release = threading.Event(), threading.Event()
+    located = disk.locate("helio/x")
+
+    def slow() -> None:
+        started.set()
+        release.wait(SIGNAL_TIMEOUT)
+
+    holding = asyncio.create_task(disk.work(located, slow))
+    await asyncio.wait_for(asyncio.to_thread(started.wait), SIGNAL_TIMEOUT)
+    storage.remove_file(LakePath.of(MARKER_FILE))
+    assert await asyncio.wait_for(disk.measure(lambda: "measured"), SIGNAL_TIMEOUT) == "measured"
+    release.set()
+    await holding
 
 
 async def test_a_lake_the_api_cannot_write_is_unavailable(
     disk: LakeDisk, storage: MemoryStorage
 ) -> None:
-    storage.denied.add(LAKE)
-    with pytest.raises(LakeUnavailable, match="cannot write the lake /lake") as raised:
+    storage.denied.add(LakePath())
+    with pytest.raises(LakeUnavailable, match="cannot write the lake") as raised:
         await disk.open()
-    assert raised.value.context == {"lake_path": str(LAKE), "path": str(LAKE)}
+    assert raised.value.context["path"] == ""
+
+
+async def test_a_link_at_the_upload_directory_is_refused_as_a_link(
+    tmp_path: Path, clock: FrozenClock
+) -> None:
+    (tmp_path / "lake").mkdir()
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "lake" / ".tus-uploads").symlink_to(tmp_path / "outside")
+    disk = lake_disk(PosixStorage(tmp_path / "lake"), clock)
+    try:
+        with pytest.raises(StorageError) as raised:
+            await disk.open()
+    finally:
+        disk.close()
+    assert (raised.value.code, raised.value.status) == ("SYMLINK_IN_LAKE", 409)
+    assert raised.value.context["path"] == ".tus-uploads"
+    assert list((tmp_path / "outside").iterdir()) == []
 
 
 async def test_open_makes_the_upload_directory_once(disk: LakeDisk, storage: MemoryStorage) -> None:
     await disk.open()
-    assert disk.upload_dir == LAKE / UPLOAD_DIR
-    assert storage.owner(disk.upload_dir).mode == 0o700
-    storage.set_mode(disk.upload_dir, 0o750)
+    found = storage.stat(UPLOADS)
+    assert found is not None and found.mode == UPLOAD_DIR_MODE
+    storage.set_mode(UPLOADS, 0o750)
     await disk.open()
-    assert storage.owner(disk.upload_dir).mode == 0o750
+    found = storage.stat(UPLOADS)
+    assert found is not None and found.mode == 0o750
 
 
 async def test_the_lake_is_ready_when_the_upload_directory_is_writable(
@@ -201,7 +255,7 @@ async def test_the_lake_is_ready_when_the_upload_directory_is_writable(
     assert await disk.ready() is False  # the answer is kept
     clock.advance(PROBE_TTL)
     assert await disk.ready() is True
-    assert [p for p in storage.nodes if p.parent == disk.upload_dir] == []
+    assert storage.is_empty(UPLOADS)
 
 
 async def test_the_answer_is_kept_for_ten_seconds(
@@ -209,7 +263,7 @@ async def test_the_answer_is_kept_for_ten_seconds(
 ) -> None:
     await disk.open()
     assert await disk.ready() is True
-    storage.denied.add(disk.upload_dir)
+    storage.denied.add(UPLOADS)
     clock.advance(PROBE_TTL - timedelta(microseconds=1))
     assert await disk.ready() is True
     clock.advance(timedelta(microseconds=1))
@@ -242,11 +296,11 @@ async def test_a_probe_that_does_not_answer_in_time_is_not_ready(
         disk.close()
 
 
-async def test_run_holds_the_lock_of_its_path(disk: LakeDisk) -> None:
+async def test_work_holds_the_lock_of_its_place(disk: LakeDisk) -> None:
     order: list[str] = []
     started = threading.Event()
     release = threading.Event()
-    target = LAKE / "helio"
+    target = disk.locate("helio")
 
     def slow() -> str:
         started.set()
@@ -254,10 +308,10 @@ async def test_run_holds_the_lock_of_its_path(disk: LakeDisk) -> None:
         order.append("first")
         return "done"
 
-    first = asyncio.create_task(disk.run(target, slow))
+    first = asyncio.create_task(disk.work(target, slow))
     await asyncio.wait_for(asyncio.to_thread(started.wait), 5)
-    second = asyncio.create_task(disk.run(target, lambda: order.append("second")))
-    other = await asyncio.wait_for(disk.run(LAKE / "geo", lambda: len(order)), 5)
+    second = asyncio.create_task(disk.work(target, lambda: order.append("second")))
+    other = await asyncio.wait_for(disk.work(disk.locate("geo"), lambda: len(order)), 5)
     assert other == 0
     release.set()
     assert await first == "done"
@@ -267,13 +321,13 @@ async def test_run_holds_the_lock_of_its_path(disk: LakeDisk) -> None:
 
 @pytest.mark.parametrize("fails", [False, True], ids=["returns", "raises"])
 @pytest.mark.parametrize("cancellations", [1, 2])
-async def test_a_cancelled_run_holds_the_lock_until_its_action_returns(
+async def test_a_cancelled_work_holds_the_lock_until_its_action_returns(
     disk: LakeDisk, loop_errors: list[dict[str, object]], cancellations: int, fails: bool
 ) -> None:
     order: list[str] = []
     started = threading.Event()
     release = threading.Event()
-    target = LAKE / "helio"
+    target = disk.locate("helio")
 
     def slow() -> None:
         started.set()
@@ -283,12 +337,12 @@ async def test_a_cancelled_run_holds_the_lock_until_its_action_returns(
             raise RuntimeError("the lake is gone")
 
     with structlog.testing.capture_logs() as logged:
-        first = asyncio.create_task(disk.run(target, slow))
+        first = asyncio.create_task(disk.work(target, slow))
         await asyncio.wait_for(asyncio.to_thread(started.wait), 5)
-        second = asyncio.create_task(disk.run(target, lambda: order.append("second")))
+        second = asyncio.create_task(disk.work(target, lambda: order.append("second")))
         for _ in range(cancellations):
             first.cancel()
-            await asyncio.wait_for(disk.run(LAKE / "geo", lambda: None), 5)
+            await asyncio.wait_for(disk.work(disk.locate("geo"), lambda: None), 5)
         assert (first.done(), second.done(), order) == (False, False, [])
         release.set()
         with pytest.raises(asyncio.CancelledError):
@@ -300,13 +354,13 @@ async def test_a_cancelled_run_holds_the_lock_until_its_action_returns(
     failure = {
         "event": "disk.cancelled_action_failed",
         "log_level": "error",
-        "path": str(target),
+        "path": "helio",
         "error": repr(RuntimeError("the lake is gone")),
     }
     assert logged == ([failure] if fails else [])
 
 
-async def test_a_cancelled_run_whose_action_never_started_ends_quietly(
+async def test_a_cancelled_work_whose_action_never_started_ends_quietly(
     disk: LakeDisk, loop_errors: list[dict[str, object]]
 ) -> None:
     busy = threading.Barrier(DISK_WORKERS + 1)
@@ -317,12 +371,12 @@ async def test_a_cancelled_run_whose_action_never_started_ends_quietly(
         release.wait(5)
 
     blockers = [
-        asyncio.create_task(disk.run(LAKE / f"busy-{n}", block)) for n in range(DISK_WORKERS)
+        asyncio.create_task(disk.work(disk.locate(f"busy-{n}"), block)) for n in range(DISK_WORKERS)
     ]
     await asyncio.wait_for(asyncio.to_thread(busy.wait, 5), 5)
     with structlog.testing.capture_logs() as logged:
-        queued = asyncio.create_task(disk.run(LAKE / "queued", lambda: None))
-        await asyncio.sleep(0)  # the run hands its action to the full pool and waits
+        queued = asyncio.create_task(disk.work(disk.locate("queued"), lambda: None))
+        await asyncio.sleep(0)  # the work hands its action to the full pool and waits
         queued.cancel()
         disk.close()
         with pytest.raises(asyncio.CancelledError):
@@ -333,49 +387,58 @@ async def test_a_cancelled_run_whose_action_never_started_ends_quietly(
     assert (logged, loop_errors) == ([], [])
 
 
-async def test_run_passes_errors_through(disk: LakeDisk) -> None:
+async def test_work_passes_errors_through(disk: LakeDisk) -> None:
     def fail() -> None:
         raise LakeUnavailable("the lake is gone", {})
 
     with pytest.raises(LakeUnavailable, match="the lake is gone"):
-        await disk.run(LAKE, fail)
+        await disk.work(disk.locate("helio"), fail)
+
+
+CATALOG = LakePath.of("helio", "heliophysics")
 
 
 @pytest.fixture
-def catalog(storage: MemoryStorage) -> Path:
-    """The helio organization and heliophysics catalog directories; helio-readers is known."""
+def groups(disk: LakeDisk, storage: MemoryStorage) -> ShareGroups:
+    """The share groups over the helio catalog directory; helio-readers is known."""
     storage.groups.update({"helio-readers": 2001, "geo-readers": 2002})
     storage.member_of.add(2001)
-    storage.make_directory(LAKE / "helio", 0o2751)
-    storage.make_directory(LAKE / "helio" / "heliophysics", 0o2750)
-    return LAKE / "helio" / "heliophysics"
+    storage.make_directory(LakePath.of("helio"), 0o2751)
+    storage.make_directory(CATALOG, 0o2750)
+    return ShareGroups(disk, storage, SERVICE_GID)
+
+
+def gid(storage: Storage, location: LakePath) -> int:
+    found = storage.stat(location)
+    assert found is not None
+    return found.gid
 
 
 async def test_a_share_group_that_can_be_set_gives_no_warning(
-    disk: LakeDisk, storage: MemoryStorage, catalog: Path
+    groups: ShareGroups, storage: MemoryStorage
 ) -> None:
-    assert await disk.set_share_group("helio/heliophysics", "helio-readers") is None
-    assert storage.owner(catalog).gid == 2001
-    assert await disk.set_share_group("helio/heliophysics", "helio-readers") is None
+    assert await groups.set_share_group("helio/heliophysics", "helio-readers") is None
+    assert gid(storage, CATALOG) == 2001
+    assert await groups.set_share_group("helio/heliophysics", "helio-readers") is None
 
 
 async def test_a_cleared_share_group_gives_the_directory_the_service_group(
-    disk: LakeDisk, storage: MemoryStorage, catalog: Path
+    groups: ShareGroups, storage: MemoryStorage
 ) -> None:
-    await disk.set_share_group("helio/heliophysics", "helio-readers")
-    assert await disk.set_share_group("helio/heliophysics", None) is None
-    assert storage.owner(catalog).gid == SERVICE_GID
-    assert await disk.set_share_group("helio/heliophysics", None) is None
+    await groups.set_share_group("helio/heliophysics", "helio-readers")
+    assert await groups.set_share_group("helio/heliophysics", None) is None
+    assert gid(storage, CATALOG) == SERVICE_GID
+    assert await groups.set_share_group("helio/heliophysics", None) is None
 
 
 @pytest.mark.parametrize(
-    ("relative", "group", "named", "detail"),
+    ("api_path", "group", "named", "detail"),
     [
         (
             "helio/heliophysics",
             "geo-readers",
             "geo-readers",
-            "/lake/helio/heliophysics: Operation not permitted",
+            "helio/heliophysics: Operation not permitted",
         ),
         (
             "helio/heliophysics",
@@ -383,43 +446,40 @@ async def test_a_cleared_share_group_gives_the_directory_the_service_group(
             "nobody-knows",
             "this machine does not know the group nobody-knows",
         ),
-        (
-            "helio/aurora",
-            "helio-readers",
-            "helio-readers",
-            "/lake/helio/aurora: No such file or directory",
-        ),
-        ("helio/aurora", None, str(SERVICE_GID), "/lake/helio/aurora: No such file or directory"),
+        ("helio/aurora", "helio-readers", "helio-readers", "helio/aurora does not exist"),
+        ("helio/aurora", None, str(SERVICE_GID), "helio/aurora does not exist"),
     ],
 )
 async def test_a_share_group_that_cannot_be_set_is_pending(
-    disk: LakeDisk, catalog: Path, relative: str, group: str | None, named: str, detail: str
+    groups: ShareGroups, api_path: str, group: str | None, named: str, detail: str
 ) -> None:
-    warning = await disk.set_share_group(relative, group)
+    warning = await groups.set_share_group(api_path, group)
     assert warning == ShareWarning(SHARE_GROUP_PENDING, named, detail)
 
 
 async def test_a_directory_the_service_does_not_own_keeps_its_group_when_cleared(
-    disk: LakeDisk, storage: MemoryStorage, catalog: Path
+    groups: ShareGroups, storage: MemoryStorage
 ) -> None:
-    storage.nodes[catalog].uid, storage.nodes[catalog].gid = 0, 2001
-    warning = await disk.set_share_group("helio/heliophysics", None)
+    storage.nodes[CATALOG].uid, storage.nodes[CATALOG].gid = 0, 2001
+    warning = await groups.set_share_group("helio/heliophysics", None)
     assert warning == ShareWarning(
-        SHARE_GROUP_PENDING, str(SERVICE_GID), f"{catalog}: Operation not permitted"
+        SHARE_GROUP_PENDING, str(SERVICE_GID), "helio/heliophysics: Operation not permitted"
     )
-    assert storage.owner(catalog).gid == 2001
+    assert gid(storage, CATALOG) == 2001
 
 
-async def test_a_share_group_needs_the_lake_and_its_marker(
-    disk: LakeDisk, storage: MemoryStorage, catalog: Path
+async def test_a_share_group_needs_the_marker_and_no_link_on_the_way(
+    groups: ShareGroups, storage: MemoryStorage
 ) -> None:
-    storage.mount(LAKE / "geo", 7)
-    with pytest.raises(OutsideLake):
-        await disk.set_share_group("geo/catalog", "helio-readers")
-    storage.remove_file(LAKE / MARKER_FILE)
+    storage.make_directory(LakePath.of("geo"), 0o2751)
+    plant_symlink(storage, LakePath.of("geo", "catalog"))
+    with pytest.raises(StorageError) as linked:
+        await groups.set_share_group("geo/catalog", "helio-readers")
+    assert linked.value.code == "SYMLINK_IN_LAKE"
+    storage.remove_file(LakePath.of(MARKER_FILE))
     with pytest.raises(LakeUnavailable):
-        await disk.set_share_group("helio/heliophysics", "helio-readers")
-    assert storage.owner(catalog).gid != 2001
+        await groups.set_share_group("helio/heliophysics", "helio-readers")
+    assert gid(storage, CATALOG) != 2001
 
 
 class LinkPausingStorage(MemoryStorage):
@@ -427,18 +487,26 @@ class LinkPausingStorage(MemoryStorage):
 
     def __init__(self) -> None:
         super().__init__(LAKE, uid=SERVICE_GID, gid=SERVICE_GID)
-        self.write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
+        self.write_bytes(LakePath.of(MARKER_FILE), ROOT_MARKER, 0o644)
         self.linking = threading.Event()
         self.release = threading.Event()
         self.order: list[str] = []
 
     def link(
-        self, source: Path, destination: Path, part_name: str, backup_name: str
-    ) -> Path | None:
+        self,
+        source: LakePath,
+        destination: LakePath,
+        *,
+        inode: int,
+        part_name: str,
+        backup_name: str,
+    ) -> LakePath | None:
         """Wait for :attr:`release`, then link."""
         self.linking.set()
         assert self.release.wait(SIGNAL_TIMEOUT)
-        linked = super().link(source, destination, part_name, backup_name)
+        linked = super().link(
+            source, destination, inode=inode, part_name=part_name, backup_name=backup_name
+        )
         self.order.append("linked")
         return linked
 
@@ -448,10 +516,10 @@ async def received(
 ) -> Upload:
     """A pending upload of ``data`` to ``rel_path`` of collection run7, received by tusd."""
     collection = await settled_collection(world.lake)
-    storage.add_root(RUN7)
-    storage.make_directory(LAKE / UPLOAD_DIR, 0o700)
+    storage.add_directory(RUN7)
+    storage.make_directory(UPLOADS, 0o700)
     upload = await world.lake.uploads.begin(CONTRIBUTOR, collection, rel_path, len(data))
-    storage.write_bytes(LAKE / UPLOAD_DIR / str(upload.id), data, 0o600)
+    storage.write_bytes(UPLOADS.joinpath(str(upload.id)), data, 0o600)
     return upload
 
 
@@ -467,12 +535,14 @@ async def test_place_links_the_upload_and_records_its_receipt(
     world: World, disk: LakeDisk, storage: MemoryStorage
 ) -> None:
     upload = await received(world, storage, b"bytes")
-    inode = storage.inode(LAKE / UPLOAD_DIR / str(upload.id))
+    inode = inode_of(storage, UPLOADS.joinpath(str(upload.id)))
     destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
-    placed = await disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+    placed = await placements(disk, storage).place(
+        world.lake.uploads, CONTRIBUTOR, upload, destination
+    )
     assert (placed.state, placed.size, placed.inode) == (UploadState.PLACED, 5, inode)
     assert placed.sha256 == hashlib.sha256(b"bytes").hexdigest()
-    assert storage.inode(RUN7 / "c.bin") == inode
+    assert inode_of(storage, RUN7.joinpath("c.bin")) == inode
 
 
 async def test_place_puts_the_names_of_the_path_below_the_collection_directory(
@@ -480,24 +550,42 @@ async def test_place_puts_the_names_of_the_path_below_the_collection_directory(
 ) -> None:
     upload = await received(world, storage, b"bytes", "day1/solar/c.bin")
     storage.nodes[RUN7].mode = 0o2750
-    inode = storage.inode(LAKE / UPLOAD_DIR / str(upload.id))
+    inode = inode_of(storage, UPLOADS.joinpath(str(upload.id)))
     destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
-    await disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
-    assert storage.inode(RUN7 / "day1" / "solar" / "c.bin") == inode
+    await placements(disk, storage).place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+    assert inode_of(storage, RUN7.joinpath("day1", "solar", "c.bin")) == inode
 
 
-async def test_a_collection_directory_on_another_filesystem_fails_the_upload(
+async def test_a_link_at_the_collection_directory_fails_the_upload(
     world: World, disk: LakeDisk, storage: MemoryStorage
 ) -> None:
     upload = await received(world, storage, b"bytes")
-    storage.mount(LAKE / "helio", 7)
+    del storage.nodes[RUN7]
+    plant_symlink(storage, RUN7)
     destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
-    with pytest.raises(OutsideLake, match="different filesystem") as raised:
-        await disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+    with pytest.raises(StorageError) as raised:
+        await placements(disk, storage).place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+    assert (raised.value.code, raised.value.status) == ("SYMLINK_IN_LAKE", 409)
+    assert raised.value.context["path"] == str(RUN7)
     failed = await world.lake.uploads.get(CONTRIBUTOR, upload.id)
     assert failed.state is UploadState.FAILED
-    assert failed.failure == Failure("OUTSIDE_LAKE", raised.value.message)
-    assert storage.inode(RUN7 / "c.bin") is None
+    assert failed.failure == Failure("SYMLINK_IN_LAKE", raised.value.message)
+    assert storage.stat(UPLOADS.joinpath(str(upload.id))) is not None
+
+
+async def test_a_link_at_the_upload_file_fails_the_upload(
+    world: World, disk: LakeDisk, storage: MemoryStorage
+) -> None:
+    upload = await received(world, storage, b"bytes")
+    source = UPLOADS.joinpath(str(upload.id))
+    del storage.nodes[source]
+    plant_symlink(storage, source)
+    destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
+    with pytest.raises(StorageError) as raised:
+        await placements(disk, storage).place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+    assert raised.value.code == "SYMLINK_IN_LAKE"
+    failed = await world.lake.uploads.get(CONTRIBUTOR, upload.id)
+    assert failed.failure == Failure("SYMLINK_IN_LAKE", raised.value.message)
 
 
 async def test_a_cancelled_placement_records_its_receipt_before_it_frees_the_path(
@@ -509,11 +597,11 @@ async def test_a_cancelled_placement_records_its_receipt_before_it_frees_the_pat
         upload = await received(world, storage, b"bytes")
         destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
         placing = asyncio.create_task(
-            disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination)
+            placements(disk, storage).place(world.lake.uploads, CONTRIBUTOR, upload, destination)
         )
         assert await asyncio.to_thread(storage.linking.wait, SIGNAL_TIMEOUT)
-        path = RUN7 / "c.bin"
-        after = asyncio.create_task(disk.run(path, lambda: storage.order.append("after")))
+        target = disk.locate(str(RUN7.joinpath("c.bin")))
+        after = asyncio.create_task(disk.work(target, lambda: storage.order.append("after")))
         placing.cancel()
         storage.release.set()
         with pytest.raises(asyncio.CancelledError):
@@ -535,15 +623,15 @@ class HashBlockingStorage(MemoryStorage):
 
     def __init__(self) -> None:
         super().__init__(LAKE, uid=SERVICE_GID, gid=SERVICE_GID)
-        self.write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
+        self.write_bytes(LakePath.of(MARKER_FILE), ROOT_MARKER, 0o644)
         self.full = threading.Event()
         self.release = threading.Event()
         self.waiting = 0
         self.counting = threading.Lock()
 
-    def open_file(self, path: Path) -> OpenFile | None:
-        """Open ``path``; its hash waits for :attr:`release`."""
-        opened = super().open_file(path)
+    def open_file(self, location: LakePath) -> OpenFile | None:
+        """Open ``location``; its hash waits for :attr:`release`."""
+        opened = super().open_file(location)
         return None if opened is None else BlockedHash(opened, self)
 
 
@@ -581,13 +669,17 @@ async def start_placements(
     uploads = [first]
     for n in range(count - 1):
         upload = await world.lake.uploads.begin(CONTRIBUTOR, first.collection_id, f"{n}", 5)
-        storage.write_bytes(LAKE / UPLOAD_DIR / str(upload.id), b"bytes", 0o600)
+        storage.write_bytes(UPLOADS.joinpath(str(upload.id)), b"bytes", 0o600)
         uploads.append(upload)
     placing = []
     for upload in uploads:
         destination = await world.lake.uploads.placement(CONTRIBUTOR, upload.id)
         placing.append(
-            asyncio.create_task(disk.place(world.lake.uploads, CONTRIBUTOR, upload, destination))
+            asyncio.create_task(
+                placements(disk, storage).place(
+                    world.lake.uploads, CONTRIBUTOR, upload, destination
+                )
+            )
         )
     return first.collection_id, placing
 
@@ -603,10 +695,12 @@ async def test_blocked_hash_workers_delay_neither_readiness_nor_other_disk_calls
         _, placing = await start_placements(world, disk, storage, DISK_WORKERS + 1)
         assert await asyncio.to_thread(storage.full.wait, SIGNAL_TIMEOUT)
         assert await asyncio.wait_for(disk.ready(), SIGNAL_TIMEOUT) is True
-        note = LAKE / "helio" / "note"
-        await asyncio.wait_for(
-            disk.run(note, lambda: storage.write_bytes(note, b"written")), SIGNAL_TIMEOUT
-        )
+        note = LakePath.of("helio", "note")
+
+        def write() -> None:
+            storage.write_bytes(note, b"written", 0o644)
+
+        await asyncio.wait_for(disk.work(disk.locate("helio/note"), write), SIGNAL_TIMEOUT)
         assert storage.read_bytes(note) == b"written"
         assert storage.waiting == HASH_WORKERS
         storage.release.set()
@@ -636,7 +730,7 @@ class RecordingExecutor(ThreadPoolExecutor):
 async def test_close_drops_a_queued_hash_and_refuses_later_disk_work(
     world: World, clock: FrozenClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("huron.applications.api.disk.ThreadPoolExecutor", RecordingExecutor)
+    monkeypatch.setattr("huron.applications.api.disk.lake.ThreadPoolExecutor", RecordingExecutor)
     monkeypatch.setattr(RecordingExecutor, "submitted", [])
     storage = HashBlockingStorage()
     disk = lake_disk(storage, clock)
@@ -661,11 +755,23 @@ async def test_close_drops_a_queued_hash_and_refuses_later_disk_work(
         ]
         assert storage.waiting == HASH_WORKERS
         with pytest.raises(RuntimeError, match="after shutdown"):
-            await disk.run(LAKE / "helio", lambda: None)
+            await disk.work(disk.locate("helio"), lambda: None)
         late = await world.lake.uploads.begin(CONTRIBUTOR, collection_id, "late", 5)
         destination = await world.lake.uploads.placement(CONTRIBUTOR, late.id)
         with pytest.raises(RuntimeError, match="after shutdown"):
-            await disk.place(world.lake.uploads, CONTRIBUTOR, late, destination)
+            await placements(disk, storage).place(
+                world.lake.uploads, CONTRIBUTOR, late, destination
+            )
     finally:
         storage.release.set()
         disk.close()
+
+
+def placements(disk: LakeDisk, storage: Storage) -> Placements:
+    return Placements(disk, Placer(storage))
+
+
+def inode_of(storage: Storage, location: LakePath) -> int:
+    found = storage.stat(location)
+    assert found is not None
+    return found.inode

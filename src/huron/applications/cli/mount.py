@@ -18,26 +18,25 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from huron.applications.cli.errors import StorageFailure
 from huron.core.storage import (
+    LakePath,
     Marker,
     MarkerState,
-    OrganizationPlace,
     ShareReader,
     StorageError,
     marker_state,
-    place_of,
-    resolve,
     verify_marker,
 )
+from huron.pkg.errors import HuronError
 
 if TYPE_CHECKING:
     from huron.applications.cli.services import Services
 
-__all__ = ["PREFIX_MARKER_HINT", "PROVISION_HINT", "UNDECLARED_HINT", "Mount"]
+__all__ = ["PREFIX_MARKER_HINT", "PROVISION_HINT", "UNDECLARED_HINT", "Mount", "Site"]
 
 PROVISION_HINT = (
     "To prepare the organization directories, run `huron adm provision-orgs` (storage admin)"
@@ -55,27 +54,55 @@ UNDECLARED_HINT = (
 _PREFIX_HINT = "run this command on a machine that mounts the share, or set `mount_prefix`"
 
 
+@dataclass(frozen=True, slots=True)
+class Site:
+    """Where an organization's directory is on this machine, and which marker guards it.
+
+    ``base`` is the organization's root, or the mount prefix when it has none; the CLI reads
+    the organization through a storage rooted at ``base``, where its API paths are lake paths.
+    An organization with a root, or any declared one, carries its own marker in its directory;
+    the others share the marker at the mount prefix. ``export`` is the NFS source of the root,
+    for hints only.
+    """
+
+    name: str
+    base: Path
+    rooted: bool
+    declared: bool = False
+    export: str | None = None
+
+    @property
+    def own_marker(self) -> bool:
+        """Whether the organization's directory carries its own marker."""
+        return self.rooted or self.declared
+
+    @property
+    def directory(self) -> Path:
+        """The organization's directory on this machine."""
+        return self.base / self.name
+
+
 @dataclass
 class Mount:
     """The mounted share, verified against the service once per organization and command."""
 
     services: Services
-    _storage: ShareReader | None = field(default=None, repr=False)
+    _readers: dict[Path, ShareReader] = field(default_factory=dict, repr=False)
     _health: Mapping[str, Any] | None = field(default=None, repr=False)
-    _places: dict[str, OrganizationPlace] = field(default_factory=dict, repr=False)
-    _verified: dict[Path, Marker] = field(default_factory=dict, repr=False)
+    _sites: dict[str, Site] = field(default_factory=dict, repr=False)
+    _verified: dict[tuple[Path, str | None], Marker] = field(default_factory=dict, repr=False)
 
     @property
     def prefix(self) -> Path:
         """Where the share is mounted, for organizations without a root."""
         return Path(self.services.config.mount_prefix)
 
-    @property
-    def storage(self) -> ShareReader:
-        """The read-only storage adapter; paths for it come from :meth:`path` and :meth:`base`."""
-        if self._storage is None:
-            self._storage = self.services.storage_factory(self.services.config)
-        return self._storage
+    def reader(self, base: Path) -> ShareReader:
+        """The read-only storage rooted at ``base``; one per directory and command."""
+        found = self._readers.get(base)
+        if found is None:
+            found = self._readers[base] = self.services.storage_factory(base)
+        return found
 
     def instance_id(self) -> str:
         """The service's instance id, from ``GET /healthz``."""
@@ -85,47 +112,46 @@ class Mount:
         """Whether the service configuration declares the organizations (``GET /healthz``)."""
         return bool(self._service_health().get("organizations_managed"))
 
-    def undeclared(self, place: OrganizationPlace) -> bool:
-        """Whether ``place`` is an organization the managed configuration does not declare."""
-        return not place.declared and self.managed()
+    def undeclared(self, site: Site) -> bool:
+        """Whether ``site`` is an organization the managed configuration does not declare."""
+        return not site.declared and self.managed()
 
     def prefix_state(self) -> MarkerState:
         """The state of the marker at the mount prefix, without raising."""
-        return marker_state(self.storage, self.prefix, self.instance_id())
+        return _storage_call(
+            lambda: marker_state(self.reader(self.prefix), LakePath(), self.instance_id())
+        )
 
-    def place(self, organization: str) -> OrganizationPlace:
+    def site(self, organization: str) -> Site:
         """Where ``organization`` lives on this machine (not yet verified)."""
-        found = self._places.get(organization)
+        found = self._sites.get(organization)
         if found is None:
-            found = self.place_of_view(
+            found = self.site_of_view(
                 self.services.api().get(f"/api/v1/organizations/{organization}")
             )
         return found
 
-    def place_of_view(self, view: Mapping[str, Any]) -> OrganizationPlace:
-        """The place of an organization from its API view (``root`` and ``declared``); cached."""
+    def site_of_view(self, view: Mapping[str, Any]) -> Site:
+        """The site of an organization from its API view (``root`` and ``declared``); cached."""
         name, root, export = str(view["name"]), view.get("root"), view.get("export")
-        try:
-            found = place_of(
-                name,
-                None if root is None else str(root),
-                bool(view.get("declared")),
-                self.prefix,
-                str(export) if export else None,
-            )
-        except StorageError as error:
-            raise StorageFailure(error.message, code=error.code) from error
-        self._places[name] = found
+        if root is None:
+            base, rooted = self.prefix, False
+        else:
+            base, rooted = _root(name, str(root)), True
+        found = Site(
+            name, base, rooted, bool(view.get("declared")), str(export) if export else None
+        )
+        self._sites[name] = found
         return found
 
-    def verify(self, organization: str) -> OrganizationPlace:
-        """The place of ``organization``, after checking the marker that guards it."""
-        place = self.place(organization)
-        self._check(place)
-        return place
+    def verify(self, organization: str) -> Site:
+        """The site of ``organization``, after checking the marker that guards it."""
+        site = self.site(organization)
+        self._check(site)
+        return site
 
-    def verify_catalog(self, catalog: str) -> OrganizationPlace:
-        """The place of the organization owning ``catalog``, verified."""
+    def verify_catalog(self, catalog: str) -> Site:
+        """The site of the organization owning ``catalog``, verified."""
         view = self.services.api().get(f"/api/v1/catalogs/{catalog}")
         return self.verify(str(view["organization"]))
 
@@ -133,48 +159,58 @@ class Mount:
         """The marker at the mount prefix, which guards organizations without their own."""
         return self._marker(self.prefix, None, _PREFIX_HINT)
 
-    def base(self, organization: str) -> Path:
-        """The verified directory the organization's API paths are relative to."""
-        return self.verify(organization).base
+    def share(self, organization: str) -> ShareReader:
+        """The verified storage that the organization's API paths are lake paths in."""
+        return self.reader(self.verify(organization).base)
 
-    def path(self, relative: str) -> Path:
-        """An absolute, verified path on the share for a path the API returned."""
-        _storage_call(lambda: resolve(self.prefix, relative))  # refuse escapes before any lookup
-        place = self.verify(relative.split("/")[0])
-        return _storage_call(lambda: place.resolve(relative))
+    def locate(self, relative: str) -> tuple[ShareReader, LakePath]:
+        """The verified storage and the lake path of a path the API returned."""
+        location = _storage_call(lambda: LakePath.parse(relative))
+        return self.share(location.names[0]), location
 
     def _service_health(self) -> Mapping[str, Any]:
         if self._health is None:
             self._health = self.services.api().get("/healthz", auth=False)
         return self._health
 
-    def _check(self, place: OrganizationPlace) -> Marker:
-        if not place.own_marker:
-            if self.undeclared(place):
-                return self._marker(self.prefix, None, f"{place.name}: {UNDECLARED_HINT}")
+    def _check(self, site: Site) -> Marker:
+        if not site.own_marker:
+            if self.undeclared(site):
+                return self._marker(self.prefix, None, f"{site.name}: {UNDECLARED_HINT}")
             return self.verify_prefix()
-        source = f" (from {place.export})" if place.export else ""
+        source = f" (from {site.export})" if site.export else ""
         return self._marker(
-            place.directory,
-            place.name,
-            f"check that {place.base} is mounted on this machine{source}. {PROVISION_HINT}",
+            site.base,
+            site.name,
+            f"check that {site.base} is mounted on this machine{source}. {PROVISION_HINT}",
         )
 
-    def _marker(self, directory: Path, organization: str | None, hint: str) -> Marker:
-        found = self._verified.get(directory)
-        if found is not None and found.organization == organization:
+    def _marker(self, base: Path, organization: str | None, hint: str) -> Marker:
+        found = self._verified.get((base, organization))
+        if found is not None:
             return found
         instance = self.instance_id()
+        directory = LakePath() if organization is None else LakePath.of(organization)
         try:
-            marker = verify_marker(self.storage, directory, instance, organization)
+            marker = verify_marker(self.reader(base), directory, instance, organization)
         except StorageError as error:
             raise StorageFailure(error.message, hint=hint, code=error.code) from error
-        self._verified[directory] = marker
+        self._verified[(base, organization)] = marker
         return marker
+
+
+def _root(name: str, root: str) -> Path:
+    """The root of organization ``name`` as a path; refuses one that is not absolute and normal."""
+    path = PurePosixPath(root)
+    if not path.is_absolute() or str(path) != (root.rstrip("/") or "/") or ".." in path.parts:
+        raise StorageFailure(
+            f"the root {root!r} of organization {name} is not an absolute, normalized path"
+        )
+    return Path(root)
 
 
 def _storage_call[T](action: Callable[[], T]) -> T:
     try:
         return action()
-    except StorageError as error:
+    except HuronError as error:
         raise StorageFailure(error.message, code=error.code) from error

@@ -145,23 +145,22 @@ def context_report(
 def unrecorded_files(ctx: typer.Context, collection: dict[str, Any]) -> list[str] | None:
     """Files in the collection's directory that are not recorded; ``None`` when not mounted here.
 
-    A draft has no directory, so nothing in it is unrecorded.
+    A draft has no directory, and a missing directory holds nothing, so nothing is unrecorded.
     """
     if collection.get("path") is None:
         return []
-    mount = services(ctx).mount()
     try:
-        directory = mount.path(str(collection["path"]))
+        storage, directory = services(ctx).mount().locate(str(collection["path"]))
     except CliError:
         return None
-    storage = mount.storage
+    if storage.stat(directory) is None:
+        return []
     recorded = recorded_files(services(ctx).api(), str(collection["id"]))
+    found = ("/".join(entry.names) for entry in storage.walk(directory) if entry.kind == "file")
     return [
-        entry.rel_path
-        for entry in storage.walk(directory)
-        if entry.kind == "file"
-        and not is_reserved_entry(entry.rel_path)
-        and rel_path_key(entry.rel_path) not in recorded
+        rel_path
+        for rel_path in found
+        if not is_reserved_entry(rel_path) and rel_path_key(rel_path) not in recorded
     ]
 
 

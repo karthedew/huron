@@ -1,11 +1,12 @@
-"""The lake's disk over a share, and shares that stall like a hung mount or pause in a hash."""
+"""The lake's disk over a lake, lakes that stall or pause, and the link planting of tests."""
 
+import stat
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 
 from huron.applications.api.disk import PROBE_TIMEOUT, LakeDisk
-from huron.core.lake.organizations.declarations import UNMANAGED, Declarations
-from huron.core.storage import MARKER_FILE, OpenFile, PathLocks, Storage
+from huron.core.storage import MARKER_FILE, LakePath, OpenFile, OrganizationPlace, Storage
 from huron.core.storage.memory import MemoryStorage
 from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import Clock
@@ -20,12 +21,16 @@ LAKE = Path("/lake")
 SERVICE_UID = 1000
 #: The service group of the in-memory lake, the primary group of its user.
 SERVICE_GID = 1000
+#: Where a planted link points: a directory outside every lake.
+OUTSIDE = "/outside"
+
+type Snapshot = list[tuple[str, int, bytes]]
 
 
 def memory_lake() -> MemoryStorage:
     """An in-memory lake at :data:`LAKE`, marked for the test service, written by its user."""
     storage = MemoryStorage(LAKE, uid=SERVICE_UID, gid=SERVICE_GID)
-    storage.write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
+    storage.write_bytes(LakePath.of(MARKER_FILE), ROOT_MARKER, 0o644)
     return storage
 
 
@@ -33,25 +38,40 @@ def lake_disk(
     storage: Storage,
     clock: Clock,
     *,
-    declarations: Declarations = UNMANAGED,
-    lake_path: Path = LAKE,
-    service_gid: int = SERVICE_GID,
+    places: Mapping[str, OrganizationPlace] | None = None,
     probe_timeout: float = PROBE_TIMEOUT,
 ) -> LakeDisk:
-    """The lake's disk over ``storage``; unrooted organizations lie below ``lake_path``.
+    """The lake's disk over ``storage``; ``places`` are the declared organizations.
 
     The caller closes it.
     """
     return LakeDisk(
-        storage,
-        lake_path,
-        str(INSTANCE_ID),
-        declarations,
-        PathLocks(),
-        service_gid=service_gid,
-        clock=clock,
-        probe_timeout=probe_timeout,
+        storage, places or {}, str(INSTANCE_ID), clock=clock, probe_timeout=probe_timeout
     )
+
+
+def plant_symlink(storage: Storage, location: LakePath) -> None:
+    """Make ``location`` a symbolic link to a directory outside the lake.
+
+    A :class:`MemoryStorage` gets a link node; a :class:`PosixStorage` gets a real link to
+    the directory ``outside`` beside its root.
+    """
+    if isinstance(storage, MemoryStorage):
+        storage.symlink(location, OUTSIDE)
+        return
+    assert isinstance(storage, PosixStorage)
+    root = storage.root
+    root.joinpath(*location.names).symlink_to(root.parent / "outside")
+
+
+def snapshot(directory: Path) -> Snapshot:
+    """The names, modes and bytes of everything below ``directory``, without following links."""
+    found: Snapshot = []
+    for path in sorted(directory.rglob("*")):
+        info = path.lstat()
+        data = path.read_bytes() if stat.S_ISREG(info.st_mode) else b""
+        found.append((str(path.relative_to(directory)), info.st_mode, data))
+    return found
 
 
 class StalledStorage(MemoryStorage):
@@ -63,17 +83,17 @@ class StalledStorage(MemoryStorage):
 
     def __init__(self) -> None:
         super().__init__(LAKE, uid=SERVICE_UID, gid=SERVICE_GID)
-        super().write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
+        super().write_bytes(LakePath.of(MARKER_FILE), ROOT_MARKER, 0o644)
         self.release = threading.Event()
         self.waiting = threading.Event()
         self.writes = 0
 
-    def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
+    def write_bytes(self, location: LakePath, data: bytes, mode: int) -> None:
         """Wait for :attr:`release`, then write."""
         self.writes += 1
         self.waiting.set()
         self.release.wait()
-        super().write_bytes(path, data, mode)
+        super().write_bytes(location, data, mode)
 
 
 class PausingStorage(PosixStorage):
@@ -83,7 +103,8 @@ class PausingStorage(PosixStorage):
     Later hashes do not wait, until :meth:`pause_next`.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
         self.hashing = threading.Event()
         self.release = threading.Event()
         self._paused = False
@@ -94,9 +115,9 @@ class PausingStorage(PosixStorage):
         self.release.clear()
         self._paused = False
 
-    def open_file(self, path: Path) -> OpenFile | None:
-        """Open ``path``; the first file opened pauses in its hash."""
-        opened = super().open_file(path)
+    def open_file(self, location: LakePath) -> OpenFile | None:
+        """Open ``location``; the first file opened pauses in its hash."""
+        opened = super().open_file(location)
         if opened is None or self._paused:
             return opened
         self._paused = True

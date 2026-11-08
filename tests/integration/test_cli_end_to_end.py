@@ -108,7 +108,7 @@ class Stack:
             sleep=lambda _: None,
             open_browser=lambda _: None,
             hostname="ws1",
-            storage_factory=lambda config: PosixStorage(),
+            storage_factory=PosixStorage,
         )
         code = run(services, list(argv))
         assert code == expect, f"huron {' '.join(argv)} → {code}\n{err.getvalue()}"

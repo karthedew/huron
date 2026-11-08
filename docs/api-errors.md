@@ -18,7 +18,7 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `GROUP_DIRECTORY_UNAVAILABLE` | 503 | The LDAP group directory could not answer during the token exchange. |
 | `INTERNAL` | 500 | An unexpected error occurred. `context.request_id` matches the service log. |
 | `INVALID_CURSOR` | 400 | This listing did not produce the paging cursor. |
-| `LAKE_UNAVAILABLE` | 503 | The API cannot write the lake. `lake_path` is not a directory, or the API cannot write it. Or the marker that guards the organization is missing or names a different instance or organization. `context` names the path. |
+| `LAKE_UNAVAILABLE` | 503 | The API cannot write the lake. `lake_path` does not open as a directory, or the API cannot write it. Or the marker that guards the organization is missing or names a different instance or organization. `context` names the path. |
 | `METADATA_INVALID` | 422 | The metadata does not satisfy the schema of the collection, or it has a value that JSON cannot hold (rule `json`). NaN, infinity and a lone surrogate are such values. `context.problems` lists each problem. |
 | `NAMESPACE_NOT_EMPTY` | 409 | The namespace still has child namespaces or collections. Draft collections count. |
 | `NAME_INVALID` | 422 | A name breaks a naming rule. `context.rule` names the rule. |
@@ -27,7 +27,6 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `ORGANIZATIONS_MANAGED` | 409 | The service configuration declares the organizations, so the API cannot create an organization. Use `huron adm provision-orgs` to prepare the declared organizations. |
 | `ORGANIZATION_DECLARED` | 409 | The service configuration declares the organization. The API cannot delete it. Its role groups at organization scope (`org_admin`, `catalog_admin`, `contributor` and `reader`) are the `groups` in its declaration. Delete its declaration from the service configuration, or change `groups.<role>` in the service configuration. |
 | `ORGANIZATION_NOT_EMPTY` | 409 | The organization still has catalogs. |
-| `OUTSIDE_LAKE` | 422 | The path of the request is outside `lake_path`, or it is on a different filesystem below `lake_path`. The API makes no change on disk there. `context.path` names the path. |
 | `PRECONDITION_REQUIRED` | 428 | A request that writes to a collection needs an `If-Match` header with the quoted version of the collection. |
 | `REQUEST_INVALID` | 422 | The request is not valid, or it names something that Huron does not accept. `context` tells what is wrong. |
 | `SCHEMA_INCOMPATIBLE` | 422 | A schema contradicts the schema that it extends. It changes the type of a required property, or it has no base schema. |
@@ -35,6 +34,7 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `SCHEMA_SCOPE` | 422 | A catalog or a schema uses a schema of a different organization. |
 | `STATE_CONFLICT` | 409 | The state of the object does not allow the operation. `context.state` and `context.allowed` tell why. |
 | `STORAGE_FAILED` | 500 | An operation on the share failed. The API reports it for its disk work, and the CLI reports it when it cannot use the share. The share is missing, has no marker or a marker for a different instance or organization, or is not writable. `context.path` names the path. |
+| `SYMLINK_IN_LAKE` | 409 | A name on the path of a disk operation is a symbolic link. The lake must not contain symbolic links. The API does not change the disk, and it does not delete the link. The storage administrator deletes it. `context.path` is the lake path of the link. |
 | `TOKEN_INVALID` | 401 | The bearer token or the company token is not valid, or it expired. |
 | `UNAUTHENTICATED` | 401 | The request has no bearer token. |
 | `UPLOADS_DISABLED` | 404 | The service has no `lake_path`, so it serves no upload route. The upload routes are `POST /api/v1/uploads/hooks`, `GET /api/v1/uploads/auth` and `GET /api/v1/uploads/{id}`. |

@@ -1,10 +1,9 @@
-"""Layout, modes, the marker and both storage adapters."""
+"""Layout, modes, the marker and the storage port on both adapters."""
 
 import errno
 import grp
 import hashlib
 import os
-import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,33 +15,32 @@ from huron.core.storage import (
     MARKER_FILE,
     ORGANIZATION_MODE,
     UPLOAD_DIR_MODE,
-    DirectoryKind,
-    FileStamp,
     GroupOutcome,
     GroupResult,
+    LakePath,
     Marker,
-    Ownership,
+    Outcome,
     SourceGone,
+    Stat,
     Storage,
     StorageError,
     is_reserved_entry,
-    mode_of,
     read_marker,
     render_marker,
-    resolve,
     verify_marker,
 )
-from huron.core.storage.memory import ROOT_DEVICE, MemoryStorage, Node
+from huron.core.storage.memory import MemoryStorage, Node
 from huron.core.storage.posix import PosixStorage
 from tests.support.disk import LAKE
 
+BASE = LakePath.of("share")
+PART = ".a.bin.1.huron-part"
+BACKUP = ".a.bin.1.huron-prev"
 
-def test_resolve_refuses_escapes() -> None:
-    prefix = Path("/projects/huron")
-    assert resolve(prefix, "helio/heliophysics") == prefix / "helio" / "heliophysics"
-    for bad in ("../etc", "/abs", "a//b", "a/./b", ""):
-        with pytest.raises(StorageError):
-            resolve(prefix, bad)
+
+def at(*names: str) -> LakePath:
+    """A lake path below :data:`BASE`."""
+    return BASE.joinpath(*names)
 
 
 def test_reserved_entries() -> None:
@@ -53,211 +51,376 @@ def test_reserved_entries() -> None:
     assert not is_reserved_entry("sub/metadata.json")
 
 
-def test_marker_round_trip_and_refusals(tmp_path: Path) -> None:
-    storage = MemoryStorage(tmp_path)
-    with pytest.raises(StorageError, match="not a Huron share"):
-        read_marker(storage, tmp_path)
-    with pytest.raises(StorageError, match="not mounted"):
-        read_marker(storage, tmp_path / "missing")
-    storage.write_bytes(tmp_path / MARKER_FILE, b"{not json")
-    with pytest.raises(StorageError, match="unreadable"):
-        read_marker(storage, tmp_path)
-    storage.write_bytes(tmp_path / MARKER_FILE, render_marker(Marker(1, "http://a", "id-1")))
-    assert verify_marker(storage, tmp_path, "id-1").api_url == "http://a"
-    with pytest.raises(StorageError, match="another Huron service"):
-        verify_marker(storage, tmp_path, "id-2")
-
-
-def test_memory_storage_behaves_like_a_share(tmp_path: Path) -> None:
-    root = Path("/share")
-    storage = MemoryStorage(root)
-    with pytest.raises(StorageError):
-        storage.make_directory(root / "a" / "b", DIRECTORY_MODE)
-    assert storage.make_directory(root / "a", DIRECTORY_MODE) is True
-    assert storage.make_directory(root / "a", DIRECTORY_MODE) is False
-    storage.make_directory(root / "a" / "x", 0o2750)
-    storage.make_directory(root / "a" / "x" / "y", 0o2750)
-    storage.write_bytes(root / "a" / "x" / "y" / "f.bin", b"abc")
-    stamp = storage.hash(root / "a" / "x" / "y" / "f.bin")
-    assert stamp == FileStamp(3, hashlib.sha256(b"abc").hexdigest())
-    assert [e.rel_path for e in storage.walk(root / "a")] == ["x", "x/y", "x/y/f.bin"]
-    assert storage.stamp(root / "a" / "x" / "y" / "f.bin").size == 3
-    assert storage.read_bytes(root / "nope") is None
-    with pytest.raises(StorageError):
-        storage.remove_directory(root / "a")
-    assert storage.remove_file(root / "a" / "x" / "y" / "f.bin") is True
-    assert storage.remove_file(root / "a" / "nope") is False
-    assert storage.remove_directory(root / "missing") is False
-    storage.write_bytes(root / "file", b"")
-    with pytest.raises(StorageError, match="is not a directory"):
-        storage.make_directory(root / "file", DIRECTORY_MODE)
-    storage.denied.add(root)
-    with pytest.raises(StorageError, match="permission denied"):
-        storage.make_directory(root / "b", DIRECTORY_MODE)
-    with pytest.raises(StorageError):
-        storage.stamp(root / "gone")
-    assert storage.exists(root / "a") and not storage.is_directory(root / "file")
-
-
-def test_posix_storage_writes_files_and_reports_failures(tmp_path: Path) -> None:
-    storage = PosixStorage()
-    collection = tmp_path / "col"
-    collection.mkdir()
-    (collection / "a" / "b").mkdir(parents=True)
-    storage.write_bytes(collection / "a" / "b" / "f.bin", b"payload")
-    stamp = storage.hash(collection / "a" / "b" / "f.bin")
-    assert stamp == FileStamp(7, hashlib.sha256(b"payload").hexdigest())
-    assert [e.rel_path for e in storage.walk(collection)] == ["a", "a/b", "a/b/f.bin"]
-    assert storage.stamp(collection / "a" / "b" / "f.bin").size == 7
-    storage.write_bytes(collection / "metadata.json", b"{}", 0o640)
-    assert storage.read_bytes(collection / "metadata.json") == b"{}"
-    assert stat.S_IMODE(os.lstat(collection / "metadata.json").st_mode) == 0o640
-    assert not list(collection.glob("*.huron-part"))
-    assert storage.read_bytes(collection / "none") is None
-    assert storage.exists(collection) and storage.is_directory(collection)
-    with pytest.raises(StorageError):
-        storage.write_bytes(collection / "missing" / "m", b"")
-    with pytest.raises(StorageError):
-        storage.remove_directory(collection)
-    assert storage.remove_file(collection / "metadata.json") is True
-    assert storage.remove_directory(tmp_path / "nope") is False
-    with pytest.raises(StorageError):
-        storage.hash(collection / "missing")
-
-
-def test_posix_storage_turns_permission_errors_into_storage_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from huron.pkg.fs import posix
-
-    def refuse(*args: object) -> None:
-        raise PermissionError(13, "Permission denied")
-
-    monkeypatch.setattr(posix, "atomic_write", refuse)
-    storage = PosixStorage()
-    with pytest.raises(StorageError, match="permission denied"):
-        storage.write_bytes(tmp_path / "f", b"x")
-
-
-@pytest.mark.parametrize(
-    ("kind", "mode"),
-    [
-        (DirectoryKind.ORGANIZATION, 0o2751),
-        (DirectoryKind.CATALOG, 0o2750),
-        (DirectoryKind.NAMESPACE, 0o2750),
-        (DirectoryKind.COLLECTION, 0o2750),
-    ],
-)
-def test_each_kind_of_directory_has_its_mode(kind: DirectoryKind, mode: int) -> None:
-    assert mode_of(kind) == mode
-
-
 def test_files_and_the_upload_directory_have_their_modes() -> None:
+    assert (ORGANIZATION_MODE, DIRECTORY_MODE) == (0o2751, 0o2750)
     assert (FILE_MODE, UPLOAD_DIR_MODE) == (0o644, 0o700)
 
 
-@pytest.fixture
-def posix() -> PosixStorage:
-    return PosixStorage()
+def test_marker_round_trip_and_refusals() -> None:
+    storage = MemoryStorage(LAKE)
+    with pytest.raises(StorageError, match="the root is not a Huron share"):
+        read_marker(storage, LakePath())
+    with pytest.raises(StorageError, match="missing is not mounted"):
+        read_marker(storage, LakePath.of("missing"))
+    storage.write_bytes(LakePath.of(MARKER_FILE), b"{not json", 0o644)
+    with pytest.raises(StorageError, match="unreadable"):
+        read_marker(storage, LakePath())
+    marker = render_marker(Marker(1, "http://a", "id-1"))
+    storage.write_bytes(LakePath.of(MARKER_FILE), marker, 0o644)
+    assert verify_marker(storage, LakePath(), "id-1").api_url == "http://a"
+    with pytest.raises(StorageError, match="another Huron service") as refused:
+        verify_marker(storage, LakePath(), "id-2")
+    assert refused.value.context["path"] == ""
 
 
-def test_posix_make_directory_gives_exactly_the_mode(tmp_path: Path, posix: PosixStorage) -> None:
-    target = tmp_path / "helio"
-    assert posix.make_directory(target, ORGANIZATION_MODE) is True
-    assert posix.owner(target) == Ownership(os.getuid(), os.lstat(target).st_gid, 0o2751)
-    os.chmod(target, 0o755)
-    assert posix.make_directory(target, ORGANIZATION_MODE) is False
-    assert posix.owner(target).mode == 0o755
+@pytest.fixture(params=["posix", "memory"])
+def share(request: pytest.FixtureRequest, tmp_path: Path) -> Storage:
+    """Each adapter with the setgid directory ``share`` of the caller's group to work in."""
+    if request.param == "posix":
+        (tmp_path / "lake" / "share").mkdir(parents=True)
+        os.chmod(tmp_path / "lake" / "share", 0o2750)
+        return PosixStorage(tmp_path / "lake")
+    memory = MemoryStorage(LAKE, uid=1000, gid=1000)
+    memory.nodes[BASE] = Node(mode=0o2750, uid=1000, gid=1000, inode=99)
+    return memory
 
 
-def test_posix_make_directory_refusals(
-    tmp_path: Path, posix: PosixStorage, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (tmp_path / "file").write_bytes(b"")
-    with pytest.raises(StorageError, match="is not a directory"):
-        posix.make_directory(tmp_path / "file", DIRECTORY_MODE)
-    with pytest.raises(StorageError, match="does not exist"):
-        posix.make_directory(tmp_path / "missing" / "d", DIRECTORY_MODE)
-
-    def refuse(*args: object) -> None:
-        raise PermissionError(errno.EACCES, "Permission denied")
-
-    monkeypatch.setattr(os, "mkdir", refuse)
-    with pytest.raises(StorageError, match="permission denied") as raised:
-        posix.make_directory(tmp_path / "d", DIRECTORY_MODE)
-    assert raised.value.context["path"] == str(tmp_path / "d")
+def found(storage: Storage, location: LakePath) -> Stat:
+    entry = storage.stat(location)
+    assert entry is not None
+    return entry
 
 
-def test_posix_set_mode_changes_only_a_different_mode(tmp_path: Path, posix: PosixStorage) -> None:
-    target = tmp_path / "f"
-    target.write_bytes(b"")
-    os.chmod(target, 0o600)
-    assert posix.set_mode(target, FILE_MODE) is True
-    assert stat.S_IMODE(os.lstat(target).st_mode) == FILE_MODE
-    assert posix.set_mode(target, FILE_MODE) is False
+def test_stat_of_a_file_a_directory_and_a_missing_name(share: Storage) -> None:
+    share.write_bytes(at("f"), b"abc", 0o640)
+    file = found(share, at("f"))
+    assert (file.kind, file.mode, file.size) == ("file", 0o640, 3)
+    assert found(share, BASE).kind == "dir"
+    assert found(share, BASE).mode == 0o2750
+    assert found(share, LakePath()).kind == "dir"
+    assert share.stat(at("missing")) is None
+    assert share.stat(at("missing", "deeper")) is None
+
+
+def test_read_bytes(share: Storage) -> None:
+    share.write_bytes(at("f"), b"abc", 0o644)
+    assert share.read_bytes(at("f")) == b"abc"
+    assert share.read_bytes(at("missing")) is None
+    assert share.read_bytes(at("missing", "f")) is None
+    with pytest.raises(StorageError, match="share: Is a directory"):
+        share.read_bytes(BASE)
+    with pytest.raises(StorageError, match="share: Is a directory"):
+        share.open_file(BASE)
+
+
+def test_is_empty(share: Storage) -> None:
+    share.make_directory(at("d"), DIRECTORY_MODE)
+    assert share.is_empty(at("d")) is True
+    share.write_bytes(at("d", "f"), b"", 0o644)
+    assert share.is_empty(at("d")) is False
     with pytest.raises(StorageError):
-        posix.set_mode(tmp_path / "missing", FILE_MODE)
+        share.is_empty(at("d", "f"))
+    with pytest.raises(StorageError, match="does not exist"):
+        share.is_empty(at("missing"))
 
 
-def test_posix_set_group_keeps_a_matching_group(tmp_path: Path, posix: PosixStorage) -> None:
-    target = tmp_path / "catalog"
-    target.mkdir()
-    name = grp.getgrgid(os.lstat(target).st_gid).gr_name
-    assert posix.set_group(target, name) == GroupResult(GroupOutcome.UNCHANGED)
+def test_walk_is_top_down_and_sorted(share: Storage) -> None:
+    share.make_directory(at("b"), DIRECTORY_MODE)
+    share.write_bytes(at("b", "c.txt"), b"12345", 0o644)
+    share.write_bytes(at("a.txt"), b"1", 0o644)
+    entries = list(share.walk(BASE))
+    assert [(e.names, e.kind) for e in entries] == [
+        (("a.txt",), "file"),
+        (("b",), "dir"),
+        (("b", "c.txt"), "file"),
+    ]
+    assert entries[2].size == 5
+    with pytest.raises(StorageError):
+        list(share.walk(at("missing")))
 
 
-def test_posix_set_group_is_pending_for_an_unknown_group(
-    tmp_path: Path, posix: PosixStorage
+def test_make_directory_gives_exactly_the_mode_and_keeps_an_existing_one(share: Storage) -> None:
+    assert share.make_directory(at("helio"), 0o2751) is True
+    assert found(share, at("helio")).mode == 0o2751
+    share.set_mode(at("helio"), 0o755)
+    assert share.make_directory(at("helio"), ORGANIZATION_MODE) is False
+    assert found(share, at("helio")).mode == 0o755
+
+
+def test_make_directory_refusals(share: Storage) -> None:
+    share.write_bytes(at("file"), b"", 0o644)
+    with pytest.raises(StorageError, match="File exists"):
+        share.make_directory(at("file"), DIRECTORY_MODE)
+    with pytest.raises(StorageError, match="does not exist"):
+        share.make_directory(at("missing", "d"), DIRECTORY_MODE)
+    with pytest.raises(StorageError, match="Not a directory"):
+        share.make_directory(at("file", "d"), DIRECTORY_MODE)
+
+
+def test_make_inheriting_dir_inherits_setgid_and_the_group(share: Storage) -> None:
+    assert share.make_inheriting_dir(at("run7")) is True
+    made = found(share, at("run7"))
+    assert (made.mode, made.gid) == (DIRECTORY_MODE, found(share, BASE).gid)
+    assert share.make_inheriting_dir(at("run7")) is False
+
+
+def test_make_inheriting_dir_refusals(share: Storage) -> None:
+    share.write_bytes(at("file"), b"", 0o644)
+    with pytest.raises(StorageError, match="File exists"):
+        share.make_inheriting_dir(at("file"))
+    share.make_directory(at("plain"), 0o750)
+    with pytest.raises(StorageError, match="did not inherit the setgid bit"):
+        share.make_inheriting_dir(at("plain", "d"))
+    assert share.stat(at("plain", "d")) is None
+    with pytest.raises(StorageError, match="does not exist"):
+        share.make_inheriting_dir(at("missing", "d"))
+
+
+def test_set_mode_changes_only_a_different_mode(share: Storage) -> None:
+    share.write_bytes(at("f"), b"", 0o600)
+    assert share.set_mode(at("f"), FILE_MODE) is True
+    assert found(share, at("f")).mode == FILE_MODE
+    assert share.set_mode(at("f"), FILE_MODE) is False
+    with pytest.raises(StorageError, match="does not exist"):
+        share.set_mode(at("missing"), FILE_MODE)
+
+
+def test_write_bytes_replaces_a_file_with_exactly_the_mode(share: Storage) -> None:
+    share.write_bytes(at("m.json"), b"{}", 0o600)
+    share.write_bytes(at("m.json"), b'{"a":1}', 0o640)
+    assert share.read_bytes(at("m.json")) == b'{"a":1}'
+    assert found(share, at("m.json")).mode == 0o640
+    assert [e.names for e in share.walk(BASE)] == [("m.json",)]
+    with pytest.raises(StorageError, match="does not exist"):
+        share.write_bytes(at("missing", "m"), b"", 0o644)
+    with pytest.raises(StorageError, match="Is a directory"):
+        share.write_bytes(BASE, b"", 0o644)
+
+
+def test_an_open_file_reports_from_its_descriptor(share: Storage) -> None:
+    share.write_bytes(at("upload"), b"payload", 0o600)
+    opened = share.open_file(at("upload"))
+    assert opened is not None
+    try:
+        assert (opened.size, opened.inode) == (7, found(share, at("upload")).inode)
+        assert opened.sha256() == hashlib.sha256(b"payload").hexdigest()
+        opened.set_mode(FILE_MODE)
+    finally:
+        opened.close()
+    assert found(share, at("upload")).mode == FILE_MODE
+    assert share.open_file(at("missing")) is None
+    assert share.open_file(at("missing", "f")) is None
+
+
+def place(share: Storage, inode: int | None = None) -> LakePath | None:
+    measured = found(share, at("upload")).inode if inode is None else inode
+    return share.link(at("upload"), at("a.bin"), inode=measured, part_name=PART, backup_name=BACKUP)
+
+
+def test_link_gives_a_file_a_new_name(share: Storage) -> None:
+    share.write_bytes(at("upload"), b"new", 0o644)
+    assert place(share) is None
+    assert found(share, at("a.bin")).inode == found(share, at("upload")).inode
+    assert share.read_bytes(at("a.bin")) == b"new"
+    assert place(share) is None
+    assert share.stat(at(BACKUP)) is None
+
+
+@pytest.mark.parametrize("stale", [False, True], ids=["fresh", "stale"])
+def test_link_replaces_an_existing_file_and_keeps_a_backup(share: Storage, stale: bool) -> None:
+    share.write_bytes(at("upload"), b"new", 0o644)
+    share.write_bytes(at("a.bin"), b"old", 0o644)
+    old_inode = found(share, at("a.bin")).inode
+    if stale:
+        share.write_bytes(at(PART), b"stale", 0o644)
+        share.write_bytes(at(BACKUP), b"stale", 0o644)
+    assert place(share) == at(BACKUP)
+    assert share.read_bytes(at("a.bin")) == b"new"
+    assert found(share, at("a.bin")).inode == found(share, at("upload")).inode
+    assert (share.read_bytes(at(BACKUP)), found(share, at(BACKUP)).inode) == (b"old", old_inode)
+    assert share.stat(at(PART)) is None
+    assert place(share) == at(BACKUP)
+
+
+def test_link_without_the_measured_source_raises_source_gone(share: Storage) -> None:
+    share.write_bytes(at("upload"), b"new", 0o644)
+    with pytest.raises(SourceGone):
+        place(share, inode=found(share, at("upload")).inode + 1)
+    share.remove_file(at("upload"))
+    with pytest.raises(SourceGone):
+        place(share, inode=1)
+    share.make_directory(at("upload"), DIRECTORY_MODE)
+    with pytest.raises(SourceGone):
+        place(share, inode=found(share, at("upload")).inode)
+    assert share.stat(at("a.bin")) is None
+
+
+def test_link_into_a_missing_directory_fails(share: Storage) -> None:
+    share.write_bytes(at("upload"), b"new", 0o644)
+    inode = found(share, at("upload")).inode
+    with pytest.raises(StorageError, match="does not exist"):
+        share.link(
+            at("upload"), at("missing", "a.bin"), inode=inode, part_name=PART, backup_name=BACKUP
+        )
+
+
+def test_rename_replaces_the_destination(share: Storage) -> None:
+    share.write_bytes(at(BACKUP), b"old", 0o644)
+    share.write_bytes(at("a.bin"), b"new", 0o644)
+    inode = found(share, at(BACKUP)).inode
+    share.rename(at(BACKUP), at("a.bin"))
+    assert (share.read_bytes(at("a.bin")), found(share, at("a.bin")).inode) == (b"old", inode)
+    assert share.stat(at(BACKUP)) is None
+    with pytest.raises(StorageError):
+        share.rename(at(BACKUP), at("a.bin"))
+
+
+def test_remove_file_answers_its_outcome(share: Storage) -> None:
+    share.write_bytes(at("f"), b"", 0o644)
+    inode = found(share, at("f")).inode
+    assert share.remove_file(at("f"), inode=inode + 1) is Outcome.KEPT
+    assert share.remove_file(at("f"), inode=inode) is Outcome.REMOVED
+    assert share.remove_file(at("f")) is Outcome.MISSING
+    assert share.remove_file(at("missing", "f")) is Outcome.MISSING
+    share.write_bytes(at("g"), b"", 0o644)
+    assert share.remove_file(at("g")) is Outcome.REMOVED
+    with pytest.raises(StorageError, match="Is a directory"):
+        share.remove_file(BASE)
+
+
+def test_remove_directory_answers_its_outcome(share: Storage) -> None:
+    share.make_directory(at("d"), DIRECTORY_MODE)
+    share.write_bytes(at("d", "f"), b"", 0o644)
+    assert share.remove_directory(at("d")) is Outcome.KEPT
+    share.remove_file(at("d", "f"))
+    assert share.remove_directory(at("d")) is Outcome.REMOVED
+    assert share.remove_directory(at("d")) is Outcome.MISSING
+    assert share.remove_directory(at("missing", "d")) is Outcome.MISSING
+    share.write_bytes(at("f"), b"", 0o644)
+    with pytest.raises(StorageError, match="Not a directory"):
+        share.remove_directory(at("f"))
+
+
+def test_rename_of_a_missing_file_names_it(share: Storage) -> None:
+    with pytest.raises(StorageError, match="share/gone does not exist"):
+        share.rename(at("gone"), at("a.bin"))
+
+
+@pytest.fixture
+def lake(tmp_path: Path) -> PosixStorage:
+    """POSIX storage over ``tmp_path/lake``, which holds the setgid directory ``share``."""
+    (tmp_path / "lake" / "share").mkdir(parents=True)
+    os.chmod(tmp_path / "lake" / "share", 0o2750)
+    return PosixStorage(tmp_path / "lake")
+
+
+def test_posix_root_that_does_not_open_is_lake_unavailable(tmp_path: Path) -> None:
+    missing = PosixStorage(tmp_path / "missing")
+    assert missing.root == tmp_path / "missing"
+    with pytest.raises(StorageError) as refused:
+        missing.stat(at("x"))
+    assert (refused.value.code, refused.value.status) == ("LAKE_UNAVAILABLE", 503)
+    assert str(tmp_path) not in refused.value.message
+
+
+def test_posix_permission_errors_are_storage_errors(lake: PosixStorage) -> None:
+    lake.make_directory(at("closed"), DIRECTORY_MODE)
+    lake.write_bytes(at("closed", "f"), b"x", 0o644)
+    os.chmod(lake.root / "share" / "closed", 0)
+    try:
+        with pytest.raises(StorageError, match="permission denied on share/closed/f") as refused:
+            lake.read_bytes(at("closed", "f"))
+        assert refused.value.context == {"path": "share/closed/f", "error": "Permission denied"}
+        with pytest.raises(StorageError, match="permission denied"):
+            list(lake.walk(at("closed")))
+    finally:
+        os.chmod(lake.root / "share" / "closed", 0o750)
+
+
+def test_posix_walk_refuses_a_directory_below_that_it_cannot_list(lake: PosixStorage) -> None:
+    lake.make_directory(at("open"), DIRECTORY_MODE)
+    lake.make_directory(at("open", "closed"), DIRECTORY_MODE)
+    os.chmod(lake.root / "share" / "open" / "closed", 0)
+    try:
+        with pytest.raises(StorageError, match="permission denied on share/open") as refused:
+            list(lake.walk(at("open")))
+        assert refused.value.code == "STORAGE_FAILED"
+    finally:
+        os.chmod(lake.root / "share" / "open" / "closed", 0o750)
+
+
+def test_posix_other_errors_keep_their_reason(
+    lake: PosixStorage, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    result = posix.set_group(tmp_path, "no-such-group-xyz")
-    assert result == GroupResult(
+    lake.write_bytes(at("upload"), b"new", 0o644)
+    opened: list[int] = []
+    real_open, real_fstat = os.open, os.fstat
+
+    def recording_open(path: str, flags: int, *args: int, dir_fd: int | None = None) -> int:
+        opened.append(real_open(path, flags, *args, dir_fd=dir_fd))
+        return opened[-1]
+
+    def failing_fstat(descriptor: int) -> os.stat_result:
+        if descriptor == opened[-1]:
+            raise OSError(errno.EIO, "Input/output error")
+        return real_fstat(descriptor)
+
+    monkeypatch.setattr(os, "open", recording_open)
+    monkeypatch.setattr(os, "fstat", failing_fstat)
+    with pytest.raises(StorageError, match="share/upload: Input/output error"):
+        lake.open_file(at("upload"))
+    monkeypatch.undo()
+    with pytest.raises(OSError, match="Bad file descriptor"):
+        real_fstat(opened[-1])  # the failed open released its descriptor
+
+
+def test_posix_set_group_keeps_a_matching_group(lake: PosixStorage) -> None:
+    name = grp.getgrgid(os.lstat(lake.root / "share").st_gid).gr_name
+    assert lake.set_group(BASE, name) == GroupResult(GroupOutcome.UNCHANGED)
+
+
+def test_posix_set_group_is_pending_for_an_unknown_group(lake: PosixStorage) -> None:
+    assert lake.set_group(BASE, "no-such-group-xyz") == GroupResult(
         GroupOutcome.PENDING, "this machine does not know the group no-such-group-xyz"
     )
 
 
 @pytest.mark.parametrize("by_name", [True, False])
 def test_posix_set_group_changes_the_group(
-    tmp_path: Path, posix: PosixStorage, monkeypatch: pytest.MonkeyPatch, by_name: bool
+    lake: PosixStorage, monkeypatch: pytest.MonkeyPatch, by_name: bool
 ) -> None:
-    target = tmp_path / "catalog"
-    target.mkdir()
-    other = os.lstat(target).st_gid + 1
-    calls: list[tuple[object, ...]] = []
+    other = os.lstat(lake.root / "share").st_gid + 1
+    calls: list[tuple[int, int]] = []
     monkeypatch.setattr(grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=other))
-    monkeypatch.setattr(os, "chown", lambda *args, **kwargs: calls.append((*args, kwargs)))
+    monkeypatch.setattr(os, "fchown", lambda fd, uid, gid: calls.append((uid, gid)))
     group = "helio-readers" if by_name else other
-    assert posix.set_group(target, group) == GroupResult(GroupOutcome.CHANGED)
-    assert calls == [(target, -1, other, {"follow_symlinks": False})]
+    assert lake.set_group(BASE, group) == GroupResult(GroupOutcome.CHANGED)
+    assert calls == [(-1, other)]
 
 
 def test_posix_set_group_is_pending_when_refused_or_missing(
-    tmp_path: Path, posix: PosixStorage, monkeypatch: pytest.MonkeyPatch
+    lake: PosixStorage, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    target = tmp_path / "catalog"
-    target.mkdir()
     monkeypatch.setattr(grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=os.getgid() + 1))
-    missing = posix.set_group(tmp_path / "missing", "helio-readers")
-    assert missing.outcome is GroupOutcome.PENDING
-    assert missing.reason == f"{tmp_path / 'missing'}: No such file or directory"
+    for missing in (at("missing"), at("missing", "deeper")):
+        result = lake.set_group(missing, "helio-readers")
+        assert result.outcome is GroupOutcome.PENDING
+        assert result.reason == f"{missing} does not exist"
 
     def refuse(*args: object, **kwargs: object) -> None:
         raise PermissionError(errno.EPERM, "Operation not permitted")
 
-    monkeypatch.setattr(os, "chown", refuse)
-    refused = posix.set_group(target, "helio-readers")
-    assert refused == GroupResult(GroupOutcome.PENDING, f"{target}: Operation not permitted")
+    monkeypatch.setattr(os, "fchown", refuse)
+    assert lake.set_group(BASE, "helio-readers") == GroupResult(
+        GroupOutcome.PENDING, "share: Operation not permitted"
+    )
 
 
-def test_posix_owner_and_device(tmp_path: Path, posix: PosixStorage) -> None:
-    target = tmp_path / "f"
-    target.write_bytes(b"")
-    os.chmod(target, 0o640)
-    info = os.lstat(target)
-    assert posix.owner(target) == Ownership(info.st_uid, info.st_gid, 0o640)
-    assert posix.device(target) == os.stat(tmp_path).st_dev
-    for read in (posix.owner, posix.device):
-        with pytest.raises(StorageError):
-            read(tmp_path / "missing")
+def test_posix_a_file_on_the_way_is_not_a_link(lake: PosixStorage) -> None:
+    lake.write_bytes(at("f"), b"", 0o644)
+    with pytest.raises(StorageError, match="Not a directory") as refused:
+        lake.stat(at("f", "x"))
+    assert refused.value.code == "STORAGE_FAILED"
 
 
 @pytest.fixture
@@ -266,248 +429,120 @@ def memory() -> MemoryStorage:
     return MemoryStorage(LAKE, uid=1000, gid=1000)
 
 
+def test_memory_add_directory_makes_the_missing_parents(memory: MemoryStorage) -> None:
+    memory.add_directory(LakePath.of("data1", "huron"), uid=7)
+    assert (memory.nodes[LakePath.of("data1")].uid, found(memory, LakePath.of("data1")).kind) == (
+        7,
+        "dir",
+    )
+    assert memory.root == LAKE
+
+
 def test_memory_make_directory_inherits_the_group_of_a_setgid_parent(
     memory: MemoryStorage,
 ) -> None:
     memory.member_of.add(0)
-    assert memory.make_directory(LAKE / "helio", ORGANIZATION_MODE) is True
-    assert memory.owner(LAKE / "helio") == Ownership(1000, 0, 0o2751)
-    assert memory.make_directory(LAKE / "helio", DIRECTORY_MODE) is False
-    assert memory.owner(LAKE / "helio").mode == 0o2751
+    assert memory.make_directory(LakePath.of("helio"), ORGANIZATION_MODE) is True
+    made = found(memory, LakePath.of("helio"))
+    assert (made.gid, made.mode) == (0, 0o2751)
+    assert memory.calls == [("mkdir", LakePath.of("helio"))]
 
 
 def test_memory_make_directory_drops_setgid_outside_the_callers_groups(
     memory: MemoryStorage,
 ) -> None:
-    memory.make_directory(LAKE / "helio", ORGANIZATION_MODE)
-    assert memory.owner(LAKE / "helio") == Ownership(1000, 0, 0o751)
-    memory.nodes[LAKE / "plain"] = Node(mode=0o755, uid=1000, gid=1000)
-    memory.make_directory(LAKE / "plain" / "d", DIRECTORY_MODE)
-    assert memory.owner(LAKE / "plain" / "d") == Ownership(1000, 1000, 0o2750)
+    memory.make_directory(LakePath.of("helio"), ORGANIZATION_MODE)
+    assert found(memory, LakePath.of("helio")).mode == 0o751
+    memory.nodes[LakePath.of("plain")] = Node(mode=0o755, uid=1000, gid=1000)
+    memory.make_directory(LakePath.of("plain", "d"), DIRECTORY_MODE)
+    made = found(memory, LakePath.of("plain", "d"))
+    assert (made.gid, made.mode) == (1000, 0o2750)
 
 
-def test_memory_make_directory_refusals(memory: MemoryStorage) -> None:
-    memory.write_bytes(LAKE / "file", b"")
-    with pytest.raises(StorageError, match="is not a directory"):
-        memory.make_directory(LAKE / "file", DIRECTORY_MODE)
-    with pytest.raises(StorageError, match="does not exist"):
-        memory.make_directory(LAKE / "file" / "d", DIRECTORY_MODE)
-    memory.denied.add(LAKE)
+def test_memory_denied_and_unreadable_directories_refuse(memory: MemoryStorage) -> None:
+    memory.make_directory(LakePath.of("d"), DIRECTORY_MODE)
+    memory.write_bytes(LakePath.of("upload"), b"new", 0o644)
+    inode = found(memory, LakePath.of("upload")).inode
+    memory.denied.add(LakePath())
+    for refused in (
+        lambda: memory.make_directory(LakePath.of("e"), DIRECTORY_MODE),
+        lambda: memory.make_inheriting_dir(LakePath.of("e")),
+        lambda: memory.write_bytes(LakePath.of("f"), b"", 0o644),
+        lambda: memory.link(
+            LakePath.of("upload"),
+            LakePath.of("a.bin"),
+            inode=inode,
+            part_name=PART,
+            backup_name=BACKUP,
+        ),
+        lambda: memory.rename(LakePath.of("upload"), LakePath.of("a.bin")),
+        lambda: memory.remove_file(LakePath.of("upload")),
+        lambda: memory.remove_directory(LakePath.of("d")),
+    ):
+        with pytest.raises(StorageError, match="permission denied"):
+            refused()
+    memory.denied.clear()
+    memory.unreadable.add(LakePath.of("d"))
+    with pytest.raises(StorageError, match="permission denied on d") as unreadable:
+        memory.stat(LakePath.of("d", "x"))
+    assert unreadable.value.context["error"] == os.strerror(errno.EACCES)
     with pytest.raises(StorageError, match="permission denied"):
-        memory.make_directory(LAKE / "d", DIRECTORY_MODE)
+        memory.is_empty(LakePath.of("d"))
 
 
-def test_memory_set_mode(memory: MemoryStorage) -> None:
-    memory.write_bytes(LAKE / "f", b"", 0o600)
-    assert memory.set_mode(LAKE / "f", FILE_MODE) is True
-    assert memory.set_mode(LAKE / "f", FILE_MODE) is False
-    assert memory.owner(LAKE / "f").mode == FILE_MODE
+def test_memory_walk_refuses_an_unreadable_directory_below(memory: MemoryStorage) -> None:
+    memory.make_directory(LakePath.of("d"), DIRECTORY_MODE)
+    memory.make_directory(LakePath.of("d", "e"), DIRECTORY_MODE)
+    memory.unreadable.add(LakePath.of("d", "e"))
+    with pytest.raises(StorageError, match="permission denied on d/e"):
+        list(memory.walk(LakePath.of("d")))
+
+
+def test_memory_set_mode_needs_the_owner(memory: MemoryStorage) -> None:
     memory.member_of.add(0)
-    memory.make_directory(LAKE / "d", 0o750)
+    memory.make_directory(LakePath.of("d"), 0o750)
     memory.member_of.discard(0)
-    assert memory.set_mode(LAKE / "d", DIRECTORY_MODE) is True
-    assert memory.owner(LAKE / "d").mode == 0o750
+    assert memory.set_mode(LakePath.of("d"), DIRECTORY_MODE) is True
+    assert found(memory, LakePath.of("d")).mode == 0o750
     with pytest.raises(StorageError, match="permission denied"):
-        memory.set_mode(LAKE, 0o755)
-    with pytest.raises(StorageError, match="does not exist"):
-        memory.set_mode(LAKE / "missing", FILE_MODE)
+        memory.set_mode(LakePath(), 0o755)
 
 
 def test_memory_set_group_outcomes(memory: MemoryStorage) -> None:
     memory.groups.update({"helio-readers": 2001, "geo-readers": 2002})
     memory.member_of.add(2001)
-    memory.make_directory(LAKE / "cat", DIRECTORY_MODE)
-    target = LAKE / "cat"
+    target = LakePath.of("cat")
+    memory.make_directory(target, DIRECTORY_MODE)
     assert memory.set_group(target, "unknown") == GroupResult.unknown("unknown")
-    assert memory.set_group(LAKE / "missing", "helio-readers") == GroupResult(
-        GroupOutcome.PENDING, f"{LAKE / 'missing'}: {os.strerror(errno.ENOENT)}"
+    assert memory.set_group(LakePath.of("missing"), "helio-readers") == GroupResult(
+        GroupOutcome.PENDING, "missing does not exist"
     )
     assert memory.set_group(target, "geo-readers") == GroupResult(
-        GroupOutcome.PENDING, f"{target}: {os.strerror(errno.EPERM)}"
+        GroupOutcome.PENDING, f"cat: {os.strerror(errno.EPERM)}"
     )
     assert memory.set_group(target, "helio-readers") == GroupResult(GroupOutcome.CHANGED)
-    assert memory.owner(target).gid == 2001
+    assert found(memory, target).gid == 2001
     assert memory.set_group(target, "helio-readers") == GroupResult(GroupOutcome.UNCHANGED)
-    assert memory.set_group(LAKE, "helio-readers").outcome is GroupOutcome.PENDING
-    assert memory.set_group(target, 2002).outcome is GroupOutcome.PENDING
+    assert memory.set_group(LakePath(), "helio-readers").outcome is GroupOutcome.PENDING
     assert memory.set_group(target, 1000) == GroupResult(GroupOutcome.CHANGED)
-    assert memory.owner(target).gid == 1000
 
 
 def test_memory_write_bytes_gives_a_file_the_group_of_a_setgid_parent(
     memory: MemoryStorage,
 ) -> None:
-    memory.write_bytes(LAKE / "inherited", b"")
-    assert memory.owner(LAKE / "inherited").gid == 0
-    memory.nodes[LAKE / "plain"] = Node(mode=0o755, uid=1000, gid=2001)
-    memory.write_bytes(LAKE / "plain" / "own", b"")
-    assert memory.owner(LAKE / "plain" / "own").gid == 1000
-    memory.nodes[LAKE / "plain"].mode = 0o2755
-    memory.write_bytes(LAKE / "plain" / "own", b"again")
-    assert memory.owner(LAKE / "plain" / "own").gid == 2001
-
-
-def test_memory_device_follows_the_mount_points(memory: MemoryStorage) -> None:
-    memory.mount(LAKE / "geo", 7)
-    memory.make_directory(LAKE / "geo" / "cat", DIRECTORY_MODE)
-    memory.make_directory(LAKE / "helio", DIRECTORY_MODE)
-    assert memory.device(LAKE) == memory.device(LAKE / "helio") == ROOT_DEVICE
-    assert memory.device(LAKE / "geo") == memory.device(LAKE / "geo" / "cat") == 7
-    with pytest.raises(StorageError, match="does not exist"):
-        memory.device(LAKE / "missing")
-
-
-@pytest.fixture(params=["posix", "memory"])
-def share(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Storage, Path]:
-    """Each adapter with a setgid directory of the caller's group to work in."""
-    if request.param == "posix":
-        base = tmp_path / "share"
-        base.mkdir()
-        os.chmod(base, 0o2750)
-        return PosixStorage(), base
-    memory = MemoryStorage(LAKE, uid=1000, gid=1000)
-    memory.nodes[LAKE / "share"] = Node(mode=0o2750, uid=1000, gid=1000)
-    return memory, LAKE / "share"
-
-
-def test_make_inheriting_dir_inherits_setgid_and_the_group(share: tuple[Storage, Path]) -> None:
-    storage, base = share
-    target = base / "run7"
-    assert storage.make_inheriting_dir(target) is True
-    assert storage.owner(target).mode == DIRECTORY_MODE
-    assert storage.owner(target).gid == storage.owner(base).gid
-    assert storage.make_inheriting_dir(target) is False
-
-
-def test_make_inheriting_dir_refusals(share: tuple[Storage, Path]) -> None:
-    storage, base = share
-    storage.write_bytes(base / "file", b"")
-    with pytest.raises(StorageError, match="File exists"):
-        storage.make_inheriting_dir(base / "file")
-    storage.make_directory(base / "plain", 0o750)
-    storage.set_mode(base / "plain", 0o750)
-    with pytest.raises(StorageError, match="did not inherit the setgid bit"):
-        storage.make_inheriting_dir(base / "plain" / "d")
-    assert not storage.exists(base / "plain" / "d")
-    with pytest.raises(StorageError):
-        storage.make_inheriting_dir(base / "missing" / "d")
-
-
-def test_an_open_file_reports_from_its_descriptor(share: tuple[Storage, Path]) -> None:
-    storage, base = share
-    storage.write_bytes(base / "upload", b"payload", 0o600)
-    opened = storage.open_file(base / "upload")
-    assert opened is not None
-    try:
-        assert (opened.size, opened.inode) == (7, storage.inode(base / "upload"))
-        assert opened.sha256() == hashlib.sha256(b"payload").hexdigest()
-        opened.set_mode(FILE_MODE)
-    finally:
-        opened.close()
-    assert storage.owner(base / "upload").mode == FILE_MODE
-    assert storage.open_file(base / "missing") is None
-
-
-PART = ".a.bin.1.huron-part"
-BACKUP = ".a.bin.1.huron-prev"
-
-
-def test_link_gives_a_file_a_new_name(share: tuple[Storage, Path]) -> None:
-    storage, base = share
-    storage.write_bytes(base / "upload", b"new")
-    assert storage.link(base / "upload", base / "a.bin", PART, BACKUP) is None
-    assert storage.inode(base / "a.bin") == storage.inode(base / "upload")
-    assert storage.read_bytes(base / "a.bin") == b"new"
-    assert storage.link(base / "upload", base / "a.bin", PART, BACKUP) is None
-    assert not storage.exists(base / BACKUP)
-
-
-@pytest.mark.parametrize("stale_part", [False, True], ids=["no-part", "stale-part"])
-def test_link_replaces_an_existing_file_and_keeps_a_backup(
-    share: tuple[Storage, Path], stale_part: bool
-) -> None:
-    storage, base = share
-    storage.write_bytes(base / "upload", b"new")
-    storage.write_bytes(base / "a.bin", b"old")
-    old_inode = storage.inode(base / "a.bin")
-    if stale_part:
-        storage.write_bytes(base / PART, b"stale")
-        storage.write_bytes(base / BACKUP, b"stale")
-    assert storage.link(base / "upload", base / "a.bin", PART, BACKUP) == base / BACKUP
-    assert storage.read_bytes(base / "a.bin") == b"new"
-    assert storage.inode(base / "a.bin") == storage.inode(base / "upload")
-    assert (storage.read_bytes(base / BACKUP), storage.inode(base / BACKUP)) == (b"old", old_inode)
-    assert not storage.exists(base / PART)
-
-
-def test_link_without_a_source_raises_source_gone(share: tuple[Storage, Path]) -> None:
-    storage, base = share
-    with pytest.raises(SourceGone):
-        storage.link(base / "missing", base / "a.bin", PART, BACKUP)
-    assert not storage.exists(base / "a.bin")
-    storage.write_bytes(base / "upload", b"new")
-    with pytest.raises(StorageError):
-        storage.link(base / "upload", base / "missing" / "a.bin", PART, BACKUP)
-
-
-def test_rename_replaces_the_destination(share: tuple[Storage, Path]) -> None:
-    storage, base = share
-    storage.write_bytes(base / BACKUP, b"old")
-    storage.write_bytes(base / "a.bin", b"new")
-    inode = storage.inode(base / BACKUP)
-    storage.rename(base / BACKUP, base / "a.bin")
-    assert (storage.read_bytes(base / "a.bin"), storage.inode(base / "a.bin")) == (b"old", inode)
-    assert not storage.exists(base / BACKUP)
-    with pytest.raises(StorageError, match="No such file or directory"):
-        storage.rename(base / BACKUP, base / "a.bin")
-
-
-def test_inode_of_a_missing_path_is_none(share: tuple[Storage, Path]) -> None:
-    storage, base = share
-    assert storage.inode(base / "missing") is None
-    assert storage.inode(base) is not None
-
-
-def test_posix_link_and_open_failures_are_storage_errors(
-    tmp_path: Path, posix: PosixStorage, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "upload"
-    source.write_bytes(b"new")
-    (tmp_path / "a.bin").mkdir()
-    with pytest.raises(StorageError, match="permission denied"):
-        posix.link(source, tmp_path / "a.bin", PART, BACKUP)
-    with pytest.raises(StorageError, match="Not a directory"):
-        posix.inode(source / "x")
-    os.chmod(source, 0)
-    with pytest.raises(StorageError, match="permission denied"):
-        posix.open_file(source)
-    os.chmod(source, 0o600)
-    opened: list[int] = []
-    real_open, real_fstat = os.open, os.fstat
-
-    def recording_open(path: Path, flags: int) -> int:
-        opened.append(real_open(path, flags))
-        return opened[-1]
-
-    def failing_fstat(descriptor: int) -> os.stat_result:
-        if descriptor in opened:
-            raise OSError(errno.EIO, "Input/output error")
-        return real_fstat(descriptor)
-
-    monkeypatch.setattr(os, "open", recording_open)
-    monkeypatch.setattr(os, "fstat", failing_fstat)
-    with pytest.raises(StorageError, match="Input/output error"):
-        posix.open_file(source)
-    monkeypatch.undo()
-    with pytest.raises(OSError, match="Bad file descriptor"):
-        real_fstat(opened[0])  # the failed open released its descriptor
+    memory.write_bytes(LakePath.of("inherited"), b"", 0o644)
+    assert found(memory, LakePath.of("inherited")).gid == 0
+    memory.nodes[LakePath.of("plain")] = Node(mode=0o755, uid=1000, gid=2001)
+    memory.write_bytes(LakePath.of("plain", "own"), b"", 0o644)
+    assert found(memory, LakePath.of("plain", "own")).gid == 1000
+    assert memory.calls[-1] == ("write", LakePath.of("plain", "own"))
 
 
 def test_memory_open_file_refuses_a_directory_and_a_foreign_file(memory: MemoryStorage) -> None:
     with pytest.raises(StorageError, match="Is a directory"):
-        memory.open_file(LAKE)
-    memory.nodes[LAKE / "theirs"] = Node(mode=0o600, uid=0, gid=0, data=b"")
-    opened = memory.open_file(LAKE / "theirs")
+        memory.open_file(LakePath())
+    memory.nodes[LakePath.of("theirs")] = Node("file", 0o600, 0, 0)
+    opened = memory.open_file(LakePath.of("theirs"))
     assert opened is not None
     with pytest.raises(StorageError, match="permission denied"):
         opened.set_mode(FILE_MODE)
@@ -516,19 +551,10 @@ def test_memory_open_file_refuses_a_directory_and_a_foreign_file(memory: MemoryS
 def test_memory_without_inheritance_refuses_new_directories(memory: MemoryStorage) -> None:
     memory.inherits = False
     with pytest.raises(StorageError, match="did not inherit"):
-        memory.make_inheriting_dir(LAKE / "d")
-    memory.denied.add(LAKE)
-    memory.inherits = True
-    with pytest.raises(StorageError, match="permission denied"):
-        memory.make_inheriting_dir(LAKE / "d")
+        memory.make_inheriting_dir(LakePath.of("d"))
+    assert memory.stat(LakePath.of("d")) is None
 
 
-def test_memory_link_and_rename_into_a_denied_directory_are_refused(
-    memory: MemoryStorage,
-) -> None:
-    memory.write_bytes(LAKE / "upload", b"new")
-    memory.denied.add(LAKE)
-    with pytest.raises(StorageError, match="permission denied"):
-        memory.link(LAKE / "upload", LAKE / "a.bin", PART, BACKUP)
-    with pytest.raises(StorageError, match="permission denied"):
-        memory.rename(LAKE / "upload", LAKE / "a.bin")
+def test_memory_symlink_needs_its_parent(memory: MemoryStorage) -> None:
+    with pytest.raises(StorageError, match="does not exist"):
+        memory.symlink(LakePath.of("missing", "link"), "/outside")

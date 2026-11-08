@@ -12,21 +12,27 @@ import pytest
 
 from huron.core.lake.organizations.models import Organization
 from huron.core.storage import (
+    FILE_MODE,
     MARKER_FILE,
     ORGANIZATION_MODE,
+    LakePath,
     Marker,
     read_marker,
     render_marker,
 )
 from huron.core.storage.memory import MemoryStorage
 from huron.pkg.identifiers import new_id
+from tests.fakes.storage import rooted
 from tests.support.api import INSTANCE_ID
 from tests.support.cli import API, Cli
 from tests.unit.cli.conftest import PREFIX, make_collection, make_directory
 
-HELIO_ROOT = Path("/data1/huron")
-GEO_ROOT = Path("/data2/huron")
-HELIO = HELIO_ROOT / "helio"
+HELIO_ROOT = PREFIX / "data1"
+GEO_ROOT = PREFIX / "data2"
+#: The roots and helio's directory as lake paths of the share at the mount prefix.
+HELIO_BASE = LakePath.of("data1")
+GEO_BASE = LakePath.of("data2")
+HELIO = HELIO_BASE.joinpath("helio")
 ORGANIZATIONS = [
     {
         "name": "helio",
@@ -48,14 +54,14 @@ ORGANIZATIONS = [
 def roots() -> MemoryStorage:
     """Both roots exist and belong to alice, the storage admin; the mount prefix is unmarked."""
     storage = MemoryStorage(PREFIX)
-    for root in (HELIO_ROOT, GEO_ROOT):
-        storage.add_root(root, uid=storage.uid)
+    for root in (HELIO_BASE, GEO_BASE):
+        storage.add_directory(root, uid=storage.uid)
     return storage
 
 
 @pytest.fixture
 def managed(tmp_path: Path, roots: MemoryStorage) -> Iterator[Cli]:
-    running = Cli(tmp_path, lambda config: roots, PREFIX, organizations=ORGANIZATIONS)
+    running = Cli(tmp_path, rooted(roots), PREFIX, organizations=ORGANIZATIONS)
     running.login_as("alice")
     yield running
     running.close()
@@ -66,16 +72,16 @@ def test_the_declared_organizations_are_provisioned_and_used(
 ) -> None:
     listed = json.loads(managed.ok("-o", "json", "get", "orgs").stdout)
     assert {(o["name"], o["declared"], o["path"]) for o in listed} == {
-        ("helio", True, "/data1/huron/helio"),
-        ("geo", True, "/data2/huron/geo"),
+        ("helio", True, f"{HELIO_ROOT}/helio"),
+        ("geo", True, f"{GEO_ROOT}/geo"),
     }
     assert managed.run("adm", "verify-mounts").exit_code == 1
 
     managed.ok("adm", "provision-orgs")
     managed.ok("adm", "verify-mounts")
-    for root, name in ((HELIO_ROOT, "helio"), (GEO_ROOT, "geo")):
-        assert roots.exists(root / name / MARKER_FILE)
-        marker = read_marker(roots, root / name)
+    for root, name in ((HELIO_BASE, "helio"), (GEO_BASE, "geo")):
+        assert roots.stat(root.joinpath(name, MARKER_FILE)) is not None
+        marker = read_marker(roots, root.joinpath(name))
         assert (marker.instance_id, marker.organization) == (str(INSTANCE_ID), name)
 
     managed.login_as("bob")
@@ -115,8 +121,8 @@ def test_an_undeclared_organization_is_reported_without_failing_the_others(
 ) -> None:
     add_undeclared(managed, "astro")
     managed.ok("adm", "provision-orgs")
-    assert read_marker(roots, PREFIX) == Marker(1, API, str(INSTANCE_ID))
-    roots.remove_file(PREFIX / MARKER_FILE)  # the mount prefix is not this service's share
+    assert read_marker(roots, LakePath()) == Marker(1, API, str(INSTANCE_ID))
+    roots.remove_file(LakePath.of(MARKER_FILE))  # the mount prefix is not this service's share
     listing = managed.ok("get", "orgs").stdout
     assert f"{PREFIX}/astro (undeclared)" in listing
 
@@ -140,9 +146,10 @@ def test_an_undeclared_organization_is_reported_without_failing_the_others(
 def test_an_undeclared_organization_stays_usable_under_a_marked_prefix(
     managed: Cli, roots: MemoryStorage
 ) -> None:
-    roots.write_bytes(PREFIX / MARKER_FILE, render_marker(Marker(1, API, str(INSTANCE_ID))))
+    marker = render_marker(Marker(1, API, str(INSTANCE_ID)))
+    roots.write_bytes(LakePath.of(MARKER_FILE), marker, FILE_MODE)
     add_undeclared(managed, "astro")
-    roots.make_directory(PREFIX / "astro", ORGANIZATION_MODE)
+    roots.make_directory(LakePath.of("astro"), ORGANIZATION_MODE)
     managed.ok("adm", "provision-orgs")
 
     managed.ok("create", "catalog", "stars", "--org", "astro")
@@ -177,7 +184,7 @@ def inheriting(tmp_path: Path, roots: MemoryStorage) -> Iterator[Cli]:
     """
     running = Cli(
         tmp_path,
-        lambda config: roots,
+        rooted(roots),
         PREFIX,
         lake=roots,
         lake_path=HELIO_ROOT,
@@ -215,7 +222,7 @@ def test_catalogs_inherit_the_organization_wide_groups(
     source.write_text("alpha")
     cli.ok("add", str(source))
     assert "+1" in cli.ok("push").stdout
-    assert roots.read_bytes(run7 / "a.txt") == b"alpha"
+    assert roots.read_bytes(run7.joinpath("a.txt")) == b"alpha"
 
     cli.login_as("erin")
     cli.ok("catalog", "heliophysics")
@@ -226,4 +233,4 @@ def test_catalogs_inherit_the_organization_wide_groups(
     cli.ok("add", str(other))
     refused = cli.run("push")
     assert refused.exit_code == 4 and "FORBIDDEN" in refused.stderr
-    assert not roots.exists(run7 / "b.txt")
+    assert roots.stat(run7.joinpath("b.txt")) is None

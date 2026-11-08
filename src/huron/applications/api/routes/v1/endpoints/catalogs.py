@@ -10,8 +10,8 @@ from fastapi import APIRouter, Query, status
 from huron.applications.api.authorization import ActorDep
 from huron.applications.api.dependencies import (
     DeclarationsDep,
-    DiskDep,
     LakeDep,
+    ShareGroupsDep,
     with_share_root,
 )
 from huron.applications.api.routes.pagination import Cursor, Limit, Order, Sort
@@ -62,7 +62,7 @@ async def create_catalog(
     actor: ActorDep,
     lake: LakeDep,
     declarations: DeclarationsDep,
-    disk: DiskDep,
+    share_groups: ShareGroupsDep,
 ) -> CatalogWriteOut:
     """Create a catalog in an organization; the default schema is the latest huron-base.
 
@@ -78,8 +78,8 @@ async def create_catalog(
         share_group=body.share_group,
     )
     warning = None
-    if disk is not None and body.share_group is not None:
-        warning = await disk.set_share_group(view.disk_path, body.share_group)
+    if share_groups is not None and body.share_group is not None:
+        warning = await share_groups.set_share_group(view.disk_path, body.share_group)
     return _written(view, declarations, warning)
 
 
@@ -99,7 +99,7 @@ async def set_catalog_share_group(
     actor: ActorDep,
     lake: LakeDep,
     declarations: DeclarationsDep,
-    disk: DiskDep,
+    share_groups: ShareGroupsDep,
 ) -> CatalogWriteOut:
     """Set or clear the catalog's share group; the catalog lock orders the changes.
 
@@ -108,8 +108,8 @@ async def set_catalog_share_group(
     """
     view = await lake.catalogs.set_share_group(actor, catalog, body.share_group)
     warning = None
-    if disk is not None:
-        warning = await disk.set_share_group(view.disk_path, view.catalog.share_group)
+    if share_groups is not None:
+        warning = await share_groups.set_share_group(view.disk_path, view.catalog.share_group)
     return _written(view, declarations, warning)
 
 

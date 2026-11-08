@@ -4,23 +4,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
+
+from huron.pkg.fs.posix import Entry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
-    from huron.pkg.fs.posix import Entry, Stamp
+    from huron.core.storage.lakepath import LakePath
 
 __all__ = [
     "SHARE_GROUP_PENDING",
-    "FileStamp",
+    "Entry",
     "GroupOutcome",
     "GroupResult",
     "OpenFile",
-    "Ownership",
+    "Outcome",
     "ShareReader",
     "ShareWarning",
+    "Stat",
+    "StatKind",
     "Storage",
 ]
 
@@ -28,21 +31,29 @@ __all__ = [
 SHARE_GROUP_PENDING = "SHARE_GROUP_PENDING"
 
 
-@dataclass(frozen=True, slots=True)
-class FileStamp:
-    """Size and content hash of a file."""
-
-    size: int
-    sha256: str
+type StatKind = Literal["file", "dir", "other"]
 
 
 @dataclass(frozen=True, slots=True)
-class Ownership:
-    """The owner, the group and the mode bits (setgid included) of an entry."""
+class Stat:
+    """One entry on the lake, never a symbolic link.
 
-    uid: int
-    gid: int
+    ``mode`` holds the permission bits with the setgid bit; ``inode`` is the inode number.
+    """
+
+    kind: StatKind
     mode: int
+    gid: int
+    inode: int
+    size: int
+
+
+class Outcome(StrEnum):
+    """What a removal did: removed the entry, found nothing, or kept what it found."""
+
+    REMOVED = "removed"
+    MISSING = "missing"
+    KEPT = "kept"
 
 
 class GroupOutcome(StrEnum):
@@ -111,103 +122,96 @@ class OpenFile(Protocol):
 
 
 class ShareReader(Protocol):
-    """Read-only operations on the share."""
+    """Read-only operations on the lake.
 
-    def read_bytes(self, path: Path) -> bytes | None:
+    Every place is a :class:`LakePath` below the storage root. A symbolic link at any step of
+    it raises ``SymlinkInLake``; only :meth:`walk` reports a link, and never enters it.
+    """
+
+    def stat(self, location: LakePath) -> Stat | None:
+        """The entry at ``location``; ``None`` when it does not exist."""
+        ...
+
+    def read_bytes(self, location: LakePath) -> bytes | None:
         """The bytes of a file, or ``None`` when it does not exist."""
         ...
 
-    def exists(self, path: Path) -> bool:
-        """Whether ``path`` is a directory or file."""
+    def is_empty(self, location: LakePath) -> bool:
+        """Whether the directory has no entry; a link counts as an entry."""
         ...
 
-    def is_directory(self, path: Path) -> bool:
-        """Whether ``path`` is a real directory."""
+    def walk(self, location: LakePath) -> Iterator[Entry]:
+        """Every entry below the directory, top-down and sorted by name."""
         ...
 
-    def walk(self, path: Path) -> Iterator[Entry]:
-        """Every entry under ``path``, sorted, without following links."""
-        ...
-
-    def stamp(self, path: Path) -> Stamp:
-        """Size and modification time of a file."""
-        ...
-
-    def hash(self, path: Path) -> FileStamp:
-        """Size and sha256 of a file."""
-        ...
-
-    def owner(self, path: Path) -> Ownership:
-        """The owner, the group and the mode of ``path``, without following a final link."""
-        ...
-
-    def device(self, path: Path) -> int:
-        """The identifier of the filesystem that holds ``path``."""
+    def open_file(self, location: LakePath) -> OpenFile | None:
+        """Open a file read-only; ``None`` when it does not exist. The caller closes it."""
         ...
 
 
 class Storage(ShareReader, Protocol):
-    """Every operation on the share, writes included."""
+    """Every operation on the lake, writes included."""
 
-    def make_directory(self, path: Path, mode: int) -> bool:
-        """Create ``path`` with exactly ``mode`` (its parent must exist); ``True`` when created.
+    def make_directory(self, location: LakePath, mode: int) -> bool:
+        """Create a directory with exactly ``mode`` (its parent must exist); ``True`` if made.
 
         An existing directory is left as it is.
         """
         ...
 
-    def set_mode(self, path: Path, mode: int) -> bool:
-        """Give ``path`` exactly ``mode``; ``True`` when the mode changed."""
-        ...
-
-    def set_group(self, path: Path, group: str | int) -> GroupResult:
-        """Try to give ``path`` the group ``group``, a name or a gid.
-
-        A refusal, or a name this machine cannot resolve, is ``PENDING``, not an error.
-        """
-        ...
-
-    def make_inheriting_dir(self, path: Path) -> bool:
-        """Create ``path`` with mode ``0750``; ``True`` when created, an existing one is kept.
+    def make_inheriting_dir(self, location: LakePath) -> bool:
+        """Create a directory with mode ``0750``; ``True`` when made, an existing one is kept.
 
         The setgid bit and the group come only from the parent's inheritance. A new directory
         without them is removed again and refused; the mode is never fixed with ``chmod``.
         """
         ...
 
-    def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
-        """Write ``data`` atomically; with ``mode``, the file gets exactly that mode."""
+    def set_mode(self, location: LakePath, mode: int) -> bool:
+        """Give the entry exactly ``mode``; ``True`` when the mode changed."""
         ...
 
-    def open_file(self, path: Path) -> OpenFile | None:
-        """Open a file read-only; ``None`` when it does not exist. The caller closes it."""
-        ...
+    def set_group(self, location: LakePath, group: str | int) -> GroupResult:
+        """Try to give the entry the group ``group``, a name or a gid.
 
-    def link(
-        self, source: Path, destination: Path, part_name: str, backup_name: str
-    ) -> Path | None:
-        """Hard-link ``source`` to ``destination``, atomically replacing an existing file.
-
-        The replaced file keeps its bytes under ``backup_name`` beside ``destination``, and the
-        replacement goes through ``part_name``. A ``destination`` that already links ``source``
-        stays as it is, and a backup an earlier attempt made for it is still the backup. Returns
-        the backup, or ``None`` when nothing was replaced. Raises ``SourceGone`` when ``source``
-        does not exist.
+        A refusal, or a name this machine cannot resolve, is ``PENDING``, not an error.
         """
         ...
 
-    def rename(self, source: Path, destination: Path) -> None:
+    def write_bytes(self, location: LakePath, data: bytes, mode: int) -> None:
+        """Write ``data`` atomically to a file with exactly ``mode``."""
+        ...
+
+    def link(
+        self,
+        source: LakePath,
+        destination: LakePath,
+        *,
+        inode: int,
+        part_name: str,
+        backup_name: str,
+    ) -> LakePath | None:
+        """Hard-link ``source`` to ``destination``, atomically replacing an existing file.
+
+        ``source`` must be a regular file with the inode ``inode``, else ``SourceGone``. The
+        replaced file keeps its bytes under ``backup_name`` beside ``destination``, and the
+        replacement goes through ``part_name``. A ``destination`` that already links ``source``
+        stays as it is, and a backup an earlier attempt made for it is still the backup.
+        Returns the backup, or ``None`` when nothing was replaced.
+        """
+        ...
+
+    def rename(self, source: LakePath, destination: LakePath) -> None:
         """Give the file at ``source`` the name ``destination``, replacing it atomically."""
         ...
 
-    def inode(self, path: Path) -> int | None:
-        """The inode number of ``path``, without following a final link; ``None`` when absent."""
+    def remove_file(self, location: LakePath, *, inode: int | None = None) -> Outcome:
+        """Remove a file; with ``inode``, only while the file has that inode.
+
+        ``MISSING`` when there is no file, ``KEPT`` when its inode is another.
+        """
         ...
 
-    def remove_file(self, path: Path) -> bool:
-        """Remove a file; ``False`` when it was already gone."""
-        ...
-
-    def remove_directory(self, path: Path) -> bool:
-        """Remove an empty directory; ``False`` when it was already gone."""
+    def remove_directory(self, location: LakePath) -> Outcome:
+        """Remove an empty directory; ``KEPT`` when it has entries, ``MISSING`` when absent."""
         ...
