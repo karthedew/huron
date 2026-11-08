@@ -12,14 +12,12 @@ import pytest
 from huron.core.storage import (
     MARKER_FILE,
     MARKER_MODE,
-    DirectoryKind,
-    EffectiveGroups,
+    ORGANIZATION_MODE,
     Marker,
     MarkerState,
     StorageError,
     marker_state,
     place_of,
-    plan,
     read_marker,
     render_marker,
     verify_marker,
@@ -33,13 +31,10 @@ from huron.core.storage.check import (
 from huron.core.storage.memory import MemoryStorage
 from huron.core.storage.posix import PosixStorage
 from huron.core.storage.provision import OrganizationTarget, Provisioner, provision_script
-from huron.pkg.fs.acl import Acl, SubprocessRunner
 
 PREFIX = Path("/projects/huron")
 ROOT = Path("/data1/huron")
 INSTANCE = "id-1"
-GROUPS = EffectiveGroups(platform_admin=("platform",), org_admin=("helio-admins",))
-ORG_PLAN = plan(DirectoryKind.ORGANIZATION, GROUPS)
 
 
 def helio_marker(instance: str = INSTANCE, organization: str | None = "helio") -> Marker:
@@ -48,14 +43,18 @@ def helio_marker(instance: str = INSTANCE, organization: str | None = "helio") -
 
 def target(root: Path = ROOT, name: str = "helio") -> OrganizationTarget:
     return OrganizationTarget(
-        place_of(name, str(root), True, PREFIX), ORG_PLAN, helio_marker(organization=name)
+        place_of(name, str(root), True, PREFIX), helio_marker(organization=name)
     )
 
 
 def share() -> MemoryStorage:
-    storage = MemoryStorage(PREFIX, user="admin")
-    storage.add_root(ROOT, owner="admin")
+    storage = MemoryStorage(PREFIX)
+    storage.add_root(ROOT, uid=storage.uid)
     return storage
+
+
+def provisioner(storage: MemoryStorage) -> Provisioner:
+    return Provisioner(storage, PREFIX)
 
 
 def test_an_organization_without_a_root_lives_under_the_prefix() -> None:
@@ -130,55 +129,64 @@ def test_marker_states_name_every_refusal() -> None:
     assert str(MarkerState.WRONG_ORG) == "wrong org"
 
 
-def test_provisioning_creates_the_directory_applies_the_plan_and_marks_it() -> None:
+def test_provisioning_creates_the_directory_with_its_mode_and_marks_it() -> None:
     storage = share()
-    steps = Provisioner(storage).provision(target())
+    steps = provisioner(storage).provision(target())
     directory = ROOT / "helio"
     assert steps == [f"created: {directory}", f"marker written: {directory / MARKER_FILE}"]
-    node = storage.nodes[directory]
-    assert (node.mode, node.acl, node.group) == (0o2771, ORG_PLAN.acl, "helio-admins")
+    assert storage.nodes[directory].mode == ORGANIZATION_MODE
     assert storage.nodes[directory / MARKER_FILE].mode == MARKER_MODE
     assert read_marker(storage, directory) == helio_marker()
 
 
 def test_provisioning_again_changes_nothing() -> None:
     storage = share()
-    Provisioner(storage).provision(target())
+    provisioner(storage).provision(target())
     before = list(storage.calls)
-    again = Provisioner(storage).provision(target())
+    again = provisioner(storage).provision(target())
     assert again == [f"exists: {ROOT / 'helio'}", f"marker ok: {ROOT / 'helio' / MARKER_FILE}"]
     assert storage.calls == before
 
 
 def test_provisioning_repairs_an_existing_directory_without_a_marker() -> None:
     storage = share()
-    storage.ensure_directory(ROOT / "helio", plan(DirectoryKind.CATALOG, EffectiveGroups()))
-    steps = Provisioner(storage).provision(target())
-    assert steps[0] == f"exists: {ROOT / 'helio'}"
-    assert storage.nodes[ROOT / "helio"].acl == ORG_PLAN.acl
-    assert read_marker(storage, ROOT / "helio").organization == "helio"
+    directory = ROOT / "helio"
+    storage.make_directory(directory, 0o2750)
+    steps = provisioner(storage).provision(target())
+    assert steps == [
+        f"exists: {directory}",
+        f"mode set to 2751: {directory}",
+        f"marker written: {directory / MARKER_FILE}",
+    ]
+    assert storage.nodes[directory].mode == ORGANIZATION_MODE
+    assert read_marker(storage, directory).organization == "helio"
 
 
 def test_a_dry_run_reports_and_changes_nothing() -> None:
     storage = share()
-    marker = ROOT / "helio" / MARKER_FILE
-    planned = Provisioner(storage).provision(target(), dry_run=True)
-    assert planned == [f"would create: {ROOT / 'helio'}", f"would write marker: {marker}"]
-    assert storage.calls == [] and not storage.exists(ROOT / "helio")
-    Provisioner(storage).provision(target())
-    again = Provisioner(storage).provision(target(), dry_run=True)
-    assert again == [
-        f"would apply the organization ACL plan to: {ROOT / 'helio'}",
-        f"marker ok: {marker}",
+    directory, marker = ROOT / "helio", ROOT / "helio" / MARKER_FILE
+    planned = provisioner(storage).provision(target(), dry_run=True)
+    assert planned == [f"would create: {directory}", f"would write marker: {marker}"]
+    assert storage.calls == [] and not storage.exists(directory)
+    storage.make_directory(directory, 0o2750)
+    calls = list(storage.calls)
+    assert provisioner(storage).provision(target(), dry_run=True) == [
+        f"exists: {directory}",
+        f"would set mode 2751: {directory}",
+        f"would write marker: {marker}",
     ]
+    assert storage.calls == calls
+    provisioner(storage).provision(target())
+    again = provisioner(storage).provision(target(), dry_run=True)
+    assert again == [f"exists: {directory}", f"marker ok: {marker}"]
 
 
 def test_the_root_itself_is_never_created() -> None:
     storage = share()
     with pytest.raises(StorageError, match="The storage admin creates it"):
-        Provisioner(storage).provision(target(Path("/data2/huron"), "geo"))
+        provisioner(storage).provision(target(Path("/data2/huron"), "geo"))
     with pytest.raises(StorageError, match="does not exist"):
-        Provisioner(storage).provision(target(Path("/data2/huron"), "geo"), dry_run=True)
+        provisioner(storage).provision(target(Path("/data2/huron"), "geo"), dry_run=True)
     assert not storage.exists(Path("/data2/huron"))
 
 
@@ -196,89 +204,145 @@ def test_the_root_itself_is_never_created() -> None:
 )
 def test_a_foreign_marker_is_never_overwritten(data: bytes, reason: str) -> None:
     storage = share()
-    storage.ensure_directory(ROOT / "helio", plan(DirectoryKind.CATALOG, EffectiveGroups()))
+    storage.make_directory(ROOT / "helio", 0o2750)
     storage.write_bytes(ROOT / "helio" / MARKER_FILE, data)
-    before = (list(storage.calls), storage.nodes[ROOT / "helio"].acl)
+    before = list(storage.calls)
     for dry_run in (False, True):
         with pytest.raises(StorageError, match="Huron does not overwrite it") as refused:
-            Provisioner(storage).provision(target(), dry_run=dry_run)
+            provisioner(storage).provision(target(), dry_run=dry_run)
         assert reason in refused.value.message
-    assert (storage.calls, storage.nodes[ROOT / "helio"].acl) == before
+    assert storage.calls == before and storage.nodes[ROOT / "helio"].mode == 0o2750
     assert storage.read_bytes(ROOT / "helio" / MARKER_FILE) == data
 
 
 def test_provisioning_a_directory_owned_by_someone_else_fails_cleanly() -> None:
     storage = share()
-    storage.add_root(ROOT / "helio", owner="root")
-    with pytest.raises(StorageError, match="only the owner"):
-        Provisioner(storage).provision(target())
+    storage.add_root(ROOT / "helio", uid=0)
+    with pytest.raises(StorageError, match="permission denied"):
+        provisioner(storage).provision(target())
+    assert not storage.exists(ROOT / "helio" / MARKER_FILE)
+
+
+def test_the_lake_path_gets_the_marker_of_the_service() -> None:
+    storage = share()
+    marker = PREFIX / MARKER_FILE
+    lake = helio_marker(organization=None)
+    assert provisioner(storage).mark_lake(lake, dry_run=True) == [f"would write marker: {marker}"]
+    assert storage.calls == [] and not storage.exists(marker)
+    assert provisioner(storage).mark_lake(lake) == [f"marker written: {marker}"]
+    assert read_marker(storage, PREFIX) == lake
+    assert storage.nodes[marker].mode == MARKER_MODE
+    assert provisioner(storage).mark_lake(lake) == [f"marker ok: {marker}"]
+    assert provisioner(storage).mark_lake(lake, dry_run=True) == [f"marker ok: {marker}"]
+
+
+def test_the_lake_path_marker_is_never_overwritten_and_the_path_never_created() -> None:
+    storage = share()
+    storage.write_bytes(PREFIX / MARKER_FILE, render_marker(helio_marker()))
+    with pytest.raises(StorageError, match="names service id-1 and organization helio"):
+        provisioner(storage).mark_lake(helio_marker(organization=None))
+    with pytest.raises(StorageError, match="the lake path /lake does not exist"):
+        Provisioner(storage, Path("/lake")).mark_lake(helio_marker(organization=None))
+    assert not storage.exists(Path("/lake"))
 
 
 def test_the_script_does_what_provisioning_does() -> None:
-    script = provision_script([target(), target(Path("/data2/huron"), "geo")], acls=True)
-    assert script.startswith("#!/bin/sh\n") and "set -eu" in script
-    assert "test -d /data1/huron ||" in script and "mkdir /data2/huron/geo" in script
-    assert "chgrp helio-admins /data1/huron/helio" in script
-    assert "chmod 2771 /data1/huron/helio" in script
-    assert "setfacl --set-file=- /data1/huron/helio <<'ACL'" in script
-    assert "group:helio-admins:rwx" in script and "default:group:platform:rwx" in script
-    assert "chmod 644 /data1/huron/helio/.huron" in script
-    assert '"organization": "geo"' in script
-    assert "setfacl" not in provision_script([target()], acls=False)
+    script = provision_script(PREFIX, helio_marker(organization=None), [target()])
+    lake, helio = f"{PREFIX / MARKER_FILE}", f"{ROOT / 'helio'}"
+    service = """'"instance_id": "id-1"'"""
+    rendered = render_marker(helio_marker(organization=None)).decode().rstrip()
+    assert script.splitlines() == [
+        "#!/bin/sh",
+        "# Prepare the Huron lake path and organization directories:"
+        " huron adm provision-orgs --emit-script.",
+        "# Run as a user that may write the lake path and each root (or as root)."
+        " Running it again is harmless.",
+        "set -eu",
+        "",
+        f"# lake path {PREFIX}",
+        f"test -d {PREFIX} || {{",
+        f"  printf 'error: the lake path %s does not exist\\n' {PREFIX} >&2; exit 1; }}",
+        f"if [ -e {lake} ]; then",
+        f"  grep -qF {service} {lake} && ! grep -qF '\"organization\"' {lake} || {{",
+        f"    printf 'error: %s names another service or organization\\n' {lake} >&2; exit 1; }}",
+        "fi",
+        f"[ -e {lake} ] || printf '%s\\n' '{rendered}' > {lake}",
+        f"chmod 644 {lake}",
+        "",
+        "# organization helio",
+        f"test -d {ROOT} || {{",
+        f"  printf 'error: the root %s does not exist\\n' {ROOT} >&2; exit 1; }}",
+        f"if [ -e {helio}/.huron ]; then",
+        f"  grep -qF {service} {helio}/.huron"
+        f' && grep -qF \'"organization": "helio"\' {helio}/.huron || {{',
+        f"    printf 'error: %s names another service or organization\\n' {helio}/.huron >&2;"
+        " exit 1; }",
+        "fi",
+        f"[ -d {helio} ] || mkdir {helio}",
+        f"chmod 2751 {helio}",
+        f"[ -e {helio}/.huron ] || printf '%s\\n'"
+        f" '{render_marker(helio_marker()).decode().rstrip()}' > {helio}/.huron",
+        f"chmod 644 {helio}/.huron",
+    ]
     checked = subprocess.run(["sh", "-n"], input=script, text=True, check=False)
     assert checked.returncode == 0
 
 
+def run_script(path: Path, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["sh", str(path)], capture_output=True, text=True, check=False, cwd=cwd)
+
+
 @pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSIX shell")
 def test_the_script_runs_and_is_idempotent(tmp_path: Path) -> None:
-    root = tmp_path / "root"
+    lake, root = tmp_path / "lake", tmp_path / "root"
+    lake.mkdir()
     root.mkdir()
-    organization = OrganizationTarget(
-        place_of("helio", str(root), True, PREFIX),
-        plan(DirectoryKind.ORGANIZATION, EffectiveGroups()),
-        helio_marker(),
-    )
+    organization = OrganizationTarget(place_of("helio", str(root), True, lake), helio_marker())
     script = tmp_path / "provision.sh"
-    script.write_text(provision_script([organization], acls=False))
+    script.write_text(provision_script(lake, helio_marker(organization=None), [organization]))
     for _ in range(2):
-        done = subprocess.run(["sh", str(script)], capture_output=True, text=True, check=False)
+        done = run_script(script, tmp_path)
         assert done.returncode == 0, done.stderr
     directory = root / "helio"
-    assert stat.S_IMODE(os.lstat(directory).st_mode) == 0o2771
+    assert stat.S_IMODE(os.lstat(directory).st_mode) == ORGANIZATION_MODE
     assert stat.S_IMODE(os.lstat(directory / MARKER_FILE).st_mode) == MARKER_MODE
-    storage = PosixStorage("none", SubprocessRunner())
+    storage = PosixStorage()
     assert verify_marker(storage, directory, INSTANCE, "helio") == helio_marker()
+    assert verify_marker(storage, lake, INSTANCE) == helio_marker(organization=None)
     (directory / MARKER_FILE).write_text(json.dumps({"instance_id": "other"}))
-    refused = subprocess.run(["sh", str(script)], capture_output=True, text=True, check=False)
+    refused = run_script(script, tmp_path)
     assert refused.returncode == 1 and "names another service" in refused.stderr
     shutil.rmtree(root)
-    missing = subprocess.run(["sh", str(script)], capture_output=True, text=True, check=False)
-    assert missing.returncode == 1 and "does not exist" in missing.stderr
+    missing = run_script(script, tmp_path)
+    assert missing.returncode == 1 and f"the root {root} does not exist" in missing.stderr
+    (lake / MARKER_FILE).write_bytes(render_marker(helio_marker()))
+    named = run_script(script, tmp_path)
+    assert named.returncode == 1 and f"{lake}/.huron names another" in named.stderr
+    shutil.rmtree(lake)
+    gone = run_script(script, tmp_path)
+    assert gone.returncode == 1 and f"the lake path {lake} does not exist" in gone.stderr
 
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSIX shell")
-def test_the_script_never_expands_a_root(tmp_path: Path) -> None:
+def test_the_script_never_expands_a_path(tmp_path: Path) -> None:
+    lake = tmp_path / "lake"
+    lake.mkdir()
     root = tmp_path / "$(touch pwned)`touch pwned`"
-    organization = OrganizationTarget(
-        place_of("helio", str(root), True, PREFIX),
-        plan(DirectoryKind.ORGANIZATION, EffectiveGroups()),
-        helio_marker(),
-    )
+    organization = OrganizationTarget(place_of("helio", str(root), True, lake), helio_marker())
     script = tmp_path / "provision.sh"
-    script.write_text(provision_script([organization], acls=False))
-    run = ["sh", str(script)]
-    missing = subprocess.run(run, capture_output=True, text=True, check=False, cwd=tmp_path)
+    script.write_text(provision_script(lake, helio_marker(organization=None), [organization]))
+    missing = run_script(script, tmp_path)
     assert missing.returncode == 1 and f"the root {root} does not exist" in missing.stderr
     root.mkdir()
     (root / "helio").mkdir()
     (root / "helio" / MARKER_FILE).write_text(json.dumps({"instance_id": "other"}))
-    refused = subprocess.run(run, capture_output=True, text=True, check=False, cwd=tmp_path)
+    refused = run_script(script, tmp_path)
     assert refused.returncode == 1 and f"{root}/helio/.huron names another" in refused.stderr
     assert not (tmp_path / "pwned").exists()
 
 
 def test_posix_storage_writes_files_with_the_mode_asked_for(tmp_path: Path) -> None:
-    storage = PosixStorage("none", SubprocessRunner())
+    storage = PosixStorage()
     storage.write_bytes(tmp_path / "m", b"x", MARKER_MODE)
     assert stat.S_IMODE(os.lstat(tmp_path / "m").st_mode) == MARKER_MODE
     memory = MemoryStorage(tmp_path)
@@ -286,12 +350,8 @@ def test_posix_storage_writes_files_with_the_mode_asked_for(tmp_path: Path) -> N
     assert memory.nodes[tmp_path / "plain"].mode == 0o660
 
 
-def expected(
-    storage: MemoryStorage, own_marker: bool = True, with_plan: bool = True
-) -> list[Finding]:
-    organization = ExpectedOrganization(
-        "helio", ROOT / "helio", INSTANCE, own_marker, ORG_PLAN if with_plan else None
-    )
+def expected(storage: MemoryStorage, own_marker: bool = True) -> list[Finding]:
+    organization = ExpectedOrganization("helio", ROOT / "helio", INSTANCE, own_marker)
     return check_organization(storage, organization)
 
 
@@ -301,7 +361,7 @@ def test_organization_findings() -> None:
     assert [(f.code, f.severity, f.path) for f in missing] == [
         ("org_dir_missing", Severity.ERROR, str(ROOT / "helio"))
     ]
-    Provisioner(storage).provision(target())
+    provisioner(storage).provision(target())
     assert expected(storage) == []
     storage.remove_file(ROOT / "helio" / MARKER_FILE)
     assert [f.code for f in expected(storage)] == ["org_marker_missing"]
@@ -309,9 +369,3 @@ def test_organization_findings() -> None:
     storage.write_bytes(ROOT / "helio" / MARKER_FILE, render_marker(helio_marker("id-2")))
     mismatch = expected(storage)
     assert [(f.code, f.detail) for f in mismatch] == [("org_marker_mismatch", "wrong instance")]
-    storage.write_bytes(ROOT / "helio" / MARKER_FILE, render_marker(helio_marker()))
-    storage.nodes[ROOT / "helio"].acl = Acl()
-    drift = expected(storage)
-    assert [(f.code, f.severity) for f in drift] == [("org_acl_drift", Severity.WARNING)]
-    assert "missing group:helio-admins:rwx" in drift[0].detail
-    assert expected(storage, with_plan=False) == []

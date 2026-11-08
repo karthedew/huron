@@ -58,7 +58,8 @@ def test_verify_mounts_checks_the_share_root_marker(cli: Cli, share: MemoryStora
     share.write_bytes(PREFIX / MARKER_FILE, render_marker(Marker(1, "http://other", "other-id")))
     refused = cli.run("adm", "verify-mounts")
     assert refused.exit_code == 1 and "wrong instance" in refused.stdout
-    assert "scripts/init-root.sh" in refused.stdout and "provision-orgs" not in refused.stdout
+    assert "To write the marker, run `huron adm provision-orgs`" in refused.stdout
+    assert "To prepare the organization directories" not in refused.stdout
     share.remove_file(PREFIX / MARKER_FILE)
     assert mounts(cli)[0]["state"] == "no marker"
     cli.configure(mount_prefix="/not/mounted")

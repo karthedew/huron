@@ -45,7 +45,6 @@ class DirectoryKind(StrEnum):
     ORGANIZATION = "organization"
     CATALOG = "catalog"
     NAMESPACE = "namespace"
-    NAMESPACE_WITH_COLLECTIONS = "namespace_with_collections"
     COLLECTION = "collection"
 
 

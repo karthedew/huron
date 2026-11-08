@@ -652,55 +652,6 @@
         "title": "CommitResultOut",
         "type": "object"
       },
-      "EffectiveGroupsOut": {
-        "description": "Groups per role on a catalog, inherited ones included.",
-        "properties": {
-          "catalog_admin": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Catalog Admin",
-            "type": "array"
-          },
-          "contributor": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Contributor",
-            "type": "array"
-          },
-          "org_admin": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Org Admin",
-            "type": "array"
-          },
-          "platform_admin": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Platform Admin",
-            "type": "array"
-          },
-          "reader": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Reader",
-            "type": "array"
-          }
-        },
-        "required": [
-          "platform_admin",
-          "org_admin",
-          "catalog_admin",
-          "contributor",
-          "reader"
-        ],
-        "title": "EffectiveGroupsOut",
-        "type": "object"
-      },
       "ExchangeIn": {
         "description": "A company ID token to exchange.",
         "properties": {
@@ -2635,49 +2586,6 @@
         "summary": "Get Collection By Identifier",
         "tags": [
           "collections"
-        ]
-      }
-    },
-    "/api/v1/catalogs/{catalog}/grants": {
-      "get": {
-        "description": "Effective groups per role on the catalog, inherited ones included.",
-        "operationId": "catalog_grants_api_v1_catalogs__catalog__grants_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "catalog",
-            "required": true,
-            "schema": {
-              "title": "Catalog",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EffectiveGroupsOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Catalog Grants",
-        "tags": [
-          "grants"
         ]
       }
     },

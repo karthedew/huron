@@ -13,7 +13,6 @@ from huron.core.security.rbac import (
     ORGANIZATION_ROLES,
     PLATFORM,
     Authorizer,
-    EffectiveGroups,
     Grant,
     GrantInvalid,
     GrantSource,
@@ -131,14 +130,6 @@ class GrantAdministration:
             return await self._replace(
                 tx, actor, scope, role, sorted(set(groups)), ObjectType.ORGANIZATION, found.id
             )
-
-    async def catalog_groups(self, actor: Actor, catalog: str) -> EffectiveGroups:
-        """Effective groups per role on a catalog, inherited ones included."""
-        async with self._uow.transaction() as tx:
-            authz = Authorizer(tx.grants)
-            found = await find_catalog(tx, authz, actor, catalog)
-            await authz.require(actor, Privilege.CATALOG_READ, Scope.catalog(found.id))
-            return await authz.effective_groups(Scope.catalog(found.id))
 
     async def catalog_grant_sources(self, actor: Actor, catalog: str) -> list[GrantSource]:
         """Every grant holding on a catalog, with its scope; needs ``CATALOG_READ``."""

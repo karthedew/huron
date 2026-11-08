@@ -62,9 +62,9 @@ Every command also takes `--help`, which prints the same reference in the termin
 
 ### [Administration](/docs/reference/cli/panels/administration/)
 
-| Command                           | Description                                                                |
-| --------------------------------- | -------------------------------------------------------------------------- |
-| [`adm`](/docs/reference/cli/adm/) | Run administration tasks: roles, directory ACLs, drift checks and schemas. |
+| Command                           | Description                                                                 |
+| --------------------------------- | --------------------------------------------------------------------------- |
+| [`adm`](/docs/reference/cli/adm/) | Run administration tasks: roles, directory modes, drift checks and schemas. |
 
 ### [Settings](/docs/reference/cli/panels/settings/)
 

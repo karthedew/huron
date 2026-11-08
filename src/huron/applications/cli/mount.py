@@ -23,11 +23,10 @@ from typing import TYPE_CHECKING, Any
 
 from huron.applications.cli.errors import StorageFailure
 from huron.core.storage import (
-    EffectiveGroups,
     Marker,
     MarkerState,
     OrganizationPlace,
-    Storage,
+    ShareReader,
     StorageError,
     marker_state,
     place_of,
@@ -46,7 +45,7 @@ PROVISION_HINT = (
 PREFIX_MARKER_HINT = (
     "Organizations without a root are below `mount_prefix`. Mount the share there."
     " To set the prefix, run `huron config set mount_prefix <dir>`."
-    " Mark the share one time with `scripts/init-root.sh`"
+    " To write the marker, run `huron adm provision-orgs` (storage admin)"
 )
 UNDECLARED_HINT = (
     "An organization that the service configuration no longer declares has no known root."
@@ -61,7 +60,7 @@ class Mount:
     """The mounted share, verified against the service once per organization and command."""
 
     services: Services
-    _storage: Storage | None = field(default=None, repr=False)
+    _storage: ShareReader | None = field(default=None, repr=False)
     _health: Mapping[str, Any] | None = field(default=None, repr=False)
     _places: dict[str, OrganizationPlace] = field(default_factory=dict, repr=False)
     _verified: dict[Path, Marker] = field(default_factory=dict, repr=False)
@@ -72,8 +71,8 @@ class Mount:
         return Path(self.services.config.mount_prefix)
 
     @property
-    def storage(self) -> Storage:
-        """The storage adapter; paths for it come from :meth:`path` and :meth:`base`."""
+    def storage(self) -> ShareReader:
+        """The read-only storage adapter; paths for it come from :meth:`path` and :meth:`base`."""
         if self._storage is None:
             self._storage = self.services.storage_factory(self.services.config)
         return self._storage
@@ -143,13 +142,6 @@ class Mount:
         _storage_call(lambda: resolve(self.prefix, relative))  # refuse escapes before any lookup
         place = self.verify(relative.split("/")[0])
         return _storage_call(lambda: place.resolve(relative))
-
-    def organization_groups(self, organization: str) -> EffectiveGroups:
-        """Platform and organization admin groups, for an organization's directory."""
-        api = self.services.api()
-        platform = api.get("/api/v1/platform/grants")["ldap_groups"]
-        admins = api.get(f"/api/v1/organizations/{organization}/grants")["org_admin"]
-        return EffectiveGroups(platform_admin=tuple(platform), org_admin=tuple(admins))
 
     def _service_health(self) -> Mapping[str, Any]:
         if self._health is None:

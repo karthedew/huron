@@ -240,11 +240,11 @@ this applies to every organization. Mark the mount prefix one time, as a user th
 (or as root):
 
 ```bash
-scripts/init-root.sh /projects/huron huron-platform-admins https://huron.apps.example.org <instance-uuid>
+huron adm provision-orgs
 ```
 
-The script sets mode 2771 and the platform admin ACL, and writes `/projects/huron/.huron`. The CLI
-checks the `instance_id` of that marker in the same way. `huron adm provision-orgs` provisions a
+The command writes `/projects/huron/.huron`. The CLI checks the `instance_id` of that marker in
+the same way. `huron adm provision-orgs` provisions a
 declared organization without a root at `<mount_prefix>/<org>`. That organization has its own
 marker.
 
@@ -364,7 +364,7 @@ and reconcile.
 
 | Finding | What to do |
 | --- | --- |
-| `org_dir_missing`, `org_marker_missing` | The storage admin runs `huron adm provision-orgs --org <org>`. For an organization that is neither declared nor rooted, use `huron create org` and `scripts/init-root.sh`. Check that the export is mounted at its root. |
+| `org_dir_missing`, `org_marker_missing` | The storage admin runs `huron adm provision-orgs --org <org>`. For an organization that is neither declared nor rooted, use `huron create org` and `huron adm provision-orgs`. Check that the export is mounted at its root. |
 | `org_marker_mismatch` | The marker names another instance or organization. The wrong export is mounted at this root, or the CLI points at another service. Fix the mount or `api_url`. Never edit the marker by hand. |
 | `org_acl_drift` | The owner of the organization directory runs `huron adm provision-orgs --org <org>` again. |
 | `org_undeclared` | A warning. The configuration no longer declares the organization. Thus the CLI cannot find its directory and does not check its catalogs. Declare it again with its root, or empty it and delete it ([Configuration](#configuration)). |

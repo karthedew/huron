@@ -1,7 +1,7 @@
 """Role-based access control: privileges, roles, grants and the authorizer."""
 
 from huron.core.security.rbac.actor import Actor
-from huron.core.security.rbac.authorize import Authorizer, EffectiveGroups, GrantSource, Visibility
+from huron.core.security.rbac.authorize import Authorizer, GrantSource, Visibility
 from huron.core.security.rbac.grants import PLATFORM, Grant, GrantInvalid, Scope, check_grant
 from huron.core.security.rbac.ports import GrantReader, GrantWriter
 from huron.core.security.rbac.privileges import Privilege
@@ -21,7 +21,6 @@ __all__ = [
     "ROLE_PRIVILEGES",
     "Actor",
     "Authorizer",
-    "EffectiveGroups",
     "Grant",
     "GrantInvalid",
     "GrantReader",

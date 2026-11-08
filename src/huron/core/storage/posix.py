@@ -1,4 +1,4 @@
-"""The share as a POSIX filesystem, with POSIX ACLs applied through ``setfacl``."""
+"""The share as a POSIX filesystem."""
 
 from __future__ import annotations
 
@@ -6,13 +6,11 @@ import grp
 import hashlib
 import os
 import stat
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-from huron.core.storage.aclplan import AclPlan, diff
 from huron.core.storage.errors import SourceGone, StorageError
 from huron.core.storage.ports import FileStamp, GroupOutcome, GroupResult, Ownership
 from huron.pkg.fs import posix
-from huron.pkg.fs.acl import Acl, AclEntry, Runner, read_acl, write_acl
 from huron.pkg.hashing import CHUNK_SIZE, sha256_file
 from huron.schema.naming import PART_SUFFIX
 
@@ -26,11 +24,7 @@ __all__ = ["PosixStorage"]
 
 
 class PosixStorage:
-    """Storage over the mounted share. With ``acl_backend="none"`` only modes are applied."""
-
-    def __init__(self, acl_backend: Literal["posix", "none"], runner: Runner) -> None:
-        self._acls = acl_backend == "posix"
-        self._runner = runner
+    """Storage over the mounted share."""
 
     def make_directory(self, path: Path, mode: int) -> bool:
         """Create ``path`` with exactly ``mode``; an existing directory is left as it is."""
@@ -80,41 +74,6 @@ class PosixStorage:
     def device(self, path: Path) -> int:
         """The filesystem of ``path``, following links."""
         return _guard(lambda: os.stat(path).st_dev, path)
-
-    def ensure_directory(self, path: Path, plan: AclPlan) -> bool:
-        """Create ``path`` with the plan's mode and ACL; an existing one is brought in line."""
-        if not posix.is_dir(path.parent):
-            raise StorageError(f"{path.parent} does not exist", {"path": str(path.parent)})
-        created = _guard(lambda: posix.make_dir(path, plan.mode), path)
-        self.apply_plan(path, plan)
-        return created
-
-    def apply_plan(self, path: Path, plan: AclPlan) -> bool:
-        """Apply group, mode and ACL; returns whether anything changed."""
-        group = plan.owning_group
-        changed = group is not None and self.set_group(path, group).outcome is GroupOutcome.CHANGED
-        if stat.S_IMODE(os.lstat(path).st_mode) != plan.mode:
-            _guard(lambda: os.chmod(path, plan.mode), path)
-            changed = True
-        if self._acls and diff(plan, self.read_acl(path)):
-            write_acl(path, plan.acl, self._runner)
-            changed = True
-        return changed
-
-    def read_acl(self, path: Path) -> Acl:
-        """The ACL of ``path``; without ACL support, the mode bits as base entries."""
-        if self._acls:
-            return read_acl(path, self._runner)
-        mode = stat.S_IMODE(os.lstat(path).st_mode)
-        return Acl(
-            frozenset(
-                {
-                    AclEntry("user", None, _perms(mode >> 6)),
-                    AclEntry("group", None, _perms(mode >> 3)),
-                    AclEntry("other", None, _perms(mode)),
-                }
-            )
-        )
 
     def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
         """Write ``data`` atomically; with ``mode``, the file gets exactly that mode."""
@@ -206,10 +165,6 @@ class PosixStorage:
         size, digest = _guard(lambda: sha256_file(path), path)
         return FileStamp(size, digest)
 
-    def owned_by_me(self, path: Path) -> bool:
-        """Whether the current user owns ``path``."""
-        return os.lstat(path).st_uid == os.getuid()
-
 
 class _PosixFile:
     """A read-only descriptor of a file on the share."""
@@ -254,7 +209,3 @@ def _storage_error(path: Path, error: OSError) -> StorageError:
         context = {"path": str(path), "error": str(error)}
         return StorageError(f"permission denied on {path}", context)
     return StorageError(f"{path}: {error.strerror or error}", {"path": str(path)})
-
-
-def _perms(bits: int) -> str:
-    return "".join(flag if bits & mask else "-" for flag, mask in (("r", 4), ("w", 2), ("x", 1)))

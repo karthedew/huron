@@ -10,8 +10,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from huron.core.storage.aclplan import AclPlan
-    from huron.pkg.fs.acl import Acl
     from huron.pkg.fs.posix import Entry, Stamp
 
 __all__ = [
@@ -212,20 +210,4 @@ class Storage(ShareReader, Protocol):
 
     def remove_directory(self, path: Path) -> bool:
         """Remove an empty directory; ``False`` when it was already gone."""
-        ...
-
-    def ensure_directory(self, path: Path, plan: AclPlan) -> bool:
-        """Create ``path`` (its parent must exist) and apply ``plan``; ``True`` when created."""
-        ...
-
-    def apply_plan(self, path: Path, plan: AclPlan) -> bool:
-        """Apply ``plan`` to an existing directory; ``True`` when anything changed."""
-        ...
-
-    def read_acl(self, path: Path) -> Acl:
-        """The ACL of ``path``."""
-        ...
-
-    def owned_by_me(self, path: Path) -> bool:
-        """Whether the current user owns ``path`` (only owners may change its ACL)."""
         ...

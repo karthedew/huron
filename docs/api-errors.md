@@ -6,7 +6,6 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 
 | Code | Status | Meaning |
 | --- | --- | --- |
-| `ACL_FAILED` | 500 | The CLI tried to read or write a POSIX ACL and failed. Only the CLI reports this code. |
 | `BASE_VERSION_CONFLICT` | 409 | The base version of the commit is older than the current version of the collection. Run `huron pull`. `context.current_version` names the current version. |
 | `CATALOG_NOT_EMPTY` | 409 | The catalog still has namespaces. |
 | `COLLECTIONS_NOT_ALLOWED` | 409 | The namespace does not allow collections. |
@@ -35,7 +34,7 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `SCHEMA_INVALID` | 422 | A schema document is outside the allowed subset of JSON Schema, or it has a value that JSON cannot hold (rule `json`). |
 | `SCHEMA_SCOPE` | 422 | A catalog or a schema uses a schema of a different organization. |
 | `STATE_CONFLICT` | 409 | The state of the object does not allow the operation. `context.state` and `context.allowed` tell why. |
-| `STORAGE_FAILED` | 500 | An operation on the share failed. The API reports it for its disk work, and the CLI reports it when it cannot use the share. The share is missing, has no marker or a marker for a different instance or organization, or is not writable, or an ACL operation failed. `context.path` names the path. |
+| `STORAGE_FAILED` | 500 | An operation on the share failed. The API reports it for its disk work, and the CLI reports it when it cannot use the share. The share is missing, has no marker or a marker for a different instance or organization, or is not writable. `context.path` names the path. |
 | `TOKEN_INVALID` | 401 | The bearer token or the company token is not valid, or it expired. |
 | `UNAUTHENTICATED` | 401 | The request has no bearer token. |
 | `UPLOADS_DISABLED` | 404 | The service has no `lake_path`, so it serves no upload route. The upload routes are `POST /api/v1/uploads/hooks`, `GET /api/v1/uploads/auth` and `GET /api/v1/uploads/{id}`. |

@@ -1,4 +1,4 @@
-"""Authorization: privilege checks, visibility and effective groups per catalog."""
+"""Authorization: privilege checks, visibility and the grant sources of a catalog."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from huron.core.security.rbac.ports import GrantReader
     from huron.core.security.rbac.privileges import Privilege
 
-__all__ = ["Authorizer", "EffectiveGroups", "GrantSource", "Visibility"]
+__all__ = ["Authorizer", "GrantSource", "Visibility"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,21 +33,6 @@ class Visibility:
     organization_ids: frozenset[uuid.UUID]
     catalog_ids: frozenset[uuid.UUID]
     managed_organization_ids: frozenset[uuid.UUID] = frozenset()
-
-
-@dataclass(frozen=True, slots=True)
-class EffectiveGroups:
-    """The groups holding each role on a catalog, inherited ones included."""
-
-    platform_admin: tuple[str, ...] = ()
-    org_admin: tuple[str, ...] = ()
-    catalog_admin: tuple[str, ...] = ()
-    contributor: tuple[str, ...] = ()
-    reader: tuple[str, ...] = ()
-
-    def as_dict(self) -> dict[str, list[str]]:
-        """Render as the API body of ``GET /catalogs/{catalog}/grants``."""
-        return {role.value: list(getattr(self, role.value)) for role in Role}
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,13 +114,6 @@ class Authorizer:
             return False
         enclosing = await self._grants.enclosing(Scope.catalog(catalog_id))
         return any(scope in held for scope in enclosing)
-
-    async def effective_groups(self, scope: Scope) -> EffectiveGroups:
-        """Groups per role at ``scope``, including those inherited from enclosing scopes."""
-        collected: dict[Role, set[str]] = {role: set() for role in Role}
-        for source in await self.grant_sources(scope):
-            collected[source.role].add(source.ldap_group)
-        return EffectiveGroups(**{role.value: tuple(sorted(collected[role])) for role in Role})
 
     async def grant_sources(self, scope: Scope) -> list[GrantSource]:
         """Every grant that holds at ``scope``, with the scope it was made at.

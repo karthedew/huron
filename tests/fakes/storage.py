@@ -8,8 +8,6 @@ from huron.core.storage.memory import MemoryStorage
 #: The methods of the ``Storage`` port that change the share.
 WRITES = frozenset(
     {
-        "apply_plan",
-        "ensure_directory",
         "link",
         "make_directory",
         "make_inheriting_dir",

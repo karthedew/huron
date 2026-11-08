@@ -23,7 +23,6 @@ __all__ = [
     "inode",
     "is_dir",
     "link_into_place",
-    "make_dir",
     "make_inheriting_dir",
     "remove_empty_dir",
     "remove_file",
@@ -59,25 +58,6 @@ class Entry:
 
 class InheritanceError(OSError):
     """A new directory did not inherit the setgid bit and the group of its parent."""
-
-
-def make_dir(path: Path, mode: int) -> bool:
-    """Create ``path`` with ``mode`` exactly, or fix the mode of an existing directory.
-
-    Returns ``True`` when the directory was created. Raises ``NotADirectoryError`` when ``path``
-    exists as anything other than a real directory (a symlink to a directory included).
-    """
-    try:
-        info = os.lstat(path)
-    except FileNotFoundError:
-        os.mkdir(path, mode)
-        os.chmod(path, mode)
-        return True
-    if not statmodule.S_ISDIR(info.st_mode):
-        raise NotADirectoryError(str(path))
-    if statmodule.S_IMODE(info.st_mode) != mode:
-        os.chmod(path, mode)
-    return False
 
 
 def make_inheriting_dir(path: Path) -> bool:

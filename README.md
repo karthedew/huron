@@ -182,8 +182,8 @@ uv run huron adm verify-mounts              # both organizations ok
 instance id (`instance_id` in `huron.dev.yaml`, also at http://127.0.0.1:8080/healthz) and the
 organization's name; the CLI refuses to write under an organization whose marker does not match.
 An organization without a `root` lives under the CLI's `mount_prefix` instead (default
-`/projects/huron`, `huron config set mount_prefix <dir>`), marked once with `scripts/init-root.sh`
-when it is not declared.
+`/projects/huron`, `huron config set mount_prefix <dir>`), marked once with
+`huron adm provision-orgs` when it is not declared.
 
 `huron login --browser` uses the loopback flow instead: it opens Keycloak in a browser on this
 machine and receives the answer on `http://127.0.0.1:<random port>/callback`. Plain `huron login`

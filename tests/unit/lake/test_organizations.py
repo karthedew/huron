@@ -172,17 +172,22 @@ async def test_organization_wide_roles_hold_in_every_catalog_of_the_organization
     assert draft.collection.name == "one"
     with pytest.raises(Forbidden):
         await lake.namespaces.create(writer, "later", "", "more", True)
-    groups = await lake.grants.catalog_groups(everyone, "later")
-    assert groups.reader == ("helio-everyone",)
-    assert groups.contributor == ("helio-writers",)
+    sources = await lake.grants.catalog_grant_sources(everyone, "later")
+    rows = {(str(s.role), s.ldap_group, str(s.scope.type)) for s in sources}
+    assert {
+        ("reader", "helio-everyone", "organization"),
+        ("contributor", "helio-writers", "organization"),
+    } <= rows
 
 
 async def test_catalog_grants_add_to_the_inherited_ones(seeded: World) -> None:
     lake = seeded.lake
     await lake.grants.set_organization_role(ORG_ADMIN, "helio", Role.READER, ["helio-readers"])
     await lake.grants.set_catalog_role(ORG_ADMIN, "heliophysics", Role.READER, [])
-    groups = await lake.grants.catalog_groups(READER, "heliophysics")
-    assert groups.reader == ("helio-readers",)
+    readers = await lake.grants.catalog_grant_sources(READER, "heliophysics")
+    assert [(s.ldap_group, str(s.scope.type)) for s in readers if s.role is Role.READER] == [
+        ("helio-readers", "organization")
+    ]
     await lake.grants.set_catalog_role(ORG_ADMIN, "heliophysics", Role.READER, ["helio-readers"])
     sources = await lake.grants.catalog_grant_sources(READER, "heliophysics")
     rows = [(str(s.role), s.ldap_group, str(s.scope.type)) for s in sources]
@@ -212,15 +217,6 @@ async def test_catalog_roles_need_the_right_privilege(seeded: World) -> None:
         CATALOG_ADMIN, "heliophysics", Role.READER, ["helio-readers", "guests"]
     )
     assert change.added == ["guests"]
-
-
-async def test_effective_groups_include_platform_and_organization(seeded: World) -> None:
-    groups = await seeded.lake.grants.catalog_groups(READER, "heliophysics")
-    assert groups.platform_admin == (PLATFORM_GROUP,)
-    assert groups.org_admin == ("helio-org-admins",)
-    assert groups.contributor == ("helio-contributors",)
-    with pytest.raises(NotFound):
-        await seeded.lake.grants.catalog_groups(STRANGER, "heliophysics")
 
 
 async def test_an_unprivileged_caller_is_refused_before_the_platform_groups_are_checked(

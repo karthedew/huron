@@ -42,7 +42,7 @@ huron config set [OPTIONS] KEY VALUE
 
 ### Arguments
 
-| Argument | Type | Description                                                                       |
-| -------- | ---- | --------------------------------------------------------------------------------- |
-| `KEY`    | str  | One of `api_url`, `issuer`, `client_id`, `mount_prefix`, `acl_backend`. Required. |
-| `VALUE`  | str  | Required.                                                                         |
+| Argument | Type | Description                                                        |
+| -------- | ---- | ------------------------------------------------------------------ |
+| `KEY`    | str  | One of `api_url`, `issuer`, `client_id`, `mount_prefix`. Required. |
+| `VALUE`  | str  | Required.                                                          |

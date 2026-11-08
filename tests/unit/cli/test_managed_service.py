@@ -13,10 +13,8 @@ import pytest
 from huron.core.lake.organizations.models import Organization
 from huron.core.storage import (
     MARKER_FILE,
-    DirectoryKind,
-    EffectiveGroups,
+    ORGANIZATION_MODE,
     Marker,
-    plan,
     read_marker,
     render_marker,
 )
@@ -49,9 +47,9 @@ ORGANIZATIONS = [
 @pytest.fixture
 def roots() -> MemoryStorage:
     """Both roots exist and belong to alice, the storage admin; the mount prefix is unmarked."""
-    storage = MemoryStorage(PREFIX, user="alice")
+    storage = MemoryStorage(PREFIX)
     for root in (HELIO_ROOT, GEO_ROOT):
-        storage.add_root(root, owner="alice")
+        storage.add_root(root, uid=storage.uid)
     return storage
 
 
@@ -117,6 +115,8 @@ def test_an_undeclared_organization_is_reported_without_failing_the_others(
 ) -> None:
     add_undeclared(managed, "astro")
     managed.ok("adm", "provision-orgs")
+    assert read_marker(roots, PREFIX) == Marker(1, API, str(INSTANCE_ID))
+    roots.remove_file(PREFIX / MARKER_FILE)  # the mount prefix is not this service's share
     listing = managed.ok("get", "orgs").stdout
     assert f"{PREFIX}/astro (undeclared)" in listing
 
@@ -142,8 +142,7 @@ def test_an_undeclared_organization_stays_usable_under_a_marked_prefix(
 ) -> None:
     roots.write_bytes(PREFIX / MARKER_FILE, render_marker(Marker(1, API, str(INSTANCE_ID))))
     add_undeclared(managed, "astro")
-    groups = EffectiveGroups(platform_admin=("huron-platform-admins",))
-    roots.ensure_directory(PREFIX / "astro", plan(DirectoryKind.ORGANIZATION, groups))
+    roots.make_directory(PREFIX / "astro", ORGANIZATION_MODE)
     managed.ok("adm", "provision-orgs")
 
     managed.ok("create", "catalog", "stars", "--org", "astro")
@@ -189,10 +188,8 @@ def inheriting(tmp_path: Path, roots: MemoryStorage) -> Iterator[Cli]:
     running.login_as("bob")
     running.ok("create", "catalog", "heliophysics", "--org", "helio")
     running.ok("create", "namespace", "heliophysics.solar-wind", "--allow-collections")
-    make_directory(running, "heliophysics", DirectoryKind.CATALOG, HELIO)
-    make_directory(
-        running, "heliophysics/solar-wind", DirectoryKind.NAMESPACE_WITH_COLLECTIONS, HELIO
-    )
+    make_directory(running, "heliophysics", HELIO)
+    make_directory(running, "heliophysics/solar-wind", HELIO)
     yield running
     running.close()
 
@@ -209,7 +206,6 @@ def test_catalogs_inherit_the_organization_wide_groups(
     assert ("contributor", "helio-contributors", "organization helio") in rows
     assert ("reader", "helio-readers", "organization helio") in rows
 
-    roots.user = "dave"
     cli.login_as("dave")
     cli.ok("catalog", "heliophysics")
     cli.prompter.answers.extend(["Run 7", "Solar wind run seven", *([False] * 7)])
@@ -221,7 +217,6 @@ def test_catalogs_inherit_the_organization_wide_groups(
     assert "+1" in cli.ok("push").stdout
     assert roots.read_bytes(run7 / "a.txt") == b"alpha"
 
-    roots.user = "erin"
     cli.login_as("erin")
     cli.ok("catalog", "heliophysics")
     assert "a.txt" in cli.ok("get", "files", "solar-wind.run7").stdout

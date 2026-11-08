@@ -250,7 +250,8 @@ def test_hard_violations_are_reported_at_their_source_lines(repo: Path) -> None:
             )
         """,
     )
-    write(repo, ste().WEB_HINTS, "const h = [\n  { title: 'Grant a role; apply ACLs' },\n];\n")
+    hints = "const h = [\n  { title: 'Grant a role; check the catalog' },\n];\n"
+    write(repo, ste().WEB_HINTS, hints)
     report = check(repo)
     assert places(report) == [
         ("docs/operator.md", 3, "semicolon", "hard"),

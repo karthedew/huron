@@ -258,12 +258,14 @@ async def test_every_catalog_of_a_declared_organization_inherits_its_role_groups
     reader = actor("erin", "helio-readers")
     names = [v.catalog.name for v in (await world.lake.catalogs.list(reader)).items]
     assert names == ["first", "second"]
-    groups = await world.lake.grants.catalog_groups(reader, "second")
-    assert (groups.catalog_admin, groups.contributor, groups.reader) == (
-        ("helio-catalog-admins",),
-        ("helio-contributors",),
-        ("helio-readers",),
-    )
+    second = await world.lake.grants.catalog_grant_sources(reader, "second")
+    held = [(str(s.role), s.ldap_group) for s in second if str(s.scope.type) == "organization"]
+    assert held == [
+        ("org_admin", "helio-org-admins"),
+        ("catalog_admin", "helio-catalog-admins"),
+        ("contributor", "helio-contributors"),
+        ("reader", "helio-readers"),
+    ]
     await world.lake.grants.set_catalog_role(PLATFORM_ADMIN, "first", Role.READER, ["guests"])
     sources = await world.lake.grants.catalog_grant_sources(reader, "first")
     readers = [(s.ldap_group, str(s.scope.type)) for s in sources if s.role is Role.READER]

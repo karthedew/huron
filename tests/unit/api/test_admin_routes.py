@@ -54,13 +54,18 @@ async def test_platform_and_organization_grants(seeded_api: Service) -> None:
         "contributor": [],
         "reader": [],
     }
-    effective = (
+    sources = (
         await c.get(
-            "/api/v1/catalogs/heliophysics/grants", headers=await seeded_api.headers("erin")
+            "/api/v1/catalogs/heliophysics/grants/sources",
+            headers=await seeded_api.headers("erin"),
         )
-    ).json()
-    assert effective["contributor"] == ["helio-contributors"]
-    assert effective["platform_admin"] == ["huron-platform-admins", "ops"]
+    ).json()["items"]
+    held = {(row["role"], row["group"]) for row in sources}
+    assert {
+        ("contributor", "helio-contributors"),
+        ("platform_admin", "huron-platform-admins"),
+        ("platform_admin", "ops"),
+    } <= held
     bad_role = await c.put(
         "/api/v1/catalogs/heliophysics/grants/org_admin", json={"ldap_groups": []}, headers=alice
     )
@@ -180,9 +185,6 @@ async def test_organization_wide_catalog_roles_over_http(seeded_api: Service) ->
     read = (await c.get(url, headers=bob)).json()
     assert read["reader"] == ["helio-everyone"] and read["catalog_admin"] == ["helio-curators"]
     assert (await c.get(url, headers=erin)).status_code == 403
-    effective = (await c.get("/api/v1/catalogs/heliophysics/grants", headers=erin)).json()
-    assert effective["reader"] == ["helio-everyone", "helio-readers"]
-    assert effective["catalog_admin"] == ["helio-catalog-admins", "helio-curators"]
     sources = await c.get("/api/v1/catalogs/heliophysics/grants/sources", headers=erin)
     assert sources.status_code == 200
     assert sources.json()["items"] == [

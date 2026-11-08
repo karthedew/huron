@@ -7,18 +7,15 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from huron.core.storage.aclplan import AclPlan, diff
-from huron.core.storage.errors import StorageError
 from huron.core.storage.layout import MARKER_FILE, is_reserved_entry, resolve
 from huron.core.storage.marker import MarkerState, marker_state
-from huron.pkg.fs.acl import AclError
 from huron.schema.naming import PART_SUFFIX, rel_path_key
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
     from pathlib import Path
 
-    from huron.core.storage.ports import Storage
+    from huron.core.storage.ports import ShareReader
 
 __all__ = [
     "STALE_DRAFT_AGE",
@@ -67,11 +64,10 @@ class Finding:
 
 @dataclass(frozen=True, slots=True)
 class ExpectedDirectory:
-    """A namespace (or catalog) directory the service knows about, with its plan."""
+    """A namespace (or catalog) directory the service knows about."""
 
     identifier: str
     disk_path: str
-    plan: AclPlan | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,24 +78,22 @@ class ExpectedCollection:
     state: str
     created_at: datetime
     disk_path: str | None = None
-    plan: AclPlan | None = None
     files: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     sidecar: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ExpectedOrganization:
-    """An organization directory, whether it carries its own marker, and its ACL plan."""
+    """An organization directory and whether it carries its own marker."""
 
     name: str
     directory: Path
     instance_id: str
     own_marker: bool
-    plan: AclPlan | None = None
 
 
-def check_organization(storage: Storage, expected: ExpectedOrganization) -> list[Finding]:
-    """The organization-level findings: a missing directory, a missing or wrong marker, ACL drift.
+def check_organization(storage: ShareReader, expected: ExpectedOrganization) -> list[Finding]:
+    """The organization-level findings: a missing directory, or a missing or wrong marker.
 
     The marker is only checked for an organization that carries its own; the share root's
     marker is checked before any disk operation instead.
@@ -117,13 +111,11 @@ def check_organization(storage: Storage, expected: ExpectedOrganization) -> list
             findings.append(
                 Finding("org_marker_mismatch", Severity.ERROR, name, marker, str(state))
             )
-    if expected.plan is not None:
-        findings += _acl(storage, name, directory, expected.plan, "org_acl_drift")
     return findings
 
 
 def check(
-    storage: Storage,
+    storage: ShareReader,
     prefix: Path,
     namespaces: Iterable[ExpectedDirectory],
     collections: Iterable[ExpectedCollection],
@@ -143,7 +135,6 @@ def check(
             prefix,
             namespace.identifier,
             namespace.disk_path,
-            namespace.plan,
             "namespace_dir_missing",
             known,
         )
@@ -153,18 +144,17 @@ def check(
 
 
 def _directory(
-    storage: Storage,
+    storage: ShareReader,
     prefix: Path,
     identifier: str,
     disk_path: str,
-    plan: AclPlan | None,
     missing_code: str,
     known: set[str],
 ) -> list[Finding]:
     path = resolve(prefix, disk_path)
     if not storage.is_directory(path):
         return [Finding(missing_code, Severity.ERROR, identifier, str(path))]
-    findings = [] if plan is None else _acl(storage, identifier, path, plan)
+    findings: list[Finding] = []
     for entry in storage.walk(path):
         if "/" in entry.rel_path or entry.kind != "dir":
             continue
@@ -176,7 +166,11 @@ def _directory(
 
 
 def _collection(
-    storage: Storage, prefix: Path, collection: ExpectedCollection, now: datetime, hash_files: bool
+    storage: ShareReader,
+    prefix: Path,
+    collection: ExpectedCollection,
+    now: datetime,
+    hash_files: bool,
 ) -> list[Finding]:
     identifier = collection.identifier
     if collection.state == "draft":
@@ -198,8 +192,6 @@ def _collection(
     path = resolve(prefix, collection.disk_path)
     if not storage.is_directory(path):
         return [*findings, Finding("collection_dir_missing", Severity.ERROR, identifier, str(path))]
-    if collection.plan is not None:
-        findings += _acl(storage, identifier, path, collection.plan)
     findings += _files(storage, path, collection, now, hash_files)
     if storage.read_bytes(path / "metadata.json") != collection.sidecar:
         findings.append(
@@ -209,7 +201,11 @@ def _collection(
 
 
 def _files(
-    storage: Storage, path: Path, collection: ExpectedCollection, now: datetime, hash_files: bool
+    storage: ShareReader,
+    path: Path,
+    collection: ExpectedCollection,
+    now: datetime,
+    hash_files: bool,
 ) -> list[Finding]:
     identifier = collection.identifier
     findings: list[Finding] = []
@@ -251,7 +247,7 @@ def _files(
 
 
 def _changed(
-    storage: Storage,
+    storage: ShareReader,
     path: Path,
     rel_path: str,
     size: int,
@@ -274,18 +270,6 @@ def _changed(
             )
         ]
     return []
-
-
-def _acl(
-    storage: Storage, identifier: str, path: Path, plan: AclPlan, code: str = "acl_drift"
-) -> list[Finding]:
-    try:
-        problems = diff(plan, storage.read_acl(path))
-    except (AclError, StorageError):
-        return []
-    if not problems:
-        return []
-    return [Finding(code, Severity.WARNING, identifier, str(path), ", ".join(problems))]
 
 
 _RANK = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}

@@ -113,8 +113,8 @@ per-organization marker `<root>/<org>/.huron`, which names this service's instan
 organization. The CLI refuses disk operations below an organization whose marker is missing or
 names another instance or organization. Where only `root` may write a root,
 `huron adm provision-orgs --emit-script` prints the same steps as a shell script to hand over.
-Organizations without a root use the marker at the mount prefix, which `scripts/init-root.sh`
-writes, as before.
+Organizations without a root use the marker at the mount prefix, which
+`huron adm provision-orgs` also writes.
 
 ## Signing-key rotation
 

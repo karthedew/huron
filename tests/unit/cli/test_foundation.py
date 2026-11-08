@@ -54,7 +54,6 @@ def test_config_show_and_set(cli: Cli) -> None:
     assert "/mnt/share" in cli.ok("config", "show").stdout
     refused = cli.run("config", "set", "nope", "x")
     assert refused.exit_code == 2 and "keys:" in refused.stderr
-    assert cli.run("config", "set", "acl_backend", "magic").exit_code == 2
     assert os.stat(cli.config_path).st_mode & 0o077 == 0
 
 
@@ -145,7 +144,6 @@ def test_api_errors_map_to_exit_codes() -> None:
         "SCHEMA_SCOPE": ExitCode.VALIDATION,
         "FILE_NOT_RECORDED": ExitCode.VALIDATION,
         "STORAGE_FAILED": ExitCode.STORAGE,
-        "ACL_FAILED": ExitCode.STORAGE,
         "INTERNAL": ExitCode.FAILED,
     }
     for code, expected in cases.items():

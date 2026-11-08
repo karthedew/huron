@@ -105,8 +105,6 @@ async def test_every_catalog_inherits_the_declared_reader_groups(managed: Servic
     bob = await managed.headers("bob")
     await c.post("/api/v1/organizations/helio/catalogs", json={"name": "sun"}, headers=bob)
     await c.put("/api/v1/catalogs/sun/grants/reader", json={"ldap_groups": ["guests"]}, headers=bob)
-    effective = (await c.get("/api/v1/catalogs/sun/grants", headers=bob)).json()
-    assert effective["reader"] == ["guests", "helio-everyone"]
     sources = (await c.get("/api/v1/catalogs/sun/grants/sources", headers=bob)).json()
     readers = [row for row in sources["items"] if row["role"] == "reader"]
     assert readers == [

@@ -7,6 +7,6 @@ description: The commands of the Administration panel of huron --help.
 
 The commands `huron --help` lists under **Administration**.
 
-| Command                           | Description                                                                |
-| --------------------------------- | -------------------------------------------------------------------------- |
-| [`adm`](/docs/reference/cli/adm/) | Run administration tasks: roles, directory ACLs, drift checks and schemas. |
+| Command                           | Description                                                                 |
+| --------------------------------- | --------------------------------------------------------------------------- |
+| [`adm`](/docs/reference/cli/adm/) | Run administration tasks: roles, directory modes, drift checks and schemas. |

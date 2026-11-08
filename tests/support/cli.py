@@ -108,6 +108,7 @@ class Cli:
 
     With ``lake``, the service holds that in-memory lake at ``lake_path`` (``mount_prefix`` by
     default) and takes uploads through :class:`FakeTus`, which ``tus`` holds. ``lake`` keeps it.
+    The provision commands write to the share that ``storage_factory`` gives.
     """
 
     def __init__(
@@ -164,10 +165,11 @@ class Cli:
 
     def services(self) -> tuple[Services, io.StringIO, io.StringIO]:
         out, err = io.StringIO(), io.StringIO()
+        config = Config.load(self.config_path, self.environ)
         services = Services(
             environ=self.environ,
             config_path=self.config_path,
-            config=Config.load(self.config_path, self.environ),
+            config=config,
             state=self.state,
             http=self.http,
             clock=self.clock,
@@ -178,6 +180,7 @@ class Cli:
             open_browser=self.opened.append,
             hostname="ws1",
             storage_factory=self.storage_factory,
+            provision_storage=lambda: self.storage_factory(config),
         )
         return services, out, err
 

@@ -28,7 +28,7 @@ from huron.core.security.broker import (
     TokenVerifier,
 )
 from huron.core.storage import PathLocks
-from huron.core.storage.factory import storage_for
+from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import Clock, SystemClock
 
 __all__ = ["VERSION", "ClosableStore", "Runtime", "build_runtime"]
@@ -171,7 +171,7 @@ def _disk(settings: Settings, clock: Clock) -> LakeDisk | None:
     if lake_path is None:
         return None
     return LakeDisk(
-        storage_for("none"),
+        PosixStorage(),
         lake_path,
         settings.mount_prefix or lake_path,
         str(settings.instance_id),

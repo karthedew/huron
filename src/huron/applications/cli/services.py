@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import httpx
 from rich.console import Console
@@ -18,6 +17,8 @@ from huron.applications.cli.mount import Mount
 from huron.applications.cli.output import OutputFormat
 from huron.applications.cli.prompts import Prompter
 from huron.applications.cli.state import StateDir
+from huron.core.storage import ShareReader, Storage
+from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import Clock
 
 __all__ = ["Services"]
@@ -25,7 +26,11 @@ __all__ = ["Services"]
 
 @dataclass
 class Services:
-    """Everything a command needs; ``main`` builds the real ones, tests build fakes."""
+    """Everything a command needs; ``main`` builds the real ones, tests build fakes.
+
+    ``storage_factory`` gives the read-only storage of :class:`Mount`. ``provision_storage``
+    gives the writable storage of the provision commands, which the storage admin runs.
+    """
 
     environ: Mapping[str, str]
     config_path: Path
@@ -39,7 +44,8 @@ class Services:
     sleep: Callable[[float], None]
     open_browser: Callable[[str], object]
     hostname: str
-    storage_factory: Callable[[Config], Any]
+    storage_factory: Callable[[Config], ShareReader]
+    provision_storage: Callable[[], Storage] = PosixStorage
     output: OutputFormat = OutputFormat.TABLE
     catalog_override: str | None = None
     _session: Session | None = field(default=None, repr=False)

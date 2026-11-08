@@ -9,7 +9,6 @@ from huron.core.storage import MARKER_FILE, OpenFile, PathLocks, Storage
 from huron.core.storage.memory import MemoryStorage
 from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import Clock
-from huron.pkg.fs.acl import SubprocessRunner
 from tests.support.api import INSTANCE_ID, ROOT_MARKER
 
 #: How long a test thread waits for a signal before the test fails instead of hanging.
@@ -25,7 +24,7 @@ SERVICE_GID = 1000
 
 def memory_lake() -> MemoryStorage:
     """An in-memory lake at :data:`LAKE`, marked for the test service, written by its user."""
-    storage = MemoryStorage(LAKE, user="huron", uid=SERVICE_UID, gid=SERVICE_GID)
+    storage = MemoryStorage(LAKE, uid=SERVICE_UID, gid=SERVICE_GID)
     storage.write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
     return storage
 
@@ -65,7 +64,7 @@ class StalledStorage(MemoryStorage):
     """
 
     def __init__(self) -> None:
-        super().__init__(LAKE, user="huron", uid=SERVICE_UID, gid=SERVICE_GID)
+        super().__init__(LAKE, uid=SERVICE_UID, gid=SERVICE_GID)
         super().write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
         self.release = threading.Event()
         self.waiting = threading.Event()
@@ -87,7 +86,6 @@ class PausingStorage(PosixStorage):
     """
 
     def __init__(self) -> None:
-        super().__init__("none", SubprocessRunner())
         self.hashing = threading.Event()
         self.release = threading.Event()
         self._paused = False

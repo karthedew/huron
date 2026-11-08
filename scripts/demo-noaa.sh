@@ -51,7 +51,6 @@ unset HURON_ISSUER HURON_API_URL HURON_CLIENT_ID HURON_MOUNT_PREFIX
 huron() { "$huron_bin" "$@"; }
 huron config set api_url "$api" >/dev/null
 huron config set issuer "$issuer" >/dev/null
-huron config set acl_backend none >/dev/null
 say "CLI configuration and state: $cache/{config,state}"
 
 # --- 3. sign in -----------------------------------------------------------------------------------

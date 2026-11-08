@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import yaml
 
@@ -14,7 +14,7 @@ from huron.applications.cli.errors import UsageError
 
 __all__ = ["CONFIG_KEYS", "Config", "config_path"]
 
-CONFIG_KEYS = ("api_url", "issuer", "client_id", "mount_prefix", "acl_backend")
+CONFIG_KEYS = ("api_url", "issuer", "client_id", "mount_prefix")
 _ENVIRONMENT = {
     "api_url": "HURON_API_URL",
     "issuer": "HURON_ISSUER",
@@ -31,7 +31,6 @@ class Config:
     issuer: str = ""
     client_id: str = "huron-cli"
     mount_prefix: str = "/projects/huron"
-    acl_backend: Literal["posix", "none"] = "posix"
     current_organization: str | None = None
     current_catalog: str | None = None
     current_collection: str | None = None
@@ -49,14 +48,7 @@ class Config:
         for key, variable in _ENVIRONMENT.items():
             if environ.get(variable):
                 values[key] = environ[variable]
-        config = cls(**values)
-        config.check()
-        return config
-
-    def check(self) -> None:
-        """Refuse values the CLI cannot use."""
-        if self.acl_backend not in ("posix", "none"):
-            raise UsageError("`acl_backend` must be `posix` or `none`")
+        return cls(**values)
 
     def set(self, key: str, value: str) -> Config:
         """A copy with ``key`` set; only the documented keys may be set."""
@@ -65,9 +57,7 @@ class Config:
                 f"there is no configuration key {key!r}",
                 hint="use one of these keys: " + ", ".join(CONFIG_KEYS),
             )
-        updated = replace(self, **{key: value})  # type: ignore[arg-type]
-        updated.check()
-        return updated
+        return replace(self, **{key: value})
 
     def save(self, path: Path) -> None:
         """Write atomically with mode 0600."""

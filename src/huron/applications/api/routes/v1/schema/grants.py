@@ -7,7 +7,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 __all__ = [
-    "EffectiveGroupsOut",
     "GrantChangeOut",
     "GrantSourceOut",
     "GrantSourcesOut",
@@ -37,16 +36,6 @@ class GrantChangeOut(BaseModel):
     ldap_groups: list[str]
     added: list[str]
     removed: list[str]
-
-
-class EffectiveGroupsOut(BaseModel):
-    """Groups per role on a catalog, inherited ones included."""
-
-    platform_admin: list[str]
-    org_admin: list[str]
-    catalog_admin: list[str]
-    contributor: list[str]
-    reader: list[str]
 
 
 class OrganizationGroupsOut(BaseModel):

@@ -94,7 +94,6 @@ addopts = "-ra --strict-markers"
 markers = [
     "contract: store contract suite against PostgreSQL",
     "integration: API over PostgreSQL and the CLI over the in-process API",
-    "acl: real getfacl/setfacl round trips",
 ]
 
 [tool.coverage.run]
@@ -187,3 +186,16 @@ forbidden_modules = [
     "huron.core.lake.schemas.completeness",
     "huron.core.lake.uploads.operations",
 ]
+
+[[tool.importlinter.contracts]]
+name = "only core.storage imports huron.pkg.fs"
+type = "forbidden"
+source_modules = [
+    "huron.applications",
+    "huron.core.lake",
+    "huron.core.security",
+    "huron.core.metastore",
+    "huron.schema",
+]
+forbidden_modules = ["huron.pkg.fs"]
+allow_indirect_imports = true

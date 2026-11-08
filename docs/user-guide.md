@@ -28,7 +28,7 @@ their purpose:
 | Catalog | `org`, `catalog`, `get`, `describe`, `tree`, `search`, `checkout` | finding your way, searching and selecting a collection |
 | Collection | `status`, `add`, `rm`, `pull`, `push`, `edit`, `validate`, `publish`, `activate` | working on the current collection |
 | Manage | `create`, `delete`, `set`, `unset` | creating, deleting and configuring organizations, catalogs, namespaces and collections |
-| Administration | `adm` | roles, directory ACLs, drift checks and schemas |
+| Administration | `adm` | roles, directory modes, drift checks and schemas |
 | Settings | `login`, `logout`, `whoami`, `config` | who you are and the configuration of the CLI |
 
 ```bash

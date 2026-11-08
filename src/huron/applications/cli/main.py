@@ -16,7 +16,7 @@ from huron.applications.cli.config import Config, config_path
 from huron.applications.cli.prompts import QuestionaryPrompter
 from huron.applications.cli.services import Services
 from huron.applications.cli.state import StateDir, state_root
-from huron.core.storage.factory import storage_for
+from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import SystemClock
 
 __all__ = ["main"]
@@ -44,6 +44,6 @@ def main() -> None:
             sleep=time.sleep,
             open_browser=webbrowser.open,
             hostname=socket.gethostname(),
-            storage_factory=lambda config: storage_for(config.acl_backend),
+            storage_factory=lambda config: PosixStorage(),
         )
         raise SystemExit(run(services, sys.argv[1:]))

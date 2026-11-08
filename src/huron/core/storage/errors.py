@@ -17,7 +17,7 @@ LAKE_UNAVAILABLE = register("LAKE_UNAVAILABLE", 503, "Lake unavailable")
 
 
 class StorageError(HuronError):
-    """The share could not be used: missing, unmarked, unwritable, or an ACL failed."""
+    """The share could not be used: missing, unmarked or unwritable."""
 
     error_code = STORAGE_FAILED
 

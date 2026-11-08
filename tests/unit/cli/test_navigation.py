@@ -416,7 +416,6 @@ def test_search_uses_the_current_catalog(browsable: Cli) -> None:
         ("collection", "list", "solar-wind"),
         ("meta", "edit"),
         ("org", "grant", "helio", "x"),
-        ("acl", "apply", "heliophysics"),
         ("platform", "verify-root"),
         ("adm", "verify-root"),
         ("schema", "publish", "helio", "x", "x.json"),
@@ -432,7 +431,7 @@ def test_old_spellings_are_usage_errors(browsable: Cli, argv: tuple[str, ...]) -
 def test_hints_name_only_current_spellings() -> None:
     root = Path(__file__).resolve().parents[3] / "src" / "huron" / "applications" / "cli"
     old = re.compile(
-        r"huron (catalog use|catalog list|namespace |collection |meta |acl |platform |"
+        r"huron (catalog use|catalog list|namespace |collection |meta |platform |"
         r"org (list|create|delete|describe|grants?|revoke)\b|schema |check\b|files\b|log\b)"
     )
     offenders = [

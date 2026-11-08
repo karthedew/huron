@@ -27,5 +27,5 @@ organization's root, as the storage administrator, run
   huron adm verify-mounts              # every organization must be ok
 {{- else }}
 No organizations are declared (unmanaged mode): platform admins create them with `huron create org`,
-under the CLI's mount_prefix, which scripts/init-root.sh prepares.
+under the CLI's mount_prefix, which huron adm provision-orgs marks.
 {{- end }}

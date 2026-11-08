@@ -5,7 +5,7 @@
 # Editing this file changes the ConfigMap's name suffix, so `oc apply -k` rolls the pods, which
 # reconcile the declared organizations at startup.
 store: postgres
-# The UUID written into every share marker (scripts/init-root.sh, huron adm provision-orgs).
+# The UUID written into every share marker (huron adm provision-orgs).
 instance_id: replace-with-the-uuid-written-into-the-share-markers
 issuer: https://huron.apps.example.org
 audience: huron

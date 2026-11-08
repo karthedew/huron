@@ -9,7 +9,6 @@ from typing import Any
 
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.sync import recorded_files
-from huron.core.storage import DirectoryKind, EffectiveGroups
 
 __all__ = ["CatalogInventory", "take_inventory", "walk_namespaces"]
 
@@ -19,7 +18,6 @@ class CatalogInventory:
     """A catalog's namespaces and collections as the service records them."""
 
     catalog: dict[str, Any]
-    groups: EffectiveGroups
     namespaces: list[dict[str, Any]]
     collections: list[dict[str, Any]]
 
@@ -28,25 +26,19 @@ class CatalogInventory:
         """The catalog directory relative to the share prefix."""
         return f"{self.catalog['organization']}/{self.catalog['name']}"
 
-    def directories(self) -> Iterator[tuple[str, str, DirectoryKind]]:
-        """``(identifier, disk_path, kind)`` of every directory, catalog first, parents first."""
-        yield self.catalog["name"], self.disk_path, DirectoryKind.CATALOG
+    def directories(self) -> Iterator[tuple[str, str]]:
+        """``(identifier, disk_path)`` of the catalog and its namespaces, parents first.
+
+        The collections are in :attr:`collections`.
+        """
+        yield self.catalog["name"], self.disk_path
         for namespace in self.namespaces:
-            kind = (
-                DirectoryKind.NAMESPACE_WITH_COLLECTIONS
-                if namespace["collections_allowed"]
-                else DirectoryKind.NAMESPACE
-            )
-            yield namespace["identifier"], namespace["disk_path"], kind
-        for collection in self.collections:
-            if collection.get("path"):
-                yield collection["identifier"], collection["path"], DirectoryKind.COLLECTION
+            yield namespace["identifier"], namespace["disk_path"]
 
 
 def take_inventory(api: ApiClient, catalog: str, *, files: bool) -> CatalogInventory:
     """Walk the catalog's namespace tree and collections; with ``files``, their recorded files."""
     found = api.get(f"/api/v1/catalogs/{catalog}")
-    groups = EffectiveGroups.from_mapping(api.get(f"/api/v1/catalogs/{catalog}/grants"))
     namespaces = list(walk_namespaces(api, catalog, ""))
     collections: list[dict[str, Any]] = []
     for namespace in namespaces:
@@ -60,7 +52,7 @@ def take_inventory(api: ApiClient, catalog: str, *, files: bool) -> CatalogInven
                 collection["sidecar"] = sidecar.content
             collection["created"] = datetime.fromisoformat(collection["created_at"])
             collections.append(collection)
-    return CatalogInventory(found, groups, namespaces, collections)
+    return CatalogInventory(found, namespaces, collections)
 
 
 def walk_namespaces(api: ApiClient, catalog: str, parent: str) -> Iterator[dict[str, Any]]:

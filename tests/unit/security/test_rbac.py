@@ -178,16 +178,6 @@ async def test_visibility_reaches_the_organization_of_a_granted_catalog(
     assert not await authorizer.can_see_organization(actor("x"), ORG_A)
 
 
-async def test_effective_groups_include_inherited_scopes(authorizer: Authorizer) -> None:
-    groups = await authorizer.effective_groups(Scope.catalog(CAT_A1))
-    assert groups.platform_admin == ("platform",)
-    assert groups.org_admin == ("org-a-admins",)
-    assert groups.contributor == ("a-writers", "a1-contrib")
-    assert groups.as_dict()["reader"] == ["a-everyone", "a-shared", "a1-readers"]
-    other = await authorizer.effective_groups(Scope.catalog(CAT_B1))
-    assert other.org_admin == ()
-
-
 async def test_roles_are_cached_per_group_set(authorizer: Authorizer) -> None:
     reader = actor("a1-readers")
     first = await authorizer.roles_for(reader)
@@ -214,17 +204,6 @@ async def test_organization_wide_catalog_roles_hold_in_every_catalog_of_it(
     assert await authorizer.can_see_catalog(everyone, CAT_A2)
     assert not await authorizer.can_see_catalog(everyone, CAT_B1)
     assert await authorizer.holds(everyone, P.ORGANIZATION_READ, Scope.organization(ORG_A))
-
-
-async def test_effective_groups_merge_organization_wide_catalog_roles(
-    authorizer: Authorizer,
-) -> None:
-    groups = await authorizer.effective_groups(Scope.catalog(CAT_A2))
-    assert groups.reader == ("a-everyone", "a-shared")
-    assert groups.contributor == ("a-writers",)
-    assert groups.catalog_admin == ("a-curators",)
-    merged = await authorizer.effective_groups(Scope.catalog(CAT_A1))
-    assert merged.reader == ("a-everyone", "a-shared", "a1-readers")
 
 
 async def test_grant_sources_name_the_scope_of_each_grant(authorizer: Authorizer) -> None:

@@ -437,7 +437,7 @@ class LinkPausingStorage(MemoryStorage):
     """The in-memory lake, whose links wait until :attr:`release` is set."""
 
     def __init__(self) -> None:
-        super().__init__(LAKE, user="huron", uid=SERVICE_GID, gid=SERVICE_GID)
+        super().__init__(LAKE, uid=SERVICE_GID, gid=SERVICE_GID)
         self.write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
         self.linking = threading.Event()
         self.release = threading.Event()
@@ -518,7 +518,7 @@ class HashBlockingStorage(MemoryStorage):
     """
 
     def __init__(self) -> None:
-        super().__init__(LAKE, user="huron", uid=SERVICE_GID, gid=SERVICE_GID)
+        super().__init__(LAKE, uid=SERVICE_GID, gid=SERVICE_GID)
         self.write_bytes(LAKE / MARKER_FILE, ROOT_MARKER)
         self.full = threading.Event()
         self.release = threading.Event()

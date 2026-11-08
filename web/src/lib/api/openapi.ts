@@ -143,15 +143,6 @@ export interface CommitResultOut {
 	version: number;
 }
 
-/** Groups per role on a catalog, inherited ones included. */
-export interface EffectiveGroupsOut {
-	catalog_admin: string[];
-	contributor: string[];
-	org_admin: string[];
-	platform_admin: string[];
-	reader: string[];
-}
-
 /** A company ID token to exchange. */
 export interface ExchangeIn {
 	company_token: string;

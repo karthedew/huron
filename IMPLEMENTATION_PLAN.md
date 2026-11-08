@@ -4208,7 +4208,7 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
   tests/unit/api/test_openapi_snapshot.py`; from `web/`, `npm run generate:api`, `npm run
   check` and `npm test`.
 - Dependencies: M11.8a.
-- Status: pending
+- Status: complete
 
 #### M11.5b Removal shapes and roots below `lake_path`
 
@@ -4932,6 +4932,9 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
     `/docs/reference/cli/adm/#huron-adm-apply-acl`. No check validates anchors, so remove or
     replace both links. `docs/architecture.md` (about line 199) still says the CLI writes
     `metadata.json`.
+  - Found in M11.9a's verification: `deploy/README.md` (about line 107) has the comment "create
+    <root>/<org>, apply the ACLs, write the marker", which the task's grep does not catch.
+    `README.md` (about lines 163 and 173) still describes `acl_backend`.
 - Verification: `make gate` (`scripts/ste_check.py` included); `make docs-check`;
   `grep -rniE "init-root|apply-acl|acl_backend|setfacl|getfacl|OUTSIDE_LAKE|version 1 migration" docs README.md deploy/README.md --exclude-dir=adr`
   prints nothing; `grep -c "Helm: not yet delivered" docs/operator.md deploy/README.md` counts

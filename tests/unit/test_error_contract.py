@@ -1,14 +1,20 @@
 """Every error code is registered once, raised codes are registered, and all are documented."""
 
+import importlib
 import re
 from pathlib import Path
 
-import huron.applications.api.app
-import huron.core.storage
-import huron.pkg.fs.acl  # noqa: F401 - registers the CLI's ACL error code
+import pytest
+
 from huron.pkg.errors import error_codes
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def every_code_registered() -> None:
+    """Import the API application, which imports every module that registers a code."""
+    importlib.import_module("huron.applications.api.app")
 
 
 def registered_in_source() -> list[str]:

@@ -1,4 +1,4 @@
-"""An in-memory share for tests: directories, files, modes, groups, ACLs, owners and mounts."""
+"""An in-memory share for tests: directories, files, modes, groups, owners and mounts."""
 
 from __future__ import annotations
 
@@ -7,19 +7,16 @@ import hashlib
 import itertools
 import os
 import stat
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from huron.core.storage.errors import SourceGone, StorageError
 from huron.core.storage.ports import FileStamp, GroupOutcome, GroupResult, Ownership
-from huron.pkg.fs.acl import Acl
 from huron.pkg.fs.posix import INHERITING_DIR_MODE, Entry, Stamp
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
-
-    from huron.core.storage.aclplan import AclPlan
 
 __all__ = ["ROOT_DEVICE", "MemoryStorage", "Node"]
 
@@ -32,17 +29,13 @@ ROOT_DEVICE = 1
 class Node:
     """A directory (``data is None``) or a file.
 
-    ``owner`` and ``group`` are names for the ACL plans; ``uid`` and ``gid`` are the numbers
-    :meth:`MemoryStorage.owner` reports. Hard links of a file share one node, so they share its
-    ``inode`` and its mode.
+    ``uid`` and ``gid`` are the numbers :meth:`MemoryStorage.owner` reports. Hard links of a
+    file share one node, so they share its ``inode`` and its mode.
     """
 
-    owner: str
     mode: int = 0o2770
     uid: int = 0
     gid: int = 0
-    acl: Acl = field(default_factory=Acl)
-    group: str | None = None
     data: bytes | None = None
     mtime_ns: int = 0
     inode: int = 0
@@ -56,20 +49,19 @@ class Node:
 class MemoryStorage:
     """A :class:`Storage` over a dictionary.
 
-    The caller is ``user``, with the numbers ``uid`` and ``gid``. ``groups`` is the machine's
+    The caller has the numbers ``uid`` and ``gid``. ``groups`` is the machine's
     group database (name to gid), and ``member_of`` the gids the caller may give an entry it
     owns. A directory in ``denied`` refuses every change to its entries. ``mounts`` maps mount
     points to the filesystem below them. ``inherits`` is whether a new directory inherits the
     setgid bit and the group of a setgid parent, as the server should.
     """
 
-    def __init__(self, root: Path, user: str = "me", uid: int = 1000, gid: int = 1000) -> None:
-        self.user = user
+    def __init__(self, root: Path, uid: int = 1000, gid: int = 1000) -> None:
         self.uid = uid
         self.gid = gid
         self.groups: dict[str, int] = {}
         self.member_of: set[int] = {gid}
-        self.nodes: dict[Path, Node] = {root: Node(owner="root", mode=0o2771)}
+        self.nodes: dict[Path, Node] = {root: Node(mode=0o2771)}
         self.denied: set[Path] = set()
         self.mounts: dict[Path, int] = {}
         self.inherits = True
@@ -77,10 +69,10 @@ class MemoryStorage:
         self._clock = 0
         self._inodes = itertools.count(2)
 
-    def add_root(self, path: Path, owner: str = "root") -> None:
-        """Add a directory owned by ``owner`` (and any missing parents), like a mounted root."""
+    def add_root(self, path: Path, uid: int = 0) -> None:
+        """Add a directory owned by ``uid`` (and any missing parents), like a mounted root."""
         for directory in (*reversed(path.parents), path):
-            self.nodes.setdefault(directory, Node(owner=owner, mode=0o755))
+            self.nodes.setdefault(directory, Node(mode=0o755, uid=uid))
 
     def mount(self, path: Path, device: int) -> None:
         """Make ``path`` (and any missing parents) the mount point of filesystem ``device``."""
@@ -99,7 +91,7 @@ class MemoryStorage:
             raise StorageError(f"{path} is not a directory", {"path": str(path)})
         self._check(path.parent)
         gid = self._new_gid(path.parent)
-        self.nodes[path] = Node(owner=self.user, uid=self.uid, gid=gid, inode=next(self._inodes))
+        self.nodes[path] = Node(uid=self.uid, gid=gid, inode=next(self._inodes))
         self.nodes[path].mode = self._settable(mode, gid)
         self.calls.append(("mkdir", path))
         return True
@@ -126,7 +118,6 @@ class MemoryStorage:
                 {"path": str(path)},
             )
         self.nodes[path] = Node(
-            owner=self.user,
             mode=INHERITING_DIR_MODE | stat.S_ISGID,
             uid=self.uid,
             gid=parent.gid,
@@ -161,8 +152,7 @@ class MemoryStorage:
             return GroupResult(GroupOutcome.UNCHANGED)
         if node.uid != self.uid or gid not in self.member_of:
             return GroupResult(GroupOutcome.PENDING, f"{path}: {os.strerror(errno.EPERM)}")
-        names = {number: name for name, number in self.groups.items()}
-        node.gid, node.group = gid, names.get(gid)
+        node.gid = gid
         self.calls.append(("chgrp", path))
         return GroupResult(GroupOutcome.CHANGED)
 
@@ -179,36 +169,6 @@ class MemoryStorage:
                 return self.mounts[candidate]
         return ROOT_DEVICE
 
-    def ensure_directory(self, path: Path, plan: AclPlan) -> bool:
-        """Create ``path`` (its parent must exist) and apply ``plan``."""
-        if not self.is_directory(path.parent):
-            raise StorageError(f"{path.parent} does not exist", {"path": str(path.parent)})
-        created = path not in self.nodes
-        if created:
-            self._check(path.parent)
-            self.nodes[path] = Node(owner=self.user, uid=self.uid, gid=self.gid)
-            self.calls.append(("mkdir", path))
-        elif not self.nodes[path].is_dir:
-            raise StorageError(f"{path} is not a directory", {"path": str(path)})
-        self.apply_plan(path, plan)
-        return created
-
-    def apply_plan(self, path: Path, plan: AclPlan) -> bool:
-        """Apply mode, group and ACL; only the owner may."""
-        node = self._node(path)
-        wanted = (plan.mode, plan.acl, plan.owning_group or node.group)
-        if (node.mode, node.acl, node.group) == wanted:
-            return False
-        if node.owner != self.user:
-            raise StorageError(f"only the owner can change {path}", {"path": str(path)})
-        node.mode, node.acl, node.group = wanted
-        self.calls.append(("acl", path))
-        return True
-
-    def read_acl(self, path: Path) -> Acl:
-        """The recorded ACL."""
-        return self._node(path).acl
-
     def write_bytes(self, path: Path, data: bytes, mode: int | None = None) -> None:
         """Store ``data`` at ``path`` (mode ``0660`` unless ``mode`` is given).
 
@@ -218,7 +178,6 @@ class MemoryStorage:
         self._check(path.parent)
         self._clock += 1
         self.nodes[path] = Node(
-            owner=self.user,
             mode=0o660 if mode is None else mode,
             uid=self.uid,
             gid=self._new_gid(path.parent),
@@ -335,10 +294,6 @@ class MemoryStorage:
         """Size and sha256."""
         data = self._node(path).data or b""
         return FileStamp(len(data), hashlib.sha256(data).hexdigest())
-
-    def owned_by_me(self, path: Path) -> bool:
-        """Whether ``user`` owns ``path``."""
-        return self._node(path).owner == self.user
 
     def _node(self, path: Path) -> Node:
         node = self.nodes.get(path)

@@ -1,4 +1,4 @@
-"""Layout, modes, ACL plans, the marker and both storage adapters."""
+"""Layout, modes, the marker and both storage adapters."""
 
 import errno
 import grp
@@ -17,7 +17,6 @@ from huron.core.storage import (
     ORGANIZATION_MODE,
     UPLOAD_DIR_MODE,
     DirectoryKind,
-    EffectiveGroups,
     FileStamp,
     GroupOutcome,
     GroupResult,
@@ -26,32 +25,16 @@ from huron.core.storage import (
     SourceGone,
     Storage,
     StorageError,
-    diff,
     is_reserved_entry,
     mode_of,
-    plan,
     read_marker,
     render_marker,
     resolve,
     verify_marker,
 )
-from huron.core.storage.factory import storage_for
 from huron.core.storage.memory import ROOT_DEVICE, MemoryStorage, Node
 from huron.core.storage.posix import PosixStorage
-from huron.pkg.fs.acl import Acl, AclEntry, CompletedRun, SubprocessRunner, acl_supported
 from tests.support.disk import LAKE
-
-GROUPS = EffectiveGroups(
-    platform_admin=("platform",),
-    org_admin=("org",),
-    catalog_admin=("cadmin",),
-    contributor=("contrib",),
-    reader=("read",),
-)
-
-
-def named(acl_entries: frozenset[AclEntry]) -> dict[str, str]:
-    return {e.qualifier: e.perms for e in acl_entries if e.tag == "group" and e.qualifier}
 
 
 def test_resolve_refuses_escapes() -> None:
@@ -68,71 +51,6 @@ def test_reserved_entries() -> None:
     assert is_reserved_entry("x/.a.bin.0192.huron-prev")
     assert is_reserved_entry(".huron")
     assert not is_reserved_entry("sub/metadata.json")
-
-
-@pytest.mark.parametrize(
-    ("kind", "mode", "access", "default", "owner"),
-    [
-        (
-            DirectoryKind.ORGANIZATION,
-            0o2771,
-            {"platform": "rwx", "org": "rwx"},
-            {"platform": "rwx", "org": "rwx"},
-            "org",
-        ),
-        (
-            DirectoryKind.CATALOG,
-            0o2770,
-            {"platform": "rwx", "org": "rwx", "cadmin": "rwx", "contrib": "r-x", "read": "r-x"},
-            {"platform": "rwx", "org": "rwx"},
-            "cadmin",
-        ),
-        (
-            DirectoryKind.NAMESPACE,
-            0o2770,
-            {"platform": "rwx", "org": "rwx", "cadmin": "rwx", "contrib": "r-x", "read": "r-x"},
-            {"platform": "rwx", "org": "rwx"},
-            "cadmin",
-        ),
-        (
-            DirectoryKind.NAMESPACE_WITH_COLLECTIONS,
-            0o3770,
-            {"platform": "rwx", "org": "rwx", "cadmin": "rwx", "contrib": "rwx", "read": "r-x"},
-            {"platform": "rwx", "org": "rwx"},
-            "contrib",
-        ),
-        (
-            DirectoryKind.COLLECTION,
-            0o2770,
-            {"platform": "rwx", "org": "rwx", "cadmin": "rwx", "contrib": "rwx", "read": "r-x"},
-            {"platform": "rwx", "org": "rwx", "cadmin": "rwx", "contrib": "rwx", "read": "r-x"},
-            "contrib",
-        ),
-    ],
-)
-def test_plans_follow_the_table(
-    kind: DirectoryKind, mode: int, access: dict[str, str], default: dict[str, str], owner: str
-) -> None:
-    planned = plan(kind, GROUPS)
-    assert planned.mode == mode and planned.owning_group == owner
-    assert named(planned.acl.access) == access
-    assert named(planned.acl.default) == default
-    other = next(e for e in planned.acl.access if e.tag == "other")
-    assert other.perms == ("--x" if kind is DirectoryKind.ORGANIZATION else "---")
-    assert diff(planned, planned.acl) == []
-
-
-def test_plans_without_groups_and_diffs() -> None:
-    planned = plan(DirectoryKind.CATALOG, EffectiveGroups())
-    assert planned.owning_group is None
-    groups = EffectiveGroups.from_mapping({"reader": ["r"], "ignored": ["x"]})
-    assert groups.reader == ("r",)
-    reader_plan = plan(DirectoryKind.CATALOG, groups)
-    problems = diff(reader_plan, Acl(frozenset({AclEntry("group", "intruder", "rwx")})))
-    assert "unexpected group:intruder:rwx" in problems
-    assert any(p.startswith("missing default:") for p in problems)
-    stray = Acl(reader_plan.acl.access, reader_plan.acl.default | {AclEntry("group", "z", "r-x")})
-    assert diff(reader_plan, stray) == ["unexpected default:group:z:r-x"]
 
 
 def test_marker_round_trip_and_refusals(tmp_path: Path) -> None:
@@ -152,14 +70,11 @@ def test_marker_round_trip_and_refusals(tmp_path: Path) -> None:
 
 def test_memory_storage_behaves_like_a_share(tmp_path: Path) -> None:
     root = Path("/share")
-    storage = MemoryStorage(root, user="dave")
-    planned = plan(DirectoryKind.COLLECTION, GROUPS)
+    storage = MemoryStorage(root)
     with pytest.raises(StorageError):
-        storage.ensure_directory(root / "a" / "b", planned)
-    assert storage.ensure_directory(root / "a", planned) is True
-    assert storage.ensure_directory(root / "a", planned) is False
-    assert storage.apply_plan(root / "a", planned) is False
-    assert storage.read_acl(root / "a") == planned.acl
+        storage.make_directory(root / "a" / "b", DIRECTORY_MODE)
+    assert storage.make_directory(root / "a", DIRECTORY_MODE) is True
+    assert storage.make_directory(root / "a", DIRECTORY_MODE) is False
     storage.make_directory(root / "a" / "x", 0o2750)
     storage.make_directory(root / "a" / "x" / "y", 0o2750)
     storage.write_bytes(root / "a" / "x" / "y" / "f.bin", b"abc")
@@ -174,48 +89,18 @@ def test_memory_storage_behaves_like_a_share(tmp_path: Path) -> None:
     assert storage.remove_file(root / "a" / "nope") is False
     assert storage.remove_directory(root / "missing") is False
     storage.write_bytes(root / "file", b"")
-    with pytest.raises(StorageError):
-        storage.ensure_directory(root / "file", planned)
-    other = MemoryStorage(root, user="erin")
-    other.nodes = storage.nodes
-    assert not other.owned_by_me(root / "a") and storage.owned_by_me(root / "a")
-    with pytest.raises(StorageError, match="only the owner"):
-        other.apply_plan(root / "a", plan(DirectoryKind.CATALOG, GROUPS))
+    with pytest.raises(StorageError, match="is not a directory"):
+        storage.make_directory(root / "file", DIRECTORY_MODE)
     storage.denied.add(root)
     with pytest.raises(StorageError, match="permission denied"):
-        storage.ensure_directory(root / "b", planned)
+        storage.make_directory(root / "b", DIRECTORY_MODE)
     with pytest.raises(StorageError):
         storage.stamp(root / "gone")
     assert storage.exists(root / "a") and not storage.is_directory(root / "file")
 
 
-@pytest.fixture
-def group() -> str:
-    return grp.getgrgid(os.getgid()).gr_name
-
-
-def test_posix_storage_creates_directories_with_modes_and_acls(tmp_path: Path, group: str) -> None:
-    acls = acl_supported(tmp_path, SubprocessRunner())
-    storage = storage_for("posix" if acls else "none")
-    groups = EffectiveGroups(platform_admin=(group,), contributor=(group,))
-    planned = plan(DirectoryKind.COLLECTION, groups)
-    target = tmp_path / "c"
-    assert storage.ensure_directory(target, planned) is True
-    assert stat.S_IMODE(os.lstat(target).st_mode) == 0o2770
-    assert storage.ensure_directory(target, planned) is False
-    assert storage.apply_plan(target, planned) is False
-    if acls:
-        assert diff(planned, storage.read_acl(target)) == []
-    os.chmod(target, 0o755)
-    assert storage.apply_plan(target, planned) is True
-    assert storage.apply_plan(target, plan(DirectoryKind.CATALOG, EffectiveGroups())) is True
-    with pytest.raises(StorageError, match="does not exist"):
-        storage.ensure_directory(tmp_path / "x" / "y", planned)
-    assert storage.owned_by_me(target)
-
-
 def test_posix_storage_writes_files_and_reports_failures(tmp_path: Path) -> None:
-    storage = PosixStorage("none", SubprocessRunner())
+    storage = PosixStorage()
     collection = tmp_path / "col"
     collection.mkdir()
     (collection / "a" / "b").mkdir(parents=True)
@@ -236,8 +121,8 @@ def test_posix_storage_writes_files_and_reports_failures(tmp_path: Path) -> None
         storage.remove_directory(collection)
     assert storage.remove_file(collection / "metadata.json") is True
     assert storage.remove_directory(tmp_path / "nope") is False
-    read = storage.read_acl(collection)
-    assert AclEntry("user", None, "rwx") in read.access
+    with pytest.raises(StorageError):
+        storage.hash(collection / "missing")
 
 
 def test_posix_storage_turns_permission_errors_into_storage_errors(
@@ -249,26 +134,9 @@ def test_posix_storage_turns_permission_errors_into_storage_errors(
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr(posix, "atomic_write", refuse)
-    storage = PosixStorage("none", SubprocessRunner())
+    storage = PosixStorage()
     with pytest.raises(StorageError, match="permission denied"):
         storage.write_bytes(tmp_path / "f", b"x")
-
-
-def test_posix_acl_failures_surface(tmp_path: Path) -> None:
-    class Failing:
-        def run(self, argv, stdin=None):  # type: ignore[no-untyped-def]
-            if argv[0] == "getfacl":
-                return CompletedRun(0, "user::rwx\ngroup::r-x\nother::---\n", "")
-            return CompletedRun(1, "", "Operation not supported")
-
-    storage = PosixStorage("posix", Failing())  # type: ignore[arg-type]
-    target = tmp_path / "d"
-    target.mkdir(mode=0o2770)
-    with pytest.raises(Exception, match="setfacl failed"):
-        storage.apply_plan(target, plan(DirectoryKind.CATALOG, GROUPS))
-    storage.write_bytes(target / "x", b"x")
-    with pytest.raises(StorageError):
-        storage.hash(target / "missing")
 
 
 @pytest.mark.parametrize(
@@ -277,7 +145,6 @@ def test_posix_acl_failures_surface(tmp_path: Path) -> None:
         (DirectoryKind.ORGANIZATION, 0o2751),
         (DirectoryKind.CATALOG, 0o2750),
         (DirectoryKind.NAMESPACE, 0o2750),
-        (DirectoryKind.NAMESPACE_WITH_COLLECTIONS, 0o2750),
         (DirectoryKind.COLLECTION, 0o2750),
     ],
 )
@@ -291,7 +158,7 @@ def test_files_and_the_upload_directory_have_their_modes() -> None:
 
 @pytest.fixture
 def posix() -> PosixStorage:
-    return storage_for("none")
+    return PosixStorage()
 
 
 def test_posix_make_directory_gives_exactly_the_mode(tmp_path: Path, posix: PosixStorage) -> None:
@@ -396,7 +263,7 @@ def test_posix_owner_and_device(tmp_path: Path, posix: PosixStorage) -> None:
 @pytest.fixture
 def memory() -> MemoryStorage:
     """An in-memory lake whose root is a setgid directory of root's group (gid 0)."""
-    return MemoryStorage(LAKE, user="huron", uid=1000, gid=1000)
+    return MemoryStorage(LAKE, uid=1000, gid=1000)
 
 
 def test_memory_make_directory_inherits_the_group_of_a_setgid_parent(
@@ -414,7 +281,7 @@ def test_memory_make_directory_drops_setgid_outside_the_callers_groups(
 ) -> None:
     memory.make_directory(LAKE / "helio", ORGANIZATION_MODE)
     assert memory.owner(LAKE / "helio") == Ownership(1000, 0, 0o751)
-    memory.nodes[LAKE / "plain"] = Node(owner="huron", mode=0o755, uid=1000, gid=1000)
+    memory.nodes[LAKE / "plain"] = Node(mode=0o755, uid=1000, gid=1000)
     memory.make_directory(LAKE / "plain" / "d", DIRECTORY_MODE)
     assert memory.owner(LAKE / "plain" / "d") == Ownership(1000, 1000, 0o2750)
 
@@ -472,7 +339,7 @@ def test_memory_write_bytes_gives_a_file_the_group_of_a_setgid_parent(
 ) -> None:
     memory.write_bytes(LAKE / "inherited", b"")
     assert memory.owner(LAKE / "inherited").gid == 0
-    memory.nodes[LAKE / "plain"] = Node(owner="huron", mode=0o755, uid=1000, gid=2001)
+    memory.nodes[LAKE / "plain"] = Node(mode=0o755, uid=1000, gid=2001)
     memory.write_bytes(LAKE / "plain" / "own", b"")
     assert memory.owner(LAKE / "plain" / "own").gid == 1000
     memory.nodes[LAKE / "plain"].mode = 0o2755
@@ -497,9 +364,9 @@ def share(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Storage, Path
         base = tmp_path / "share"
         base.mkdir()
         os.chmod(base, 0o2750)
-        return storage_for("none"), base
-    memory = MemoryStorage(LAKE, user="huron", uid=1000, gid=1000)
-    memory.nodes[LAKE / "share"] = Node(owner="huron", mode=0o2750, uid=1000, gid=1000)
+        return PosixStorage(), base
+    memory = MemoryStorage(LAKE, uid=1000, gid=1000)
+    memory.nodes[LAKE / "share"] = Node(mode=0o2750, uid=1000, gid=1000)
     return memory, LAKE / "share"
 
 
@@ -639,7 +506,7 @@ def test_posix_link_and_open_failures_are_storage_errors(
 def test_memory_open_file_refuses_a_directory_and_a_foreign_file(memory: MemoryStorage) -> None:
     with pytest.raises(StorageError, match="Is a directory"):
         memory.open_file(LAKE)
-    memory.nodes[LAKE / "theirs"] = Node(owner="root", mode=0o600, uid=0, gid=0, data=b"")
+    memory.nodes[LAKE / "theirs"] = Node(mode=0o600, uid=0, gid=0, data=b"")
     opened = memory.open_file(LAKE / "theirs")
     assert opened is not None
     with pytest.raises(StorageError, match="permission denied"):

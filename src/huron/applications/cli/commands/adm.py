@@ -1,9 +1,10 @@
-"""``huron adm``: roles, directory ACLs, organization mounts, drift checks and schemas."""
+"""``huron adm``: roles, directory modes, organization mounts, drift checks and schemas."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -20,7 +21,7 @@ from huron.applications.cli.commands.common import (
     show_list,
     table_mode,
 )
-from huron.applications.cli.errors import ApiError, CliError, ExitCode, StorageFailure, UsageError
+from huron.applications.cli.errors import ApiError, StorageFailure, UsageError
 from huron.applications.cli.inventory import CatalogInventory, take_inventory
 from huron.applications.cli.mount import (
     PREFIX_MARKER_HINT,
@@ -31,14 +32,11 @@ from huron.applications.cli.mount import (
 from huron.applications.cli.output import Column
 from huron.applications.cli.services import Services
 from huron.core.storage import (
-    AclPlan,
-    DirectoryKind,
     Marker,
     MarkerState,
     OrganizationPlace,
     StorageError,
     marker_state,
-    plan,
 )
 from huron.core.storage.check import (
     ExpectedCollection,
@@ -58,7 +56,7 @@ SHARE = "Share"
 SCHEMAS = "Schemas"
 
 adm_app = typer.Typer(
-    help="Run administration tasks: roles, directory ACLs, drift checks and schemas.",
+    help="Run administration tasks: roles, directory modes, drift checks and schemas.",
     no_args_is_help=True,
 )
 publish_app = typer.Typer(help="Publish a schema.", no_args_is_help=True)
@@ -93,6 +91,8 @@ MOUNT_COLUMNS = [
 #: The ``verify-mounts`` state of an organization the managed configuration does not declare.
 UNDECLARED = "undeclared"
 
+#: The ``provision-orgs`` row name of the lake path's steps.
+LAKE_PATH = "lake path"
 STEP_COLUMNS = [Column("ORG", lambda r: r["organization"]), Column("STEP", lambda r: r["step"])]
 
 FINDING_COLUMNS = [
@@ -212,33 +212,32 @@ def provision_orgs(
         ),
     ] = False,
 ) -> None:
-    """Prepare the directory of each declared organization below its root (storage admin).
+    """Mark the lake path and prepare each declared organization below its root (storage admin).
 
-    The root must exist. When the organization directory does not exist, the command creates
-    it. The command gives the directory the organization ACL plan and a marker for this service
-    and the organization. You can run the command again safely.
+    The lake path is `mount_prefix` on this machine. The lake path and each root must exist.
+    The command writes a marker for this service at the lake path. When an organization
+    directory does not exist, the command creates it. The command sets the mode of the directory
+    and writes a marker for this service and the organization. You can run the command again
+    safely.
     """
     found = services(ctx)
     mount = found.mount()
-    targets = [_target(found.config.api_url, mount, v) for v in _declared(ctx, organization)]
-    if not targets:
-        say(ctx, "The service configuration declares no organizations. There is nothing to do")
-        return
-    acls = found.config.acl_backend == "posix"
+    lake = Marker(1, found.config.api_url, mount.instance_id())
+    targets = [_target(lake, mount, view) for view in _declared(ctx, organization)]
     if emit_script:
-        script = provision_script(targets, acls=acls)
+        script = provision_script(mount.prefix, lake, targets)
         found.out.print(script, markup=False, highlight=False, end="", soft_wrap=True)
         return
-    rows, failed = _provision(found.err, Provisioner(mount.storage), targets, dry_run)
-    note = "" if acls else " (modes only, because `acl_backend` is `none`)"
+    provisioner = Provisioner(found.provision_storage(), mount.prefix)
+    rows, failed = _provision(found.err, provisioner, lake, targets, dry_run)
     if table_mode(ctx):
         for row in rows:
-            say(ctx, f"{row['organization']}: {row['step']}{note}")
+            say(ctx, f"{row['organization']}: {row['step']}")
     else:
         show_list(ctx, rows, STEP_COLUMNS)
     if failed:
         raise StorageFailure(
-            f"the CLI could not prepare {len(failed)} of {len(targets)} organizations:"
+            f"the CLI could not prepare {len(failed)} of {len(targets) + 1} directories:"
             f" {', '.join(failed)}",
             hint=(
                 "when only `root` may write to a root, run `huron adm provision-orgs --emit-script`"
@@ -355,8 +354,7 @@ def _drift(
 ) -> list[Finding]:
     """Organization findings first, then those of each catalog its organization lets us see."""
     mount = found.mount()
-    acls = found.config.acl_backend == "posix"
-    findings, blocked = _organizations_pass(mount, organizations, acls)
+    findings, blocked = _organizations_pass(mount, organizations)
     for inventory in inventories:
         organization = str(inventory.catalog["organization"])
         if organization in blocked:
@@ -364,8 +362,8 @@ def _drift(
         findings += check(
             mount.storage,
             mount.base(organization),
-            _directories(inventory, acls),
-            _collections(inventory, acls),
+            _directories(inventory),
+            _collections(inventory),
             found.clock.now(),
             hash_files=hash_files,
         )
@@ -373,22 +371,20 @@ def _drift(
 
 
 def _organizations_pass(
-    mount: Mount, organizations: Iterable[str], acls: bool
+    mount: Mount, organizations: Iterable[str]
 ) -> tuple[list[Finding], set[str]]:
     """Organization findings, and the organizations whose directory forbids looking further."""
     findings: list[Finding] = []
     blocked: set[str] = set()
     for organization in sorted(organizations):
-        here, stop = _organization_findings(mount, organization, acls)
+        here, stop = _organization_findings(mount, organization)
         findings += here
         if stop:
             blocked.add(organization)
     return findings, blocked
 
 
-def _organization_findings(
-    mount: Mount, organization: str, acls: bool
-) -> tuple[list[Finding], bool]:
+def _organization_findings(mount: Mount, organization: str) -> tuple[list[Finding], bool]:
     """The findings of one organization, and whether its catalogs must not be looked at.
 
     An organization without its own marker needs the mount prefix's marker; one the managed
@@ -407,25 +403,10 @@ def _organization_findings(
             return [warning], True
         mount.verify_prefix()
     expected = ExpectedOrganization(
-        organization,
-        place.directory,
-        mount.instance_id(),
-        place.own_marker,
-        _organization_plan(mount, organization) if acls else None,
+        organization, place.directory, mount.instance_id(), place.own_marker
     )
     found = check_organization(mount.storage, expected)
     return found, place.own_marker and _has_error(found)
-
-
-def _organization_plan(mount: Mount, organization: str) -> AclPlan | None:
-    """The organization ACL plan, or ``None`` when the caller may not read its admin groups."""
-    try:
-        groups = mount.organization_groups(organization)
-    except CliError as error:
-        if error.exit_code is not ExitCode.FORBIDDEN:
-            raise
-        return None
-    return plan(DirectoryKind.ORGANIZATION, groups)
 
 
 def _has_error(findings: Iterable[Finding]) -> bool:
@@ -470,22 +451,31 @@ def _declared(ctx: typer.Context, organization: str | None) -> list[dict[str, An
     return chosen
 
 
-def _target(api_url: str, mount: Mount, view: dict[str, Any]) -> OrganizationTarget:
+def _target(lake: Marker, mount: Mount, view: dict[str, Any]) -> OrganizationTarget:
     place = mount.place_of_view(view)
-    marker = Marker(1, api_url, mount.instance_id(), place.name)
-    groups = mount.organization_groups(place.name)
-    return OrganizationTarget(place, plan(DirectoryKind.ORGANIZATION, groups), marker)
+    return OrganizationTarget(place, replace(lake, organization=place.name))
 
 
 def _provision(
-    err: Console, provisioner: Provisioner, targets: Iterable[OrganizationTarget], dry_run: bool
+    err: Console,
+    provisioner: Provisioner,
+    lake: Marker,
+    targets: Iterable[OrganizationTarget],
+    dry_run: bool,
 ) -> tuple[list[dict[str, str]], list[str]]:
+    """The steps of the lake path, then of each organization, and the names that failed."""
+    jobs: list[tuple[str, Callable[[], list[str]]]] = [
+        (LAKE_PATH, partial(provisioner.mark_lake, lake, dry_run=dry_run))
+    ]
+    jobs += [
+        (target.place.name, partial(provisioner.provision, target, dry_run=dry_run))
+        for target in targets
+    ]
     rows: list[dict[str, str]] = []
     failed: list[str] = []
-    for target in targets:
-        name = target.place.name
+    for name, job in jobs:
         try:
-            steps = provisioner.provision(target, dry_run=dry_run)
+            steps = job()
         except StorageError as error:
             err.print(f"error: {name}: {error.message}", markup=False, highlight=False)
             failed.append(name)
@@ -494,23 +484,20 @@ def _provision(
     return rows, failed
 
 
-def _directories(inventory: CatalogInventory, acls: bool) -> list[ExpectedDirectory]:
+def _directories(inventory: CatalogInventory) -> list[ExpectedDirectory]:
     return [
-        ExpectedDirectory(identifier, disk_path, plan(kind, inventory.groups) if acls else None)
-        for identifier, disk_path, kind in inventory.directories()
-        if kind is not DirectoryKind.COLLECTION
+        ExpectedDirectory(identifier, disk_path)
+        for identifier, disk_path in inventory.directories()
     ]
 
 
-def _collections(inventory: CatalogInventory, acls: bool) -> list[ExpectedCollection]:
-    collection_plan = plan(DirectoryKind.COLLECTION, inventory.groups) if acls else None
+def _collections(inventory: CatalogInventory) -> list[ExpectedCollection]:
     return [
         ExpectedCollection(
             identifier=c["identifier"],
             state=c["state"],
             created_at=c["created"],
             disk_path=c.get("path"),
-            plan=collection_plan,
             files=c.get("files", {}),
             sidecar=c.get("sidecar"),
         )

@@ -9,7 +9,6 @@ from fastapi import APIRouter
 from huron.applications.api.authorization import ActorDep
 from huron.applications.api.dependencies import LakeDep
 from huron.applications.api.routes.v1.schema.grants import (
-    EffectiveGroupsOut,
     GrantChangeOut,
     GrantSourceOut,
     GrantSourcesOut,
@@ -59,13 +58,6 @@ async def set_organization_grants(
         actor, organization, Role(role), body.ldap_groups
     )
     return GrantChangeOut.model_validate(change.as_dict())
-
-
-@router.get("/catalogs/{catalog}/grants")
-async def catalog_grants(catalog: str, actor: ActorDep, lake: LakeDep) -> EffectiveGroupsOut:
-    """Effective groups per role on the catalog, inherited ones included."""
-    groups = await lake.grants.catalog_groups(actor, catalog)
-    return EffectiveGroupsOut.model_validate(groups.as_dict())
 
 
 @router.get("/catalogs/{catalog}/grants/sources")

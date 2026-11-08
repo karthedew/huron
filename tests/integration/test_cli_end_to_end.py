@@ -2,12 +2,9 @@
 real directory standing in for the share, every role doing its part."""
 
 import asyncio
-import grp
 import io
 import json
-import os
 import socket
-import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -24,7 +21,8 @@ from huron.applications.cli.services import Services
 from huron.applications.cli.state import StateDir, Tokens
 from huron.core.metastore.postgres import PostgresStore
 from huron.core.security.broker import TokenIssuer
-from huron.core.storage.factory import storage_for
+from huron.core.storage import MARKER_FILE, Marker, render_marker
+from huron.core.storage.posix import PosixStorage
 from tests.fakes.groups import FakeGroups
 from tests.fakes.issuer import FakeIssuer
 from tests.fakes.prompter import ScriptedPrompter
@@ -37,7 +35,6 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skip(reason="rewritten by the dev-stack task"),
 ]
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "init-root.sh"
 
 
 class Stack:
@@ -76,25 +73,13 @@ class Stack:
             self.loop.call(asyncio.sleep(0.02))
         self.share = home / "share"
         self.share.mkdir()
-        group = grp.getgrgid(os.getgid()).gr_name
-        subprocess.run(
-            [
-                "bash",
-                str(SCRIPT),
-                str(self.share),
-                group,
-                f"http://127.0.0.1:{self.port}",
-                str(INSTANCE_ID),
-            ],
-            check=True,
-            capture_output=True,
-        )
+        marker = Marker(1, f"http://127.0.0.1:{self.port}", str(INSTANCE_ID))
+        (self.share / MARKER_FILE).write_bytes(render_marker(marker))
         self.config_path = home / "config.yaml"
         Config(
             api_url=f"http://127.0.0.1:{self.port}",
             issuer="https://idp.test",
             mount_prefix=str(self.share),
-            acl_backend="none",
         ).save(self.config_path)
         self.state = StateDir(home / "state")
         self.http = httpx.Client(timeout=10)
@@ -123,7 +108,7 @@ class Stack:
             sleep=lambda _: None,
             open_browser=lambda _: None,
             hostname="ws1",
-            storage_factory=lambda config: storage_for(config.acl_backend),
+            storage_factory=lambda config: PosixStorage(),
         )
         code = run(services, list(argv))
         assert code == expect, f"huron {' '.join(argv)} → {code}\n{err.getvalue()}"

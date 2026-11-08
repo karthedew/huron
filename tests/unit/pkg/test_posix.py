@@ -10,29 +10,6 @@ import pytest
 from huron.pkg.fs import posix
 
 
-def test_make_dir_creates_with_the_exact_mode(tmp_path: Path) -> None:
-    target = tmp_path / "d"
-    assert posix.make_dir(target, 0o2770) is True
-    assert stat.S_IMODE(os.lstat(target).st_mode) == 0o2770
-    assert posix.make_dir(target, 0o2770) is False
-
-
-def test_make_dir_fixes_the_mode_of_an_existing_directory(tmp_path: Path) -> None:
-    target = tmp_path / "d"
-    target.mkdir(mode=0o755)
-    assert posix.make_dir(target, 0o3770) is False
-    assert stat.S_IMODE(os.lstat(target).st_mode) == 0o3770
-
-
-def test_make_dir_refuses_files_and_symlinks(tmp_path: Path) -> None:
-    (tmp_path / "file").write_text("x")
-    (tmp_path / "real").mkdir()
-    (tmp_path / "link").symlink_to(tmp_path / "real")
-    for name in ("file", "link"):
-        with pytest.raises(NotADirectoryError):
-            posix.make_dir(tmp_path / name, 0o770)
-
-
 def test_atomic_write_replaces_through_the_given_part_file(tmp_path: Path) -> None:
     target = tmp_path / "metadata.json"
     (tmp_path / "metadata.json.part").write_bytes(b"stale")

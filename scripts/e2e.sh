@@ -73,7 +73,6 @@ export XDG_CONFIG_HOME="$work/config" XDG_STATE_HOME="$work/state"
 huron() { uv run huron "$@"; }
 huron config set api_url "$api"
 huron config set mount_prefix "$share"
-huron config set acl_backend none
 
 # The development users' password grant and token exchange (scripts/dev-login.sh).
 source "$root/scripts/dev-login.sh"

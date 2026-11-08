@@ -1,1 +1,1 @@
-"""Filesystem primitives: POSIX operations and POSIX ACLs."""
+"""Filesystem primitives: POSIX operations."""

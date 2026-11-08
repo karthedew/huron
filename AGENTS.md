@@ -8,19 +8,19 @@ file and the plan disagree, the plan wins and this file is corrected.
 
 ```text
 src/huron/
-  pkg/             generic code with no Huron vocabulary (errors, paging, hashing, fs, acl)
+  pkg/             generic code with no Huron vocabulary (errors, paging, hashing, fs)
   schema/          JSON Schema documents, validator, naming rules, schema composition
   core/
     security/      broker/ (OIDC exchange, Huron tokens) and rbac/ (roles, privileges, grants)
     lake/          the domain: one subpackage per area (organizations, catalogs, namespaces,
                    collections, files, schemas, audit)
     metastore/     PostgreSQL adapters and in-memory fakes, one subpackage per area
-    storage/       share layout, ACL plans, POSIX storage, drift check (used by the API and the CLI)
+    storage/       share layout, modes, POSIX storage, drift check (used by the API and the CLI)
   applications/
     api/           FastAPI service; routes/v1/{endpoints,schema}
     cli/           Typer CLI; commands/ holds one module per verb group
 migrations/        Alembic environment and versions
-tests/             unit/ contract/ integration/ acl/ fakes/ support/
+tests/             unit/ contract/ integration/ fakes/ support/
 web/               SvelteKit web app, a read-only client of the API (see Frontend: web/ below)
 docker/            seed/: the one-shot seed of the Docker application stack
 docker-compose.app.yml   the whole application in Docker (make app); docker-compose.yml is make up

@@ -19,15 +19,12 @@ import pytest
 from huron.applications.cli.errors import StorageFailure
 from huron.core.storage import (
     MARKER_FILE,
-    DirectoryKind,
-    EffectiveGroups,
+    ORGANIZATION_MODE,
     Marker,
-    plan,
     read_marker,
     render_marker,
 )
 from huron.core.storage.memory import MemoryStorage
-from huron.pkg.fs.acl import Acl
 from tests.support.api import INSTANCE_ID
 from tests.support.cli import API, Cli
 from tests.support.lake import PLATFORM_ADMIN
@@ -100,11 +97,6 @@ def org_marker(organization: str, instance: str = str(INSTANCE_ID)) -> bytes:
     return render_marker(Marker(1, API, instance, organization))
 
 
-def named(share: MemoryStorage, path: Path) -> dict[str, str]:
-    acl = share.nodes[path].acl
-    return {e.qualifier: e.perms for e in acl.access if e.tag == "group" and e.qualifier}
-
-
 def manage(
     cli: Cli,
     monkeypatch: pytest.MonkeyPatch,
@@ -128,11 +120,9 @@ def managed(
     lake = cli.runtime.lake
     cli.loop.call(lake.organizations.create(PLATFORM_ADMIN, "geo", "Geoscience", ""))
     cli.loop.call(lake.organizations.create(PLATFORM_ADMIN, "quiet", "Quiet", ""))
-    share.user = "alice"
     for root in (HELIO_ROOT, GEO_ROOT):
-        share.add_root(root, owner="alice")
-    platform = EffectiveGroups(platform_admin=("huron-platform-admins",))
-    share.ensure_directory(PREFIX / "quiet", plan(DirectoryKind.ORGANIZATION, platform))
+        share.add_root(root, uid=share.uid)
+    share.make_directory(PREFIX / "quiet", ORGANIZATION_MODE)
     share.calls.clear()
     cli.login_as("alice")
     return cli, manage(cli, monkeypatch)
@@ -143,8 +133,8 @@ def provisioned(managed: tuple[Cli, ManagedService], share: MemoryStorage) -> Cl
     """The declared organizations are provisioned; heliophysics.solar-wind is below the root."""
     cli, _ = managed
     cli.ok("adm", "provision-orgs")
-    make_directory(cli, "heliophysics", DirectoryKind.CATALOG, HELIO)
-    make_directory(cli, "heliophysics/solar-wind", DirectoryKind.NAMESPACE_WITH_COLLECTIONS, HELIO)
+    make_directory(cli, "heliophysics", HELIO)
+    make_directory(cli, "heliophysics/solar-wind", HELIO)
     return cli
 
 
@@ -154,14 +144,13 @@ def test_provision_orgs_prepares_every_declared_organization(
     cli, _ = managed
     done = cli.ok("adm", "provision-orgs")
     assert done.stdout.splitlines() == [
+        f"lake path: marker ok: {PREFIX / MARKER_FILE}",
         f"geo: created: {GEO}",
         f"geo: marker written: {GEO / MARKER_FILE}",
         f"helio: created: {HELIO}",
         f"helio: marker written: {HELIO / MARKER_FILE}",
     ]
-    assert share.nodes[HELIO].mode == 0o2771
-    assert named(share, HELIO) == {"huron-platform-admins": "rwx", "helio-org-admins": "rwx"}
-    assert named(share, GEO) == {"huron-platform-admins": "rwx"}
+    assert share.nodes[HELIO].mode == share.nodes[GEO].mode == ORGANIZATION_MODE
     assert read_marker(share, HELIO) == Marker(1, API, str(INSTANCE_ID), "helio")
     assert read_marker(share, GEO).organization == "geo"
     assert share.nodes[GEO / MARKER_FILE].mode == 0o644
@@ -187,6 +176,7 @@ def test_provision_orgs_dry_run_and_one_organization(
     assert refused.exit_code == 2 and "does not declare organization quiet" in refused.stderr
     rows = json.loads(cli.ok("-o", "json", "adm", "provision-orgs", "--org", "geo").stdout)
     assert rows == [
+        {"organization": "lake path", "step": f"marker ok: {PREFIX / MARKER_FILE}"},
         {"organization": "geo", "step": f"exists: {GEO}"},
         {"organization": "geo", "step": f"marker ok: {GEO / MARKER_FILE}"},
     ]
@@ -197,14 +187,13 @@ def test_provision_orgs_never_creates_a_root(
 ) -> None:
     cli = seeded_cli
     cli.loop.call(cli.runtime.lake.organizations.create(PLATFORM_ADMIN, "geo", "Geo", ""))
-    share.user = "alice"
-    share.add_root(HELIO_ROOT, owner="alice")
+    share.add_root(HELIO_ROOT, uid=share.uid)
     manage(cli, monkeypatch)
     cli.login_as("alice")
     result = cli.run("adm", "provision-orgs")
     assert result.exit_code == 8
     assert f"error: geo: the root {GEO_ROOT} of organization geo does not exist" in result.stderr
-    assert "the CLI could not prepare 1 of 2 organizations: geo" in result.stderr
+    assert "the CLI could not prepare 1 of 3 directories: geo" in result.stderr
     assert "--emit-script" in result.stderr
     assert share.exists(HELIO / MARKER_FILE) and not share.exists(GEO_ROOT)
 
@@ -213,12 +202,11 @@ def test_provision_orgs_refuses_a_marker_of_another_instance(
     managed: tuple[Cli, ManagedService], share: MemoryStorage
 ) -> None:
     cli, _ = managed
-    share.ensure_directory(HELIO, plan(DirectoryKind.CATALOG, EffectiveGroups()))
+    share.make_directory(HELIO, 0o2750)
     share.write_bytes(HELIO / MARKER_FILE, org_marker("helio", "other-instance"))
-    acl = share.nodes[HELIO].acl
     result = cli.run("adm", "provision-orgs")
     assert result.exit_code == 8 and "Huron does not overwrite it" in result.stderr
-    assert share.nodes[HELIO].acl == acl
+    assert share.nodes[HELIO].mode == 0o2750
     assert read_marker(share, HELIO).instance_id == "other-instance"
     assert read_marker(share, GEO).organization == "geo"
 
@@ -230,18 +218,32 @@ def test_provision_orgs_emits_a_script_without_touching_the_share(
     script = cli.ok("adm", "provision-orgs", "--emit-script").stdout
     assert script.startswith("#!/bin/sh\n")
     assert f"mkdir {HELIO}" in script and f"mkdir {GEO}" in script
-    assert f"setfacl --set-file=- {HELIO}" in script
+    assert f"chmod 2751 {HELIO}" in script
+    assert f"chmod 644 {PREFIX / MARKER_FILE}" in script
     assert f"chmod 644 {GEO / MARKER_FILE}" in script
     assert share.calls == []
-    cli.configure(acl_backend="none")
-    assert "setfacl" not in cli.ok("adm", "provision-orgs", "--emit-script").stdout
-    plain = cli.ok("adm", "provision-orgs").stdout
-    assert f"helio: created: {HELIO} (modes only, because `acl_backend` is `none`)" in plain
 
 
-def test_provision_orgs_with_nothing_declared(cli: Cli) -> None:
+def test_provision_orgs_with_nothing_declared_marks_the_lake_path(
+    cli: Cli, share: MemoryStorage
+) -> None:
     cli.login_as("alice")
-    assert "nothing to do" in cli.ok("adm", "provision-orgs").stdout
+    share.remove_file(PREFIX / MARKER_FILE)
+    done = cli.ok("adm", "provision-orgs").stdout
+    assert done == f"lake path: marker written: {PREFIX / MARKER_FILE}\n"
+    assert read_marker(share, PREFIX) == Marker(1, API, str(INSTANCE_ID))
+    assert cli.ok("adm", "provision-orgs").stdout.startswith("lake path: marker ok")
+
+
+def test_provision_orgs_refuses_a_lake_path_marker_of_an_organization(
+    cli: Cli, share: MemoryStorage
+) -> None:
+    cli.login_as("alice")
+    share.write_bytes(PREFIX / MARKER_FILE, org_marker("helio"))
+    result = cli.run("adm", "provision-orgs")
+    assert result.exit_code == 8
+    assert "error: lake path:" in result.stderr and "Huron does not overwrite it" in result.stderr
+    assert "the CLI could not prepare 1 of 1 directories: lake path" in result.stderr
 
 
 def test_verify_mounts_reports_every_organization(
@@ -285,7 +287,7 @@ def test_disk_reads_need_the_organization_marker(
     assert missing.value.exit_code == 8 and f"{HELIO}" in missing.value.message
     assert f"mounted on this machine (from nfs1:/export{HELIO_ROOT})" in str(missing.value.hint)
     assert "huron adm provision-orgs" in str(missing.value.hint)
-    share.ensure_directory(HELIO, plan(DirectoryKind.ORGANIZATION, EffectiveGroups()))
+    share.make_directory(HELIO, ORGANIZATION_MODE)
     share.write_bytes(HELIO / MARKER_FILE, org_marker("geo"))
     services, _, _ = cli.services()
     with pytest.raises(StorageFailure, match="names organization geo, not organization helio"):
@@ -332,14 +334,9 @@ def test_check_reports_organization_findings(
         return [(f["code"], f["identifier"]) for f in found]
 
     assert codes() == []
-    share.nodes[HELIO].acl = Acl()
-    assert codes("--catalog", "heliophysics") == [("org_acl_drift", "helio")]
-    cli.configure(acl_backend="none")
-    assert codes() == []
-    cli.configure(acl_backend="posix")
     share.remove_file(HELIO / MARKER_FILE)
     share.remove_directory(HELIO / "heliophysics" / "solar-wind")
-    assert codes() == [("org_marker_missing", "helio"), ("org_acl_drift", "helio")]
+    assert codes() == [("org_marker_missing", "helio")]
     share.write_bytes(GEO / MARKER_FILE, org_marker("helio"))
     mismatch = json.loads(cli.run("-o", "json", "adm", "check").stdout)
     assert {"code": "org_marker_mismatch", "detail": "wrong org"}.items() <= next(
@@ -348,32 +345,6 @@ def test_check_reports_organization_findings(
     share.remove_file(GEO / MARKER_FILE)
     share.remove_directory(GEO)
     assert ("org_dir_missing", "geo") in codes()
-
-
-def test_check_skips_acl_drift_of_organizations_whose_admins_are_hidden(
-    provisioned: Cli, share: MemoryStorage
-) -> None:
-    cli = provisioned
-    share.nodes[HELIO].acl = Acl()
-    cli.login_as("carol")
-    found = json.loads(cli.run("-o", "json", "adm", "check", "--catalog", "heliophysics").stdout)
-    assert [f["code"] for f in found] == []
-
-
-def test_check_fails_when_the_organization_admins_cannot_be_read(
-    provisioned: Cli, managed: tuple[Cli, ManagedService], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cli, service = managed
-    cli.login_as("alice")
-
-    def broken(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/v1/organizations/helio/grants":
-            raise httpx.ConnectError("connection refused", request=request)
-        return service(request)
-
-    monkeypatch.setattr(cli.router, "handle_request", broken)
-    failed = cli.run("adm", "check", "--catalog", "heliophysics")
-    assert failed.exit_code == 1 and "unreachable" in failed.stderr
 
 
 def test_get_orgs_shows_where_each_directory_is(managed: tuple[Cli, ManagedService]) -> None:
@@ -425,7 +396,7 @@ def test_deleting_an_organization_with_a_root_leaves_its_directory(
     cli = seeded_cli
     cli.loop.call(cli.runtime.lake.organizations.create(PLATFORM_ADMIN, "quiet", "Quiet", ""))
     manage(cli, monkeypatch, DECLARED, rooted={"quiet": GEO_ROOT})
-    share.add_root(GEO_ROOT / "quiet", owner="alice")
+    share.add_root(GEO_ROOT / "quiet", uid=share.uid)
     cli.login_as("alice")
     deleted = cli.ok("delete", "org", "quiet").stdout
     assert deleted.splitlines() == [

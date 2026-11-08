@@ -48,12 +48,6 @@ def test_check_needs_the_share(built: Cli) -> None:
     assert built.run("adm", "check").exit_code == 8
 
 
-def test_acl_backend_none_skips_acl_findings(built: Cli) -> None:
-    built.configure(acl_backend="none")
-    findings = json.loads(built.run("-o", "json", "adm", "check").stdout or "[]")
-    assert all(f["code"] != "acl_drift" for f in findings)
-
-
 def test_a_sidecar_with_integers_of_any_size_checks_fresh(
     built: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
