@@ -53,7 +53,7 @@ Do not change these parts of the dirty tree in this plan: `.agents/`, `.opencode
     rows of rule 1 for every port method that the repair uses.
 - Verification: `make gate`. No `startswith` assertion hides a path difference between adapters.
 - Dependencies: R1.
-- Status: pending
+- Status: complete (verification 2 of 3 passed, 2026-11-10)
 
 ### R3 One source for the repair failure contract
 
@@ -251,3 +251,45 @@ lines that the diff does not change. Line 170 has no trailing whitespace.
   The commit split must decide their parts.
 - R4: the commit split must also consider the `IMPLEMENTATION_PLAN.md` diff (481 insertions, 10 deletions).
   That diff holds the port table and the M11.5e escalation and resolution.
+
+### R2 (2026-11-10)
+
+No source file changed. The fix of `MemoryStorage.write_bytes` was already in the tree. The changes
+are in `tests/unit/storage/`.
+
+- Contract table (`test_containment.py`): 253 rows become 264. Before the change, the 253 rows
+  agreed with the table in section 3 of `IMPLEMENTATION_PLAN.md`, one for one (checked by a
+  script). The new rows are:
+  - `make_directory` and `make_inheriting_dir` with a directory at the name: `False`.
+  - `write_bytes` with a file at the name: `None`, P is a file, no part file.
+  - `set_mode` with a file at the name: `True`. `set_group` with a file at the name: `PENDING`,
+    `a/t: Operation not permitted`. Both again with no search permission on the parent: `EACCES`.
+  - `link` with a file at the name: the backup, which is a file. `link` with the source missing:
+    `SourceGone` at the source.
+  - `rename` with a file at the name: `None`, and the source is gone. `rename` with the source
+    missing: `ENOENT` at the source.
+- The old plan's table does not have these 11 rows. The old plan was not edited.
+- The table in section 3 of `IMPLEMENTATION_PLAN.md` is 11 rows behind the contract test, and the
+  owner decides if it is updated.
+- New test `test_each_part_of_a_combined_row_has_its_own_row`: a case in a combined row must also
+  have its own row.
+- Verification 3 cases, on both adapters: after `dir_at_part`, the lake is unchanged (the part
+  directory and its entry stay). After `part_and_dir`, the part file is gone and the name is a
+  directory.
+- `test_repair.py`: the partial assertions now compare the full `RepairFailure`. They were in
+  `test_a_link_above_the_steps_directory_fails_at_the_links_path`,
+  `test_a_directory_that_did_not_inherit_is_mode_drift` and the memory-only test of the rooted
+  base, `test_paths_are_relative_to_the_organizations_base`. That test was replaced by two tests
+  on both adapters: `test_a_made_directory_is_named_relative_to_the_organizations_base` (a made
+  catalog directory and a made collection directory) and
+  `test_a_failure_is_named_relative_to_the_organizations_base_and_changes_nothing`, where each
+  failure changes nothing. `Lake.frozen` compares the nodes and calls of `MemoryStorage`, and on
+  POSIX a snapshot of the lake and of the directory outside it.
+- The `match=` checks of storage errors in the tests on both adapters (`test_directories.py`,
+  `test_storage.py`, `test_placement.py`) and the `in message` check of `test_organizations.py`
+  now compare the exact message and context.
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `UV_OFFLINE=1 UV_NO_SYNC=1 make gate` | 0 | `2685 passed, 2 deselected, 1 warning in 144.82s`. Coverage 99.98% (9691 statements, 2 missed, `cli/identifiers.py` 76-77). radon prints nothing |
+| `UV_OFFLINE=1 UV_NO_SYNC=1 uv run pytest -m contract` | 0 | `59 passed, 2628 deselected, 1 warning in 25.29s` |
