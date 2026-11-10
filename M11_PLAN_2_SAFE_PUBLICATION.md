@@ -127,7 +127,7 @@ task D6) describes the manual procedure.
 - Verification: an independent run of the same commands gives the same answers. Remove the
   containers, the network and the temporary lake that this task made. Touch no other container.
 - Dependencies: plan 1.
-- Status: pending
+- Status: complete (verification 3 of 3 passed, 2026-11-10)
 
 ### S2 Values and schema
 
@@ -273,4 +273,359 @@ task D6) describes the manual procedure.
 
 ## S1 results
 
-Task S1 writes its results here.
+Run on 2026-11-10 with `tusproject/tusd:v2.10.1` (commit `388a27cb`) and `nginx:1.31.8`, both
+`--pull=never`. A verifier ran the drivers again and added probes the same day. OBSERVED means
+measured in one of these runs. REASONED means not measured. Times are in seconds. The scripts and
+logs existed at session time only, so this section holds the requests, flags and results.
+
+### Method
+
+- OBSERVED setup: bridge network `huron-s1-net`, no published port. The host reached each
+  container at its bridge address. Every container ran as `--user 1000:1000`, with a temporary
+  lake at `/lake`. A standard-library Python stub was the hook endpoint and the nginx auth server.
+  It listened on the bridge gateway (`172.23.0.1:18901` in this run, an address that depends on
+  the host). Base tusd command, to which each case adds the flags that it names:
+
+```text
+docker run -d --pull=never --name huron-s1-tusd --network huron-s1-net --user 1000:1000
+  -v <lake>:/lake tusproject/tusd:v2.10.1 -host=0.0.0.0 -port=1080 -base-path=/files/
+  -upload-dir=/lake/.tus-uploads -hooks-http=http://<gateway>:18901/hooks
+  -hooks-http-forward-headers=Authorization -hooks-http-timeout=2s -file-perms=0600 -dir-perms=0700
+  -hooks-enabled-events=pre-create,post-create,post-receive,pre-finish,post-finish,pre-terminate,post-terminate
+```
+
+- OBSERVED requests, each with `Tus-Resumable: 1.0.0` and `Authorization: Bearer <user>`: creation
+  `POST /files/` with `Upload-Length` and `Upload-Metadata: attempt <base64 UUID>`. Chunk
+  `PATCH /files/<id>` with `Upload-Offset` and `Content-Type: application/offset+octet-stream`.
+- OBSERVED hook answers, all HTTP 200: pre-create allow `{"ChangeFileInfo": {"ID": <attempt>}}`.
+  Refusal `{"RejectUpload": true, "HTTPResponse": {"StatusCode": N, "Header": {...}, "Body": ...}}`.
+  Pre-finish success `{"HTTPResponse": {"Header": {...}}}`. Pre-finish has no refusal field, so
+  its "refusal" is `HTTPResponse` with `StatusCode 422`. A failing hook answered 500 or late.
+
+### 1. Creation identity
+
+| Request (pre-create answers the fixed ID) | Result |
+| --- | --- |
+| POST, PATCH 1,000 of 4,000 bytes, same POST again | `201`, same `Location`. Data file 0 bytes, HEAD `Upload-Offset: 0`, PATCH at 1000 gets `409` |
+| Upload complete (post-finish fired), same POST again | `201`. Data file 0 bytes, HEAD `Upload-Offset: 0` |
+| Same POST during a running 3,000,000-byte PATCH | POST `201`. PATCH `204 Upload-Offset: 3000000`, pre-finish `Offset 3000000`. File holds 2,000,000 bytes |
+| Complete upload, hook refuses the repeat with 409 | `409`, our headers (`Location` too) and body. 4,000 bytes intact, `.info` `Size 4000` |
+| Two concurrent POSTs, hook serialized by one lock, allows when no `.info` | Both `201` in 4 of 5 rounds, `201` and `409` in 1 |
+
+- OBSERVED: a creation with an existing ID truncates the data file to 0 bytes, and tusd logs
+  `UploadCreated` again. It does this also while `<id>.lock` exists for a running PATCH. REASONED:
+  tusd writes `.info` again. Its content stayed the same in each run.
+- REASONED cause of the concurrent result: the serialization ends when the hook answers, and tusd
+  writes `.info` after that answer.
+- OBSERVED: hook allows and tusd cannot write (upload directory mode `0500`): `500`, nothing on
+  disk. tusd killed during the hook: closed connection, nothing on disk.
+- REASONED: a kill between the hook answer and the file creation was not provoked. tusd makes the
+  data file first, then `.info`. The result is nothing, a 0-byte data file only, or both.
+- REASONED: no tusd path makes a creation safely repeatable. Only a refusal is safe.
+- What the product must do (REASONED): the creation rule of Contradictions, 1. The row keeps each
+  issued ID, so cleanup removes an orphan by its database ID. The CLI first reads
+  `GET /api/v1/upload-attempts/{attempt_id}`. It resumes a `receiving` upload with HEAD and PATCH.
+  A 409 for a `receiving` row names the upload to resume. A 409 that names another state tells
+  the client to read the attempt and not to upload again. A 409 conflict for different fields is
+  an error that the CLI shows to the user. When HEAD shows a complete upload, the client reads the
+  attempt, and that read starts the API's own seal (Contradictions, 2). The seal never trusts the
+  hook's `Offset`.
+
+### 2. Zero bytes
+
+- OBSERVED: `POST /files/` with `Upload-Length: 0`. All hooks carry `Method POST`, `URI /files/`.
+  pre-create comes first. post-create and pre-finish start together, either one first (3 of 6
+  runs each). post-finish comes last. pre-finish success gives `201`, `Location` and its headers.
+  Pre-finish 422 gives `422`, our body and a `Location`, and post-finish still fires. A failing
+  pre-finish (500, 2 calls) gives `500` with no `Location` and no post-finish. In each case the
+  empty data file and `.info` exist. A later zero-length PATCH at 0 answers `204` with no hook.
+- What the product must do (REASONED): seal an empty upload like any other. The CLI finds a failed
+  empty creation through its `attempt_id`, because that 500 has no upload ID. Its read of the
+  attempt starts the API's own seal (Contradictions, 2).
+
+### 3. Extensions
+
+- OBSERVED: `OPTIONS /files/` gives `Tus-Extension: creation,creation-with-upload,termination,
+  concatenation,creation-defer-length`. No `expiration`. No response has `Upload-Expires`.
+- OBSERVED: by default GET of the finished upload (10 of 10 bytes) gives `200` with the 10 bytes.
+  GET of an upload at offset 0 of 10 gives `200` with an empty body. DELETE gives `204` and
+  removes the files of a finished upload and of an upload at offset 0. `-disable-concatenation`
+  answers `Upload-Concat` with `400` before any hook. `-disable-termination` and
+  `-disable-download` answer DELETE and GET with `405`, no hook.
+- OBSERVED: `-help` has no flag for deferred length or creation-with-upload. In the run with
+  default flags, pre-create sees `Upload.SizeIsDeferred: true` and `Upload-Defer-Length`, a body
+  as `Content-Length` above `"0"` with the offset content type, and concatenation as `IsPartial`,
+  `IsFinal`, `PartialUploads`. It allowed each one.
+- OBSERVED, default flags and a hook that refuses: a 400 pre-create refusal stopped deferred
+  length, partial uploads and creation-with-upload. The hook did not refuse the final
+  concatenation in that run. tusd answered `404 ERR_UPLOAD_NOT_FOUND` for the unknown parts, with
+  no hook call. `-disable-concatenation` stops a final concatenation with `400` before any hook.
+- What the product must do (REASONED): the three disable flags. Pre-create refuses
+  `SizeIsDeferred`, `IsPartial`, `IsFinal`, a non-zero `Content-Length` and the offset content
+  type. Cancel goes through the API, which removes the tusd files of each ID that the row issued.
+  Expiry is `upload_ttl`.
+
+### 4. The pre-finish hook
+
+- OBSERVED defaults (`-help`): `-hooks-http-timeout 15s`, `-hooks-http-retry 3`,
+  `-hooks-http-backoff 1s`, `-network-timeout 1m`, `-request-completion-timeout 10s`,
+  `-acquire-lock-timeout 20s`, `-filelock-holder-poll-interval 5s`.
+- OBSERVED requests: POST 2,000 bytes, PATCH 1,000 at 0, final PATCH 1,000 at 1000.
+
+| tusd flags | pre-finish behaviour | Client gets for the final PATCH |
+| --- | --- | --- |
+| `-hooks-http-timeout=3s` | answers after 1 s | 1 call, `204` |
+| `-hooks-http-timeout=3s` | answers after 5 s | 1 call, `500 context deadline exceeded` at 3.0 s |
+| `-hooks-http-timeout=3s` | 500 once, then 200 | 2 calls 1 s apart, `204` |
+| `-hooks-http-timeout=10s` | always 500 | calls at 0, 1, 2 s, `500 unexpected response code` |
+| `-hooks-http-retry=0,1,2,5` | always 500 | 1, 1, 2, 5 calls (N is the total of calls, at least 1, not the retries) |
+| `-hooks-http-timeout=2s` (item 5 run) | always 500 | 2 calls, `500 context deadline exceeded` at 2.0 s |
+| `-hooks-http-timeout=3s` | 200 with `StatusCode 422` | `422`, our body. post-finish fires, HEAD 2000 of 2000 |
+| `-network-timeout=2s -hooks-http-timeout=20s` | answers after 6 s | tusd logs `204`, client gets a closed connection at 6 s |
+
+- REASONED from the `2s` row: one `-hooks-http-timeout` covers all calls of one hook, retries
+  included. The third call was due at 2 s and did not start.
+- OBSERVED after each pre-finish that answered 500 to the end or timed out: HEAD gives offset 2000
+  of 2000 and post-finish does not fire. A repeated final PATCH gets `409 ERR_MISMATCHED_OFFSET`.
+  A 0-byte or 1-byte PATCH at 2000 gets `204 Upload-Offset: 2000`. None runs pre-finish again. A
+  422 still finishes the upload.
+- OBSERVED cause chain of a cancel: a HEAD asks for the upload's lock. The PATCH that holds it
+  notices at its next `-filelock-holder-poll-interval` tick (log `UploadInterrupted`). tusd cancels
+  the request context after `-request-completion-timeout`. A client that leaves starts the same
+  timeout (3 s cancel with `2s`). The poll and completion flags were varied in the table below.
+  REASONED from that table: the hook call is cancelled only when that timeout is shorter than the
+  hook's remaining time.
+
+| Flags (8 s hook unless named) | Event at 1 s | Result |
+| --- | --- | --- |
+| poll 5 s (default), completion `2s`, lock `2s` | HEAD | HEAD `500` at 3 s. Interrupted at 5 s, PATCH `500 context canceled` at 7 s, no post-finish |
+| poll `1s`, completion `2s`, lock `2s` | HEAD | HEAD `500` at 3 s. PATCH `500 context canceled` at 4 s |
+| poll `1s`, completion `20s`, lock `2s` | HEAD | HEAD `500` at 3 s. Hook completes at 8 s, PATCH `204`, post-finish fires |
+| completion `2s` | client leaves | Hook cancelled at 3 s, tusd logs `500`, no post-finish. Later HEAD 2000 of 2000 |
+| completion 10 s (default), 6 s hook, `-network-timeout=2s` | client leaves, HEAD at 1.5 s | Interrupted at 5 s, hook completes at 6 s, tusd logs `204`, post-finish fires |
+
+- What the product must do (REASONED): "the final PATCH timed out, resume later" works only when
+  the API seals on its own (item 5). The API's own seal acts only on rows in state `receiving`,
+  and only on the row's current ID. A 422 leaves a finished tusd upload, so a row that the hook
+  refused (`failed`, `cancelled`, `expired`) is never sealed. `-request-completion-timeout` is at
+  least the hook's wait. The hook is short (Contradictions, 4).
+
+### 5. A completed upload that is not sealed
+
+- OBSERVED, pre-finish always 500, and `docker kill` during a 4 s pre-finish: the data file holds
+  all 2,000 bytes. `.info` has `Size 2000`, `SizeIsDeferred false`, `Offset 0`. Nothing in `.info`
+  records the offset or a finish.
+- OBSERVED: after the kill `<id>.lock` holds `1`. A new tusd with the lock in place answers HEAD
+  `500` after `-acquire-lock-timeout=3s`. With the lock files removed before the start, HEAD gives
+  2000 of 2000, and a zero-length PATCH gives `204` with no hook. REASONED: `1` is the old
+  process ID, and the new tusd also runs as PID 1, so it cannot see that the lock is stale.
+- OBSERVED, a 1,000,000-byte PATCH in 100,000-byte pieces with a 4 s pre-finish, sampled every
+  0.25 s: `<id>.lock` exists from the first piece. pre-finish starts at 1.8 s. The data file
+  shows 1,000,000 bytes from the 2.0 s sample. The PATCH answers `204` at 5.8 s. The lock exists
+  until that answer and is gone after. REASONED: tusd calls pre-finish after the last byte. The
+  samples are rounded to 0.1 s, so the 1.8 s sample (900,000 bytes) can come before the hook start
+  at 1.80 s.
+- OBSERVED: so "size equals `.info` `Size`, not deferred" also matches a PATCH still in pre-finish.
+- What the product must do (REASONED): the detection rule of Contradictions, 2. The API reads the
+  files from the mount, with no tus request. Its own seal skips an upload while `<id>.lock` exists.
+  Stale locks are removed before tusd starts (the `clean-locks` step of `IMPLEMENTATION_PLAN.md`).
+  Sealing on demand is sufficient and simpler than a periodic scan. On NFS a writer crash or
+  out-of-order WRITE calls can show the full size with holes. The backstop is the server hash,
+  which the commit compares with the client's `sha256`.
+
+### 6. nginx `auth_request`
+
+- OBSERVED setup: nginx in front of tusd `-behind-proxy` with the disable flags. The auth location
+  calls the stub with `proxy_pass_request_body off`, `X-Original-Method` and `X-Original-URI`.
+- OBSERVED: `OPTIONS /files/` without a token reaches tusd through `@tus_options` with no auth
+  call. The auth stub gets the client's other headers and the two `X-Original-*` headers. Its
+  `Host` is `api` (the upstream name), not the client's `uploads.example`, and it gets no
+  `Content-Length`. On `/files/<id>` the owner gets HEAD `200`, PATCH `204`, DELETE and GET `405`
+  (tusd's answers). Another user gets `403`, no token `401`.
+- OBSERVED: a 64 MiB PATCH with a foreign token or none gets `403` or `401` before a body byte.
+  With the owner's token it gives `204 Upload-Offset: 67108864`. 66 MiB against
+  `client_max_body_size 65m` and a 2 MiB creation body against `1m` give `413`. Auth down: `500`.
+- OBSERVED: without `client_max_body_size 0` in `location = /_huron_auth`, a 2 MiB PATCH gets
+  `auth request unexpected status: 413` in the nginx log, and the client gets `500`. REASONED:
+  the auth subrequest keeps the request's body length, and 1 MiB is nginx's default
+  `client_max_body_size`. So each body over 1 MiB fails in the same way.
+- OBSERVED `Location` of a creating POST through nginx:
+
+| nginx forwarded headers | Client sends | `Location` authority |
+| --- | --- | --- |
+| tusd without `-behind-proxy` | `Host: uploads.example:8443` | `http://uploads.example:8443` |
+| same | `Host: uploads.example`, `X-Forwarded-Proto: https` | `http://uploads.example` |
+| Plan map, client value passed | `X-Forwarded-Host: evil.example`, proto `https` | `https://evil.example` |
+| `X-Forwarded-Host $host`, proto map `https` only | `Host: evil.example`, proto `https` | `https://evil.example` |
+| same | `Host: uploads.example:8443`, proto `https` | `https://uploads.example` (port lost) |
+| same | `Host: uploads.example`, proto `https, https` | `http://uploads.example` |
+
+- OBSERVED: `proxy_set_header Forwarded ""` clears `Forwarded`. `$host` comes from the client's
+  `Host` header, so it is not a fixed value. REASONED: for a creating POST the auth call checks the
+  token and the creation headers, not an owner. Pre-create decides.
+- What the product must do (REASONED): send a configured fixed public authority (host and port) in
+  `X-Forwarded-Host` and a configured fixed scheme in `X-Forwarded-Proto`. A fixed value with a
+  port was not measured. Second defence: the CLI builds the upload URL from its configured
+  `uploads_url` and the upload ID. It never uses the authority of `Location`.
+
+### 7. Where `.tus-uploads` and the object area live
+
+- OBSERVED in the code: `UPLOAD_DIR = ".tus-uploads"` is directly below the lake path, and
+  `OrganizationPlace.base` is the organization's root, with the directory at `base / name`
+  (`core/storage/layout.py`). `_places` (`applications/api/runtime.py`) sets `base` to the lake
+  path, or to the declared root relative to `lake_path`. ADR 0007: the directory is `<root>/<name>`,
+  and the example exports are organization directories (`/data1/huron/helio`). Placement links
+  from `.tus-uploads` into the collection (`core/storage/placement.py`).
+- OBSERVED (busybox `ln` in one container): a link inside one bind mount works. A link to a second
+  bind mount of the same host filesystem (same `st_dev`) fails with `Cross-device link`. A link to
+  a tmpfs fails too. A copy to the second mount, then a link inside it, works.
+- OBSERVED, lake at `/lake` and a second mount at `/lake/orgx` (same `st_dev`):
+  `ln /lake/.huron-objects/x /lake/orgx/coll/y` fails with `Cross-device link`.
+  `ln /lake/orgx/.huron-objects/x /lake/orgx/coll/y` works.
+- OBSERVED: pre-create can set `ChangeFileInfo.Storage.Path`. tusd writes the data file there and
+  makes the directory. `.info` stays in `-upload-dir`. REASONED: the lock file was not checked.
+- REASONED: `<base>/.huron-objects/` sits beside the organization directories. It works only when
+  each export is mounted at its root, which ADR 0007's exports are not.
+- What the product must do (REASONED): the object area of Contradictions, 3. The seal copies from
+  `.tus-uploads` into the organization's object area, and that copy may cross a filesystem. Equal
+  `st_dev` does not prove one mount, so the readiness probe makes a real hard link and removes it.
+  Free space is checked on the filesystem of `.tus-uploads` and of each object area.
+  `Storage.Path` is not needed.
+
+### Contradictions with the design
+
+1. Creation identity.
+   - Design: "The same `attempt_id` with the same fields gives the same upload."
+   - Evidence (item 1, OBSERVED): a second creation with an existing ID truncates the bytes, also
+     of a completed upload. With the hook serialized by one lock (a stand-in for the row lock), two
+     concurrent POSTs both got `201` in 4 of 5 rounds. REASONED: the lock ends when the hook
+     answers, before tusd writes `.info`. OBSERVED: a 409 refusal kept a completed upload intact.
+   - Corrected rule (REASONED): the same `attempt_id` with the same fields names the same attempt
+     row. The API never hands out an upload ID twice. Pre-create takes the attempt row lock and
+     applies the first case that matches:
+     1. No row for this `attempt_id`: make the row in `receiving`, issue a fresh UUID, and store
+        it as the row's current ID.
+     2. The row exists with different fields: refuse with 409 (conflict).
+     3. The row is in `receiving`, and its current ID has a `.info`: refuse with 409 and name the
+        ID. The client resumes it.
+     4. The row is in `receiving`, and its current ID has no `.info`: issue a fresh UUID and store
+        it as the row's current ID. The earlier ID is an orphan that cleanup removes by its ID.
+     5. The row is in `sealing`, `ready` or `consumed`: refuse with 409, the state and the current
+        upload ID. Issue nothing.
+     6. The row is in `failed`, `cancelled` or `expired`: refuse with 409 and the state. A new
+        upload needs a new `attempt_id`.
+   - Also (REASONED): the hooks, the nginx auth check, the API's own seal and the commit act only
+     on the row's current ID. An earlier issued ID is never sealed or published. A client whose ID
+     is no longer current gets a refusal and reads the attempt. The seal's own size measurement
+     and the commit's server-hash check stay as backstops.
+   - Evidence for the corrected rule (OBSERVED, verifier probe, tusd with
+     `-hooks-http-timeout=10s`, a stub that applies cases 1, 3 and 4 under one lock):
+     - Two concurrent creations, no delay inside the lock: two `201` with two distinct fresh IDs
+       in 9 of 10 rounds, `201` and `409` in 1 round. In each two-`201` round the row's current
+       ID was the later ID.
+     - Two concurrent creations, 0.3 s inside the lock: `201` and `409` in all 10 rounds. Each
+       `409` body named the ID of the `201`.
+     - A repeated POST after a 1,000-byte PATCH, during a running 3,000,000-byte PATCH and after a
+       complete 4,000-byte upload: `409` each time. The data files kept 1,000, 3,000,000 and
+       4,000 bytes. The running PATCH answered `204` with `Upload-Offset: 3000000`.
+     - So no ID was handed out twice, and no data file was truncated.
+   - REASONED: with a cached auth answer (`proxy_cache_valid 204 30s` in the nginx block of
+     `IMPLEMENTATION_PLAN.md`) a client can PATCH an orphan for a short time. That wastes work and
+     loses no data, because pre-finish and the seal act only on the current ID.
+2. How the API learns of a finish.
+   - Design: "When tusd finishes an upload, the API copies the bytes into a new file."
+   - Evidence (items 4, 5, OBSERVED): a failed, timed-out or cancelled pre-finish is never sent
+     again. A 422 still finishes the upload. A kill during pre-finish leaves a full file and no
+     finish record. `<id>.lock` exists for the whole final PATCH, pre-finish included.
+   - Corrected rule (REASONED): the API also seals a `receiving` upload whose tusd file is
+     complete: `.info` exists, not deferred, data size equal to `.info` `Size` and the declared
+     size, and no `<id>.lock`. It checks on demand, when the client reads the upload or the
+     attempt, or names it in a commit. A periodic scan is optional. One seal task for each upload
+     ID serves the hook and the API's own check. The seal acts only on the row's current ID. A row
+     in another state is never sealed. A commit that names an upload that is not `ready` gets 409
+     `UPLOAD_INELIGIBLE`, and the client reads the attempt before it sends the commit again. The
+     server hash checked at commit is the backstop for a file with holes.
+3. Where the object area sits.
+   - Design: "The object area must be on the same filesystem as the collection."
+   - Evidence (item 7, OBSERVED): a hard link fails across two mounts of one filesystem. With the
+     organization directory as its own mount, a link from `<base>/.huron-objects/` fails and a
+     link from `<base>/<org>/.huron-objects/` works. ADR 0007's exports are organization
+     directories.
+   - Corrected rule (REASONED): the object area is `<root>/<org>/.huron-objects/`, inside the
+     organization directory and its mount, mode 0700, a reserved name that walks and `adm check`
+     skip. The readiness probe makes a real link from the object area into each organization
+     directory.
+4. Rules kept from `IMPLEMENTATION_PLAN.md` and ADR 0008.
+   - Design: sections 3 to 9 stay. They include a pre-finish that hashes the file and waits up to
+     55 minutes, `-hooks-http-retry=3`, an nginx block with no `client_max_body_size 0` in
+     `/_huron_auth` and a client-chosen `X-Forwarded-Host`, and `pre-terminate` as a hook event.
+   - Evidence (items 3, 4, 6, OBSERVED): a HEAD (noticed at the holder poll, default 5 s) or a
+     disconnect cancelled the hook when `-request-completion-timeout` (default 10 s) was shorter
+     than the remaining hook time. It did not cancel the hook when that timeout was longer. A
+     `-network-timeout` below the hook time drops the answer.
+     `-hooks-http-retry=3` gives three calls in total. A 2 MiB PATCH got `500` without
+     `client_max_body_size 0` in the auth location. The client's `X-Forwarded-Host` or `Host`
+     sets the `Location` authority. REASONED: each body over 1 MiB fails in the same way, because
+     1 MiB is nginx's default `client_max_body_size`.
+   - Corrected rule (REASONED): the seal task does not depend on the hook request. Pre-finish
+     starts or joins the seal task. It answers with the receipt if the seal is done within a short
+     wait, otherwise at once with `Huron-Upload-State: sealing`. The client polls the API. The
+     API's on-demand seal recovers every case where the hook failed, timed out, or tusd died. The
+     short hook does NOT remove the need for the API to seal on its own. Also: `-hooks-http-retry=3`
+     means three calls, use the nginx block below, add `-disable-termination`, and remove
+     `pre-terminate` from `-hooks-enabled-events`.
+
+### Recommended tusd flags
+
+```text
+-host=127.0.0.1 -port=1081 -base-path=/files/ -upload-dir=${HURON_LAKE_PATH}/.tus-uploads
+-behind-proxy -disable-download -disable-termination -disable-concatenation
+-max-size=<max_upload_bytes> -file-perms=0600 -dir-perms=0700
+-hooks-http=http://<api>/api/v1/uploads/hooks -hooks-http-forward-headers=Authorization
+-hooks-enabled-events=pre-create,pre-finish
+-hooks-http-timeout=60s -hooks-http-retry=3 -hooks-http-backoff=1s
+-request-completion-timeout=60s -network-timeout=2m
+```
+
+- OBSERVED: the behaviour of the disable flags, `-behind-proxy` and the retry count (items 3, 4, 6).
+- REASONED, not measured: `-port=1081` (from `IMPLEMENTATION_PLAN.md`), `-hooks-http-timeout=60s`,
+  `-request-completion-timeout=60s`, `-network-timeout=2m`, `-max-size`, a 20 s short-hook wait.
+- REASONED constraints: `-hooks-http-timeout` above the hook's wait (one timeout covers all
+  calls). `-request-completion-timeout` at least the hook's wait, and equal to
+  `-hooks-http-timeout` to cover the retries. `-network-timeout` above `-hooks-http-timeout`.
+- REASONED: the flags enable no `post-receive`. The API records the activity of a chunk for
+  `upload_ttl` when the auth check allows a PATCH. A cached auth answer delays that record by at
+  most the cache time.
+
+### Recommended nginx configuration
+
+```nginx
+proxy_set_header Host $http_host;
+proxy_set_header X-Forwarded-Host "<public host>:<public port>";   # configured, fixed
+proxy_set_header X-Forwarded-Proto "https";                        # configured, fixed
+proxy_set_header Forwarded "";
+location = /files/ { auth_request /_huron_auth; client_max_body_size 1m; proxy_request_buffering off; ... }
+location /files/   { auth_request /_huron_auth; client_max_body_size 65m; proxy_request_buffering off;
+                     proxy_buffering off; proxy_read_timeout 120s; ... }
+location = /_huron_auth { internal; client_max_body_size 0; proxy_pass_request_body off;
+    proxy_set_header Content-Length ""; proxy_set_header X-Original-Method $request_method;
+    proxy_set_header X-Original-URI $request_uri; ... }
+```
+
+- OBSERVED: OPTIONS on `@tus_options` without `auth_request`, the body limits, the auth location
+  lines and `Forwarded ""` (item 6).
+- REASONED, not measured: the fixed forwarded values and `proxy_read_timeout 120s`. The read
+  timeout must exceed the short hook's wait plus the write of one chunk.
+- REASONED: `...` keeps the other lines of the nginx block of `IMPLEMENTATION_PLAN.md`: the
+  OPTIONS rule to `@tus_options` in both `/files/` locations, `proxy_pass`, and the auth cache.
+- REASONED: two values in `location /files/` differ on purpose from the nginx block of
+  `IMPLEMENTATION_PLAN.md`. `client_max_body_size 65m` replaces `0`, and
+  `proxy_read_timeout 120s` replaces `3600s`. Plan 4 tasks D2 and D3 apply these values on
+  purpose. A client chunk must be at most 64 MiB, the largest PATCH that passed.
+
+### Cleanup
+
+- OBSERVED before (09:22): 23 containers (among them `huron-m11-production-a1` and
+  `huron-p00-20261110t045227-pg`, both Exited), 8 networks, 20 volumes.
+- OBSERVED after: the same names and states. Only the "Exited … ago" text differs. No
+  `huron-s1-*` resource, stub or temporary lake is left. The verifier's run ended the same way.
