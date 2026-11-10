@@ -222,7 +222,7 @@ async def test_a_lake_the_api_cannot_write_is_unavailable(
     storage.denied.add(LakePath())
     with pytest.raises(LakeUnavailable, match="cannot write the lake") as raised:
         await disk.open()
-    assert raised.value.context["path"] == ""
+    assert raised.value.context["path"] == ".tus-uploads"
 
 
 async def test_a_link_at_the_upload_directory_is_refused_as_a_link(

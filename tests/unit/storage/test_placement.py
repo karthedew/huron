@@ -16,14 +16,16 @@ from huron.core.storage import (
     LakePath,
     Linked,
     Measured,
+    Outcome,
     Placer,
     SourceGone,
     Storage,
     StorageError,
+    SymlinkInLake,
 )
 from huron.core.storage.memory import MemoryStorage
 from huron.core.storage.posix import PosixStorage
-from tests.support.disk import memory_lake
+from tests.support.disk import memory_lake, plant_symlink
 
 UPLOAD_ID = uuid.UUID("0192b6a0-0000-7000-8000-0000000000aa")
 DATA = b"solar wind"
@@ -160,10 +162,12 @@ def test_link_without_tusds_info_file_still_succeeds(storage: Storage) -> None:
 
 def test_link_never_makes_the_collection_directory(storage: Storage) -> None:
     storage.remove_directory(COLLECTION)
-    with pytest.raises(CollectionDirectoryMissing, match="huron adm repair") as raised:
+    with pytest.raises(CollectionDirectoryMissing) as raised:
         link(storage, COLLECTION.joinpath("a", "c.bin"))
-    assert (raised.value.code, raised.value.context) == (
+    assert (raised.value.code, raised.value.message, raised.value.context) == (
         "STORAGE_FAILED",
+        f"the collection directory {COLLECTION} does not exist. To make the directory again,"
+        " run huron adm repair for the collection",
         {"path": str(COLLECTION)},
     )
     assert storage.stat(COLLECTION) is None
@@ -173,9 +177,13 @@ def test_link_never_makes_the_collection_directory(storage: Storage) -> None:
 def test_link_refuses_a_collection_that_is_a_file(storage: Storage) -> None:
     storage.remove_directory(COLLECTION)
     storage.write_bytes(COLLECTION, b"", 0o644)
-    with pytest.raises(StorageError, match="is not a directory") as raised:
+    with pytest.raises(StorageError) as raised:
         link(storage)
-    assert raised.value.code == "STORAGE_FAILED"
+    assert (raised.value.code, raised.value.message, raised.value.context) == (
+        "STORAGE_FAILED",
+        f"{COLLECTION} is not a directory",
+        {"path": str(COLLECTION)},
+    )
     assert storage.stat(SOURCE) is not None
 
 
@@ -209,6 +217,68 @@ def test_link_of_a_replaced_source_links_nothing_and_prunes(storage: Storage) ->
     assert storage.stat(COLLECTION.joinpath("a")) is None
     assert storage.stat(SOURCE) is not None
     assert storage.is_empty(COLLECTION)
+
+
+def test_link_of_a_source_that_is_a_link_fails_and_prunes(storage: Storage) -> None:
+    measured = inode(storage, SOURCE)
+    storage.remove_file(SOURCE)
+    plant_symlink(storage, SOURCE)
+    with pytest.raises(SymlinkInLake) as raised:
+        link(storage, COLLECTION.joinpath("a", "b", "c.bin"), measured)
+    assert raised.value.context == {"path": str(SOURCE)}
+    assert storage.stat(COLLECTION.joinpath("a")) is None
+    assert storage.is_empty(COLLECTION)
+
+
+def test_link_without_the_upload_directory_fails_and_prunes(storage: Storage) -> None:
+    measured = inode(storage, SOURCE)
+    storage.remove_file(SOURCE)
+    storage.remove_file(INFO)
+    storage.remove_directory(UPLOADS)
+    with pytest.raises(StorageError) as raised:
+        link(storage, COLLECTION.joinpath("a", "c.bin"), measured)
+    assert (raised.value.code, raised.value.message) == (
+        "STORAGE_FAILED",
+        f"{SOURCE} does not exist",
+    )
+    assert storage.is_empty(COLLECTION)
+
+
+def test_a_directory_that_fails_after_another_was_made_prunes_the_made_one(
+    storage: Storage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = storage.make_inheriting_dir
+
+    def second_fails(location: LakePath) -> bool:
+        if location.name == "b":
+            raise StorageError(f"{location}: Input/output error", {"path": str(location)})
+        return real(location)
+
+    monkeypatch.setattr(storage, "make_inheriting_dir", second_fails)
+    with pytest.raises(StorageError) as raised:
+        link(storage, COLLECTION.joinpath("a", "b", "c.bin"))
+    failed = str(COLLECTION.joinpath("a", "b"))
+    assert (raised.value.message, raised.value.context) == (
+        f"{failed}: Input/output error",
+        {"path": failed},
+    )
+    assert storage.is_empty(COLLECTION)
+    assert storage.stat(SOURCE) is not None
+
+
+def test_a_failed_prune_keeps_the_error_of_the_link(
+    storage: Storage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    measured = inode(storage, SOURCE)
+    storage.remove_file(SOURCE)
+
+    def refuse(location: LakePath) -> Outcome:
+        raise StorageError(f"permission denied on {location}", {"path": str(location)})
+
+    monkeypatch.setattr(storage, "remove_directory", refuse)
+    with pytest.raises(SourceGone):
+        link(storage, COLLECTION.joinpath("a", "c.bin"), measured)
+    assert storage.stat(COLLECTION.joinpath("a")) is not None
 
 
 def test_undo_removes_the_placed_file_and_the_directories_link_made(storage: Storage) -> None:

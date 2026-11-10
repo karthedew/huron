@@ -1,9 +1,13 @@
-"""Shared pytest configuration: no service configuration from the shell, logging restored after
-each test, the test database, the event loop's clock and its error reports."""
+"""Shared pytest configuration: no service configuration from the shell, a fixed umask, logging
+restored after each test, the test database, the event loop's clock, its error reports and modes
+restored."""
 
 import asyncio
 import logging
-from collections.abc import Iterator
+import os
+import stat
+from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 import structlog
@@ -21,6 +25,14 @@ def isolated_service_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     """No configuration file or organization list from the shell; a test sets its own."""
     for name in SERVICE_CONFIGURATION:
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def fixed_umask() -> Iterator[None]:
+    """Umask ``022`` for each test, as the API sets at start (``SERVICE_UMASK``); restored after."""
+    previous = os.umask(0o022)
+    yield
+    os.umask(previous)
 
 
 @pytest.fixture(autouse=True)
@@ -67,3 +79,17 @@ async def loop_errors() -> list[dict[str, object]]:
     reported: list[dict[str, object]] = []
     asyncio.get_running_loop().set_exception_handler(lambda _, context: reported.append(context))
     return reported
+
+
+@pytest.fixture
+def temporary_mode() -> Iterator[Callable[[Path, int], None]]:
+    """``chmod`` for real entries; each gets its mode back at teardown, so cleanup can remove it."""
+    changed: list[tuple[Path, int]] = []
+
+    def change(path: Path, mode: int) -> None:
+        changed.append((path, stat.S_IMODE(os.lstat(path).st_mode)))
+        os.chmod(path, mode)
+
+    yield change
+    for path, mode in reversed(changed):
+        os.chmod(path, mode)

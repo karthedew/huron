@@ -1,9 +1,14 @@
 """The lake's disk over a lake, lakes that stall or pause, and the link planting of tests."""
 
+import errno
+import os
 import stat
 import threading
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from huron.applications.api.disk import PROBE_TIMEOUT, LakeDisk
 from huron.core.storage import MARKER_FILE, LakePath, OpenFile, OrganizationPlace, Storage
@@ -25,6 +30,83 @@ SERVICE_GID = 1000
 OUTSIDE = "/outside"
 
 type Snapshot = list[tuple[str, int, bytes]]
+
+#: Primary operations paired with the cleanup failures that can follow them.
+WRITE_CLEANUP_FAILURES = [
+    (operation, cleanup)
+    for operation in ("fchmod", "write", "fsync")
+    for cleanup in (("close",), ("stat",), ("unlink",), ("close", "stat"), ("close", "unlink"))
+] + [
+    (operation, (cleanup,))
+    for operation in ("open", "close", "rename")
+    for cleanup in ("stat", "unlink")
+    if operation != "open" or cleanup == "stat"
+]
+
+
+def fail_file_io(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    name: str,
+    number: int | BaseException,
+    *,
+    after: int = 0,
+) -> BaseException:
+    """Raise and return one error on the named file, after the given matching calls."""
+    real = getattr(os, operation)
+    error = (
+        OSError(number, os.strerror(number), "/untrusted/elsewhere")
+        if isinstance(number, int)
+        else number
+    )
+
+    def failing(path: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal after
+        actual = os.readlink(f"/proc/self/fd/{path}") if isinstance(path, int) else str(path)
+        if Path(actual).name == name:
+            if after == 0:
+                after = -1
+                if operation == "close":
+                    real(path, *args, **kwargs)
+                raise error
+            after -= 1
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, operation, failing)
+    return error
+
+
+def fail_write_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    part: str,
+    operation: str,
+    cleanup: tuple[str, ...],
+    number: int,
+    secondary_number: int = errno.EIO,
+) -> tuple[BaseException, ...]:
+    """Fail a write operation and its cleanup, retaining the exact injected exceptions."""
+    primary = fail_file_io(monkeypatch, operation, part, number)
+    secondary = tuple(
+        fail_file_io(
+            monkeypatch, action, part, secondary_number, after=2 if action == "stat" else 0
+        )
+        for action in cleanup
+    )
+    return primary, *secondary
+
+
+def exception_chain(error: BaseException) -> tuple[BaseException, ...]:
+    """The explicit causes of a public exception, including the exception itself."""
+    chain = [error]
+    while error.__cause__ is not None:
+        error = error.__cause__
+        chain.append(error)
+    return tuple(chain)
+
+
+def cleanup_notes(error: BaseException) -> list[str]:
+    """All secondary diagnostics retained on a public exception and its explicit causes."""
+    return [note for cause in exception_chain(error) for note in getattr(cause, "__notes__", [])]
 
 
 def memory_lake() -> MemoryStorage:

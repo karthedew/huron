@@ -112,10 +112,11 @@ def test_any_other_entry_is_refused(lake: Lake, entry: str) -> None:
         lake.storage.write_bytes(NAMESPACE.joinpath("x.bin"), b"x", FILE_MODE)
     else:
         lake.storage.write_bytes(NAMESPACE, b"x", FILE_MODE)
-    with pytest.raises(StorageError, match="exists and is not an empty directory") as refused:
+    with pytest.raises(StorageError) as refused:
         lake.writer.make(PLACE, NAMESPACE)
-    assert (refused.value.code, refused.value.context) == (
+    assert (refused.value.code, refused.value.message, refused.value.context) == (
         "STORAGE_FAILED",
+        "helio/heliophysics/solar-wind exists and is not an empty directory",
         {"path": "helio/heliophysics/solar-wind"},
     )
 
@@ -125,16 +126,24 @@ def test_a_link_is_refused_and_stays(lake: Lake) -> None:
     with pytest.raises(StorageError) as refused:
         lake.writer.make(PLACE, NAMESPACE)
     assert (refused.value.code, refused.value.status) == ("SYMLINK_IN_LAKE", 409)
-    with pytest.raises(StorageError, match="symbolic link"):
+    with pytest.raises(StorageError) as refused:
         lake.writer.make(PLACE, NAMESPACE.joinpath("inner"))
+    assert (refused.value.message, refused.value.context) == (
+        f"{NAMESPACE} is a symbolic link. The lake must not contain symbolic links. Remove it.",
+        {"path": str(NAMESPACE)},
+    )
     assert lake.unchanged()
 
 
 def test_a_directory_that_does_not_inherit_is_refused_and_removed(lake: Lake) -> None:
     lake.storage.make_directory(NAMESPACE, 0o750)
-    with pytest.raises(InheritanceFailed, match="did not inherit the setgid bit") as refused:
+    with pytest.raises(InheritanceFailed) as refused:
         lake.writer.make(PLACE, COLLECTION)
     assert (refused.value.code, refused.value.status) == ("STORAGE_FAILED", 500)
+    gid = found(lake.storage, NAMESPACE).gid
+    assert refused.value.message == (
+        f"{COLLECTION}: the directory did not inherit the setgid bit and the group {gid}"
+    )
     assert refused.value.context == {"path": str(COLLECTION)}
     assert lake.storage.stat(COLLECTION) is None
 
@@ -188,9 +197,14 @@ def test_metadata_is_written_when_its_bytes_change(lake: Lake) -> None:
 
 def test_metadata_that_is_not_a_file_is_refused(lake: Lake) -> None:
     lake.storage.make_inheriting_dir(CATALOG.joinpath("metadata.json"))
-    with pytest.raises(StorageError, match="Is a directory") as refused:
+    with pytest.raises(StorageError) as refused:
         lake.writer.write_metadata(CATALOG, b"{}\n")
-    assert refused.value.code == "STORAGE_FAILED"
+    metadata = str(CATALOG.joinpath("metadata.json"))
+    assert (refused.value.code, refused.value.message, refused.value.context) == (
+        "STORAGE_FAILED",
+        f"{metadata}: Is a directory",
+        {"path": metadata},
+    )
 
 
 def test_remove_reports_what_it_did(lake: Lake) -> None:

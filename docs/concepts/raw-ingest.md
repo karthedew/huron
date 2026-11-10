@@ -39,7 +39,7 @@ Some names belong to Huron: `metadata.json` at
 the top of the collection, any segment that starts with `.huron`, and any segment that ends with
 `.huron-part`. You cannot stage a file with one of these names.
 
-A relative path has at most 1,024 UTF-8 bytes, with at most 255 bytes in each segment. It uses `/`
+A relative path has at most 1,024 UTF-8 bytes, with at most 206 bytes in each segment. It uses `/`
 between segments and has no leading or trailing `/`. Huron refuses empty segments, `.` and `..`,
 backslashes and control characters. Unicode names must use NFC normalization, a standard form for
 equivalent characters.
@@ -79,8 +79,8 @@ tells how to mark the mount prefix.
    before the service reserves the name.
 2. The service reserves the name. The collection is a draft at version 1.
 3. The CLI asks for the metadata, or it reads `--metadata file.json`.
-4. The CLI creates the directory of the collection in the directory of its namespace. The directory
-   gets mode 2770 and the ACL plan of a collection.
+4. The API creates the directory of the collection in the directory of its namespace. The directory
+   gets mode `2750` and inherits its parent's group.
 5. The service activates the collection. The request carries the version of the collection.
 6. The CLI gets the `metadata.json` document from the service and writes it into the directory.
 7. The CLI records a working copy and selects it as the current collection.
@@ -93,14 +93,9 @@ Creating the directory and activating the record are separate operations. If act
 the draft can have a directory left by the CLI. Check the error and correct its cause. Then use
 `huron activate collection <identifier>` to continue with the reserved collection.
 
-The ACL plan of a collection comes from the groups of the catalog. The CLI reads them from the
-service and calculates the plan itself. Readers get `r-x`. Contributors, catalog admins,
-organization admins and platform admins get `rwx`. Others get no access. The directory also gets
-the same entries as its default ACL, so new files and directories inside it inherit them. With
-`acl_backend: none`, the CLI applies the mode only.
-
-The CLI creates the directory as the user who runs the command. Thus that user owns the
-directory. Only the owner of a directory can change its ACL.
+The service user owns the collection directory. The directory inherits its group through setgid,
+not through ACLs or API grants. Clients mount the share read-only.
+See [Directory modes and share groups](access-and-roles.md#directory-modes-and-share-groups) for the access rules.
 
 ## The working copy and the stage
 
@@ -283,7 +278,7 @@ document of the service.
 ## Drift detection
 
 `huron adm check` compares what the service records with what the share holds. It first checks the
-directory and the marker of each organization. With `acl_backend: posix`, it also checks the ACL.
+directory and the marker of each organization. It does not check ACLs: Huron uses none.
 Then it checks each catalog that you can read, or only the catalog of `--catalog`. It skips the
 catalogs of an organization when its own directory or marker is missing or wrong. These findings
 concern raw ingest:
@@ -295,36 +290,32 @@ concern raw ingest:
 | `file_unrecorded` | A file in the directory of a collection that no commit records. |
 | `stale_part` | A `.huron-part` file older than one hour. |
 | `sidecar_stale` | `metadata.json` is missing or does not agree with the service. |
-| `acl_drift` | The ACL of a directory does not agree with its plan. |
 
 Without `--hash`, the check compares only the size of each file. Thus it does not find a change
 that keeps the size. `huron adm check --hash` reads each file and calculates its hash. The command
 exits with code 1 when it has findings.
 
-`huron adm apply-acl <identifier>` applies the ACL plan to the directory of a catalog, a namespace
-or a collection again. With `--recursive`, it also applies the plans of the directories below it.
-It skips each directory that you do not own or that does not exist. It prints each skipped
-directory, and then it exits with code 1. The CLI calculates the plans from the current groups of
-the catalog. Thus a change to the groups needs the owners to run `huron adm apply-acl`.
+The check does not repair directories. API grants and the catalog's filesystem share group are separate.
+A grant change does not change directory permissions. The API repair endpoints use database rows to plan directory work, not a filesystem scan.
+Missing setgid bits or wrong groups below a catalog need the storage administrator.
+The current CLI has no `adm repair`, `adm provision-catalogs` or `adm apply-acl` command.
+See [Grant changes and directory repair](access-and-roles.md#grant-changes-and-directory-repair) before requesting repair.
 
 [Reading huron adm check](../operator.md#reading-huron-adm-check) tells what to do for each
 finding.
 
 ## The trust model
 
-Huron contains and detects mistakes. It does not prevent all of them. A contributor can write
-into the directory of a collection with NFS, without the CLI. The ACL plans limit where that is
-possible. Organization, catalog and namespace directories are writable only by admins. A namespace
-that allows collections also gives contributors write access, and it has the sticky bit. The
-directory of a collection gives write access to the contributors of its catalog.
+Huron contains and detects mistakes. It does not prevent all of them. Clients mount the share read-only,
+and API privileges control writes through Huron. Directory modes and share groups control filesystem reads.
+AUTH_SYS trusts client user IDs, so these permissions do not protect against root on an authorized client.
 
 The service never reads the share. It trusts the size and the hash that the CLI reports in each
 commit. After the commit, `huron adm check` finds a changed file when its size changed. Only
 `huron adm check --hash` compares the contents.
 
-Only the owner of a directory can change its ACL. Thus the CLI cannot change the ACL of a
-directory that another user owns. `huron adm check` reports that drift, and the owner runs
-`huron adm apply-acl`.
+Huron uses no ACLs. Directory modes and share groups control filesystem read access independently of API grants.
+The CLI reports drift but does not change those directory permissions.
 
 ## Related pages
 
@@ -332,10 +323,9 @@ directory that another user owns. `huron adm check` reports that drift, and the 
 - [Glossary](../user-guide.md#glossary): the Huron terms on this page.
 - [`huron push`](/docs/reference/cli/push/), [`huron add`](/docs/reference/cli/add/),
   [`huron rm`](/docs/reference/cli/rm/) and [`huron pull`](/docs/reference/cli/pull/).
-- [`huron adm check`](/docs/reference/cli/adm/#huron-adm-check) and
-  [`huron adm apply-acl`](/docs/reference/cli/adm/#huron-adm-apply-acl).
+- [`huron adm check`](/docs/reference/cli/adm/#huron-adm-check): report drift without changing the share.
 - [Reading huron adm check](../operator.md#reading-huron-adm-check): what to do for each finding.
 - [API error codes](../api-errors.md): `BASE_VERSION_CONFLICT`, `COMMIT_INVALID` and others.
 - [How Huron works](how-huron-works.md): the parts of Huron and the collection lifecycle.
-- [How roles become directory ACLs](access-and-roles.md#how-roles-become-directory-acls): the
+- [Directory modes and share groups](access-and-roles.md#directory-modes-and-share-groups): the
   permissions of each directory.

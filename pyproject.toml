@@ -175,6 +175,7 @@ source_modules = [
     "huron.core.lake.schemas.models",
     "huron.core.lake.audit.models",
     "huron.core.lake.uploads.models",
+    "huron.core.lake.repairs.models",
 ]
 forbidden_modules = [
     "huron.core.lake.organizations.operations",
@@ -185,6 +186,7 @@ forbidden_modules = [
     "huron.core.lake.schemas.registry",
     "huron.core.lake.schemas.completeness",
     "huron.core.lake.uploads.operations",
+    "huron.core.lake.repairs.operations",
 ]
 
 [[tool.importlinter.contracts]]

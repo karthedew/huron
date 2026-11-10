@@ -1,15 +1,20 @@
 """Segment, identifier and relative-path rules."""
 
 import unicodedata
+import uuid
 
 import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from huron.schema.naming import (
+    LAKE_NAME_MAX_BYTES,
+    PART_SUFFIX,
+    REL_PATH_SEGMENT_MAX_BYTES,
     Identifier,
     NamingError,
     RelPathError,
+    check_lake_name,
     check_rel_path,
     check_segment,
     collection_identifier,
@@ -103,6 +108,7 @@ def test_valid_relative_paths_are_accepted(parts: list[str]) -> None:
         ("", "rel_path_length"),
         ("a" * 1025, "rel_path_length"),
         ("a/" + "b" * 256, "rel_path_segment"),
+        ("a/" + "b" * 207, "rel_path_segment"),
         ("bad\x00name", "rel_path_control"),
         ("back\\slash", "rel_path_control"),
         ("/abs", "rel_path_separator"),
@@ -121,6 +127,15 @@ def test_invalid_relative_paths_name_the_broken_rule(value: str, rule: str) -> N
     with pytest.raises(RelPathError) as raised:
         check_rel_path(value)
     assert raised.value.rule == rule
+
+
+def test_a_segment_leaves_room_for_the_part_and_backup_names() -> None:
+    longest = "é" * 103
+    assert len(longest.encode()) == REL_PATH_SEGMENT_MAX_BYTES == 206
+    assert check_rel_path(f"a/{longest}") == f"a/{longest}"
+    part = f".{longest}.{uuid.uuid4()}{PART_SUFFIX}"
+    assert len(part.encode()) == LAKE_NAME_MAX_BYTES
+    assert check_lake_name(part) == part
 
 
 def test_metadata_json_below_the_root_is_an_ordinary_file() -> None:

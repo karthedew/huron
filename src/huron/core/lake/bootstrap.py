@@ -16,6 +16,7 @@ from huron.core.lake.organizations.declarations import UNMANAGED, Declarations
 from huron.core.lake.organizations.grants import GrantAdministration
 from huron.core.lake.organizations.operations import Organizations
 from huron.core.lake.organizations.reconcile import Reconciler, Reconciliation
+from huron.core.lake.repairs.operations import Repairs
 from huron.core.lake.schemas.completeness import Completeness
 from huron.core.lake.schemas.models import BASE_SCHEMA_NAME, SchemaEntry
 from huron.core.lake.schemas.registry import SchemaRegistry, SchemaResolver
@@ -63,6 +64,7 @@ class Lake:
     collections: Collections
     commits: Commits
     uploads: Uploads
+    repairs: Repairs
     audit: AuditLog
     keys: SigningKeys
 
@@ -92,6 +94,7 @@ def build_lake(uow: UnitOfWork, clock: Clock, settings: LakeSettings) -> Lake:
         collections=Collections(uow, clock, resolver),
         commits=Commits(uow, clock, settings.receipt_mode, settings.upload_ttl),
         uploads=Uploads(uow, clock, ttl=settings.upload_ttl, max_size=settings.upload_max_size),
+        repairs=Repairs(uow),
         audit=AuditLog(uow),
         keys=SigningKeys(uow, clock, settings.key_overlap),
     )

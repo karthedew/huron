@@ -18,7 +18,7 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `GROUP_DIRECTORY_UNAVAILABLE` | 503 | The LDAP group directory could not answer during the token exchange. |
 | `INTERNAL` | 500 | An unexpected error occurred. `context.request_id` matches the service log. |
 | `INVALID_CURSOR` | 400 | This listing did not produce the paging cursor. |
-| `LAKE_UNAVAILABLE` | 503 | The API cannot write the lake. `lake_path` does not open as a directory, or the API cannot write it. Or the marker that guards the organization is missing or names a different instance or organization. `context` names the path. |
+| `LAKE_UNAVAILABLE` | 503 | The API cannot write the lake. `lake_path` does not open as a directory, or the API cannot write it. Or the marker that guards the organization is missing or names a different instance or organization. `context` names the path. A repair route of a service without `lake_path` also answers it. |
 | `METADATA_INVALID` | 422 | The metadata does not satisfy the schema of the collection, or it has a value that JSON cannot hold (rule `json`). NaN, infinity and a lone surrogate are such values. `context.problems` lists each problem. |
 | `NAMESPACE_NOT_EMPTY` | 409 | The namespace still has child namespaces or collections. Draft collections count. |
 | `NAME_INVALID` | 422 | A name breaks a naming rule. `context.rule` names the rule. |
@@ -60,9 +60,17 @@ is not empty, the directory stays on the disk and the answer is 204.
 ## Warnings
 
 A warning is not an error. The request succeeded, but a change on disk is not complete. The
-create and set catalog responses list their warnings in `warnings`. Each warning has the fields
-`code`, `group` and `detail`.
+create and set catalog responses and the repair responses list their warnings in `warnings`. Each
+warning has the fields `code`, `group` and `detail`.
 
 | Code | Meaning |
 | --- | --- |
 | `SHARE_GROUP_PENDING` | The catalog directory does not have the group `group`. The API could not set the group, and `detail` tells why. When the request sets a share group, `group` is the share group. When the request clears the share group, `group` is the gid of the service group. The storage administrator sets the group on disk. |
+
+## Repair failures
+
+A repair (`POST /api/v1/catalogs/{catalog}/repair` and `POST /api/v1/organizations/{org}/repair`)
+answers 200 also when it cannot fix a place. Each place that it cannot fix is an item in `failed`,
+with the fields `path`, `reason` and `detail`. Only `LAKE_UNAVAILABLE` stops a repair. The schema
+`RepairFailureOut` in the OpenAPI reference ([`openapi.json`](openapi.json)) gives the rules for
+the three fields.

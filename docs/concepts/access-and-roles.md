@@ -3,8 +3,8 @@
 Huron controls access with five fixed roles. Each role is a fixed set of privileges. Huron grants
 roles to LDAP groups, never to persons, at the platform, at an organization or at a catalog. The
 service reads your groups at login and puts them in your Huron token. On each request, it maps
-those groups to roles through the current grants. The CLI then writes the groups of each catalog
-into the POSIX ACLs of its directories on the share. This page tells how these parts work
+those groups to roles through the current grants. Filesystem access uses directory modes and
+the catalog's share group, not grants or ACLs. This page tells how these parts work
 together. The [glossary](../user-guide.md#glossary) defines the other Huron terms.
 
 ## The five roles
@@ -149,64 +149,43 @@ change to these groups with 409 `ORGANIZATION_DECLARED`. The CLI then names the 
 to edit. You still change the grants on a single catalog of that organization with the CLI. The
 [declared organizations](../operator.md#declared-organizations) section tells more.
 
-## How roles become directory ACLs
+## Directory modes and share groups
 
-The service mounts no share. The CLI creates each directory as the user who runs it, and it gives
-the directory an ACL plan. A plan is a mode, POSIX ACL entries for groups, and an owning group. The
-CLI makes the plan from the groups of the catalog (`GET /api/v1/catalogs/{catalog}/grants`). These
-groups include the groups that the catalog inherits. The API never sends ACL entries.
+Huron uses no ACLs. The API writes the lake as the service user. Clients mount the share read-only.
+The CLI does not create catalog, namespace or collection directories on the share.
 
-| Directory kind | Mode | Access ACL | Default ACL | Others |
-| --- | --- | --- | --- | --- |
-| organization | `2771` | Platform Admin and Org Admin `rwx` | the same as the access ACL | `--x` |
-| catalog | `2770` | Platform Admin, Org Admin and Catalog Admin `rwx`. Contributor and Reader `r-x` | Platform Admin and Org Admin `rwx` | `---` |
-| namespace without collections | `2770` | the same as a catalog | Platform Admin and Org Admin `rwx` | `---` |
-| namespace that allows collections | `3770` | Platform Admin, Org Admin, Catalog Admin and Contributor `rwx`. Reader `r-x` | Platform Admin and Org Admin `rwx` | `---` |
-| collection | `2770` | the same as a namespace that allows collections | the same as the access ACL | `---` |
+| Directory kind | Mode | Group |
+| --- | --- | --- |
+| organization | `2751` | service group |
+| catalog | `2750` | catalog's `share_group`, or service group when unset |
+| namespace, collection, intermediate directory | `2750` | inherited from the parent |
 
-Each cell names the groups of a role. When a group holds more than one role, its entry gets the
-widest permissions of those roles. New files and directories get the default ACL. Thus the files in
-a collection are writable for its Contributors.
+The setgid bit makes new directories inherit their parent's group. Namespaces that allow collections
+use the same mode as other namespaces. They have no sticky bit or contributor write permission.
+Files use mode `0644`. The directories above a file control who can reach it.
 
-The owning group of a directory is the first group, in sorted order, of this list:
+The storage administrator prepares declared organization directories and markers with
+[`huron adm provision-orgs`](/docs/reference/cli/adm/#huron-adm-provision-orgs).
+This command does not apply grants or ACLs.
 
-- An organization: the Org Admin groups, else the Platform Admin groups.
-- A catalog or a namespace without collections: the Catalog Admin groups, else the Org Admin groups.
-- A namespace that allows collections, or a collection: the Contributor groups, else the Catalog
-  Admin groups.
+## Grant changes and directory repair
 
-Each mode sets the setgid bit, so new entries get the owning group of their directory. A namespace
-that allows collections also sets the sticky bit. In such a directory, only the owner of an entry,
-the owner of the directory or root can delete or rename that entry.
+[`huron adm grant`](/docs/reference/cli/adm/#huron-adm-grant) and
+[`huron adm revoke`](/docs/reference/cli/adm/#huron-adm-revoke) change API access, not directory permissions.
+They print no ACL reminder. A grant change applies at the next API request.
+The filesystem uses the client's user and group identity, not the Huron token.
+The operator must keep share-group membership and API grants aligned. Revoking a grant alone does not remove filesystem read access.
 
-The storage administrator prepares the directory of each declared organization with
-[`huron adm provision-orgs`](/docs/reference/cli/adm/#huron-adm-provision-orgs). That command
-applies the organization plan ([Adding an organization](../operator.md#adding-an-organization)). With
-`acl_backend: none` in the CLI configuration, the CLI sets the modes only.
+[`huron adm check`](/docs/reference/cli/adm/#huron-adm-check) reports drift without changing the share.
+The API repair endpoints act on directories planned from database rows. They do not scan the filesystem or apply ACLs.
+Repair can create missing directories, correct permitted mode changes, try the catalog's share group, and restore collection metadata.
+Missing setgid bits or wrong groups below a catalog require the storage administrator.
+Repair does not change the permissions of data files and does not recursively replace directory groups.
+When repair writes `metadata.json`, the new file has mode `0644`.
 
-## Re-applying ACLs
-
-Only the owner of a directory can change its ACL. Thus a grant change does not change the ACLs of
-directories that exist. The owners re-apply the plans with
-[`huron adm apply-acl <identifier>`](/docs/reference/cli/adm/#huron-adm-apply-acl). Add
-`--recursive` to include each directory below the identifier. The command changes only the
-directories that you own. It prints each directory that it skips, and then it exits with code 1.
-
-After a change to a catalog role, `huron adm grant` and `huron adm revoke` print the
-`huron adm apply-acl <catalog> --recursive` command for each catalog that the change concerns. They
-print it in the table output only. After
-an operator changes the `groups` of a declared organization, run that command for each catalog of
-the organization. For a change to `groups.org_admin`, run `huron adm provision-orgs` to re-apply the
-ACL of the organization directory.
-
-`huron adm check` reports a directory whose ACL is not its plan as `acl_drift`, or as
-`org_acl_drift` for an organization directory
-([Reading `huron adm check`](../operator.md#reading-huron-adm-check)).
-
-API access and filesystem access change separately. Revoking a grant affects the next API
-request, but it does not change an existing ACL. The filesystem uses the machine's user and group
-identity, not the Huron token. The storage environment must resolve the LDAP groups in the ACLs.
-Use the current grants to update the directory ACLs after a role change.
+The current CLI has no `adm repair`, `adm provision-catalogs` or `adm apply-acl` command.
+Report directory failures to the storage administrator rather than run those commands.
+The [API error reference](../api-errors.md) links to the authoritative repair failure schema.
 
 ## Seeing grants
 

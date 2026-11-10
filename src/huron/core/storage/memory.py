@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Literal
 from huron.core.storage.errors import InheritanceFailed, SourceGone, StorageError, SymlinkInLake
 from huron.core.storage.lakepath import LakePath
 from huron.core.storage.ports import Entry, GroupOutcome, GroupResult, Outcome, Stat
-from huron.pkg.fs.posix import INHERITING_DIR_MODE
+from huron.pkg.fs.posix import INHERITED_MODE, INHERITING_DIR_MODE
+from huron.schema.naming import PART_SUFFIX
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -52,7 +53,9 @@ class MemoryStorage:
     gids the caller may give an entry it owns. A directory in ``denied`` refuses every change
     to its entries, and a directory in ``unreadable`` cannot be searched or listed.
     ``inherits`` is whether a new directory inherits the setgid bit and the group of a setgid
-    parent, as the server should. Each traversal refuses a symbolic link as the POSIX one does.
+    parent, as the server should, and ``umask`` takes bits from the mode of a new directory
+    that gets no ``chmod``, as the process umask does. Each traversal refuses a symbolic link as
+    the POSIX one does.
     """
 
     def __init__(self, root: Path, uid: int = 1000, gid: int = 1000) -> None:
@@ -65,6 +68,7 @@ class MemoryStorage:
         self.denied: set[LakePath] = set()
         self.unreadable: set[LakePath] = set()
         self.inherits = True
+        self.umask = 0o022
         self.calls: list[tuple[str, LakePath]] = []
         self._clock = 0
         self._inodes = itertools.count(2)
@@ -77,8 +81,13 @@ class MemoryStorage:
             )
 
     def symlink(self, location: LakePath, target: str) -> None:
-        """Plant a symbolic link to ``target``; for tests only, Huron makes no link."""
+        """Plant a symbolic link to ``target``; for tests only, Huron makes no link.
+
+        An existing entry at ``location`` is refused, as the system call refuses it.
+        """
         self._require_parent(location)
+        if self.nodes.get(location) is not None:
+            raise _error(location, errno.EEXIST)
         self.nodes[location] = Node("symlink", 0o777, self.uid, self.gid, target=target)
 
     def stat(self, location: LakePath) -> Stat | None:
@@ -132,7 +141,7 @@ class MemoryStorage:
         """Create a directory with mode ``0750``; setgid and the group come only from the parent.
 
         With :attr:`inherits` off, a setgid parent passes neither on, and the new directory is
-        refused.
+        refused. A :attr:`umask` that takes bits of ``0750`` refuses it too.
         """
         if not self._new_directory(location):
             return False
@@ -141,8 +150,13 @@ class MemoryStorage:
             raise InheritanceFailed(
                 location, f"the directory did not inherit the setgid bit and the group {parent.gid}"
             )
+        mode = INHERITING_DIR_MODE & ~self.umask | stat.S_ISGID
+        if mode != INHERITED_MODE:
+            raise InheritanceFailed(
+                location, f"the directory has the mode {mode:o}, not {INHERITED_MODE:o}"
+            )
         self.nodes[location] = Node(
-            mode=INHERITING_DIR_MODE | stat.S_ISGID,
+            mode=INHERITED_MODE,
             uid=self.uid,
             gid=parent.gid,
             inode=next(self._inodes),
@@ -180,12 +194,22 @@ class MemoryStorage:
         return GroupResult(GroupOutcome.CHANGED)
 
     def write_bytes(self, location: LakePath, data: bytes, mode: int) -> None:
-        """Store ``data`` with ``mode``; the new file takes its group from a setgid parent."""
+        """Store ``data`` with ``mode``; the new file takes its group from a setgid parent.
+
+        The steps are those of the POSIX adapter's atomic write through ``<name>.huron-part``:
+        refuse a link at the name, refuse a link or a directory at the part file, remove a part
+        file that an earlier attempt left, then write. A directory at the name fails after the
+        part file is removed.
+        """
         self._require_parent(location)
         existing = self._final(location)
+        part = location.parent.joinpath(f"{location.name}{PART_SUFFIX}")
+        self._no_directory(part)
+        self._check(location.parent, location)
+        if self.nodes.pop(part, None) is not None:
+            self.calls.append(("unlink", part))
         if existing is not None and existing.kind == "dir":
             raise _error(location, errno.EISDIR)
-        self._check(location.parent)
         self._clock += 1
         self.nodes[location] = Node(
             "file",
@@ -209,29 +233,35 @@ class MemoryStorage:
     ) -> LakePath | None:
         """Give the file at ``source`` the name ``destination`` too, and return the backup.
 
-        ``source`` must be a file with the inode ``inode``, else ``SourceGone``. An existing
-        ``destination`` keeps its node under ``backup_name`` and is replaced through
-        ``part_name``, as on the server. A ``destination`` that already is the source's node
-        stays, with the backup an earlier attempt left.
+        ``source`` must be a file with the inode ``inode``, else ``SourceGone``. A link at
+        ``source`` is ``SymlinkInLake``, and a missing parent of ``source`` is ``ENOENT``. An
+        existing ``destination`` keeps its node under ``backup_name`` and is replaced through
+        ``part_name``, as on the server. A directory at either name is refused. A
+        ``destination`` that already is the source's node stays, with the backup an earlier
+        attempt left. The checks come in the order of the POSIX adapter.
         """
-        found = self.nodes.get(source) if self._parent(source) is not None else None
+        self._require_parent(source)
+        found = self._final(source)
+        self._require_parent(destination)
         if found is None or found.kind != "file" or found.inode != inode:
             raise SourceGone(source)
-        self._require_parent(destination)
         existing = self._final(destination)
         part, backup = (
             destination.parent.joinpath(part_name),
             destination.parent.joinpath(backup_name),
         )
+        if existing is not None and existing.kind == "dir":
+            raise _error(destination, errno.EISDIR)
         if existing is found:
             return backup if self._final(backup) is not None else None
-        self._check(destination.parent)
+        if existing is not None:
+            self._no_directory(part)
+            self._no_directory(backup)
+        self._check(destination.parent, destination)
         if existing is None:
             self.nodes[destination] = found
             self.calls.append(("link", destination))
             return None
-        self._final(part)
-        self._final(backup)
         self.nodes.pop(part, None)
         self.nodes[backup] = existing
         self.nodes[destination] = found
@@ -239,53 +269,80 @@ class MemoryStorage:
         return backup
 
     def rename(self, source: LakePath, destination: LakePath) -> None:
-        """Give the node at ``source`` the name ``destination``."""
-        if self._lookup(source) is None:
+        """Give the file at ``source`` the name ``destination``.
+
+        A directory at ``source`` is refused before the destination is looked up. Two names of
+        one file change nothing, as ``rename(2)`` does. A refusal of either parent directory
+        names ``destination``, as the POSIX adapter names it, and comes before the refusal of a
+        directory at ``destination``.
+        """
+        found = self._lookup(source)
+        if found is None:
             raise _error(source, errno.ENOENT)
+        if found.kind == "dir":
+            raise _error(source, errno.EISDIR)
         self._require_parent(destination)
-        self._final(destination)
-        self._check(destination.parent)
+        existing = self._final(destination)
+        if existing is found:
+            return
+        self._check(source.parent, destination)
+        self._check(destination.parent, destination)
+        if existing is not None and existing.kind == "dir":
+            raise _error(destination, errno.EISDIR)
         self.nodes[destination] = self.nodes.pop(source)
         self.calls.append(("rename", destination))
 
     def remove_file(self, location: LakePath, *, inode: int | None = None) -> Outcome:
-        """Remove a file; with ``inode``, only while the file has that inode."""
+        """Remove a file; with ``inode``, only while the file has that inode.
+
+        A refusal of the parent directory comes before the refusal of a directory.
+        """
         node = self._lookup(location)
         if node is None:
             return Outcome.MISSING
         if inode is not None and node.inode != inode:
             return Outcome.KEPT
+        self._check(location.parent, location)
         if node.kind == "dir":
             raise _error(location, errno.EISDIR)
-        self._check(location.parent)
         del self.nodes[location]
         self.calls.append(("unlink", location))
         return Outcome.REMOVED
 
     def remove_directory(self, location: LakePath) -> Outcome:
-        """Remove an empty directory; ``KEPT`` when it has entries."""
+        """Remove an empty directory; ``KEPT`` when it has entries.
+
+        A refusal of the parent directory comes before the refusal of a file and before
+        ``KEPT``.
+        """
         node = self._lookup(location)
         if node is None:
             return Outcome.MISSING
+        self._check(location.parent, location)
         if node.kind != "dir":
             raise _error(location, errno.ENOTDIR)
         if any(self._children(location)):
             return Outcome.KEPT
-        self._check(location.parent)
         del self.nodes[location]
         self.calls.append(("rmdir", location))
         return Outcome.REMOVED
+
+    def in_group(self, gid: int) -> bool:
+        """Whether ``gid`` is one of :attr:`member_of`."""
+        return gid in self.member_of
 
     def _parent(self, location: LakePath) -> Node | None:
         """The directory that holds ``location``, opened as the POSIX traversal opens it.
 
         ``None`` when a name on the way does not exist. A link on the way is
         ``SymlinkInLake``, a file on the way ``ENOTDIR`` and an unreadable directory ``EACCES``.
+        As on the server, opening a directory needs search permission on the directories above
+        it only. The look-up of a name in it (:meth:`_final`) needs search permission on it.
         """
         current = LakePath()
         node = self.nodes[current]
         for name in location.parent.names:
-            self._search(current)
+            self._search(current, location)
             current = current.joinpath(name)
             found = self.nodes.get(current)
             if found is None:
@@ -295,16 +352,17 @@ class MemoryStorage:
             if found.kind != "dir":
                 raise _error(location, errno.ENOTDIR)
             node = found
-        self._search(current)
         return node
 
     def _require_parent(self, location: LakePath) -> Node:
         parent = self._parent(location)
         if parent is None:
-            raise _error(location.parent, errno.ENOENT)
+            raise _error(location, errno.ENOENT)
         return parent
 
     def _final(self, location: LakePath) -> Node | None:
+        """The node at the last name of ``location``, looked up in its parent directory."""
+        self._search(location.parent, location)
         node = self.nodes.get(location)
         if node is not None and node.kind == "symlink":
             raise SymlinkInLake(location)
@@ -319,7 +377,7 @@ class MemoryStorage:
             raise _error(location, errno.ENOENT)
         if node.kind != "dir":
             raise _error(location, errno.ENOTDIR)
-        self._search(location)
+        self._search(location, location)
 
     def _new_directory(self, location: LakePath) -> bool:
         """Whether ``location`` is free for a new directory; ``False`` for an existing one."""
@@ -329,27 +387,37 @@ class MemoryStorage:
             if existing.kind == "dir":
                 return False
             raise _error(location, errno.EEXIST)
-        self._check(location.parent)
+        self._check(location.parent, location)
         return True
+
+    def _no_directory(self, location: LakePath) -> None:
+        """Refuse a link or a directory at a part or backup file; the error names the file."""
+        found = self._final(location)
+        if found is not None and found.kind == "dir":
+            raise _error(location, errno.EISDIR)
 
     def _children(self, location: LakePath) -> Iterator[LakePath]:
         return (p for p in self.nodes if p.parent == location and p != location)
 
-    def _walk(self, location: LakePath, prefix: tuple[str, ...]) -> Iterator[Entry]:
-        for child in sorted(self._children(location), key=lambda p: p.name):
+    def _walk(self, top: LakePath, prefix: tuple[str, ...]) -> Iterator[Entry]:
+        for child in sorted(self._children(top.joinpath(*prefix)), key=lambda p: p.name):
             node, names = self.nodes[child], (*prefix, child.name)
             yield Entry(names, node.kind, len(node.data), node.mtime_ns)
             if node.kind == "dir":
-                self._search(child)
-                yield from self._walk(child, names)
+                self._search(child, top)
+                yield from self._walk(top, names)
 
-    def _search(self, directory: LakePath) -> None:
+    def _search(self, directory: LakePath, location: LakePath) -> None:
+        """Refuse a ``directory`` that cannot be searched; the error names ``location``, the
+        place the caller asked for, as the POSIX adapter names it.
+        """
         if directory in self.unreadable:
-            raise _error(directory, errno.EACCES)
+            raise _error(location, errno.EACCES)
 
-    def _check(self, directory: LakePath) -> None:
+    def _check(self, directory: LakePath, location: LakePath) -> None:
+        """Refuse a change in a denied ``directory``; the error names ``location``."""
         if directory in self.denied:
-            raise _error(directory, errno.EACCES)
+            raise _error(location, errno.EACCES)
 
     def _new_gid(self, directory: LakePath) -> int:
         parent = self.nodes.get(directory)

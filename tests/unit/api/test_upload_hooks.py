@@ -349,6 +349,31 @@ async def test_a_namespace_replaced_by_a_link_fails_the_upload_and_changes_nothi
     assert snapshot(outside) == before
 
 
+async def test_a_link_at_the_upload_file_after_the_hash_fails_the_upload_and_prunes(
+    pausing: tuple[Service, PausingStorage, UploadTarget],
+) -> None:
+    api, storage, target = pausing
+    upload_id = await target.tusd.begin("dave", target.collection_id, "a/b/c.bin", DATA)
+    received = target.tusd.upload_dir / upload_id
+    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
+    await hashing(storage)
+    kept = received.parent.parent / "kept"
+    received.rename(kept)
+    received.symlink_to(kept)
+    storage.release.set()
+    finished = await asyncio.wait_for(finishing, SIGNAL_TIMEOUT)
+    assert finished.status_code == 200
+    problem = problem_of(finished)
+    assert (problem["status"], problem["code"]) == (409, "SYMLINK_IN_LAKE")
+    assert problem["context"] == {"path": f".tus-uploads/{upload_id}"}
+    failed = await state(api, upload_id)
+    assert failed["state"] == "failed"
+    assert failed["failure"] == {"code": "SYMLINK_IN_LAKE", "message": problem["detail"]}
+    assert not (target.directory / "a").exists()
+    assert received.is_symlink()
+    assert kept.read_bytes() == DATA
+
+
 async def test_a_wrong_marker_makes_tusd_send_the_hook_again(
     seeded_lake_api: Service, target: UploadTarget, lake: Path
 ) -> None:

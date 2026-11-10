@@ -26,6 +26,7 @@ class SymlinkInLake(StorageError):
     """A name on the way to a place on the lake, or the place itself, is a symbolic link.
 
     Nothing was changed, and the link stays: the storage administrator removes it.
+    ``context["path"]`` is the lake path of the link.
     """
 
     error_code = SYMLINK_IN_LAKE

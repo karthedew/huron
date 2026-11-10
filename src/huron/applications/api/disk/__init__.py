@@ -16,6 +16,7 @@ from huron.applications.api.disk.lake import (
     Run,
 )
 from huron.applications.api.disk.placements import Placements
+from huron.applications.api.disk.repair import LakeRepair
 
 __all__ = [
     "DISK_WORKERS",
@@ -25,6 +26,7 @@ __all__ = [
     "Directories",
     "LakeDirectories",
     "LakeDisk",
+    "LakeRepair",
     "Located",
     "NoLake",
     "Placements",

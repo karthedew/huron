@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from huron.core.lake.catalogs.errors import CatalogNotFound
+from huron.core.lake.collections.metadata import render_sidecar
 from huron.core.lake.collections.models import Collection, CollectionView
 from huron.core.lake.errors import VersionConflict
 from huron.core.security.rbac import Privilege, Scope
@@ -31,6 +32,7 @@ __all__ = [
     "find_namespace",
     "find_organization",
     "page_of",
+    "rendered_sidecar",
 ]
 
 
@@ -112,6 +114,19 @@ async def collection_path(tx: Transaction, collection: Collection, catalog: Cata
     path = (await collection_view(tx, collection, catalog)).disk_path
     assert path is not None
     return path
+
+
+async def rendered_sidecar(tx: Transaction, collection_id: uuid.UUID) -> bytes | None:
+    """The ``metadata.json`` of a settled collection, rendered from its rows now.
+
+    ``None`` for a draft and for a collection that is gone. It checks no privilege.
+    """
+    collection = await tx.collections.get(collection_id)
+    if collection is None or not collection.settled:
+        return None
+    catalog = await tx.catalogs.get(collection.catalog_id)
+    assert catalog is not None
+    return render_sidecar(await collection_view(tx, collection, catalog))
 
 
 def check_version(current: int, expected: int) -> None:

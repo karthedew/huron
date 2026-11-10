@@ -225,7 +225,10 @@ def test_the_root_itself_is_never_created() -> None:
             render_marker(helio_marker(organization="geo")),
             "names service id-1 and organization geo",
         ),
-        (render_marker(helio_marker(organization=None)), "and organization (none)"),
+        (
+            render_marker(helio_marker(organization=None)),
+            "names service id-1 and organization (none)",
+        ),
         (b"{broken", "is unreadable"),
     ],
 )
@@ -235,9 +238,10 @@ def test_a_foreign_marker_is_never_overwritten(data: bytes, reason: str) -> None
     write(storage, HELIO.joinpath(MARKER_FILE), data)
     before = list(storage.calls)
     for dry_run in (False, True):
-        with pytest.raises(StorageError, match="Huron does not overwrite it") as refused:
+        with pytest.raises(StorageError) as refused:
             provisioner(storage).provision(target(), dry_run=dry_run)
-        assert reason in refused.value.message
+        marker = shown(HELIO.joinpath(MARKER_FILE))
+        assert refused.value.message == f"{marker} {reason}. Huron does not overwrite it"
         assert refused.value.context["path"] == shown(HELIO)
     assert storage.calls == before and storage.nodes[HELIO].mode == 0o2750
     assert storage.read_bytes(HELIO.joinpath(MARKER_FILE)) == data

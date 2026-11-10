@@ -7,12 +7,12 @@ to its destination and removes tusd's files. Each step here is one call in the A
 
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from huron.core.lake.uploads.errors import UploadSizeMismatch
-from huron.core.storage.errors import SourceGone, StorageError
+from huron.core.storage.errors import StorageError
 from huron.core.storage.layout import FILE_MODE, UPLOADS
 from huron.core.storage.removal import prune
 from huron.schema.naming import BACKUP_SUFFIX, PART_SUFFIX
@@ -95,13 +95,17 @@ class Placer:
         """Link the upload's file to ``target`` inside ``collection``, then remove tusd's files.
 
         The collection directory must exist. The directories between it and ``target`` are
-        made with :meth:`Storage.make_inheriting_dir`. The upload's file must still have the
-        measured ``inode``. An existing file is replaced through the part file
+        made with :meth:`Storage.make_inheriting_dir`. The upload's file must still be a regular
+        file with the measured ``inode``. An existing file is replaced through the part file
         ``.<name>.<upload id>.huron-part`` and keeps its bytes in the backup
         ``.<name>.<upload id>.huron-prev`` until :meth:`drop_backup`. Raises
-        :class:`CollectionDirectoryMissing` without the collection directory, ``SourceGone``,
-        after removing the empty directories it made, when the upload's file is gone or
-        replaced, and ``ValueError`` for a ``target`` that is not below ``collection``.
+        :class:`CollectionDirectoryMissing` without the collection directory, and
+        ``ValueError`` for a ``target`` that is not below ``collection``. When a directory or
+        the link fails, the empty directories that this call made are removed before the error
+        goes on:
+        ``SourceGone`` when the upload's file is gone or replaced, ``SymlinkInLake`` for a link
+        at the upload's file or on the way to the target, and ``StorageError`` for any other
+        failure, a missing ``.tus-uploads`` included.
         """
         depth = len(collection.names)
         if len(target.names) <= depth or target.names[:depth] != collection.names:
@@ -111,28 +115,26 @@ class Placer:
             raise CollectionDirectoryMissing(collection)
         if found.kind != "dir":
             raise StorageError(f"{collection} is not a directory", {"path": str(collection)})
-        made = tuple(
-            directory
-            for size in range(depth + 1, len(target.names))
-            if self._storage.make_inheriting_dir(
-                directory := collection.joinpath(*target.names[depth:size])
-            )
-        )
-        source = _upload_file(upload_id)
+        made: list[LakePath] = []
         try:
+            for size in range(depth + 1, len(target.names)):
+                directory = collection.joinpath(*target.names[depth:size])
+                if self._storage.make_inheriting_dir(directory):
+                    made.append(directory)
             backup = self._storage.link(
-                source,
+                _upload_file(upload_id),
                 target,
                 inode=inode,
                 part_name=f".{target.name}.{upload_id}{PART_SUFFIX}",
                 backup_name=_backup_name(target, upload_id),
             )
-        except SourceGone:
-            prune(self._storage, made)
+        except Exception:
+            with suppress(StorageError):
+                prune(self._storage, made)
             raise
-        self._storage.remove_file(source)
+        self._storage.remove_file(_upload_file(upload_id))
         self._storage.remove_file(UPLOADS.joinpath(f"{upload_id}.info"))
-        return Linked(made, backup)
+        return Linked(tuple(made), backup)
 
     def drop_backup(self, target: LakePath, upload_id: uuid.UUID) -> None:
         """Remove the backup of the file the upload replaced, once its receipt is recorded."""

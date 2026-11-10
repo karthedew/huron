@@ -29,7 +29,11 @@ if TYPE_CHECKING:
 
     from huron.core.storage.ports import Entry, StatKind
 
-__all__ = ["PosixStorage"]
+__all__ = ["AUTH_SYS_GROUPS", "PosixStorage"]
+
+#: The supplementary groups that an AUTH_SYS request carries to an NFS server; the server does
+#: not see the groups after them.
+AUTH_SYS_GROUPS = 16
 
 
 class PosixStorage:
@@ -138,7 +142,8 @@ class PosixStorage:
     def set_group(self, location: LakePath, group: str | int) -> GroupResult:
         """Give the entry the group ``group``, a name or a gid.
 
-        An unknown name, a missing entry or a refusal is ``PENDING``.
+        An unknown name, a missing entry or a refused ``chown`` is ``PENDING``; any other
+        failure is an error, as in every other operation.
         """
         try:
             gid = group if isinstance(group, int) else grp.getgrnam(group).gr_gid
@@ -148,19 +153,27 @@ class PosixStorage:
             with self._parent(location) as parent:
                 try:
                     changed = posix.change_group(parent, _name(location), gid)
-                except (FileNotFoundError, posix.SymlinkError):
-                    raise
-                except OSError as error:
+                except posix.ChangeRefused as error:
                     return GroupResult(GroupOutcome.PENDING, f"{location}: {error.strerror}")
         except _Missing as missing:
             return GroupResult(GroupOutcome.PENDING, missing.message)
         return GroupResult(GroupOutcome.CHANGED if changed else GroupOutcome.UNCHANGED)
 
     def write_bytes(self, location: LakePath, data: bytes, mode: int) -> None:
-        """Write ``data`` atomically to a file with exactly ``mode``."""
+        """Write ``data`` atomically to a file with exactly ``mode``.
+
+        A link or a directory at the part file ``<name>.huron-part`` refuses the write, and the
+        error names the part file.
+        """
         name = _name(location)
+        part = f"{name}{PART_SUFFIX}"
         with self._parent(location) as parent:
-            posix.atomic_write(parent, name, data, mode, f"{name}{PART_SUFFIX}")
+            try:
+                posix.atomic_write(parent, name, data, mode, part)
+            except posix.FileError as error:
+                raise _storage_error(location.parent.joinpath(part), error.error) from error
+            except posix.PartBlocked as error:
+                raise _blocked(location, error) from error
 
     def link(
         self,
@@ -173,31 +186,47 @@ class PosixStorage:
     ) -> LakePath | None:
         """Hard-link ``source`` to ``destination``; the replaced file stays as ``backup_name``.
 
-        Raises ``SourceGone`` when ``source`` is not a regular file with the inode ``inode``, and
-        ``NAME_INVALID`` before any change when ``part_name`` or ``backup_name`` is not one name.
+        Raises ``SourceGone`` when ``source`` is missing or is not a regular file with the inode
+        ``inode``, ``SymlinkInLake`` for a link at ``source``, a ``StorageError`` (``ENOENT``)
+        for a missing parent of ``source``, and ``NAME_INVALID`` before any change when
+        ``part_name`` or ``backup_name`` is not one name. A failure to look up ``source`` names
+        ``source``. A directory at ``part_name`` or ``backup_name`` names that file. Any other
+        failure names ``destination``.
         """
         check_lake_name(part_name)
         check_lake_name(backup_name)
-        with self._parent(source) as source_parent, self._parent(destination) as parent:
-            try:
-                backup = posix.link_into_place(
-                    source_parent,
-                    source.name,
-                    inode,
-                    parent,
-                    destination.name,
-                    part_name,
-                    backup_name,
-                )
-            except (FileNotFoundError, posix.SourceMismatch) as error:
-                raise SourceGone(source) from error
+        with self._parent(source) as source_parent:
+            posix.entry(source_parent, source.name)
+            with self._parent(destination) as parent:
+                try:
+                    backup = posix.link_into_place(
+                        source_parent,
+                        source.name,
+                        inode,
+                        parent,
+                        destination.name,
+                        part_name,
+                        backup_name,
+                    )
+                except (FileNotFoundError, posix.SourceMismatch) as error:
+                    raise SourceGone(source) from error
+                except posix.PartBlocked as error:
+                    raise _blocked(destination, error) from error
         return None if backup is None else destination.parent.joinpath(backup)
 
     def rename(self, source: LakePath, destination: LakePath) -> None:
-        """Give the file at ``source`` the name ``destination``, replacing it atomically."""
+        """Give the file at ``source`` the name ``destination``, replacing it atomically.
+
+        A directory at ``source`` is refused, and two names of one file change nothing. A
+        failure of the ``rename`` itself names ``destination``, as the system does not tell which
+        of the two directories refused it.
+        """
         with self._parent(source) as source_parent:
-            if posix.entry(source_parent, source.name) is None:
+            found = posix.entry(source_parent, source.name)
+            if found is None:
                 raise _Missing(source)
+            if stat.S_ISDIR(found.st_mode):
+                raise _not_a_file(source, errno.EISDIR)
             with self._parent(destination) as parent:
                 posix.entry(parent, destination.name)
                 os.rename(
@@ -230,6 +259,12 @@ class PosixStorage:
         except _Missing:
             return Outcome.MISSING
         return Outcome.REMOVED if removed else Outcome.MISSING
+
+    def in_group(self, gid: int) -> bool:
+        """Whether ``gid`` is the effective group or one of the first :data:`AUTH_SYS_GROUPS`
+        supplementary groups, the only ones that the server sees.
+        """
+        return gid == os.getegid() or gid in os.getgroups()[:AUTH_SYS_GROUPS]
 
     @contextmanager
     def _parent(self, location: LakePath) -> Generator[int]:
@@ -296,8 +331,16 @@ def _require_file(descriptor: int, location: LakePath) -> None:
     """Refuse a descriptor that is not of a regular file, as the in-memory lake refuses it."""
     mode = _guard(lambda: os.fstat(descriptor), location).st_mode
     if not stat.S_ISREG(mode):
-        number = errno.EISDIR if stat.S_ISDIR(mode) else errno.EINVAL
-        raise StorageError(f"{location}: {os.strerror(number)}", {"path": str(location)})
+        raise _not_a_file(location, errno.EISDIR if stat.S_ISDIR(mode) else errno.EINVAL)
+
+
+def _blocked(location: LakePath, error: posix.PartBlocked) -> StorageError:
+    """The error of a directory at a part or backup file beside ``location``; it names the file."""
+    return _storage_error(location.parent.joinpath(f"{error.filename}"), error)
+
+
+def _not_a_file(location: LakePath, number: int) -> StorageError:
+    return StorageError(f"{location}: {os.strerror(number)}", {"path": str(location)})
 
 
 def _read_all(descriptor: int) -> bytes:

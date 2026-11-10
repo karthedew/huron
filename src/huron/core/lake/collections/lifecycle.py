@@ -30,6 +30,7 @@ from huron.core.lake.lookups import (
     find_collection,
     find_namespace,
     page_of,
+    rendered_sidecar,
 )
 from huron.core.security.rbac import Authorizer, Privilege, Scope
 from huron.pkg.errors import Conflict, Forbidden
@@ -305,12 +306,7 @@ class Collections:
         renders the file for the disk work of a change that the caller was allowed to make.
         """
         async with self._uow.transaction() as tx:
-            collection = await tx.collections.get(collection_id)
-            if collection is None or not collection.settled:
-                return None
-            catalog = await tx.catalogs.get(collection.catalog_id)
-            assert catalog is not None
-            return render_sidecar(await collection_view(tx, collection, catalog))
+            return await rendered_sidecar(tx, collection_id)
 
     async def _readable(
         self,

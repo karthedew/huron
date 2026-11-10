@@ -37,9 +37,10 @@ class Placements:
         destination, each disk step after the marker check. A file the placement replaces
         stays as a backup until the receipt is recorded. A receipt refused because the
         collection or the upload ended during the hash takes the placed file away again, puts
-        a replaced file back, and raises the refusal. A symbolic link on the way and a missing
-        collection directory fail the upload. When the upload's file is gone, another attempt
-        moved it: the upload's state, or the file at the destination, decides. Raises
+        a replaced file back, and raises the refusal. A symbolic link on the way, or at the
+        upload's file, and a missing collection directory fail the upload. When the upload's
+        file is gone, another attempt moved it: the upload's state, or the file at the
+        destination, decides. Raises
         ``STORAGE_FAILED`` when neither proves the placement, and ``LAKE_UNAVAILABLE`` when the
         lake or its marker refuses the write.
         """

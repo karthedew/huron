@@ -103,12 +103,15 @@ async def test_begin_accepts_an_empty_file_and_any_size_without_a_maximum(
     assert (empty.size, huge.size) == (0, 2**50)
 
 
-async def test_begin_refuses_a_bad_path_and_a_negative_size(
+async def test_begin_refuses_a_bad_path_a_long_name_and_a_negative_size(
     seeded: World, collection_id: uuid.UUID
 ) -> None:
     with pytest.raises(RelPathError) as bad_path:
         await seeded.lake.uploads.begin(CONTRIBUTOR, collection_id, "../escape", 1)
     assert bad_path.value.rule == "rel_path_separator"
+    with pytest.raises(RelPathError) as long_name:
+        await seeded.lake.uploads.begin(CONTRIBUTOR, collection_id, "d/" + "n" * 207, 1)
+    assert long_name.value.rule == "rel_path_segment"
     with pytest.raises(Invalid) as negative:
         await seeded.lake.uploads.begin(CONTRIBUTOR, collection_id, "a", -1)
     assert negative.value.context == {"size": -1}

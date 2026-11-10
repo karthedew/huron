@@ -201,11 +201,13 @@ class Storage(ShareReader, Protocol):
     ) -> LakePath | None:
         """Hard-link ``source`` to ``destination``, atomically replacing an existing file.
 
-        ``source`` must be a regular file with the inode ``inode``, else ``SourceGone``. The
-        replaced file keeps its bytes under ``backup_name`` beside ``destination``, and the
-        replacement goes through ``part_name``. A ``destination`` that already links ``source``
-        stays as it is, and a backup an earlier attempt made for it is still the backup.
-        Returns the backup, or ``None`` when nothing was replaced.
+        ``source`` must be a regular file with the inode ``inode``: a missing source or another
+        entry is ``SourceGone``, a link at ``source`` is ``SymlinkInLake``, and a missing parent
+        of ``source`` is a ``StorageError``. The replaced file keeps its bytes under
+        ``backup_name`` beside ``destination``, and the replacement goes through ``part_name``.
+        A ``destination`` that already links ``source`` stays as it is, and a backup an earlier
+        attempt made for it is still the backup. Returns the backup, or ``None`` when nothing
+        was replaced.
         """
         ...
 
@@ -222,4 +224,12 @@ class Storage(ShareReader, Protocol):
 
     def remove_directory(self, location: LakePath) -> Outcome:
         """Remove an empty directory; ``KEPT`` when it has entries, ``MISSING`` when absent."""
+        ...
+
+    def in_group(self, gid: int) -> bool:
+        """Whether the server counts this process as a member of the group ``gid``.
+
+        A ``chmod`` by a caller outside an entry's group clears its setgid bit, so a mode is
+        changed only while this is ``True``.
+        """
         ...

@@ -13,6 +13,7 @@ from huron.applications.api.routes.v1.endpoints import (
     grants,
     namespaces,
     organizations,
+    repairs,
     schemas,
     uploads,
 )
@@ -30,6 +31,7 @@ for module in (
     collections,
     files,
     uploads,
+    repairs,
     admin,
 ):
     router.include_router(module.router)

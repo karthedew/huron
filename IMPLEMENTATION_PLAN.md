@@ -567,12 +567,343 @@ point never changes. The record is `architectural_review.md` ("S: Synthesis"). T
     `write_bytes` (mode required), `link(..., inode=)`, `rename`,
     `remove_file(..., inode=) -> Outcome`, `remove_directory -> Outcome`, and `in_group`
     (M11.5e). `Outcome` is `REMOVED`, `MISSING` or `KEPT`. `link` makes the hard link only when
-    the source is a regular file with the measured inode, else `SourceGone`.
+    the source is a regular file with the measured inode. A missing source or another entry is
+    `SourceGone`, a link at the source is `SymlinkInLake`, and a missing parent of the source
+    (`.tus-uploads`) is a `StorageError` (M11.5e).
   - Gone from the port and both adapters: `exists`, `is_directory`, `owner`, `inode`, `stamp`,
     `hash`, `device`, `ensure_directory`, `apply_plan`, `read_acl`, `owned_by_me` and `copy_in`.
   - Two adapters: `PosixStorage(root)` and `MemoryStorage(root)`. `MemoryStorage` models links,
     not mounts. One contract suite (`tests/unit/storage/test_containment.py` and the port cases)
     runs over both.
+  - **Errors per port method (decided 2026-11-08, M11.5e).** The contract suite is the
+    specification of the port. Each row of the table below gives one method, one case and the
+    result. The result is the return value, or the error class and the path that the error
+    names. The error names the path in `context.path` and in its message. `PosixStorage` is the
+    reference. A row states what it does, and `MemoryStorage` gives the same result. One parametrized test in
+    `tests/unit/storage/test_containment.py` runs every row over `MemoryStorage` and
+    `PosixStorage(root=tmp_path)`. A new error case of the port is a new row here and in the test.
+    - P is the place that the method gets. For `link` and `rename` the row names the argument:
+      the source or the destination. "The link" is the lake path of the link. "The parent" is
+      the directory that holds P.
+    - An error changes nothing, in the lake or outside it, unless the row says so.
+    - The message of a `StorageError` is `<path> does not exist` for `ENOENT`,
+      `permission denied on <path>` for `EACCES` (with the system's text in `context.error`),
+      and `<path>: <system text>` for any other reason. The message of `SymlinkInLake` is
+      `<link> is a symbolic link. The lake must not contain symbolic links. Remove it.`
+    - A case that cannot occur for a method has no row. For example, `stat` accepts a file and
+      a directory, and `chmod` and `chown` need no write permission on the parent.
+    - A failure of the `rename` call itself names the destination, because the system does not
+      tell which of the two directories refused it.
+    - Precedence: when several cases hold at once, the first check in this order decides. It
+      is the order of `PosixStorage` and of the system calls that it makes, and `MemoryStorage`
+      follows it in every method.
+      1. The traversal, one directory at a time from the root. A missing directory, a link, a
+         file, or no search permission on a directory above the parent ends the call there.
+      2. For `link` and `rename`, the source comes first. `rename` looks up the source and
+         refuses a link, a missing name and a directory before it opens the destination's
+         parent. `link` looks up the source (a link is `SymlinkInLake`) and opens the
+         destination's parent. Then it refuses a missing source, or a source that is not a
+         regular file with the measured inode (`SourceGone`).
+      3. The look-up of the name in its parent. No search permission on the parent is `EACCES`,
+         and a link at the name is `SymlinkInLake`.
+      4. The checks that Huron makes before any change. `link` refuses a directory at the
+         destination, and a link or a directory at a part or backup file. `write_bytes` refuses
+         a link or a directory at the part file. `remove_file` compares the inode.
+      5. The system call. A call that removes or replaces a name (`unlink`, `rmdir`, `rename`)
+         checks write permission on the parent (`EACCES`) before the kind of the entry
+         (`EISDIR`, `ENOTDIR`) and before its entries (`KEPT`). A call that makes a name
+         (`mkdir`, `link`, `open` with `O_CREAT` and `O_EXCL`) reports an existing name before
+         write permission. For `mkdir`, Huron then answers `False` for a directory and `EEXIST`
+         for any other entry.
+    - Pairs of cases. The parts of a method are the cases of its rows. Each part is in one of
+      four groups:
+      - A way part: the parent is missing, a link or a file.
+      - A lock part: no search permission or no write permission on the parent.
+      - The source part: the source of `link` or `rename` is missing.
+      - An entry part: any other case, which states what is at the name and beside it.
+
+      Two way parts, two lock parts or two entry parts cannot hold at once. A way part and a
+      lock or entry part cannot hold at once either. For each method, the table has one
+      combined row for each other pair of its parts, and no other combined row. `test_each_pair_of_cases_that_can_hold_at_once_has_one_row` computes
+      the pairs and fails on a missing or an extra combined row.
+    - The umask is not a case of the table. The API runs with umask `022` (section 6.2). Under
+      a umask that takes bits of `0750`, `make_inheriting_dir` raises `InheritanceFailed`
+      (`the directory has the mode 2700, not 2750`) and removes the new directory, on both
+      adapters (`MemoryStorage.umask`).
+    - `Stat.size` of a directory is not specified. No caller reads it.
+    - `EACCES` on the entry itself (a file of mode `000`, a directory of mode `0300` or `0100`)
+      is not in the table. `MemoryStorage` does not model the permission of an entry, and no
+      Huron path depends on it.
+    - Defects of `PosixStorage` that the table found (M11.5e), each fixed:
+      - `set_group` answered `PENDING` for `EACCES` on the parent, but an error for the same
+        `EACCES` one level up. Now only a refused `chown` is `PENDING`.
+      - `link` reported a directory at the destination as `permission denied`. Now it is
+        `EISDIR`, before any change.
+      - `link` named the destination for an error of the lookup of the source, and answered
+        `SourceGone` for a link at the source. Now the error names the source, and a link is
+        `SymlinkInLake`.
+      - `rename` moved a directory at the source. Now it is `EISDIR`.
+      - `write_bytes` named `<name>` for a directory at the part file. Now it names the part
+        file.
+      - `link` named the destination for a directory at `part_name` or `backup_name`. Now it
+        refuses that directory before any change, and the error names it.
+
+    | Method | Case | Result |
+    | --- | --- | --- |
+    | `stat` | the name is missing | `None` |
+    | `stat` | the parent is missing | `None` |
+    | `stat` | a link at the name | `SymlinkInLake` at P |
+    | `stat` | a link above the name | `SymlinkInLake` at the link |
+    | `stat` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `stat` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `read_bytes` | the name is missing | `None` |
+    | `read_bytes` | the parent is missing | `None` |
+    | `read_bytes` | a link at the name | `SymlinkInLake` at P |
+    | `read_bytes` | a link above the name | `SymlinkInLake` at the link |
+    | `read_bytes` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `read_bytes` | a directory at the name, where a file is expected | `StorageError` (`EISDIR`) at P |
+    | `read_bytes` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `open_file` | the name is missing | `None` |
+    | `open_file` | the parent is missing | `None` |
+    | `open_file` | a link at the name | `SymlinkInLake` at P |
+    | `open_file` | a link above the name | `SymlinkInLake` at the link |
+    | `open_file` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `open_file` | a directory at the name, where a file is expected | `StorageError` (`EISDIR`) at P |
+    | `open_file` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `is_empty` | the name is missing | `StorageError` (`ENOENT`) at P |
+    | `is_empty` | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `is_empty` | a link at the name | `SymlinkInLake` at P |
+    | `is_empty` | a link above the name | `SymlinkInLake` at the link |
+    | `is_empty` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `is_empty` | a file at the name, where a directory is expected | `StorageError` (`ENOTDIR`) at P |
+    | `is_empty` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `walk` | the name is missing | `StorageError` (`ENOENT`) at P |
+    | `walk` | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `walk` | a link at the name | `SymlinkInLake` at P |
+    | `walk` | a link above the name | `SymlinkInLake` at the link |
+    | `walk` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `walk` | a file at the name, where a directory is expected | `StorageError` (`ENOTDIR`) at P |
+    | `walk` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `make_directory` | the name is missing | `True` |
+    | `make_directory` | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `make_directory` | a link at the name | `SymlinkInLake` at P |
+    | `make_directory` | a link above the name | `SymlinkInLake` at the link |
+    | `make_directory` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `make_directory` | a file at the name, where a directory is expected | `StorageError` (`EEXIST`) at P |
+    | `make_directory` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `make_directory` | `EACCES` on the parent: no write permission | `StorageError` (`EACCES`) at P |
+    | `make_inheriting_dir` | the name is missing | `True` |
+    | `make_inheriting_dir` | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `make_inheriting_dir` | a link at the name | `SymlinkInLake` at P |
+    | `make_inheriting_dir` | a link above the name | `SymlinkInLake` at the link |
+    | `make_inheriting_dir` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `make_inheriting_dir` | a file at the name, where a directory is expected | `StorageError` (`EEXIST`) at P |
+    | `make_inheriting_dir` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `make_inheriting_dir` | `EACCES` on the parent: no write permission | `StorageError` (`EACCES`) at P |
+    | `set_mode` | the name is missing | `StorageError` (`ENOENT`) at P |
+    | `set_mode` | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `set_mode` | a link at the name | `SymlinkInLake` at P |
+    | `set_mode` | a link above the name | `SymlinkInLake` at the link |
+    | `set_mode` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `set_mode` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `set_group` | the name is missing | `PENDING`, reason `<P> does not exist` |
+    | `set_group` | the parent is missing | `PENDING`, reason `<P> does not exist` |
+    | `set_group` | a link at the name | `SymlinkInLake` at P |
+    | `set_group` | a link above the name | `SymlinkInLake` at the link |
+    | `set_group` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `set_group` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | the name is missing | `None`; P is a new file |
+    | `write_bytes` | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `write_bytes` | a link at the name | `SymlinkInLake` at P |
+    | `write_bytes` | a link above the name | `SymlinkInLake` at the link |
+    | `write_bytes` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `write_bytes` | a directory at the name, where a file is expected | `StorageError` (`EISDIR`) at P |
+    | `write_bytes` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no write permission | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | a directory at `<name>.huron-part` | `StorageError` (`EISDIR`) at `<P>.huron-part` |
+    | `write_bytes` | an old part file, and a directory at the name | `StorageError` (`EISDIR`) at P; the part file is removed |
+    | `write_bytes` | a link at `<name>.huron-part` | `SymlinkInLake` at `<P>.huron-part` |
+    | `write_bytes` | an old part file, the name is missing | `None`; the part file is removed, and P is a new file |
+    | `link` (destination) | the name is missing | `None`; P is a new file |
+    | `link` (destination) | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `link` (destination) | a link at the name | `SymlinkInLake` at P |
+    | `link` (destination) | a link above the name | `SymlinkInLake` at the link |
+    | `link` (destination) | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `link` (destination) | a directory at the name, where a file is expected | `StorageError` (`EISDIR`) at P |
+    | `link` (destination) | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no write permission | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | a file at the name, and a directory at `part_name` | `StorageError` (`EISDIR`) at `part_name` |
+    | `link` (destination) | a file at the name, and a directory at `backup_name` | `StorageError` (`EISDIR`) at `backup_name` |
+    | `link` (destination) | a file at the name, and a link at `part_name` | `SymlinkInLake` at `part_name` |
+    | `link` (destination) | a file at the name, and a link at `backup_name` | `SymlinkInLake` at `backup_name` |
+    | `link` (source) | the name is missing | `SourceGone` at P |
+    | `link` (source) | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `link` (source) | a link at the name | `SymlinkInLake` at P |
+    | `link` (source) | a link above the name | `SymlinkInLake` at the link |
+    | `link` (source) | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `link` (source) | a directory at the name, where a file is expected | `SourceGone` at P |
+    | `link` (source) | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `link` (source) | `EACCES` on the parent: no write permission | `None`; the destination is a new file |
+    | `rename` (destination) | the name is missing | `None`; P is a new file |
+    | `rename` (destination) | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `rename` (destination) | a link at the name | `SymlinkInLake` at P |
+    | `rename` (destination) | a link above the name | `SymlinkInLake` at the link |
+    | `rename` (destination) | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `rename` (destination) | a directory at the name, where a file is expected | `StorageError` (`EISDIR`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no write permission | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | a second name of the source at the name | `None`; both names stay |
+    | `rename` (source) | the name is missing | `StorageError` (`ENOENT`) at P |
+    | `rename` (source) | the parent is missing | `StorageError` (`ENOENT`) at P |
+    | `rename` (source) | a link at the name | `SymlinkInLake` at P |
+    | `rename` (source) | a link above the name | `SymlinkInLake` at the link |
+    | `rename` (source) | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `rename` (source) | a directory at the name, where a file is expected | `StorageError` (`EISDIR`) at P |
+    | `rename` (source) | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `rename` (source) | `EACCES` on the parent: no write permission | `StorageError` (`EACCES`) at the destination |
+    | `remove_file` | the name is missing | `MISSING` |
+    | `remove_file` | the parent is missing | `MISSING` |
+    | `remove_file` | a link at the name | `SymlinkInLake` at P |
+    | `remove_file` | a link above the name | `SymlinkInLake` at the link |
+    | `remove_file` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `remove_file` | a directory at the name, where a file is expected | `StorageError` (`EISDIR`) at P |
+    | `remove_file` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `remove_file` | `EACCES` on the parent: no write permission | `StorageError` (`EACCES`) at P |
+    | `remove_directory` | the name is missing | `MISSING` |
+    | `remove_directory` | the parent is missing | `MISSING` |
+    | `remove_directory` | a link at the name | `SymlinkInLake` at P |
+    | `remove_directory` | a link above the name | `SymlinkInLake` at the link |
+    | `remove_directory` | a file above the name | `StorageError` (`ENOTDIR`) at P |
+    | `remove_directory` | a file at the name, where a directory is expected | `StorageError` (`ENOTDIR`) at P |
+    | `remove_directory` | a directory with entries at the name | `KEPT` |
+    | `remove_directory` | `EACCES` on the parent: no search permission | `StorageError` (`EACCES`) at P |
+    | `remove_directory` | `EACCES` on the parent: no write permission | `StorageError` (`EACCES`) at P |
+    | `stat` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `stat` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `read_bytes` | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `read_bytes` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `read_bytes` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `open_file` | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `open_file` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `open_file` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `is_empty` | `EACCES` on the parent: no search permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `is_empty` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `is_empty` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `walk` | `EACCES` on the parent: no search permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `walk` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `walk` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `make_directory` | `EACCES` on the parent: no write permission and a directory at the name | `False` |
+    | `make_directory` | `EACCES` on the parent: no write permission and a file at the name | `StorageError` (`EEXIST`) at P |
+    | `make_directory` | `EACCES` on the parent: no write permission and a link at the name | `SymlinkInLake` at P |
+    | `make_directory` | `EACCES` on the parent: no write permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `make_directory` | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `make_directory` | `EACCES` on the parent: no search permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `make_directory` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `make_directory` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `make_inheriting_dir` | `EACCES` on the parent: no write permission and a directory at the name | `False` |
+    | `make_inheriting_dir` | `EACCES` on the parent: no write permission and a file at the name | `StorageError` (`EEXIST`) at P |
+    | `make_inheriting_dir` | `EACCES` on the parent: no write permission and a link at the name | `SymlinkInLake` at P |
+    | `make_inheriting_dir` | `EACCES` on the parent: no write permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `make_inheriting_dir` | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `make_inheriting_dir` | `EACCES` on the parent: no search permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `make_inheriting_dir` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `make_inheriting_dir` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `set_mode` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `set_mode` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `set_group` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `set_group` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no write permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no write permission and a directory at `<name>.huron-part` | `StorageError` (`EISDIR`) at `<P>.huron-part` |
+    | `write_bytes` | `EACCES` on the parent: no write permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no write permission and a link at the name | `SymlinkInLake` at P |
+    | `write_bytes` | `EACCES` on the parent: no write permission and a link at `<name>.huron-part` | `SymlinkInLake` at `<P>.huron-part` |
+    | `write_bytes` | `EACCES` on the parent: no write permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no write permission and an old part file | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no write permission and an old part file and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no search permission and a directory at `<name>.huron-part` | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no search permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no search permission and a link at `<name>.huron-part` | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no search permission and an old part file | `StorageError` (`EACCES`) at P |
+    | `write_bytes` | `EACCES` on the parent: no search permission and an old part file and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | a file at the name, and a directory at `backup_name` and the source is missing | `SourceGone` at the source |
+    | `link` (destination) | a directory at the name and the source is missing | `SourceGone` at the source |
+    | `link` (destination) | a file at the name, and a directory at `part_name` and the source is missing | `SourceGone` at the source |
+    | `link` (destination) | a file above the name and the source is missing | `StorageError` (`ENOTDIR`) at P |
+    | `link` (destination) | a file at the name and the source is missing | `SourceGone` at the source |
+    | `link` (destination) | a link above the name and the source is missing | `SymlinkInLake` at the link |
+    | `link` (destination) | a file at the name, and a link at `backup_name` and the source is missing | `SourceGone` at the source |
+    | `link` (destination) | a link at the name and the source is missing | `SourceGone` at the source |
+    | `link` (destination) | a file at the name, and a link at `part_name` and the source is missing | `SourceGone` at the source |
+    | `link` (destination) | the name is missing and the source is missing | `SourceGone` at the source |
+    | `link` (destination) | the parent is missing and the source is missing | `StorageError` (`ENOENT`) at P |
+    | `link` (destination) | `EACCES` on the parent: no write permission and a file at the name, and a directory at `backup_name` | `StorageError` (`EISDIR`) at `backup_name` |
+    | `link` (destination) | `EACCES` on the parent: no write permission and a directory at the name | `StorageError` (`EISDIR`) at P |
+    | `link` (destination) | `EACCES` on the parent: no write permission, a file at the name and a directory at `part_name` | `StorageError` (`EISDIR`) at `part_name` |
+    | `link` (destination) | `EACCES` on the parent: no write permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no write permission and a file at the name, and a link at `backup_name` | `SymlinkInLake` at `backup_name` |
+    | `link` (destination) | `EACCES` on the parent: no write permission and a link at the name | `SymlinkInLake` at P |
+    | `link` (destination) | `EACCES` on the parent: no write permission and a file at the name, and a link at `part_name` | `SymlinkInLake` at `part_name` |
+    | `link` (destination) | `EACCES` on the parent: no write permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no write permission and the source is missing | `SourceGone` at the source |
+    | `link` (destination) | `EACCES` on the parent: no search permission and a file at the name, and a directory at `backup_name` | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no search permission and a file at the name, and a directory at `part_name` | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no search permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no search permission and a file at the name, and a link at `backup_name` | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no search permission and a file at the name, and a link at `part_name` | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `link` (destination) | `EACCES` on the parent: no search permission and the source is missing | `SourceGone` at the source |
+    | `link` (source) | `EACCES` on the parent: no write permission and a directory at the name | `SourceGone` at P |
+    | `link` (source) | `EACCES` on the parent: no write permission and a link at the name | `SymlinkInLake` at P |
+    | `link` (source) | `EACCES` on the parent: no write permission and the name is missing | `SourceGone` at P |
+    | `link` (source) | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `link` (source) | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `link` (source) | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | a directory at the name and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (destination) | a file above the name and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (destination) | a file at the name and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (destination) | a link above the name and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (destination) | a link at the name and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (destination) | the name is missing and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (destination) | the parent is missing and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (destination) | `EACCES` on the parent: no write permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no write permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no write permission and a link at the name | `SymlinkInLake` at P |
+    | `rename` (destination) | `EACCES` on the parent: no write permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no write permission and a second name of the source at the name | `None` |
+    | `rename` (destination) | `EACCES` on the parent: no write permission and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (destination) | a second name of the source at the name and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (destination) | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no search permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no search permission and a second name of the source at the name | `StorageError` (`EACCES`) at P |
+    | `rename` (destination) | `EACCES` on the parent: no search permission and the source is missing | `StorageError` (`ENOENT`) at the source |
+    | `rename` (source) | `EACCES` on the parent: no write permission and a directory at the name | `StorageError` (`EISDIR`) at P |
+    | `rename` (source) | `EACCES` on the parent: no write permission and a link at the name | `SymlinkInLake` at P |
+    | `rename` (source) | `EACCES` on the parent: no write permission and the name is missing | `StorageError` (`ENOENT`) at P |
+    | `rename` (source) | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `rename` (source) | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `rename` (source) | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `remove_file` | `EACCES` on the parent: no write permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `remove_file` | `EACCES` on the parent: no write permission and a link at the name | `SymlinkInLake` at P |
+    | `remove_file` | `EACCES` on the parent: no write permission and the name is missing | `MISSING` |
+    | `remove_file` | `EACCES` on the parent: no search permission and a directory at the name | `StorageError` (`EACCES`) at P |
+    | `remove_file` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `remove_file` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `remove_directory` | `EACCES` on the parent: no write permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `remove_directory` | `EACCES` on the parent: no write permission and a link at the name | `SymlinkInLake` at P |
+    | `remove_directory` | `EACCES` on the parent: no write permission and the name is missing | `MISSING` |
+    | `remove_directory` | `EACCES` on the parent: no write permission and a directory with entries at the name | `StorageError` (`EACCES`) at P |
+    | `remove_directory` | `EACCES` on the parent: no search permission and a file at the name | `StorageError` (`EACCES`) at P |
+    | `remove_directory` | `EACCES` on the parent: no search permission and a link at the name | `StorageError` (`EACCES`) at P |
+    | `remove_directory` | `EACCES` on the parent: no search permission and the name is missing | `StorageError` (`EACCES`) at P |
+    | `remove_directory` | `EACCES` on the parent: no search permission and a directory with entries at the name | `StorageError` (`EACCES`) at P |
+
   - Small synchronous rule modules sit above the port. Each is tested over both adapters without
     asyncio, and none touches `os` or `Path`:
 
@@ -668,12 +999,17 @@ point never changes. The record is `architectural_review.md` ("S: Synthesis"). T
         intermediate directories below the collection directory with `make_inheriting_dir`
         ("Catalog share group and directory modes"). It links the file to
         its destination with `link`, only when the source is a regular file with the inode of
-        sub-step 4 (else sub-step 7). On `EEXIST` it links the file to `.<name>.<id>.huron-part`
+        sub-step 4. A missing source or another entry goes to sub-step 7. A link at the source
+        refuses the placement with `SYMLINK_IN_LAKE`: the API records it with `Uploads.fail`
+        (row `failed`) and answers the 409 refusal. A missing `.tus-uploads` is
+        `STORAGE_FAILED`. On `EEXIST` it links the file to `.<name>.<id>.huron-part`
         beside the destination (on `EEXIST` there: unlink the part file, link again), links the
         existing destination to the backup `.<name>.<id>.huron-prev` (on `EEXIST` there: unlink
         the backup, link again), and `rename`s the part over the destination. The backup keeps
         the bytes that the overwrite replaces until the receipt is recorded (decided 2026-11-07).
-        `ENOENT` on the link source goes to sub-step 7.
+        `ENOENT` on the link source goes to sub-step 7. When making a directory or the link
+        fails, the API removes the empty intermediate directories that it made before it
+        answers (M11.5e).
         The API unlinks `.tus-uploads/<id>` and `<id>.info`; `ENOENT` is not an error. Then,
         still under the lock, `Uploads.receipt(id, size, sha256, inode)` with the inode from
         sub-step 4 marks the row `placed`. After the receipt the API unlinks the backup
@@ -1042,6 +1378,10 @@ point never changes. The record is `architectural_review.md` ("S: Synthesis"). T
       report the same link once. Any other `StorageError` is the step's failure with the reason
       `storage_failed`. Only `LAKE_UNAVAILABLE` ends the repair (503). File modes and
       directories that no row plans are `huron adm check`'s findings.
+    - A failure names the place that the error names, in the API form: a failure at
+      `metadata.json` or at its part file has that file as `path`, so `path` and `detail` name
+      the same place (decided 2026-11-08). The Field descriptions of `RepairFailureOut` are the
+      one statement of the rules for `path`, `reason` and `detail`.
     - Repair reads rows only. It reads the rows of each planned directory again under that
       directory's lock (`Repairs.expected`), before the step; a directory whose row is gone is
       skipped.
@@ -1962,9 +2302,14 @@ the group of its inode in `.tus-uploads`.
   directory with `mkdir` at mode `0o750` on the parent's descriptor
   (`pkg.fs.posix.make_inheriting_dir`), and the server sets its group and its setgid bit from
   the parent. `mkdir(2)` honours only the permission bits. The API then runs `stat` on the new
-  directory, with no follow. A missing `S_ISGID` bit, or a group other than the parent's, is
-  `InheritanceFailed`: `STORAGE_FAILED` in a verb, and a step in `failed` with the reason
-  `mode_drift` in a repair. It is never fixed with a silent `chmod`.
+  directory, with no follow. A missing `S_ISGID` bit, a group other than the parent's, or a mode
+  other than `2750` is `InheritanceFailed`, and the API removes the new directory again:
+  `STORAGE_FAILED` in a verb, and a step in `failed` with the reason `mode_drift` in a repair.
+  It is never fixed with a silent `chmod`.
+- The API runs with umask `022`. `build_runtime` sets it (`SERVICE_UMASK`) before any disk pool
+  starts (decided 2026-11-08). `mkdir(2)` applies the umask, and no `chmod` follows the `mkdir`
+  of a directory below a catalog, because a `chmod` by `U` outside the directory's group clears
+  `S_ISGID`. So the umask must keep the bits of `0750`.
 - Every entry is a directory or a regular file. A symbolic link anywhere in the lake is an
   error: a write or read through it answers 409 `SYMLINK_IN_LAKE`, and `huron adm check`
   reports `symbolic_link` (section 3, "Containment in the lake"). Placement makes hard links
@@ -2023,9 +2368,11 @@ no work on disk. A row that is `failed` or `terminated` gets the refusal `UPLOAD
    `pkg.fs.posix.link_into_place`), only when the source is a regular file with the inode of
    step 2: `link`, or on `EEXIST` a link
    to `.<name>.<id>.huron-part`, a link of the old file to the backup `.<name>.<id>.huron-prev`
-   and a `rename` over the destination. It unlinks the upload and its `.info` (a missing file is
-   not an error). Then it calls `Uploads.receipt(id, size, sha256, inode)` with the inode of step
-   2, still under the lock, and unlinks the backup.
+   and a `rename` over the destination. When making a directory or the link fails, the API
+   removes the empty intermediate directories that it made before it answers. It unlinks the
+   upload and its `.info` (a missing file is not an error). Then it calls
+   `Uploads.receipt(id, size, sha256, inode)` with the inode of step 2, still under the lock,
+   and unlinks the backup.
 4. When the receipt raises `UploadNotFound` or `UploadStateConflict` (the collection was
    deleted, or the creator terminated the upload during the hash), it undoes the placement when
    the destination's inode is the placed inode (the backup is renamed back over the destination,
@@ -4593,7 +4940,8 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
   `uv run pytest tests/unit/api/test_openapi_snapshot.py`; from `web/`, `npm run check` and
   `npm test`.
 - Dependencies: M11.5d.
-- Status: pending
+- Status: in progress (resumed 2026-11-08; see "Escalation (M11.5e, 2026-11-08)" and its
+  "Resolution (2026-11-08, the user's answers)", which binds this task)
 
 #### M11.6 Removals, the background runner and the sweep
 
@@ -5018,6 +5366,7 @@ tasks do not wait either: the `stat` after each `mkdir` makes a failed inheritan
 | A machine mounts an organization's export at another path, or not at all (amendment 2026-10-31). | The API writes into the wrong tree, or a check reads it. | Per-organization markers carry the instance and the organization and are checked inside `Mount`; `huron adm verify-mounts` lists every organization's state; hints name the configured `export`. |
 | Replicas run different configurations during a rollout. | A replica of the old configuration that restarts reconciles the database back to it until the rollout ends. | Reconciliation runs under the bootstrap advisory lock and is idempotent; the Helm chart's `checksum/config` rolls every pod to one configuration; undeclared organizations are never deleted. |
 | Loopback or device login unavailable on a cluster node. | No way to log in. | Both flows exist; `tokens.json` can be copied between machines of the same user (documented, mode checked). |
+| A failed placement removes an empty directory that it made, while another placement (another path, another lock) has seen that directory and not yet linked into it (M11.5e). | The other placement answers 500 `STORAGE_FAILED`. | Accepted. tusd sends the hook again, the upload file stays in `.tus-uploads`, and the next attempt makes the directory again. The removal never removes a directory that is not empty or that the failed call did not make. |
 | The export trusts UIDs (AUTH_SYS). | Any process on a read-write client that claims `U` can write the lake. Root on any client can read every file, whatever the share groups say. | Read-write only for the clients of the API pod and the upload pod. The claim is bound to Huron's namespace. The restricted SCC keeps other namespaces out of `U`'s range. Kerberos (`sec=krb5`) is the upgrade path. |
 | tusd runs one replica. | A rollout or a crash interrupts uploads. | `Recreate`, because tusd's test that a lock file's PID is alive works only inside one PID namespace. tus clients resume from the last offset. |
 | The API holds the writable mount. A bug in the API, or a compromised API pod, can change any file of the lake. | Data loss that only ONTAP snapshots undo. | The API writes only through `core.storage.Storage` on `LakePath`, under `LakeDisk.hold`, which checks the marker first. Every path is built from validated names and opened from the root with no follow of a symbolic link, so no write leaves the lake. The API never deletes outside a collection's own entries. Snapshots stay the only history. The upload pod writes only `.tus-uploads`. |
@@ -5326,3 +5675,125 @@ of Milestone 11, M11.5a to M11.13, answers the questions:
 
 The old text of M11.5 "Directory verbs and repair in the API", with its execution notes, is
 replaced by these tasks. This escalation is resolved by the split.
+
+## Escalation (M11.5e, 2026-11-08)
+
+M11.5e "Repair" failed its third verification. The workflow stopped there, as its iteration cap
+requires. No task after M11.5e ran. M11.5a to M11.5d, M11.7, M11.8a and M11.9a are complete and
+committed (last commit `0dcdf1ff`).
+
+State of the tree: the M11.5e work is uncommitted on `tusd-integration`, on top of `0dcdf1ff`
+(34 entries in `git status`). The full gate passes on it: 1727 passed, 1 skipped (the known
+integration skip), coverage 99.98%, `make gate` exit 0, contract tier 59 passed, web
+`npm run check`, `npm test` and `npm run lint` pass. The branch `m11.5-escalated` is kept.
+No verification found a containment hole in any of the three rounds.
+
+### Verification 1 (FAIL)
+
+1. For an organization with its own marker (declared, with a root), a symbolic link at the
+   organization directory or at its `.huron` marker made `LakeDisk`'s marker check raise
+   `SymlinkInLake` before the step ran. The whole catalog or organization repair answered 409,
+   with a base-prefixed path. Section 3 "Repair" and section 8 say a link at or above a step's
+   directory is that step's failure, and only `LAKE_UNAVAILABLE` ends a repair.
+2. The module docstring of `core/storage/repair.py` said repair never sets a setgid bit. The
+   organization step sets mode `2751`.
+3. The `mode_drift` row of `docs/api-errors.md` left out two cases that the code reports: the
+   mode is still wrong after the change, and a new directory did not inherit.
+
+### Verification 2 (FAIL)
+
+1. `docs/api-errors.md`, the `RepairFailureOut` Field descriptions (and so `docs/openapi.json`
+   and `web/src/lib/api/openapi.ts`) and the `FailureReason` docstring did not state that a link
+   at or above the organization's base keeps its lake path, nor that a link at `metadata.json`
+   or at its part file is a `symbolic_link` failure.
+2. `_detail` replaced every occurrence of the path in the error message, so a strerror that
+   contains the path text was changed ("Input/output error" became "output error").
+3. A test named "link above the base" put the link at the base. `RepairFailure.of_link` and
+   `RepairStep.api_path` had no direct edge tests.
+4. `MemoryStorage` and `PosixStorage` named different paths in a permission-denied error (the
+   requested place against the denied directory). A `startswith` assertion hid the difference.
+
+### Verification 3 (FAIL)
+
+The four findings of verification 2 are fixed, and the gate passes. Two new defects:
+
+1. `MemoryStorage.write_bytes` (`core/storage/memory.py`, about lines 193-196) models the part
+   file differently from POSIX `atomic_write` (`pkg/fs/posix.py`, about lines 213-235). POSIX
+   refuses a link at the name, unlinks the part file, writes, then renames.
+   - A directory at `<name>.huron-part`: POSIX refuses with EISDIR and changes nothing.
+     `MemoryStorage` pops the node, so the write succeeds, the directory is deleted and its
+     children stay without a parent. A repair step with metadata then gives `storage_failed`
+     on POSIX and deletes a directory on the in-memory adapter.
+   - `<name>` is a directory and an old part file exists: POSIX removes the part file, then fails
+     with EISDIR. `MemoryStorage` fails first and keeps the part file.
+   - No contract test covers either case.
+2. `docs/api-errors.md` (about line 76) and the `detail` Field description in
+   `routes/v1/schema/repairs.py` (about line 44, copied into `docs/openapi.json` and
+   `web/src/lib/api/openapi.ts`) say that `detail` names the same path as `path`. For a storage
+   error at `metadata.json` (a directory there, or EACCES or EIO on it), `path` is the step's
+   directory and `detail` names `.../metadata.json`.
+
+### Diagnosis
+
+The repair design in section 3 holds. Each round confirmed it: planned steps only, rows read
+again under the lock, one step per directory, the three reasons, the no-follow primitives, the
+races and the unreadable directories. The failures are of two classes, and each fix pass exposed
+the next instance of the same class:
+
+- Adapter fidelity. `MemoryStorage` is a second implementation of every error case of the POSIX
+  adapter. The plan has no table of the error behaviour per port method, so the contract suite
+  has no list to cover, and each review finds one more case where the two differ (permission
+  paths in round 2, the part file in round 3). M11.5e touched `MemoryStorage` because the repair
+  tests run on both adapters.
+- Text that restates code case by case. The repair failure contract (`path`, `reason`, `detail`)
+  is restated in `docs/api-errors.md`, the Pydantic Field descriptions, the OpenAPI file, the web
+  types and three docstrings. The plan does not fix what `detail` promises. Every new case in the
+  code makes one of these texts false.
+
+Neither class needs a different architecture. Both need a decision that the plan does not hold.
+
+### Design questions
+
+1. Adapter fidelity. Pick one rule:
+   - (a) The contract suite is the specification. Add to section 3 "The disk-access module" a
+     table of the error per port method and per case (link at the name, link above, directory at
+     the name, directory at the part file, missing parent, EACCES, ENOTDIR). Both adapters must
+     pass every row. `MemoryStorage` stays a full adapter.
+   - (b) `MemoryStorage` models only the success paths and the link refusal. Error-path tests
+     (EACCES, EISDIR, part-file states, races) run on `PosixStorage` over `tmp_path` only.
+2. `detail` promise. Pick one rule:
+   - (a) `detail` is free text for people, and the docs promise nothing about its path. `path` is
+     the only machine-readable field.
+   - (b) A failure at `metadata.json` or at its part file sets `path` to that file, so `detail`
+     and `path` always name the same place.
+3. One source for the failure contract. Should the reason and path rules live only in the
+   Pydantic Field descriptions, with `docs/api-errors.md` linking to the OpenAPI reference
+   instead of restating them?
+4. Resumption. After the decisions: fix the two verification 3 defects under the chosen rules, then
+   verify M11.5e once more with a new verification cycle. Or replan M11.5e first.
+
+### Resolution (2026-11-08, the user's answers)
+
+The user answered the design questions: 1 (a), 2 (b), 3 yes, 4 fix and verify again. These rules
+bind M11.5e and every later task.
+
+1. The contract suite is the specification of the port. Section 3 "The disk-access module" holds
+   the table "Errors per port method": one row per port method and case, with the result (the
+   return value, or the error class and the path the error names). The cases: the name is
+   missing; the parent is missing; a link at the name; a link above the name; a non-directory
+   above the name; a directory where a file is expected; a file where a directory is expected;
+   `EACCES` on the parent; and, for `write_bytes`, a directory at `<name>.huron-part` and an old
+   part file with a directory at `<name>`. A case that cannot occur for a method is not a row.
+   The POSIX adapter is the reference: a row states what `PosixStorage` does, unless that is a
+   defect, which the task fixes and names. One parametrized contract test runs every row over
+   `MemoryStorage` and `PosixStorage(root=tmp_path)`. `MemoryStorage` stays a full adapter and
+   passes every row.
+2. A repair failure at `metadata.json` or at its part file sets `path` to that file, in the API
+   form. So `path` and `detail` always name the same place.
+3. The `path`, `reason` and `detail` rules of a repair failure live in one place: the Field
+   descriptions of `RepairFailureOut` (and so `docs/openapi.json` and
+   `web/src/lib/api/openapi.ts`). `docs/api-errors.md` links to that schema and does not restate
+   the cases. The docstrings of `FailureReason`, `RepairFailure` and `_detail` state what each
+   value means in one sentence and list no cases.
+4. M11.5e resumes with one fix pass for the two defects of verification 3 under rules 1 to 3,
+   then a new verification cycle of at most three verifications.

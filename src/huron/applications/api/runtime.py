@@ -17,6 +17,7 @@ from huron.applications.api.disk import (
     Directories,
     LakeDirectories,
     LakeDisk,
+    LakeRepair,
     NoLake,
     Placements,
 )
@@ -41,14 +42,20 @@ from huron.core.storage import (
     LakeUnavailable,
     OrganizationPlace,
     Placer,
+    Repairer,
     Storage,
 )
 from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import Clock, SystemClock
 
-__all__ = ["VERSION", "ClosableStore", "Runtime", "build_runtime"]
+__all__ = ["SERVICE_UMASK", "VERSION", "ClosableStore", "Runtime", "build_runtime"]
 
 VERSION = __version__
+
+#: The umask of the API process. ``mkdir`` applies it, and a new directory below a catalog gets
+#: no ``chmod`` (a ``chmod`` by a caller outside the directory's group clears the setgid bit), so
+#: it must keep the bits of ``0750``.
+SERVICE_UMASK = 0o022
 
 #: The startup reconcile report's logger: one ``bootstrap.*`` event per organization it touched.
 _bootstrap_log = structlog.get_logger("huron.api.bootstrap")
@@ -66,8 +73,8 @@ class ClosableStore(UnitOfWork, Protocol):
 class Runtime:
     """The service's shared objects.
 
-    ``disk`` and ``placements`` are ``None`` when the service has no lake, and ``directories``
-    is then :class:`NoLake`.
+    ``disk``, ``placements`` and ``repair`` are ``None`` when the service has no lake, and
+    ``directories`` is then :class:`NoLake`.
     """
 
     settings: Settings
@@ -81,6 +88,7 @@ class Runtime:
     declarations: Declarations = UNMANAGED
     disk: LakeDisk | None = None
     placements: Placements | None = None
+    repair: LakeRepair | None = None
     directories: Directories = field(default_factory=NoLake)
     _ring: KeyRing | None = field(default=None, repr=False)
     _ring_loaded_at: datetime | None = field(default=None, repr=False)
@@ -147,9 +155,11 @@ async def build_runtime(
 ) -> Runtime:
     """Connect the store, bootstrap the lake, open the lake's disk and assemble the runtime.
 
-    With ``lake_path``, ``storage`` stands in for the POSIX storage rooted there, and
+    First it sets the process umask to :data:`SERVICE_UMASK`, before any disk pool starts. With
+    ``lake_path``, ``storage`` stands in for the POSIX storage rooted there, and
     ``probe_timeout`` bounds the readiness probe of the lake's disk.
     """
+    os.umask(SERVICE_UMASK)
     clock = clock or SystemClock()
     if store is None:
         store = await _store(settings)
@@ -164,7 +174,7 @@ async def build_runtime(
     )
     _report(await bootstrap(store, clock, lake_settings))
     lake_path = settings.lake_path
-    disk = placements = None
+    disk = placements = repair = None
     directories: Directories = NoLake()
     if lake_path is not None:
         storage = storage or PosixStorage(root=lake_path)
@@ -178,7 +188,9 @@ async def build_runtime(
         await _open(disk, lake_path)
         placements = Placements(disk, Placer(storage))
         # The service group is the pod's runAsGroup, not a setting.
-        directories = LakeDirectories(disk, DirectoryWriter(storage, os.getgid()))
+        writer = DirectoryWriter(storage, os.getgid())
+        directories = LakeDirectories(disk, writer)
+        repair = LakeRepair(disk, Repairer(storage, writer))
     owns_http = http is None
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
     return Runtime(
@@ -195,6 +207,7 @@ async def build_runtime(
         declarations=declarations,
         disk=disk,
         placements=placements,
+        repair=repair,
         directories=directories,
     )
 

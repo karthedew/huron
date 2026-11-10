@@ -729,6 +729,16 @@
         "title": "FailureOut",
         "type": "object"
       },
+      "FailureReason": {
+        "description": "Why a repair could not fix a place.",
+        "enum": [
+          "mode_drift",
+          "symbolic_link",
+          "storage_failed"
+        ],
+        "title": "FailureReason",
+        "type": "string"
+      },
       "FileOut": {
         "description": "A recorded file.",
         "properties": {
@@ -1720,6 +1730,88 @@
           "changed"
         ],
         "title": "RecomputeOut",
+        "type": "object"
+      },
+      "RepairFailureOut": {
+        "description": "A place that the repair could not fix.",
+        "properties": {
+          "detail": {
+            "description": "Why the repair failed, as text for people. It names the same place as path.",
+            "title": "Detail",
+            "type": "string"
+          },
+          "path": {
+            "description": "The place where the repair failed, in the form of a view's path. For mode_drift, path is the directory of the step. For symbolic_link, path is the link. The link can be at the directory of the step or at a directory above it. It can also be at the metadata.json of the step or at its part file (metadata.json.huron-part). Or it can be at the .huron marker that guards the organization. For an organization with its own root, this marker is in the directory of the organization (path <organization>/.huron). For any other organization, it is the marker at the root of the lake (path .huron). For storage_failed, path is the place that the storage error names. This place is the directory of the step, the catalog directory, the metadata.json of the step or its part file. When the directory refuses to make or to delete the part file, or the rename of the part file fails, path is metadata.json. A place at or above the root of the organization keeps its path in the lake, for example roots.",
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/FailureReason",
+            "description": "mode_drift: only the storage administrator can set the mode or the group of the directory. The catalog directory or a directory below it does not have the setgid bit. Or a directory below the catalog directory does not have the group of the catalog directory. Or the permission bits are wrong, and the API is not in the group of the directory. Or the mode is still wrong after the API changed it. Or a new directory did not get the setgid bit and the group of its parent, or the mode 2750. The API deleted that directory again. The storage administrator runs huron adm provision-catalogs. symbolic_link: path is a symbolic link. The repair does not change the link. The storage administrator deletes it. storage_failed: a different storage error occurred. For example, the path of the step is not a directory. Or a directory is at metadata.json or at its part file. Or the API cannot read or write path."
+          }
+        },
+        "required": [
+          "path",
+          "reason",
+          "detail"
+        ],
+        "title": "RepairFailureOut",
+        "type": "object"
+      },
+      "RepairIn": {
+        "description": "What a catalog repair covers.",
+        "properties": {
+          "recursive": {
+            "default": false,
+            "description": "Also repair every namespace and settled collection below the target.",
+            "title": "Recursive",
+            "type": "boolean"
+          },
+          "target": {
+            "description": "The catalog's name, or the identifier of one of its namespaces or settled collections.",
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "RepairIn",
+        "type": "object"
+      },
+      "RepairOut": {
+        "description": "What a repair changed, the share groups still pending, and what it could not fix.",
+        "properties": {
+          "changed": {
+            "description": "The paths that the repair made or changed.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed",
+            "type": "array"
+          },
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/RepairFailureOut"
+            },
+            "title": "Failed",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/ShareWarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "changed",
+          "warnings",
+          "failed"
+        ],
+        "title": "RepairOut",
         "type": "object"
       },
       "RoleOut": {
@@ -3273,6 +3365,59 @@
         ]
       }
     },
+    "/api/v1/catalogs/{catalog}/repair": {
+      "post": {
+        "description": "Repair the directories of the target, from the catalog's down to the target's.\n\nThe API makes each missing directory, sets wrong permission bits, tries the catalog\ndirectory's share group and writes each settled collection's ``metadata.json`` that\ndiffers. With ``recursive`` it also repairs every namespace and settled collection below\nthe target. It acts only on the directories that the rows plan and lists no directory. Of\nthe directories, it deletes only a new directory that it made without the mode 2750 or\nwithout the group of its parent. Before it writes ``metadata.json``, it deletes the part\nfile ``metadata.json.huron-part`` that an earlier write left. When the write fails, it\ntries to delete its own part file.",
+        "operationId": "catalog_repair_api_v1_catalogs__catalog__repair_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalog",
+            "required": true,
+            "schema": {
+              "title": "Catalog",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepairIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Catalog Repair",
+        "tags": [
+          "repairs"
+        ]
+      }
+    },
     "/api/v1/catalogs/{catalog}/schema": {
       "get": {
         "description": "The catalog's resolved schema document.",
@@ -4492,6 +4637,49 @@
         "summary": "Set Organization Grants",
         "tags": [
           "grants"
+        ]
+      }
+    },
+    "/api/v1/organizations/{organization}/repair": {
+      "post": {
+        "description": "Repair the mode of the organization's directory, or make the directory when it is missing.",
+        "operationId": "organization_repair_api_v1_organizations__organization__repair_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organization",
+            "required": true,
+            "schema": {
+              "title": "Organization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Organization Repair",
+        "tags": [
+          "repairs"
         ]
       }
     },

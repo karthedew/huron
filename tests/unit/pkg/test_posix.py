@@ -1,5 +1,6 @@
 """POSIX descriptor primitives on a real temporary filesystem."""
 
+import asyncio
 import errno
 import os
 import stat
@@ -10,7 +11,14 @@ from pathlib import Path
 import pytest
 
 from huron.pkg.fs import posix
-from tests.support.disk import snapshot
+from tests.support.disk import (
+    WRITE_CLEANUP_FAILURES,
+    cleanup_notes,
+    exception_chain,
+    fail_file_io,
+    fail_write_cleanup,
+    snapshot,
+)
 
 PART = ".a.bin.1.huron-part"
 BACKUP = ".a.bin.1.huron-prev"
@@ -46,7 +54,6 @@ PRIMITIVES: dict[str, Callable[[Path, int, str], object]] = {
     "entry": lambda lake, fd, name: posix.entry(fd, name),
     "open_file": lambda lake, fd, name: posix.open_file(fd, name),
     "open_directory": lambda lake, fd, name: posix.open_directory(fd, name),
-    "open_entry": lambda lake, fd, name: posix.open_entry(fd, name),
     "change_mode": lambda lake, fd, name: posix.change_mode(fd, name, 0o600),
     "change_group": lambda lake, fd, name: posix.change_group(fd, name, os.getgid()),
     "make_dir": lambda lake, fd, name: posix.make_dir(fd, name, 0o750),
@@ -175,6 +182,16 @@ def test_make_inheriting_dir_keeps_the_inherited_setgid_bit_and_group(
         assert posix.make_inheriting_dir(fd, "d") is False
 
 
+def test_make_inheriting_dir_refuses_a_mode_that_the_umask_cut(
+    lake: Path, setgid_dir: Path
+) -> None:
+    os.umask(0o077)
+    with parent(lake, "a") as fd, pytest.raises(posix.InheritanceError) as refused:
+        posix.make_inheriting_dir(fd, "d")
+    assert refused.value.strerror == "the directory has the mode 2700, not 2750"
+    assert not (setgid_dir / "d").exists()
+
+
 def test_make_inheriting_dir_refuses_a_directory_without_an_inherited_setgid_bit(
     lake: Path,
 ) -> None:
@@ -236,6 +253,369 @@ def test_atomic_write_refuses_a_part_file_that_is_a_link(lake: Path) -> None:
         posix.atomic_write(fd, "m.json", b"x", 0o644, PART)
     assert refused.value.names == (PART,)
     assert (outside / "file").read_bytes() == b"keep"
+
+
+def test_atomic_write_refuses_a_directory_at_the_part_file_and_changes_nothing(
+    lake: Path,
+) -> None:
+    (lake / "a" / PART).mkdir()
+    (lake / "a" / PART / "keep").write_bytes(b"keep")
+    with parent(lake, "a") as fd, pytest.raises(posix.PartBlocked) as refused:
+        posix.atomic_write(fd, "m.json", b"x", 0o644, PART)
+    assert (refused.value.errno, refused.value.filename) == (errno.EISDIR, PART)
+    assert names_in(lake / "a") == [PART]
+    assert (lake / "a" / PART / "keep").read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize(
+    "operation", ["stat", "unlink", "open", "fchmod", "write", "fsync", "close"]
+)
+@pytest.mark.parametrize("number", [errno.EIO, errno.EACCES])
+def test_atomic_write_keeps_the_error_origin_and_old_bytes(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, operation: str, number: int
+) -> None:
+    target = lake / "a" / "m.json"
+    target.write_bytes(b"old")
+    (lake / "a" / PART).write_bytes(b"stale")
+    with parent(lake, "a") as fd:
+        fail_file_io(monkeypatch, operation, PART, number)
+        with pytest.raises(OSError) as refused:
+            posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    error = refused.value
+    assert error.errno == number
+    if number == errno.EACCES and operation in {"open", "unlink"}:
+        assert isinstance(error, PermissionError)
+    else:
+        assert isinstance(error, posix.FileError)
+        assert error.filename == PART
+        assert error.error.errno == number
+    assert target.read_bytes() == b"old"
+
+
+@pytest.mark.parametrize("operation", ["stat", "rename"])
+def test_atomic_write_does_not_attribute_target_or_replace_errors_to_the_part(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    target = lake / "a" / "m.json"
+    target.write_bytes(b"old")
+    with parent(lake, "a") as fd:
+        fail_file_io(monkeypatch, operation, "m.json" if operation == "stat" else PART, errno.EIO)
+        with pytest.raises(OSError) as refused:
+            posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    assert not isinstance(refused.value, posix.FileError)
+    assert refused.value.errno == errno.EIO
+    assert target.read_bytes() == b"old"
+
+
+@pytest.mark.parametrize("operation,cleanup", WRITE_CLEANUP_FAILURES)
+@pytest.mark.parametrize(
+    "number,secondary_number",
+    [
+        (errno.ENOSPC, errno.EIO),
+        (errno.EIO, errno.EACCES),
+        (errno.EACCES, errno.ENOSPC),
+        (errno.ENOENT, errno.EPERM),
+        (errno.EINTR, errno.EBADF),
+    ],
+)
+def test_atomic_write_keeps_the_primary_error_when_cleanup_also_fails(
+    lake: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    cleanup: tuple[str, ...],
+    number: int,
+    secondary_number: int,
+) -> None:
+    target = lake / "a" / "m.json"
+    target.write_bytes(b"old")
+    old_inode = target.stat().st_ino
+    with parent(lake, "a") as fd, monkeypatch.context() as patch:
+        primary, *secondary = fail_write_cleanup(
+            patch, PART, operation, cleanup, number, secondary_number
+        )
+        original_message = str(primary)
+        with pytest.raises(OSError) as refused:
+            posix.atomic_write(fd, "m.json", b"new", 0o640, PART)
+    error = refused.value
+    assert exception_chain(error)[-1] is primary
+    assert (error.errno, error.strerror) == (number, os.strerror(number))
+    assert str(primary) == original_message
+    if operation == "rename" or (operation == "open" and number == errno.EACCES):
+        assert error is primary
+    else:
+        assert isinstance(error, posix.FileError)
+        assert error.filename == PART
+        assert error.error is primary
+    expected = [
+        f"{'close' if action == 'close' else 'remove'} {PART!r} failed: "
+        f"[Errno {secondary_number}] {os.strerror(secondary_number)}"
+        for action in cleanup
+    ]
+    assert sorted(cleanup_notes(error)) == sorted(expected)
+    assert all(fault.__traceback__ is not None for fault in secondary)
+    assert (target.read_bytes(), target.stat().st_ino) == (b"old", old_inode)
+    assert (lake / "a" / PART).exists() == (operation != "open" and cleanup != ("close",))
+    with parent(lake, "a") as fd:
+        posix.atomic_write(fd, "m.json", b"new", 0o640, PART)
+    assert target.read_bytes() == b"new"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+    assert names_in(lake / "a") == ["m.json"]
+
+
+@pytest.mark.parametrize("operation", ["fchmod", "write", "fsync", "rename"])
+@pytest.mark.parametrize(
+    "kind", [asyncio.CancelledError, KeyboardInterrupt, SystemExit, GeneratorExit]
+)
+def test_atomic_write_preserves_interruption_during_failing_cleanup(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, operation: str, kind: type[BaseException]
+) -> None:
+    target = lake / "a" / "m.json"
+    target.write_bytes(b"old")
+    interruption = kind("interrupted")
+    with parent(lake, "a") as fd, monkeypatch.context() as patch:
+        fail_file_io(patch, operation, PART, interruption)
+        if operation != "rename":
+            fail_file_io(patch, "close", PART, errno.EIO)
+        fail_file_io(patch, "unlink", PART, errno.EACCES)
+        with pytest.raises(kind) as refused:
+            posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    assert refused.value is interruption
+    assert len(cleanup_notes(interruption)) == (1 if operation == "rename" else 2)
+    assert target.read_bytes() == b"old"
+    with parent(lake, "a") as fd:
+        posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    assert target.read_bytes() == b"new"
+    assert not (lake / "a" / PART).exists()
+
+
+@pytest.mark.parametrize("cleanup", ["close", "stat", "unlink"])
+@pytest.mark.parametrize(
+    "kind", [asyncio.CancelledError, KeyboardInterrupt, SystemExit, GeneratorExit]
+)
+def test_atomic_write_does_not_suppress_an_interruption_in_cleanup(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, cleanup: str, kind: type[BaseException]
+) -> None:
+    target = lake / "a" / "m.json"
+    target.write_bytes(b"old")
+    interruption = kind("cleanup interrupted")
+    with parent(lake, "a") as fd, monkeypatch.context() as patch:
+        primary = fail_file_io(patch, "fsync", PART, errno.ENOSPC)
+        fail_file_io(patch, cleanup, PART, interruption, after=2 if cleanup == "stat" else 0)
+        with pytest.raises(kind) as refused:
+            posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    assert refused.value is interruption
+    assert primary.__traceback__ is not None
+    assert target.read_bytes() == b"old"
+    with parent(lake, "a") as fd:
+        posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    assert target.read_bytes() == b"new"
+
+
+@pytest.mark.parametrize("operation", ["fchmod", "write", "fsync", "rename"])
+def test_parent_close_cannot_replace_a_write_error_or_its_cleanup_diagnostics(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    target = lake / "a" / "m.json"
+    target.write_bytes(b"old")
+    with monkeypatch.context() as patch, pytest.raises(OSError) as refused, parent(lake, "a") as fd:
+        primary, secondary = fail_write_cleanup(patch, PART, operation, ("unlink",), errno.ENOSPC)
+        closed = fail_file_io(patch, "close", "a", errno.EIO)
+        posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    assert exception_chain(refused.value)[-1] is primary
+    assert refused.value.errno == errno.ENOSPC
+    assert sorted(cleanup_notes(refused.value)) == sorted(
+        [
+            f"remove {PART!r} failed: [Errno 5] Input/output error",
+            "close parent directory failed: [Errno 5] Input/output error",
+        ]
+    )
+    assert secondary.__traceback__ is not None and closed.__traceback__ is not None
+    with pytest.raises(OSError) as released:
+        os.fstat(fd)
+    assert released.value.errno == errno.EBADF
+    assert target.read_bytes() == b"old"
+
+
+@pytest.mark.parametrize("name", [PART, "a"])
+def test_a_close_failure_never_retries_a_descriptor_that_can_be_reused(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    target = lake / "a" / "m.json"
+    target.write_bytes(b"old")
+    real_close = os.close
+    replacements: list[int] = []
+    fault = OSError(errno.EINTR, "interrupted close", "/untrusted/elsewhere")
+
+    def closing(descriptor: int) -> None:
+        actual = Path(os.readlink(f"/proc/self/fd/{descriptor}")).name
+        real_close(descriptor)
+        if actual == name and not replacements:
+            replacement = os.open(lake.parent / "outside" / "file", os.O_RDONLY)
+            if replacement != descriptor:
+                os.dup2(replacement, descriptor)
+                real_close(replacement)
+                replacement = descriptor
+            replacements.append(replacement)
+            assert replacement == descriptor
+            raise fault
+
+    try:
+        with (
+            monkeypatch.context() as patch,
+            pytest.raises(OSError) as refused,
+            parent(lake, "a") as fd,
+        ):
+            patch.setattr(os, "close", closing)
+            posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+        assert exception_chain(refused.value)[-1] is fault
+        assert cleanup_notes(refused.value) == []
+        assert len(replacements) == 1
+        assert os.read(replacements[0], 4) == b"keep"
+        assert target.read_bytes() == (b"old" if name == PART else b"new")
+        assert not (lake / "a" / PART).exists()
+    finally:
+        for descriptor in replacements:
+            real_close(descriptor)
+
+
+@pytest.mark.parametrize("final_close_fails", [False, True])
+def test_a_traversal_close_failure_releases_the_new_descriptor_without_retrying_the_old(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, final_close_fails: bool
+) -> None:
+    real_open, real_close = os.open, os.close
+    opened: list[int] = []
+    replacement: list[int] = []
+    fault = OSError(errno.EIO, "close failed")
+
+    def opening(*args: object, **kwargs: object) -> int:
+        descriptor = real_open(*args, **kwargs)
+        opened.append(descriptor)
+        return descriptor
+
+    def closing(descriptor: int) -> None:
+        real_close(descriptor)
+        if descriptor == opened[0] and not replacement:
+            replacement.append(real_open(lake.parent / "outside" / "file", os.O_RDONLY))
+            assert replacement[0] == descriptor
+            raise fault
+        if final_close_fails and descriptor == opened[1]:
+            raise OSError(errno.EBADF, "secondary close failure")
+
+    try:
+        with monkeypatch.context() as patch, pytest.raises(OSError) as refused:
+            patch.setattr(os, "open", opening)
+            patch.setattr(os, "close", closing)
+            with parent(lake, "a"):
+                pytest.fail("A failed traversal cannot yield a directory")
+        assert refused.value is fault
+        assert cleanup_notes(fault) == (
+            ["close parent directory failed: [Errno 9] secondary close failure"]
+            if final_close_fails
+            else []
+        )
+        assert len(opened) == 2
+        assert os.read(replacement[0], 4) == b"keep"
+        with pytest.raises(OSError) as released:
+            os.fstat(opened[1])
+        assert released.value.errno == errno.EBADF
+    finally:
+        for descriptor in replacement:
+            real_close(descriptor)
+
+
+def test_an_empty_atomic_write_closes_its_descriptor_and_removes_the_part(lake: Path) -> None:
+    with parent(lake, "a") as fd:
+        posix.atomic_write(fd, "m.json", b"", 0o640, PART)
+    assert (lake / "a" / "m.json").read_bytes() == b""
+    assert names_in(lake / "a") == ["m.json"]
+
+
+@pytest.mark.parametrize("replacement", ["symlink", "directory", "missing"])
+def test_failed_write_cleanup_never_removes_an_obstruction_or_follows_a_link(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    target = lake / "a" / "m.json"
+    target.write_bytes(b"old")
+    part = lake / "a" / PART
+    outside = lake.parent / "outside"
+    before = snapshot(outside)
+    primary = OSError(errno.ENOSPC, "rename failed", "/untrusted/elsewhere")
+
+    def replacing(*args: object, **kwargs: object) -> None:
+        part.unlink()
+        if replacement == "symlink":
+            part.symlink_to(outside / "file")
+        elif replacement == "directory":
+            part.mkdir()
+            (part / "keep").write_bytes(b"keep")
+        raise primary
+
+    with parent(lake, "a") as fd, monkeypatch.context() as patch:
+        patch.setattr(os, "rename", replacing)
+        with pytest.raises(OSError) as refused:
+            posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    assert refused.value is primary
+    assert snapshot(outside) == before
+    assert target.read_bytes() == b"old"
+    if replacement == "symlink":
+        assert part.is_symlink()
+        assert cleanup_notes(primary) == [f"remove {PART!r} failed: [Errno 40] a symbolic link"]
+        part.unlink()
+    elif replacement == "directory":
+        assert (part / "keep").read_bytes() == b"keep"
+        assert cleanup_notes(primary) == [f"remove {PART!r} failed: [Errno 21] Is a directory"]
+        (part / "keep").unlink()
+        part.rmdir()
+    else:
+        assert not part.exists()
+        assert cleanup_notes(primary) == []
+    with parent(lake, "a") as fd:
+        posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    assert target.read_bytes() == b"new"
+
+
+@pytest.mark.parametrize("operation", ["write", "rename"])
+def test_cleanup_preserves_custom_primary_text_existing_notes_and_cause(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    primary = OSError(errno.ENOSPC, "primary failure at /other/place", "/untrusted/elsewhere")
+    cause = ValueError("original cause")
+    primary.__cause__ = cause
+    primary.add_note("original diagnostic")
+    message = str(primary)
+    with parent(lake, "a") as fd, monkeypatch.context() as patch:
+        fail_file_io(patch, operation, PART, primary)
+        fail_file_io(patch, "unlink", PART, OSError(errno.EIO, "secondary cleanup failure"))
+        with pytest.raises(OSError) as refused:
+            posix.atomic_write(fd, "m.json", b"new", 0o644, PART)
+    assert primary in exception_chain(refused.value)
+    assert exception_chain(refused.value)[-1] is cause
+    assert primary.__cause__ is cause
+    assert str(primary) == message
+    assert refused.value.strerror == "primary failure at /other/place"
+    assert sorted(cleanup_notes(refused.value)) == sorted(
+        ["original diagnostic", f"remove {PART!r} failed: [Errno 5] secondary cleanup failure"]
+    )
+    assert not (lake / "a" / "m.json").exists()
+
+
+@pytest.mark.parametrize(
+    "kind", [asyncio.CancelledError, KeyboardInterrupt, SystemExit, GeneratorExit]
+)
+def test_parent_close_retains_an_active_interruption(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, kind: type[BaseException]
+) -> None:
+    interruption = kind("interrupted")
+    with monkeypatch.context() as patch, pytest.raises(kind) as refused, parent(lake, "a") as fd:
+        fail_file_io(patch, "close", "a", errno.EIO)
+        raise interruption
+    assert refused.value is interruption
+    assert cleanup_notes(interruption) == [
+        "close parent directory failed: [Errno 5] Input/output error"
+    ]
+    with pytest.raises(OSError) as released:
+        os.fstat(fd)
+    assert released.value.errno == errno.EBADF
 
 
 def place(lake: Path, name: str = "a.bin", inode: int | None = None) -> str | None:
@@ -328,12 +708,13 @@ def test_link_into_place_refuses_a_part_or_backup_name_that_is_a_link(
     assert (outside / "file").read_bytes() == b"keep"
 
 
-def test_link_into_place_that_cannot_back_up_the_destination_removes_its_part(
+def test_link_into_place_refuses_a_directory_at_the_destination_before_any_change(
     lake: Path,
 ) -> None:
     (lake / "a" / "a.bin").mkdir()
-    with pytest.raises(PermissionError):
+    with pytest.raises(IsADirectoryError) as refused:
         place(lake)
+    assert refused.value.filename == "a.bin"
     assert names_in(lake / "a") == ["a.bin"]
 
 
@@ -404,15 +785,58 @@ def test_change_mode_and_change_group_act_through_the_entry(lake: Path) -> None:
     assert stat.S_IMODE(os.lstat(lake / "a" / "d").st_mode) == 0o2750
 
 
-def test_change_group_changes_the_group_through_the_descriptor(
+def test_change_group_changes_the_group_without_following_a_link(
     lake: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    changed: list[tuple[int, int]] = []
-    monkeypatch.setattr(os, "fchown", lambda fd, uid, gid: changed.append((uid, gid)))
+    changed: list[tuple[str, int, int, bool]] = []
+
+    def chown(path: str, uid: int, gid: int, *, dir_fd: int, follow_symlinks: bool) -> None:
+        changed.append((path, uid, gid, follow_symlinks))
+
+    monkeypatch.setattr(os, "chown", chown)
     other = os.lstat(lake / "up" / "src").st_gid + 1
     with parent(lake, "up") as fd:
         assert posix.change_group(fd, "src", other) is True
-    assert changed == [(-1, other)]
+        with pytest.raises(FileNotFoundError):
+            posix.change_group(fd, "missing", other)
+    assert changed == [("src", -1, other, False)]
+
+
+def test_change_group_reports_a_refused_chown(lake: Path) -> None:
+    group = os.lstat(lake / "up" / "src").st_gid
+    other = next(gid for gid in range(1, 65536) if gid != group and gid not in os.getgroups())
+    with parent(lake, "up") as fd, pytest.raises(posix.ChangeRefused) as refused:
+        posix.change_group(fd, "src", other)
+    assert (refused.value.errno, refused.value.filename) == (errno.EPERM, "src")
+    assert os.lstat(lake / "up" / "src").st_gid == group
+
+
+@pytest.mark.parametrize("mode", [0o000, 0o2000, 0o300, 0o100])
+def test_a_directory_this_process_cannot_read_changes_its_mode_and_group(
+    lake: Path, temporary_mode: Callable[[Path, int], None], mode: int
+) -> None:
+    unreadable = lake / "a" / "d"
+    unreadable.mkdir()
+    temporary_mode(unreadable, mode)
+    gid = os.lstat(unreadable).st_gid
+    with parent(lake, "a") as fd:
+        assert posix.change_group(fd, "d", gid) is False
+        assert posix.change_mode(fd, "d", 0o2750) is True
+    assert stat.S_IMODE(os.lstat(unreadable).st_mode) == 0o2750
+
+
+def test_change_mode_reports_a_filesystem_that_cannot_change_without_following(
+    lake: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise ValueError("chmod: cannot use dir_fd and follow_symlinks together")
+
+    monkeypatch.setattr(os, "chmod", refuse)
+    with parent(lake, "up") as fd, pytest.raises(OSError) as refused:
+        posix.change_mode(fd, "src", 0o600)
+    assert not isinstance(refused.value, posix.SymlinkError)
+    assert refused.value.errno == errno.EOPNOTSUPP
+    assert stat.S_IMODE(os.lstat(lake / "up" / "src").st_mode) != 0o600
 
 
 def test_walk_names_a_directory_that_a_link_replaced_from_the_walked_directory(

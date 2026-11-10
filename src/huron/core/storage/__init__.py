@@ -1,4 +1,6 @@
-"""The lake's layout, the storage port and adapters, directories, placement, removal and locks."""
+"""The lake's layout, the storage port and adapters, directories, placement, repair, removal
+and locks.
+"""
 
 from huron.core.storage.directories import DirectoryWriter
 from huron.core.storage.errors import (
@@ -49,6 +51,13 @@ from huron.core.storage.ports import (
     Storage,
 )
 from huron.core.storage.removal import prune
+from huron.core.storage.repair import (
+    FailureReason,
+    Repairer,
+    RepairFailure,
+    RepairResult,
+    RepairStep,
+)
 
 __all__ = [
     "DIRECTORY_MODE",
@@ -63,6 +72,7 @@ __all__ = [
     "CollectionDirectoryMissing",
     "DirectoryWriter",
     "Entry",
+    "FailureReason",
     "GroupOutcome",
     "GroupResult",
     "InheritanceFailed",
@@ -77,6 +87,10 @@ __all__ = [
     "Outcome",
     "PathLocks",
     "Placer",
+    "RepairFailure",
+    "RepairResult",
+    "RepairStep",
+    "Repairer",
     "ShareReader",
     "ShareWarning",
     "SourceGone",

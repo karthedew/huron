@@ -85,7 +85,7 @@ Do not change these parts of the dirty tree in this plan: `.agents/`, `.opencode
 - Verification: all commands exit 0, the greps print what the task text states, the branch
   `m11.5-escalated` exists.
 - Dependencies: R3.
-- Status: pending
+- Status: complete (verification 2 of 3 passed, 2026-11-10)
 
 ## Ledger
 
@@ -339,3 +339,221 @@ I/O error and does not model the permission of a file, so the cases on the file 
 | `npm run check` (from `web/`) | 0 | 0 errors, 0 warnings |
 | `npm test` (from `web/`) | 0 | 130 files, 1645 tests passed |
 | `git diff --check` | 0 | Prints nothing |
+
+### R4 (2026-11-10)
+
+#### Part A: notes of the R3 verification
+
+No behaviour change in `src/`. Only text and tests changed.
+
+1. `RepairFailureOut.path` (`routes/v1/schema/repairs.py`) has a new sentence: "When the
+   directory refuses to make or to delete the part file, or the rename of the part file fails,
+   path is metadata.json." The code agrees:
+   - `atomic_write` (`pkg/fs/posix.py`) gives a `PermissionError` on the create or the unlink of
+     the part file, and any error of the `rename`, without the part-file name.
+   - `PosixStorage.write_bytes` then names `metadata.json` (`_parent` maps the error).
+   - `MemoryStorage.write_bytes` checks the permission of the directory before it removes the
+     part file. Its error names `metadata.json`.
+   - `RepairFailure.of` takes `path` from that error.
+   - `docs/openapi.json` and `web/src/lib/api/openapi.ts` were regenerated.
+2. `tests/unit/storage/test_repair.py`: the parametrized test is now
+   `test_an_error_on_metadata_json_or_its_part_file_is_storage_failed_and_changes_nothing`.
+   A new column gives the files in the directory before the repair. The test runs with `EIO` and
+   `EACCES`, at both bases. The new rows:
+   - `fstat-of-read`: the `fstat` of the read of `metadata.json`. It goes through `_guard`. The
+     `open` of the read goes through the same mapping as the existing `read` row, so it has no
+     row.
+   - `lstat-of-write`: the `lstat` of `metadata.json` at the start of the write.
+   - `removal-of-old-part`: an old part file that a crash left. `EIO` on its unlink names the
+     part file. `EACCES` names `metadata.json`.
+   - `part-fsync-of-new-file`: see item 5.
+   - Each row asserts the exact `path`, `reason` and `detail`, an unchanged snapshot of the lake,
+     and a second repair that writes the file and leaves no part file.
+   - All cases use `fail_file_io`. No case needs a mock of the code under test.
+3. `Repairer.repair`, item 2 of the docstring: "Below it, also check that the directory has the
+   group of the catalog's directory."
+4. `Repairer` class docstring: "Runs one RepairStep at a time and lists no directory. It deletes
+   only one kind of directory: a directory that it made, without the mode 2750 or without the
+   group of its parent." The docstring of `catalog_repair` (`routes/v1/endpoints/repairs.py`)
+   also said "never deletes". That text is in `docs/openapi.json`. It now says: "It acts only on
+   the directories that the rows plan and lists no directory. It deletes only a new directory
+   that it made without the mode 2750 or without the group of its parent."
+5. `test_an_input_output_error_while_syncing_metadata_names_the_part_file` is gone. The row
+   `part-fsync-of-new-file` of the parametrized test replaces it: no `metadata.json` before the
+   repair, and the error on the `fsync` of the part file.
+
+Fix after verification 1: the text of item 4 said that a repair deletes only a new directory.
+But `atomic_write` and `MemoryStorage.write_bytes` delete an old `metadata.json.huron-part`, and
+`atomic_write` tries to delete its own part file after a failed write. The `catalog_repair` and
+`Repairer` docstrings now say this, `docs/openapi.json` was regenerated (`openapi.ts` did not
+change), and the gate counts did not change. `access-and-roles.md` now says that repair does
+not change the permissions of data files and that a `metadata.json` it writes has mode `0644`
+(`FILE_MODE`).
+
+#### Part B: definition of done of M11.5e
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `UV_OFFLINE=1 UV_NO_SYNC=1 make gate` | 0 | `2711 passed, 2 deselected, 1 warning in 151.07s`. Coverage 99.98% (9691 statements, 2 missed, `cli/identifiers.py` 76-77). radon prints nothing |
+| `UV_OFFLINE=1 UV_NO_SYNC=1 uv run pytest -m contract` | 0 | `59 passed, 2654 deselected, 1 warning in 25.35s` |
+| `uv run pytest tests/unit/api/test_openapi_snapshot.py` | 0 | `2 passed` |
+| `npm run check` (from `web/`) | 0 | 0 errors, 0 warnings |
+| `npm test` (from `web/`) | 0 | 130 files, 1645 tests passed |
+| `git diff --check` | 0 | Prints nothing |
+| Trailing whitespace in the 10 untracked product files | 1 (`grep`) | No match |
+
+2711 is the R3 count 2696, plus 16 new cases (4 rows, 2 errors, 2 bases), minus the removed test.
+
+The greps of the "Verification" entry:
+
+| Command | Required result | Result |
+| --- | --- | --- |
+| `grep -rnE "\bon_error\b\|DirectoryPlan\|..." src/huron tests` | Nothing | Nothing |
+| `grep -rn "^MODE_DRIFT" src/huron` | Nothing | Nothing |
+| `grep -n "walk" core/storage/repair.py core/lake/repairs/*.py` | Nothing | Nothing |
+| `grep -rn "Level" src/huron/core/storage` | Nothing | Nothing |
+| `grep -n "symbolic_link" docs/openapi.json` | The reason enum | Line 736 is the enum. Lines 1744 and 1750 are descriptions |
+| `grep -rn "symlink" ... \| grep -v "follow_symlinks=False"` | Only `MemoryStorage.symlink` and the literal `"symlink"` | `memory.py` 27, 83, 91, 350, 367, `directories.py` 104, `pkg/fs/posix.py` 7, 56, 490 |
+| `git branch --list m11.5-escalated` | The branch | `m11.5-escalated` |
+
+`pkg/fs/posix.py:7` is a docstring that names the kind `symlink`, as R1 records.
+
+"Create or change" of M11.5e:
+
+- `core/lake/repairs/`: done. `Level`, `PlannedDirectory`, `RepairPlan` with `catalog`,
+  `PlannedRow` (`models.py`). `Repairs.plan`, `Repairs.organization`, `Repairs.expected` and
+  `_Tree` (`operations.py`). `bootstrap.py` builds `Repairs`. `pyproject.toml` adds
+  `huron.core.lake.repairs.models` and `huron.core.lake.repairs.operations` to the two lists of
+  the `core.lake` contract.
+- `core/storage/repair.py`: done. `FailureReason`, `RepairFailure`, `RepairResult.combine`,
+  `RepairStep`, `Repairer.repair` with the order of the task text.
+- `Storage.in_group`: done. `ports.py`, `PosixStorage.in_group` with `AUTH_SYS_GROUPS = 16`,
+  `MemoryStorage.in_group` with `member_of`.
+- `applications/api/disk/repair.py`: done. `LakeRepair.repair` locates every directory first,
+  then runs one `hold` per directory, and a gone row gives no step. `Runtime` builds it only
+  with `lake_path`.
+- Routes: done. `catalog_repair` and `organization_repair` (`endpoints/repairs.py`),
+  `RepairIn`, `RepairOut` and `RepairFailureOut` (`schema/repairs.py`), and `router.py`.
+  `_require_lake` raises `LakeUnavailable` with the stated message and an empty `context`.
+  `make openapi` and `npm run generate:api` ran.
+- `tests/conftest.py`: done. `temporary_mode`.
+- The branch `m11.5-escalated`: done. It exists.
+
+"Tests" of M11.5e:
+
+- `tests/unit/lake/test_repairs.py`: done.
+  `test_a_recursive_plan_holds_every_namespace_and_settled_collection` (recursive plan, share
+  group, `plan.catalog`), `test_a_plan_runs_from_the_catalog_down_to_its_target` (the row
+  `sibling-prefix` is `solar` beside `solar-wind`), `test_a_target_must_be_a_directory_of_the_catalog`
+  (other catalog, unknown, draft), `test_a_catalog_repair_needs_namespace_configure` and
+  `test_an_organization_repair_needs_catalog_grant_admin`.
+- `tests/unit/storage/test_repair.py`: done.
+  - Missing: `test_a_missing_directory_is_made_with_its_mode`.
+  - Wrong bits: `test_wrong_bits_are_set`. Right bits: `test_right_bits_get_no_chmod`.
+  - Setgid bit and group: `test_a_missing_setgid_bit_is_mode_drift_with_no_chmod`,
+    `test_a_directory_of_another_group_below_the_catalog_is_mode_drift`.
+  - Outside the groups: `test_a_directory_outside_the_services_groups_gets_no_chmod`.
+  - `chmod` that drops setgid: `test_a_chmod_that_still_drops_the_setgid_bit_is_mode_drift`.
+  - Organization directory: `test_the_organization_directory_gets_its_mode`,
+    `test_a_missing_organization_directory_is_made`.
+  - Group attempt: `test_the_catalog_step_tries_the_share_group`,
+    `test_the_catalog_step_keeps_a_matching_service_group`.
+  - Non-directory: `test_a_non_directory_at_a_planned_path_is_storage_failed`.
+  - Links: `test_a_link_at_the_steps_directory_is_symbolic_link_with_no_write`,
+    `test_a_link_above_the_steps_directory_fails_at_the_links_path`.
+  - Unreadable catalog directory: `test_an_unreadable_catalog_directory_is_storage_failed`.
+  - Stale file: `test_a_stale_metadata_file_is_rewritten_and_an_equal_one_kept`.
+  - Combine: `test_combine_keeps_each_path_warning_and_failure_once`. Idempotence:
+    `test_a_repair_is_idempotent`.
+- `tests/unit/storage/test_storage.py`: done.
+  `test_posix_in_group_trusts_the_effective_group_and_the_first_16_groups`.
+- `tests/unit/api/test_repair.py`: done.
+  - Both routes: `test_a_catalog_repair_makes_a_missing_directory_and_sets_wrong_bits`,
+    `test_the_organization_route_sets_the_mode_and_makes_a_missing_directory`.
+  - Privileges and 503: `test_the_routes_check_the_privilege_first_and_need_a_lake`.
+  - Gone row: `test_a_directory_whose_row_is_gone_before_its_step_is_not_made`.
+  - Planned directories only: `test_a_recursive_repair_acts_only_on_planned_directories`.
+    Siblings: `test_a_recursive_repair_of_a_namespace_leaves_its_siblings_alone`.
+  - Real filesystem with a snapshot of `outside`:
+    `test_an_unsearchable_namespace_is_repaired_and_a_link_below_it_is_refused`,
+    `test_a_planned_directory_that_is_a_link_is_refused`,
+    `test_a_link_above_two_planned_collections_fails_once_and_the_other_steps_run`,
+    `test_a_link_at_metadata_json_or_its_part_file_is_refused_and_changes_nothing`.
+
+"Found in M11.5c's verification (binding)":
+
+1. Done. `change_mode` calls `os.chmod(name, mode, dir_fd=parent_fd, follow_symlinks=False)`.
+   `change_group` calls `os.chown(name, -1, gid, dir_fd=parent_fd, follow_symlinks=False)`. The
+   race tests in `tests/unit/storage/test_races.py` stay. The case over both adapters is
+   `test_mode_and_group_change_on_a_directory_this_process_cannot_read` (`test_storage.py`,
+   mode `02000`).
+2. Done. `pkg/fs/posix.py` has no `is_symlink()`. It uses `statmodule.S_ISLNK`.
+3. Done. `check_rel_path` refuses a segment longer than `REL_PATH_SEGMENT_MAX_BYTES` (206) with
+   `rel_path_segment` (`schema/naming.py`). Tests: `tests/unit/schema/test_naming.py` and
+   `test_begin_refuses_a_bad_path_a_long_name_and_a_negative_size` (`test_uploads.py`).
+   `docs/concepts/raw-ingest.md` states the 206-byte limit.
+
+No item is open.
+
+#### Part C: the paths of the M11.5e commit
+
+`git status --porcelain=v1 --untracked-files=all` lists 102 entries. 48 go into the commit.
+54 stay out. No path is unplaced.
+
+Include (48):
+
+- Plans: `IMPLEMENTATION_PLAN.md`, `M11_PLAN_1_REPAIR.md`.
+- Documents and generated files: `docs/api-errors.md`, `docs/concepts/access-and-roles.md`,
+  `docs/concepts/raw-ingest.md`, `docs/openapi.json`, `web/src/lib/api/openapi.ts`.
+- `pyproject.toml`.
+- Source, changed: `src/huron/applications/api/disk/__init__.py`,
+  `src/huron/applications/api/disk/placements.py`,
+  `src/huron/applications/api/routes/v1/router.py`, `src/huron/applications/api/runtime.py`,
+  `src/huron/core/lake/bootstrap.py`, `src/huron/core/lake/collections/lifecycle.py`,
+  `src/huron/core/lake/lookups.py`, `src/huron/core/storage/__init__.py`,
+  `src/huron/core/storage/errors.py`, `src/huron/core/storage/memory.py`,
+  `src/huron/core/storage/placement.py`, `src/huron/core/storage/ports.py`,
+  `src/huron/core/storage/posix.py`, `src/huron/pkg/fs/posix.py`, `src/huron/schema/naming.py`.
+- Source, new: `src/huron/applications/api/disk/repair.py`,
+  `src/huron/applications/api/routes/v1/endpoints/repairs.py`,
+  `src/huron/applications/api/routes/v1/schema/repairs.py`,
+  `src/huron/core/lake/repairs/__init__.py`, `src/huron/core/lake/repairs/models.py`,
+  `src/huron/core/lake/repairs/operations.py`, `src/huron/core/storage/repair.py`.
+- Tests, changed: `tests/conftest.py`, `tests/support/disk.py`,
+  `tests/unit/api/test_lake_disk.py`, `tests/unit/api/test_lifespan.py`,
+  `tests/unit/api/test_openapi_snapshot.py`, `tests/unit/api/test_upload_hooks.py`,
+  `tests/unit/lake/test_uploads.py`, `tests/unit/pkg/test_posix.py`,
+  `tests/unit/schema/test_naming.py`, `tests/unit/storage/test_containment.py`,
+  `tests/unit/storage/test_directories.py`, `tests/unit/storage/test_organizations.py`,
+  `tests/unit/storage/test_placement.py`, `tests/unit/storage/test_races.py`,
+  `tests/unit/storage/test_storage.py`.
+- Tests, new: `tests/unit/api/test_repair.py`, `tests/unit/lake/test_repairs.py`,
+  `tests/unit/storage/test_repair.py`.
+
+`tests/unit/storage/test_directories.py` and `tests/unit/storage/test_organizations.py` are not
+in the R1 record. R2 changed them (exact message and context checks on both adapters).
+
+The two concept documents are committed whole, because the repair text in `raw-ingest.md` links
+to anchors that the same diff adds to `access-and-roles.md`.
+
+Exclude (54):
+
+- Agent tooling (41): every entry in `.agents/` (36, with the 4 untracked `huron-*` skills and
+  the 3 staged deletions), `.opencode/` (4) and `opencode.json`. `.claude/` has no change.
+- Other (13): `.gitignore`, `AGENTS.md`, `docs/agents/domain.md`, `web/package.json`,
+  `web/docs-site/package.json`, `web/scripts/npm-scripts.test.mjs`,
+  `IMPLEMENTATION_PLAN_LATEST.md`, `HANDOFF_M11_PLAN.md`, `HANDOFF_MEDIUM_WORKFLOW.md`,
+  `REPOSITORY_READINESS.md` and the three files in `design/`.
+
+The included set needs no excluded file:
+
+- No included document links to an excluded file. `M11_PLAN_1_REPAIR.md` names excluded files
+  as text only.
+- The `IMPLEMENTATION_PLAN.md` diff names no excluded file.
+- No test, script or `Makefile` target of the gate reads `AGENTS.md`, `.agents/`,
+  `opencode.json`, `docs/agents/` or a `package.json`.
+- The `pyproject.toml` diff is the two `huron.core.lake.repairs` lines.
+
+The excluded files need nothing from the included set. No excluded file names a repair module,
+route or schema. `web/scripts/npm-scripts.test.mjs` tests the scripts of `web/package.json`, and
+both stay out together.

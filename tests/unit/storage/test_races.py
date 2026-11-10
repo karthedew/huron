@@ -89,6 +89,45 @@ def test_a_link_that_replaces_the_name_after_its_check_is_never_changed(
     assert stat.S_IMODE((outside(lake) / "b" / "f").stat().st_mode) == 0o640
 
 
+def other_group() -> int:
+    """A group of this process other than its own, else its own."""
+    return next((gid for gid in os.getgroups() if gid != os.getgid()), os.getgid())
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda lake: lake.set_mode(LakePath.of("a", "b"), 0o2700),
+        lambda lake: lake.set_group(LakePath.of("a", "b"), other_group()),
+    ],
+    ids=["set_mode", "set_group"],
+)
+def test_a_link_that_replaces_a_directory_between_its_lstat_and_the_change_is_never_changed(
+    lake: PosixStorage, monkeypatch: pytest.MonkeyPatch, change: Callable[[PosixStorage], object]
+) -> None:
+    target = outside(lake) / "b"
+    before, group = snapshot(outside(lake)), os.lstat(target).st_gid
+    real = os.stat
+    done: list[bool] = []
+
+    def checked(
+        path: str, *, dir_fd: int | None = None, follow_symlinks: bool = True
+    ) -> os.stat_result:
+        found = real(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+        if not done and path == "b":
+            done.append(True)
+            os.rename(lake.root / "a" / "b", lake.root / "a" / "b.moved")
+            (lake.root / "a" / "b").symlink_to(target)
+        return found
+
+    monkeypatch.setattr(os, "stat", checked)
+    with pytest.raises(StorageError) as refused:
+        change(lake)
+    assert (refused.value.code, refused.value.context["path"]) == ("SYMLINK_IN_LAKE", "a/b")
+    assert snapshot(outside(lake)) == before
+    assert os.lstat(target).st_gid == group
+
+
 OPERATIONS: dict[str, Callable[[PosixStorage], object]] = {
     "write_bytes": lambda lake: lake.write_bytes(FILE, b"new", 0o644),
     "set_mode": lambda lake: lake.set_mode(FILE, 0o600),
