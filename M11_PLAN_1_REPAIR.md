@@ -72,7 +72,7 @@ Do not change these parts of the dirty tree in this plan: `.agents/`, `.opencode
 - Verification: `make gate`, `uv run pytest tests/unit/api/test_openapi_snapshot.py`, and from
   `web/` `npm run check` and `npm test`. `git diff --check` prints nothing.
 - Dependencies: R2.
-- Status: pending
+- Status: complete (verification 1 of 3 passed, 2026-11-10)
 
 ### R4 Accept M11.5e
 
@@ -293,3 +293,49 @@ are in `tests/unit/storage/`.
 | --- | --- | --- |
 | `UV_OFFLINE=1 UV_NO_SYNC=1 make gate` | 0 | `2685 passed, 2 deselected, 1 warning in 144.82s`. Coverage 99.98% (9691 statements, 2 missed, `cli/identifiers.py` 76-77). radon prints nothing |
 | `UV_OFFLINE=1 UV_NO_SYNC=1 uv run pytest -m contract` | 0 | `59 passed, 2628 deselected, 1 warning in 25.29s` |
+
+### R3 (2026-11-10)
+
+No behaviour change. The repair reads `metadata.json` before it writes it:
+`DirectoryWriter.write_metadata` calls `read_bytes` and writes only when the bytes differ.
+`PosixStorage.read_bytes` opens the file, then reads it with `os.read`. `MemoryStorage` has no
+I/O error and does not model the permission of a file, so the cases on the file itself run on
+`PosixStorage` only.
+
+- `core/storage/repair.py`: the docstrings of `RepairFailure.of`, `RepairResult.combine`,
+  `Repairer.repair` and the module no longer restate the failure rules. `Repairer.repair` lists
+  its steps and points to the Field descriptions of `RepairFailureOut`. The docstring of
+  `RepairResult` now says that the API form applies to `changed`. Three docstrings lost a
+  semicolon.
+- `RepairFailureOut.reason`: `mode_drift` now also names a new directory that did not get the
+  mode 2750 (the second check of `make_inheriting_dir`). The other cases agree with the code.
+- `docs/openapi.json` and `web/src/lib/api/openapi.ts` regenerated. Only that text changed.
+- `docs/api-errors.md`, `docs/concepts/access-and-roles.md` and `docs/concepts/raw-ingest.md`
+  restate no failure case. No change.
+- Storage tests (`tests/unit/storage/test_repair.py`):
+  - `test_an_error_on_metadata_json_or_its_part_file_names_that_file_and_keeps_the_old_bytes`
+    (was `test_a_part_inspection_error_names_the_part_and_preserves_metadata`) adds `EIO` and
+    `EACCES` on the `read` of `metadata.json`, at both bases. Each case compares a snapshot of
+    the lake.
+  - `test_a_metadata_json_of_mode_000_on_the_disk_fails_at_that_file_and_changes_nothing`
+    replaces the test with one mechanism for each adapter. It runs on `PosixStorage` only.
+  - `test_a_new_directory_that_did_not_get_its_mode_is_mode_drift` (was
+    `test_a_directory_that_did_not_inherit_is_mode_drift`) adds the umask case.
+- API tests (`tests/unit/api/test_repair.py`):
+  - `test_an_error_on_metadata_json_or_its_part_file_reports_that_file_and_keeps_it` (was
+    `test_a_part_inspection_failure_reports_the_actual_api_path_and_keeps_metadata`) adds `EIO`
+    and `EACCES` on the `read` of `metadata.json`, and compares a snapshot of the lake.
+  - `test_a_metadata_json_of_mode_000_is_reported_at_that_file_and_kept`: `EACCES` on the file
+    itself, for both organization forms.
+  - `test_a_link_at_metadata_json_or_its_part_file_is_refused_and_changes_nothing` (was
+    `test_a_link_at_metadata_json_is_refused`) adds the part file. It compares snapshots of the
+    lake and of the directory outside it.
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `UV_OFFLINE=1 UV_NO_SYNC=1 make gate` | 0 | `2696 passed, 2 deselected, 1 warning in 149.24s`. Coverage 99.98% (9691 statements, 2 missed, `cli/identifiers.py` 76-77). radon prints nothing |
+| `UV_OFFLINE=1 UV_NO_SYNC=1 uv run pytest -m contract` | 0 | `59 passed, 2639 deselected, 1 warning in 24.70s` |
+| `uv run pytest tests/unit/api/test_openapi_snapshot.py` | 0 | `2 passed` |
+| `npm run check` (from `web/`) | 0 | 0 errors, 0 warnings |
+| `npm test` (from `web/`) | 0 | 130 files, 1645 tests passed |
+| `git diff --check` | 0 | Prints nothing |
