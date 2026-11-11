@@ -201,7 +201,8 @@ def _patch(ctx: typer.Context, collection: dict[str, Any], body: dict[str, Any])
         json=body,
         headers=if_match(int(collection["version"])),
     )
-    copy = found.state.read_copy(str(collection["id"]))
-    if copy is not None and copy.version == int(collection["version"]):
-        checkout(found, updated)
+    with found.state.locked():
+        copy = found.state.working(str(collection["id"]))
+        if copy is not None and copy.base_version == int(collection["version"]):
+            checkout(found, updated)
     return updated

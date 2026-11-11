@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
-from huron.applications.cli.state import Tokens
+from huron.applications.cli.localstate import Tokens
 from tests.support.cli import Cli
 
 

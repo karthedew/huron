@@ -13,7 +13,6 @@ from huron.applications.cli.config import Config, config_path
 from huron.applications.cli.errors import ApiError, CliError, ExitCode, exit_code_for
 from huron.applications.cli.identifiers import qualify, resolve_collection, resolve_namespace
 from huron.applications.cli.output import Column, OutputFormat, render, render_one
-from huron.applications.cli.state import Stage, StagedAdd, StateDir, Tokens, WorkingCopy, state_root
 from tests.support.cli import Cli
 
 
@@ -68,33 +67,6 @@ def test_config_files_and_environment(tmp_path: Path) -> None:
     assert Config.load(tmp_path / "missing.yaml", {}).api_url.startswith("http")
     assert config_path({"XDG_CONFIG_HOME": "/x"}) == Path("/x/huron/config.yaml")
     assert config_path({"HOME": "/h"}) == Path("/h/.config/huron/config.yaml")
-    assert state_root({"XDG_STATE_HOME": "/s"}) == Path("/s/huron")
-    assert state_root({"HOME": "/h"}) == Path("/h/.local/state/huron")
-
-
-def test_state_round_trips_and_guards_tokens(tmp_path: Path) -> None:
-    state = StateDir(tmp_path / "state")
-    assert state.read_tokens() is None and state.delete_tokens() is False
-    state.write_tokens(Tokens("t", 1.0, "dave", None))
-    assert state.read_tokens() == Tokens("t", 1.0, "dave", None)
-    os.chmod(state.root / "tokens.json", 0o644)
-    with pytest.raises(CliError) as raised:
-        state.read_tokens()
-    assert raised.value.exit_code == ExitCode.NOT_LOGGED_IN
-    assert state.delete_tokens() is True
-    copy = WorkingCopy("id", "c.n.x", 2, "o/c/n/x")
-    state.write_copy(copy)
-    assert state.read_copy("id") == copy and state.read_copy("other") is None
-    stage = Stage([StagedAdd("a", "/tmp/a", 1)], ["b"])
-    state.write_stage("id", stage)
-    assert state.read_stage("id") == stage and Stage().empty and not stage.empty
-    state.write_draft("id", {"title": "x"})
-    assert state.read_draft("id") == {"title": "x"}
-    state.delete_draft("id")
-    assert state.read_draft("id") is None
-    with state.locked("id"), pytest.raises(CliError) as busy, state.locked("id"):
-        pass  # pragma: no cover
-    assert busy.value.exit_code == ExitCode.CONFLICT
 
 
 def test_output_formats() -> None:

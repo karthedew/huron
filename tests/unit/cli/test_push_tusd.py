@@ -14,17 +14,16 @@ import pytest
 
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.errors import CliError
-from huron.applications.cli.state import Stage, StagedAdd
+from huron.applications.cli.localstate import StagedAdd, WorkingState
 from huron.applications.cli.uploads import Uploader, UploadService
 from huron.core.storage import UPLOADS, LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.fakes.storage import rooted
 from tests.support.cli import Cli
 from tests.support.tus import TUS_URL, FakeTus
-from tests.unit.cli.conftest import PREFIX, make_collection
+from tests.unit.cli.conftest import PREFIX
 
 COLLECTION = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
-ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
 #: The service's hook timeout here: three reads of an unsealed upload, five seconds apart.
 HOOK_TIMEOUT = 10
 #: The upload ID that the fixed answers of the uploader's tests name.
@@ -46,24 +45,13 @@ def cli(tmp_path: Path, share: MemoryStorage) -> Iterator[Cli]:
     running.close()
 
 
-@pytest.fixture
-def ready(seeded_cli: Cli) -> Cli:
-    """dave has created and checked out the active collection solar-wind.run7."""
-    seeded_cli.login_as("dave")
-    seeded_cli.ok("catalog", "heliophysics")
-    seeded_cli.prompter.answers.extend(ANSWERS)
-    seeded_cli.ok("create", "collection", "solar-wind.run7")
-    make_collection(seeded_cli)
-    return seeded_cli
-
-
 def tus(cli: Cli) -> FakeTus:
     assert cli.tus is not None
     return cli.tus
 
 
-def stage(cli: Cli) -> Stage:
-    return cli.state.read_stage(cli.config_current())
+def stage(cli: Cli) -> WorkingState:
+    return cli.working()
 
 
 def staged(cli: Cli, tmp_path: Path, name: str, data: bytes) -> Path:
@@ -140,20 +128,60 @@ def test_an_upload_that_tusd_lost_starts_again(
     assert stage(ready).empty and first is not None
 
 
+def test_a_file_staged_while_a_push_runs_stays_staged_for_the_next_push(
+    ready: Cli, tmp_path: Path
+) -> None:
+    staged(ready, tmp_path, "a.txt", b"alpha")
+    later = tmp_path / "b.txt"
+    later.write_bytes(b"beta")
+
+    def stage_during_the_commit(request: httpx.Request) -> None:
+        if request.url.path.endswith("/commits") and "dry_run" not in request.url.params:
+            ready.router.observe = None
+            ready.ok("add", str(later))
+
+    ready.router.observe = stage_during_the_commit
+    assert "version 3 → 4, +1 −0 files" in ready.ok("push").stdout
+    assert recorded(ready) == {"a.txt": sha(b"alpha")}
+    after = stage(ready)
+    assert ([add.rel_path for add in after.adds], after.base_version) == (["b.txt"], 4)
+    ready.ok("push")
+    assert recorded(ready) == {"a.txt": sha(b"alpha"), "b.txt": sha(b"beta")}
+
+
+def test_a_file_unstaged_while_its_upload_runs_is_not_staged_again(
+    ready: Cli, tmp_path: Path
+) -> None:
+    staged(ready, tmp_path, "a.txt", b"alpha")
+    forward = ready.router.tus
+    assert forward is not None
+    unstaged: list[httpx.Request] = []
+
+    class UnstageOnPatch(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            if request.method == "PATCH" and not unstaged:
+                unstaged.append(request)
+                ready.ok("rm", "a.txt")
+            return forward.handle_request(request)
+
+    ready.router.tus = UnstageOnPatch()
+    ready.ok("push")
+    assert len(unstaged) == 1 and stage(ready).empty
+    assert stage(ready).base_version == 4
+
+
 def test_an_attempt_unknown_to_the_service_starts_again(ready: Cli, tmp_path: Path) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
-    current = stage(ready)
-    current.adds[0].attempt_id, current.adds[0].upload_id = str(uuid.uuid4()), U1
-    ready.state.write_stage(ready.config_current(), current)
+    with ready.state.changing(ready.config_current()) as current:
+        current.adds[0].attempt_id, current.adds[0].upload_id = str(uuid.uuid4()), U1
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["POST", "PATCH"]
 
 
 def test_an_attempt_id_the_service_refuses_is_reported(ready: Cli, tmp_path: Path) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
-    current = stage(ready)
-    current.adds[0].attempt_id = "nope"
-    ready.state.write_stage(ready.config_current(), current)
+    with ready.state.changing(ready.config_current()) as current:
+        current.adds[0].attempt_id = "nope"
     refused = ready.run("push")
     assert refused.exit_code == 7 and "REQUEST_INVALID" in refused.stderr
     assert tus(ready).requests == []

@@ -101,10 +101,9 @@ def test_a_push_behind_the_service_is_refused_until_pull(
     create(ready)
     (a,) = files(tmp_path, **{"a.txt": "alpha"})
     ready.ok("add", str(a))
-    copy = ready.state.read_copy(ready.config_current())
+    version = ready.working().base_version
     ready.ok("unset", "override")
-    assert copy is not None
-    ready.state.write_copy(copy)
+    ready.rebase(version)
     behind = ready.run("push")
     assert behind.exit_code == 6 and "huron pull" in behind.stderr
     assert "behind" in ready.ok("status").stdout
@@ -224,12 +223,9 @@ def test_pull_drops_removals_of_files_no_longer_recorded(ready: Cli, tmp_path: P
     ready.ok("add", str(a))
     ready.ok("push")
     ready.ok("rm", "a.txt")
-    copy = ready.state.read_copy(ready.config_current())
+    version = ready.working().base_version
     ready.ok("push")
-    assert copy is not None
-    ready.state.write_copy(copy)
-    ready.state.write_stage(
-        copy.collection_id, ready.state.read_stage(copy.collection_id).__class__([], ["a.txt"])
-    )
+    with ready.state.changing(ready.config_current()) as working:
+        working.base_version, working.removes = version, ["a.txt"]
     pulled = ready.ok("pull")
     assert "no longer records" in pulled.stderr

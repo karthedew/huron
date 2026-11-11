@@ -25,7 +25,7 @@ import httpx
 from huron import __version__
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.errors import ApiError, CliError, ExitCode
-from huron.applications.cli.state import StagedAdd
+from huron.applications.cli.localstate import StagedAdd
 from huron.pkg.hashing import sha256_file
 
 __all__ = ["CHUNK_SIZE", "POLL_INTERVAL", "UploadService", "Uploader"]

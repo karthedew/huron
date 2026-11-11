@@ -12,11 +12,11 @@ from rich.console import Console
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.config import Config
 from huron.applications.cli.errors import UsageError
+from huron.applications.cli.localstate import LocalState
 from huron.applications.cli.login import Oidc, Session
 from huron.applications.cli.mount import Mount
 from huron.applications.cli.output import OutputFormat
 from huron.applications.cli.prompts import Prompter
-from huron.applications.cli.state import StateDir
 from huron.core.storage import ShareReader, Storage
 from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import Clock
@@ -36,7 +36,7 @@ class Services:
     environ: Mapping[str, str]
     config_path: Path
     config: Config
-    state: StateDir
+    state: LocalState
     http: httpx.Client
     clock: Clock
     out: Console
@@ -92,6 +92,7 @@ class Services:
         return catalog
 
     def save_config(self, config: Config) -> None:
-        """Persist and adopt ``config``."""
-        config.save(self.config_path)
+        """Persist and adopt ``config``, under the state lock."""
+        with self.state.locked():
+            config.save(self.config_path)
         self.config = config

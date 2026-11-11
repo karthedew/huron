@@ -14,8 +14,8 @@ import httpx
 
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.errors import ApiError, CliError, ExitCode, UsageError
+from huron.applications.cli.localstate import StagedAdd, WorkingState
 from huron.applications.cli.services import Services
-from huron.applications.cli.state import Stage, StagedAdd, WorkingCopy
 from huron.applications.cli.uploads import Uploader, UploadService
 from huron.schema.naming import RelPathError, check_rel_path, rel_path_key
 
@@ -59,29 +59,29 @@ class RmAction(StrEnum):
     STAGED_REMOVE = "staged removal of"
 
 
-def checkout(services: Services, collection: dict[str, Any]) -> WorkingCopy:
+def checkout(services: Services, collection: dict[str, Any]) -> WorkingState:
     """Record a working copy of ``collection`` and make it current; its stage is kept."""
-    copy = WorkingCopy(
-        collection_id=str(collection["id"]),
-        identifier=str(collection["identifier"]),
-        version=int(collection["version"]),
-        path=collection.get("path"),
-    )
-    services.state.write_copy(copy)
-    services.save_config(replace(services.config, current_collection=copy.collection_id))
-    return copy
+    with services.state.locked():
+        working = services.state.check_out(
+            str(collection["id"]),
+            str(collection["identifier"]),
+            int(collection["version"]),
+            collection.get("path"),
+        )
+        services.save_config(replace(services.config, current_collection=working.collection_id))
+    return working
 
 
-def current(services: Services) -> WorkingCopy:
+def current(services: Services) -> WorkingState:
     """The checked-out working copy."""
     collection_id = services.config.current_collection
-    copy = None if collection_id is None else services.state.read_copy(collection_id)
-    if copy is None:
+    working = None if collection_id is None else services.state.working(collection_id)
+    if working is None:
         raise UsageError(
             "there is no current collection",
             hint="run `huron checkout <identifier>`, or run `huron checkout` to choose one",
         )
-    return copy
+    return working
 
 
 def send_commit(
@@ -107,7 +107,11 @@ def recorded_files(api: ApiClient, collection_id: str) -> dict[str, dict[str, An
 
 
 def stage_paths(
-    services: Services, copy: WorkingCopy, paths: list[Path], rename: str | None, recursive: bool
+    services: Services,
+    working: WorkingState,
+    paths: list[Path],
+    rename: str | None,
+    recursive: bool,
 ) -> list[StagedAdd]:
     """Stage local files (and, with ``recursive``, directories) for the next push."""
     if rename is not None and len(paths) != 1:
@@ -115,80 +119,92 @@ def stage_paths(
     staged: list[StagedAdd] = []
     for path in paths:
         staged.extend(_collect(path, rename, recursive))
-    stage = services.state.read_stage(copy.collection_id)
     keys = {rel_path_key(add.rel_path) for add in staged}
-    stage.adds = [add for add in stage.adds if rel_path_key(add.rel_path) not in keys] + staged
-    stage.removes = [path for path in stage.removes if rel_path_key(path) not in keys]
-    services.state.write_stage(copy.collection_id, stage)
+    with services.state.changing(working.collection_id) as stage:
+        stage.adds = [add for add in stage.adds if rel_path_key(add.rel_path) not in keys] + staged
+        stage.removes = [path for path in stage.removes if rel_path_key(path) not in keys]
     return staged
 
 
 def unstage_or_remove(
-    services: Services, copy: WorkingCopy, rel_paths: list[str]
+    services: Services, working: WorkingState, rel_paths: list[str]
 ) -> list[tuple[RmAction, str]]:
     """Drop a staged add or removal, or stage the removal of a recorded file, for each path.
 
     Returns what was done to each path, in order; a path already staged for removal is unstaged,
     so ``huron rm`` undoes itself. Nothing is written when a path is neither recorded nor staged.
     """
-    stage = services.state.read_stage(copy.collection_id)
-    recorded = recorded_files(services.api(), copy.collection_id)
-    done = [item for rel_path in rel_paths for item in _rm_one(stage, recorded, rel_path)]
-    services.state.write_stage(copy.collection_id, stage)
-    return done
+    recorded = recorded_files(services.api(), working.collection_id)
+    with services.state.changing(working.collection_id) as stage:
+        return [item for rel_path in rel_paths for item in _rm_one(stage, recorded, rel_path)]
 
 
-def pull(services: Services, copy: WorkingCopy) -> tuple[WorkingCopy, list[str]]:
+def pull(services: Services, working: WorkingState) -> tuple[WorkingState, list[str]]:
     """Catch the working copy up with the service; drops staged removes no longer recorded."""
     api = services.api()
-    collection = api.get(f"/api/v1/collections/{copy.collection_id}")
-    stage = services.state.read_stage(copy.collection_id)
-    recorded = recorded_files(api, copy.collection_id)
-    dropped = [path for path in stage.removes if rel_path_key(path) not in recorded]
-    stage.removes = [path for path in stage.removes if rel_path_key(path) in recorded]
-    services.state.write_stage(copy.collection_id, stage)
-    return checkout(services, collection), dropped
+    collection = api.get(f"/api/v1/collections/{working.collection_id}")
+    recorded = recorded_files(api, working.collection_id)
+    with services.state.locked():
+        with services.state.changing(working.collection_id) as stage:
+            dropped = [path for path in stage.removes if rel_path_key(path) not in recorded]
+            stage.removes = [path for path in stage.removes if rel_path_key(path) in recorded]
+        return checkout(services, collection), dropped
 
 
-def push(services: Services, copy: WorkingCopy, message: str | None) -> PushResult:
+def push(services: Services, working: WorkingState, message: str | None) -> PushResult:
     """Upload the staged files through tusd and commit them with the version they were based on.
 
-    The service checks the commit with a dry run first, so a push it would refuse (no right to
-    write files, a pending commit, a stale base version, a removed file that is not recorded)
-    fails before any byte is uploaded. The stage records each upload attempt, so a push that
-    stops continues on the next push. The commit names each upload by its ID, under a new
-    request ID.
+    The push holds the push lock of the working copy from start to end. The service checks the
+    commit with a dry run first, so a push it would refuse (no right to write files, a pending
+    commit, a stale base version, a removed file that is not recorded) fails before any byte is
+    uploaded. The stage records each upload attempt, so a push that stops continues on the next
+    push. The commit names each upload by its ID, under a new request ID. A file staged while
+    the push runs stays staged for the next push.
     """
-    with services.state.locked(copy.collection_id):
-        stage = services.state.read_stage(copy.collection_id)
+    with services.state.push_lock(working.collection_id):
+        stage = current(services)
         api = services.api()
-        collection = api.get(f"/api/v1/collections/{copy.collection_id}")
-        if int(collection["version"]) != copy.version:
+        collection = api.get(f"/api/v1/collections/{stage.collection_id}")
+        if int(collection["version"]) != stage.base_version:
             raise CliError(
-                f"{copy.identifier} is at version {collection['version']},"
-                f" but your working copy is at version {copy.version}",
+                f"{stage.identifier} is at version {collection['version']},"
+                f" but your working copy is at version {stage.base_version}",
                 ExitCode.CONFLICT,
                 hint="run `huron pull`",
                 code="BASE_VERSION_CONFLICT",
             )
         if collection.get("path") is None:
             raise CliError(
-                f"{copy.identifier} is a draft",
+                f"{stage.identifier} is a draft",
                 ExitCode.CONFLICT,
                 hint="run `huron activate collection`",
             )
         uploader = _uploader(services, api) if stage.adds else None
-        _preflight(services, api, copy, stage, message)
+        _preflight(services, api, stage, message)
         if uploader is not None:
-            _upload_files(services, copy, stage, uploader)
-        result = _commit(services, api, copy, stage, message)
-        services.state.write_stage(copy.collection_id, Stage())
-        services.state.write_copy(replace(copy, version=int(result["version"])))
-        return PushResult(copy.version, int(result["version"]), len(stage.adds), len(stage.removes))
+            _upload_files(services, stage, uploader)
+        result = _commit(services, api, stage, message)
+        _finish(services, stage, int(result["version"]))
+        return PushResult(
+            stage.base_version, int(result["version"]), len(stage.adds), len(stage.removes)
+        )
+
+
+def _finish(services: Services, pushed: WorkingState, version: int) -> None:
+    """Remove the pushed changes from the stage and move its base to ``version``.
+
+    Changes staged while the push ran stay staged.
+    """
+    with services.state.changing(pushed.collection_id) as stage:
+        stage.adds = [
+            add for add in stage.adds if not any(add.same_file(sent) for sent in pushed.adds)
+        ]
+        stage.removes = [path for path in stage.removes if path not in pushed.removes]
+        stage.base_version = version
 
 
 def _rm_one(
-    stage: Stage, recorded: dict[str, dict[str, Any]], rel_path: str
+    stage: WorkingState, recorded: dict[str, dict[str, Any]], rel_path: str
 ) -> list[tuple[RmAction, str]]:
     """Apply ``huron rm`` to one path of ``stage`` in place; what it did.
 
@@ -210,7 +226,7 @@ def _split[T](items: list[T], matches: Callable[[T], bool]) -> tuple[list[T], li
 
 
 def _stage_removal(
-    stage: Stage, recorded: dict[str, dict[str, Any]], rel_path: str
+    stage: WorkingState, recorded: dict[str, dict[str, Any]], rel_path: str
 ) -> tuple[RmAction, str]:
     """Stage the removal of the recorded file at ``rel_path``, spelled as it was recorded."""
     found = recorded.get(rel_path_key(rel_path))
@@ -261,43 +277,51 @@ def _uploader(services: Services, api: ApiClient) -> Uploader:
     )
 
 
-def _upload_files(services: Services, copy: WorkingCopy, stage: Stage, uploader: Uploader) -> None:
-    def save() -> None:
-        services.state.write_stage(copy.collection_id, stage)
-
+def _upload_files(services: Services, stage: WorkingState, uploader: Uploader) -> None:
     for add in stage.adds:
-        uploader.upload(copy.collection_id, add, save)
+
+        def save(sent: StagedAdd = add) -> None:
+            _save_attempt(services, stage.collection_id, sent)
+
+        uploader.upload(stage.collection_id, add, save)
         save()
 
 
+def _save_attempt(services: Services, collection_id: str, sent: StagedAdd) -> None:
+    """Record the upload of ``sent`` in the stage entry of the same file, if it is still staged."""
+    with services.state.changing(collection_id) as stage:
+        for add in stage.adds:
+            if add.same_file(sent):
+                add.sha256, add.attempt_id = sent.sha256, sent.attempt_id
+                add.upload_id, add.attempt_state = sent.upload_id, sent.attempt_state
+
+
 def _preflight(
-    services: Services, api: ApiClient, copy: WorkingCopy, stage: Stage, message: str | None
+    services: Services, api: ApiClient, stage: WorkingState, message: str | None
 ) -> None:
     api.post(
-        f"/api/v1/collections/{copy.collection_id}/commits",
+        f"/api/v1/collections/{stage.collection_id}/commits",
         params={"dry_run": "true"},
-        json=_commit_body(services, copy, stage, message),
+        json=_commit_body(services, stage, message),
     )
 
 
 def _commit(
-    services: Services, api: ApiClient, copy: WorkingCopy, stage: Stage, message: str | None
+    services: Services, api: ApiClient, stage: WorkingState, message: str | None
 ) -> dict[str, Any]:
-    body = _commit_body(services, copy, stage, message)
+    body = _commit_body(services, stage, message)
     body["request_id"] = str(uuid.uuid4())
-    path = f"/api/v1/collections/{copy.collection_id}/commits"
+    path = f"/api/v1/collections/{stage.collection_id}/commits"
     try:
         response = api.request("POST", path, json=body)
     except CliError as error:
         if error.code is not None:
             raise
-        return _recover(api, copy, stage, error)
+        return _recover(api, stage, error)
     return _settled(api, response, services.sleep)
 
 
-def _commit_body(
-    services: Services, copy: WorkingCopy, stage: Stage, message: str | None
-) -> dict[str, Any]:
+def _commit_body(services: Services, stage: WorkingState, message: str | None) -> dict[str, Any]:
     """The commit body without its request ID.
 
     Each add names its sealed upload and the sha256 of the bytes that the push sent. An add not
@@ -311,7 +335,7 @@ def _commit_body(
             entry["upload_id"] = add.upload_id
         adds.append(entry)
     body: dict[str, Any] = {
-        "base_version": copy.version,
+        "base_version": stage.base_version,
         "adds": adds,
         "removes": list(stage.removes),
         "host": services.hostname,
@@ -362,11 +386,11 @@ def _unfinished(outcome: dict[str, Any]) -> CliError:
     )
 
 
-def _recover(api: ApiClient, copy: WorkingCopy, stage: Stage, error: CliError) -> dict[str, Any]:
-    collection = api.get(f"/api/v1/collections/{copy.collection_id}")
-    if int(collection["version"]) <= copy.version:
+def _recover(api: ApiClient, stage: WorkingState, error: CliError) -> dict[str, Any]:
+    collection = api.get(f"/api/v1/collections/{stage.collection_id}")
+    if int(collection["version"]) <= stage.base_version:
         raise error
-    recorded = recorded_files(api, copy.collection_id)
+    recorded = recorded_files(api, stage.collection_id)
     for add in stage.adds:
         found = recorded.get(rel_path_key(add.rel_path))
         if found is None or found["sha256"] != add.sha256:

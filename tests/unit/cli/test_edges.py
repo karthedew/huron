@@ -10,9 +10,9 @@ import pytest
 from huron.applications.cli import main as entry
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.errors import CliError
+from huron.applications.cli.localstate import StagedAdd, WorkingState
 from huron.applications.cli.login import Oidc
 from huron.applications.cli.prompts import QuestionaryPrompter
-from huron.applications.cli.state import Stage, StagedAdd, WorkingCopy
 from huron.applications.cli.sync import _recover
 from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
@@ -126,11 +126,10 @@ def test_recovery_refuses_when_the_files_are_not_recorded() -> None:
         return httpx.Response(200, json={"version": 9, "file_count": 0})
 
     api = ApiClient(httpx.Client(transport=httpx.MockTransport(handler)), "http://x")
-    copy = WorkingCopy("id", "c.n.x", 3, "o/c/n/x")
-    stage = Stage([StagedAdd("a", "/a", 1, "f" * 64)])
+    stage = WorkingState("id", "c.n.x", "o/c/n/x", 3, [StagedAdd("a", "/a", 1, sha256="f" * 64)])
     lost = CliError("lost")
     with pytest.raises(CliError) as raised:
-        _recover(api, copy, stage, lost)
+        _recover(api, stage, lost)
     assert raised.value is lost
 
 

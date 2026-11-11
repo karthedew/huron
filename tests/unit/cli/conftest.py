@@ -19,6 +19,8 @@ from tests.support.lake import PLATFORM_ADMIN, World, seed
 PREFIX = Path("/projects/huron")
 ORGANIZATION = LakePath.of("helio")
 CATALOG = ORGANIZATION.joinpath("heliophysics")
+#: The answers of ``huron create collection solar-wind.run7``: title, description, no options.
+ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
 
 
 @pytest.fixture
@@ -51,6 +53,17 @@ def seeded_cli(cli: Cli, share: MemoryStorage) -> Cli:
     make_directory(cli, "heliophysics")
     make_directory(cli, "heliophysics/solar-wind")
     return cli
+
+
+@pytest.fixture
+def ready(seeded_cli: Cli) -> Cli:
+    """dave has created and checked out the active collection solar-wind.run7."""
+    seeded_cli.login_as("dave")
+    seeded_cli.ok("catalog", "heliophysics")
+    seeded_cli.prompter.answers.extend(ANSWERS)
+    seeded_cli.ok("create", "collection", "solar-wind.run7")
+    make_collection(seeded_cli)
+    return seeded_cli
 
 
 def make_directory(cli: Cli, relative: str, organization: LakePath = ORGANIZATION) -> LakePath:

@@ -23,9 +23,9 @@ from huron.applications.cli.commands.common import (
     table_mode,
 )
 from huron.applications.cli.errors import CliError, ExitCode
+from huron.applications.cli.localstate import WorkingState
 from huron.applications.cli.output import Column
 from huron.applications.cli.services import Services
-from huron.applications.cli.state import WorkingCopy
 from huron.applications.cli.sync import recorded_files
 from huron.core.storage import is_reserved_entry
 from huron.schema.naming import rel_path_key
@@ -52,10 +52,10 @@ def register(app: typer.Typer, panels: Mapping[str, str]) -> None:
     app.command("catalog", rich_help_panel=panels["catalog"])(catalog)
 
 
-def checked_out(found: Services) -> WorkingCopy | None:
+def checked_out(found: Services) -> WorkingState | None:
     """The checked-out working copy, if any."""
     collection_id = found.config.current_collection
-    return None if collection_id is None else found.state.read_copy(collection_id)
+    return None if collection_id is None else found.state.working(collection_id)
 
 
 def organization(
@@ -131,7 +131,7 @@ def organization_in_view(ctx: typer.Context, current: str | None) -> str | None:
 
 
 def context_report(
-    found: Services, organization: str | None, current: str | None, copy: WorkingCopy | None
+    found: Services, organization: str | None, current: str | None, copy: WorkingState | None
 ) -> dict[str, object]:
     """Where you are: the organization and catalog in view, the API and the checked-out copy."""
     return {
@@ -238,13 +238,13 @@ def _show_catalogs(
     say(ctx, f"The current catalog is {current}{where} on {url}")
 
 
-def _report_copy(ctx: typer.Context, current: str | None, copy: WorkingCopy | None) -> None:
+def _report_copy(ctx: typer.Context, current: str | None, copy: WorkingState | None) -> None:
     if copy is None:
         if current is not None:
             say(ctx, "There is no current collection. To choose one, run `huron checkout`")
         return
     owner = copy.identifier.split(".")[0]
-    checked = f"Current collection: {copy.identifier} (version {copy.version})"
+    checked = f"Current collection: {copy.identifier} (version {copy.base_version})"
     if owner == current:
         say(ctx, checked)
     elif current is None:

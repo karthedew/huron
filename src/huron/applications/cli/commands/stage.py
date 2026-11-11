@@ -52,8 +52,11 @@ def checkout(
     if identifier is None:
         identifier = _pick(ctx)
     collection = fetch_collection(ctx, identifier)
-    copy = record_checkout(services(ctx), collection)
-    say(ctx, f"The current collection is now {copy.identifier} at version {copy.version}")
+    working = record_checkout(services(ctx), collection)
+    say(
+        ctx,
+        f"The current collection is now {working.identifier} at version {working.base_version}",
+    )
 
 
 def add(
@@ -85,13 +88,13 @@ def rm(
 def pull_command(ctx: typer.Context) -> None:
     """Update the working copy to the version on the service."""
     found = services(ctx)
-    copy, dropped = pull(found, current(found))
+    working, dropped = pull(found, current(found))
     for rel_path in dropped:
         found.err.print(
             f"warning: the service no longer records {rel_path}, so the CLI unstaged its removal",
             markup=False,
         )
-    say(ctx, f"{copy.identifier} at version {copy.version}")
+    say(ctx, f"{working.identifier} at version {working.base_version}")
 
 
 def push_command(
@@ -102,11 +105,11 @@ def push_command(
 ) -> None:
     """Upload the staged files and commit them."""
     found = services(ctx)
-    copy = current(found)
-    if found.state.read_stage(copy.collection_id).empty:
+    working = current(found)
+    if working.empty:
         say(ctx, "Nothing is staged. There is nothing to push")
         return
-    result = push(found, copy, message)
+    result = push(found, working, message)
     say(ctx, f"version {result.before} → {result.after}, +{result.adds} −{result.removes} files")
 
 

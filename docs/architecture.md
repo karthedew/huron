@@ -209,8 +209,10 @@ The default of `$XDG_CONFIG_HOME` is `~/.config`, and the default of `$XDG_STATE
 `~/.local/state`. The state directory of the CLI holds these files:
 
 - `tokens.json` (mode 0600): the Huron token, its expiry and the company refresh token.
-- `collections/<collection id>/copy.json`: the working copy and the version that it holds.
-- `collections/<collection id>/stage.json`: the stage of that working copy.
+- `state.lock`: the state lock. A command that changes the local state holds it.
+- `collections/<collection id>/working.json`: the working copy. It holds a format version, the
+  version of the collection, the stage, the upload attempts and the pending commit.
+- `collections/<collection id>/push.lock`: the lock that a push of that working copy holds.
 - `collections/<collection id>/metadata.draft.json`: the metadata draft, when there is one.
 
 The CLI refuses to read `tokens.json` when another user owns it, or when its mode gives any access

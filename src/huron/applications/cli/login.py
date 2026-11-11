@@ -17,7 +17,7 @@ import httpx
 
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.errors import CliError, ExitCode, NotLoggedIn
-from huron.applications.cli.state import StateDir, Tokens
+from huron.applications.cli.localstate import LocalState, Tokens
 from huron.pkg.clock import Clock
 
 __all__ = ["CompanyTokens", "Oidc", "Session", "pkce_pair"]
@@ -150,7 +150,7 @@ class Session:
     """The logged-in user's Huron token, renewed through the company refresh token."""
 
     def __init__(
-        self, api: ApiClient, oidc: Callable[[], Oidc], state: StateDir, clock: Clock
+        self, api: ApiClient, oidc: Callable[[], Oidc], state: LocalState, clock: Clock
     ) -> None:
         self._api = api
         self._oidc = oidc

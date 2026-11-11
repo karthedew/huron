@@ -79,7 +79,8 @@ This section replaces the CLI recovery rules of decision D-8 and the state files
   file.
 - Verification: `make gate`. `uv run python scripts/cli_reference.py --check`.
 - Dependencies: plan 1.
-- Status: pending
+- Status: complete (2026-11-11). Three verifications failed on small findings. The owner
+  authorized one more fix pass and the commit; see "Escalation".
 
 ### C2 Source checks
 
@@ -129,3 +130,107 @@ This section replaces the CLI recovery rules of decision D-8 and the state files
 - Verification: `make gate`, `make docs-check`.
 - Dependencies: C3.
 - Status: pending
+
+## Escalation
+
+Recorded 2026-11-11. Task C1 "Atomic state and the state lock" failed its third verification.
+The workflow stops here. C2 to C4 did not start.
+
+### State of the tree
+
+- HEAD is `b1aabee3` (plan 2, task S9), pushed. Plan 2 is complete.
+- The C1 work is in the working tree and is not committed. It was not reverted, because the tree
+  is not broken: the third verifier ran every gate on it with exit code 0.
+  - `make gate`: 4038 passed, 24 deselected. 11456 statements, 2 missed
+    (`applications/cli/identifiers.py` 76-77, not touched by the task). `pyscn check` passes.
+    Duplication: 69 clones, 25 groups, equal to the baseline.
+  - `uv run pytest -m contract`: 216 passed. `uv run pytest -m integration`: 23 passed, 1 skipped
+    (the old skip of `test_cli_end_to_end.py`).
+
+### The three verifications
+
+1. FAIL. No test showed that token and draft writes take the state lock. One message used a
+   progressive verb form. A fixture was copied a third time.
+2. FAIL. `collections/` did not get mode 0700, and new text said that it did.
+3. FAIL. One finding: the read error and the save error give a hint that does not fit each case.
+   `_cannot_read` always says "correct the permissions". `_cannot_save` always says "make free
+   space or correct the permissions". When the cause is a path of the wrong kind (`ENOTDIR`,
+   `EISDIR`, `EEXIST`), for example an `XDG_STATE_HOME` that is a file, the hint does not help.
+   The correction: select the hint from `error.errno`, or give one neutral hint, with a test for
+   each hint.
+
+Each verifier confirmed the design of C1: the atomic write, the two locks, the NFS refusal, the
+format refusal and the removal of the old state code. The third verifier ran 20 mutations, and
+the tests caught each one.
+
+### Diagnosis
+
+- The plan is sound. No verification found a defect in a behaviour that the task text requires.
+- The finding of verification 3 is in code that the orchestrator added to the second fix pass,
+  beyond the finding of verification 2: clear refusals of state that the CLI cannot read or save.
+  This extra scope made new messages, and the last verification had no pass left to correct them.
+- The task text has no rule for an I/O error on the state files other than a full disk.
+
+### Questions
+
+1. Does the owner accept C1 with one more bounded correction (the hints of `_cannot_read` and
+   `_cannot_save`) and one more verification, as for S7 of plan 2?
+2. Does C1 own the refusal of unreadable state, or does a later task own it? If a later task
+   owns it, the correction can be to remove the two general errors from C1.
+3. Does a fix pass get a rule that it corrects the findings only, with nothing added?
+
+### Next steps
+
+1. The rule of the workflow: run
+   `/architectural-review src/huron/applications/cli M11_PLAN_3_CLI_RECOVERY.md`, with this
+   section as its input.
+2. Then run `/design-plan` for the same area. Give it this section and the output of the review.
+
+### Resolution
+
+Recorded 2026-11-11. The owner did not run the review. The owner authorized one more fix pass,
+then the commit and the push of C1, with no further verification agent.
+
+- Fix pass 3 changed `localstate.py` and `tests/unit/cli/test_localstate.py` only. The read error
+  and the save error now select their hint from the error number: permissions (`EACCES`,
+  `EPERM`, `EROFS`), free space (`ENOSPC`, `EDQUOT`), a path of the incorrect type (`ENOTDIR`,
+  `EISDIR`, `EEXIST`), and a neutral hint for each other cause.
+- The implementer showed that a selection that always gives the permissions hint fails 28 tests.
+- The orchestrator ran `make gate` on the final tree: exit 0, 4057 passed, 24 deselected, 11463
+  statements, 2 missed (`applications/cli/identifiers.py` 76-77), `pyscn check` passes,
+  duplication 69 clones in 25 groups.
+- No independent verification ran after fix pass 3. The first task of the next session can
+  read the hint selection again when it starts C2.
+
+## Handoff
+
+Recorded 2026-11-11 for a new session. Read [M11_PLANS.md](M11_PLANS.md) first.
+
+- Plans 1 and 2 are complete and pushed. C1 is complete and pushed. The next task is C2.
+- Rules of the owner for the execution:
+  - The orchestrator stays on the model of the session. Each child is an Agent with
+    `subagent_type: general-purpose`, `model: "opus"`, `effort: "high"`, one at a time, with no
+    nested delegation. Children make no git state changes.
+  - Commit after each task that passes verification, with explicit paths. Push at the end of
+    each plan. About 52 unrelated uncommitted entries stay out of each commit: `.agents/`
+    (with staged deletions), `.opencode/`, `opencode.json`, `.gitignore`, other sections of
+    `AGENTS.md`, `docs/agents/`, `web/package.json`, `web/docs-site/package.json`,
+    `web/scripts/npm-scripts.test.mjs`, `IMPLEMENTATION_PLAN_LATEST.md`, `HANDOFF_*.md`,
+    `REPOSITORY_READINESS.md`, `design/`.
+  - Containers: only the cached images `tusproject/tusd:v2.10.1` and `nginx:1.31.8` with
+    `--pull=never`, and the postgres:16 test container. Touch no other container, network or
+    volume.
+  - A fix pass corrects the findings of its verification only. Added scope caused the third
+    failure of C1.
+- Open notes for later tasks:
+  - C2: `mtime_ns` and `sha256` of a staged add are in `working.json` and are empty until C2.
+  - C3: `_recover` in `sync.py` remains. A file that the user unstages during its upload is
+    still committed by that push. The pending commit closes this.
+  - C4: the exit-code table of `docs/user-guide.md` does not name the busy locks (exit code 6)
+    or the format, read and save errors (exit code 1). `mount_prefix` matters to `huron adm`
+    only.
+  - Not in a task: a `current_collection` in `config.yaml` that is not a string gives an
+    unexpected `TypeError`. `delete_tokens` and `delete_draft` give an unexpected failure when
+    the unlink fails. The push steps in `docs/concepts/raw-ingest.md` and
+    `docs/adr/0008-uploads-through-tusd.md` describe the old copy path (plan 4, task D6).
+  - Plan 4: D4 needs a cluster context, D5 needs the storage operator, D7 needs Helm 3.

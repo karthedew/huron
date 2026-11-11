@@ -16,8 +16,8 @@ from huron.applications.api.app import create_app
 from huron.applications.api.runtime import Runtime, build_runtime
 from huron.applications.cli.app import run
 from huron.applications.cli.config import Config
+from huron.applications.cli.localstate import LocalState, Tokens, WorkingState
 from huron.applications.cli.services import Services
-from huron.applications.cli.state import StateDir, Tokens
 from huron.core.lake.publications.models import CommitRequest
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.broker import TokenIssuer
@@ -160,7 +160,7 @@ class Cli:
         config = Config(api_url=API, issuer=ISSUER, mount_prefix=str(mount_prefix))
         self.config_path = home / "config" / "huron" / "config.yaml"
         config.save(self.config_path)
-        self.state = StateDir(home / "state" / "huron")
+        self.state = LocalState(home / "state" / "huron")
         self.storage_factory = storage_factory
         self.environ: dict[str, str] = {}
 
@@ -226,6 +226,17 @@ class Cli:
         current = Config.load(self.config_path, {}).current_collection
         assert current is not None
         return current
+
+    def working(self) -> WorkingState:
+        """The current working copy as ``working.json`` records it."""
+        found = self.state.working(self.config_current())
+        assert found is not None
+        return found
+
+    def rebase(self, base_version: int) -> None:
+        """Set the base version of the current working copy, as an older checkout left it."""
+        with self.state.changing(self.config_current()) as working:
+            working.base_version = base_version
 
     def configure(self, **values: Any) -> None:
         config = Config.load(self.config_path, {})

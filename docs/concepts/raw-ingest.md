@@ -104,14 +104,14 @@ default. Each working copy has a directory there, `collections/<collection id>/`
 
 | File | Contents |
 | --- | --- |
-| `copy.json` | The id and identifier of the collection, the path of its directory, and the version that the working copy holds. |
-| `stage.json` | The staged adds and removals. Each add has the path in the collection, the absolute path of the local file and its size. After a push copies the file, the add also has its `sha256`. |
+| `working.json` | A format version, the id and identifier of the collection, the path of its directory, the version that the working copy holds, and the stage. Each staged add has the path in the collection, the absolute path of the local file, its size, its `sha256` and its upload attempt. |
 | `metadata.draft.json` | Your metadata draft, when you have one. |
-| `lock` | The lock that a push holds. |
+| `push.lock` | The lock that a push holds. |
 
-The CLI writes each of these files to a `.tmp` file first and then renames it over the old file.
-The files have mode 0600 and the directories have mode 0700. The current collection is
-in the CLI configuration, `$XDG_CONFIG_HOME/huron/config.yaml`.
+To change `working.json` or `metadata.draft.json`, the CLI writes a new temporary file first. It
+syncs that file, renames it over the old file and syncs the directory.
+The files have mode 0600. The CLI creates the directories with mode 0700. The current collection
+is in the CLI configuration, `$XDG_CONFIG_HOME/huron/config.yaml`.
 
 The working copy holds no copy of your files. It holds the version of the collection, the stage
 and your metadata draft. `huron checkout` records a working copy and keeps the stage of each working
@@ -188,7 +188,7 @@ For each file in step 5, the CLI does these steps:
 3. It copies the local file into the part file and calculates the SHA-256 hash during the copy.
 4. It flushes the part file to disk with `fsync`.
 5. It renames the part file to `<name>`. The rename replaces a file with that name.
-6. It saves the size and hash in `stage.json`, and it prints `copied <path> (<n> bytes)`.
+6. It saves the size and hash in `working.json`, and it prints `copied <path> (<n> bytes)`.
 
 When the copy fails, the CLI unlinks the part file. The file at `<name>` does not change.
 

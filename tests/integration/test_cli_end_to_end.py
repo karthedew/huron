@@ -16,8 +16,8 @@ from huron.applications.api.app import create_app
 from huron.applications.api.runtime import Runtime, build_runtime
 from huron.applications.cli.app import run
 from huron.applications.cli.config import Config
+from huron.applications.cli.localstate import LocalState, Tokens
 from huron.applications.cli.services import Services
-from huron.applications.cli.state import StateDir, Tokens
 from huron.core.metastore.postgres import PostgresStore
 from huron.core.security.broker import TokenIssuer
 from huron.core.storage import MARKER_FILE, Marker, render_marker
@@ -78,7 +78,7 @@ class Stack:
             issuer="https://idp.test",
             mount_prefix=str(self.share),
         ).save(self.config_path)
-        self.state = StateDir(home / "state")
+        self.state = LocalState(home / "state")
         self.http = httpx.Client(timeout=10)
         self.prompter = ScriptedPrompter()
 
@@ -182,9 +182,8 @@ def test_every_role_end_to_end(stack: Stack, tmp_path: Path) -> None:
     stack.huron("publish", "meta")
     (data / "d.txt").write_text("d")
     stack.huron("add", str(data / "d.txt"))
-    copy = stack.state.read_copy(Config.load(stack.config_path, {}).current_collection or "")
-    assert copy is not None
-    stack.state.write_copy(copy.__class__(copy.collection_id, copy.identifier, 3, copy.path))
+    with stack.state.changing(Config.load(stack.config_path, {}).current_collection or "") as copy:
+        copy.base_version = 3
     stack.huron("push", expect=6)
     stack.huron("pull")
     stack.huron("push")

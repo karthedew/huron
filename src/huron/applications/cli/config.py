@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any
 import yaml
 
 from huron.applications.cli.errors import UsageError
+from huron.applications.cli.localstate import write_atomically
 
 __all__ = ["CONFIG_KEYS", "Config", "config_path"]
 
@@ -62,11 +62,7 @@ class Config:
     def save(self, path: Path) -> None:
         """Write atomically with mode 0600."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        part = path.with_name(path.name + ".tmp")
-        descriptor = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(descriptor, "w") as handle:
-            yaml.safe_dump(asdict(self), handle, sort_keys=True)
-        os.replace(part, path)
+        write_atomically(path, yaml.safe_dump(asdict(self), sort_keys=True).encode())
 
     def as_dict(self) -> dict[str, Any]:
         """Every value, for ``huron config show``."""

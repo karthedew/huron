@@ -13,9 +13,9 @@ from rich.console import Console
 
 from huron.applications.cli.app import run
 from huron.applications.cli.config import Config, config_path
+from huron.applications.cli.localstate import LocalState, state_root
 from huron.applications.cli.prompts import QuestionaryPrompter
 from huron.applications.cli.services import Services
-from huron.applications.cli.state import StateDir, state_root
 from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import SystemClock
 
@@ -35,7 +35,7 @@ def main() -> None:
             environ=environ,
             config_path=path,
             config=Config.load(path, environ),
-            state=StateDir(state_root(environ)),
+            state=LocalState(state_root(environ)),
             http=http,
             clock=SystemClock(),
             out=Console(),

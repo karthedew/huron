@@ -15,8 +15,8 @@ from huron.applications.cli.commands.context import (
     organization_in_view,
     unrecorded_files,
 )
+from huron.applications.cli.localstate import WorkingState
 from huron.applications.cli.output import Column, human_size
-from huron.applications.cli.state import Stage, WorkingCopy
 
 __all__ = ["STAGED_COLUMNS", "CopyStatus", "register", "staged_rows", "status"]
 
@@ -38,7 +38,7 @@ NOTHING_ANYWHERE = "Nothing is staged in any working copy"
 
 @dataclass(frozen=True, slots=True)
 class CopyStatus:
-    """One working copy's status: its stage and, for the checked-out copy, the service's view.
+    """One working copy's status: its state and, for the checked-out copy, the service's view.
 
     ``collection`` is the service's view of the checked-out copy; ``None`` for the other working
     copies, which are read from the state directory alone. ``organization`` is the collection's
@@ -47,8 +47,7 @@ class CopyStatus:
     not mounted here, and is only checked for the checked-out copy.
     """
 
-    copy: WorkingCopy
-    stage: Stage
+    working: WorkingState
     collection: dict[str, Any] | None = None
     organization: str | None = None
     unrecorded: list[str] | None = None
@@ -63,18 +62,18 @@ class CopyStatus:
         """The catalog the collection belongs to."""
         if self.collection is not None:
             return str(self.collection["catalog"])
-        return self.copy.identifier.split(".")[0]
+        return self.working.identifier.split(".")[0]
 
     @property
     def behind(self) -> bool | None:
         """Whether the service holds a newer version; ``None`` when it was not asked."""
         if self.collection is None:
             return None
-        return int(self.collection["version"]) != self.copy.version
+        return int(self.collection["version"]) != self.working.base_version
 
     def header(self) -> str:
         """``On collection … (version N, up to date) in catalog c, organization o``."""
-        version = f"version {self.copy.version}"
+        version = f"version {self.working.base_version}"
         if self.collection is not None:
             service = int(self.collection["version"])
             behind = f", behind the service's version {service}"
@@ -82,7 +81,7 @@ class CopyStatus:
         where = f" in catalog {self.catalog}"
         if self.organization is not None:
             where += f", organization {self.organization}"
-        return f"On collection {self.copy.identifier} ({version}){where}"
+        return f"On collection {self.working.identifier} ({version}){where}"
 
     def report(self, organization: str | None, catalog: str | None) -> dict[str, object]:
         """The machine-readable status, with ``organization`` and ``catalog`` of the context."""
@@ -90,15 +89,15 @@ class CopyStatus:
         return {
             "organization": organization,
             "catalog": catalog,
-            "collection": self.copy.identifier,
+            "collection": self.working.identifier,
             "state": None if view is None else view["state"],
-            "your_version": self.copy.version,
+            "your_version": self.working.base_version,
             "service_version": None if view is None else view["version"],
             "behind": self.behind,
-            "adds": [add.rel_path for add in self.stage.adds],
-            "removes": list(self.stage.removes),
+            "adds": [add.rel_path for add in self.working.adds],
+            "removes": list(self.working.removes),
             "unrecorded": self.unrecorded,
-            "staged": staged_rows(self.stage),
+            "staged": staged_rows(self.working),
         }
 
 
@@ -107,7 +106,7 @@ def register(app: typer.Typer, panel: str) -> None:
     app.command("status", rich_help_panel=panel)(status)
 
 
-def staged_rows(stage: Stage) -> list[dict[str, object]]:
+def staged_rows(stage: WorkingState) -> list[dict[str, object]]:
     """The staged adds then removes, as ``{action, rel_path, size, source}`` rows."""
     adds: list[dict[str, object]] = [
         {"action": "add", "rel_path": add.rel_path, "size": add.size, "source": add.source}
@@ -160,10 +159,10 @@ def _every_copy(ctx: typer.Context) -> None:
     found = services(ctx)
     selected = found.config.current_collection
     statuses = [
-        _checked_out_status(ctx, copy)
-        if copy.collection_id == selected
-        else _offline_status(ctx, copy)
-        for copy in found.state.working_copies()
+        _checked_out_status(ctx, working)
+        if working.collection_id == selected
+        else _offline_status(working)
+        for working in found.state.working_copies()
     ]
     if table_mode(ctx):
         _show_every(ctx, statuses)
@@ -177,7 +176,7 @@ def _every_copy(ctx: typer.Context) -> None:
 
 def _show_every(ctx: typer.Context, statuses: list[CopyStatus]) -> None:
     """Sections of the copies with something staged; of the checked-out copy alone when none has."""
-    staged = [item for item in statuses if not item.stage.empty]
+    staged = [item for item in statuses if not item.working.empty]
     shown = staged or [item for item in statuses if item.current]
     for index, item in enumerate(shown):
         if index:
@@ -193,30 +192,28 @@ def _show_every(ctx: typer.Context, statuses: list[CopyStatus]) -> None:
         say(ctx, NOTHING_ANYWHERE)
 
 
-def _checked_out_status(ctx: typer.Context, copy: WorkingCopy) -> CopyStatus:
+def _checked_out_status(ctx: typer.Context, working: WorkingState) -> CopyStatus:
     found = services(ctx)
-    collection: dict[str, Any] = found.api().get(f"/api/v1/collections/{copy.collection_id}")
+    collection: dict[str, Any] = found.api().get(f"/api/v1/collections/{working.collection_id}")
     return CopyStatus(
-        copy,
-        found.state.read_stage(copy.collection_id),
+        working,
         collection,
         collection.get("organization"),
         unrecorded_files(ctx, collection),
     )
 
 
-def _offline_status(ctx: typer.Context, copy: WorkingCopy) -> CopyStatus:
-    """A copy other than the checked-out one, from ``copy.json`` and ``stage.json`` alone."""
-    found = services(ctx)
-    organization = None if not copy.path else copy.path.split("/")[0]
-    return CopyStatus(copy, found.state.read_stage(copy.collection_id), organization=organization)
+def _offline_status(working: WorkingState) -> CopyStatus:
+    """A copy other than the checked-out one, from its ``working.json`` alone."""
+    organization = None if not working.path else working.path.split("/")[0]
+    return CopyStatus(working, organization=organization)
 
 
 def _section(ctx: typer.Context, item: CopyStatus, *, alone: bool) -> None:
     """One copy in table mode; ``alone`` when it is the only one shown (plain ``status``)."""
     marker = "* " if item.current and not alone else ""
     say(ctx, marker + item.header())
-    rows = staged_rows(item.stage)
+    rows = staged_rows(item.working)
     if rows:
         show_list(ctx, rows, STAGED_COLUMNS)
     if item.current:
@@ -229,7 +226,8 @@ def _section(ctx: typer.Context, item: CopyStatus, *, alone: bool) -> None:
     else:
         say(
             ctx,
-            f"To push or unstage these changes, run `huron checkout {item.copy.identifier}` first",
+            "To push or unstage these changes,"
+            f" run `huron checkout {item.working.identifier}` first",
         )
 
 

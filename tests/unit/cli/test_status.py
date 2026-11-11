@@ -8,8 +8,8 @@ import pytest
 from rich.console import Console
 
 from huron.applications.cli.commands.status import STAGED_COLUMNS
+from huron.applications.cli.localstate import StagedAdd
 from huron.applications.cli.output import OutputFormat, human_size, render
-from huron.applications.cli.state import Stage, StagedAdd, StateDir, WorkingCopy
 from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
@@ -117,10 +117,9 @@ def test_status_says_when_the_share_is_not_mounted(staged: Cli) -> None:
 
 
 def test_status_behind_the_service_names_both_versions_and_says_pull(ready: Cli) -> None:
-    copy = ready.state.read_copy(ready.config_current())
-    assert copy is not None
+    version = ready.working().base_version
     ready.ok("unset", "override")
-    ready.state.write_copy(copy)
+    ready.rebase(version)
     shown = lines(ready, "status")
     assert shown[0] == f"On collection {RUN8} (version 3, behind the service's version 4) {WHERE}"
     assert shown[1:] == [
@@ -164,8 +163,8 @@ def test_status_all_shows_only_copies_with_something_staged(
     assert shown[0] == f"On collection {RUN7} (version 4) {WHERE}"
     assert [row.split()[0] for row in shown[1:4]] == ["STAGED", "add", "remove"]
     assert shown[4:] == [f"To push or unstage these changes, run `huron checkout {RUN7}` first"]
-    run7 = staged.state.read_copy(_id_of(staged, RUN7))
-    assert run7 is not None and not any(run7.collection_id in path for path in paths)
+    run7 = _id_of(staged, RUN7)
+    assert not any(run7 in path for path in paths)
 
 
 def test_status_all_marks_the_checked_out_copy(staged: Cli, tmp_path: Path) -> None:
@@ -225,8 +224,8 @@ def test_status_all_in_json_is_a_list_of_reports(staged: Cli) -> None:
 def test_status_all_in_json_names_each_collections_own_catalog_and_organization(
     ready: Cli,
 ) -> None:
-    ready.state.write_copy(WorkingCopy("c-1", "terra.ground.site1", 2, "geo/terra/ground/site1"))
-    ready.state.write_copy(WorkingCopy("c-2", "terra.ground.site2", 1, None))
+    ready.state.check_out("c-1", "terra.ground.site1", 2, "geo/terra/ground/site1")
+    ready.state.check_out("c-2", "terra.ground.site2", 1, None)
     reports = json.loads(ready.ok("--catalog", "terra", "-o", "json", "status", "--all").stdout)
     places = {r["collection"]: (r["catalog"], r["organization"]) for r in reports}
     assert places == {
@@ -238,8 +237,9 @@ def test_status_all_in_json_names_each_collections_own_catalog_and_organization(
 
 
 def test_status_all_of_a_copy_in_another_catalog_names_its_organization(ready: Cli) -> None:
-    ready.state.write_copy(WorkingCopy("c-1", "terra.ground.site1", 2, "geo/terra/ground/site1"))
-    ready.state.write_stage("c-1", Stage([StagedAdd("x.txt", "/src/x.txt", 3)]))
+    ready.state.check_out("c-1", "terra.ground.site1", 2, "geo/terra/ground/site1")
+    with ready.state.changing("c-1") as working:
+        working.adds = [StagedAdd("x.txt", "/src/x.txt", 3)]
     assert lines(ready, "status", "--all")[0] == (
         "On collection terra.ground.site1 (version 2) in catalog terra, organization geo"
     )
@@ -263,19 +263,6 @@ def test_rm_twice_unstages_the_removal_and_rm_of_an_add_says_so(staged: Cli) -> 
     assert lines(staged, "status")[1:] == [NOTHING_STAGED]
     assert staged.ok("rm", "A.TXT").stdout.strip() == "staged removal of a.txt"
     assert [row.split()[:2] for row in lines(staged, "status")[2:3]] == [["remove", "a.txt"]]
-
-
-def test_working_copies_lists_recorded_copies_by_identifier(tmp_path: Path) -> None:
-    state = StateDir(tmp_path / "state")
-    assert state.working_copies() == []
-    assert not (tmp_path / "state").exists()
-    later = WorkingCopy("id-1", "zeta.ns.b", 1, None)
-    earlier = WorkingCopy("id-2", "alpha.ns.a", 5, "p")
-    state.write_copy(later)
-    state.write_copy(earlier)
-    with state.locked("id-3"):
-        pass
-    assert state.working_copies() == [earlier, later]
 
 
 @pytest.mark.parametrize(

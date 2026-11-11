@@ -6,26 +6,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
-import pytest
 
 from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
-from tests.unit.cli.conftest import make_collection
 
 COLLECTION = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
-ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
-
-
-@pytest.fixture
-def ready(seeded_cli: Cli) -> Cli:
-    """dave has created and checked out the active collection solar-wind.run7."""
-    seeded_cli.login_as("dave")
-    seeded_cli.ok("catalog", "heliophysics")
-    seeded_cli.prompter.answers.extend(ANSWERS)
-    seeded_cli.ok("create", "collection", "solar-wind.run7")
-    make_collection(seeded_cli)
-    return seeded_cli
 
 
 def write(tmp_path: Path, name: str, text: str) -> Path:
@@ -86,7 +72,7 @@ def test_a_readers_push_is_refused_and_leaves_the_share_untouched(
     assert refused.exit_code == 4 and "FORBIDDEN" in refused.stderr
     assert share.calls == calls and share.stat(COLLECTION.joinpath("a.txt")) is None
     assert uploads(ready) == []
-    stage = ready.state.read_stage(ready.config_current())
+    stage = ready.working()
     assert [add.rel_path for add in stage.adds] == ["a.txt"]
     assert stage.adds[0].sha256 is None
 
@@ -107,18 +93,16 @@ def test_a_base_version_conflict_is_reported_before_uploading(
     assert "huron pull" in conflict.stderr
     assert len(sent) == 1 and share.calls == calls and uploads(ready) == []
     assert share.stat(COLLECTION.joinpath("a.txt")) is None
-    copy = ready.state.read_copy(collection_id)
-    assert copy is not None and copy.version == 3
+    assert ready.working().base_version == 3
 
 
 def test_a_push_behind_the_service_uploads_nothing(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     ready.ok("add", str(write(tmp_path, "a.txt", "alpha")))
-    copy = ready.state.read_copy(ready.config_current())
-    assert copy is not None
+    version = ready.working().base_version
     ready.ok("unset", "override")
-    ready.state.write_copy(copy)
+    ready.rebase(version)
     calls = list(share.calls)
     behind = ready.run("push")
     assert behind.exit_code == 6 and "huron pull" in behind.stderr
