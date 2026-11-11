@@ -1,5 +1,10 @@
 """The whole service over PostgreSQL, walked through HTTP as every role."""
 
+import hashlib
+import json
+import uuid
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -9,22 +14,24 @@ from huron.core.metastore.postgres import PostgresStore
 from huron.core.security.broker import TokenIssuer
 from tests.fakes.groups import FakeGroups
 from tests.fakes.issuer import FakeIssuer
-from tests.support.api import USERS, settings
+from tests.support.api import USERS, mark_lake, settings
 from tests.support.clock import START, frozen
 from tests.support.postgres import truncate
+from tests.support.tusd import hook_body, upload_body
 
 pytestmark = pytest.mark.integration
-SHA = "d" * 64
+DATA = b"a"
 
 
-async def test_section_one_end_to_end(database_url: str) -> None:
+async def test_section_one_end_to_end(database_url: str, tmp_path: Path) -> None:
     await truncate(database_url)
+    lake = mark_lake(tmp_path / "lake")
     store = PostgresStore(database_url)
     await store.connect()
     issuer = FakeIssuer()
     clock = frozen()
     runtime = await build_runtime(
-        settings(store="postgres", database_url=database_url),
+        settings(store="postgres", database_url=database_url, lake_path=lake),
         store=store,
         http=httpx.AsyncClient(transport=issuer.transport()),
         groups=FakeGroups(USERS),
@@ -85,16 +92,28 @@ async def test_section_one_end_to_end(database_url: str) -> None:
             f"/collections/{cid}/activate", headers=as_("dave", **{"If-Match": '"1"'})
         )
         assert activated.json()["state"] == "active"
-        body = {
-            "base_version": 2,
-            "adds": [{"rel_path": "a.txt", "size": 1, "sha256": SHA}],
-            "removes": [],
-            "host": "ws1",
+        metadata = {"attempt_id": str(uuid.uuid4()), "collection": cid, "rel_path": "a.txt"}
+        creation = hook_body("pre-create", upload_body("", 1, metadata), "POST", "/files/")
+        created = await c.post("/uploads/hooks", json=creation, headers=as_("dave"))
+        upload_id = created.json()["ChangeFileInfo"]["ID"]
+        (lake / ".tus-uploads" / upload_id).write_bytes(DATA)
+        info = {"ID": upload_id, "Size": 1, "SizeIsDeferred": False, "Offset": 0}
+        (lake / ".tus-uploads" / f"{upload_id}.info").write_text(json.dumps(info))
+        finish = hook_body("pre-finish", upload_body(upload_id, 1), "PATCH", f"/files/{upload_id}")
+        finished = await c.post("/uploads/hooks", json=finish, headers=as_("dave"))
+        assert finished.json()["HTTPResponse"]["Header"]["Huron-Upload-State"] == "ready"
+        add = {
+            "rel_path": "a.txt",
+            "size": 1,
+            "sha256": hashlib.sha256(DATA).hexdigest(),
+            "upload_id": upload_id,
         }
-        assert (await c.post(f"/collections/{cid}/commits", json=body, headers=as_("dave"))).json()[
-            "version"
-        ] == 3
-        stale = await c.post(f"/collections/{cid}/commits", json=body, headers=as_("dave"))
+        body = {"base_version": 2, "adds": [add], "removes": [], "host": "ws1"}
+        first = {**body, "request_id": str(uuid.uuid4())}
+        committed = await c.post(f"/collections/{cid}/commits", json=first, headers=as_("dave"))
+        assert committed.json()["version"] == 3
+        again = {**body, "request_id": str(uuid.uuid4()), "adds": []}
+        stale = await c.post(f"/collections/{cid}/commits", json=again, headers=as_("dave"))
         assert stale.json()["code"] == "BASE_VERSION_CONFLICT"
         found = await c.get(
             "/catalogs/heliophysics/search?q=wind&label=site=a", headers=as_("erin")
@@ -105,8 +124,7 @@ async def test_section_one_end_to_end(database_url: str) -> None:
             "collection.commit",
             "collection.activate",
         ]
-        refused = await c.post(
-            f"/collections/{cid}/commits", json={**body, "base_version": 3}, headers=as_("erin")
-        )
+        reader = {**body, "request_id": str(uuid.uuid4()), "base_version": 3, "adds": []}
+        refused = await c.post(f"/collections/{cid}/commits", json=reader, headers=as_("erin"))
         assert refused.status_code == 403
     await runtime.close()

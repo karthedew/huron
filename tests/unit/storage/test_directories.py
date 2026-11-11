@@ -218,12 +218,11 @@ def test_remove_reports_what_it_did(lake: Lake) -> None:
 
 @pytest.fixture
 def collection(lake: Lake) -> Lake:
-    """Collection run7 with metadata.json, and a part and a backup file in ``a``."""
+    """Collection run7 with metadata.json, and a part file in ``a``."""
     for directory in (NAMESPACE, COLLECTION, COLLECTION.joinpath("a")):
         lake.writer.make(PLACE, directory)
     lake.writer.write_metadata(COLLECTION, b"{}\n")
-    for name in (".c.bin.1.huron-part", ".c.bin.1.huron-prev"):
-        lake.storage.write_bytes(COLLECTION.joinpath("a", name), b"x", FILE_MODE)
+    lake.storage.write_bytes(COLLECTION.joinpath("a", ".c.bin.1.huron-part"), b"x", FILE_MODE)
     return lake
 
 

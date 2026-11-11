@@ -120,7 +120,7 @@ def test_valid_relative_paths_are_accepted(parts: list[str]) -> None:
         (".huron", "rel_path_reserved"),
         ("x/.huronstate", "rel_path_reserved"),
         ("x.bin.huron-part", "rel_path_reserved"),
-        ("x/.y.bin.huron-prev", "rel_path_reserved"),
+        ("x/.y.bin.huron-part", "rel_path_reserved"),
     ],
 )
 def test_invalid_relative_paths_name_the_broken_rule(value: str, rule: str) -> None:
@@ -129,7 +129,7 @@ def test_invalid_relative_paths_name_the_broken_rule(value: str, rule: str) -> N
     assert raised.value.rule == rule
 
 
-def test_a_segment_leaves_room_for_the_part_and_backup_names() -> None:
+def test_a_segment_leaves_room_for_the_temporary_name_of_a_publication() -> None:
     longest = "é" * 103
     assert len(longest.encode()) == REL_PATH_SEGMENT_MAX_BYTES == 206
     assert check_rel_path(f"a/{longest}") == f"a/{longest}"

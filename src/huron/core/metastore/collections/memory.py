@@ -78,23 +78,12 @@ class MemoryCollections:
         self._state.collections[collection.id] = _copy(collection)
 
     async def delete(self, collection_id: uuid.UUID) -> None:
-        """Remove a collection with its uploads.
+        """Remove a collection.
 
-        Its removals and commit requests stay, without collection or commit, and its upload
-        attempts stay without collection.
+        Its commit requests stay, without collection or commit, and its upload attempts stay
+        without collection.
         """
         self._state.collections.pop(collection_id, None)
-        self._state.uploads = {
-            key: upload
-            for key, upload in self._state.uploads.items()
-            if upload.collection_id != collection_id
-        }
-        self._state.removals = {
-            key: replace(removal, collection_id=None, commit_id=None)
-            if removal.collection_id == collection_id
-            else removal
-            for key, removal in self._state.removals.items()
-        }
         self._state.attempts = {
             key: replace(attempt, collection_id=None)
             if attempt.collection_id == collection_id

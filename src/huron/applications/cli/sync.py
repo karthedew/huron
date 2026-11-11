@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from huron.applications.cli.client import ApiClient
-from huron.applications.cli.errors import CliError, ExitCode, UsageError
+from huron.applications.cli.errors import ApiError, CliError, ExitCode, UsageError
 from huron.applications.cli.services import Services
 from huron.applications.cli.state import Stage, StagedAdd, WorkingCopy
 from huron.applications.cli.uploads import Uploader, UploadService
 from huron.schema.naming import RelPathError, check_rel_path, rel_path_key
 
 __all__ = [
+    "COMMIT_POLL",
+    "COMMIT_WAIT",
     "PushResult",
     "RmAction",
     "checkout",
@@ -24,9 +29,16 @@ __all__ = [
     "pull",
     "push",
     "recorded_files",
+    "send_commit",
     "stage_paths",
     "unstage_or_remove",
 ]
+
+
+#: The seconds between two reads of a commit request that the service did not finish yet.
+COMMIT_POLL = 5.0
+#: The most seconds the CLI waits for a commit request that the service accepted.
+COMMIT_WAIT = 600.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +82,20 @@ def current(services: Services) -> WorkingCopy:
             hint="run `huron checkout <identifier>`, or run `huron checkout` to choose one",
         )
     return copy
+
+
+def send_commit(
+    api: ApiClient, collection_id: str, body: dict[str, Any], sleep: Callable[[float], None]
+) -> dict[str, Any]:
+    """Send the commit ``body``, and wait for the request when the service answers 202.
+
+    The wait reads the state of the request every :data:`COMMIT_POLL` seconds, for at most
+    :data:`COMMIT_WAIT` seconds. Returns the request when it succeeded. A request that the
+    service refused raises the refusal, and a blocked, abandoned or still accepted request
+    raises an error that says so.
+    """
+    response = api.request("POST", f"/api/v1/collections/{collection_id}/commits", json=body)
+    return _settled(api, response, sleep)
 
 
 def recorded_files(api: ApiClient, collection_id: str) -> dict[str, dict[str, Any]]:
@@ -128,8 +154,10 @@ def push(services: Services, copy: WorkingCopy, message: str | None) -> PushResu
     """Upload the staged files through tusd and commit them with the version they were based on.
 
     The service checks the commit with a dry run first, so a push it would refuse (no right to
-    write files, a stale base version, a removed file that is not recorded) fails before any byte
-    is uploaded. The stage records each upload, so a push that stops continues on the next push.
+    write files, a pending commit, a stale base version, a removed file that is not recorded)
+    fails before any byte is uploaded. The stage records each upload attempt, so a push that
+    stops continues on the next push. The commit names each upload by its ID, under a new
+    request ID.
     """
     with services.state.locked(copy.collection_id):
         stage = services.state.read_stage(copy.collection_id)
@@ -256,30 +284,31 @@ def _commit(
     services: Services, api: ApiClient, copy: WorkingCopy, stage: Stage, message: str | None
 ) -> dict[str, Any]:
     body = _commit_body(services, copy, stage, message)
+    body["request_id"] = str(uuid.uuid4())
+    path = f"/api/v1/collections/{copy.collection_id}/commits"
     try:
-        result: dict[str, Any] = api.post(
-            f"/api/v1/collections/{copy.collection_id}/commits", json=body
-        )
+        response = api.request("POST", path, json=body)
     except CliError as error:
         if error.code is not None:
             raise
-        result = _recover(api, copy, stage, error)
-    return result
+        return _recover(api, copy, stage, error)
+    return _settled(api, response, services.sleep)
 
 
 def _commit_body(
     services: Services, copy: WorkingCopy, stage: Stage, message: str | None
 ) -> dict[str, Any]:
-    """The commit body.
+    """The commit body without its request ID.
 
-    Each add's ``sha256`` is the ``Huron-Sha256`` receipt of its upload. An add not yet uploaded
-    has none, which a dry run accepts.
+    Each add names its sealed upload and the sha256 of the bytes that the push sent. An add not
+    yet uploaded has neither, which a dry run accepts.
     """
     adds: list[dict[str, Any]] = []
     for add in stage.adds:
         entry: dict[str, Any] = {"rel_path": add.rel_path, "size": add.size}
-        if add.sha256 is not None:
+        if add.sha256 is not None and add.upload_id is not None:
             entry["sha256"] = add.sha256
+            entry["upload_id"] = add.upload_id
         adds.append(entry)
     body: dict[str, Any] = {
         "base_version": copy.version,
@@ -290,6 +319,47 @@ def _commit_body(
     if message:
         body["message"] = message
     return body
+
+
+def _settled(
+    api: ApiClient, response: httpx.Response, sleep: Callable[[float], None]
+) -> dict[str, Any]:
+    """The succeeded request of the commit answer ``response``; see :func:`send_commit`."""
+    outcome: dict[str, Any] = response.json()
+    location = response.headers.get("Location")
+    waited = 0.0
+    while response.status_code == 202 and outcome["state"] == "accepted" and waited < COMMIT_WAIT:
+        sleep(COMMIT_POLL)
+        waited += COMMIT_POLL
+        outcome = api.get(str(location))
+    if outcome["state"] != "succeeded":
+        raise _unfinished(outcome)
+    return outcome
+
+
+def _unfinished(outcome: dict[str, Any]) -> CliError:
+    """The error for a commit request that did not succeed."""
+    refusal = outcome.get("refusal")
+    if outcome["state"] == "rejected" and refusal is not None:
+        return ApiError.from_problem(0, refusal)
+    if outcome["state"] == "blocked":
+        return CliError(
+            "the service accepted the commit, but a step of it is blocked",
+            ExitCode.CONFLICT,
+            hint="a platform administrator must resolve the commit request",
+            code="PUBLICATION_BLOCKED",
+        )
+    if outcome["state"] == "abandoned":
+        return CliError(
+            "a platform administrator abandoned the commit",
+            ExitCode.CONFLICT,
+            hint="run `huron push` again",
+        )
+    return CliError(
+        f"the service accepted the commit, but did not finish it in {int(COMMIT_WAIT)} seconds",
+        ExitCode.FAILED,
+        hint="to see the result later, run `huron get files`",
+    )
 
 
 def _recover(api: ApiClient, copy: WorkingCopy, stage: Stage, error: CliError) -> dict[str, Any]:

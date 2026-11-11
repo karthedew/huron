@@ -89,6 +89,7 @@ export function collectionFixture(overrides: Partial<Collection> = {}): Collecti
 		path: 'helio/heliophysics/solar-wind/ace/mag-l2-2024',
 		problems: [],
 		share_root: null,
+		pending_request: null,
 		...overrides
 	};
 }

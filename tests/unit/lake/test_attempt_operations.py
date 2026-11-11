@@ -204,13 +204,29 @@ async def test_a_creation_needs_the_right_to_write_to_a_settled_collection(
 
 
 async def test_a_creation_refuses_a_bad_path_and_a_negative_size(publishing: Publishing) -> None:
-    with pytest.raises(RelPathError):
+    with pytest.raises(RelPathError) as bad_path:
         await begin(publishing, rel_path="../escape")
+    assert bad_path.value.rule == "rel_path_separator"
+    with pytest.raises(RelPathError) as long_name:
+        await begin(publishing, rel_path="d/" + "n" * 207)
+    assert long_name.value.rule == "rel_path_segment"
     with pytest.raises(Invalid) as raised:
         await begin(publishing, size=-1)
     assert raised.value.context == {"size": -1}
     with pytest.raises(NotFound):
         await publishing.attempts.get(CONTRIBUTOR, ATTEMPT_ID)
+
+
+async def test_a_creation_takes_an_empty_file_and_any_size_without_a_maximum(
+    publishing: Publishing,
+) -> None:
+    empty = await publishing.attempts.begin(
+        CONTRIBUTOR, new_id(), publishing.collection_id, "empty", 0
+    )
+    huge = await publishing.attempts.begin(
+        CONTRIBUTOR, new_id(), publishing.collection_id, "huge", 2**50
+    )
+    assert (empty.size, huge.size) == (0, 2**50)
 
 
 async def test_a_creation_larger_than_the_maximum_upload_is_refused(publishing: Publishing) -> None:
@@ -439,8 +455,11 @@ async def test_a_cancel_of_an_attempt_that_a_commit_uses_is_refused(
     assert raised.value.context == {
         "attempt_id": str(held.attempt_id),
         "state": "ready",
-        "allowed": ["receiving", "sealing", "ready"],
+        "allowed": ["receiving", "sealing"],
     }
+    assert raised.value.message == (
+        "a commit uses the upload attempt. You can cancel only an attempt that no commit uses"
+    )
     await publishing.publish(outcome)
     with pytest.raises(Conflict) as consumed:
         await publishing.attempts.cancel(CONTRIBUTOR, held.attempt_id)
@@ -531,3 +550,150 @@ async def test_fail_leaves_another_state_and_an_id_that_is_not_current(
     with pytest.raises(UploadNotFound) as missing:
         await publishing.attempts.fail(unknown, 1)
     assert missing.value.context == {"upload": str(unknown)}
+
+
+# The reads and the activity of the upload proxy's authorization.
+
+
+async def test_find_reads_the_attempt_of_any_issued_upload_id(publishing: Publishing) -> None:
+    first = await begin(publishing)
+    reissued = await begin(publishing)
+    assert await publishing.attempts.find(first.current_upload_id) == reissued
+    assert await publishing.attempts.find(reissued.current_upload_id) == reissued
+    with pytest.raises(UploadNotFound) as missing:
+        await publishing.attempts.find(ATTEMPT_ID)
+    assert missing.value.context == {"upload": str(ATTEMPT_ID)}
+
+
+async def test_only_the_owner_sends_bytes_to_the_current_id_of_a_receiving_attempt(
+    publishing: Publishing,
+) -> None:
+    first = await begin(publishing)
+    reissued = await begin(publishing)
+    accepts = publishing.attempts.accepts
+    assert await accepts(CONTRIBUTOR, reissued.current_upload_id) is True
+    assert await accepts(OTHER_CONTRIBUTOR, reissued.current_upload_id) is False
+    assert await accepts(CONTRIBUTOR, first.current_upload_id) is False
+    assert await accepts(CONTRIBUTOR, new_id()) is False
+    await publishing.seal(reissued, DATA)
+    assert await accepts(CONTRIBUTOR, reissued.current_upload_id) is False
+
+
+async def test_a_lapsed_attempt_takes_no_bytes_and_the_read_changes_nothing(
+    publishing: Publishing,
+) -> None:
+    attempt = await begin(publishing)
+    publishing.clock.advance(TTL)
+    assert await publishing.attempts.accepts(CONTRIBUTOR, attempt.current_upload_id) is True
+    publishing.clock.advance(timedelta(microseconds=1))
+    assert await publishing.attempts.accepts(CONTRIBUTOR, attempt.current_upload_id) is False
+    assert (await publishing.attempt(attempt)).state is AttemptState.RECEIVING
+
+
+async def test_touch_records_activity_on_the_current_id_of_a_receiving_attempt(
+    publishing: Publishing,
+) -> None:
+    attempt = await begin(publishing)
+    publishing.clock.advance(timedelta(days=6))
+    assert await publishing.attempts.touch(attempt.current_upload_id) is True
+    touched = await publishing.attempt(attempt)
+    assert touched == replace(attempt, active_at=START + timedelta(days=6))
+    publishing.clock.advance(timedelta(days=6))
+    assert await publishing.attempts.accepts(CONTRIBUTOR, attempt.current_upload_id) is True
+
+
+async def test_touch_gives_no_activity_to_an_id_that_is_not_current_or_not_receiving(
+    publishing: Publishing,
+) -> None:
+    first = await begin(publishing)
+    reissued = await begin(publishing)
+    publishing.clock.advance(timedelta(hours=1))
+    assert await publishing.attempts.touch(first.current_upload_id) is False
+    assert await publishing.attempt(reissued) == reissued
+    sealed = await publishing.seal(reissued, DATA)
+    assert await publishing.attempts.touch(reissued.current_upload_id) is False
+    assert await publishing.attempt(sealed) == sealed
+    with pytest.raises(UploadNotFound):
+        await publishing.attempts.touch(new_id())
+
+
+async def test_touch_expires_a_lapsed_attempt(publishing: Publishing) -> None:
+    attempt = await begin(publishing)
+    publishing.clock.advance(TTL + timedelta(microseconds=1))
+    assert await publishing.attempts.touch(attempt.current_upload_id) is False
+    assert (await publishing.attempt(attempt)).state is AttemptState.EXPIRED
+
+
+async def test_unsealed_names_the_current_ids_of_receiving_and_sealing_attempts(
+    publishing: Publishing,
+) -> None:
+    receiving = await publishing.receiving(CONTRIBUTOR, "a", DATA)
+    sealing = await publishing.receiving(CONTRIBUTOR, "b", DATA)
+    await publishing.attempts.start_seal(sealing.current_upload_id)
+    ready = await publishing.ready(CONTRIBUTOR, "c", DATA)
+    first = await begin(publishing)
+    await begin(publishing)
+    named = [
+        ready.current_upload_id,
+        sealing.current_upload_id,
+        first.current_upload_id,
+        new_id(),
+        receiving.current_upload_id,
+    ]
+    assert await publishing.attempts.unsealed(CONTRIBUTOR, named) == [
+        sealing.current_upload_id,
+        receiving.current_upload_id,
+    ]
+    assert await publishing.attempts.unsealed(CONTRIBUTOR, []) == []
+
+
+async def test_unsealed_names_no_upload_of_another_actor(publishing: Publishing) -> None:
+    foreign = await publishing.receiving(OTHER_CONTRIBUTOR, "a", DATA)
+    own = await publishing.receiving(CONTRIBUTOR, "b", DATA)
+    named = [foreign.current_upload_id, own.current_upload_id]
+    assert await publishing.attempts.unsealed(CONTRIBUTOR, named) == [own.current_upload_id]
+    assert await publishing.attempts.unsealed(OTHER_CONTRIBUTOR, named) == [
+        foreign.current_upload_id
+    ]
+
+
+@pytest.mark.parametrize(("size", "error"), [(-1, Invalid), (11, UploadTooLarge)])
+async def test_check_size_refuses_a_size_that_can_never_start(
+    publishing: Publishing, size: int, error: type[Exception]
+) -> None:
+    attempts = limited(publishing, max_upload_bytes=10)
+    with pytest.raises(error):
+        attempts.check_size(size)
+    attempts.check_size(0)
+    attempts.check_size(10)
+
+
+def test_an_attempt_renders_its_state_and_current_upload_id_for_its_owner() -> None:
+    upload_id = new_id()
+    attempt = UploadAttempt(
+        id=new_id(),
+        subject="dave",
+        attempt_id=ATTEMPT_ID,
+        collection_id=None,
+        rel_path="a.cdf",
+        size=4,
+        state=AttemptState.FAILED,
+        current_upload_id=upload_id,
+        upload_ids=(upload_id,),
+        created_at=START,
+        active_at=START,
+        failure=Failure("UPLOAD_SIZE_MISMATCH", "short"),
+    )
+    assert attempt.as_dict() == {
+        "attempt_id": str(ATTEMPT_ID),
+        "collection_id": None,
+        "rel_path": "a.cdf",
+        "size": 4,
+        "state": "failed",
+        "upload_id": str(upload_id),
+        "failure": {"code": "UPLOAD_SIZE_MISMATCH", "message": "short"},
+    }
+    collection_id = new_id()
+    assert replace(attempt, collection_id=collection_id, failure=None).as_dict() | {
+        "state": "x"
+    } == attempt.as_dict() | {"collection_id": str(collection_id), "failure": None, "state": "x"}

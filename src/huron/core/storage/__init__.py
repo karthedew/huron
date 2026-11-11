@@ -1,5 +1,5 @@
-"""The lake's layout, the storage port and adapters, directories, placement, seals,
-publication, repair, removal and locks.
+"""The lake's layout, the storage port and adapters, directories, seals, publication, repair
+and locks.
 """
 
 from huron.core.storage.directories import DirectoryWriter
@@ -35,12 +35,6 @@ from huron.core.storage.marker import (
     render_marker,
     verify_marker,
 )
-from huron.core.storage.placement import (
-    CollectionDirectoryMissing,
-    Linked,
-    Measured,
-    Placer,
-)
 from huron.core.storage.ports import (
     SHARE_GROUP_PENDING,
     Entry,
@@ -67,7 +61,6 @@ from huron.core.storage.publication import (
     StepOutcome,
     StepResult,
 )
-from huron.core.storage.removal import prune
 from huron.core.storage.repair import (
     FailureReason,
     Repairer,
@@ -91,7 +84,6 @@ __all__ = [
     "UPLOAD_DIR_MODE",
     "AddFile",
     "BlockReason",
-    "CollectionDirectoryMissing",
     "Completeness",
     "DirectoryWriter",
     "Entry",
@@ -103,16 +95,13 @@ __all__ = [
     "Inspection",
     "LakePath",
     "LakeUnavailable",
-    "Linked",
     "MakeDirectory",
     "Marker",
     "MarkerState",
-    "Measured",
     "OpenFile",
     "OrganizationPlace",
     "Outcome",
     "PathLocks",
-    "Placer",
     "PruneDirectory",
     "Publisher",
     "RemoveDirectory",
@@ -136,7 +125,6 @@ __all__ = [
     "SymlinkInLake",
     "is_reserved_entry",
     "marker_state",
-    "prune",
     "read_marker",
     "render_marker",
     "verify_marker",

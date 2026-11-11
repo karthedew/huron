@@ -4,7 +4,14 @@
  * organization-wide grants, its catalogs and its schema, carol (catalog admin) namespaces, member grants and the schema
  * assignment, dave (contributor) the helio collections and their commits. Tokens come from the
  * fake IdP's `POST /test/id-token` and the API's exchange.
+ *
+ * A commit publishes uploads, so the seed does tusd's part of each upload: it sends the
+ * `pre-create` hook, writes the bytes and the `.info` file into the lake's `.tus-uploads`, and
+ * sends the `pre-finish` hook, which seals the upload. The API must hold the lake at `lakePath`.
  */
+import { randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
 	CATALOGS,
 	COLLECTIONS,
@@ -12,6 +19,7 @@ import {
 	ORGANIZATIONS,
 	SCHEMAS,
 	collectionIdentifier,
+	fileContent,
 	fileSha256
 } from './fixture.mjs';
 
@@ -23,6 +31,18 @@ import {
  * @typedef {object} SeedOptions
  * @property {string} apiUrl The API origin; `/api/v1` is appended.
  * @property {string} issuer The fake IdP.
+ * @property {string} [lakePath] The API's lake, into whose `.tus-uploads` the seed writes the
+ *   bytes of each upload. Only `seed` needs it.
+ */
+
+/**
+ * Calls the API as a fixture user, as `SeedClient.call` does.
+ * @callback ApiCall
+ * @param {Username} username
+ * @param {'GET' | 'POST' | 'PUT' | 'PATCH'} method
+ * @param {readonly string[]} segments
+ * @param {unknown} [body]
+ * @returns {Promise<any>}
  */
 
 /**
@@ -31,7 +51,8 @@ import {
  * @param {SeedOptions} options
  * @returns {Promise<{ created: boolean }>}
  */
-export async function seed({ apiUrl, issuer }) {
+export async function seed({ apiUrl, issuer, lakePath }) {
+	if (lakePath === undefined) throw new Error('the seed needs the lake path of the API');
 	const api = new SeedClient(apiUrl, issuer);
 	const first = ORGANIZATIONS[0];
 	if (await api.exists(first.createdBy, ['organizations', first.name])) return { created: false };
@@ -79,7 +100,7 @@ export async function seed({ apiUrl, issuer }) {
 			collections_allowed: namespace.collectionsAllowed
 		});
 	}
-	for (const collection of COLLECTIONS) await createCollection(api, collection);
+	for (const collection of COLLECTIONS) await createCollection(api, collection, lakePath);
 	for (const schema of SCHEMAS) await publishAndAssign(api, schema);
 	return { created: true };
 }
@@ -89,8 +110,9 @@ export async function seed({ apiUrl, issuer }) {
  * commits in order.
  * @param {SeedClient} api
  * @param {FixtureCollection} collection
+ * @param {string} lakePath
  */
-async function createCollection(api, collection) {
+async function createCollection(api, collection, lakePath) {
 	const identifier = collectionIdentifier(collection);
 	const actor = collection.createdBy;
 	let draft = await api.call(
@@ -113,21 +135,96 @@ async function createCollection(api, collection) {
 	const active = await api.call(actor, 'POST', ['collections', id, 'activate'], undefined, {
 		'if-match': `"${number(draft, 'version')}"`
 	});
-	let version = number(active, 'version');
+	const call = /** @type {ApiCall} */ ((...args) => api.call(...args));
+	await publishCommits(call, lakePath, collection, id, number(active, 'version'));
+}
+
+/**
+ * Upload the files of each commit of a fixture collection, then commit them, in order. Each
+ * upload goes through tusd's hooks, with the bytes written into the lake's `.tus-uploads`; each
+ * commit has a new request ID, and a commit that answers 202 is read until it succeeds.
+ * @param {ApiCall} call
+ * @param {string} lakePath
+ * @param {FixtureCollection} collection
+ * @param {string} id The collection's ID.
+ * @param {number} version The collection's version after its activation.
+ */
+export async function publishCommits(call, lakePath, collection, id, version) {
+	const identifier = collectionIdentifier(collection);
+	const actor = collection.createdBy;
+	let base = version;
 	for (const commit of collection.commits) {
-		const result = await api.call(actor, 'POST', ['collections', id, 'commits'], {
-			base_version: version,
-			adds: commit.adds.map(({ relPath, size }) => ({
+		const adds = [];
+		for (const { relPath, size } of commit.adds) {
+			const uploadId = await upload(call, lakePath, actor, id, identifier, relPath);
+			adds.push({
 				rel_path: relPath,
 				size,
-				sha256: fileSha256(identifier, relPath)
-			})),
+				sha256: fileSha256(identifier, relPath),
+				upload_id: uploadId
+			});
+		}
+		let result = await call(actor, 'POST', ['collections', id, 'commits'], {
+			request_id: randomUUID(),
+			base_version: base,
+			adds,
 			removes: commit.removes,
 			host: commit.host,
 			...(commit.message === null ? {} : { message: commit.message })
 		});
-		version = number(result, 'version');
+		while (text(result, 'state') === 'accepted') {
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			result = await call(actor, 'GET', ['commit-requests', text(result, 'request_id')]);
+		}
+		if (text(result, 'state') !== 'succeeded') {
+			throw new Error(`the commit of ${identifier} is ${text(result, 'state')}`);
+		}
+		base = number(result, 'version');
 	}
+}
+
+/**
+ * One sealed upload of a fixture file, as tusd and the API make it: the upload ID.
+ * @param {ApiCall} call
+ * @param {string} lakePath
+ * @param {Username} actor
+ * @param {string} collectionId
+ * @param {string} identifier
+ * @param {string} relPath
+ */
+async function upload(call, lakePath, actor, collectionId, identifier, relPath) {
+	const content = fileContent(identifier, relPath);
+	const metadata = { attempt_id: randomUUID(), collection: collectionId, rel_path: relPath };
+	const created = await call(actor, 'POST', ['uploads', 'hooks'], {
+		Type: 'pre-create',
+		Event: {
+			Upload: { ID: '', Size: content.length, MetaData: metadata },
+			HTTPRequest: { Method: 'POST', URI: '/files/', Header: {} }
+		}
+	});
+	const uploadId = text(/** @type {Record<string, unknown>} */ (created).ChangeFileInfo, 'ID');
+	const data = join(lakePath, '.tus-uploads', uploadId);
+	await writeFile(data, content, { mode: 0o600 });
+	const info = { ID: uploadId, Size: content.length, SizeIsDeferred: false, Offset: 0 };
+	await writeFile(`${data}.info`, JSON.stringify(info), { mode: 0o600 });
+	const finished = await call(actor, 'POST', ['uploads', 'hooks'], {
+		Type: 'pre-finish',
+		Event: {
+			Upload: { ID: uploadId, Size: content.length },
+			HTTPRequest: { Method: 'PATCH', URI: `/files/${uploadId}`, Header: {} }
+		}
+	});
+	let state = finished?.HTTPResponse?.Header?.['Huron-Upload-State'];
+	while (state === 'sealing') {
+		const attempt = await call(actor, 'GET', ['upload-attempts', metadata.attempt_id]);
+		state = text(attempt, 'state');
+	}
+	if (state !== 'ready') {
+		throw new Error(
+			`the upload of ${identifier}/${relPath} is not sealed: ${JSON.stringify(finished)}`
+		);
+	}
+	return uploadId;
 }
 
 /**

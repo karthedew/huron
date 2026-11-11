@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from huron.core.lake.catalogs.errors import CatalogNotFound
 from huron.core.lake.collections.metadata import render_sidecar
-from huron.core.lake.collections.models import Collection, CollectionView
+from huron.core.lake.collections.models import Collection, CollectionView, PendingRequest
 from huron.core.lake.errors import VersionConflict
 from huron.core.security.rbac import Privilege, Scope
 from huron.pkg.errors import Conflict, NotFound
@@ -112,11 +112,16 @@ async def collection_view(
     catalog: Catalog,
     problems: Sequence[dict[str, str]] = (),
 ) -> CollectionView:
-    """Assemble the API view of a collection."""
+    """Assemble the API view of a collection, with its pending commit request."""
     organization = await tx.organizations.get(catalog.organization_id)
     namespace = await tx.namespaces.get(collection.namespace_id)
     schema = await tx.schemas.get(catalog.schema_id)
     assert organization is not None and namespace is not None and schema is not None
+    pending = None
+    if collection.pending_request_id is not None:
+        request = await tx.commit_requests.find(collection.pending_request_id)
+        assert request is not None
+        pending = PendingRequest(request.state, request.created_at)
     return CollectionView(
         collection=collection,
         organization=organization.name,
@@ -124,6 +129,7 @@ async def collection_view(
         namespace_path=namespace.path,
         schema=schema.ref,
         problems=list(problems),
+        pending_request=pending,
     )
 
 

@@ -1,11 +1,14 @@
 """Namespaces, collections, commits, files, search and logs over HTTP."""
 
+import hashlib
+import uuid
+
 import httpx
 
 from tests.support.api import Service
+from tests.support.tusd import UploadTarget
 
 META = {"title": "Run 7", "description": "Solar wind run seven", "labels": {"site": "a"}}
-SHA = "c" * 64
 
 
 async def draft(api: Service, name: str = "run7", metadata: dict | None = None) -> httpx.Response:  # type: ignore[type-arg]
@@ -150,49 +153,44 @@ async def test_drafts_are_hidden_from_readers(seeded_api: Service) -> None:
     assert [x["name"] for x in listing.json()["items"]] == ["hidden", "shown"]
 
 
-async def test_commits_files_and_conflicts(seeded_api: Service) -> None:
-    c = seeded_api.client
-    cid = (await active(seeded_api))["id"]
-    dave = await seeded_api.headers("dave")
+async def test_commits_list_the_files_and_keep_a_collection_until_it_is_empty(
+    target: UploadTarget,
+) -> None:
+    api = target.tusd.api
+    c, cid = api.client, target.collection_id
+    dave, erin = await api.headers("dave"), await api.headers("erin")
+    upload_id = await target.tusd.begin("dave", cid, "a.txt", b"a")
+    add = {"rel_path": "a.txt", "size": 1, "sha256": hashlib.sha256(b"a").hexdigest()}
     body = {
+        "request_id": str(uuid.uuid4()),
         "base_version": 2,
-        "adds": [{"rel_path": "a.txt", "size": 1, "sha256": SHA}],
+        "adds": [{**add, "upload_id": upload_id}],
         "removes": [],
         "host": "ws1",
         "message": "first",
     }
-    first = await c.post(f"/api/v1/collections/{cid}/commits", json=body, headers=dave)
-    assert first.status_code == 200 and first.json()["version"] == 3
-    assert first.headers["ETag"] == '"3"'
-    stale = await c.post(f"/api/v1/collections/{cid}/commits", json=body, headers=dave)
-    assert stale.status_code == 409 and stale.json()["code"] == "BASE_VERSION_CONFLICT"
-    assert stale.json()["context"]["current_version"] == 3
-    too_big = {**body, "base_version": 3, "removes": [str(i) for i in range(10_001)]}
-    big = await c.post(f"/api/v1/collections/{cid}/commits", json=too_big, headers=dave)
-    assert big.status_code == 413
-    malformed = await c.post(f"/api/v1/collections/{cid}/commits", json={"x": 1}, headers=dave)
-    assert malformed.json()["code"] == "COMMIT_INVALID"
-    erin = await seeded_api.headers("erin")
-    files = (await c.get(f"/api/v1/collections/{cid}/files", headers=erin)).json()
-    assert files["items"][0]["rel_path"] == "a.txt"
-    commits = (await c.get(f"/api/v1/collections/{cid}/commits", headers=erin)).json()
-    assert commits["items"][0]["message"] == "first"
-    refused = await c.post(
-        f"/api/v1/collections/{cid}/commits", json={**body, "base_version": 3}, headers=erin
-    )
+    refused = await c.post(f"/api/v1/collections/{cid}/commits", json=body, headers=erin)
     assert refused.status_code == 403
+    first = await c.post(
+        f"/api/v1/collections/{cid}/commits",
+        json={**body, "request_id": str(uuid.uuid4())},
+        headers=dave,
+    )
+    assert first.status_code == 200 and first.json()["version"] == 3
+    files = (await c.get(f"/api/v1/collections/{cid}/files", headers=erin)).json()
+    assert [(item["rel_path"], item["size"]) for item in files["items"]] == [("a.txt", 1)]
+    commits = (await c.get(f"/api/v1/collections/{cid}/commits", headers=erin)).json()
+    assert [(item["message"], item["adds"]) for item in commits["items"]] == [("first", 1)]
     not_empty = await c.delete(
-        f"/api/v1/collections/{cid}",
-        headers=await seeded_api.headers("dave", **{"If-Match": '"3"'}),
+        f"/api/v1/collections/{cid}", headers=await api.headers("dave", **{"If-Match": '"3"'})
     )
     assert not_empty.json()["code"] == "COLLECTION_NOT_EMPTY"
-    removal = {"base_version": 3, "adds": [], "removes": ["a.txt"], "host": "ws1"}
-    assert (
-        await c.post(f"/api/v1/collections/{cid}/commits", json=removal, headers=dave)
-    ).status_code == 200
+    removal = {**body, "request_id": str(uuid.uuid4()), "base_version": 3}
+    removal |= {"adds": [], "removes": ["a.txt"]}
+    removed = await c.post(f"/api/v1/collections/{cid}/commits", json=removal, headers=dave)
+    assert removed.status_code == 200
     deleted = await c.delete(
-        f"/api/v1/collections/{cid}",
-        headers=await seeded_api.headers("dave", **{"If-Match": '"4"'}),
+        f"/api/v1/collections/{cid}", headers=await api.headers("dave", **{"If-Match": '"4"'})
     )
     assert deleted.status_code == 204
 
@@ -239,3 +237,57 @@ async def test_metadata_json_cannot_hold_is_refused(seeded_api: Service) -> None
     assert refused.status_code == 422
     assert refused.json()["code"] == "METADATA_INVALID"
     assert refused.json()["context"]["problems"][0]["rule"] == "json"
+
+
+async def commit_files(target: UploadTarget, base_version: int, files: dict[str, bytes]) -> None:
+    """Upload ``files`` through tusd's hooks and commit them as dave."""
+    api = target.tusd.api
+    adds = []
+    for rel_path, data in files.items():
+        upload_id = await target.tusd.begin("dave", target.collection_id, rel_path, data)
+        add = {"rel_path": rel_path, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        adds.append({**add, "upload_id": upload_id})
+    body = {"request_id": str(uuid.uuid4()), "base_version": base_version, "adds": adds}
+    committed = await api.client.post(
+        f"/api/v1/collections/{target.collection_id}/commits",
+        json={**body, "removes": [], "host": "ws1"},
+        headers=await api.headers("dave"),
+    )
+    assert committed.status_code == 200, committed.text
+
+
+async def every_page(api: Service, path: str) -> list[list[dict[str, object]]]:
+    """Each page of a listing at ``path`` with ``limit=1``, following ``next_cursor``."""
+    erin = await api.headers("erin")
+    pages: list[list[dict[str, object]]] = []
+    params: dict[str, str | int] = {"limit": 1}
+    while True:
+        answer = await api.client.get(path, params=params, headers=erin)
+        assert answer.status_code == 200
+        body = answer.json()
+        assert set(body) == {"items", "next_cursor"}
+        pages.append(body["items"])
+        if body["next_cursor"] is None:
+            return pages
+        params = {"limit": 1, "cursor": body["next_cursor"]}
+
+
+async def test_files_and_commits_page_over_http(target: UploadTarget) -> None:
+    api = target.tusd.api
+    await commit_files(target, 2, {"b.txt": b"b", "A.txt": b"aa"})
+    await commit_files(target, 3, {"c.txt": b"ccc"})
+    base = f"/api/v1/collections/{target.collection_id}"
+    files = await every_page(api, f"{base}/files")
+    assert [[(item["rel_path"], item["size"]) for item in page] for page in files] == [
+        [("A.txt", 2)],
+        [("b.txt", 1)],
+        [("c.txt", 3)],
+    ]
+    commits = await every_page(api, f"{base}/commits")
+    assert [[item["new_version"] for item in page] for page in commits] == [[4], [3]]
+    erin = await api.headers("erin")
+    for listing in ("files", "commits"):
+        refused = await api.client.get(
+            f"{base}/{listing}", params={"cursor": "not-a-cursor"}, headers=erin
+        )
+        assert (refused.status_code, refused.json()["code"]) == (400, "INVALID_CURSOR")

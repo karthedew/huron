@@ -7,7 +7,7 @@ from datetime import timedelta
 import pytest
 
 from huron.core.lake.audit import Action
-from huron.core.lake.collections.models import Update
+from huron.core.lake.collections.models import PendingRequest, Update
 from huron.core.lake.files.errors import BaseVersionConflict, CommitInvalid, FileNotRecorded
 from huron.core.lake.files.models import Commit, FileRecord
 from huron.core.lake.publications.errors import (
@@ -35,6 +35,7 @@ from tests.support.lake import (
     CONTRIBUTOR,
     OTHER_CONTRIBUTOR,
     PLATFORM_ADMIN,
+    READER,
     STRANGER,
     VALID_METADATA,
     settled_collection,
@@ -537,6 +538,16 @@ async def test_only_a_platform_administrator_resolves_a_request(publishing: Publ
     assert await publishing.saved(blocked) == blocked
 
 
+async def test_the_operator_check_refuses_everyone_but_a_platform_administrator(
+    publishing: Publishing,
+) -> None:
+    await publishing.publications.check_operator(PLATFORM_ADMIN)
+    for actor in (CATALOG_ADMIN, CONTRIBUTOR):
+        with pytest.raises(Forbidden) as raised:
+            await publishing.publications.check_operator(actor)
+        assert raised.value.context == {"role": "platform_admin", "scope": "platform"}
+
+
 async def test_a_retry_makes_a_blocked_request_accepted_again(publishing: Publishing) -> None:
     outcome = await blocked_overwrite(publishing)
     retried = await publishing.publications.resolve(
@@ -717,3 +728,24 @@ async def test_an_upload_whose_seal_failed_cannot_be_published(publishing: Publi
         publishing, CONTRIBUTOR, publishing.request(2, [(attempt, NEW)]), UploadIneligible
     )
     assert error.context["state"] == "failed"
+
+
+async def test_the_collection_view_shows_its_pending_request_until_the_request_ends(
+    publishing: Publishing,
+) -> None:
+    get = publishing.lake.collections.get
+    assert (await get(READER, publishing.collection_id)).pending_request is None
+    attempt = await publishing.ready(CONTRIBUTOR, "a.txt", b"a")
+    publishing.clock.advance(timedelta(minutes=3))
+    outcome = await publishing.publications.submit(
+        CONTRIBUTOR, publishing.request(2, [(attempt, b"a")])
+    )
+    view = await get(READER, publishing.collection_id)
+    since = START + timedelta(minutes=3)
+    assert view.pending_request == PendingRequest("accepted", since)
+    assert view.as_dict()["pending_request"] == {"state": "accepted", "since": since.isoformat()}
+    assert view.collection.version == 2
+    await publishing.publish(outcome)
+    finished = await get(READER, publishing.collection_id)
+    assert finished.pending_request is None
+    assert finished.as_dict()["pending_request"] is None

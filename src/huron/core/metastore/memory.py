@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from huron.core.lake.organizations.models import Organization
     from huron.core.lake.publications.models import CommitEntry, CommitOutcome
     from huron.core.lake.schemas.models import SchemaEntry
-    from huron.core.lake.uploads.models import Removal, StoredObject, Upload, UploadAttempt
+    from huron.core.lake.uploads.models import StoredObject, UploadAttempt
     from huron.core.security.broker.keys import SigningKey
     from huron.core.security.rbac import Role, Scope
 
@@ -41,8 +41,6 @@ class MemoryState:
     grants: dict[tuple[Scope, Role, str], str] = field(default_factory=dict)
     audit: list[AuditEntry] = field(default_factory=list)
     keys: dict[str, SigningKey] = field(default_factory=dict)
-    uploads: dict[uuid.UUID, Upload] = field(default_factory=dict)
-    removals: dict[uuid.UUID, Removal] = field(default_factory=dict)
     attempts: dict[uuid.UUID, UploadAttempt] = field(default_factory=dict)
     issued: dict[uuid.UUID, tuple[uuid.UUID, datetime]] = field(default_factory=dict)
     objects: dict[uuid.UUID, StoredObject] = field(default_factory=dict)
@@ -63,8 +61,6 @@ class MemoryState:
             grants=dict(self.grants),
             audit=list(self.audit),
             keys=dict(self.keys),
-            uploads=dict(self.uploads),
-            removals=dict(self.removals),
             attempts=dict(self.attempts),
             issued=dict(self.issued),
             objects=dict(self.objects),

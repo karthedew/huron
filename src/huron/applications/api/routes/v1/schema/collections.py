@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from huron.applications.api.routes.v1.schema.schemas import SchemaRefOut
 
-__all__ = ["CollectionIn", "CollectionOut", "CollectionPatch", "ProblemOut"]
+__all__ = ["CollectionIn", "CollectionOut", "CollectionPatch", "PendingRequestOut", "ProblemOut"]
 
 
 class CollectionIn(BaseModel):
@@ -32,6 +32,13 @@ class ProblemOut(BaseModel):
     path: str
     message: str
     rule: str
+
+
+class PendingRequestOut(BaseModel):
+    """The commit request that holds a collection."""
+
+    state: str = Field(description="accepted, or blocked until an operator resolves it.")
+    since: datetime
 
 
 class CollectionOut(BaseModel):
@@ -58,6 +65,11 @@ class CollectionOut(BaseModel):
     share_root: str | None = Field(
         description="The configured root of the organization's directory; clients join it with"
         " the relative path, or use their own mount prefix when it is null."
+    )
+    pending_request: PendingRequestOut | None = Field(
+        description="The commit request that holds the collection; null when none holds it."
+        " While a request is pending, the files and the version are those of the last"
+        " commit that succeeded."
     )
 
     model_config = {"populate_by_name": True}

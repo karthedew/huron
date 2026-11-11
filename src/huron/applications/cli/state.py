@@ -41,15 +41,16 @@ class WorkingCopy:
 class StagedAdd:
     """A local file to upload into the collection at ``rel_path``.
 
-    ``upload_url`` and ``upload_id`` name the tus upload once it is created, so a later push
-    continues it. ``sha256`` is the service's receipt once the service placed the file.
+    ``attempt_id`` names the upload attempt before its creation, and ``upload_id`` the tus
+    upload once it is created, so a later push continues it. ``sha256`` is the hash of the
+    file that the push sent, once the service sealed the upload.
     """
 
     rel_path: str
     source: str
     size: int
     sha256: str | None = None
-    upload_url: str | None = None
+    attempt_id: str | None = None
     upload_id: str | None = None
 
 

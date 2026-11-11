@@ -13,7 +13,8 @@ import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { startFakeIdp } from '../e2e/support/fake-idp.mjs';
-import { USERNAMES, USERS } from '../e2e/support/fixture.mjs';
+import { INSTANCE_ID, USERNAMES, USERS } from '../e2e/support/fixture.mjs';
+import { prepareLake } from '../e2e/support/lake.mjs';
 import { seed } from '../e2e/support/seed.mjs';
 import {
 	LOOPBACK,
@@ -60,10 +61,11 @@ try {
 		apiUrl: stack.apiUrl,
 		webOrigins: stack.webOrigins
 	});
+	await prepareLake(stack.lakePath, stack.apiUrl, INSTANCE_ID);
 	const [command, ...args] = apiCommand(stack);
 	const api = start('API', command, args, repositoryRoot, apiEnvironment(stack));
 	await waitUntilReady(`${stack.apiUrl}/readyz`, api);
-	await seed({ apiUrl: stack.apiUrl, issuer: stack.issuer });
+	await seed({ apiUrl: stack.apiUrl, issuer: stack.issuer, lakePath: stack.lakePath });
 	const web = start(
 		'vite dev',
 		process.execPath,

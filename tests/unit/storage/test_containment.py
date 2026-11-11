@@ -36,17 +36,12 @@ from huron.core.storage import (
 )
 from huron.core.storage.memory import MemoryStorage
 from huron.core.storage.posix import PosixStorage
-from huron.pkg.errors import HuronError
 from tests.support.disk import LAKE, plant_symlink, snapshot
 
 SOURCE = LakePath.of("up", "src")
 NAME = LakePath.of("a", "t")
 PART = LakePath.of("a", "t.huron-part")
-#: The part and backup names that ``link`` gets.
-LINK_PART, LINK_BACKUP = ".part", ".prev"
-#: The backup that ``link`` keeps when it replaces the file at :data:`NAME`.
-BACKUP = LakePath.of("a", LINK_BACKUP)
-#: Where ``link source``, ``link_once source`` and ``copy_sealed source`` put their file.
+#: Where ``link_once source`` and ``copy_sealed source`` put their file.
 DESTINATION = LakePath.of("up", "dst")
 #: The bytes of :data:`SOURCE` in the case ``resized_source``: not the 3 bytes that
 #: ``copy_sealed`` expects.
@@ -158,26 +153,13 @@ def full_directory(lake: Lake, at: LakePath) -> None:
     lake.put(at.joinpath("keep"), "file")
 
 
-def replaced_with(planted: Callable[[Lake, LakePath], None]) -> Callable[[Lake, LakePath], None]:
-    """A file at the place, so that ``link`` replaces it, and ``planted`` beside it."""
-
-    def setup(lake: Lake, at: LakePath) -> None:
-        lake.put(at, "file")
-        planted(lake, at)
-
-    return setup
-
-
 def nothing(lake: Lake, at: LakePath) -> None:
     """The case needs nothing beyond the place."""
 
 
 def same_file(lake: Lake, at: LakePath) -> None:
     """A second name of :data:`SOURCE` at the place."""
-    storage = lake.storage
-    storage.link(
-        SOURCE, at, inode=source_inode(storage), part_name=LINK_PART, backup_name=LINK_BACKUP
-    )
+    lake.storage.link_once(SOURCE, at)
 
 
 SETUPS: dict[str, Callable[[Lake, LakePath], None]] = {
@@ -195,23 +177,13 @@ SETUPS: dict[str, Callable[[Lake, LakePath], None]] = {
     "part_and_dir": lambda lake, at: (lake.put(part_of(at), "file"), lake.put(at, "dir")),
     "link_at_part": lambda lake, at: plant_symlink(lake.storage, part_of(at)),
     "old_part": lambda lake, at: lake.put(part_of(at), "file"),
-    "dir_at_part_name": replaced_with(lambda lake, at: full_directory(lake, beside(at, LINK_PART))),
-    "dir_at_backup_name": replaced_with(
-        lambda lake, at: full_directory(lake, beside(at, LINK_BACKUP))
-    ),
-    "link_at_part_name": replaced_with(
-        lambda lake, at: plant_symlink(lake.storage, beside(at, LINK_PART))
-    ),
-    "link_at_backup_name": replaced_with(
-        lambda lake, at: plant_symlink(lake.storage, beside(at, LINK_BACKUP))
-    ),
     "same_file_at_name": same_file,
     "source_missing": lambda lake, at: lake.storage.remove_file(SOURCE),
     "resized_source": lambda lake, at: lake.storage.write_bytes(SOURCE, RESIZED, 0o644),
 }
 #: The parts of a case by group. A way part says that the parent is not a directory, a lock
 #: part that the parent is a directory without a permission, and a source part what is at the
-#: source of ``link``, ``link_once``, ``copy_sealed`` or ``rename``. Every other part is an
+#: source of ``link_once``, ``copy_sealed`` or ``rename``. Every other part is an
 #: entry part: it states everything at the name and beside it.
 WAY = frozenset({"parent_missing", "link_above", "file_above"})
 LOCK = frozenset({"unsearchable", "read_only"})
@@ -282,26 +254,6 @@ METHODS: dict[str, tuple[Kind, Callable[[Storage, LakePath], object]]] = {
     "set_mode": ("dir", lambda storage, at: storage.set_mode(at, 0o700)),
     "set_group": ("dir", lambda storage, at: storage.set_group(at, 0)),
     "write_bytes": (None, lambda storage, at: storage.write_bytes(at, b"y", 0o644)),
-    "link": (
-        None,
-        lambda storage, at: storage.link(
-            SOURCE,
-            at,
-            inode=source_inode(storage),
-            part_name=LINK_PART,
-            backup_name=LINK_BACKUP,
-        ),
-    ),
-    "link source": (
-        "file",
-        lambda storage, at: storage.link(
-            at,
-            DESTINATION,
-            inode=file_inode(storage, at),
-            part_name=LINK_PART,
-            backup_name=LINK_BACKUP,
-        ),
-    ),
     "copy_sealed": (
         None,
         lambda storage, at: copied(storage, at, storage.copy_sealed(SOURCE, at, len(b"new"))),
@@ -432,7 +384,7 @@ def table_rows() -> list[Row]:
             Returns(GroupResult(GroupOutcome.PENDING, f"a/t: {os.strerror(errno.EPERM)}")),
         ),
     ]
-    for method, created in (("write_bytes", "file"), ("link", "file"), ("rename", "file")):
+    for method, created in (("write_bytes", "file"), ("rename", "file")):
         rows += [
             Row(method, "missing", Returns(None), {NAME: created}),
             Row(method, "parent_missing", PARENT_MISSING),
@@ -453,22 +405,10 @@ def table_rows() -> list[Row]:
         Row("write_bytes", "file_at_name", Returns(None), {PART: None, NAME: "file"}),
     ]
     rows += [
-        Row(
-            "link",
-            "file_at_name",
-            Returns(BACKUP),
-            {NAME: "file", BACKUP: "file", beside(NAME, LINK_PART): None},
-        ),
-        Row("link", "source_missing", Raises(SourceGone, "up/src")),
         Row("rename", "file_at_name", Returns(None), {NAME: "file", SOURCE: None}),
         Row("rename", "source_missing", Raises(StorageError, "up/src", "ENOENT")),
     ]
     rows += [
-        Row("link source", "missing", Raises(SourceGone, "a/t")),
-        Row("link source", "parent_missing", PARENT_MISSING),
-        *traversal_rows("link source"),
-        Row("link source", "dir_at_name", Raises(SourceGone, "a/t")),
-        Row("link source", "read_only", Returns(None), {DESTINATION: "file"}),
         Row("rename", "same_file_at_name", Returns(None), {NAME: "file", SOURCE: "file"}),
     ]
     rows += [
@@ -479,10 +419,6 @@ def table_rows() -> list[Row]:
         Row("rename source", "read_only", Raises(StorageError, "up/moved", "EACCES")),
     ]
     rows += [
-        Row("link", "dir_at_part_name", Raises(StorageError, "a/.part", "EISDIR")),
-        Row("link", "dir_at_backup_name", Raises(StorageError, "a/.prev", "EISDIR")),
-        Row("link", "link_at_part_name", Raises(SymlinkInLake, "a/.part")),
-        Row("link", "link_at_backup_name", Raises(SymlinkInLake, "a/.prev")),
         Row("remove_directory", "nonempty_dir", Returns(Outcome.KEPT)),
     ]
     rows += [
@@ -630,8 +566,6 @@ def combined_rows() -> list[Row]:
             ("make_directory", "file_at_name"),
             ("make_inheriting_dir", "file_at_name"),
             ("write_bytes", "dir_at_name"),
-            ("link", "dir_at_name"),
-            ("link source", "dir_at_name"),
             ("rename", "dir_at_name"),
             ("rename source", "dir_at_name"),
             ("remove_file", "dir_at_name"),
@@ -652,12 +586,6 @@ def combined_rows() -> list[Row]:
             Raises(StorageError, "a/p/t.huron-part", "EISDIR"),
         ),
         Row("write_bytes", "read_only+old_part", DENIED),
-        Row("link", "read_only+dir_at_name", Raises(StorageError, "a/p/t", "EISDIR")),
-        Row("link", "read_only+file_at_name", DENIED),
-        Row("link", "read_only+dir_at_part_name", Raises(StorageError, "a/p/.part", "EISDIR")),
-        Row("link", "read_only+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "unsearchable+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "parent_missing+source_missing", PARENT_MISSING),
         Row("rename", "read_only+dir_at_name", DENIED),
         Row("rename", "read_only+file_at_name", DENIED),
         Row("rename", "read_only+source_missing", Raises(StorageError, "up/src", "ENOENT")),
@@ -708,33 +636,6 @@ def combined_rows() -> list[Row]:
         Row("write_bytes", "unsearchable+old_part", Raises(StorageError, "a/p/t", "EACCES")),
         Row("write_bytes", "read_only+part_and_dir", Raises(StorageError, "a/p/t", "EACCES")),
         Row("write_bytes", "unsearchable+part_and_dir", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link", "read_only+dir_at_backup_name", Raises(StorageError, "a/p/.prev", "EISDIR")),
-        Row("link", "dir_at_backup_name+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "unsearchable+dir_at_backup_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link", "dir_at_name+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "dir_at_part_name+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "unsearchable+dir_at_part_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link", "file_above+source_missing", Raises(StorageError, "a/f/t", "ENOTDIR")),
-        Row("link", "file_at_name+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "unsearchable+file_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link", "link_above+source_missing", Raises(SymlinkInLake, "a/l")),
-        Row("link", "read_only+link_at_backup_name", Raises(SymlinkInLake, "a/p/.prev")),
-        Row("link", "link_at_backup_name+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "unsearchable+link_at_backup_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link", "read_only+link_at_name", Raises(SymlinkInLake, "a/p/t")),
-        Row("link", "link_at_name+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link", "read_only+link_at_part_name", Raises(SymlinkInLake, "a/p/.part")),
-        Row("link", "link_at_part_name+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "unsearchable+link_at_part_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link", "read_only+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link", "missing+source_missing", Raises(SourceGone, "up/src")),
-        Row("link", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link source", "read_only+dir_at_name", Raises(SourceGone, "a/p/t")),
-        Row("link source", "read_only+link_at_name", Raises(SymlinkInLake, "a/p/t")),
-        Row("link source", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("link source", "read_only+missing", Raises(SourceGone, "a/p/t")),
-        Row("link source", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
         Row("rename", "dir_at_name+source_missing", Raises(StorageError, "up/src", "ENOENT")),
         Row("rename", "file_above+source_missing", Raises(StorageError, "up/src", "ENOENT")),
         Row("rename", "file_at_name+source_missing", Raises(StorageError, "up/src", "ENOENT")),
@@ -772,7 +673,7 @@ def combined_rows() -> list[Row]:
 
 
 ROWS = table_rows()
-ROW_COUNT = 388
+ROW_COUNT = 331
 
 
 def test_the_table_has_one_row_per_method_and_case() -> None:
@@ -822,20 +723,6 @@ def test_walk_yields_a_link_and_never_enters_it(lake: Lake) -> None:
     entries = list(lake.storage.walk(LakePath.of("a")))
     assert [(e.names, e.kind) for e in entries] == [(("t",), "symlink")]
     assert lake.storage.is_empty(LakePath.of("a")) is False
-    assert lake.state() == before
-
-
-@pytest.mark.parametrize("field", ["part_name", "backup_name"])
-@pytest.mark.parametrize("name", ["../../outside/escaped", "x/y", "..", ""])
-def test_link_refuses_a_part_or_backup_name_that_is_not_one_name(
-    lake: Lake, field: str, name: str
-) -> None:
-    names = {"part_name": ".part", "backup_name": ".prev", field: name}
-    inode = source_inode(lake.storage)
-    before = lake.state()
-    with pytest.raises(HuronError) as refused:
-        lake.storage.link(SOURCE, LakePath.of("a", "c.bin"), inode=inode, **names)
-    assert (refused.value.code, refused.value.status) == ("NAME_INVALID", 422)
     assert lake.state() == before
 
 

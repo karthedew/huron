@@ -15,7 +15,13 @@
  * The web serves the documentation from `HURON_E2E_DOCS_DIR`, by default the build of
  * `npm run docs:build` (`docs-site/dist`, relative to `web/`). `src/lib/testing/docs`, the unit
  * tests' stand-in, serves for every docs test but the search's.
+ *
+ * The API holds a lake at `HURON_E2E_LAKE_DIR`, by default `huron-e2e-lake-<API port>` in the
+ * system's temporary directory: a commit publishes uploads, and `seed.mjs` writes their bytes
+ * there. `lake.mjs` makes it empty, with the service's marker, before the API starts.
  */
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	API_AUDIENCE,
 	CLIENT_ID,
@@ -48,6 +54,7 @@ export const FAULTS_PROJECT = 'faults';
  * @property {string} webOrigin The origin browsers use.
  * @property {readonly string[]} webOrigins Every origin the IdP may redirect back to.
  * @property {string} docsDir The documentation build the web serves at `/docs`.
+ * @property {string} lakePath The API's lake.
  */
 
 /** @typedef {Record<string, string | undefined>} Environment */
@@ -61,7 +68,7 @@ export const FAULTS_PROJECT = 'faults';
 export function e2eStack(env) {
 	const ports = backendPorts(env, port(env, 'HURON_E2E_WEB_PORT', 4173));
 	const webOrigin = `http://localhost:${ports.web}`;
-	return stack(ports, webOrigin, [webOrigin], docsDir(env));
+	return stack(ports, webOrigin, [webOrigin], docsDir(env), lakeDir(env, ports));
 }
 
 /**
@@ -75,7 +82,8 @@ export function demoStack(env) {
 		ports,
 		`http://localhost:${ports.web}`,
 		[`http://localhost:${ports.web}`, `http://${LOOPBACK}:${ports.web}`],
-		docsDir(env)
+		docsDir(env),
+		lakeDir(env, ports)
 	);
 }
 
@@ -113,10 +121,10 @@ export function webOriginsFrom(env, fallback) {
 }
 
 /**
- * Every setting of the API, on the memory store, trusting the fake IdP. No configuration file
- * (an empty `HURON_CONFIG_FILE` names none, even when the shell exports one): the API runs with
- * unmanaged organizations, which `seed.mjs` creates, and `share_root` is null throughout, so
- * share paths fall back to `MOUNT_PREFIX`.
+ * Every setting of the API, on the memory store, trusting the fake IdP, with its lake at
+ * `lakePath`. No configuration file (an empty `HURON_CONFIG_FILE` names none, even when the
+ * shell exports one): the API runs with unmanaged organizations, which `seed.mjs` creates, and
+ * `share_root` is null throughout, so share paths fall back to `MOUNT_PREFIX`.
  * @param {Stack} stack
  * @returns {Record<string, string>}
  */
@@ -136,7 +144,8 @@ export function apiEnvironment(stack) {
 		HURON_GROUP_DIRECTORY_URL: stack.issuer,
 		HURON_PLATFORM_ADMIN_GROUP: PLATFORM_ADMIN_GROUP,
 		HURON_POOL_SIZE: '10',
-		HURON_LOG_LEVEL: 'INFO'
+		HURON_LOG_LEVEL: 'INFO',
+		HURON_LAKE_PATH: stack.lakePath
 	};
 }
 
@@ -211,13 +220,25 @@ function docsDir(env) {
 }
 
 /**
+ * @param {Environment} env
+ * @param {Ports} ports
+ */
+function lakeDir(env, ports) {
+	const configured = env.HURON_E2E_LAKE_DIR;
+	return configured === undefined || configured === ''
+		? join(tmpdir(), `huron-e2e-lake-${ports.api}`)
+		: configured;
+}
+
+/**
  * @param {Ports} ports
  * @param {string} webOrigin
  * @param {readonly string[]} webOrigins
  * @param {string} docs
+ * @param {string} lakePath
  * @returns {Stack}
  */
-function stack(ports, webOrigin, webOrigins, docs) {
+function stack(ports, webOrigin, webOrigins, docs, lakePath) {
 	return {
 		ports,
 		issuer: `http://${LOOPBACK}:${ports.idp}`,
@@ -225,7 +246,8 @@ function stack(ports, webOrigin, webOrigins, docs) {
 		apiUrl: `http://${LOOPBACK}:${ports.api}`,
 		webOrigin,
 		webOrigins,
-		docsDir: docs
+		docsDir: docs,
+		lakePath
 	};
 }
 

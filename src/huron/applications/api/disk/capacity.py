@@ -41,7 +41,7 @@ class Capacity:
         uploads = await self._free(self._disk.in_uploads())
         objects = await self._free(self._disk.locate(organization))
         if uploads.filesystem == objects.filesystem:
-            self._fits(objects, 2 * size)
+            self._fits(objects, 2 * size, doubled=True)
             return
         self._fits(uploads, size)
         self._fits(objects, size)
@@ -49,7 +49,7 @@ class Capacity:
     async def _free(self, located: Located) -> FreeSpace:
         return await self._disk.work(located, lambda: self._storage.free_space(located.location))
 
-    def _fits(self, space: FreeSpace, requested: int) -> None:
+    def _fits(self, space: FreeSpace, requested: int, *, doubled: bool = False) -> None:
         if space.free - requested < self._min_free_bytes:
             available = max(0, space.free - self._min_free_bytes)
-            raise CapacityExceeded("min_free_bytes", requested, available)
+            raise CapacityExceeded("min_free_bytes", requested, available, doubled=doubled)

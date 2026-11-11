@@ -9,8 +9,9 @@ which `huron.dev.yaml` declares.
 - `load.sh` creates the catalog, its namespaces and one collection per file group, then pushes
   the files.
 
-On the development stack, `make demo-noaa` does all of it in one command once `make app` is up:
-it signs a CLI of its own in as `admin` (configuration and state under
+`make demo-noaa` does all of it in one command on a running stack whose API takes uploads (an API
+with a lake and a tusd behind an upload proxy). The API of `make app` has neither, so there the
+pushes stop with `error: the Huron service does not accept uploads`. The command signs a CLI of its own in as `admin` (configuration and state under
 `~/.cache/huron/demo-noaa/`, never your own), runs `fetch.py` into
 `~/.cache/huron/demo-noaa/raw` the first time, then `huron adm provision-orgs` and `load.sh`, and
 prints the tree and the files on disk. Running it again changes nothing. `NOAA_REFRESH=1` fetches

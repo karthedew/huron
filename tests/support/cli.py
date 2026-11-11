@@ -3,6 +3,7 @@
 import asyncio
 import io
 import threading
+import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -17,6 +18,7 @@ from huron.applications.cli.app import run
 from huron.applications.cli.config import Config
 from huron.applications.cli.services import Services
 from huron.applications.cli.state import StateDir, Tokens
+from huron.core.lake.publications.models import CommitRequest
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.broker import TokenIssuer
 from huron.core.storage.memory import MemoryStorage
@@ -26,6 +28,7 @@ from tests.fakes.prompter import ScriptedPrompter
 from tests.fakes.storage import rooted
 from tests.support.api import USERS, settings
 from tests.support.clock import START, frozen
+from tests.support.lake import CONTRIBUTOR
 from tests.support.tus import TUS_URL, FakeTus
 
 API = "http://huron.test"
@@ -205,6 +208,19 @@ class Cli:
         )
         token, claims = issuer.issue(user, user.title(), USERS[user])
         self.state.write_tokens(Tokens(token, claims.exp.timestamp(), user, f"refresh-{user}"))
+
+    def commit_nothing(self, collection_id: str, base_version: int) -> None:
+        """An empty commit of the contributor on the service: the collection's version goes up."""
+
+        async def commit() -> None:
+            request = CommitRequest(
+                uuid.uuid4(), uuid.UUID(collection_id), base_version, (), (), "ws2"
+            )
+            outcome = await self.runtime.publications.submit(CONTRIBUTOR, request)
+            assert self.runtime.orchestration is not None
+            await self.runtime.orchestration.materializer.start(outcome)
+
+        self.loop.call(commit())
 
     def config_current(self) -> str:
         current = Config.load(self.config_path, {}).current_collection

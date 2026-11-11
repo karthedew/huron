@@ -26,6 +26,11 @@
  * Settings, all required: HURON_SEED_API_URL (the API origin), HURON_SEED_ISSUER (Keycloak's
  * realm), HURON_SEED_CLIENT_ID (a client with the password grant) and HURON_SEED_FIXTURE_DIR
  * (the directory holding seed.mjs and fixture.mjs).
+ *
+ * A commit publishes sealed uploads, so the seed commits files only with HURON_SEED_LAKE_DIR: the
+ * API's lake, mounted into the seed's container, into whose `.tus-uploads` the seed writes the
+ * bytes of each upload (`publishCommits` of seed.mjs). Without it, the collections stay without
+ * files, and the seed says so.
  */
 import { createServer } from 'node:http';
 import { join } from 'node:path';
@@ -35,6 +40,7 @@ const API_URL = setting('HURON_SEED_API_URL');
 const ISSUER = setting('HURON_SEED_ISSUER');
 const CLIENT_ID = setting('HURON_SEED_CLIENT_ID');
 const FIXTURE_DIR = setting('HURON_SEED_FIXTURE_DIR');
+const LAKE_DIR = process.env.HURON_SEED_LAKE_DIR || null;
 
 /** The development password of the fixture's creators in the realm. */
 const PASSWORD = 'password';
@@ -54,11 +60,14 @@ async function main() {
 			`seed: ID token shim on ${shim.url} (inside the stack only) for ${[...creators].sort().join(', ')}`
 		);
 		try {
-			const { huronToken } = await import(pathToFileURL(join(FIXTURE_DIR, 'seed.mjs')).href);
+			const seeding = await import(pathToFileURL(join(FIXTURE_DIR, 'seed.mjs')).href);
 			const api = new SeedApi(API_URL, (username) =>
-				huronToken({ apiUrl: API_URL, issuer: shim.url }, username)
+				seeding.huronToken({ apiUrl: API_URL, issuer: shim.url }, username)
 			);
-			const created = await seedFixture(api, fixture);
+			if (LAKE_DIR === null) {
+				console.log('seed: no HURON_SEED_LAKE_DIR, so the collections get no files');
+			}
+			const created = await seedFixture(api, fixture, seeding.publishCommits);
 			console.log(
 				created.length > 0
 					? `seed: created the catalogs ${created.join(', ')}`
@@ -78,9 +87,10 @@ async function main() {
  * Seed what is missing and return the names of the catalogs created.
  * @param {SeedApi} api
  * @param {Record<string, any>} fixture The exports of fixture.mjs.
+ * @param {Function} publishCommits The function of seed.mjs that uploads and commits files.
  * @returns {Promise<string[]>}
  */
-async function seedFixture(api, fixture) {
+async function seedFixture(api, fixture, publishCommits) {
 	const { ORGANIZATIONS, CATALOGS, NAMESPACES, COLLECTIONS, SCHEMAS } = fixture;
 	const organizations = new Set();
 	for (const organization of ORGANIZATIONS) {
@@ -112,7 +122,7 @@ async function seedFixture(api, fixture) {
 		});
 	}
 	for (const collection of COLLECTIONS.filter((entry) => fresh.has(entry.catalog))) {
-		await createCollection(api, fixture, collection);
+		await createCollection(api, collection, publishCommits);
 	}
 	for (const schema of SCHEMAS) {
 		const catalogs = schema.assignedTo.filter((/** @type {string} */ name) => fresh.has(name));
@@ -167,13 +177,12 @@ async function ensureOrganization(api, organization) {
 
 /**
  * A draft with its metadata and schema override, activated unless it stays a draft, then its
- * commits in order.
+ * commits in order when the seed has the lake.
  * @param {SeedApi} api
- * @param {Record<string, any>} fixture
  * @param {Record<string, any>} collection A fixture collection.
+ * @param {Function} publishCommits The function of seed.mjs that uploads and commits files.
  */
-async function createCollection(api, { collectionIdentifier, fileSha256 }, collection) {
-	const identifier = collectionIdentifier(collection);
+async function createCollection(api, collection, publishCommits) {
 	const actor = collection.createdBy;
 	let draft = await api.call(
 		actor,
@@ -194,21 +203,9 @@ async function createCollection(api, { collectionIdentifier, fileSha256 }, colle
 	const active = await api.call(actor, 'POST', ['collections', draft.id, 'activate'], undefined, {
 		'if-match': `"${draft.version}"`
 	});
-	let version = active.version;
-	for (const commit of collection.commits) {
-		const result = await api.call(actor, 'POST', ['collections', draft.id, 'commits'], {
-			base_version: version,
-			adds: commit.adds.map((/** @type {{ relPath: string, size: number }} */ add) => ({
-				rel_path: add.relPath,
-				size: add.size,
-				sha256: fileSha256(identifier, add.relPath)
-			})),
-			removes: commit.removes,
-			host: commit.host,
-			...(commit.message === null ? {} : { message: commit.message })
-		});
-		version = result.version;
-	}
+	if (LAKE_DIR === null) return;
+	const call = (/** @type {any[]} */ ...args) => api.call(...args);
+	await publishCommits(call, LAKE_DIR, collection, draft.id, active.version);
 }
 
 /**

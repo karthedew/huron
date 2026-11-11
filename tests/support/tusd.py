@@ -2,6 +2,7 @@
 
 import json
 import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from huron.core.storage import UPLOAD_DIR
 from tests.support.api import Service, active_collection
 
 HOOKS = "/api/v1/uploads/hooks"
+AUTH = "/api/v1/uploads/auth"
 
 
 def upload_body(
@@ -27,10 +29,21 @@ def upload_body(
     return {"ID": upload_id, "Size": size, "MetaData": metadata, "Offset": size, **flags}
 
 
-def hook_body(hook_type: str, upload: dict[str, Any], method: str, uri: str) -> dict[str, Any]:
+def hook_body(
+    hook_type: str,
+    upload: dict[str, Any],
+    method: str,
+    uri: str,
+    header: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
     """A tusd v2 hook request, as tusd sends it to the hooks endpoint."""
-    request = {"Method": method, "URI": uri, "RemoteAddr": "10.0.0.7:5100", "Header": {}}
+    request = {"Method": method, "URI": uri, "RemoteAddr": "10.0.0.7:5100", "Header": header or {}}
     return {"Type": hook_type, "Event": {"Upload": upload, "HTTPRequest": request}}
+
+
+def creation_metadata(collection_id: str, rel_path: str, attempt_id: str) -> dict[str, str]:
+    """The ``Upload-Metadata`` of a creation, decoded."""
+    return {"attempt_id": attempt_id, "collection": collection_id, "rel_path": rel_path}
 
 
 def problem_of(response: httpx.Response) -> dict[str, Any]:
@@ -59,29 +72,51 @@ class FakeTusd:
         return await self.api.client.post(HOOKS, json=body, headers=headers)
 
     async def create(
-        self, user: str | None, collection_id: str, rel_path: str, size: int, **flags: bool
+        self,
+        user: str | None,
+        collection_id: str,
+        rel_path: str,
+        size: int,
+        *,
+        attempt_id: str | None = None,
+        header: dict[str, list[str]] | None = None,
+        **flags: bool,
     ) -> httpx.Response:
         """``pre-create`` of an upload of ``size`` bytes to ``rel_path`` of the collection."""
-        metadata = {"collection": collection_id, "rel_path": rel_path}
+        metadata = creation_metadata(collection_id, rel_path, attempt_id or str(uuid.uuid4()))
         upload = upload_body("", size, metadata, **flags)
-        return await self.send(user, hook_body("pre-create", upload, "POST", "/files/"))
+        return await self.send(user, hook_body("pre-create", upload, "POST", "/files/", header))
 
-    async def begin(self, user: str, collection_id: str, rel_path: str, data: bytes) -> str:
+    async def begin(
+        self,
+        user: str,
+        collection_id: str,
+        rel_path: str,
+        data: bytes,
+        *,
+        attempt_id: str | None = None,
+    ) -> str:
         """Create an upload of ``data`` and receive all of its bytes; returns the upload id."""
-        created = await self.create(user, collection_id, rel_path, len(data))
+        created = await self.create(user, collection_id, rel_path, len(data), attempt_id=attempt_id)
         assert created.status_code == 200, created.text
         upload_id: str = created.json()["ChangeFileInfo"]["ID"]
         self.receive(upload_id, data)
         return upload_id
 
-    def receive(self, upload_id: str, data: bytes) -> Path:
-        """Write the upload's bytes and its ``.info`` file, as tusd's filestore does."""
+    def receive(self, upload_id: str, data: bytes, *, locked: bool = False) -> Path:
+        """Write the upload's bytes and its ``.info`` file, as tusd's filestore does.
+
+        ``locked`` adds the ``.lock`` file that tusd keeps while it works on the upload.
+        """
         source = self.upload_dir / upload_id
         source.write_bytes(data)
         os.chmod(source, 0o600)
         info = self.upload_dir / f"{upload_id}.info"
-        info.write_text(json.dumps({"ID": upload_id, "Size": len(data)}))
+        document = {"ID": upload_id, "Size": len(data), "SizeIsDeferred": False, "Offset": 0}
+        info.write_text(json.dumps(document))
         os.chmod(info, 0o600)
+        if locked:
+            (self.upload_dir / f"{upload_id}.lock").write_text("1")
         return source
 
     async def finish(self, user: str | None, upload_id: str, size: int) -> httpx.Response:
@@ -90,11 +125,12 @@ class FakeTusd:
         uri = f"/files/{upload_id}"
         return await self.send(user, hook_body("pre-finish", upload, "PATCH", uri))
 
-    async def terminate(self, user: str | None, upload_id: str) -> httpx.Response:
-        """``pre-terminate`` of the upload, sent from a ``DELETE``."""
-        upload = upload_body(upload_id)
-        uri = f"/files/{upload_id}"
-        return await self.send(user, hook_body("pre-terminate", upload, "DELETE", uri))
+    async def authorize(self, user: str | None, method: str, uri: str) -> httpx.Response:
+        """nginx's authorization of a request with ``method`` on ``uri``."""
+        headers = {"X-Original-Method": method, "X-Original-URI": uri}
+        if user is not None:
+            headers |= await self.api.headers(user)
+        return await self.api.client.get(AUTH, headers=headers)
 
 
 @dataclass(frozen=True)

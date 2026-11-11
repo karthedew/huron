@@ -15,6 +15,7 @@ import type {
 	Organization,
 	OrganizationGroups,
 	Page,
+	PendingRequest,
 	RoleGrant,
 	SchemaEntry,
 	SchemaRef,
@@ -24,6 +25,7 @@ import {
 	DecodeError,
 	JsonFields,
 	asArray,
+	asNullable,
 	asObject,
 	asOneOf,
 	isJsonObject,
@@ -633,6 +635,11 @@ const collectionProblem: Decoder<CollectionProblem> = (value, path) => {
 	return { message: f.string('message'), path: f.string('path'), rule: f.string('rule') };
 };
 
+const pendingRequest: Decoder<PendingRequest> = (value, path) => {
+	const f = new JsonFields(value, path);
+	return { since: f.string('since'), state: f.string('state') };
+};
+
 const collection: Decoder<Collection> = (value, path) => {
 	const f = new JsonFields(value, path);
 	return {
@@ -648,6 +655,7 @@ const collection: Decoder<Collection> = (value, path) => {
 		namespace: f.string('namespace'),
 		organization: f.string('organization'),
 		path: f.nullableString('path'),
+		pending_request: f.get('pending_request', asNullable(pendingRequest)),
 		problems: f.get('problems', asArray(collectionProblem)),
 		schema: f.get('schema', schemaRef),
 		schema_override: f.nullableObject('schema_override'),

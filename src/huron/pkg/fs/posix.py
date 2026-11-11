@@ -34,14 +34,12 @@ __all__ = [
     "RootUnavailable",
     "SealedFile",
     "SizeMismatch",
-    "SourceMismatch",
     "SymlinkError",
     "atomic_write",
     "change_group",
     "change_mode",
     "copy_sealed",
     "entry",
-    "link_into_place",
     "link_once",
     "make_dir",
     "make_inheriting_dir",
@@ -105,10 +103,6 @@ class RootUnavailable(OSError):
     """The root of :func:`open_beneath` does not open as a directory."""
 
 
-class SourceMismatch(OSError):
-    """The source of :func:`link_into_place` is not a regular file with the expected inode."""
-
-
 class SizeMismatch(OSError):
     """The copy of :func:`copy_sealed` does not have the expected size; ``size`` is its size."""
 
@@ -122,9 +116,9 @@ class InheritanceError(OSError):
 
 
 class PartBlocked(OSError):
-    """A directory has the name of a part or backup file; ``filename`` is that name.
+    """A directory has the name of a part file; ``filename`` is that name.
 
-    :func:`atomic_write` and :func:`link_into_place` raise it before any change.
+    :func:`atomic_write` raises it before any change.
     """
 
 
@@ -296,48 +290,6 @@ def atomic_write(parent_fd: int, name: str, data: bytes, mode: int, part_name: s
         with _cleanup_errors(error, f"remove {part_name!r}"):
             _remove_write_part(parent_fd, part_name)
         raise
-
-
-def link_into_place(
-    source_fd: int,
-    source_name: str,
-    inode: int,
-    parent_fd: int,
-    name: str,
-    part_name: str,
-    backup_name: str,
-) -> str | None:
-    """Hard-link the source to ``name``, replacing an existing ``name`` atomically.
-
-    The source must be a regular file with the inode ``inode``, else :class:`SourceMismatch`;
-    a missing source raises ``FileNotFoundError``. A new name is one ``link``. An existing name
-    is first linked to ``backup_name`` beside it, so its bytes outlive the replacement, then
-    replaced by a link to ``part_name`` and a ``rename`` over it. A part or backup file left by
-    an earlier attempt is replaced. A ``name`` that already links the source is left as it is:
-    an earlier attempt placed it, and a ``backup_name`` beside it holds the bytes that attempt
-    replaced. The directory is flushed to disk afterwards. Returns the backup's name, if any.
-    Raises, before any change, :class:`SymlinkError` when ``name``, ``part_name`` or
-    ``backup_name`` is a link, ``IsADirectoryError`` when ``name`` is a directory, and
-    :class:`PartBlocked` when ``part_name`` or ``backup_name`` is a directory and ``name``
-    exists.
-    """
-    source = os.stat(source_name, dir_fd=source_fd, follow_symlinks=False)
-    if not statmodule.S_ISREG(source.st_mode) or source.st_ino != inode:
-        raise SourceMismatch(errno.ESTALE, "the source is not the measured file", source_name)
-    backup: str | None = None
-    existing = entry(parent_fd, name)
-    if existing is not None and statmodule.S_ISDIR(existing.st_mode):
-        raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), name)
-    if existing is None:
-        _link(source_fd, source_name, parent_fd, name)
-    elif os.path.samestat(source, existing):
-        return backup_name if entry(parent_fd, backup_name) is not None else None
-    else:
-        _require_no_directory(parent_fd, part_name)
-        _require_no_directory(parent_fd, backup_name)
-        backup = _replace(source_fd, source_name, parent_fd, name, part_name, backup_name)
-    _sync(parent_fd)
-    return backup
 
 
 def copy_sealed(source_fd: int, parent_fd: int, name: str, size: int, mode: int) -> SealedFile:
@@ -561,28 +513,6 @@ def _sync(directory_fd: int) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-
-
-def _replace(
-    source_fd: int, source_name: str, parent_fd: int, name: str, part_name: str, backup_name: str
-) -> str:
-    _link_afresh(source_fd, source_name, parent_fd, part_name)
-    try:
-        _link_afresh(parent_fd, name, parent_fd, backup_name)
-        try:
-            os.rename(part_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-        except BaseException:
-            remove_file(parent_fd, backup_name)
-            raise
-    except BaseException:
-        remove_file(parent_fd, part_name)
-        raise
-    return backup_name
-
-
-def _link_afresh(source_fd: int, source_name: str, parent_fd: int, name: str) -> None:
-    remove_file(parent_fd, name)
-    _link(source_fd, source_name, parent_fd, name)
 
 
 def _link(source_fd: int, source_name: str, parent_fd: int, name: str) -> None:

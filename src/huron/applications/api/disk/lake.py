@@ -4,9 +4,7 @@ Only the one writer of the lake (:mod:`huron.applications.api.disk.ownership`) p
 
 The lake is a ``hard`` NFS mount, so a disk call can block without end during an outage. All
 disk work therefore runs in dedicated pools of worker threads, never in the event loop or the
-default executor, and readiness waits for its probe only for a bounded time. The hashes of
-uploads run in a pool of their own, so a burst of large uploads never delays the probe or the
-short directory and metadata calls.
+default executor, and readiness waits for its probe only for a bounded time.
 """
 
 from __future__ import annotations
@@ -46,7 +44,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DISK_WORKERS",
-    "HASH_WORKERS",
     "PROBE_TIMEOUT",
     "PROBE_TTL",
     "LakeDisk",
@@ -55,10 +52,8 @@ __all__ = [
     "Writer",
 ]
 
-#: The worker threads of the disk pool, which runs every disk call but the hashes of uploads.
+#: The worker threads of the disk pool, which runs every disk call.
 DISK_WORKERS = 8
-#: The worker threads of the hash pool, which measures uploads.
-HASH_WORKERS = 4
 #: How long readiness waits for the lake probe, in seconds.
 PROBE_TIMEOUT = 2.0
 #: How long readiness keeps the probe's answer.
@@ -95,6 +90,11 @@ class Writer(Protocol):
         """Whether this process can start a filesystem step now."""
         ...
 
+    @property
+    def lost(self) -> bool:
+        """Whether this process was the writer and lost its lock."""
+        ...
+
 
 class LakeDisk:
     """The lake that this process alone writes, behind the one gate :meth:`hold`.
@@ -124,7 +124,6 @@ class LakeDisk:
         self._probe_timeout = probe_timeout
         self._locks = PathLocks()
         self._pool = ThreadPoolExecutor(DISK_WORKERS, thread_name_prefix="huron-disk")
-        self._hash_pool = ThreadPoolExecutor(HASH_WORKERS, thread_name_prefix="huron-hash")
         self._probe: asyncio.Future[bool] | None = None
         self._probed: tuple[datetime, bool] | None = None
 
@@ -136,9 +135,8 @@ class LakeDisk:
         await self._submit(self._open)
 
     def close(self) -> None:
-        """Stop the disk pool and the hash pool; work that has not started is dropped."""
+        """Stop the disk pool; work that has not started is dropped."""
         self._pool.shutdown(wait=False, cancel_futures=True)
-        self._hash_pool.shutdown(wait=False, cancel_futures=True)
 
     async def ready(self) -> bool:
         """Whether this process can write the upload directory and publish into each declared
@@ -151,6 +149,8 @@ class LakeDisk:
         answer is kept for :data:`PROBE_TTL`. A probe that does not answer within the
         timeout counts as ``False``; while it still runs, no second probe starts.
         """
+        if self._writer is not None and self._writer.lost:
+            return False
         now = self._clock.now()
         if self._probed is not None and now - self._probed[0] < PROBE_TTL:
             return self._probed[1]
@@ -213,10 +213,6 @@ class LakeDisk:
     async def work[T](self, located: Located, action: Callable[[], T]) -> T:
         """Run one ``action`` on :meth:`hold`."""
         return await self.hold(located, lambda run: run(action))
-
-    async def measure[T](self, action: Callable[[], T]) -> T:
-        """Run ``action`` in the hash pool, with no lock and no marker check."""
-        return await asyncio.get_running_loop().run_in_executor(self._hash_pool, action)
 
     def _submit[T](self, action: Callable[[], T]) -> asyncio.Future[T]:
         return asyncio.get_running_loop().run_in_executor(self._pool, action)

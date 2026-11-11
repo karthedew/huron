@@ -59,7 +59,8 @@ export default defineConfig({
 		},
 		{
 			name: 'api',
-			command: apiCommand(stack).join(' '),
+			// The lake starts empty, with the service's marker.
+			command: ['node web/e2e/support/lake.mjs', apiCommand(stack).join(' ')].join(' && '),
 			cwd: '..',
 			url: `${stack.apiUrl}/readyz`,
 			env: apiEnvironment(stack),

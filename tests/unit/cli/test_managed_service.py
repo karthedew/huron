@@ -23,7 +23,7 @@ from huron.core.storage import (
 from huron.core.storage.memory import MemoryStorage
 from huron.pkg.identifiers import new_id
 from tests.fakes.storage import rooted
-from tests.support.api import INSTANCE_ID
+from tests.support.api import INSTANCE_ID, ROOT_MARKER
 from tests.support.cli import API, Cli
 from tests.unit.cli.conftest import PREFIX, make_collection, make_directory
 
@@ -180,8 +180,10 @@ INHERITING = [
 def inheriting(tmp_path: Path, roots: MemoryStorage) -> Iterator[Cli]:
     """helio declares org-wide contributor and reader groups; heliophysics has no grants.
 
-    The service holds the helio root as its lake and takes uploads.
+    The service holds the helio root as its lake and takes uploads: the marker at that root
+    guards tusd's upload directory.
     """
+    roots.write_bytes(HELIO_BASE.joinpath(MARKER_FILE), ROOT_MARKER, FILE_MODE)
     running = Cli(
         tmp_path,
         rooted(roots),

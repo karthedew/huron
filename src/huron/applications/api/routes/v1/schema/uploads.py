@@ -1,4 +1,4 @@
-"""Upload bodies: tusd's v2 hook request and response, and an upload's state."""
+"""Upload bodies: tusd's v2 hook request and response, and an upload attempt."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ __all__ = [
     "HookType",
     "HookUpload",
     "TusdBody",
-    "UploadOut",
+    "UploadAttemptOut",
 ]
 
 
@@ -26,7 +26,6 @@ class HookType(StrEnum):
 
     PRE_CREATE = "pre-create"
     PRE_FINISH = "pre-finish"
-    PRE_TERMINATE = "pre-terminate"
 
 
 class TusdBody(BaseModel):
@@ -47,9 +46,22 @@ class HookUpload(TusdBody):
 
 
 class HookHTTPRequest(TusdBody):
-    """The client's request that made tusd send the hook; ``uri`` names the tus resource."""
+    """The client's request that made tusd send the hook.
 
+    ``uri`` names the tus resource. ``header`` holds the client's headers, each name with its
+    values.
+    """
+
+    method: str = Field(default="", alias="Method")
     uri: str = Field(default="", alias="URI")
+    header: dict[str, list[str]] = Field(default_factory=dict, alias="Header")
+
+    def first(self, name: str) -> str | None:
+        """The first value of the header ``name`` in any case, ``None`` when it is absent."""
+        for key, values in self.header.items():
+            if key.lower() == name.lower() and values:
+                return values[0]
+        return None
 
 
 class HookEvent(TusdBody):
@@ -70,7 +82,7 @@ class HTTPResponse(TusdBody):
     """What tusd merges into its response to the client.
 
     A refusal sets the status, the problem media type and the problem document as text. A
-    finished upload adds the receipt headers and keeps tusd's status.
+    finished upload adds the header ``Huron-Upload-State`` and keeps tusd's status.
     """
 
     status_code: int | None = Field(default=None, alias="StatusCode")
@@ -79,7 +91,7 @@ class HTTPResponse(TusdBody):
 
 
 class ChangeFileInfo(TusdBody):
-    """The id tusd gives the new upload: the id of the API's upload row."""
+    """The id tusd gives the new upload: the upload ID that Huron issued for the attempt."""
 
     id: str = Field(alias="ID")
 
@@ -87,30 +99,33 @@ class ChangeFileInfo(TusdBody):
 class HookResponse(TusdBody):
     """The API's answer to a hook.
 
-    ``RejectUpload`` refuses a creation and ``RejectTermination`` a termination. A refused
-    ``pre-finish`` has only ``HTTPResponse``: tusd still counts that upload as finished.
+    ``RejectUpload`` refuses a creation. A refused ``pre-finish`` has only ``HTTPResponse``:
+    tusd still counts that upload as finished.
     """
 
     http_response: HTTPResponse | None = Field(default=None, alias="HTTPResponse")
     reject_upload: bool | None = Field(default=None, alias="RejectUpload")
-    reject_termination: bool | None = Field(default=None, alias="RejectTermination")
     change_file_info: ChangeFileInfo | None = Field(default=None, alias="ChangeFileInfo")
 
 
 class FailureOut(BaseModel):
-    """Why the API could not place an upload."""
+    """Why an upload attempt failed."""
 
     code: str
     message: str
 
 
-class UploadOut(BaseModel):
-    """An upload and its receipt, for its creator."""
+class UploadAttemptOut(BaseModel):
+    """An upload attempt and its current upload ID, for its owner."""
 
-    id: str
-    collection_id: str
+    attempt_id: str
+    collection_id: str | None = Field(description="null when the collection is deleted.")
     rel_path: str
     size: int
-    state: str = Field(description="pending, placed, failed, terminated or committed.")
-    sha256: str | None
+    state: str = Field(
+        description="receiving, sealing, ready, consumed, failed, cancelled or expired."
+    )
+    upload_id: str = Field(
+        description="The current upload ID: the only ID that tusd takes bytes for."
+    )
     failure: FailureOut | None

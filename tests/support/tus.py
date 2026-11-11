@@ -1,11 +1,12 @@
 """A fake upload endpoint for CLI tests: nginx's authorization and tusd, in one mock transport.
 
 Each request first asks the in-process service's auth route, as nginx does. tusd's part keeps
-the bytes in the in-memory lake's ``.tus-uploads`` and sends its hooks to the service, which
-places the file in the lake and records its receipt.
+the bytes and the ``.info`` file in the in-memory lake's ``.tus-uploads`` and sends its hooks to
+the service, which seals the upload into the object area.
 """
 
 import base64
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,6 +42,10 @@ class FakeTus:
     - ``finish_status``: the final ``PATCH`` answers this status. With ``skip_finish``, tusd
       sends no ``pre-finish`` hook first, as when the hook timed out.
     - ``corrupt``: the received bytes change before ``pre-finish``.
+    - ``location_base``: the next creation answers a ``Location`` with this base, not tusd's.
+    - ``info_size``: the next creation writes this size into the ``.info`` file.
+    - ``hold_lock``: the final ``PATCH`` leaves a ``.lock`` file and sends no ``pre-finish``,
+      as when tusd died during the hook.
 
     As tusd does, it answers 412 to a request without ``Tus-Resumable: 1.0.0`` and 415 to a
     ``PATCH`` whose ``Content-Type`` is not ``application/offset+octet-stream``.
@@ -55,6 +60,9 @@ class FakeTus:
         self.finish_status: int | None = None
         self.skip_finish = False
         self.corrupt = False
+        self.location_base: str | None = None
+        self.info_size: int | None = None
+        self.hold_lock = False
         self._service = service
         self._lake = lake
         self._upload_dir = UPLOADS
@@ -104,7 +112,12 @@ class FakeTus:
         upload_id = answer["ChangeFileInfo"]["ID"]
         self.uploads[upload_id] = TusUpload(length)
         self._lake.write_bytes(self._upload_dir.joinpath(upload_id), b"", 0o600)
-        created = httpx.Response(201, headers={"Location": f"{TUS_URL}{upload_id}"})
+        size, self.info_size = length if self.info_size is None else self.info_size, None
+        info = {"ID": upload_id, "Size": size, "SizeIsDeferred": False, "Offset": 0}
+        info_file = self._upload_dir.joinpath(f"{upload_id}.info")
+        self._lake.write_bytes(info_file, json.dumps(info).encode(), 0o600)
+        base, self.location_base = self.location_base or TUS_URL, None
+        created = httpx.Response(201, headers={"Location": f"{base}{upload_id}"})
         if length == 0:
             return self._finish(request, upload_id, created)
         return created
@@ -136,6 +149,9 @@ class FakeTus:
             self._lake.write_bytes(source, bytes(byte ^ 0xFF for byte in data), 0o600)
         status, self.finish_status = self.finish_status, None
         skip, self.skip_finish = self.skip_finish, False
+        if self.hold_lock:
+            self.hold_lock, skip = False, True
+            self._lake.write_bytes(self._upload_dir.joinpath(f"{upload_id}.lock"), b"1", 0o600)
         if not skip:
             upload = upload_body(upload_id, self.uploads[upload_id].length)
             hook = hook_body("pre-finish", upload, request.method, request.url.path)

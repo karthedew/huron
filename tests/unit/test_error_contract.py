@@ -16,15 +16,8 @@ PATTERN = re.compile(r'register\(\s*"([A-Z_]+)"')
 
 @pytest.fixture(autouse=True)
 def every_code_registered() -> None:
-    """Import the API application and each module that registers a code.
-
-    A module of the lake can own codes that no route of the API raises yet.
-    """
+    """Import the API application, which imports every module that registers a code."""
     importlib.import_module("huron.applications.api.app")
-    for path in sorted((ROOT / "src").rglob("*.py")):
-        if PATTERN.search(path.read_text()):
-            module = path.relative_to(ROOT / "src").with_suffix("").parts
-            importlib.import_module(".".join(module))
 
 
 def registered_in_source() -> list[str]:

@@ -61,12 +61,18 @@ class Ownership:
         self._on_lost = on_lost
         self._interval = interval
         self._held = False
+        self._lost = False
         self._watch: asyncio.Task[None] | None = None
 
     @property
     def writable(self) -> bool:
         """Whether this process holds the lock, so that it can start a filesystem step."""
         return self._held
+
+    @property
+    def lost(self) -> bool:
+        """Whether this process held the lock and lost it: it is no longer ready."""
+        return self._lost
 
     async def start(self) -> bool:
         """Take the lock, and start the watch when this process got it.
@@ -88,6 +94,7 @@ class Ownership:
         """
         if self._held and not await self._lock.held():
             self._held = False
+            self._lost = True
             _log.error("ownership.lost")
             self._on_lost()
         return self._held

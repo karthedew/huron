@@ -10,6 +10,8 @@ import asyncpg
 import pytest
 from alembic import command
 
+from huron.core.metastore.postgres import PostgresStore
+from tests.contract.suite import stored_collection
 from tests.support.postgres import alembic_config, migrated_database, with_database
 
 pytestmark = pytest.mark.contract
@@ -43,10 +45,10 @@ def test_catalog_roles_at_organization_scope_arrive_with_revision_0002(database_
 
 def test_uploads_inodes_and_share_groups_arrive_with_revision_0003(database_url: str) -> None:
     with migrated_database(with_database(database_url, "postgres")) as url:
-        assert asyncio.run(_revision_0003_objects(url)) == REVISION_0003
+        assert asyncio.run(_revision_0003_objects(url)) == REVISION_0003 - LEGACY_OBJECTS
         command.downgrade(alembic_config(url), "0002_organization_catalog_roles")
         assert asyncio.run(_revision_0003_objects(url)) == set()
-        command.upgrade(alembic_config(url), "head")
+        command.upgrade(alembic_config(url), "0003_uploads")
         assert asyncio.run(_revision_0003_objects(url)) == REVISION_0003
 
 
@@ -60,6 +62,60 @@ REVISION_0003 = {
     "constraint ck_uploads_inode",
 }
 """What revision 0003 makes: its tables, the inode and share group columns, the inode check."""
+
+LEGACY_OBJECTS = {
+    "table uploads",
+    "table removals",
+    "column uploads.inode bigint null",
+    "column removals.inode bigint null",
+    "constraint ck_uploads_inode",
+}
+"""What revision 0005 drops again: the tables of revision 0003 with their columns."""
+
+
+def test_the_legacy_upload_tables_go_with_revision_0005(database_url: str) -> None:
+    with migrated_database(with_database(database_url, "postgres")) as url:
+        command.downgrade(alembic_config(url), "0004_publication")
+        assert asyncio.run(_revision_0003_objects(url)) == REVISION_0003
+        command.upgrade(alembic_config(url), "head")
+        assert asyncio.run(_revision_0003_objects(url)) == REVISION_0003 - LEGACY_OBJECTS
+        assert asyncio.run(_revision_0004_objects(url)) == REVISION_0004
+
+
+@pytest.mark.parametrize(
+    ("tables", "named"),
+    [(["removals"], "removals"), (["uploads"], "uploads"), (["removals", "uploads"], "removals")],
+)
+def test_revision_0005_refuses_to_drop_a_legacy_table_that_holds_a_row(
+    database_url: str, tables: list[str], named: str
+) -> None:
+    with migrated_database(with_database(database_url, "postgres")) as url:
+        command.downgrade(alembic_config(url), "0004_publication")
+        collection_id = asyncio.run(_collection(url))
+        for table in tables:
+            asyncio.run(_execute(url, _LEGACY_ROWS[table].format(collection=collection_id)))
+        with pytest.raises(RuntimeError, match=rf"table huron\.{named} holds rows"):
+            command.upgrade(alembic_config(url), "head")
+        assert asyncio.run(_revision_0003_objects(url)) == REVISION_0003
+        assert asyncio.run(_rows(url)) == {table: int(table in tables) for table in _LEGACY_ROWS}
+        for table in tables:
+            asyncio.run(_execute(url, f"delete from huron.{table}"))
+        command.upgrade(alembic_config(url), "head")
+        assert asyncio.run(_revision_0003_objects(url)) == REVISION_0003 - LEGACY_OBJECTS
+
+
+_LEGACY_ROWS = {
+    "removals": (
+        "insert into huron.removals (id, path, rel_path, rel_path_key, sha256, created_at)"
+        f" values ('{uuid.uuid4()}', 'helio/a', 'a', 'a', '{'0' * 64}', now())"
+    ),
+    "uploads": (
+        "insert into huron.uploads (id, collection_id, rel_path, rel_path_key, size, state,"
+        f" created_by, created_at) values ('{uuid.uuid4()}', '{{collection}}', 'a', 'a', 1,"
+        " 'pending', 'dave', now())"
+    ),
+}
+"""A row of each legacy table; an upload names the collection ``{collection}``."""
 
 
 def test_publication_tables_arrive_with_revision_0004(database_url: str) -> None:
@@ -132,6 +188,14 @@ async def _revision_0003_objects(url: str) -> set[str]:
     return {row["name"] for row in rows}
 
 
+async def _execute(url: str, statement: str) -> None:
+    connection = await asyncpg.connect(url)
+    try:
+        await connection.execute(statement)
+    finally:
+        await connection.close()
+
+
 async def _grant(
     url: str, scope_type: str, scope_id: uuid.UUID | None, role: str, group: str
 ) -> None:
@@ -158,3 +222,24 @@ async def _roles(url: str) -> list[tuple[str, str]]:
     finally:
         await connection.close()
     return [(row["role"], row["ldap_group"]) for row in rows]
+
+
+async def _collection(url: str) -> uuid.UUID:
+    """The ID of a stored collection, with the organization, catalog and namespace it needs."""
+    store = PostgresStore(url, pool_size=1)
+    await store.connect()
+    try:
+        return (await stored_collection(store)).id
+    finally:
+        await store.close()
+
+
+async def _rows(url: str) -> dict[str, int]:
+    connection = await asyncpg.connect(url)
+    try:
+        return {
+            table: await connection.fetchval(f"select count(*) from huron.{table}")
+            for table in _LEGACY_ROWS
+        }
+    finally:
+        await connection.close()

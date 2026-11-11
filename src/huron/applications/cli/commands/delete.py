@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import replace
 from typing import Annotated, Any
 
@@ -17,7 +18,7 @@ from huron.applications.cli.commands.common import (
     services,
 )
 from huron.applications.cli.errors import ApiError, CliError, ExitCode
-from huron.applications.cli.sync import recorded_files
+from huron.applications.cli.sync import recorded_files, send_commit
 
 __all__ = ["DECLARED_HINT", "delete_app", "register"]
 
@@ -88,8 +89,8 @@ def delete_collection(
     """Delete all files of a collection, the collection and its directory.
 
     This needs the creator of the collection or a catalog admin. The API deletes only the files
-    that it recorded or placed. Other files stay in the directory, and `huron adm check` reports
-    them as `dir_unrecorded`.
+    that it recorded. Other files stay in the directory, and `huron adm check` reports them as
+    `dir_unrecorded`.
     """
     found = services(ctx)
     collection = fetch_collection(ctx, identifier)
@@ -116,10 +117,11 @@ def _remove_files(ctx: typer.Context, collection: dict[str, Any]) -> int:
         return version
     removes = [item["rel_path"] for item in recorded.values()]
     body = {
+        "request_id": str(uuid.uuid4()),
         "base_version": version,
         "adds": [],
         "removes": removes,
         "host": services(ctx).hostname,
     }
-    commit = api(ctx).post(f"/api/v1/collections/{collection['id']}/commits", json=body)
+    commit = send_commit(api(ctx), str(collection["id"]), body, services(ctx).sleep)
     return int(commit["version"])

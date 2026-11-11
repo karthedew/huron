@@ -10,9 +10,8 @@ from huron.pkg.errors import HuronError, register
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Iterable
 
-    from huron.core.lake.uploads.models import UploadAttempt, UploadState
+    from huron.core.lake.uploads.models import UploadAttempt
 
 __all__ = [
     "AttemptIdConflict",
@@ -21,9 +20,7 @@ __all__ = [
     "UploadAttemptRefused",
     "UploadIneligible",
     "UploadNotFound",
-    "UploadReceiptMissing",
     "UploadSizeMismatch",
-    "UploadStateConflict",
     "UploadTooLarge",
 ]
 
@@ -31,7 +28,6 @@ UPLOAD_NOT_FOUND = register("UPLOAD_NOT_FOUND", 404, "Upload not found")
 UPLOAD_STATE_CONFLICT = register("UPLOAD_STATE_CONFLICT", 409, "Upload state conflict")
 UPLOAD_SIZE_MISMATCH = register("UPLOAD_SIZE_MISMATCH", 422, "Upload size mismatch")
 UPLOAD_TOO_LARGE = register("UPLOAD_TOO_LARGE", 413, "Upload too large")
-UPLOAD_RECEIPT_MISSING = register("UPLOAD_RECEIPT_MISSING", 422, "Upload receipt missing")
 UPLOAD_INELIGIBLE = register("UPLOAD_INELIGIBLE", 409, "Upload ineligible")
 CAPACITY_EXCEEDED = register("CAPACITY_EXCEEDED", 429, "Capacity exceeded")
 ATTEMPT_ID_CONFLICT = register("ATTEMPT_ID_CONFLICT", 409, "Attempt ID conflict")
@@ -46,20 +42,8 @@ class UploadNotFound(HuronError):
         super().__init__("upload not found", {"upload": str(upload_id)})
 
 
-class UploadStateConflict(HuronError):
-    """The state of the upload does not allow the operation."""
-
-    error_code = UPLOAD_STATE_CONFLICT
-
-    def __init__(self, state: UploadState, allowed: Iterable[UploadState]) -> None:
-        super().__init__(
-            f"the upload is {state}. This operation is not possible in that state",
-            {"state": str(state), "allowed": [str(each) for each in allowed]},
-        )
-
-
 class UploadSizeMismatch(HuronError):
-    """The placed bytes do not have the size the upload declared."""
+    """The received bytes do not have the size that the upload declared."""
 
     error_code = UPLOAD_SIZE_MISMATCH
 
@@ -79,18 +63,6 @@ class UploadTooLarge(HuronError):
         super().__init__(
             f"the upload has {size} bytes. The maximum is {maximum} bytes",
             {"size": size, "maximum": maximum},
-        )
-
-
-class UploadReceiptMissing(HuronError):
-    """A commit adds a file that no placed upload of the committer proves."""
-
-    error_code = UPLOAD_RECEIPT_MISSING
-
-    def __init__(self, rel_path: str) -> None:
-        super().__init__(
-            f"{rel_path!r} has no upload receipt. Upload the file, then commit it again",
-            {"rel_path": rel_path},
         )
 
 
@@ -130,29 +102,50 @@ class IneligibleReason(StrEnum):
 class UploadIneligible(HuronError):
     """A commit or a seal names an upload that it cannot use.
 
-    ``state`` is the state of the attempt of the upload, and ``reason`` tells why. With
-    ``sealing`` the message is for a seal that cannot start, which has only the reasons
-    ``state`` and ``superseded``. Otherwise it is for a commit request: a client that sends the
-    commit again uses a new request ID, because the request ID keeps this refusal.
+    ``state`` is the state of the attempt of the upload, and ``reason`` tells why. Build it with
+    :meth:`for_commit` or :meth:`for_seal`: a seal refusal has only the reasons ``state`` and
+    ``superseded``. A client that sends a refused commit again uses a new request ID, because
+    the request ID keeps the refusal.
     """
 
     error_code = UPLOAD_INELIGIBLE
 
     def __init__(
-        self,
-        upload_id: uuid.UUID,
-        state: AttemptState,
-        reason: IneligibleReason = IneligibleReason.STATE,
-        *,
-        sealing: bool = False,
+        self, message: str, upload_id: uuid.UUID, state: AttemptState, reason: IneligibleReason
     ) -> None:
-        messages = _SEAL_REFUSALS if sealing else _COMMIT_REFUSALS
         super().__init__(
-            messages[reason].format(upload_id=upload_id, state=state),
-            {"upload_id": str(upload_id), "state": str(state), "reason": str(reason)},
+            message, {"upload_id": str(upload_id), "state": str(state), "reason": str(reason)}
         )
         self.state = state
         self.reason = reason
+
+    @classmethod
+    def for_commit(
+        cls,
+        upload_id: uuid.UUID,
+        state: AttemptState,
+        reason: IneligibleReason = IneligibleReason.STATE,
+    ) -> UploadIneligible:
+        """The refusal of a commit that names ``upload_id``.
+
+        An upload whose attempt ended tells the client to start a new upload.
+        """
+        if reason is IneligibleReason.STATE and state.ended:
+            template = _ENDED_REFUSAL
+        else:
+            template = _COMMIT_REFUSALS[reason]
+        return cls(template.format(upload_id=upload_id, state=state), upload_id, state, reason)
+
+    @classmethod
+    def for_seal(
+        cls, upload_id: uuid.UUID, state: AttemptState, *, superseded: bool = False
+    ) -> UploadIneligible:
+        """The refusal of a seal of ``upload_id``: its attempt is in another state than
+        ``receiving``, or with ``superseded`` the ID is not the current ID of its attempt.
+        """
+        reason = IneligibleReason.SUPERSEDED if superseded else IneligibleReason.STATE
+        message = _SEAL_REFUSALS[reason].format(upload_id=upload_id, state=state)
+        return cls(message, upload_id, state, reason)
 
 
 class AttemptIdConflict(HuronError):
@@ -169,19 +162,31 @@ class AttemptIdConflict(HuronError):
 
 
 class CapacityExceeded(HuronError):
-    """The service has not enough space for the upload now."""
+    """The service has not enough space for the upload now.
+
+    With ``doubled``, ``requested`` is two times the size of the upload: the tusd file and its
+    sealed copy are on one filesystem.
+    """
 
     error_code = CAPACITY_EXCEEDED
 
-    def __init__(self, limit: str, requested: int, available: int) -> None:
+    def __init__(
+        self, limit: str, requested: int, available: int, *, doubled: bool = False
+    ) -> None:
+        need = f"the upload needs {requested} bytes"
+        if doubled:
+            need += " (two times its size: tusd keeps the file and Huron keeps a copy)"
         super().__init__(
-            f"the upload needs {requested} bytes, but {limit} permits only {available} bytes."
-            " Send the upload again later",
+            f"{need}, but {limit} permits only {available} bytes. Send the upload again later",
             {"limit": limit, "requested": requested, "available": available},
         )
 
 
 _AGAIN = " Read the upload attempt, then send the commit again with a new request ID"
+_ENDED_REFUSAL = (
+    "upload {upload_id} is {state}. Start a new upload of the file with a new attempt_id,"
+    " then send the commit again with a new request ID"
+)
 _COMMIT_REFUSALS = {
     IneligibleReason.STATE: (
         "upload {upload_id} is {state}. A commit can publish only a ready upload." + _AGAIN

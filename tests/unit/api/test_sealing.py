@@ -16,7 +16,7 @@ from huron.core.lake.uploads.models import AttemptState, ObjectState
 from huron.core.storage import UPLOADS, LakePath, StorageError
 from huron.core.storage.memory import MemoryStorage
 from huron.pkg.identifiers import new_id
-from tests.support.clock import LoopClock
+from tests.support.clock import LoopClock, run_ready
 from tests.support.disk import SIGNAL_TIMEOUT
 from tests.support.lake import CONTRIBUTOR
 from tests.support.orchestration import OBJECTS, Bench, bench, receive, tus_file
@@ -323,6 +323,85 @@ async def test_the_seal_goes_on_when_its_caller_stops_waiting(
     caller.cancel()
     release.set()
     assert (await task).state is AttemptState.READY
+
+
+async def test_the_seal_wait_is_twenty_seconds() -> None:
+    assert SEAL_WAIT == 20.0
+
+
+async def test_settling_no_uploads_returns_at_once(lab: Bench, loop_clock: LoopClock) -> None:
+    settling = asyncio.create_task(lab.sealing.settle([], SEAL_WAIT))
+    await asyncio.sleep(0)
+    assert settling.done()
+    assert await settling is None
+    assert copies(lab.storage) == []
+
+
+async def test_settling_returns_when_every_check_ends_before_the_wait(
+    lab: Bench, loop_clock: LoopClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = await lab.received("a.cdf", DATA)
+    second = await lab.received("b.cdf", DATA)
+    upload_ids = [first.current_upload_id, second.current_upload_id]
+    copying, release = pause_first(lab.storage, monkeypatch, "copy_sealed")
+    settling = asyncio.create_task(lab.sealing.settle(upload_ids, SEAL_WAIT))
+    assert await asyncio.to_thread(copying.wait, SIGNAL_TIMEOUT)
+    seals = {lab.sealing.check(upload_id) for upload_id in upload_ids}
+    ended, going = await asyncio.wait(seals, return_when=asyncio.FIRST_COMPLETED)
+    assert (len(ended), len(going)) == (1, 1)
+    assert ended.pop().result().state is AttemptState.READY
+    loop_clock.advance(SEAL_WAIT - 0.001)
+    await run_ready()
+    assert not settling.done()
+    release.set()
+    assert await asyncio.wait_for(settling, SIGNAL_TIMEOUT) is None
+    for attempt in (first, second):
+        assert (await lab.publishing.attempt(attempt)).state is AttemptState.READY
+        assert not lab.sealing.running(attempt.current_upload_id)
+
+
+async def test_settling_stops_waiting_after_its_timeout_and_the_seal_goes_on(
+    lab: Bench, loop_clock: LoopClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempt = await lab.received("a.cdf", DATA)
+    upload_id = attempt.current_upload_id
+    copying, release = pause_first(lab.storage, monkeypatch, "copy_sealed")
+    settling = asyncio.create_task(lab.sealing.settle([upload_id], SEAL_WAIT))
+    assert await asyncio.to_thread(copying.wait, SIGNAL_TIMEOUT)
+    loop_clock.advance(SEAL_WAIT - 0.001)
+    await run_ready()
+    assert not settling.done()
+    loop_clock.advance(0.001)
+    await run_ready()
+    assert settling.done()
+    assert settling.result() is None
+    assert lab.sealing.running(upload_id)
+    assert (await lab.publishing.attempt(attempt)).state is AttemptState.SEALING
+    release.set()
+    assert (await lab.sealing.check(upload_id)).state is AttemptState.READY
+    assert lab.storage.read_bytes(OBJECTS.joinpath(str(upload_id))) == DATA
+
+
+async def test_settling_cancels_no_check_that_its_timeout_finds_before_the_seal(
+    lab: Bench, loop_clock: LoopClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempt = await lab.received("a.cdf", DATA)
+    upload_id = attempt.current_upload_id
+    reading, release = pause_first(lab.storage, monkeypatch, "read_bytes")
+    settling = asyncio.create_task(lab.sealing.settle([upload_id], SEAL_WAIT))
+    assert await asyncio.to_thread(reading.wait, SIGNAL_TIMEOUT)
+    check = lab.sealing.check(upload_id)
+    loop_clock.advance(SEAL_WAIT)
+    await run_ready()
+    assert settling.done()
+    assert settling.result() is None
+    assert (await lab.publishing.attempt(attempt)).state is AttemptState.RECEIVING
+    assert copies(lab.storage) == []
+    release.set()
+    await asyncio.wait({check})
+    assert not check.cancelled()
+    assert check.result().state is AttemptState.READY
+    assert lab.storage.read_bytes(OBJECTS.joinpath(str(upload_id))) == DATA
 
 
 async def test_has_info_tells_whether_tusd_made_the_info_file(lab: Bench) -> None:

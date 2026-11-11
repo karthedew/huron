@@ -9,12 +9,14 @@ from huron.applications.api.routes.v1.endpoints import (
     auth,
     catalogs,
     collections,
+    commit_requests,
     files,
     grants,
     namespaces,
     organizations,
     repairs,
     schemas,
+    upload_attempts,
     uploads,
 )
 
@@ -30,7 +32,9 @@ for module in (
     namespaces,
     collections,
     files,
+    commit_requests,
     uploads,
+    upload_attempts,
     repairs,
     admin,
 ):

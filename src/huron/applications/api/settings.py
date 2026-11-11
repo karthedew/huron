@@ -33,7 +33,6 @@ from pydantic_settings import (
 
 from huron.core.lake.organizations.declarations import Declarations, DeclaredOrganization
 from huron.core.lake.organizations.models import OrganizationGroups
-from huron.core.lake.uploads.models import ReceiptMode
 from huron.pkg.errors import HuronError
 
 if TYPE_CHECKING:
@@ -149,8 +148,9 @@ class Settings(BaseSettings):
     both. ``min_free_bytes`` is the space that the filesystem of ``.tus-uploads`` and the
     filesystem of the object area must keep free after a new upload (default 1 GiB). The upload
     counts two times on one filesystem that holds both, and one time on each of two.
-    ``sweep_interval`` is the time between two cleanup runs. ``upload_ttl`` and
-    ``upload_max_size`` are the settings of the receipt uploads.
+    ``sweep_interval`` is the time between two runs of the periodic loop: it continues the
+    accepted commit requests that have no task, then cleans up the lake.
+    ``upload_hook_timeout`` is how long tusd waits for a hook.
     """
 
     model_config = SettingsConfigDict(env_prefix="HURON_", extra="ignore")
@@ -172,12 +172,9 @@ class Settings(BaseSettings):
     organizations: list[OrganizationEntry] | None = None
     lake_path: Path | None = None
     uploads_url: str | None = None
-    upload_ttl: Duration = timedelta(hours=24)
-    upload_max_size: int = Field(default=0, ge=0)
     upload_hook_timeout: Annotated[Duration, Field(le=MAX_UPLOAD_HOOK_TIMEOUT)] = timedelta(
         minutes=15
     )
-    removal_interval: Duration = timedelta(seconds=60)
     sweep_interval: Duration = timedelta(minutes=10)
     attempt_ttl: Duration = timedelta(days=7)
     max_upload_bytes: int = Field(default=0, ge=0)
@@ -210,9 +207,7 @@ class Settings(BaseSettings):
         return value.upper() if isinstance(value, str) else value
 
     @field_validator(
-        "upload_ttl",
         "upload_hook_timeout",
-        "removal_interval",
         "sweep_interval",
         "attempt_ttl",
         mode="before",
@@ -271,15 +266,6 @@ class Settings(BaseSettings):
     def declarations(self) -> Declarations:
         """The declared organizations; unmanaged when ``organizations`` is absent."""
         return self._declarations
-
-    @property
-    def receipt_mode(self) -> ReceiptMode:
-        """Whether a commit needs a receipt for each add.
-
-        With a lake every add needs one. Without a lake no route issues a receipt, so none is
-        needed.
-        """
-        return ReceiptMode.REQUIRED if self.lake_path is not None else ReceiptMode.OPTIONAL
 
     @property
     def token_ttl(self) -> timedelta:

@@ -26,6 +26,7 @@ from huron.core.storage import Completeness
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Collection
 
     from huron.applications.api.disk.lake import LakeDisk
     from huron.core.lake.uploads.attempts import Attempts
@@ -78,6 +79,16 @@ class Sealing:
         if self._seals.running(upload_id):
             return self.start(upload_id)
         return self._checks.start(upload_id, lambda: self._check(upload_id))
+
+    async def settle(self, upload_ids: Collection[uuid.UUID], timeout: float) -> None:
+        """Run the seal check of each of ``upload_ids``, and wait at most ``timeout`` seconds
+        until all of them end.
+
+        The wait cancels no check: a check that goes on after the wait ends later on its own.
+        """
+        checks = {self.check(upload_id) for upload_id in upload_ids}
+        if checks:
+            await asyncio.wait(checks, timeout=timeout)
 
     def running(self, upload_id: uuid.UUID) -> bool:
         """Whether a seal task or a check task of ``upload_id`` runs now."""

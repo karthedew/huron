@@ -25,7 +25,7 @@ from huron.core.storage import StorageError
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from huron.applications.api.disk.lake import LakeDisk, Located
     from huron.applications.api.disk.sealing import Sealing
@@ -68,6 +68,18 @@ class Cleanup:
         await self._remove_objects()
         await self._remove_uploads()
 
+    async def remove_uploads(self, upload_ids: Iterable[uuid.UUID]) -> None:
+        """Remove the tusd files (data and ``.info``) of each of ``upload_ids`` now.
+
+        The caller selects the IDs by their rows: the IDs of a cancelled attempt. An upload
+        whose seal task runs keeps its files, and a failed removal is logged. The next run of
+        the cleanup removes what stays.
+        """
+        for upload_id in upload_ids:
+            if not self._sealing.running(upload_id):
+                located = self._disk.in_uploads(str(upload_id))
+                await self._removed(located, partial(self._sealer.remove_upload, upload_id))
+
     async def _remove_objects(self) -> None:
         after: uuid.UUID | None = None
         while page := await self._leftovers.unreferenced(after, _PAGE):
@@ -89,10 +101,7 @@ class Cleanup:
     async def _remove_uploads(self) -> None:
         found = await self._disk.work(self._disk.in_uploads(), self._sealer.upload_ids)
         for chunk in batched(sorted(found), _PAGE):
-            for upload_id in sorted(await self._leftovers.spent(chunk)):
-                if not self._sealing.running(upload_id):
-                    located = self._disk.in_uploads(str(upload_id))
-                    await self._removed(located, partial(self._sealer.remove_upload, upload_id))
+            await self.remove_uploads(sorted(await self._leftovers.spent(chunk)))
 
     async def _removed(self, located: Located, remove: Callable[[], object]) -> bool:
         """Run ``remove`` on ``located``; ``False`` after a storage error, which is logged."""

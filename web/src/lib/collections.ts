@@ -86,6 +86,11 @@ export interface CollectionSummary {
 	sharePath: string | null;
 	/** The catalog's schema it validates against. */
 	schema: { name: string; version: number };
+	/**
+	 * The commit that holds the collection: its state (`accepted`, or `blocked` until an operator
+	 * resolves it) and when the service accepted it; `null` when no commit holds it.
+	 */
+	pendingCommit: { state: string; since: string } | null;
 	/** Whether its own schema override adds to the catalog's schema. */
 	hasOverride: boolean;
 	/**
@@ -125,6 +130,10 @@ export function collectionSummary(collection: Collection, mountPrefix: string): 
 				? null
 				: sharePath(collection.share_root, mountPrefix, collection.path),
 		schema: { name: collection.schema.name, version: collection.schema.version },
+		pendingCommit:
+			collection.pending_request === null
+				? null
+				: { state: collection.pending_request.state, since: collection.pending_request.since },
 		hasOverride: collection.schema_override !== null,
 		overrideIncompatible: collection.problems.some(({ rule }) => rule === INCOMPATIBLE_OVERRIDE)
 	};

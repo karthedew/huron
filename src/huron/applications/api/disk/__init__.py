@@ -10,7 +10,6 @@ from huron.applications.api.disk.directories import (
 )
 from huron.applications.api.disk.lake import (
     DISK_WORKERS,
-    HASH_WORKERS,
     PROBE_TIMEOUT,
     PROBE_TTL,
     LakeDisk,
@@ -19,7 +18,6 @@ from huron.applications.api.disk.lake import (
     Writer,
 )
 from huron.applications.api.disk.ownership import WRITER_CHECK_INTERVAL, Ownership, WriterLock
-from huron.applications.api.disk.placements import Placements
 from huron.applications.api.disk.publications import PUBLISH_WAIT, Materializer
 from huron.applications.api.disk.repair import LakeRepair
 from huron.applications.api.disk.sealing import SEAL_WAIT, Sealing
@@ -27,7 +25,6 @@ from huron.applications.api.disk.tasks import Tasks, repeat, wait_for
 
 __all__ = [
     "DISK_WORKERS",
-    "HASH_WORKERS",
     "PROBE_TIMEOUT",
     "PROBE_TTL",
     "PUBLISH_WAIT",
@@ -43,7 +40,6 @@ __all__ = [
     "Materializer",
     "NoLake",
     "Ownership",
-    "Placements",
     "Render",
     "Run",
     "Sealing",

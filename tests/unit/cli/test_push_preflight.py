@@ -8,11 +8,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from huron.core.lake.files.models import CommitRequest
 from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.support.cli import Cli
-from tests.support.lake import CONTRIBUTOR
 from tests.unit.cli.conftest import make_collection
 
 COLLECTION = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
@@ -69,7 +67,11 @@ def test_a_push_sends_a_dry_run_with_sizes_before_uploading(
     preview = json.loads(dry.content)
     assert preview["adds"] == [{"rel_path": "a.txt", "size": 5}]
     assert preview["base_version"] == 3 and preview["message"] == "first"
-    assert json.loads(real.content)["adds"][0]["sha256"]
+    assert "request_id" not in preview
+    committed = json.loads(real.content)
+    assert uuid.UUID(committed["request_id"])
+    (add,) = committed["adds"]
+    assert len(add["sha256"]) == 64 and uuid.UUID(add["upload_id"])
     assert share.stat(COLLECTION.joinpath("a.txt")) is not None
 
 
@@ -93,11 +95,10 @@ def test_a_base_version_conflict_is_reported_before_uploading(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     ready.ok("add", str(write(tmp_path, "a.txt", "alpha")))
-    collection_id = uuid.UUID(ready.config_current())
+    collection_id = ready.config_current()
 
     def someone_else_commits(_: httpx.Request) -> None:
-        request = CommitRequest(3, (), (), "ws2")
-        ready.loop.call(ready.runtime.lake.commits.commit(CONTRIBUTOR, collection_id, request))
+        ready.commit_nothing(collection_id, 3)
 
     calls = list(share.calls)
     sent = watch(ready, someone_else_commits)
@@ -106,7 +107,7 @@ def test_a_base_version_conflict_is_reported_before_uploading(
     assert "huron pull" in conflict.stderr
     assert len(sent) == 1 and share.calls == calls and uploads(ready) == []
     assert share.stat(COLLECTION.joinpath("a.txt")) is None
-    copy = ready.state.read_copy(str(collection_id))
+    copy = ready.state.read_copy(collection_id)
     assert copy is not None and copy.version == 3
 
 
@@ -132,5 +133,5 @@ def test_a_resumed_push_sends_the_hashes_it_already_knows(
     assert ready.run("push").exit_code == 1
     sent = watch(ready, lambda _: None)
     ready.ok("push")
-    preview = json.loads(sent[0].content)
-    assert preview["adds"][0]["size"] == 5 and len(preview["adds"][0]["sha256"]) == 64
+    (add,) = json.loads(sent[0].content)["adds"]
+    assert add["size"] == 5 and len(add["sha256"]) == 64 and uuid.UUID(add["upload_id"])

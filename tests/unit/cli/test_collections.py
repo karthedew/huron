@@ -87,11 +87,11 @@ def test_stage_push_status_and_pull(ready: Cli, share: MemoryStorage, tmp_path: 
     ready.ok("rm", "b.txt")
     ready.ok("push")
     assert "b.txt" not in ready.ok("get", "files").stdout
-    # The CLI unlinks nothing: the bytes of a removed file stay until the service removes them.
-    assert share.read_bytes(COLLECTION.joinpath("b.txt")) == b"bravo"
+    # The service removes the file of a removal in the commit.
+    assert share.stat(COLLECTION.joinpath("b.txt")) is None
     share.write_bytes(COLLECTION.joinpath("stray.txt"), b"x", 0o644)
     status = json.loads(ready.ok("-o", "json", "status").stdout)
-    assert status["unrecorded"] == ["b.txt", "stray.txt"] and status["behind"] is False
+    assert status["unrecorded"] == ["stray.txt"] and status["behind"] is False
     assert "commit" in ready.ok("get", "log").stdout
 
 

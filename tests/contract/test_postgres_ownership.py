@@ -14,12 +14,16 @@ pytestmark = pytest.mark.contract
 
 
 async def terminate_writer(database_url: str) -> None:
-    """End the session of the writer's connection, as a dropped connection ends it."""
+    """End the session of the writer's connection, as a dropped connection ends it.
+
+    Only the sessions of the test's own database end: another test or another tool on the same
+    server keeps its sessions.
+    """
     connection = await asyncpg.connect(database_url)
     try:
         ended = await connection.fetchval(
             "select count(*) from (select pg_terminate_backend(pid) from pg_stat_activity"
-            " where application_name = $1) as ended",
+            " where application_name = $1 and datname = current_database()) as ended",
             WRITER_APPLICATION,
         )
         assert ended >= 1

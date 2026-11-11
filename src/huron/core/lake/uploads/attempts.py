@@ -1,8 +1,9 @@
 """Upload attempts: create them, seal their bytes, cancel and expire them.
 
-The API calls these for tusd's hooks, for its own seal check and for its cleanup. ``begin``,
-``cancel`` and ``get`` act for the uploading user. ``by_upload``, ``start_seal``, ``finish_seal``,
-``fail`` and ``expire`` serve the API's own work, so they take no actor. No operation touches the
+The API calls these for tusd's hooks, for the upload proxy's authorization, for its own seal
+check and for its cleanup. ``begin``, ``accepts``, ``unsealed``, ``cancel`` and ``get`` act for
+the uploading user. ``by_upload``, ``find``, ``touch``, ``start_seal``, ``finish_seal``, ``fail``
+and ``expire`` serve the API's own work, so they take no actor. No operation touches the
 filesystem: the caller gives each fact that only the filesystem knows.
 
 Every transaction takes its row locks in one order: the collection row, the commit request row,
@@ -11,11 +12,12 @@ so a collection delete at the same time either finds the new attempt or makes ``
 with the collection's not-found error. The other operations lock the attempt row, and the seals
 the object row after it.
 
-An attempt expires ``ttl`` after its last activity: an allowed ``PATCH`` or the end of a seal.
-``expire`` marks the lapsed attempts ``expired``. ``begin`` and ``start_seal`` also mark the
-attempt that they act on ``expired`` when it lapsed, before they decide, and they commit that
-mark also when they then refuse. ``finish_seal``, ``cancel`` and ``get`` do not look at the
-time.
+An attempt expires ``ttl`` after its last activity: an allowed ``PATCH`` (``touch``) or the end
+of a seal. ``expire`` marks the lapsed attempts ``expired``. ``begin``, ``touch`` and
+``start_seal`` also mark the attempt that they act on ``expired`` when it lapsed, before they
+decide, and they commit that mark also when they then refuse. ``accepts`` treats a lapsed
+attempt as expired and changes nothing. ``finish_seal``, ``cancel`` and ``get`` do not look at
+the time.
 """
 
 from __future__ import annotations
@@ -27,7 +29,6 @@ from huron.core.lake.lookups import find_collection, require_file_writer
 from huron.core.lake.uploads.errors import (
     AttemptIdConflict,
     CapacityExceeded,
-    IneligibleReason,
     UploadAttemptRefused,
     UploadIneligible,
     UploadNotFound,
@@ -50,6 +51,7 @@ from huron.schema.naming import check_rel_path
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Collection
     from datetime import datetime, timedelta
 
     from huron.core.lake.transaction import Transaction, UnitOfWork
@@ -116,10 +118,7 @@ class Attempts:
         :class:`CapacityExceeded`. The caller checks the free space of the filesystems.
         """
         check_rel_path(rel_path)
-        if size < 0:
-            raise Invalid("the size must be 0 or more", {"size": size})
-        if self._max_upload_bytes and size > self._max_upload_bytes:
-            raise UploadTooLarge(size, self._max_upload_bytes)
+        self.check_size(size)
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
             collection, catalog = await find_collection(
@@ -135,6 +134,15 @@ class Attempts:
                 raise AttemptIdConflict(attempt_id)
             result = await self._reissue(tx, attempt, with_info)
         return _raised(result)
+
+    def check_size(self, size: int) -> None:
+        """Refuse a ``size`` below 0 (:class:`Invalid`) or above ``max_upload_bytes``
+        (:class:`UploadTooLarge`): no upload of that size can ever start.
+        """
+        if size < 0:
+            raise Invalid("the size must be 0 or more", {"size": size})
+        if self._max_upload_bytes and size > self._max_upload_bytes:
+            raise UploadTooLarge(size, self._max_upload_bytes)
 
     async def start_seal(self, upload_id: uuid.UUID, *, orphaned: bool = False) -> Seal:
         """Start the seal of ``upload_id``: its attempt becomes ``sealing``.
@@ -217,11 +225,12 @@ class Attempts:
                 return attempt
             if attempt.commit_request_id is not None:
                 raise Conflict(
-                    "a commit uses the upload attempt. You cannot cancel it",
+                    "a commit uses the upload attempt. You can cancel only an attempt that no"
+                    " commit uses",
                     {
                         "attempt_id": str(attempt_id),
                         "state": str(attempt.state),
-                        "allowed": [str(state) for state in _CANCELLABLE],
+                        "allowed": [str(state) for state in _UNFINISHED_ORDER],
                     },
                 )
             cancelled = replace(attempt, state=AttemptState.CANCELLED)
@@ -256,10 +265,83 @@ class Attempts:
             raise UploadNotFound(upload_id)
         return attempt
 
+    async def find(self, upload_id: uuid.UUID) -> UploadAttempt:
+        """The attempt that Huron issued ``upload_id`` for, read without a row lock.
+
+        Raises :class:`UploadNotFound` for an ID that Huron never issued.
+        """
+        async with self._uow.transaction() as tx:
+            attempt = (await tx.attempts.find_uploads([upload_id])).get(upload_id)
+        if attempt is None:
+            raise UploadNotFound(upload_id)
+        return attempt
+
+    async def accepts(self, actor: Actor, upload_id: uuid.UUID) -> bool:
+        """Whether the actor can send bytes to ``upload_id`` now.
+
+        That is so when ``upload_id`` is the current upload ID of the actor's ``receiving``
+        attempt and the attempt has not lapsed. The read takes no row lock.
+        """
+        async with self._uow.transaction() as tx:
+            attempt = (await tx.attempts.find_uploads([upload_id])).get(upload_id)
+        return (
+            attempt is not None
+            and attempt.subject == actor.subject
+            and self._receives(attempt, upload_id)
+        )
+
+    async def touch(self, upload_id: uuid.UUID) -> bool:
+        """Record activity on ``upload_id`` now: tusd takes a chunk of its bytes.
+
+        Only the current upload ID of a ``receiving`` attempt that has not lapsed gets the
+        activity, and the answer is ``True``. A lapsed attempt is marked ``expired``, and that
+        mark commits. Any other attempt stays as it is. ``False`` when the attempt gets no
+        activity. Raises :class:`UploadNotFound` for an ID that Huron never issued.
+        """
+        now = self._clock.now()
+        async with self._uow.transaction() as tx:
+            attempt = (await tx.attempts.lock_uploads([upload_id])).get(upload_id)
+            if attempt is None:
+                raise UploadNotFound(upload_id)
+            attempt = await self._unless_lapsed(tx, attempt)
+            if not self._receives(attempt, upload_id):
+                return False
+            await tx.attempts.update(replace(attempt, active_at=now))
+            return True
+
+    async def unsealed(self, actor: Actor, upload_ids: Collection[uuid.UUID]) -> list[uuid.UUID]:
+        """The IDs of ``upload_ids`` that are the current ID of the actor's ``receiving`` or
+        ``sealing`` attempt, in the order of ``upload_ids``: the uploads of the actor that a seal
+        check can make ready.
+
+        The read takes no row lock. An ID that Huron never issued, and an ID of another actor's
+        attempt, is not in the list.
+        """
+        async with self._uow.transaction() as tx:
+            found = await tx.attempts.find_uploads(upload_ids)
+        return [
+            upload_id
+            for upload_id in upload_ids
+            if (attempt := found.get(upload_id)) is not None
+            and attempt.subject == actor.subject
+            and attempt.current_upload_id == upload_id
+            and attempt.state in _UNFINISHED
+        ]
+
     async def get(self, actor: Actor, attempt_id: uuid.UUID) -> UploadAttempt:
         """The actor's attempt with ``attempt_id``; another actor's attempt is not found."""
         async with self._uow.transaction() as tx:
             return _found(await tx.attempts.get(actor.subject, attempt_id), attempt_id)
+
+    def _receives(self, attempt: UploadAttempt, upload_id: uuid.UUID) -> bool:
+        """Whether ``upload_id`` is the current ID of ``attempt``, which is ``receiving`` and
+        has not lapsed.
+        """
+        return (
+            attempt.current_upload_id == upload_id
+            and attempt.state is AttemptState.RECEIVING
+            and not attempt.lapsed(self._clock.now() - self._ttl)
+        )
 
     def _new_attempt(
         self,
@@ -292,7 +374,7 @@ class Attempts:
         staged = await tx.attempts.staged_bytes()
         if 2 * staged > self._max_staged_bytes:
             available = max(0, self._max_staged_bytes - 2 * (staged - size))
-            raise CapacityExceeded("max_staged_bytes", 2 * size, available)
+            raise CapacityExceeded("max_staged_bytes", 2 * size, available, doubled=True)
 
     async def _reissue(
         self, tx: Transaction, attempt: UploadAttempt, with_info: uuid.UUID | None
@@ -338,8 +420,8 @@ class Attempts:
         return expired
 
 
-_CANCELLABLE = (AttemptState.RECEIVING, AttemptState.SEALING, AttemptState.READY)
-_UNFINISHED = frozenset({AttemptState.RECEIVING, AttemptState.SEALING})
+_UNFINISHED_ORDER = (AttemptState.RECEIVING, AttemptState.SEALING)
+_UNFINISHED = frozenset(_UNFINISHED_ORDER)
 
 
 def _raised[T](result: T | HuronError) -> T:
@@ -366,12 +448,12 @@ def _seal_refusal(
     attempt: UploadAttempt, upload_id: uuid.UUID, orphaned: bool
 ) -> UploadIneligible | None:
     if attempt.current_upload_id != upload_id:
-        return UploadIneligible(upload_id, attempt.state, IneligibleReason.SUPERSEDED, sealing=True)
+        return UploadIneligible.for_seal(upload_id, attempt.state, superseded=True)
     if attempt.state is AttemptState.RECEIVING or (
         orphaned and attempt.state is AttemptState.SEALING
     ):
         return None
-    return UploadIneligible(upload_id, attempt.state, sealing=True)
+    return UploadIneligible.for_seal(upload_id, attempt.state)
 
 
 async def _organization(tx: Transaction, attempt: UploadAttempt) -> str:

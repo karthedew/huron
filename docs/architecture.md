@@ -251,34 +251,45 @@ Huron token in a new session.
 
 ## A push
 
-A push copies the stage of the current collection onto the share and records it in one commit.
-The code is `push` in `cli/sync.py`.
+A push uploads the stage of the current collection through tusd and records it in one commit.
+The code is `push` in `cli/sync.py` and the tus client in `cli/uploads.py`.
 
 ```text
   huron push
     1. lock the working copy
-    2. GET  /api/v1/collections/{id}     stop if the version is not the base
-    3. POST .../commits?dry_run=true     the service checks, changes nothing
-    4. check the marker, copy each file  <rel_path>.huron-part, fsync, rename
-    5. POST .../commits                  base_version, adds, removes, host
-    6. delete the files of the removals  only after the commit
+    2. GET  /api/v1/collections/{id}       stop if the version is not the base
+    3. POST .../commits?dry_run=true       the service checks, changes nothing
+    4. POST <uploads_url>, PATCH ...       one upload attempt for each add
+    5. POST .../commits                    request_id, base_version, adds, removes
+    6. GET  /api/v1/commit-requests/{id}   only after a 202
     7. empty the stage, record the new version
 ```
 
 1. The CLI locks the working copy, so that two pushes of one working copy cannot run together.
 2. The CLI reads the collection. When its version is not the version of the working copy, the push
    stops with `BASE_VERSION_CONFLICT`. The push also stops when the collection is a draft.
-3. The CLI sends the commit as a dry run. The service checks the right to write files, the state,
-   the base version and the paths, exactly as for a real commit, and changes nothing. A refusal
-   stops the push before the CLI copies a byte.
-4. `Mount` checks the marker. The CLI then copies each staged file to `<rel_path>.huron-part` while
-   it calculates the SHA-256, calls `fsync` and renames the part file into place. After each file,
-   the stage records the size and the hash.
-5. The CLI sends the commit with `base_version`, the adds (path, size and SHA-256), the removals,
-   the host name and the message. The service applies the commit in one transaction, or it refuses
-   all of it.
-6. The CLI deletes from the share each file that the commit took out of the record. A failure
-   here is only a warning.
+3. The CLI sends the commit as a dry run, without a request ID. An add carries its size, and an
+   add that an earlier push already uploaded also carries its SHA-256 and its upload ID. The
+   service checks the right to write files, a pending commit, the base version and the paths, as
+   for a real commit, and changes nothing. A refusal stops the push before the CLI sends a byte.
+4. For each add, the CLI records a new `attempt_id` in the stage and creates a tus upload with
+   that `attempt_id`. The pre-create hook issues the upload ID. The CLI makes the upload address
+   from its `uploads_url` and the upload ID, and it sends the bytes in chunks of at most 64 MiB.
+   The pre-finish hook seals the upload: the API copies the bytes into the object area of the
+   organization and measures the copy. The answer to the last chunk says `ready`, or `sealing`
+   when the seal takes more than 20 seconds. Some answers do not say `ready`: `sealing`, a 500,
+   502 or 504, or no answer in time. After such an answer, the CLI reads the upload attempt every
+   5 seconds until it is `ready` or ended, for at most `upload_hook_timeout` (from
+   `GET /healthz`). An upload that is still not sealed then stops the push, and the stage keeps
+   its attempt for the next push.
+5. The CLI sends the commit with a new `request_id`, the `base_version`, the adds (path, size,
+   SHA-256 and upload ID), the removals, the host name and the message. The service accepts the
+   request, publishes each entry on the lake, then records the files, the version and the audit
+   record in one transaction.
+6. The service answers 200 when the commit succeeded. A commit that does not end within 5
+   seconds gets 202 and the address of the state of the request. The CLI then reads that state
+   every 5 seconds for at most 600 seconds. A request that is rejected, blocked or abandoned, or
+   that is still accepted at the end of the wait, stops the push with a message.
 7. The CLI empties the stage and records the new version in the working copy.
 
 When the commit request fails without a problem document, the CLI reads the collection again. If
@@ -286,12 +297,11 @@ the version increased and the service recorded each added file with its hash, th
 commit as done.
 
 The dry run and the real commit use separate transactions. The dry run does not reserve the
-version while the CLI copies files. Another change can make the real commit fail. Copied files
-stay on the share after such a failure, including replacements of existing files.
-[When a push stops](concepts/raw-ingest.md#when-a-push-stops) explains the possible outcomes.
+version while the CLI uploads files. Another change can make the real commit fail. The uploads of
+such a push stay `ready`, and the stage keeps them for the next push.
 
-A repeated push does not copy a file again when the file on the share already has the recorded
-size and hash. [Staging and pushing files](user-guide.md#staging-and-pushing-files) and
+A repeated push does not send a file again when its upload attempt is `ready` and the file did not
+change. [Staging and pushing files](user-guide.md#staging-and-pushing-files) and
 [`huron push`](/docs/reference/cli/push/) describe the commands.
 
 ## Configuration
@@ -384,7 +394,8 @@ start stops the other stack first.
   migrations, and `make api` runs the API on the host with `dev.env` and `huron.dev.yaml`.
 - `make app` (`docker-compose.app.yml`) runs PostgreSQL, the migrations, Keycloak, the group
   directory, the API, a one-time seed and the web. All containers share one network namespace, and
-  the ports are on 127.0.0.1 only. The web is at `http://localhost:3000`.
+  the ports are on 127.0.0.1 only. The web is at `http://localhost:3000`. The API has no lake, so
+  it takes no upload and no commit, and the seeded collections have no files.
 
 `make app` mounts `huron.dev.yaml` into the API and recreates the API when the file changes.
 `make down` stops both stacks and keeps their data. `make app-reset` deletes the data of `make app`.

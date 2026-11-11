@@ -252,52 +252,6 @@ class MemoryStorage:
         )
         self.calls.append(("write", location))
 
-    def link(
-        self,
-        source: LakePath,
-        destination: LakePath,
-        *,
-        inode: int,
-        part_name: str,
-        backup_name: str,
-    ) -> LakePath | None:
-        """Give the file at ``source`` the name ``destination`` too, and return the backup.
-
-        ``source`` must be a file with the inode ``inode``, else ``SourceGone``. A link at
-        ``source`` is ``SymlinkInLake``, and a missing parent of ``source`` is ``ENOENT``. An
-        existing ``destination`` keeps its node under ``backup_name`` and is replaced through
-        ``part_name``, as on the server. A directory at either name is refused. A
-        ``destination`` that already is the source's node stays, with the backup an earlier
-        attempt left. The checks come in the order of the POSIX adapter.
-        """
-        self._require_parent(source)
-        found = self._final(source)
-        self._require_parent(destination)
-        if found is None or found.kind != "file" or found.inode != inode:
-            raise SourceGone(source)
-        existing = self._final(destination)
-        part, backup = (
-            destination.parent.joinpath(part_name),
-            destination.parent.joinpath(backup_name),
-        )
-        if existing is not None and existing.kind == "dir":
-            raise _error(destination, errno.EISDIR)
-        if existing is found:
-            return backup if self._final(backup) is not None else None
-        if existing is not None:
-            self._no_directory(part)
-            self._no_directory(backup)
-        self._check(destination.parent, destination)
-        if existing is None:
-            self.nodes[destination] = found
-            self.calls.append(("link", destination))
-            return None
-        self.nodes.pop(part, None)
-        self.nodes[backup] = existing
-        self.nodes[destination] = found
-        self.calls += [("link", part), ("link", backup), ("rename", destination)]
-        return backup
-
     def rename(self, source: LakePath, destination: LakePath) -> None:
         """Give the file at ``source`` the name ``destination``.
 
@@ -496,7 +450,7 @@ class MemoryStorage:
         return True
 
     def _no_directory(self, location: LakePath) -> None:
-        """Refuse a link or a directory at a part or backup file; the error names the file."""
+        """Refuse a link or a directory at a part file; the error names the file."""
         found = self._final(location)
         if found is not None and found.kind == "dir":
             raise _error(location, errno.EISDIR)

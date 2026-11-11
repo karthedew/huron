@@ -13,17 +13,22 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Iterable, Mapping
 
-    from huron.core.lake.publications.models import CommitAdd, CommitRequest
+    from huron.core.lake.publications.models import CommitAdd, CommitDraft, CommitRequest, DraftAdd
+
+    type Changes = CommitRequest | CommitDraft
+    type Added = CommitAdd | DraftAdd
 
 __all__ = ["plan_entries"]
 
 
-def plan_entries(current: Iterable[str], request: CommitRequest) -> tuple[CommitEntry, ...]:
+def plan_entries(current: Iterable[str], request: Changes) -> tuple[CommitEntry, ...]:
     """The entries that change the files ``current`` into the files after ``request``.
 
     ``current`` holds the paths of the recorded files of the collection, and the directories of
-    the collection are the directories above them. Directories compare by exact spelling: on a
-    case-sensitive filesystem ``Dir`` and ``dir`` are two directories.
+    the collection are the directories above them. ``request`` is a commit request, or the draft
+    of a dry run, whose add entries name no upload when the draft names none. Directories
+    compare by exact spelling: on a case-sensitive filesystem ``Dir`` and ``dir`` are two
+    directories.
 
     - A remove names a recorded file by its key, and the entry uses the recorded spelling.
     - An add whose key is recorded with a different spelling removes that file, then adds the
@@ -69,7 +74,7 @@ def _recorded(files: Mapping[str, str], removes: Iterable[str]) -> list[str]:
     return [files[rel_path_key(path)] for path in removes]
 
 
-def _check_adds(adds: Iterable[CommitAdd]) -> None:
+def _check_adds(adds: Iterable[Added]) -> None:
     added = {_key(add): add.rel_path for add in adds}
     for key, path in added.items():
         outer = _enclosing(key, added)
@@ -80,7 +85,7 @@ def _check_adds(adds: Iterable[CommitAdd]) -> None:
             )
 
 
-def _check_tree(adds: Iterable[CommitAdd], kept: Iterable[str]) -> None:
+def _check_tree(adds: Iterable[Added], kept: Iterable[str]) -> None:
     """Refuse an add inside a kept file, or over a directory that holds a kept file."""
     kept_files: dict[str, str] = {}
     kept_below: dict[str, str] = {}
@@ -108,7 +113,7 @@ def _enclosing(key: str, files: Mapping[str, str]) -> str | None:
     return next((files[each] for each in _parents(key) if each in files), None)
 
 
-def _respelled(files: Mapping[str, str], request: CommitRequest) -> list[str]:
+def _respelled(files: Mapping[str, str], request: Changes) -> list[str]:
     """The recorded spelling of each file that an add gives a new spelling."""
     return [
         files[_key(add)]
@@ -128,15 +133,13 @@ def _taken(directory: str, added: Iterable[str]) -> bool:
     return any(path in paths for path in added)
 
 
-def _kept(files: Mapping[str, str], removed: Iterable[str], adds: Iterable[CommitAdd]) -> list[str]:
+def _kept(files: Mapping[str, str], removed: Iterable[str], adds: Iterable[Added]) -> list[str]:
     """The recorded files that the request neither removes nor replaces, sorted."""
     gone = {rel_path_key(path) for path in removed} | {_key(add) for add in adds}
     return sorted(path for key, path in files.items() if key not in gone)
 
 
-def _removals(
-    files: Iterable[str], unneeded: Iterable[str], request: CommitRequest
-) -> list[CommitEntry]:
+def _removals(files: Iterable[str], unneeded: Iterable[str], request: Changes) -> list[CommitEntry]:
     """The removed files, then the removed and the pruned directories, the deepest path first.
 
     An unneeded directory at an added path or below one is removed. Each other one is pruned.
@@ -153,7 +156,7 @@ def _removals(
     return sorted(entries, key=lambda entry: (-_depth(entry.rel_path), entry.rel_path))
 
 
-def _additions(new: Iterable[str], request: CommitRequest) -> list[CommitEntry]:
+def _additions(new: Iterable[str], request: Changes) -> list[CommitEntry]:
     """The new directories and the adds, a parent directory before its children."""
     entries = [_entry(EntryAction.MAKE_DIRECTORY, path) for path in new]
     entries += [_entry(EntryAction.ADD_FILE, add.rel_path, add.upload_id) for add in request.adds]
@@ -165,7 +168,7 @@ def _entry(action: EntryAction, rel_path: str, upload_id: uuid.UUID | None = Non
     return CommitEntry(0, action, rel_path, upload_id)
 
 
-def _key(add: CommitAdd) -> str:
+def _key(add: Added) -> str:
     return rel_path_key(add.rel_path)
 
 

@@ -893,6 +893,16 @@ level`); client-fetched levels live in a `SvelteMap` inside the keyed instance; 
   fields, with all existing text/item bounds and safe links. Schema validation rules stay on
   Schema. The common header retains the title and description bounds.
 
+- **Accepted amendment (2026-11-11, pending commit).** A commit request holds a collection from
+  its acceptance until it ends (`pending_request` of the collection: its state and the time of
+  its acceptance). While a request holds the collection, the common header shows one line of
+  read-only text below the title: "A commit is in progress since <time>." or, for a request that
+  waits for an operator, "A commit is blocked since <time>.", then "The files and the version
+  show the last completed commit." The time is a `<time datetime>` in the fixed UTC format. The
+  line has no link and no control: an operator resolves a blocked request with the API.
+  Covered by `src/lib/collections.test.ts`, `src/lib/server/huron-api.test.ts` and the
+  collection layout's test.
+
 ### 4.4 Activity
 
 Human labels for every action in the closed vocabulary (e.g. `collection.commit` → "Committed files").

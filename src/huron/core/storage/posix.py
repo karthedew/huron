@@ -22,7 +22,7 @@ from huron.core.storage.layout import FILE_MODE
 from huron.core.storage.ports import FreeSpace, GroupOutcome, GroupResult, Outcome, Stat
 from huron.pkg.fs import posix
 from huron.pkg.hashing import CHUNK_SIZE, sha256_descriptor
-from huron.schema.naming import PART_SUFFIX, check_lake_name
+from huron.schema.naming import PART_SUFFIX
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -175,45 +175,6 @@ class PosixStorage:
                 raise _storage_error(location.parent.joinpath(part), error.error) from error
             except posix.PartBlocked as error:
                 raise _blocked(location, error) from error
-
-    def link(
-        self,
-        source: LakePath,
-        destination: LakePath,
-        *,
-        inode: int,
-        part_name: str,
-        backup_name: str,
-    ) -> LakePath | None:
-        """Hard-link ``source`` to ``destination``; the replaced file stays as ``backup_name``.
-
-        Raises ``SourceGone`` when ``source`` is missing or is not a regular file with the inode
-        ``inode``, ``SymlinkInLake`` for a link at ``source``, a ``StorageError`` (``ENOENT``)
-        for a missing parent of ``source``, and ``NAME_INVALID`` before any change when
-        ``part_name`` or ``backup_name`` is not one name. A failure to look up ``source`` names
-        ``source``. A directory at ``part_name`` or ``backup_name`` names that file. Any other
-        failure names ``destination``.
-        """
-        check_lake_name(part_name)
-        check_lake_name(backup_name)
-        with self._parent(source) as source_parent:
-            posix.entry(source_parent, source.name)
-            with self._parent(destination) as parent:
-                try:
-                    backup = posix.link_into_place(
-                        source_parent,
-                        source.name,
-                        inode,
-                        parent,
-                        destination.name,
-                        part_name,
-                        backup_name,
-                    )
-                except (FileNotFoundError, posix.SourceMismatch) as error:
-                    raise SourceGone(source) from error
-                except posix.PartBlocked as error:
-                    raise _blocked(destination, error) from error
-        return None if backup is None else destination.parent.joinpath(backup)
 
     def rename(self, source: LakePath, destination: LakePath) -> None:
         """Give the file at ``source`` the name ``destination``, replacing it atomically.
@@ -395,7 +356,7 @@ def _require_file(descriptor: int, location: LakePath) -> None:
 
 
 def _blocked(location: LakePath, error: posix.PartBlocked) -> StorageError:
-    """The error of a directory at a part or backup file beside ``location``; it names the file."""
+    """The error of a directory at a part file beside ``location``; it names the file."""
     return _storage_error(location.parent.joinpath(f"{error.filename}"), error)
 
 

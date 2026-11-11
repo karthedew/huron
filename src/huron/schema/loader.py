@@ -11,7 +11,7 @@ from typing import Any
 __all__ = ["DOCUMENTS", "DOCUMENTS_DIR", "load_document"]
 
 DOCUMENTS_DIR = Path(__file__).resolve().parent / "documents"
-DOCUMENTS = ("commit-request-v1", "huron-base-v1", "schema-document-v1")
+DOCUMENTS = ("huron-base-v1", "schema-document-v1")
 
 
 def load_document(name: str) -> dict[str, Any]:

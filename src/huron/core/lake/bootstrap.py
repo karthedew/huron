@@ -20,8 +20,6 @@ from huron.core.lake.repairs.operations import Repairs
 from huron.core.lake.schemas.completeness import Completeness
 from huron.core.lake.schemas.models import BASE_SCHEMA_NAME, SchemaEntry
 from huron.core.lake.schemas.registry import SchemaRegistry, SchemaResolver
-from huron.core.lake.uploads.models import ReceiptMode
-from huron.core.lake.uploads.operations import Uploads
 from huron.core.security.rbac import PLATFORM, Role
 from huron.pkg.identifiers import new_id
 from huron.schema.loader import load_document
@@ -37,19 +35,11 @@ BOOTSTRAP_ACTOR = "huron-bootstrap"
 
 @dataclass(frozen=True, slots=True)
 class LakeSettings:
-    """What the lake needs from configuration; ``organizations`` are the declared ones.
-
-    ``receipt_mode`` decides whether a commit needs a receipt for each add; ``upload_ttl`` is
-    how long a receipt stays good; ``upload_max_size`` is the largest upload in bytes, ``0`` for
-    no limit.
-    """
+    """What the lake needs from configuration; ``organizations`` are the declared ones."""
 
     platform_admin_group: str
     key_overlap: timedelta = timedelta(hours=24)
     organizations: Declarations = UNMANAGED
-    receipt_mode: ReceiptMode = ReceiptMode.REQUIRED
-    upload_ttl: timedelta = timedelta(hours=24)
-    upload_max_size: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +53,6 @@ class Lake:
     namespaces: Namespaces
     collections: Collections
     commits: Commits
-    uploads: Uploads
     repairs: Repairs
     audit: AuditLog
     keys: SigningKeys
@@ -92,8 +81,7 @@ def build_lake(uow: UnitOfWork, clock: Clock, settings: LakeSettings) -> Lake:
         catalogs=Catalogs(uow, clock, resolver, completeness),
         namespaces=Namespaces(uow, clock),
         collections=Collections(uow, clock, resolver),
-        commits=Commits(uow, clock, settings.receipt_mode, settings.upload_ttl),
-        uploads=Uploads(uow, clock, ttl=settings.upload_ttl, max_size=settings.upload_max_size),
+        commits=Commits(uow),
         repairs=Repairs(uow),
         audit=AuditLog(uow),
         keys=SigningKeys(uow, clock, settings.key_overlap),

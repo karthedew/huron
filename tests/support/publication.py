@@ -155,11 +155,18 @@ async def publishing_over(store: UnitOfWork) -> Publishing:
     await bootstrap(store, clock, SETTINGS)
     lake = build_lake(store, clock, SETTINGS)
     await seed_lake(lake)
+    return publishing_of(lake, store, clock, await settled_collection(lake))
+
+
+def publishing_of(
+    lake: Lake, store: UnitOfWork, clock: FrozenClock, collection_id: uuid.UUID
+) -> Publishing:
+    """A :class:`Publishing` for the collection ``collection_id`` of a lake that exists."""
     return Publishing(
         lake=lake,
         store=store,
         clock=clock,
         attempts=Attempts(store, clock, ttl=TTL, object_dir=OBJECT_DIR),
         publications=Publications(store, clock),
-        collection_id=await settled_collection(lake),
+        collection_id=collection_id,
     )

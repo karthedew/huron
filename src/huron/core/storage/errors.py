@@ -62,10 +62,7 @@ class LakeUnavailable(StorageError):
 
 
 class SourceGone(StorageError):
-    """The upload's file is gone from ``.tus-uploads`` or is not the measured file any more.
-
-    Another attempt may have placed it.
-    """
+    """The source of a copy or a link is gone, or it is not a regular file."""
 
     def __init__(self, source: LakePath) -> None:
         super().__init__(f"the upload file {source} does not exist", {"path": str(source)})

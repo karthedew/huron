@@ -649,9 +649,28 @@ export function recordedFiles(/** @type {FixtureCollection} */ collection) {
 	return [...files.values()];
 }
 
-/** The SHA-256 the seed records for a file: derived from its place, so it is stable per run. */
+/**
+ * The bytes the seed uploads for a file: its place (`<identifier>/<relPath>` and a line end),
+ * repeated and cut to the size of the latest add of that path, so they are stable per run.
+ * @param {string} identifier
+ * @param {string} relPath
+ * @returns {Buffer}
+ */
+export function fileContent(identifier, relPath) {
+	const collection = COLLECTIONS.find((each) => collectionIdentifier(each) === identifier);
+	const added = (collection?.commits ?? [])
+		.flatMap((commit) => commit.adds)
+		.findLast((add) => add.relPath === relPath);
+	if (added === undefined) throw new Error(`the fixture adds no file ${identifier}/${relPath}`);
+	const unit = Buffer.from(`${identifier}/${relPath}\n`);
+	const content = Buffer.alloc(added.size);
+	for (let offset = 0; offset < added.size; offset += unit.length) unit.copy(content, offset);
+	return content;
+}
+
+/** The SHA-256 of a file's bytes (`fileContent`), which the service measures when it seals them. */
 export function fileSha256(/** @type {string} */ identifier, /** @type {string} */ relPath) {
-	return createHash('sha256').update(`${identifier}/${relPath}`).digest('hex');
+	return createHash('sha256').update(fileContent(identifier, relPath)).digest('hex');
 }
 
 /**

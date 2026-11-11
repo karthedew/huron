@@ -36,6 +36,10 @@ class CommitRequestStore(Protocol):
         """The request of ``subject`` with ``request_id``."""
         ...
 
+    async def find(self, row_id: uuid.UUID) -> CommitOutcome | None:
+        """The request with the row ID ``row_id``, read without a row lock."""
+        ...
+
     async def lock(self, row_id: uuid.UUID) -> CommitOutcome | None:
         """The request with the row ID ``row_id``, locked until the transaction ends."""
         ...

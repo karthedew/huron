@@ -15,7 +15,7 @@ import structlog
 from huron.core.storage.errors import StorageError
 from huron.core.storage.layout import FILE_MODE, ORGANIZATION_MODE
 from huron.core.storage.ports import Outcome
-from huron.schema.naming import BACKUP_SUFFIX, METADATA_FILE, PART_SUFFIX
+from huron.schema.naming import METADATA_FILE, PART_SUFFIX
 
 if TYPE_CHECKING:
     from huron.core.storage.lakepath import LakePath
@@ -88,9 +88,10 @@ class DirectoryWriter:
     def remove_collection(self, location: LakePath) -> Outcome:
         """Remove what Huron put into a collection directory, then the directory.
 
-        Placed files are the removals' work. This removes ``metadata.json``, part and backup
-        files and the subdirectories that are then empty, the deepest entries first. A symbolic
-        link below is not removed and keeps the directories above it, with the log event
+        A collection without recorded files holds no published file. This removes
+        ``metadata.json``, part files and the subdirectories that are then empty, the deepest
+        entries first. A symbolic link below is not removed and keeps the directories above it,
+        with the log event
         ``disk.link_found``. The directory stays (``KEPT``) while any entry is in it. A missing
         directory is ``MISSING``.
         """
@@ -113,4 +114,4 @@ def _depth(entry: Entry) -> int:
 
 
 def _belongs_to_huron(entry: Entry) -> bool:
-    return entry.names == (METADATA_FILE,) or entry.names[-1].endswith((PART_SUFFIX, BACKUP_SUFFIX))
+    return entry.names == (METADATA_FILE,) or entry.names[-1].endswith(PART_SUFFIX)

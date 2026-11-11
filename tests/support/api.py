@@ -11,7 +11,7 @@ import httpx
 
 from huron.applications.api.app import create_app
 from huron.applications.api.disk import PROBE_TIMEOUT
-from huron.applications.api.runtime import Runtime, build_runtime
+from huron.applications.api.runtime import ClosableStore, Runtime, build_runtime
 from huron.applications.api.settings import Settings
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.broker import TokenIssuer
@@ -100,7 +100,7 @@ class Service:
 @asynccontextmanager
 async def service(
     *,
-    store: MemoryStore | None = None,
+    store: ClosableStore | None = None,
     storage: Storage | None = None,
     probe_timeout: float = PROBE_TIMEOUT,
     clock: FrozenClock | None = None,

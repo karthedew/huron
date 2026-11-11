@@ -76,8 +76,8 @@ huron delete namespace [OPTIONS] IDENTIFIER
 Delete all files of a collection, the collection and its directory.
 
 This needs the creator of the collection or a catalog admin. The API deletes only the files
-that it recorded or placed. Other files stay in the directory, and `huron adm check` reports
-them as `dir_unrecorded`.
+that it recorded. Other files stay in the directory, and `huron adm check` reports them as
+`dir_unrecorded`.
 
 ```text
 huron delete collection [OPTIONS] IDENTIFIER

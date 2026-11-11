@@ -1,1 +1,1 @@
-"""The uploads area of the lake: upload rows, receipts and the removal outbox."""
+"""The uploads area of the lake: upload attempts, their seals and their leftovers."""

@@ -1,5 +1,6 @@
-"""``huron push`` uploads each staged file through tusd and commits the receipts."""
+"""``huron push`` uploads each staged file through tusd and commits the sealed uploads."""
 
+import base64
 import hashlib
 import io
 import json
@@ -15,19 +16,19 @@ from huron.applications.cli.client import ApiClient
 from huron.applications.cli.errors import CliError
 from huron.applications.cli.state import Stage, StagedAdd
 from huron.applications.cli.uploads import Uploader, UploadService
-from huron.core.lake.files.models import CommitRequest
-from huron.core.storage import LakePath
+from huron.core.storage import UPLOADS, LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.fakes.storage import rooted
 from tests.support.cli import Cli
-from tests.support.lake import CONTRIBUTOR
 from tests.support.tus import TUS_URL, FakeTus
 from tests.unit.cli.conftest import PREFIX, make_collection
 
 COLLECTION = LakePath.of("helio", "heliophysics", "solar-wind", "run7")
 ANSWERS = ["Run 7", "Solar wind run seven", *([False] * 7)]
-#: The service's hook timeout here: three reads of a pending upload, five seconds apart.
+#: The service's hook timeout here: three reads of an unsealed upload, five seconds apart.
 HOOK_TIMEOUT = 10
+#: The upload ID that the fixed answers of the uploader's tests name.
+U1 = "0190d5a4-0000-7000-8000-0000000000e1"
 
 
 @pytest.fixture
@@ -39,7 +40,7 @@ def cli(tmp_path: Path, share: MemoryStorage) -> Iterator[Cli]:
         PREFIX,
         lake=share,
         upload_hook_timeout=timedelta(seconds=HOOK_TIMEOUT),
-        upload_max_size=1000,
+        max_upload_bytes=1000,
     )
     yield running
     running.close()
@@ -83,7 +84,7 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def test_a_push_uploads_through_tusd_and_commits_the_receipt(
+def test_a_push_uploads_through_tusd_and_commits_the_sealed_upload(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
@@ -115,7 +116,7 @@ def test_a_dropped_patch_continues_on_the_next_push(
     assert dropped.exit_code == 1 and "is unreachable" in dropped.stderr
     assert "The next push continues the upload" in dropped.stderr
     (add,) = stage(ready).adds
-    assert add.upload_id is not None and add.upload_url == f"{TUS_URL}{add.upload_id}"
+    assert add.attempt_id is not None and add.upload_id is not None
     assert tus(ready).uploads[add.upload_id].offset == 3
     tus(ready).requests.clear()
     ready.ok("push")
@@ -130,45 +131,45 @@ def test_an_upload_that_tusd_lost_starts_again(
     staged(ready, tmp_path, "a.txt", b"alphabet")
     tus(ready).drop_after = 3
     assert ready.run("push").exit_code == 1
+    first = stage(ready).adds[0].attempt_id
     tus(ready).uploads.clear()
     tus(ready).requests.clear()
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["HEAD", "POST", "PATCH"]
     assert share.read_bytes(COLLECTION.joinpath("a.txt")) == b"alphabet"
+    assert stage(ready).empty and first is not None
 
 
-def test_an_upload_unknown_to_the_service_starts_again(ready: Cli, tmp_path: Path) -> None:
+def test_an_attempt_unknown_to_the_service_starts_again(ready: Cli, tmp_path: Path) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
     current = stage(ready)
-    unknown = str(uuid.uuid4())
-    current.adds[0].upload_id, current.adds[0].upload_url = unknown, f"{TUS_URL}{unknown}"
+    current.adds[0].attempt_id, current.adds[0].upload_id = str(uuid.uuid4()), U1
     ready.state.write_stage(ready.config_current(), current)
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["POST", "PATCH"]
 
 
-def test_an_upload_id_the_service_refuses_is_reported(ready: Cli, tmp_path: Path) -> None:
+def test_an_attempt_id_the_service_refuses_is_reported(ready: Cli, tmp_path: Path) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
     current = stage(ready)
-    current.adds[0].upload_id, current.adds[0].upload_url = "nope", f"{TUS_URL}nope"
+    current.adds[0].attempt_id = "nope"
     ready.state.write_stage(ready.config_current(), current)
     refused = ready.run("push")
     assert refused.exit_code == 7 and "REQUEST_INVALID" in refused.stderr
     assert tus(ready).requests == []
 
 
-def test_a_hash_mismatch_commits_nothing(ready: Cli, tmp_path: Path) -> None:
+def test_bytes_that_changed_on_the_way_commit_nothing(ready: Cli, tmp_path: Path) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
     tus(ready).corrupt = True
     mismatch = ready.run("push")
-    assert mismatch.exit_code == 8
-    assert "the service hash of a.txt is not the same as the local hash" in mismatch.stderr
+    assert mismatch.exit_code == 6 and "[UPLOAD_INELIGIBLE]" in mismatch.stderr
+    assert "holds a different file" in mismatch.stderr
     assert recorded(ready) == {}
-    assert stage(ready).adds[0].sha256 is None
 
 
 @pytest.mark.parametrize("status", [500, 502, 504])
-def test_an_unclear_final_answer_reads_the_placed_upload(
+def test_an_unclear_final_answer_reads_the_upload_attempt(
     ready: Cli, share: MemoryStorage, tmp_path: Path, status: int
 ) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
@@ -180,38 +181,44 @@ def test_an_unclear_final_answer_reads_the_placed_upload(
 
 
 @pytest.mark.parametrize("status", [504, None])
-def test_a_pending_upload_is_not_placed_and_the_next_push_starts_again(
+def test_a_final_patch_whose_hook_never_ran_is_sealed_by_the_attempt_read(
     ready: Cli, share: MemoryStorage, tmp_path: Path, status: int | None
 ) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
     tus(ready).finish_status, tus(ready).skip_finish = status, True
-    pending = ready.run("push")
-    assert pending.exit_code == 8
-    assert f"the service did not place a.txt in {HOOK_TIMEOUT} seconds" in pending.stderr
-    assert "The next push starts a new upload of the file" in pending.stderr
-    assert ready.slept == [5.0, 5.0]
-    (add,) = stage(ready).adds
-    assert (add.upload_id, add.upload_url, add.sha256) == (None, None, None)
-    tus(ready).requests.clear()
-    ready.ok("push")
+    pushed = ready.ok("push")
+    assert "uploaded a.txt (5 bytes)" in pushed.stderr
     assert [method for method, _ in tus(ready).requests] == ["POST", "PATCH"]
     assert recorded(ready) == {"a.txt": sha(b"alpha")}
 
 
-def test_a_failed_upload_prints_the_failure(
+def test_an_upload_that_tusd_still_holds_is_kept_for_the_next_push(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
-    depth = len(COLLECTION.names)
-    saved = {
-        path: node for path, node in share.nodes.items() if path.names[:depth] == COLLECTION.names
-    }
-    for path in saved:
-        del share.nodes[path]
+    tus(ready).hold_lock = True
+    held = ready.run("push")
+    assert held.exit_code == 8
+    assert f"the service did not seal a.txt in {HOOK_TIMEOUT} seconds" in held.stderr
+    assert "The next push reads the state of the upload" in held.stderr
+    assert ready.slept == [5.0, 5.0]
+    (add,) = stage(ready).adds
+    assert add.attempt_id is not None and add.upload_id is not None
+    share.remove_file(UPLOADS.joinpath(f"{add.upload_id}.lock"))
+    tus(ready).requests.clear()
+    again = ready.ok("push")
+    assert tus(ready).requests == []
+    assert "a.txt is on the service from an earlier push" in again.stderr
+    assert recorded(ready) == {"a.txt": sha(b"alpha")}
+
+
+def test_a_failed_upload_prints_the_failure_and_the_next_push_starts_again(
+    ready: Cli, share: MemoryStorage, tmp_path: Path
+) -> None:
+    staged(ready, tmp_path, "a.txt", b"alpha")
+    tus(ready).info_size = 4
     failed = ready.run("push")
-    assert failed.exit_code == 8 and "[STORAGE_FAILED]" in failed.stderr
-    assert "the service did not place a.txt: the collection directory" in failed.stderr
-    share.nodes.update(saved)
+    assert failed.exit_code == 1 and "[UPLOAD_SIZE_MISMATCH]" in failed.stderr
     tus(ready).requests.clear()
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["POST", "PATCH"]
@@ -222,7 +229,7 @@ def test_a_failed_upload_prints_the_failure(
     ("method", "status", "exit_code", "message"),
     [
         ("POST", 401, 3, "the upload proxy did not accept your token"),
-        ("PATCH", 403, 4, "this upload belongs to another user, or it no longer exists"),
+        ("PATCH", 403, 4, "this upload belongs to another user, or it does not take bytes now"),
     ],
 )
 def test_the_proxy_refusals_are_explained(
@@ -268,7 +275,7 @@ def test_a_push_of_removals_alone_needs_no_uploads(
     assert "+0 −1 files" in ready.ok("push").stdout
 
 
-def test_a_retried_push_skips_the_placed_uploads(ready: Cli, tmp_path: Path) -> None:
+def test_a_retried_push_skips_the_sealed_uploads(ready: Cli, tmp_path: Path) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
     staged(ready, tmp_path, "b.txt", b"bravo")
     ready.router.fail_commits = "before"
@@ -310,16 +317,36 @@ def test_a_file_removed_after_add_is_refused(ready: Cli, tmp_path: Path) -> None
     assert refused.exit_code == 2 and "changed after you staged it" in refused.stderr
 
 
-def test_an_upload_whose_bytes_all_arrived_is_read_from_the_service(
+def test_an_upload_whose_bytes_all_arrived_is_sealed_by_the_next_push(
     ready: Cli, tmp_path: Path
 ) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
     tus(ready).drop_after = 5
     assert ready.run("push").exit_code == 1
     tus(ready).requests.clear()
-    pending = ready.run("push")
-    assert [method for method, _ in tus(ready).requests] == ["HEAD"]
-    assert pending.exit_code == 8 and "did not place a.txt" in pending.stderr
+    pushed = ready.ok("push")
+    assert tus(ready).requests == []
+    assert "a.txt is on the service from an earlier push" in pushed.stderr
+    assert recorded(ready) == {"a.txt": sha(b"alpha")}
+
+
+def test_a_location_on_another_host_is_not_followed(ready: Cli, tmp_path: Path) -> None:
+    staged(ready, tmp_path, "a.txt", b"alpha")
+    tus(ready).location_base = "https://evil.example:8443/elsewhere/"
+    ready.ok("push")
+    assert [path.startswith("/files/") for _, path in tus(ready).requests] == [True, True]
+    assert recorded(ready) == {"a.txt": sha(b"alpha")}
+
+
+def test_a_commit_that_waits_reads_the_state_of_its_request_until_it_succeeds(
+    ready: Cli, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staged(ready, tmp_path, "a.txt", b"alpha")
+    monkeypatch.setattr("huron.applications.api.routes.v1.endpoints.files.PUBLISH_WAIT", 0.0)
+    pushed = ready.ok("push")
+    assert "version 3 → 4, +1 −0 files" in pushed.stdout
+    assert ready.slept == [5.0]
+    assert recorded(ready) == {"a.txt": sha(b"alpha")}
 
 
 class Endpoint:
@@ -368,42 +395,72 @@ def local(tmp_path: Path, data: bytes) -> StagedAdd:
     return StagedAdd("f.bin", str(source), len(data))
 
 
-def created(upload_id: str = "u1") -> httpx.Response:
-    return httpx.Response(201, headers={"Location": f"/files/{upload_id}"})
+def created(location: str = f"/files/{U1}") -> httpx.Response:
+    return httpx.Response(201, headers={"Location": location})
+
+
+def ready_answer(offset: int) -> httpx.Response:
+    """The answer of a final ``PATCH`` whose pre-finish hook sealed the upload."""
+    headers = {"Upload-Offset": str(offset), "Huron-Upload-State": "ready"}
+    return httpx.Response(204, headers=headers)
+
+
+def attempt_state(state: str, failure: dict[str, str] | None = None) -> httpx.Response:
+    """The API's answer to ``GET /api/v1/upload-attempts/{attempt_id}``."""
+    body = {"attempt_id": "a1", "state": state, "upload_id": U1, "failure": failure}
+    return httpx.Response(200, json=body)
+
+
+def b64(text: str) -> str:
+    return base64.b64encode(text.encode()).decode()
 
 
 def test_the_uploader_sends_chunks_with_a_progress_line(tmp_path: Path) -> None:
     lines: list[str] = []
     data = b"0123456789"
-    receipt = {"Huron-Sha256": sha(data)}
     endpoint = Endpoint(
         created(),
         httpx.Response(204, headers={"Upload-Offset": "4"}),
         httpx.Response(204, headers={"Upload-Offset": "8"}),
-        httpx.Response(204, headers={"Upload-Offset": "10", **receipt}),
+        ready_answer(10),
     )
     add = local(tmp_path, data)
-    saved: list[str | None] = []
-    uploader(endpoint, lines).upload("c1", add, lambda: saved.append(add.upload_url))
+    saved: list[tuple[str | None, str | None]] = []
+    uploader(endpoint, lines).upload(
+        "c1", add, lambda: saved.append((add.attempt_id, add.upload_id))
+    )
     assert lines == [
         "sent 4 of 10 bytes of f.bin",
         "sent 8 of 10 bytes of f.bin",
         "uploaded f.bin (10 bytes)",
     ]
-    assert (add.upload_url, add.upload_id, add.sha256) == (f"{TUS_URL}u1", "u1", sha(data))
-    assert saved == [f"{TUS_URL}u1"]
+    assert add.attempt_id is not None
+    assert (add.upload_id, add.sha256) == (U1, sha(data))
+    assert saved == [(add.attempt_id, None), (add.attempt_id, U1)]
+    assert [str(request.url) for request in endpoint.sent[1:]] == [f"{TUS_URL}{U1}"] * 3
     offsets = [request.headers["Upload-Offset"] for request in endpoint.sent[1:]]
     assert offsets == ["0", "4", "8"]
     creation = endpoint.sent[0]
     assert creation.headers["Tus-Resumable"] == "1.0.0"
     assert creation.headers["Authorization"] == "Bearer token"
-    assert creation.headers["Upload-Metadata"] == "collection YzE=,rel_path Zi5iaW4="
+    assert creation.headers["Upload-Metadata"] == (
+        f"attempt_id {b64(add.attempt_id)},collection YzE=,rel_path Zi5iaW4="
+    )
 
 
-def test_the_uploader_refuses_a_creation_without_an_address(tmp_path: Path) -> None:
-    endpoint = Endpoint(httpx.Response(201))
-    with pytest.raises(CliError, match="did not give an upload address"):
-        uploader(endpoint, []).upload("c1", local(tmp_path, b"abc"), lambda: None)
+def test_the_uploader_builds_the_address_from_the_uploads_url(tmp_path: Path) -> None:
+    endpoint = Endpoint(created(f"https://evil.example:8443/elsewhere/{U1}"), ready_answer(3))
+    uploader(endpoint, []).upload("c1", local(tmp_path, b"abc"), lambda: None)
+    assert str(endpoint.sent[1].url) == f"{TUS_URL}{U1}"
+
+
+@pytest.mark.parametrize("location", [None, "/files/not-an-id"])
+def test_the_uploader_refuses_a_creation_without_an_upload_address(
+    tmp_path: Path, location: str | None
+) -> None:
+    answer = httpx.Response(201) if location is None else created(location)
+    with pytest.raises(CliError, match="did not give the address of a new upload"):
+        uploader(Endpoint(answer), []).upload("c1", local(tmp_path, b"abc"), lambda: None)
 
 
 def test_the_uploader_reports_an_unexpected_status(tmp_path: Path) -> None:
@@ -425,19 +482,19 @@ def test_the_uploader_refuses_a_file_that_shrinks_while_it_is_sent(tmp_path: Pat
         uploader(endpoint, [], chunk_size=chunk).upload("c1", add, lambda: None)
 
 
-def test_a_commit_refused_after_the_uploads_keeps_the_receipts(ready: Cli, tmp_path: Path) -> None:
+def test_a_commit_refused_after_the_uploads_keeps_the_uploads(ready: Cli, tmp_path: Path) -> None:
     staged(ready, tmp_path, "a.txt", b"alpha")
-    collection_id = uuid.UUID(ready.config_current())
+    collection_id = ready.config_current()
 
     def someone_else_commits(request: httpx.Request) -> None:
         if request.url.path.endswith("/commits") and "dry_run" not in request.url.params:
-            change = CommitRequest(3, (), (), "ws2")
-            ready.loop.call(ready.runtime.lake.commits.commit(CONTRIBUTOR, collection_id, change))
+            ready.commit_nothing(collection_id, 3)
 
     ready.router.observe = someone_else_commits
     refused = ready.run("push")
     assert refused.exit_code == 6 and "BASE_VERSION_CONFLICT" in refused.stderr
-    assert stage(ready).adds[0].sha256 == sha(b"alpha")
+    (add,) = stage(ready).adds
+    assert (add.sha256, add.upload_id is not None) == (sha(b"alpha"), True)
 
 
 def read_timeout(request: httpx.Request) -> float | None:
@@ -445,66 +502,69 @@ def read_timeout(request: httpx.Request) -> float | None:
     return timeout["read"]
 
 
-def upload_state(state: str, sha256: str | None = None) -> httpx.Response:
-    """The API's answer to ``GET /api/v1/uploads/u1``."""
-    body = {"id": "u1", "state": state, "sha256": sha256, "failure": None}
-    return httpx.Response(200, json=body)
-
-
 def test_the_request_that_finishes_an_upload_waits_for_the_hook(tmp_path: Path) -> None:
-    data = b"0123456789"
     endpoint = Endpoint(
         created(),
         httpx.Response(204, headers={"Upload-Offset": "4"}),
         httpx.Response(204, headers={"Upload-Offset": "8"}),
-        httpx.Response(204, headers={"Upload-Offset": "10", "Huron-Sha256": sha(data)}),
+        ready_answer(10),
     )
-    uploader(endpoint, []).upload("c1", local(tmp_path, data), lambda: None)
+    uploader(endpoint, []).upload("c1", local(tmp_path, b"0123456789"), lambda: None)
     assert [read_timeout(request) for request in endpoint.sent] == [5.0, 5.0, 5.0, 70.0]
 
 
 def test_the_creation_of_an_empty_file_waits_for_the_hook(tmp_path: Path) -> None:
-    finished = httpx.Response(201, headers={"Location": "/files/u1", "Huron-Sha256": sha(b"")})
+    finished = httpx.Response(
+        201, headers={"Location": f"/files/{U1}", "Huron-Upload-State": "ready"}
+    )
     endpoint = Endpoint(finished)
     add = local(tmp_path, b"")
     uploader(endpoint, []).upload("c1", add, lambda: None)
     assert [read_timeout(request) for request in endpoint.sent] == [70.0]
-    assert add.sha256 == sha(b"")
+    assert (add.upload_id, add.sha256) == (U1, sha(b""))
 
 
-def test_a_late_final_answer_reads_the_placed_upload(tmp_path: Path) -> None:
+def test_a_late_final_answer_reads_the_upload_attempt(tmp_path: Path) -> None:
     lines: list[str] = []
     data = b"abc"
-    endpoint = Endpoint(created(), httpx.ReadTimeout("late"), upload_state("placed", sha(data)))
+    endpoint = Endpoint(created(), httpx.ReadTimeout("late"), attempt_state("ready"))
     add = local(tmp_path, data)
     uploader(endpoint, lines).upload("c1", add, lambda: None)
     assert add.sha256 == sha(data) and lines == ["uploaded f.bin (3 bytes)"]
-    assert endpoint.sent[-1].url.path == "/api/v1/uploads/u1"
+    assert endpoint.sent[-1].url.path == f"/api/v1/upload-attempts/{add.attempt_id}"
 
 
-def test_a_late_answer_to_the_creation_of_an_empty_file_starts_again(tmp_path: Path) -> None:
-    endpoint = Endpoint(httpx.ReadTimeout("late"))
+def test_an_answer_that_says_the_seal_goes_on_reads_the_attempt_until_it_is_ready(
+    tmp_path: Path,
+) -> None:
+    sealing = httpx.Response(204, headers={"Huron-Upload-State": "sealing"})
+    endpoint = Endpoint(created(), sealing, attempt_state("sealing"), attempt_state("ready"))
+    add = local(tmp_path, b"abc")
+    uploader(endpoint, []).upload("c1", add, lambda: None)
+    assert add.sha256 == sha(b"abc")
+    assert len(endpoint.sent) == 4
+
+
+def test_a_late_answer_to_the_creation_of_an_empty_file_reads_the_attempt(
+    tmp_path: Path,
+) -> None:
+    endpoint = Endpoint(httpx.ReadTimeout("late"), attempt_state("ready"))
     add = local(tmp_path, b"")
-    with pytest.raises(CliError) as raised:
-        uploader(endpoint, []).upload("c1", add, lambda: None)
-    assert raised.value.message == (
-        "the upload service did not answer the creation of f.bin in time"
-    )
-    assert raised.value.hint is not None and "starts a new upload" in raised.value.hint
-    assert add.upload_id is None
+    uploader(endpoint, []).upload("c1", add, lambda: None)
+    assert (add.upload_id, add.sha256) == (U1, sha(b""))
 
 
 @pytest.mark.parametrize(
     ("state", "message"),
     [
         (
-            httpx.Response(404, json={"code": "UPLOAD_NOT_FOUND", "detail": "gone"}),
+            httpx.Response(404, json={"code": "NOT_FOUND", "detail": "gone"}),
             "the service has no record of the upload of f.bin",
         ),
-        (upload_state("terminated"), "the upload of f.bin is terminated"),
+        (attempt_state("cancelled"), "the upload of f.bin is cancelled"),
     ],
 )
-def test_an_upload_that_is_gone_or_terminated_says_so(
+def test_an_upload_that_is_gone_or_ended_says_so(
     tmp_path: Path, state: httpx.Response, message: str
 ) -> None:
     endpoint = Endpoint(created(), httpx.Response(504), state)
@@ -516,8 +576,26 @@ def test_an_upload_that_is_gone_or_terminated_says_so(
     assert raised.value.hint == (
         "run `huron push` again. The next push starts a new upload of the file"
     )
-    assert saved == ["u1", None]
+    assert saved == [None, U1, None]
+    assert (add.attempt_id, add.upload_id) == (None, None)
     assert len(endpoint.sent) == 3
+
+
+def test_a_failed_attempt_says_why(tmp_path: Path) -> None:
+    failure = {"code": "UPLOAD_SIZE_MISMATCH", "message": "the sizes differ"}
+    endpoint = Endpoint(created(), httpx.Response(500), attempt_state("failed", failure))
+    with pytest.raises(CliError) as raised:
+        uploader(endpoint, []).upload("c1", local(tmp_path, b"abc"), lambda: None)
+    assert raised.value.message == "the service did not seal f.bin: the sizes differ"
+    assert raised.value.code == "UPLOAD_SIZE_MISMATCH"
+
+
+def test_another_error_of_the_attempt_read_is_raised(tmp_path: Path) -> None:
+    refused = httpx.Response(403, json={"code": "FORBIDDEN", "detail": "no"})
+    endpoint = Endpoint(created(), httpx.Response(502), refused)
+    with pytest.raises(CliError) as raised:
+        uploader(endpoint, []).upload("c1", local(tmp_path, b"abc"), lambda: None)
+    assert raised.value.code == "FORBIDDEN"
 
 
 def test_the_fake_tusd_refuses_requests_without_the_tus_headers(ready: Cli, tmp_path: Path) -> None:
@@ -525,7 +603,8 @@ def test_the_fake_tusd_refuses_requests_without_the_tus_headers(ready: Cli, tmp_
     tus(ready).drop_after = 2
     assert ready.run("push").exit_code == 1
     (add,) = stage(ready).adds
-    assert add.upload_url is not None
+    assert add.upload_id is not None
+    address = f"{TUS_URL}{add.upload_id}"
     tokens = ready.state.read_tokens()
     assert tokens is not None
     bearer = {"Authorization": f"Bearer {tokens.huron_token}"}
@@ -536,13 +615,13 @@ def test_the_fake_tusd_refuses_requests_without_the_tus_headers(ready: Cli, tmp_
         return tus(ready).handle(request).status_code
 
     assert answer("POST", TUS_URL, {**bearer, "Upload-Length": "1"}) == 412
-    assert answer("HEAD", add.upload_url, bearer) == 412
-    assert answer("HEAD", add.upload_url, {**bearer, "Tus-Resumable": "0.2.2"}) == 412
+    assert answer("HEAD", address, bearer) == 412
+    assert answer("HEAD", address, {**bearer, "Tus-Resumable": "0.2.2"}) == 412
     patch = {**tus_headers, "Upload-Offset": "2"}
-    assert answer("PATCH", add.upload_url, patch, b"pha") == 415
+    assert answer("PATCH", address, patch, b"pha") == 415
     stream = {**patch, "Content-Type": "application/offset+octet-stream"}
-    assert answer("PATCH", add.upload_url, {**stream, "Tus-Resumable": ""}, b"pha") == 412
-    assert answer("HEAD", add.upload_url, tus_headers) == 200
+    assert answer("PATCH", address, {**stream, "Tus-Resumable": ""}, b"pha") == 412
+    assert answer("HEAD", address, tus_headers) == 200
 
 
 def test_a_dropped_chunk_reports_the_service_unreachable(tmp_path: Path) -> None:
@@ -552,4 +631,38 @@ def test_a_dropped_chunk_reports_the_service_unreachable(tmp_path: Path) -> None
         uploader(endpoint, []).upload("c1", add, lambda: None)
     assert raised.value.message == f"the upload service at {TUS_URL} is unreachable: refused"
     assert raised.value.hint == "run `huron push` again. The next push continues the upload"
-    assert add.upload_id == "u1"
+    assert add.upload_id == U1
+
+
+def resumable(tmp_path: Path, data: bytes, sha256: str | None = None) -> StagedAdd:
+    """A staged add whose earlier push created the attempt ``a1`` with the upload :data:`U1`."""
+    add = local(tmp_path, data)
+    add.attempt_id, add.upload_id, add.sha256 = "a1", U1, sha256
+    return add
+
+
+def test_a_resumed_upload_that_is_sealing_is_read_until_it_is_ready(tmp_path: Path) -> None:
+    lines: list[str] = []
+    endpoint = Endpoint(attempt_state("sealing"), attempt_state("sealing"), attempt_state("ready"))
+    add = resumable(tmp_path, b"abc")
+    uploader(endpoint, lines).upload("c1", add, lambda: None)
+    assert (add.attempt_id, add.upload_id, add.sha256) == ("a1", U1, sha(b"abc"))
+    assert lines == ["uploaded f.bin (3 bytes)"]
+    assert [request.url.path for request in endpoint.sent] == ["/api/v1/upload-attempts/a1"] * 3
+
+
+def test_a_resumed_upload_whose_bytes_tusd_holds_reads_the_attempt(tmp_path: Path) -> None:
+    head = httpx.Response(200, headers={"Upload-Offset": "3", "Upload-Length": "3"})
+    endpoint = Endpoint(attempt_state("receiving"), head, attempt_state("ready"))
+    add = resumable(tmp_path, b"abc")
+    uploader(endpoint, []).upload("c1", add, lambda: None)
+    assert add.sha256 == sha(b"abc")
+    assert [request.method for request in endpoint.sent] == ["GET", "HEAD", "GET"]
+
+
+def test_a_resumed_upload_of_a_file_that_changed_starts_a_new_attempt(tmp_path: Path) -> None:
+    endpoint = Endpoint(attempt_state("ready"), created(), ready_answer(3))
+    add = resumable(tmp_path, b"abc", sha256=sha(b"xyz"))
+    uploader(endpoint, []).upload("c1", add, lambda: None)
+    assert add.attempt_id != "a1" and add.sha256 == sha(b"abc")
+    assert [request.method for request in endpoint.sent] == ["GET", "POST", "PATCH"]

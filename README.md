@@ -54,7 +54,9 @@ machine and network you trust. To run the web against this stack, follow
 the API, the development group directory, Keycloak as a stand-in for the company OIDC provider, the
 web app, and a one-shot seed that loads the demo data of the web's end-to-end fixture. The API reads
 its organizations from [`huron.dev.yaml`](#the-development-configuration). It returns once every
-service is healthy and the seed has run.
+service is healthy and the seed has run. The stack has no lake and no tusd: its API takes no upload
+and no commit, so the seeded collections have no files, and `huron push` and `make demo-noaa` do
+not work on it.
 
 Prerequisites: Docker Engine 25 or newer with the Compose plugin on Linux, or Docker Desktop 4.27 or
 newer on macOS or Windows; ports 3000, 5432, 8080, 8081 and 8082 free on 127.0.0.1; `uv` for the
@@ -62,10 +64,9 @@ CLI. The first run pulls the images and builds the API and web images, which tak
 
 ```bash
 make app
-make demo-noaa    # optional: the NOAA Planetary K-index catalog in the organization noaa
 ```
 
-`make demo-noaa` needs the running stack; see [The NOAA demo](#the-noaa-demo) below.
+`make demo-noaa` needs a stack whose API takes uploads; see [The NOAA demo](#the-noaa-demo) below.
 
 | Service | Address |
 | --- | --- |
@@ -213,9 +214,13 @@ schema; the fixture's organizations the file does not declare, `astro` and `plan
 with their catalogs. It runs on every `make app`, creates each fixture catalog that is still
 missing, and changes nothing once its data is there.
 
-The seed records catalog entries only. No directory and no file bytes exist on any share: the files
-the web lists are records without bytes on disk. `uv run huron adm check --catalog geoscience` therefore
-reports the seeded namespaces and collections missing from your share (`namespace_dir_missing`,
+A commit publishes uploads, and the API of `make app` has no lake. So the seed makes the collections
+without files, and its log says `seed: no HURON_SEED_LAKE_DIR, so the collections get no files`.
+`HURON_SEED_LAKE_DIR` names the lake of an API that has one, mounted into the seed: the seed then
+uploads the fixture's files through the API's upload hooks, writes their bytes into the lake's
+`.tus-uploads`, and commits them. On `make app`, the seed records catalog entries only, and no
+directory exists on your share. `uv run huron adm check --catalog geoscience` therefore reports the
+seeded namespaces and collections missing from your share (`namespace_dir_missing`,
 `collection_dir_missing`) and exits 1.
 
 On `heliophysics`, and without `--catalog`, `huron adm check` stops with `error: internal error
@@ -233,8 +238,8 @@ uv run huron create catalog heliophysics --org helio
 uv run huron create namespace heliophysics.solar-wind.ace --parents
 ```
 
-Then sign out of Keycloak as described above, sign the CLI in as `user`, and make a collection with
-one file. Both show in the web at once, at
+Then sign out of Keycloak as described above, sign the CLI in as `user`, and make a collection. It
+shows in the web at once, at
 http://localhost:3000/catalogs/heliophysics/collections/solar-wind.ace.my-run:
 
 ```bash
@@ -249,12 +254,15 @@ uv run huron add "$work/results.csv"
 uv run huron push -m "First results"
 ```
 
-`push` copies `results.csv` to `/data1/huron/helio/heliophysics/solar-wind/ace/my-run/`.
+`add` stages `results.csv`. `push` then stops with `error: the Huron service does not accept
+uploads`: the API of `make app` has no `lake_path` and no `uploads_url`. A push needs an API that
+holds the lake and a tusd behind an upload proxy.
 
 ### The NOAA demo
 
-`make demo-noaa` loads real data into the running stack: the catalog `planetary` in the
-organization `noaa`, with a year of NOAA SWPC Planetary K-index files stored as raw files
+`make demo-noaa` loads real data into a running stack whose API takes uploads: the catalog
+`planetary` in the organization `noaa`, with a year of NOAA SWPC Planetary K-index files stored as
+raw files
 ([examples/noaa](examples/noaa/README.md) describes the data and the layout). It runs
 [scripts/demo-noaa.sh](scripts/demo-noaa.sh), which:
 
@@ -269,6 +277,9 @@ organization `noaa`, with a year of NOAA SWPC Planetary K-index files stored as 
    nothing, since `noaa`'s `groups.reader` in `huron.dev.yaml` makes `noaa-readers` a reader of
    every `noaa` catalog;
 5. prints `huron --catalog planetary tree` and the files on disk.
+
+The API of `make app` has no lake and no tusd, so on that stack the pushes of step 4 stop with
+`error: the Huron service does not accept uploads`.
 
 It needs `/data1/huron` writable by you, like the rest of [the CLI on the host](#the-cli-on-the-host).
 Running it again changes nothing. `NOAA_REFRESH=1 make demo-noaa` downloads again and pushes only
@@ -287,10 +298,10 @@ make app-reset   # stop and delete the database; the next make app seeds again
 make down        # stop this stack and the make up stack; the data of both stays
 ```
 
-For a fresh database with the demo data, the seed's and NOAA's:
+For a fresh database with the seed's demo data:
 
 ```bash
-make app-reset && make app && make demo-noaa
+make app-reset && make app
 ```
 
 `make app-reset` deletes the database, not `/data1/huron`: the directories and files of an earlier

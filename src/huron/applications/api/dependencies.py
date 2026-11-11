@@ -6,8 +6,8 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Request
 
-from huron.applications.api.disk import Directories, Placements
-from huron.applications.api.runtime import Runtime
+from huron.applications.api.disk import Directories
+from huron.applications.api.runtime import Orchestration, Runtime
 from huron.core.lake.bootstrap import Lake
 from huron.core.lake.organizations.declarations import Declarations
 from huron.pkg.errors import HuronError, register
@@ -31,7 +31,7 @@ UPLOADS_DISABLED = register("UPLOADS_DISABLED", 404, "Uploads disabled")
 
 
 class UploadsDisabled(HuronError):
-    """The service has no lake, so it serves no upload route."""
+    """The service has no lake, so it serves no upload route and takes no commit."""
 
     error_code = UPLOADS_DISABLED
 
@@ -57,11 +57,16 @@ def get_directories(runtime: Annotated[Runtime, Depends(get_runtime)]) -> Direct
     return runtime.directories
 
 
-def require_uploads(runtime: Annotated[Runtime, Depends(get_runtime)]) -> Placements:
-    """The placement of uploads; without a lake, ``UPLOADS_DISABLED``."""
-    if runtime.placements is None:
-        raise UploadsDisabled("this service has no lake path. It does not accept uploads")
-    return runtime.placements
+def require_uploads(runtime: Annotated[Runtime, Depends(get_runtime)]) -> Orchestration:
+    """The work on the lake that seals uploads and publishes commits.
+
+    Without a lake, ``UPLOADS_DISABLED``.
+    """
+    if runtime.orchestration is None:
+        raise UploadsDisabled(
+            "this service has no lake path. It does not accept uploads or commits"
+        )
+    return runtime.orchestration
 
 
 def with_share_root(row: dict[str, Any], declarations: Declarations) -> dict[str, Any]:
@@ -73,4 +78,4 @@ RuntimeDep = Annotated[Runtime, Depends(get_runtime)]
 LakeDep = Annotated[Lake, Depends(get_lake)]
 DeclarationsDep = Annotated[Declarations, Depends(get_declarations)]
 DirectoriesDep = Annotated[Directories, Depends(get_directories)]
-UploadsDep = Annotated[Placements, Depends(require_uploads)]
+UploadsDep = Annotated[Orchestration, Depends(require_uploads)]

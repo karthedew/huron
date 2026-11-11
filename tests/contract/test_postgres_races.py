@@ -2,7 +2,7 @@
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
@@ -14,17 +14,13 @@ from huron.core.lake.bootstrap import Lake, bootstrap, build_lake
 from huron.core.lake.catalogs.models import Catalog
 from huron.core.lake.collections.models import DeletedCollection, State, Update
 from huron.core.lake.errors import NameTaken
-from huron.core.lake.files.errors import BaseVersionConflict
-from huron.core.lake.files.models import CommitRequest, FileAdd
 from huron.core.lake.namespaces.errors import NamespaceNotEmpty
-from huron.core.lake.publications.models import CommitState, Refusal
+from huron.core.lake.publications.models import CommitDraft, CommitState, DraftAdd, Refusal
 from huron.core.lake.schemas.models import BASE_SCHEMA_NAME
-from huron.core.lake.uploads.errors import UploadNotFound
-from huron.core.lake.uploads.models import AttemptState, Upload
+from huron.core.lake.uploads.models import AttemptState, UploadAttempt
 from huron.core.metastore.catalogs.postgres import PostgresCatalogs
 from huron.core.metastore.collections.postgres import PostgresCollections
 from huron.core.metastore.postgres import PostgresStore, PostgresTransaction
-from huron.core.metastore.uploads.postgres import PostgresUploads
 from huron.pkg.errors import NotFound
 from huron.pkg.identifiers import new_id
 from huron.schema.validator import Validator
@@ -37,12 +33,10 @@ from tests.support.lake import (
     READER,
     SETTINGS,
     World,
-    commit_uploaded,
-    placed_upload,
     seed,
     settled_collection,
 )
-from tests.support.publication import publishing_over
+from tests.support.publication import Publishing, publishing_of, publishing_over
 
 pytestmark = pytest.mark.contract
 SHA = "e" * 64
@@ -58,19 +52,9 @@ async def lake(uow: PostgresStore) -> AsyncIterator[Lake]:
     yield built
 
 
-async def test_concurrent_commits_on_one_base_version(lake: Lake) -> None:
-    cid = await settled_collection(lake)
-    requests = [CommitRequest(2, (FileAdd(f"{i}.txt", 1, SHA),), (), f"h{i}") for i in range(2)]
-    for request in requests:
-        await placed_upload(lake, CONTRIBUTOR, cid, request.adds[0].rel_path, 1, SHA)
-    results = await asyncio.gather(
-        *(lake.commits.commit(CONTRIBUTOR, cid, r) for r in requests),
-        return_exceptions=True,
-    )
-    assert sum(isinstance(r, BaseVersionConflict) for r in results) == 1
-    assert sum(not isinstance(r, Exception) for r in results) == 1
-    view = await lake.collections.get(READER, cid)
-    assert (view.collection.version, view.collection.file_count) == (3, 1)
+async def publishing(lake: Lake, uow: PostgresStore, name: str = "run7") -> Publishing:
+    """The commit operations for a new active collection ``name`` of ``lake``."""
+    return publishing_of(lake, uow, frozen(), await settled_collection(lake, name))
 
 
 async def test_namespace_and_collection_racing_for_one_name(lake: Lake) -> None:
@@ -120,9 +104,10 @@ async def test_namespace_deletion_racing_collection_creation_leaves_no_orphan(la
 
 
 async def test_a_commit_between_listing_and_recompute_is_not_overwritten(
-    lake: Lake, monkeypatch: pytest.MonkeyPatch
+    lake: Lake, uow: PostgresStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cid = await settled_collection(lake)
+    published = await publishing(lake, uow)
+    cid = published.collection_id
     page = await lake.schemas.list(ORG_ADMIN, None, None, None)
     base = next(entry.id for entry in page.items if entry.name == BASE_SCHEMA_NAME)
     strict = {
@@ -137,8 +122,9 @@ async def test_a_commit_between_listing_and_recompute_is_not_overwritten(
     async def list_then_commit(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         rows = await original(self, *args, **kwargs)
         if not committed:
-            request = CommitRequest(2, (FileAdd("late.txt", 1, SHA),), (), "h")
-            committed.append((await commit_uploaded(lake, CONTRIBUTOR, cid, request)).version)
+            outcome = await published.commit(CONTRIBUTOR, 2, {"late.txt": b"l"})
+            assert outcome.version is not None
+            committed.append(outcome.version)
         return rows
 
     monkeypatch.setattr(PostgresCollections, "list_in_catalog", list_then_commit)
@@ -181,14 +167,16 @@ async def test_a_collection_deleted_between_listing_and_recompute_is_skipped(
         await lake.collections.get(CONTRIBUTOR, cid)
 
 
-async def test_a_dry_run_commit_writes_nothing_to_postgresql(lake: Lake) -> None:
-    cid = await settled_collection(lake)
-    added = CommitRequest(2, (FileAdd("a.txt", 1, SHA),), (), "h")
-    await commit_uploaded(lake, CONTRIBUTOR, cid, added)
+async def test_a_dry_run_commit_writes_nothing_to_postgresql(
+    lake: Lake, uow: PostgresStore
+) -> None:
+    published = await publishing(lake, uow)
+    cid = published.collection_id
+    await published.commit(CONTRIBUTOR, 2, {"a.txt": b"a"})
     log = await lake.audit.for_collection(CATALOG_ADMIN, cid)
-    request = CommitRequest(3, (FileAdd("b.txt", 2, None),), ("a.txt",), "h")
-    preview = await lake.commits.commit(CONTRIBUTOR, cid, request, dry_run=True)
-    assert preview.as_dict() == {"version": 4, "file_count": 1, "commit_id": None}
+    draft = CommitDraft(cid, 3, (DraftAdd("b.txt", 2),), ("a.txt",))
+    preview = await published.publications.preview(CONTRIBUTOR, draft)
+    assert preview.as_dict() == {"version": 4, "file_count": 1}
     view = await lake.collections.get(READER, cid)
     assert (view.collection.version, view.collection.file_count) == (3, 1)
     commits = await lake.commits.list_commits(READER, cid)
@@ -197,71 +185,41 @@ async def test_a_dry_run_commit_writes_nothing_to_postgresql(lake: Lake) -> None
     assert [f.rel_path for f in files.items] == ["a.txt"]
     after = await lake.audit.for_collection(CATALOG_ADMIN, cid)
     assert len(after.items) == len(log.items)
-    hashed = CommitRequest(3, (FileAdd("b.txt", 2, SHA),), ("a.txt",), "h")
-    result = await commit_uploaded(lake, CONTRIBUTOR, cid, hashed)
+    result = await published.commit(CONTRIBUTOR, 3, {"b.txt": b"bb"}, ["a.txt"])
     assert (result.version, result.file_count) == (preview.version, preview.file_count)
 
 
-async def test_a_receipt_waits_for_a_collection_delete_that_read_the_placed_uploads(
-    lake: Lake, database_url: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cid = await settled_collection(lake)
-    upload = await lake.uploads.begin(CONTRIBUTOR, cid, "late.txt", 1)
-    original = PostgresUploads.placed
-    receipts: list[asyncio.Task[Upload]] = []
-
-    async def placed_then_receipt(
-        self: PostgresUploads, collection_id: uuid.UUID
-    ) -> Sequence[Upload]:
-        rows = await original(self, collection_id)
-        receipt = asyncio.create_task(lake.uploads.receipt(upload.id, 1, SHA, 1))
-        receipts.append(receipt)
-        await _done_or_waiting_for_a_lock(receipt, database_url)
-        return rows
-
-    monkeypatch.setattr(PostgresUploads, "placed", placed_then_receipt)
-    await lake.collections.delete(CONTRIBUTOR, cid, 2)
-    with pytest.raises(UploadNotFound):
-        await receipts[0]
-    assert await lake.uploads.claim_removals() == []
-
-
 async def test_an_upload_begun_during_a_collection_delete_waits_and_finds_no_collection(
-    lake: Lake, database_url: str, monkeypatch: pytest.MonkeyPatch
+    lake: Lake, uow: PostgresStore, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cid = await settled_collection(lake)
-    original = PostgresUploads.placed
-    begun: list[asyncio.Task[Upload]] = []
+    published = await publishing(lake, uow)
+    original = PostgresCollections.delete
+    begun: list[asyncio.Task[UploadAttempt]] = []
 
-    async def placed_then_begin(
-        self: PostgresUploads, collection_id: uuid.UUID
-    ) -> Sequence[Upload]:
-        rows = await original(self, collection_id)
-        begin = asyncio.create_task(lake.uploads.begin(CONTRIBUTOR, cid, "late.txt", 1))
+    async def delete_while_begin_waits(self: PostgresCollections, collection_id: uuid.UUID) -> None:
+        begin = asyncio.create_task(published.receiving(CONTRIBUTOR, "late.txt", b"l"))
         begun.append(begin)
         await _done_or_waiting_for_a_lock(begin, database_url)
-        return rows
+        await original(self, collection_id)
 
-    monkeypatch.setattr(PostgresUploads, "placed", placed_then_begin)
-    await lake.collections.delete(CONTRIBUTOR, cid, 2)
+    monkeypatch.setattr(PostgresCollections, "delete", delete_while_begin_waits)
+    await lake.collections.delete(CONTRIBUTOR, published.collection_id, 2)
     with pytest.raises(NotFound, match="collection not found"):
         await begun[0]
-    assert await lake.uploads.claim_removals() == []
 
 
 async def test_an_upload_begun_with_a_collection_delete_never_fails_in_the_database(
-    lake: Lake,
+    lake: Lake, uow: PostgresStore
 ) -> None:
-    cid = await settled_collection(lake)
+    published = await publishing(lake, uow)
     begun, deleted = await asyncio.gather(
-        lake.uploads.begin(CONTRIBUTOR, cid, "late.txt", 1),
-        lake.collections.delete(CONTRIBUTOR, cid, 2),
+        published.receiving(CONTRIBUTOR, "late.txt", b"l"),
+        lake.collections.delete(CONTRIBUTOR, published.collection_id, 2),
         return_exceptions=True,
     )
-    assert deleted == DeletedCollection("helio/heliophysics/solar-wind/run7", ())
-    if isinstance(begun, Upload):
-        with pytest.raises(UploadNotFound):
-            await lake.uploads.get(CONTRIBUTOR, begun.id)
+    assert deleted == DeletedCollection("helio/heliophysics/solar-wind/run7")
+    if isinstance(begun, UploadAttempt):
+        assert (await published.attempt(begun)).collection_id is None
     else:
         assert isinstance(begun, NotFound)
 

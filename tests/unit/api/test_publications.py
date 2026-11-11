@@ -35,6 +35,7 @@ class Flag:
     """A writer whose lock the test takes away."""
 
     writable: bool = True
+    lost: bool = False
 
 
 async def submit(

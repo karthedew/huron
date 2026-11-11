@@ -98,8 +98,19 @@ describe('collectionSummary', () => {
 			activatedAt: '2026-10-02T09:05:00+00:00',
 			sharePath: '/projects/huron/helio/heliophysics/solar-wind/ace/mag-l2-2024',
 			schema: { name: 'huron-base', version: 1 },
+			pendingCommit: null,
 			hasOverride: true,
 			overrideIncompatible: false
+		});
+	});
+
+	it('keeps the state and the time of the commit that holds the collection', () => {
+		const held = collectionFixture({
+			pending_request: { state: 'accepted', since: '2026-10-04T09:00:00+00:00' }
+		});
+		expect(collectionSummary(held, '/projects/huron').pendingCommit).toEqual({
+			state: 'accepted',
+			since: '2026-10-04T09:00:00+00:00'
 		});
 	});
 

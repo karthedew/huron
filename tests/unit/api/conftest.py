@@ -1,11 +1,15 @@
 """Fixtures for API tests."""
 
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from huron.core.storage.posix import PosixStorage
 from tests.support.api import Service, mark_lake, seed_service, service
+from tests.support.disk import SIGNAL_TIMEOUT
 from tests.support.tusd import UploadTarget, upload_target
 
 
@@ -45,3 +49,24 @@ async def seeded_lake_api(lake_api: Service) -> Service:
 async def target(seeded_lake_api: Service, lake: Path) -> UploadTarget:
     """Collection ``run7`` of the service with the temporary lake, ready for uploads."""
     return await upload_target(seeded_lake_api, lake)
+
+
+@pytest.fixture
+async def paused_copy(
+    target: UploadTarget, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[tuple[threading.Event, threading.Event]]:
+    """The copy of each seal waits until the second event is set; the first is set then.
+
+    The second event is set at the end of the test, before the service of ``target`` stops.
+    """
+    copying, release = threading.Event(), threading.Event()
+    real = PosixStorage.copy_sealed
+
+    def paused(self: PosixStorage, *args: Any, **kwargs: Any) -> Any:
+        copying.set()
+        assert release.wait(SIGNAL_TIMEOUT)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(PosixStorage, "copy_sealed", paused)
+    yield copying, release
+    release.set()

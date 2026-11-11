@@ -67,6 +67,13 @@ class PostgresCommitRequests:
         )
         return None if row is None else _request(row)
 
+    async def find(self, row_id: uuid.UUID) -> CommitOutcome | None:
+        """The request with ``row_id``, read without a row lock."""
+        row = await self._db.fetchrow(
+            f"select {_REQUEST_COLUMNS} from huron.commit_requests where id = $1", row_id
+        )
+        return None if row is None else _request(row)
+
     async def lock(self, row_id: uuid.UUID) -> CommitOutcome | None:
         """The request with ``row_id``, locked ``for update``."""
         row = await self._db.fetchrow(

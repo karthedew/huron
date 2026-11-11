@@ -4,6 +4,7 @@
 	import CopyIdentifier from '$design/components/CopyIdentifier.svelte';
 	import SectionNav from '$design/components/SectionNav.svelte';
 	import { identifierInCatalog } from '$lib/explorer';
+	import { formatTimestamp, timestampAttribute } from '$lib/format';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -88,6 +89,14 @@
 		</h1>
 		<CopyIdentifier value={collection.identifier} />
 	</div>
+	{#if collection.pendingCommit}
+		{@const pending = collection.pendingCommit}
+		<p class="mt-1 mb-0 text-sm wrap-anywhere text-app-muted">
+			A commit is {pending.state === 'blocked' ? 'blocked' : 'in progress'} since
+			<time datetime={timestampAttribute(pending.since)}>{formatTimestamp(pending.since)}</time>.
+			The files and the version show the last completed commit.
+		</p>
+	{/if}
 	<SectionNav label="Collection" {sections} />
 </header>
 

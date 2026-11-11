@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from huron.core.storage.lakepath import LakePath
-from huron.schema.naming import BACKUP_SUFFIX, METADATA_FILE, PART_SUFFIX, NamingError
+from huron.schema.naming import METADATA_FILE, PART_SUFFIX, NamingError
 
 __all__ = [
     "DIRECTORY_MODE",
@@ -35,7 +35,7 @@ ORGANIZATION_MODE = 0o2751
 #: Catalog, namespace, collection and intermediate directories: the group reads, setgid passes
 #: the catalog's group down to every directory made below it.
 DIRECTORY_MODE = 0o2750
-#: A placed file and ``metadata.json``: readable by whoever may traverse the directories above.
+#: A published file and ``metadata.json``: readable by whoever may traverse the directories above.
 FILE_MODE = 0o644
 #: tusd's filestore: only the service user.
 UPLOAD_DIR_MODE = 0o700
@@ -92,8 +92,4 @@ class OrganizationPlace:
 def is_reserved_entry(rel_path: str) -> bool:
     """Whether an entry inside a collection belongs to Huron rather than to the user."""
     name = rel_path.rpartition("/")[2]
-    return (
-        rel_path == METADATA_FILE
-        or name.startswith(MARKER_FILE)
-        or name.endswith((PART_SUFFIX, BACKUP_SUFFIX))
-    )
+    return rel_path == METADATA_FILE or name.startswith(MARKER_FILE) or name.endswith(PART_SUFFIX)

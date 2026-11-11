@@ -78,7 +78,10 @@ the one with it, and anything else answers the site's 404 page. The image builds
 ## Try it: `npm run demo`
 
 The demo runs `vite dev` against a stand-in for the company IdP and the API on its memory store,
-seeded with the end-to-end fixture. After the [setup](#setup) it needs nothing more: the API runs
+seeded with the end-to-end fixture. The API holds a lake of its own: `HURON_E2E_LAKE_DIR`, by
+default `huron-e2e-lake-<API port>` in the system's temporary directory. Each start deletes that
+directory with everything in it and makes it again, empty; the seed then uploads the fixture's
+files into it and commits them. After the [setup](#setup) it needs nothing more: the API runs
 with `uv run --offline --no-sync`, so nothing is downloaded. From `web/`:
 
 ```bash
@@ -174,6 +177,9 @@ HURON_SEED_API_URL=http://127.0.0.1:8080 HURON_SEED_ISSUER=http://127.0.0.1:8081
 ```
 
 The data stays in the volume `huron_postgres-data`, and running the seed again changes nothing.
+The API of `make api` has no lake unless its configuration sets `lake_path`, so the seed makes the
+collections without files. When the API has a lake, `HURON_SEED_LAKE_DIR=<the API's lake>` makes the
+seed also upload and commit their files.
 
 A `make up` Keycloak whose volume predates the `huron-web` client answers the sign-in with "Client
 not found"; recreate only its volume, as the root README's
@@ -185,7 +191,7 @@ their ports, so `make up` stops the `make app` stack first, and `make app` stops
 
 `make app`, in the repository root, builds and starts the whole application in Docker:
 PostgreSQL, the API, the group directory, Keycloak, this web app on http://localhost:3000 and the
-demo data. The CLI on the host signs in to the same Keycloak, with the device or the loopback
+demo data. Its API has no lake, so the seeded collections have no files. The CLI on the host signs in to the same Keycloak, with the device or the loopback
 flow, and writes through the same API, so what it creates shows here at once.
 [Run everything in Docker](../README.md#run-everything-in-docker) in the root README lists the
 accounts and covers the CLI's setup, stopping, resetting and troubleshooting. `make up` and
@@ -227,7 +233,7 @@ npm run test:e2e
 
 The end-to-end tests run the whole stack on this machine, as the demo does. `npm run test:e2e`
 builds the web and the documentation (run `npm run docs:install` once first), then starts the fake IdP and the fault proxy (8199, 8197), the API on the memory store
-(8198) and the built web server (`node build/index.js` at http://localhost:4173, which reads no
+with its lake (8198; the lake is `HURON_E2E_LAKE_DIR`, which each start deletes and makes again) and the built web server (`node build/index.js` at http://localhost:4173, which reads no
 `.env`), seeds the fixture once, and runs the tests in Chromium. Every process gets every setting
 explicitly, so nothing leaks in from `.env` or the shell. The ports are the demo's, so the two
 cannot run at the same time; move them with the variables above and `HURON_E2E_WEB_PORT`. The
@@ -238,8 +244,9 @@ search runs without a documentation build. The pieces live in `e2e/support/`:
 - `fake-idp.mjs`: the stand-in company IdP and group directory, one sign-in button per fixture
   user, and the fault proxy.
 - `fixture.mjs`: the users, groups, organizations, catalogs, namespaces, collections and schema
-  the tests assert on; `seed.mjs` creates them through the real API, and `make app` seeds the
-  same fixture. One collection, `space-weather.alerts.storm-count-2024`, has a schema override
+  the tests assert on; `seed.mjs` creates them through the real API, with the files uploaded
+  through the upload hooks into the API's lake, and `make app` seeds the same fixture without
+  files. One collection, `space-weather.alerts.storm-count-2024`, has a schema override
   that no longer fits its catalog's schema, so it stays incomplete: the case of an incompatible
   override.
 - `stack.mjs`: the ports and the environment of every process.

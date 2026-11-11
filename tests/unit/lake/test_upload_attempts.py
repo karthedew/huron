@@ -130,7 +130,7 @@ def test_a_refusal_of_an_ended_attempt_names_its_state_only(state: AttemptState)
 
 
 def test_an_ineligible_upload_names_the_upload_its_state_and_the_reason() -> None:
-    error = UploadIneligible(CURRENT, AttemptState.SEALING)
+    error = UploadIneligible.for_commit(CURRENT, AttemptState.SEALING)
     assert (error.code, error.status) == ("UPLOAD_INELIGIBLE", 409)
     assert (error.state, error.reason) == (AttemptState.SEALING, IneligibleReason.STATE)
     assert error.context == {"upload_id": str(CURRENT), "state": "sealing", "reason": "state"}
@@ -160,20 +160,36 @@ def test_an_ineligible_upload_names_the_upload_its_state_and_the_reason() -> Non
     ],
 )
 def test_an_ineligible_upload_tells_each_reason(reason: IneligibleReason, message: str) -> None:
-    error = UploadIneligible(FIRST, AttemptState.READY, reason)
+    error = UploadIneligible.for_commit(FIRST, AttemptState.READY, reason)
     assert (error.message, error.reason) == (message, reason)
     assert error.context == {"upload_id": str(FIRST), "state": "ready", "reason": str(reason)}
 
 
 @pytest.mark.parametrize(
-    ("reason", "message"),
+    "state", [AttemptState.FAILED, AttemptState.CANCELLED, AttemptState.EXPIRED]
+)
+def test_a_commit_of_an_ended_upload_tells_the_client_to_start_a_new_upload(
+    state: AttemptState,
+) -> None:
+    error = UploadIneligible.for_commit(FIRST, state)
+    assert error.reason is IneligibleReason.STATE
+    assert error.message == (
+        f"upload {FIRST} is {state}. Start a new upload of the file with a new attempt_id,"
+        " then send the commit again with a new request ID"
+    )
+
+
+@pytest.mark.parametrize(
+    ("superseded", "reason", "message"),
     [
         (
+            False,
             IneligibleReason.STATE,
             f"upload {FIRST} is cancelled. Huron cannot start a seal of it."
             " Read the upload attempt",
         ),
         (
+            True,
             IneligibleReason.SUPERSEDED,
             f"upload {FIRST} is not the current upload of its attempt."
             " Huron cannot start a seal of it. Read the upload attempt",
@@ -181,9 +197,9 @@ def test_an_ineligible_upload_tells_each_reason(reason: IneligibleReason, messag
     ],
 )
 def test_a_seal_that_cannot_start_tells_its_reason_without_a_commit(
-    reason: IneligibleReason, message: str
+    superseded: bool, reason: IneligibleReason, message: str
 ) -> None:
-    error = UploadIneligible(FIRST, AttemptState.CANCELLED, reason, sealing=True)
+    error = UploadIneligible.for_seal(FIRST, AttemptState.CANCELLED, superseded=superseded)
     assert (error.code, error.message, error.reason) == ("UPLOAD_INELIGIBLE", message, reason)
     assert error.context == {
         "upload_id": str(FIRST),
@@ -236,4 +252,13 @@ def test_exceeded_capacity_names_the_limit_and_the_bytes() -> None:
     assert error.message == (
         "the upload needs 100 bytes, but max_staged_bytes permits only 40 bytes."
         " Send the upload again later"
+    )
+
+
+def test_exceeded_capacity_of_a_doubled_upload_says_that_it_needs_its_size_two_times() -> None:
+    error = CapacityExceeded("min_free_bytes", 100, 40, doubled=True)
+    assert error.context == {"limit": "min_free_bytes", "requested": 100, "available": 40}
+    assert error.message == (
+        "the upload needs 100 bytes (two times its size: tusd keeps the file and Huron keeps a"
+        " copy), but min_free_bytes permits only 40 bytes. Send the upload again later"
     )

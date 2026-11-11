@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from huron.applications.api.disk import PROBE_TIMEOUT, LakeDisk, Writer
-from huron.core.storage import MARKER_FILE, LakePath, OpenFile, OrganizationPlace, Storage
+from huron.core.storage import MARKER_FILE, LakePath, OrganizationPlace, Storage
 from huron.core.storage.memory import MemoryStorage
 from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import Clock
@@ -212,34 +212,6 @@ class StalledStorage(MemoryStorage):
         super().write_bytes(location, data, mode)
 
 
-class PausingStorage(PosixStorage):
-    """POSIX storage whose first hash waits until :attr:`release` is set.
-
-    :attr:`hashing` is set once that hash waits, so a test can act while a placement hashes.
-    Later hashes do not wait, until :meth:`pause_next`.
-    """
-
-    def __init__(self, root: Path) -> None:
-        super().__init__(root)
-        self.hashing = threading.Event()
-        self.release = threading.Event()
-        self._paused = False
-
-    def pause_next(self) -> None:
-        """Make the next hash wait as the first one did, with both signals cleared."""
-        self.hashing.clear()
-        self.release.clear()
-        self._paused = False
-
-    def open_file(self, location: LakePath) -> OpenFile | None:
-        """Open ``location``; the first file opened pauses in its hash."""
-        opened = super().open_file(location)
-        if opened is None or self._paused:
-            return opened
-        self._paused = True
-        return _PausedFile(opened, self.hashing, self.release)
-
-
 def _fail_link(monkeypatch: pytest.MonkeyPatch, name: str, number: int) -> None:
     """Fail the first ``os.link`` to a name ``name`` with ``number``."""
     real = os.link
@@ -253,24 +225,3 @@ def _fail_link(monkeypatch: pytest.MonkeyPatch, name: str, number: int) -> None:
         real(source, destination, *args, **kwargs)
 
     monkeypatch.setattr(os, "link", failing)
-
-
-class _PausedFile:
-    def __init__(self, opened: OpenFile, hashing: threading.Event, release: threading.Event):
-        self._opened = opened
-        self._hashing = hashing
-        self._release = release
-        self.size = opened.size
-        self.inode = opened.inode
-
-    def sha256(self) -> str:
-        self._hashing.set()
-        if not self._release.wait(SIGNAL_TIMEOUT):
-            raise TimeoutError("the test never released the paused hash")
-        return self._opened.sha256()
-
-    def set_mode(self, mode: int) -> None:
-        self._opened.set_mode(mode)
-
-    def close(self) -> None:
-        self._opened.close()

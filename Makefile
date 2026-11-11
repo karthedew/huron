@@ -53,7 +53,7 @@ app-reset: ## Stop the Docker application and delete its data.
 	$(APP) down -v
 
 # NOAA_RAW=<dir> loads an existing examples/noaa/fetch.py download; NOAA_REFRESH=1 fetches again.
-demo-noaa: ## Load the NOAA Planetary K-index demo (catalog planetary in org noaa) into a running `make app`; safe to re-run.
+demo-noaa: ## Load the NOAA Planetary K-index demo (catalog planetary in org noaa) into a running stack whose API takes uploads (not `make app`); safe to re-run.
 	./scripts/demo-noaa.sh
 
 test: ## Run the unit tier (no database needed).

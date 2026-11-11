@@ -13,6 +13,7 @@ import type {
 	OrganizationGroupsOut,
 	OrganizationOut,
 	Page as ApiPage,
+	PendingRequestOut,
 	ProblemOut,
 	RoleOut,
 	SchemaOut,
@@ -27,6 +28,7 @@ export type Namespace = NamespaceOut;
 export type Collection = CollectionOut;
 export type CollectionState = State;
 export type CollectionProblem = ProblemOut;
+export type PendingRequest = PendingRequestOut;
 export type FileRecord = FileOut;
 export type Commit = CommitOut;
 export type AuditEntry = AuditOut;

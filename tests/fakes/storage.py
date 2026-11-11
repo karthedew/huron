@@ -23,7 +23,6 @@ from huron.core.storage.memory import MemoryStorage
 WRITES = frozenset(
     {
         "copy_sealed",
-        "link",
         "link_once",
         "make_directory",
         "make_inheriting_dir",
@@ -73,24 +72,6 @@ class Subtree:
 
     def write_bytes(self, location: LakePath, data: bytes, mode: int) -> None:
         self.share.write_bytes(self._in(location), data, mode)
-
-    def link(
-        self,
-        source: LakePath,
-        destination: LakePath,
-        *,
-        inode: int,
-        part_name: str,
-        backup_name: str,
-    ) -> LakePath | None:
-        backup = self.share.link(
-            self._in(source),
-            self._in(destination),
-            inode=inode,
-            part_name=part_name,
-            backup_name=backup_name,
-        )
-        return None if backup is None else LakePath.parse(backup.relative_to(self.base))
 
     def rename(self, source: LakePath, destination: LakePath) -> None:
         self.share.rename(self._in(source), self._in(destination))

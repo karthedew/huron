@@ -2,7 +2,6 @@
 
 import uuid
 from dataclasses import replace
-from datetime import timedelta
 
 import pytest
 
@@ -21,9 +20,7 @@ from huron.core.lake.collections.models import (
     Update,
 )
 from huron.core.lake.errors import NameTaken, VersionConflict
-from huron.core.lake.files.models import CommitRequest, FileAdd
 from huron.core.lake.schemas.models import BASE_SCHEMA_NAME
-from huron.core.lake.uploads.models import Removal
 from huron.pkg.errors import Conflict, Forbidden, NotFound
 from huron.schema.composition import SchemaIncompatible
 from huron.schema.naming import NamingError
@@ -38,9 +35,8 @@ from tests.support.lake import (
     STRANGER,
     VALID_METADATA,
     World,
-    commit_uploaded,
-    placed_upload,
 )
+from tests.support.publication import publishing_of
 
 SHA = "0" * 64
 RUN7 = "helio/heliophysics/solar-wind/run7"
@@ -251,14 +247,13 @@ async def test_deletion_rules(seeded: World) -> None:
     cid = view.collection.id
     with pytest.raises(Forbidden):
         await lake.collections.delete(OTHER_CONTRIBUTOR, cid, 2)
-    await commit_uploaded(
-        seeded.lake, CONTRIBUTOR, cid, CommitRequest(2, (FileAdd("a.txt", 1, SHA),), (), "host")
-    )
+    publishing = publishing_of(lake, seeded.store, seeded.clock, cid)
+    await publishing.commit(CONTRIBUTOR, 2, {"a.txt": b"a"})
     with pytest.raises(CollectionNotEmpty):
         await lake.collections.delete(CONTRIBUTOR, cid, 3)
     with pytest.raises(VersionConflict):
         await lake.collections.delete(CONTRIBUTOR, cid, 2)
-    await lake.commits.commit(CONTRIBUTOR, cid, CommitRequest(3, (), ("a.txt",), "host"))
+    await publishing.commit(CONTRIBUTOR, 3, {}, ["a.txt"])
     await lake.collections.delete(CATALOG_ADMIN, cid, 4)
     with pytest.raises(NotFound):
         await lake.collections.get(CONTRIBUTOR, cid)
@@ -266,48 +261,30 @@ async def test_deletion_rules(seeded: World) -> None:
     await lake.collections.delete(CONTRIBUTOR, other.collection.id, 2)
 
 
-async def test_a_delete_answers_the_directory_and_no_removals_without_placed_files(
-    seeded: World,
-) -> None:
+async def test_a_delete_answers_the_directory_of_the_collection(seeded: World) -> None:
     lake = seeded.lake
     settled = await active(seeded)
     draft = await lake.collections.create(CONTRIBUTOR, "heliophysics", "solar-wind", "sketch")
     assert await lake.collections.delete(
         CONTRIBUTOR, settled.collection.id, 2
-    ) == DeletedCollection(RUN7, ())
+    ) == DeletedCollection(RUN7)
     assert await lake.collections.delete(CONTRIBUTOR, draft.collection.id, 1) == DeletedCollection(
-        None, ()
+        None
     )
-    assert seeded.store.state.removals == {}
 
 
-async def test_a_delete_claims_the_removal_of_each_placed_file_with_its_inode(
+async def test_a_delete_keeps_the_upload_attempts_without_their_collection(
     seeded: World,
 ) -> None:
     lake = seeded.lake
     cid = (await active(seeded)).collection.id
-    await lake.uploads.begin(CONTRIBUTOR, cid, "waiting", 1)
-    await placed_upload(lake, OTHER_CONTRIBUTOR, cid, "Data/B.txt", 3, SHA, inode=2**63 + 1)
-    failing = await lake.uploads.begin(CONTRIBUTOR, cid, "c", 1)
-    await lake.uploads.fail(failing.id, "X", "x")
-    seeded.clock.advance(timedelta(minutes=1))
-    now = seeded.clock.now()
-    deleted = await lake.collections.delete(CONTRIBUTOR, cid, 2)
-    (queued,) = seeded.store.state.removals.values()
-    assert queued == Removal(
-        queued.id,
-        None,
-        f"{RUN7}/Data/B.txt",
-        "Data/B.txt",
-        "data/b.txt",
-        SHA,
-        None,
-        now,
-        claimed_at=now,
-        inode=2**63 + 1,
-    )
-    assert deleted == DeletedCollection(RUN7, (replace(queued, collection_id=cid),))
-    assert seeded.store.state.uploads == {}
+    publishing = publishing_of(lake, seeded.store, seeded.clock, cid)
+    waiting = await publishing.receiving(CONTRIBUTOR, "waiting", b"w")
+    ready = await publishing.ready(OTHER_CONTRIBUTOR, "Data/B.txt", b"bee")
+    await lake.collections.delete(CONTRIBUTOR, cid, 2)
+    for attempt in (waiting, ready):
+        kept = await publishing.attempt(attempt)
+        assert kept == replace(attempt, collection_id=None, active_at=kept.active_at)
 
 
 async def test_sidecar_is_canonical_and_absent_for_drafts(seeded: World) -> None:
@@ -423,9 +400,8 @@ async def test_a_dry_run_delete_checks_rights_and_version_but_changes_nothing(
     lake = seeded.lake
     view = await active(seeded)
     collection_id = view.collection.id
-    await commit_uploaded(
-        seeded.lake, CONTRIBUTOR, collection_id, CommitRequest(2, (FileAdd("a", 1, SHA),), (), "h")
-    )
+    publishing = publishing_of(lake, seeded.store, seeded.clock, collection_id)
+    await publishing.commit(CONTRIBUTOR, 2, {"a": b"a"})
     with pytest.raises(Forbidden):
         await lake.collections.delete(OTHER_CONTRIBUTOR, collection_id, 3, dry_run=True)
     with pytest.raises(VersionConflict):

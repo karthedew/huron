@@ -11,13 +11,13 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from huron.core.lake.schemas.models import SchemaRef
-    from huron.core.lake.uploads.models import Removal
 
 __all__ = [
     "UNSET",
     "Collection",
     "CollectionView",
     "DeletedCollection",
+    "PendingRequest",
     "Search",
     "SettledCollection",
     "State",
@@ -92,8 +92,27 @@ class Update:
 
 
 @dataclass(frozen=True, slots=True)
+class PendingRequest:
+    """The commit request that holds a collection: its ``state`` (``accepted`` or ``blocked``)
+    and the time ``since`` when the server accepted it.
+    """
+
+    state: str
+    since: datetime
+
+    def as_dict(self) -> dict[str, str]:
+        """Render for the API."""
+        return {"state": self.state, "since": self.since.isoformat()}
+
+
+@dataclass(frozen=True, slots=True)
 class CollectionView:
-    """A collection as the API shows it."""
+    """A collection as the API shows it.
+
+    ``pending_request`` is the commit request that holds the collection, ``None`` when no
+    request holds it. While a request is pending, the files and the version are those of the
+    last commit that succeeded.
+    """
 
     collection: Collection
     organization: str
@@ -101,6 +120,7 @@ class CollectionView:
     namespace_path: str
     schema: SchemaRef
     problems: list[dict[str, str]] = field(default_factory=list)
+    pending_request: PendingRequest | None = None
 
     @property
     def disk_path(self) -> str | None:
@@ -132,6 +152,9 @@ class CollectionView:
             "activated_at": None if c.activated_at is None else c.activated_at.isoformat(),
             "path": self.disk_path,
             "problems": self.problems,
+            "pending_request": (
+                None if self.pending_request is None else self.pending_request.as_dict()
+            ),
         }
 
 
@@ -148,9 +171,7 @@ class DeletedCollection:
     """What deleting a collection leaves for the disk.
 
     ``disk_path`` is the directory the collection had, in the form of
-    :attr:`CollectionView.disk_path`, ``None`` for a draft. ``removals`` are the removals of the
-    files of its placed, uncommitted uploads, claimed for the request that deleted it.
+    :attr:`CollectionView.disk_path`, ``None`` for a draft.
     """
 
     disk_path: str | None
-    removals: tuple[Removal, ...]

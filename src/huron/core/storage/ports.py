@@ -204,27 +204,6 @@ class Storage(ShareReader, Protocol):
         """Write ``data`` atomically to a file with exactly ``mode``."""
         ...
 
-    def link(
-        self,
-        source: LakePath,
-        destination: LakePath,
-        *,
-        inode: int,
-        part_name: str,
-        backup_name: str,
-    ) -> LakePath | None:
-        """Hard-link ``source`` to ``destination``, atomically replacing an existing file.
-
-        ``source`` must be a regular file with the inode ``inode``: a missing source or another
-        entry is ``SourceGone``, a link at ``source`` is ``SymlinkInLake``, and a missing parent
-        of ``source`` is a ``StorageError``. The replaced file keeps its bytes under
-        ``backup_name`` beside ``destination``, and the replacement goes through ``part_name``.
-        A ``destination`` that already links ``source`` stays as it is, and a backup an earlier
-        attempt made for it is still the backup. Returns the backup, or ``None`` when nothing
-        was replaced.
-        """
-        ...
-
     def rename(self, source: LakePath, destination: LakePath) -> None:
         """Give the file at ``source`` the name ``destination``, replacing it atomically."""
         ...

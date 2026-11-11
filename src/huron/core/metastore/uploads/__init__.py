@@ -1,1 +1,1 @@
-"""Persistence of uploads and removals."""
+"""Persistence of upload attempts and their objects."""

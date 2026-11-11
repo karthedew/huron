@@ -21,10 +21,13 @@ __all__ = [
     "MAX_BASE_VERSION",
     "MAX_ENTRIES",
     "CommitAdd",
+    "CommitDraft",
     "CommitEntry",
     "CommitOutcome",
+    "CommitPreview",
     "CommitRequest",
     "CommitState",
+    "DraftAdd",
     "EntryAction",
     "EntryTarget",
     "Refusal",
@@ -149,6 +152,51 @@ class CommitRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class DraftAdd:
+    """A file that a dry run of a commit adds: the client may not know its sha256 and upload."""
+
+    rel_path: str
+    size: int
+    sha256: str | None = None
+    upload_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CommitDraft:
+    """The body of a dry run of a commit to one collection.
+
+    The rules of :class:`CommitRequest` hold, except that an add can leave out its ``sha256``
+    and its ``upload_id``: a client asks before it uploads, so it knows neither. A sha256 that
+    is present must be 64 lowercase hexadecimal characters.
+    """
+
+    collection_id: uuid.UUID
+    base_version: int
+    adds: tuple[DraftAdd, ...]
+    removes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _check_entry_count(len(self.adds) + len(self.removes))
+        _check_base_version(self.base_version)
+        for add in self.adds:
+            _check_add(add)
+        _check_paths([add.rel_path for add in self.adds], list(self.removes))
+        _check_uploads(tuple(add for add in self.adds if add.upload_id is not None))
+
+
+@dataclass(frozen=True, slots=True)
+class CommitPreview:
+    """What a commit would make: the ``version`` and the ``file_count`` of the collection."""
+
+    version: int
+    file_count: int
+
+    def as_dict(self) -> dict[str, Any]:
+        """Render for the API."""
+        return {"version": self.version, "file_count": self.file_count}
+
+
+@dataclass(frozen=True, slots=True)
 class CommitEntry:
     """One filesystem change of an accepted request, done in the order of ``ordinal``.
 
@@ -263,12 +311,14 @@ def _check_base_version(base_version: int) -> None:
         )
 
 
-def _check_add(add: CommitAdd) -> None:
+def _check_add(add: CommitAdd | DraftAdd) -> None:
     if add.size < 0:
         raise CommitInvalid(
             f"the size of {add.rel_path!r} must be 0 or more",
             {"rel_path": add.rel_path, "size": add.size},
         )
+    if add.sha256 is None:
+        return
     if len(add.sha256) != _SHA256_LENGTH or not set(add.sha256) <= _HEX:
         raise CommitInvalid(
             f"the sha256 of {add.rel_path!r} must be 64 lowercase hexadecimal characters",
@@ -293,8 +343,8 @@ def _check_paths(adds: list[str], removes: list[str]) -> None:
         keys[key] = path
 
 
-def _check_uploads(adds: tuple[CommitAdd, ...]) -> None:
-    named: dict[uuid.UUID, str] = {}
+def _check_uploads(adds: tuple[CommitAdd | DraftAdd, ...]) -> None:
+    named: dict[uuid.UUID | None, str] = {}
     for add in adds:
         if add.upload_id in named:
             raise CommitInvalid(

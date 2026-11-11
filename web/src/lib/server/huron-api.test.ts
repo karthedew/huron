@@ -169,7 +169,14 @@ describe('HuronApi URLs', () => {
 			'/api/v1/catalogs/heliophysics/collections/solar-wind.ace.mag-l2-2024',
 			collectionFixture()
 		],
-		['collection', (api) => api.collection(ID), `/api/v1/collections/${ID}`, collectionFixture()],
+		[
+			'collection',
+			(api) => api.collection(ID),
+			`/api/v1/collections/${ID}`,
+			collectionFixture({
+				pending_request: { state: 'blocked', since: '2026-10-04T09:00:00+00:00' }
+			})
+		],
 		['collectionSchema', (api) => api.collectionSchema(ID), `/api/v1/collections/${ID}/schema`, {}],
 		[
 			'files',

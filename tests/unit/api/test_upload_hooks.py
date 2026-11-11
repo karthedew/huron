@@ -1,505 +1,479 @@
-"""tusd's hooks over a temporary lake: creating, placing and terminating uploads."""
+"""tusd's hooks over HTTP: the creation rule in ``pre-create`` and the seal in ``pre-finish``."""
 
 import asyncio
-import hashlib
-import os
-import shutil
-import stat
+import threading
 import uuid
-from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
-import httpx
 import pytest
 
-from huron.core.storage import MARKER_FILE, Marker, render_marker
-from huron.pkg.hashing import EMPTY_SHA256
-from tests.support.api import Service, seed_service, service
-from tests.support.clock import frozen
-from tests.support.disk import SIGNAL_TIMEOUT, PausingStorage, snapshot
-from tests.support.lake import CONTRIBUTOR
-from tests.support.tusd import (
-    HOOKS,
-    UploadTarget,
-    hook_body,
-    problem_of,
-    upload_body,
-    upload_target,
-)
+from huron.applications.api.disk import SEAL_WAIT
+from huron.applications.api.routes.v1.endpoints.uploads import UPLOAD_STATE_HEADER
+from huron.core.storage import MARKER_FILE, FreeSpace
+from huron.core.storage.posix import PosixStorage
+from tests.support.api import mark_lake, seed_service, service
+from tests.support.clock import LoopClock, run_ready
+from tests.support.disk import SIGNAL_TIMEOUT
+from tests.support.tusd import UploadTarget, problem_of, upload_target
 
-DATA = b"solar wind, run seven"
-SHA = hashlib.sha256(DATA).hexdigest()
-OLD = b"old bytes"
-OLD_SHA = hashlib.sha256(OLD).hexdigest()
+DATA = b"solar wind, day one"
+ATTEMPT = "0190d5a4-0000-7000-8000-0000000000a1"
 
 
-def receipt(upload_id: str, sha256: str) -> dict[str, object]:
-    return {"HTTPResponse": {"Header": {"Huron-Upload-Id": upload_id, "Huron-Sha256": sha256}}}
-
-
-async def state(api: Service, upload_id: str, user: str = "dave") -> dict[str, object]:
-    response = await api.client.get(f"/api/v1/uploads/{upload_id}", headers=await api.headers(user))
-    assert response.status_code == 200, response.text
-    return dict(response.json())
-
-
-@pytest.fixture
-async def pausing(lake: Path) -> AsyncIterator[tuple[Service, PausingStorage, UploadTarget]]:
-    """A service whose lake pauses in its first hash, with collection ``run7`` ready."""
-    storage = PausingStorage(lake)
-    clock = frozen()
-    try:
-        async with service(storage=storage, clock=clock, lake_path=lake) as api:
-            await seed_service(api)
-            yield api, storage, await upload_target(api, lake)
-    finally:
-        storage.release.set()
-
-
-async def hashing(storage: PausingStorage) -> None:
-    assert await asyncio.to_thread(storage.hashing.wait, SIGNAL_TIMEOUT)
-
-
-async def delete_collection(api: Service, target: UploadTarget) -> httpx.Response:
-    return await api.client.delete(
-        f"/api/v1/collections/{target.collection_id}",
-        headers=await api.headers("dave", **{"If-Match": f'"{target.version}"'}),
+async def attempt_of(target: UploadTarget, attempt_id: str = ATTEMPT) -> dict[str, Any]:
+    """The upload attempt as its owner dave reads it."""
+    api = target.tusd.api
+    read = await api.client.get(
+        f"/api/v1/upload-attempts/{attempt_id}", headers=await api.headers("dave")
     )
+    assert read.status_code == 200, read.text
+    attempt: dict[str, Any] = read.json()
+    return attempt
 
 
-async def commit(api: Service, target: UploadTarget, rel_path: str, data: bytes) -> None:
-    """Commit the placed upload of ``data`` to ``rel_path`` as dave."""
-    body = {
-        "base_version": target.version,
-        "adds": [
-            {"rel_path": rel_path, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
-        ],
-        "removes": [],
-        "host": "ws1",
-        "message": "first",
-    }
-    committed = await api.client.post(
-        f"/api/v1/collections/{target.collection_id}/commits",
-        json=body,
-        headers=await api.headers("dave"),
+async def created(target: UploadTarget, **options: Any) -> str:
+    """The upload ID that ``pre-create`` of :data:`DATA` by dave names."""
+    answer = await target.tusd.create(
+        "dave", target.collection_id, "a.cdf", len(DATA), attempt_id=ATTEMPT, **options
     )
-    assert committed.status_code == 200, committed.text
+    assert answer.status_code == 200, answer.text
+    upload_id: str = answer.json()["ChangeFileInfo"]["ID"]
+    return upload_id
 
 
-async def test_a_fresh_upload_is_placed_and_received(
-    seeded_lake_api: Service, target: UploadTarget
-) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "a/b/c.bin", DATA)
-    inode = os.lstat(target.tusd.upload_dir / upload_id).st_ino
-    finished = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert (finished.status_code, finished.json()) == (200, receipt(upload_id, SHA))
-    placed = target.directory / "a" / "b" / "c.bin"
-    assert placed.read_bytes() == DATA
-    info = os.lstat(placed)
-    assert (stat.S_IMODE(info.st_mode), info.st_nlink, info.st_ino) == (0o644, 1, inode)
-    for directory in (target.directory / "a", target.directory / "a" / "b"):
-        assert stat.S_IMODE(os.lstat(directory).st_mode) == 0o2750
-    assert sorted(p.name for p in target.tusd.upload_dir.iterdir()) == []
-    assert await state(seeded_lake_api, upload_id) == {
-        "id": upload_id,
+# pre-create: the six cases of the creation rule.
+
+
+async def test_a_first_creation_names_the_upload_with_the_issued_id(target: UploadTarget) -> None:
+    answer = await target.tusd.create(
+        "dave", target.collection_id, "a.cdf", len(DATA), attempt_id=ATTEMPT
+    )
+    assert answer.status_code == 200
+    upload_id = answer.json()["ChangeFileInfo"]["ID"]
+    assert answer.json() == {"ChangeFileInfo": {"ID": upload_id}}
+    attempt = await attempt_of(target)
+    assert attempt == {
+        "attempt_id": ATTEMPT,
         "collection_id": target.collection_id,
-        "rel_path": "a/b/c.bin",
+        "rel_path": "a.cdf",
         "size": len(DATA),
-        "state": "placed",
-        "sha256": SHA,
+        "state": "receiving",
+        "upload_id": upload_id,
         "failure": None,
     }
-    upload = await seeded_lake_api.runtime.lake.uploads.get(CONTRIBUTOR, uuid.UUID(upload_id))
-    assert upload.inode == inode
 
 
-@pytest.mark.parametrize("stale_part", [False, True], ids=["no-part", "stale-part"])
-async def test_an_upload_replaces_a_file_through_the_part_file(
-    target: UploadTarget, stale_part: bool
-) -> None:
-    first = await target.tusd.begin("dave", target.collection_id, "c.bin", OLD)
-    await target.tusd.finish("dave", first, len(OLD))
-    second = await target.tusd.begin("frank", target.collection_id, "c.bin", DATA)
-    if stale_part:
-        (target.directory / f".c.bin.{second}.huron-part").write_bytes(b"stale")
-    finished = await target.tusd.finish("frank", second, len(DATA))
-    assert finished.json() == receipt(second, SHA)
-    assert (target.directory / "c.bin").read_bytes() == DATA
-    assert sorted(p.name for p in target.directory.iterdir()) == ["c.bin", "metadata.json"]
-
-
-async def test_a_retried_pre_finish_after_the_receipt_answers_it_again_without_disk_work(
-    seeded_lake_api: Service, target: UploadTarget
-) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    first = await target.tusd.finish("dave", upload_id, len(DATA))
-    (target.directory / "c.bin").unlink()
-    again = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert again.json() == first.json() == receipt(upload_id, SHA)
-    assert not (target.directory / "c.bin").exists()
-    await commit(seeded_lake_api, target, "c.bin", DATA)
-    assert (await state(seeded_lake_api, upload_id))["state"] == "committed"
-    late = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert late.json() == receipt(upload_id, SHA)
-
-
-async def test_two_interleaved_attempts_of_one_upload_both_answer_the_receipt(
-    pausing: tuple[Service, PausingStorage, UploadTarget],
-) -> None:
-    api, storage, target = pausing
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    first = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
-    await hashing(storage)
-    second = await target.tusd.finish("dave", upload_id, len(DATA))
-    storage.release.set()
-    first_answer = await asyncio.wait_for(first, SIGNAL_TIMEOUT)
-    assert first_answer.json() == second.json() == receipt(upload_id, SHA)
-    assert (target.directory / "c.bin").read_bytes() == DATA
-    assert (await state(api, upload_id))["state"] == "placed"
-
-
-async def test_an_attempt_that_finds_the_file_placed_by_another_records_the_receipt(
-    seeded_lake_api: Service, target: UploadTarget
-) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    source = target.tusd.upload_dir / upload_id
-    os.link(source, target.directory / "c.bin")
-    source.unlink()
-    finished = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert finished.json() == receipt(upload_id, SHA)
-    assert (await state(seeded_lake_api, upload_id))["state"] == "placed"
-
-
-@pytest.mark.parametrize("placed", [None, b"other"], ids=["nothing-placed", "other-size"])
-async def test_an_attempt_without_the_file_or_its_placement_is_retried(
-    seeded_lake_api: Service, target: UploadTarget, placed: bytes | None
-) -> None:
-    created = await target.tusd.create("dave", target.collection_id, "c.bin", len(DATA))
-    upload_id = created.json()["ChangeFileInfo"]["ID"]
-    if placed is not None:
-        (target.directory / "c.bin").write_bytes(placed)
-    finished = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert (finished.status_code, finished.json()["code"]) == (500, "STORAGE_FAILED")
-    assert (await state(seeded_lake_api, upload_id))["state"] == "pending"
-
-
-@pytest.mark.parametrize("received", [DATA[:-1], DATA + b"!"], ids=["shorter", "longer"])
-async def test_the_size_of_the_received_file_must_be_the_declared_size(
-    seeded_lake_api: Service, target: UploadTarget, received: bytes
-) -> None:
-    created = await target.tusd.create("dave", target.collection_id, "c.bin", len(DATA))
-    upload_id = created.json()["ChangeFileInfo"]["ID"]
-    target.tusd.receive(upload_id, received)
-    finished = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert finished.status_code == 200
-    problem = problem_of(finished)
-    assert (problem["status"], problem["code"]) == (422, "UPLOAD_SIZE_MISMATCH")
-    assert problem["context"] == {"declared": len(DATA), "received": len(received)}
-    assert (await state(seeded_lake_api, upload_id))["state"] == "pending"
-    assert not (target.directory / "c.bin").exists()
-
-
-async def test_a_collection_deleted_during_the_hash_takes_the_placed_file_away(
-    pausing: tuple[Service, PausingStorage, UploadTarget],
-) -> None:
-    api, storage, target = pausing
-    upload_id = await target.tusd.begin("dave", target.collection_id, "a/b/c.bin", DATA)
-    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
-    await hashing(storage)
-    assert (await delete_collection(api, target)).status_code == 204
-    storage.release.set()
-    finished = await asyncio.wait_for(finishing, SIGNAL_TIMEOUT)
-    problem = problem_of(finished)
-    assert (problem["status"], problem["code"]) == (404, "UPLOAD_NOT_FOUND")
-    assert not target.directory.exists()
-
-
-async def test_a_termination_during_the_hash_takes_the_placed_file_away(
-    pausing: tuple[Service, PausingStorage, UploadTarget],
-) -> None:
-    api, storage, target = pausing
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
-    await hashing(storage)
-    assert (await target.tusd.terminate("dave", upload_id)).json() == {}
-    storage.release.set()
-    finished = await asyncio.wait_for(finishing, SIGNAL_TIMEOUT)
-    problem = problem_of(finished)
-    assert (problem["status"], problem["code"]) == (409, "UPLOAD_STATE_CONFLICT")
-    assert [p.name for p in target.directory.iterdir()] == ["metadata.json"]
-    assert (await state(api, upload_id))["state"] == "terminated"
-
-
-async def uploaded_first(
-    api: Service, storage: PausingStorage, target: UploadTarget, *, committed: bool
-) -> tuple[Path, int]:
-    """Place an upload of ``OLD`` to ``c.bin``, committed or not; the next hash pauses.
-
-    Returns the placed file and its inode.
-    """
-    storage.release.set()
-    first = await target.tusd.begin("dave", target.collection_id, "c.bin", OLD)
-    assert (await target.tusd.finish("dave", first, len(OLD))).json() == receipt(first, OLD_SHA)
-    if committed:
-        await commit(api, target, "c.bin", OLD)
-    storage.pause_next()
-    placed = target.directory / "c.bin"
-    return placed, os.lstat(placed).st_ino
-
-
-@pytest.mark.parametrize(
-    ("refusal", "status", "code"),
-    [("delete", 404, "UPLOAD_NOT_FOUND"), ("terminate", 409, "UPLOAD_STATE_CONFLICT")],
-)
-async def test_an_overwrite_refused_after_the_link_restores_the_replaced_file(
-    pausing: tuple[Service, PausingStorage, UploadTarget], refusal: str, status: int, code: str
-) -> None:
-    api, storage, target = pausing
-    # A collection with recorded files cannot be deleted, so the delete replaces a placed file.
-    replaced, inode = await uploaded_first(api, storage, target, committed=refusal == "terminate")
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
-    await hashing(storage)
-    if refusal == "delete":
-        assert (await delete_collection(api, target)).status_code == 204
-    else:
-        assert (await target.tusd.terminate("dave", upload_id)).json() == {}
-    storage.release.set()
-    problem = problem_of(await asyncio.wait_for(finishing, SIGNAL_TIMEOUT))
-    assert (problem["status"], problem["code"]) == (status, code)
-    assert (replaced.read_bytes(), os.lstat(replaced).st_ino) == (OLD, inode)
-    assert not (target.directory / f".c.bin.{upload_id}.huron-prev").exists()
-
-
-async def test_a_termination_after_a_crash_between_the_rename_and_the_cleanup_restores_the_file(
-    pausing: tuple[Service, PausingStorage, UploadTarget],
-) -> None:
-    api, storage, target = pausing
-    replaced, inode = await uploaded_first(api, storage, target, committed=True)
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    # An earlier attempt renamed its part over c.bin and stopped before it removed tusd's files.
-    backup = target.directory / f".c.bin.{upload_id}.huron-prev"
-    part = target.directory / f".c.bin.{upload_id}.huron-part"
-    os.link(replaced, backup)
-    os.link(target.tusd.upload_dir / upload_id, part)
-    os.rename(part, replaced)
-    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
-    await hashing(storage)
-    assert (await target.tusd.terminate("dave", upload_id)).json() == {}
-    storage.release.set()
-    problem = problem_of(await asyncio.wait_for(finishing, SIGNAL_TIMEOUT))
-    assert (problem["status"], problem["code"]) == (409, "UPLOAD_STATE_CONFLICT")
-    assert (replaced.read_bytes(), os.lstat(replaced).st_ino) == (OLD, inode)
-    assert not backup.exists()
-
-
-async def test_a_replay_after_a_crash_between_the_rename_and_the_receipt_drops_the_backup(
-    seeded_lake_api: Service, target: UploadTarget
-) -> None:
-    destination = target.directory / "c.bin"
-    destination.write_bytes(OLD)
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    backup = target.directory / f".c.bin.{upload_id}.huron-prev"
-    os.link(destination, backup)
-    os.replace(target.tusd.upload_dir / upload_id, destination)
-    finished = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert finished.json() == receipt(upload_id, SHA)
-    assert destination.read_bytes() == DATA
-    assert not backup.exists()
-    assert (await state(seeded_lake_api, upload_id))["state"] == "placed"
-
-
-async def test_a_missing_collection_directory_fails_the_upload(
-    seeded_lake_api: Service, target: UploadTarget
-) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "a/c.bin", DATA)
-    shutil.rmtree(target.directory)
-    finished = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert finished.status_code == 200
-    problem = problem_of(finished)
-    assert (problem["status"], problem["code"]) == (500, "STORAGE_FAILED")
-    assert "huron adm repair" in problem["detail"]
-    assert problem["instance"] == f"/files/{upload_id}"
-    failed = await state(seeded_lake_api, upload_id)
-    assert failed["state"] == "failed"
-    assert failed["failure"] == {"code": "STORAGE_FAILED", "message": problem["detail"]}
-    assert not target.directory.exists()
-
-
-async def test_a_namespace_replaced_by_a_link_fails_the_upload_and_changes_nothing_outside(
-    seeded_lake_api: Service, target: UploadTarget, lake: Path
-) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    outside = lake.parent / "outside"
-    (outside / "run7").mkdir(parents=True)
-    os.chmod(outside / "run7", 0o2750)
-    namespace = target.directory.parent
-    shutil.rmtree(namespace)
-    namespace.symlink_to(outside)
-    before = snapshot(outside)
-    finished = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert finished.status_code == 200
-    problem = problem_of(finished)
-    assert (problem["status"], problem["code"]) == (409, "SYMLINK_IN_LAKE")
-    assert problem["context"] == {"path": "helio/heliophysics/solar-wind"}
-    failed = await state(seeded_lake_api, upload_id)
-    assert failed["state"] == "failed"
-    assert failed["failure"] == {"code": "SYMLINK_IN_LAKE", "message": problem["detail"]}
-    assert (target.tusd.upload_dir / upload_id).read_bytes() == DATA
-    assert snapshot(outside) == before
-
-
-async def test_a_link_at_the_upload_file_after_the_hash_fails_the_upload_and_prunes(
-    pausing: tuple[Service, PausingStorage, UploadTarget],
-) -> None:
-    api, storage, target = pausing
-    upload_id = await target.tusd.begin("dave", target.collection_id, "a/b/c.bin", DATA)
-    received = target.tusd.upload_dir / upload_id
-    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
-    await hashing(storage)
-    kept = received.parent.parent / "kept"
-    received.rename(kept)
-    received.symlink_to(kept)
-    storage.release.set()
-    finished = await asyncio.wait_for(finishing, SIGNAL_TIMEOUT)
-    assert finished.status_code == 200
-    problem = problem_of(finished)
-    assert (problem["status"], problem["code"]) == (409, "SYMLINK_IN_LAKE")
-    assert problem["context"] == {"path": f".tus-uploads/{upload_id}"}
-    failed = await state(api, upload_id)
-    assert failed["state"] == "failed"
-    assert failed["failure"] == {"code": "SYMLINK_IN_LAKE", "message": problem["detail"]}
-    assert not (target.directory / "a").exists()
-    assert received.is_symlink()
-    assert kept.read_bytes() == DATA
-
-
-async def test_a_wrong_marker_makes_tusd_send_the_hook_again(
-    seeded_lake_api: Service, target: UploadTarget, lake: Path
-) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    (lake / MARKER_FILE).write_bytes(render_marker(Marker(1, "http://other", "other")))
-    finished = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert (finished.status_code, finished.json()["code"]) == (503, "LAKE_UNAVAILABLE")
-    assert (await state(seeded_lake_api, upload_id))["state"] == "pending"
-    assert (target.tusd.upload_dir / upload_id).exists()
-
-
-async def test_a_zero_length_upload_is_placed_with_the_hash_of_no_bytes(
+async def test_a_creation_with_other_fields_for_the_attempt_is_a_conflict(
     target: UploadTarget,
 ) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "empty.bin", b"")
-    finished = await target.tusd.finish("dave", upload_id, 0)
-    assert finished.json() == receipt(upload_id, EMPTY_SHA256)
-    assert (target.directory / "empty.bin").read_bytes() == b""
+    await created(target)
+    answer = await target.tusd.create(
+        "dave", target.collection_id, "a.cdf", len(DATA) + 1, attempt_id=ATTEMPT
+    )
+    assert answer.json()["RejectUpload"] is True
+    problem = problem_of(answer)
+    assert (problem["status"], problem["code"]) == (409, "ATTEMPT_ID_CONFLICT")
+    assert problem["context"] == {"attempt_id": ATTEMPT}
 
 
-async def test_a_terminated_upload_is_never_placed(
-    seeded_lake_api: Service, target: UploadTarget
+async def test_a_creation_of_an_upload_that_tusd_holds_names_the_id_to_continue(
+    target: UploadTarget,
 ) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    for _ in range(2):
-        terminated = await target.tusd.terminate("dave", upload_id)
-        assert (terminated.status_code, terminated.json()) == (200, {})
-    assert (await state(seeded_lake_api, upload_id))["state"] == "terminated"
-    finished = await target.tusd.finish("dave", upload_id, len(DATA))
-    assert set(finished.json()) == {"HTTPResponse"}
-    problem = problem_of(finished)
-    assert (problem["status"], problem["code"]) == (409, "UPLOAD_STATE_CONFLICT")
+    upload_id = await created(target)
+    target.tusd.receive(upload_id, DATA[:5])
+    answer = await target.tusd.create(
+        "dave", target.collection_id, "a.cdf", len(DATA), attempt_id=ATTEMPT
+    )
+    problem = problem_of(answer)
+    assert (answer.json()["RejectUpload"], problem["status"]) == (True, 409)
+    assert problem["code"] == "UPLOAD_STATE_CONFLICT"
     assert problem["context"] == {
-        "state": "terminated",
-        "allowed": ["pending", "placed", "committed"],
+        "attempt_id": ATTEMPT,
+        "state": "receiving",
+        "upload_id": upload_id,
     }
+    assert problem["detail"] == f"the upload attempt is receiving. Continue upload {upload_id}"
 
 
-async def test_a_creation_answers_the_upload_id(
-    seeded_lake_api: Service, target: UploadTarget
+async def test_a_creation_whose_upload_tusd_never_made_gets_a_new_id(
+    target: UploadTarget,
 ) -> None:
-    created = await target.tusd.create("dave", target.collection_id, "c.bin", len(DATA))
-    assert created.status_code == 200
-    upload_id = created.json()["ChangeFileInfo"]["ID"]
-    assert created.json() == {"ChangeFileInfo": {"ID": upload_id}}
-    assert (await state(seeded_lake_api, upload_id))["state"] == "pending"
+    first = await created(target)
+    second = await created(target)
+    assert second != first
+    assert (await attempt_of(target))["upload_id"] == second
+
+
+async def test_a_creation_of_a_sealed_upload_names_its_state_and_id(target: UploadTarget) -> None:
+    upload_id = await created(target)
+    target.tusd.receive(upload_id, DATA)
+    assert (await target.tusd.finish("dave", upload_id, len(DATA))).status_code == 200
+    answer = await target.tusd.create(
+        "dave", target.collection_id, "a.cdf", len(DATA), attempt_id=ATTEMPT
+    )
+    problem = problem_of(answer)
+    assert (problem["status"], problem["code"]) == (409, "UPLOAD_STATE_CONFLICT")
+    assert problem["context"] == {"attempt_id": ATTEMPT, "state": "ready", "upload_id": upload_id}
+
+
+async def test_a_creation_of_a_cancelled_attempt_names_its_state_only(
+    target: UploadTarget,
+) -> None:
+    upload_id = await created(target)
+    api = target.tusd.api
+    cancelled = await api.client.post(
+        f"/api/v1/uploads/{upload_id}/cancel", headers=await api.headers("dave")
+    )
+    assert cancelled.status_code == 200
+    answer = await target.tusd.create(
+        "dave", target.collection_id, "a.cdf", len(DATA), attempt_id=ATTEMPT
+    )
+    problem = problem_of(answer)
+    assert (problem["status"], problem["code"]) == (409, "UPLOAD_STATE_CONFLICT")
+    assert problem["context"] == {"attempt_id": ATTEMPT, "state": "cancelled"}
+
+
+# pre-create: the refusals.
 
 
 @pytest.mark.parametrize(
-    ("user", "metadata", "flags", "status", "code"),
+    ("options", "carries"),
     [
-        ("dave", None, {"SizeIsDeferred": True}, 422, "REQUEST_INVALID"),
-        ("dave", None, {"IsPartial": True}, 422, "REQUEST_INVALID"),
-        ("dave", None, {"IsFinal": True}, 422, "REQUEST_INVALID"),
-        ("dave", {"rel_path": "c.bin"}, {}, 422, "REQUEST_INVALID"),
-        ("dave", {"collection": "not-a-uuid", "rel_path": "c.bin"}, {}, 422, "REQUEST_INVALID"),
-        ("dave", {"collection": "<collection>"}, {}, 422, "REQUEST_INVALID"),
-        ("erin", None, {}, 403, "FORBIDDEN"),
-        (None, None, {}, 401, "UNAUTHENTICATED"),
+        ({"SizeIsDeferred": True}, {"size_is_deferred": True}),
+        ({"IsPartial": True}, {"is_partial": True}),
+        ({"IsFinal": True}, {"is_final": True}),
+        ({"header": {"Content-Length": ["5"]}}, {"carries_bytes": True}),
+        (
+            {"header": {"content-type": ["application/offset+octet-stream"]}},
+            {"carries_bytes": True},
+        ),
     ],
 )
-async def test_a_creation_is_refused(
+async def test_a_creation_that_is_not_one_declared_upload_without_bytes_is_refused(
+    target: UploadTarget, options: dict[str, Any], carries: dict[str, bool]
+) -> None:
+    answer = await target.tusd.create("dave", target.collection_id, "a.cdf", 4, **options)
+    problem = problem_of(answer)
+    assert (answer.json()["RejectUpload"], problem["status"]) == (True, 422)
+    assert problem["code"] == "REQUEST_INVALID"
+    expected = {
+        "size_is_deferred": False,
+        "is_partial": False,
+        "is_final": False,
+        "carries_bytes": False,
+    }
+    assert problem["context"] == expected | carries
+
+
+async def test_a_creation_with_an_empty_body_is_allowed(target: UploadTarget) -> None:
+    upload_id = await created(target, header={"Content-Length": ["0"]})
+    assert uuid.UUID(upload_id)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"collection": "x", "rel_path": "a", "attempt_id": ATTEMPT},
+        {"rel_path": "a"},
+        {"attempt_id": "not-a-uuid", "rel_path": "a"},
+        {"attempt_id": ATTEMPT.upper(), "rel_path": "a"},
+        {"attempt_id": ATTEMPT},
+    ],
+)
+async def test_a_creation_without_the_attempt_the_collection_and_the_path_is_refused(
+    target: UploadTarget, metadata: dict[str, str]
+) -> None:
+    metadata.setdefault("collection", target.collection_id)
+    body = {
+        "Type": "pre-create",
+        "Event": {"Upload": {"ID": "", "Size": 4, "MetaData": metadata}},
+    }
+    problem = problem_of(await target.tusd.send("dave", body))
+    assert (problem["status"], problem["code"]) == (422, "REQUEST_INVALID")
+    assert problem["context"] == {"metadata": sorted(metadata)}
+
+
+async def test_a_creation_without_a_token_is_refused_with_the_401_problem(
     target: UploadTarget,
-    user: str | None,
-    metadata: dict[str, str] | None,
-    flags: dict[str, bool],
-    status: int,
-    code: str,
 ) -> None:
-    given = metadata or {"collection": target.collection_id, "rel_path": "c.bin"}
-    given = {k: v.replace("<collection>", target.collection_id) for k, v in given.items()}
-    body = hook_body("pre-create", upload_body("", 5, given, **flags), "POST", "/files/")
-    refused = await target.tusd.send(user, body)
-    assert refused.status_code == 200
-    assert set(refused.json()) == {"HTTPResponse", "RejectUpload"}
-    assert refused.json()["RejectUpload"] is True
-    problem = problem_of(refused)
-    assert (problem["status"], problem["code"], problem["instance"]) == (status, code, "/files/")
-
-
-async def test_an_invalid_token_is_refused_in_the_hook(
-    seeded_lake_api: Service, target: UploadTarget
-) -> None:
-    body = hook_body("pre-finish", upload_body(str(uuid.uuid4()), 1), "PATCH", "/files/x")
-    refused = await seeded_lake_api.client.post(
-        HOOKS, json=body, headers={"Authorization": "Bearer not-a-token"}
+    answer = await target.tusd.create(None, target.collection_id, "a.cdf", 4)
+    assert answer.status_code == 200
+    assert set(answer.json()) == {"HTTPResponse", "RejectUpload"}
+    problem = problem_of(answer)
+    assert (problem["status"], problem["code"], problem["instance"]) == (
+        401,
+        "UNAUTHENTICATED",
+        "/files/",
     )
-    problem = problem_of(refused)
+
+
+async def test_a_hook_with_an_invalid_token_is_refused_with_the_401_problem(
+    target: UploadTarget,
+) -> None:
+    api = target.tusd.api
+    body = {
+        "Type": "pre-finish",
+        "Event": {"Upload": {"ID": str(uuid.uuid4()), "Size": 1}},
+    }
+    answer = await api.client.post(
+        "/api/v1/uploads/hooks", json=body, headers={"Authorization": "Bearer not-a-token"}
+    )
+    assert answer.status_code == 200
+    assert set(answer.json()) == {"HTTPResponse"}
+    problem = problem_of(answer)
     assert (problem["status"], problem["code"]) == (401, "TOKEN_INVALID")
 
 
-async def test_another_users_upload_is_not_found(target: UploadTarget) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    finished = await target.tusd.finish("frank", upload_id, len(DATA))
-    assert problem_of(finished)["code"] == "UPLOAD_NOT_FOUND"
-    terminated = await target.tusd.terminate("frank", upload_id)
-    assert set(terminated.json()) == {"HTTPResponse", "RejectTermination"}
-    assert terminated.json()["RejectTermination"] is True
-    assert problem_of(terminated)["code"] == "UPLOAD_NOT_FOUND"
-    assert (target.tusd.upload_dir / upload_id).exists()
+async def test_a_creation_by_a_reader_is_refused(target: UploadTarget) -> None:
+    problem = problem_of(await target.tusd.create("erin", target.collection_id, "a.cdf", 4))
+    assert (problem["status"], problem["code"]) == (403, "FORBIDDEN")
 
 
-@pytest.mark.parametrize("upload_id", ["not-a-uuid", "0192B6A0-0000-7000-8000-0000000000AA"])
-async def test_a_hook_for_an_id_that_is_not_a_uuid_is_refused(
-    target: UploadTarget, upload_id: str
+async def test_a_creation_in_an_unknown_collection_is_not_found(target: UploadTarget) -> None:
+    problem = problem_of(await target.tusd.create("dave", str(uuid.uuid4()), "a.cdf", 4))
+    assert (problem["status"], problem["code"]) == (404, "NOT_FOUND")
+
+
+async def test_a_creation_that_can_never_fit_is_too_large(lake: Path) -> None:
+    async with service(lake_path=lake, max_upload_bytes=3, min_free_bytes=1 << 62) as api:
+        target = await upload_target(await seed_service(api), lake)
+        problem = problem_of(await target.tusd.create("dave", target.collection_id, "a", 4))
+    assert (problem["status"], problem["code"]) == (413, "UPLOAD_TOO_LARGE")
+    assert problem["context"] == {"size": 4, "maximum": 3}
+
+
+async def test_a_creation_without_free_space_is_refused(lake: Path) -> None:
+    async with service(lake_path=lake, min_free_bytes=1 << 62) as api:
+        target = await upload_target(await seed_service(api), lake)
+        answer = await target.tusd.create("dave", target.collection_id, "a", 4)
+    problem = problem_of(answer)
+    assert (problem["status"], problem["code"]) == (429, "CAPACITY_EXCEEDED")
+    assert problem["context"]["limit"] == "min_free_bytes"
+    assert problem["context"]["requested"] == 8
+    assert "two times its size" in problem["detail"]
+
+
+async def test_a_resume_and_a_refusal_need_no_free_space(
+    target: UploadTarget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    finished = await target.tusd.finish("dave", upload_id, 0)
-    assert problem_of(finished)["code"] == "REQUEST_INVALID"
+    upload_id = await created(target)
+    target.tusd.receive(upload_id, DATA[:3])
+    monkeypatch.setattr(PosixStorage, "free_space", lambda self, location: FreeSpace(1, 0))
+    resumed = await target.tusd.create(
+        "dave", target.collection_id, "a.cdf", len(DATA), attempt_id=ATTEMPT
+    )
+    assert problem_of(resumed)["code"] == "UPLOAD_STATE_CONFLICT"
+    conflict = await target.tusd.create(
+        "dave", target.collection_id, "a.cdf", 1, attempt_id=ATTEMPT
+    )
+    assert problem_of(conflict)["code"] == "ATTEMPT_ID_CONFLICT"
+    new = await target.tusd.create("dave", target.collection_id, "b.cdf", 1)
+    assert problem_of(new)["code"] == "CAPACITY_EXCEEDED"
 
 
-async def test_an_upload_is_read_by_its_creator_only(
-    seeded_lake_api: Service, target: UploadTarget
+async def test_the_upload_routes_need_a_lake() -> None:
+    async with service() as api:
+        headers = await api.headers("dave")
+        answers = [
+            await api.client.post(
+                "/api/v1/uploads/hooks",
+                json={"Type": "pre-create", "Event": {"Upload": {}}},
+                headers=headers,
+            ),
+            await api.client.post(f"/api/v1/uploads/{uuid.uuid4()}/cancel", headers=headers),
+        ]
+    for answer in answers:
+        assert (answer.status_code, answer.json()["code"]) == (404, "UPLOADS_DISABLED")
+
+
+async def test_a_hook_that_tusd_does_not_send_is_refused_as_invalid(target: UploadTarget) -> None:
+    body = {"Type": "post-finish", "Event": {"Upload": {"ID": str(uuid.uuid4())}}}
+    answer = await target.tusd.send("dave", body)
+    assert (answer.status_code, answer.json()["code"]) == (422, "REQUEST_INVALID")
+
+
+# pre-finish.
+
+
+async def test_the_finish_of_a_complete_upload_answers_that_it_is_ready(
+    target: UploadTarget, lake: Path
 ) -> None:
-    upload_id = await target.tusd.begin("dave", target.collection_id, "c.bin", DATA)
-    for user, path in (("frank", upload_id), ("dave", str(uuid.uuid4()))):
-        read = await seeded_lake_api.client.get(
-            f"/api/v1/uploads/{path}", headers=await seeded_lake_api.headers(user)
-        )
-        assert (read.status_code, read.json()["code"]) == (404, "UPLOAD_NOT_FOUND")
+    upload_id = await target.tusd.begin(
+        "dave", target.collection_id, "a.cdf", DATA, attempt_id=ATTEMPT
+    )
+    answer = await target.tusd.finish("dave", upload_id, len(DATA))
+    assert answer.status_code == 200
+    assert answer.json() == {"HTTPResponse": {"Header": {UPLOAD_STATE_HEADER: "ready"}}}
+    assert (await attempt_of(target))["state"] == "ready"
+    assert (lake / "helio" / ".huron-objects" / upload_id).read_bytes() == DATA
 
 
-async def test_upload_routes_need_a_lake(seeded_api: Service) -> None:
-    body = hook_body("pre-create", upload_body(), "POST", "/files/")
-    headers = await seeded_api.headers("dave")
-    for response in (
-        await seeded_api.client.post(HOOKS, json=body, headers=headers),
-        await seeded_api.client.get(f"/api/v1/uploads/{uuid.uuid4()}", headers=headers),
-    ):
-        assert (response.status_code, response.json()["code"]) == (404, "UPLOADS_DISABLED")
+async def test_the_finish_answers_sealing_after_the_wait_and_the_seal_goes_on(
+    target: UploadTarget,
+    paused_copy: tuple[threading.Event, threading.Event],
+    loop_clock: LoopClock,
+) -> None:
+    copying, release = paused_copy
+    upload_id = await target.tusd.begin(
+        "dave", target.collection_id, "a.cdf", DATA, attempt_id=ATTEMPT
+    )
+    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
+    assert await asyncio.to_thread(copying.wait, SIGNAL_TIMEOUT)
+    loop_clock.advance(SEAL_WAIT - 0.001)
+    await asyncio.sleep(0)
+    assert not finishing.done()
+    loop_clock.advance(0.001)
+    answer = await asyncio.wait_for(finishing, SIGNAL_TIMEOUT)
+    assert answer.json() == {"HTTPResponse": {"Header": {UPLOAD_STATE_HEADER: "sealing"}}}
+    release.set()
+    orchestration = target.tusd.api.runtime.orchestration
+    assert orchestration is not None
+    sealed = await asyncio.wait_for(orchestration.sealing.start(uuid.UUID(upload_id)), 5)
+    assert sealed.state.value == "ready"
+
+
+async def test_the_finish_of_a_seal_that_ends_within_the_wait_answers_ready(
+    target: UploadTarget,
+    paused_copy: tuple[threading.Event, threading.Event],
+    loop_clock: LoopClock,
+) -> None:
+    copying, release = paused_copy
+    upload_id = await target.tusd.begin(
+        "dave", target.collection_id, "a.cdf", DATA, attempt_id=ATTEMPT
+    )
+    finishing = asyncio.create_task(target.tusd.finish("dave", upload_id, len(DATA)))
+    assert await asyncio.to_thread(copying.wait, SIGNAL_TIMEOUT)
+    loop_clock.advance(SEAL_WAIT - 0.001)
+    release.set()
+    answer = await asyncio.wait_for(finishing, SIGNAL_TIMEOUT)
+    assert answer.json() == {"HTTPResponse": {"Header": {UPLOAD_STATE_HEADER: "ready"}}}
+
+
+async def test_the_attempt_read_answers_sealing_after_the_wait_and_the_seal_goes_on(
+    target: UploadTarget,
+    paused_copy: tuple[threading.Event, threading.Event],
+    loop_clock: LoopClock,
+) -> None:
+    copying, release = paused_copy
+    upload_id = await target.tusd.begin(
+        "dave", target.collection_id, "a.cdf", DATA, attempt_id=ATTEMPT
+    )
+    reading = asyncio.create_task(attempt_of(target))
+    assert await asyncio.to_thread(copying.wait, SIGNAL_TIMEOUT)
+    loop_clock.advance(SEAL_WAIT - 0.001)
+    await run_ready()
+    assert not reading.done()
+    loop_clock.advance(0.001)
+    await run_ready()
+    assert reading.done()
+    assert reading.result()["state"] == "sealing"
+    orchestration = target.tusd.api.runtime.orchestration
+    assert orchestration is not None
+    assert orchestration.sealing.running(uuid.UUID(upload_id))
+    release.set()
+    sealed = await asyncio.wait_for(orchestration.sealing.start(uuid.UUID(upload_id)), 5)
+    assert sealed.state.value == "ready"
+
+
+async def test_the_attempt_read_of_a_seal_that_ends_within_the_wait_answers_ready(
+    target: UploadTarget,
+    paused_copy: tuple[threading.Event, threading.Event],
+    loop_clock: LoopClock,
+) -> None:
+    copying, release = paused_copy
+    await target.tusd.begin("dave", target.collection_id, "a.cdf", DATA, attempt_id=ATTEMPT)
+    reading = asyncio.create_task(attempt_of(target))
+    assert await asyncio.to_thread(copying.wait, SIGNAL_TIMEOUT)
+    loop_clock.advance(SEAL_WAIT - 0.001)
+    await run_ready()
+    release.set()
+    assert (await asyncio.wait_for(reading, SIGNAL_TIMEOUT))["state"] == "ready"
+
+
+async def test_the_finish_of_an_upload_of_another_size_fails_its_attempt(
+    target: UploadTarget,
+) -> None:
+    upload_id = await created(target)
+    target.tusd.receive(upload_id, DATA + b"!")
+    answer = await target.tusd.finish("dave", upload_id, len(DATA) + 1)
+    assert "RejectUpload" not in answer.json()
+    problem = problem_of(answer)
+    assert (problem["status"], problem["code"]) == (422, "UPLOAD_SIZE_MISMATCH")
+    assert problem["context"] == {"upload": upload_id}
+    attempt = await attempt_of(target)
+    assert attempt["state"] == "failed"
+    assert attempt["failure"]["code"] == "UPLOAD_SIZE_MISMATCH"
+
+
+async def test_the_finish_of_an_id_that_is_not_current_is_refused(target: UploadTarget) -> None:
+    first = await created(target)
+    await created(target)
+    target.tusd.receive(first, DATA)
+    problem = problem_of(await target.tusd.finish("dave", first, len(DATA)))
+    assert (problem["status"], problem["code"]) == (409, "UPLOAD_INELIGIBLE")
+    assert problem["context"] == {"upload_id": first, "state": "receiving", "reason": "superseded"}
+
+
+async def test_the_finish_of_a_cancelled_upload_is_refused(target: UploadTarget) -> None:
+    upload_id = await created(target)
+    api = target.tusd.api
+    await api.client.post(f"/api/v1/uploads/{upload_id}/cancel", headers=await api.headers("dave"))
+    target.tusd.receive(upload_id, DATA)
+    problem = problem_of(await target.tusd.finish("dave", upload_id, len(DATA)))
+    assert (problem["status"], problem["code"]) == (409, "UPLOAD_INELIGIBLE")
+    assert problem["context"] == {"upload_id": upload_id, "state": "cancelled", "reason": "state"}
+
+
+async def test_the_finish_of_another_users_upload_is_not_found(target: UploadTarget) -> None:
+    upload_id = await target.tusd.begin("dave", target.collection_id, "a.cdf", DATA)
+    problem = problem_of(await target.tusd.finish("frank", upload_id, len(DATA)))
+    assert (problem["status"], problem["code"]) == (404, "UPLOAD_NOT_FOUND")
+    for named in ("not-an-id", upload_id.upper()):
+        problem = problem_of(await target.tusd.finish("dave", named, len(DATA)))
+        assert (problem["status"], problem["code"]) == (422, "REQUEST_INVALID")
+
+
+async def test_a_finish_that_the_lake_refuses_is_an_http_error_for_tusd_to_retry(
+    target: UploadTarget, lake: Path
+) -> None:
+    upload_id = await target.tusd.begin("dave", target.collection_id, "a.cdf", DATA)
+    (lake / MARKER_FILE).unlink()
+    answer = await target.tusd.finish("dave", upload_id, len(DATA))
+    assert (answer.status_code, answer.json()["code"]) == (503, "LAKE_UNAVAILABLE")
+    runtime = target.tusd.api.runtime
+    assert (await runtime.attempts.find(uuid.UUID(upload_id))).state.value == "receiving"
+    assert (target.tusd.upload_dir / upload_id).read_bytes() == DATA
+    mark_lake(lake)
+    retried = await target.tusd.finish("dave", upload_id, len(DATA))
+    assert retried.json() == {"HTTPResponse": {"Header": {UPLOAD_STATE_HEADER: "ready"}}}
+
+
+async def test_an_empty_upload_is_sealed_with_the_hash_of_no_bytes(
+    target: UploadTarget, lake: Path
+) -> None:
+    upload_id = await target.tusd.begin("dave", target.collection_id, "empty.bin", b"")
+    answer = await target.tusd.finish("dave", upload_id, 0)
+    assert answer.json() == {"HTTPResponse": {"Header": {UPLOAD_STATE_HEADER: "ready"}}}
+    assert (lake / "helio" / ".huron-objects" / upload_id).read_bytes() == b""
+    sealed = await target.tusd.api.runtime.attempts.find(uuid.UUID(upload_id))
+    assert (sealed.state.value, sealed.size) == ("ready", 0)
+
+
+async def test_a_repeated_finish_of_a_sealed_upload_answers_ready_and_copies_nothing(
+    target: UploadTarget, lake: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload_id = await target.tusd.begin("dave", target.collection_id, "a.cdf", DATA)
+    assert (await target.tusd.finish("dave", upload_id, len(DATA))).status_code == 200
+    copies: list[object] = []
+    real = PosixStorage.copy_sealed
+
+    def counted(self: PosixStorage, *args: Any, **kwargs: Any) -> Any:
+        copies.append(args)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(PosixStorage, "copy_sealed", counted)
+    again = await target.tusd.finish("dave", upload_id, len(DATA))
+    assert again.json() == {"HTTPResponse": {"Header": {UPLOAD_STATE_HEADER: "ready"}}}
+    assert copies == []
+    assert (lake / "helio" / ".huron-objects" / upload_id).read_bytes() == DATA

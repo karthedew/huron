@@ -163,6 +163,5 @@ def test_push_and_status_edge_cases(ready: Cli, share: MemoryStorage, tmp_path: 
     ready.configure(mount_prefix=str(PREFIX))
     ready.ok("rm", "a.txt")
     target = LakePath.of("helio", "heliophysics", "solar-wind", "draft")
-    share.calls.clear()
     ready.ok("push")
-    assert share.stat(target.joinpath("a.txt")) is not None and share.calls == []
+    assert share.stat(target.joinpath("a.txt")) is None

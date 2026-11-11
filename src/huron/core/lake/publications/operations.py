@@ -31,6 +31,7 @@ from huron.core.lake.publications.errors import (
 )
 from huron.core.lake.publications.models import (
     CommitOutcome,
+    CommitPreview,
     CommitState,
     EntryAction,
     EntryTarget,
@@ -52,7 +53,12 @@ if TYPE_CHECKING:
 
     from huron.core.lake.catalogs.models import Catalog
     from huron.core.lake.collections.models import Collection
-    from huron.core.lake.publications.models import CommitAdd, CommitEntry, CommitRequest
+    from huron.core.lake.publications.models import (
+        CommitAdd,
+        CommitDraft,
+        CommitEntry,
+        CommitRequest,
+    )
     from huron.core.lake.transaction import Transaction, UnitOfWork
     from huron.core.lake.uploads.models import StoredObject, UploadAttempt
     from huron.core.security.rbac import Actor
@@ -97,6 +103,24 @@ class Publications:
         if isinstance(result, HuronError):
             raise result
         return result
+
+    async def preview(self, actor: Actor, draft: CommitDraft) -> CommitPreview:
+        """What a commit with the body ``draft`` would make now; nothing is saved or audited.
+
+        The checks of :meth:`submit` run, except the checks of the uploads: the privilege, the
+        pending request of the collection, the base version and the tree. Each one raises its
+        refusal. A collection that the actor cannot see is not found.
+        """
+        async with self._uow.transaction() as tx:
+            authz = Authorizer(tx.grants)
+            collection, catalog = await find_collection(
+                tx, authz, actor, collection_id=draft.collection_id
+            )
+            recorded, _ = await _planned(tx, authz, actor, collection, catalog, draft)
+        removed = {rel_path_key(path) for path in draft.removes}
+        added = {rel_path_key(add.rel_path) for add in draft.adds}
+        kept = {rel_path_key(path) for path in recorded} - removed - added
+        return CommitPreview(collection.version + 1, len(kept) + len(added))
 
     async def status(self, actor: Actor, request_id: uuid.UUID) -> CommitOutcome:
         """The saved outcome of the actor's request; another actor's request is not found."""
@@ -179,6 +203,14 @@ class Publications:
             _require_done(request, entries)
             return await self._publish(tx, collection, request, entries)
 
+    async def check_operator(self, actor: Actor) -> None:
+        """Refuse an actor that may not resolve a blocked request (:class:`Forbidden`).
+
+        Only a platform administrator resolves one. :meth:`resolve` checks it too.
+        """
+        async with self._uow.transaction() as tx:
+            await _require_platform_admin(Authorizer(tx.grants), actor)
+
     async def resolve(
         self, actor: Actor, collection_id: uuid.UUID, resolution: Resolution
     ) -> CommitOutcome:
@@ -193,11 +225,7 @@ class Publications:
         """
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
-            if (PLATFORM, Role.PLATFORM_ADMIN) not in await authz.roles_for(actor):
-                raise Forbidden(
-                    "this operation needs the platform_admin role",
-                    {"role": str(Role.PLATFORM_ADMIN), "scope": "platform"},
-                )
+            await _require_platform_admin(authz, actor)
             collection, _ = await find_collection(
                 tx, authz, actor, collection_id=collection_id, lock=True
             )
@@ -368,6 +396,14 @@ _PAGE = 1000
 """How many recorded paths one read of the acceptance gets."""
 
 
+async def _require_platform_admin(authz: Authorizer, actor: Actor) -> None:
+    if (PLATFORM, Role.PLATFORM_ADMIN) not in await authz.roles_for(actor):
+        raise Forbidden(
+            "this operation needs the platform_admin role",
+            {"role": str(Role.PLATFORM_ADMIN), "scope": "platform"},
+        )
+
+
 def _replayed(saved: CommitOutcome, digest: str) -> CommitOutcome:
     """The saved outcome of a request sent again; another body is a conflict."""
     if saved.body_digest != digest:
@@ -412,13 +448,30 @@ async def _acceptance(
     request: CommitRequest,
 ) -> tuple[tuple[CommitEntry, ...], list[UploadAttempt]]:
     """The entries of ``request`` and the attempts of its adds; raises the first refusal."""
+    _, entries = await _planned(tx, authz, actor, collection, catalog, request)
+    return entries, await _eligible(tx, actor, request)
+
+
+async def _planned(
+    tx: Transaction,
+    authz: Authorizer,
+    actor: Actor,
+    collection: Collection,
+    catalog: Catalog,
+    request: CommitRequest | CommitDraft,
+) -> tuple[list[str], tuple[CommitEntry, ...]]:
+    """The recorded paths of the collection and the entries of ``request``.
+
+    Runs the checks that need no upload and raises the first refusal: the privilege, the
+    pending request, the base version, the tree.
+    """
     await require_file_writer(authz, actor, collection, catalog, "commit")
     if collection.pending_request_id is not None:
         raise CollectionBusy(collection.id)
     if request.base_version != collection.version:
         raise BaseVersionConflict(collection.version, request.base_version)
-    entries = plan_entries(await _recorded_paths(tx, collection.id), request)
-    return entries, await _eligible(tx, actor, request)
+    recorded = await _recorded_paths(tx, collection.id)
+    return recorded, plan_entries(recorded, request)
 
 
 async def _recorded_paths(tx: Transaction, collection_id: uuid.UUID) -> list[str]:
@@ -454,13 +507,15 @@ def _check_upload(
     if attempt is None or attempt.subject != actor.subject:
         raise UploadNotFound(add.upload_id)
     if attempt.current_upload_id != add.upload_id:
-        raise UploadIneligible(add.upload_id, attempt.state, IneligibleReason.SUPERSEDED)
+        raise UploadIneligible.for_commit(add.upload_id, attempt.state, IneligibleReason.SUPERSEDED)
     if attempt.state is not AttemptState.READY:
-        raise UploadIneligible(add.upload_id, attempt.state)
+        raise UploadIneligible.for_commit(add.upload_id, attempt.state)
     if attempt.commit_request_id is not None:
-        raise UploadIneligible(add.upload_id, attempt.state, IneligibleReason.HELD)
+        raise UploadIneligible.for_commit(add.upload_id, attempt.state, IneligibleReason.HELD)
     if not _same_file(add, attempt, stored, request.collection_id):
-        raise UploadIneligible(add.upload_id, attempt.state, IneligibleReason.DIFFERENT_FILE)
+        raise UploadIneligible.for_commit(
+            add.upload_id, attempt.state, IneligibleReason.DIFFERENT_FILE
+        )
 
 
 def _same_file(

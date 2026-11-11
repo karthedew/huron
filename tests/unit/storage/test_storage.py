@@ -24,7 +24,6 @@ from huron.core.storage import (
     Marker,
     Outcome,
     SealedFile,
-    SourceGone,
     SourceSizeMismatch,
     Stat,
     Storage,
@@ -39,8 +38,7 @@ from huron.core.storage.posix import PosixStorage
 from tests.support.disk import LAKE, inject_fault
 
 BASE = LakePath.of("share")
-PART = ".a.bin.1.huron-part"
-BACKUP = ".a.bin.1.huron-prev"
+OLD = "old.bin"
 
 
 def at(*names: str) -> LakePath:
@@ -51,7 +49,6 @@ def at(*names: str) -> LakePath:
 def test_reserved_entries() -> None:
     assert is_reserved_entry("metadata.json")
     assert is_reserved_entry("x/a.bin.huron-part")
-    assert is_reserved_entry("x/.a.bin.0192.huron-prev")
     assert is_reserved_entry(".huron")
     assert not is_reserved_entry("sub/metadata.json")
 
@@ -232,50 +229,13 @@ def test_an_open_file_reports_from_its_descriptor(share: Storage) -> None:
     assert found(share, at("upload")).mode == FILE_MODE
 
 
-def place(share: Storage, inode: int | None = None) -> LakePath | None:
-    measured = found(share, at("upload")).inode if inode is None else inode
-    return share.link(at("upload"), at("a.bin"), inode=measured, part_name=PART, backup_name=BACKUP)
-
-
-def test_link_gives_a_file_a_new_name(share: Storage) -> None:
-    share.write_bytes(at("upload"), b"new", 0o644)
-    assert place(share) is None
-    assert found(share, at("a.bin")).inode == found(share, at("upload")).inode
-    assert share.read_bytes(at("a.bin")) == b"new"
-    assert place(share) is None
-    assert share.stat(at(BACKUP)) is None
-
-
-@pytest.mark.parametrize("stale", [False, True], ids=["fresh", "stale"])
-def test_link_replaces_an_existing_file_and_keeps_a_backup(share: Storage, stale: bool) -> None:
-    share.write_bytes(at("upload"), b"new", 0o644)
-    share.write_bytes(at("a.bin"), b"old", 0o644)
-    old_inode = found(share, at("a.bin")).inode
-    if stale:
-        share.write_bytes(at(PART), b"stale", 0o644)
-        share.write_bytes(at(BACKUP), b"stale", 0o644)
-    assert place(share) == at(BACKUP)
-    assert share.read_bytes(at("a.bin")) == b"new"
-    assert found(share, at("a.bin")).inode == found(share, at("upload")).inode
-    assert (share.read_bytes(at(BACKUP)), found(share, at(BACKUP)).inode) == (b"old", old_inode)
-    assert share.stat(at(PART)) is None
-    assert place(share) == at(BACKUP)
-
-
-def test_link_of_a_source_with_another_inode_raises_source_gone(share: Storage) -> None:
-    share.write_bytes(at("upload"), b"new", 0o644)
-    with pytest.raises(SourceGone):
-        place(share, inode=found(share, at("upload")).inode + 1)
-    assert share.stat(at("a.bin")) is None
-
-
 def test_rename_replaces_the_destination(share: Storage) -> None:
-    share.write_bytes(at(BACKUP), b"old", 0o644)
+    share.write_bytes(at(OLD), b"old", 0o644)
     share.write_bytes(at("a.bin"), b"new", 0o644)
-    inode = found(share, at(BACKUP)).inode
-    share.rename(at(BACKUP), at("a.bin"))
+    inode = found(share, at(OLD)).inode
+    share.rename(at(OLD), at("a.bin"))
     assert (share.read_bytes(at("a.bin")), found(share, at("a.bin")).inode) == (b"old", inode)
-    assert share.stat(at(BACKUP)) is None
+    assert share.stat(at(OLD)) is None
 
 
 def test_remove_file_answers_its_outcome(share: Storage) -> None:

@@ -13,7 +13,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from huron.pkg.errors import INTERNAL, NOT_FOUND, REQUEST_INVALID, HuronError, error_codes
 
-__all__ = ["PROBLEM_MEDIA_TYPE", "install_problem_handlers", "problem_response"]
+__all__ = [
+    "PROBLEM_MEDIA_TYPE",
+    "install_problem_handlers",
+    "problem_document",
+    "problem_response",
+    "saved_problem_response",
+]
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 
@@ -25,6 +31,36 @@ def problem_response(error: HuronError, request: Request) -> JSONResponse:
     return JSONResponse(
         error.problem(request.url.path), status_code=error.status, media_type=PROBLEM_MEDIA_TYPE
     )
+
+
+def problem_document(
+    code: str, detail: str, context: dict[str, Any], instance: str | None = None
+) -> dict[str, Any]:
+    """The problem document of an error that the service saved as its ``code`` and ``detail``.
+
+    The status and the title come from the registry. A code that the registry does not know
+    gets the status 500.
+    """
+    entry = error_codes().get(code) if code in error_codes() else None
+    document: dict[str, Any] = {
+        "type": "https://huron.dev/problems/" + code.lower().replace("_", "-"),
+        "title": entry.title if entry else "Error",
+        "status": entry.status if entry else 500,
+        "detail": detail,
+        "code": code,
+        "context": context,
+    }
+    if instance is not None:
+        document["instance"] = instance
+    return document
+
+
+def saved_problem_response(
+    code: str, detail: str, context: dict[str, Any], request: Request
+) -> JSONResponse:
+    """The response for an error that the service saved before: the same problem again."""
+    document = problem_document(code, detail, context, request.url.path)
+    return JSONResponse(document, status_code=document["status"], media_type=PROBLEM_MEDIA_TYPE)
 
 
 def install_problem_handlers(app: FastAPI) -> None:
@@ -77,15 +113,7 @@ def _document(
     context: dict[str, Any],
     status: int | None = None,
 ) -> JSONResponse:
-    entry = error_codes().get(code) if code in error_codes() else None
-    status_code = status or (entry.status if entry else 500)
-    body = {
-        "type": "https://huron.dev/problems/" + code.lower().replace("_", "-"),
-        "title": entry.title if entry else "Error",
-        "status": status_code,
-        "detail": detail,
-        "code": code,
-        "context": context,
-        "instance": request.url.path,
-    }
-    return JSONResponse(body, status_code=status_code, media_type=PROBLEM_MEDIA_TYPE)
+    body = problem_document(code, detail, context, request.url.path)
+    if status is not None:
+        body["status"] = status
+    return JSONResponse(body, status_code=body["status"], media_type=PROBLEM_MEDIA_TYPE)

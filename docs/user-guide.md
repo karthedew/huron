@@ -204,16 +204,18 @@ something staged, the command shows only the current collection and says
 - On a recorded file with nothing staged, it stages the removal of the file
   (`staged removal of old.h5`).
 
-Before `push` copies anything, it asks the service whether the service would accept the commit. In
-these cases, the push stops with the error and copies nothing onto the share:
+Before `push` uploads anything, it asks the service whether the service would accept the commit.
+In these cases, the push stops with the error and uploads nothing:
 
 - You may not write files to the collection.
+- The collection has a pending commit.
 - The collection changed after the version of your working copy.
 
-Otherwise, `push` copies each file onto the share and records the batch in one commit.
+Otherwise, `push` uploads each file to the service and records the batch in one commit. The
+service puts the files on the share.
 
-If something interrupts the push, run it again. The push does not copy a file again when it copied
-that file before.
+If something interrupts the push, run it again. The push does not upload a file again when the
+service has its upload and the file did not change.
 
 [The push, step by step](concepts/raw-ingest.md#the-push-step-by-step) explains what the CLI does
 at each step. [When a push stops](concepts/raw-ingest.md#when-a-push-stops) tells what stays on the
@@ -222,7 +224,7 @@ share and in the stage.
 ## When someone else changed the collection
 
 Each commit carries the version of your working copy. If someone published metadata or pushed
-files after the version of your working copy, the push stops before the CLI copies a file:
+files after the version of your working copy, the push stops before the CLI uploads a file:
 
 ```text
 error: … is at version 6, but your working copy is at version 5 [BASE_VERSION_CONFLICT]

@@ -25,7 +25,6 @@ from huron.applications.api.disk import (
     Materializer,
     NoLake,
     Ownership,
-    Placements,
     Sealing,
     Tasks,
     WriterLock,
@@ -38,6 +37,7 @@ from huron.core.lake.publications.operations import Publications
 from huron.core.lake.transaction import UnitOfWork
 from huron.core.lake.uploads.attempts import Attempts
 from huron.core.lake.uploads.leftovers import Leftovers
+from huron.core.lake.uploads.models import UploadAttempt
 from huron.core.metastore.postgres import PostgresStore
 from huron.core.metastore.store import MemoryStore
 from huron.core.security.broker import (
@@ -55,7 +55,6 @@ from huron.core.storage import (
     LakePath,
     LakeUnavailable,
     OrganizationPlace,
-    Placer,
     Publisher,
     Repairer,
     Sealer,
@@ -122,6 +121,26 @@ class Orchestration:
             "maintenance", lambda: repeat("maintenance", interval.total_seconds(), self.maintain)
         )
 
+    def require_writer(self) -> None:
+        """Refuse a change of the lake in a process that is not the writer.
+
+        Raises ``LAKE_UNAVAILABLE`` with the reason ``writer_lock``.
+        """
+        if not self.ownership.writable:
+            raise LakeUnavailable(
+                "this API process does not hold the writer lock. Another API process writes"
+                " the lake",
+                {"reason": "writer_lock"},
+            )
+
+    async def cancelled(self, attempt: UploadAttempt) -> None:
+        """Remove the tusd files of every upload ID of the cancelled ``attempt``, in the writer.
+
+        A process that serves reads only leaves the files to the cleanup of the writer.
+        """
+        if self.ownership.writable:
+            await self.cleanup.remove_uploads(attempt.upload_ids)
+
     async def maintain(self) -> None:
         """One run of the periodic loop: continue each ``accepted`` request that has no task,
         then clean up the lake.
@@ -141,8 +160,8 @@ class Orchestration:
 class Runtime:
     """The service's shared objects.
 
-    ``disk``, ``placements``, ``repair`` and ``orchestration`` are ``None`` when the service
-    has no lake, and ``directories`` is then :class:`NoLake`. ``attempts`` and ``publications``
+    ``disk``, ``repair`` and ``orchestration`` are ``None`` when the service has no lake, and
+    ``directories`` is then :class:`NoLake`. ``attempts`` and ``publications``
     are the upload attempt and commit request operations.
     """
 
@@ -158,7 +177,6 @@ class Runtime:
     owns_http: bool = False
     declarations: Declarations = UNMANAGED
     disk: LakeDisk | None = None
-    placements: Placements | None = None
     repair: LakeRepair | None = None
     directories: Directories = field(default_factory=NoLake)
     orchestration: Orchestration | None = None
@@ -246,14 +264,7 @@ async def build_runtime(
     if store is None:
         store = await _store(settings)
     declarations = settings.declarations
-    lake_settings = LakeSettings(
-        settings.platform_admin_group,
-        settings.key_overlap,
-        declarations,
-        receipt_mode=settings.receipt_mode,
-        upload_ttl=settings.upload_ttl,
-        upload_max_size=settings.upload_max_size,
-    )
+    lake_settings = LakeSettings(settings.platform_admin_group, settings.key_overlap, declarations)
     _report(await bootstrap(store, clock, lake_settings))
     attempts = Attempts(
         store,
@@ -265,7 +276,7 @@ async def build_runtime(
     )
     publications = Publications(store, clock)
     lake_path = settings.lake_path
-    disk = placements = repair = orchestration = None
+    disk = repair = orchestration = None
     directories: Directories = NoLake()
     if lake_path is not None:
         storage = storage or PosixStorage(root=lake_path)
@@ -283,7 +294,6 @@ async def build_runtime(
             disk, storage, store, attempts, publications, ownership, settings.min_free_bytes
         )
         await _start(disk, orchestration, lake_path, settings.sweep_interval)
-        placements = Placements(disk, Placer(storage))
         # The service group is the pod's runAsGroup, not a setting.
         writer = DirectoryWriter(storage, os.getgid())
         directories = LakeDirectories(disk, writer)
@@ -305,7 +315,6 @@ async def build_runtime(
         owns_http=owns_http,
         declarations=declarations,
         disk=disk,
-        placements=placements,
         repair=repair,
         directories=directories,
         orchestration=orchestration,

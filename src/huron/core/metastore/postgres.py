@@ -23,7 +23,6 @@ from huron.core.metastore.schemas.postgres import PostgresSchemas
 from huron.core.metastore.uploads.postgres import (
     PostgresAttempts,
     PostgresObjects,
-    PostgresUploads,
 )
 from huron.pkg.errors import Unavailable
 
@@ -79,7 +78,6 @@ class PostgresTransaction:
         self.collections = PostgresCollections(connection)
         self.files = PostgresFiles(connection)
         self.commits = PostgresCommits(connection)
-        self.uploads = PostgresUploads(connection)
         self.attempts = PostgresAttempts(connection)
         self.objects = PostgresObjects(connection)
         self.commit_requests = PostgresCommitRequests(connection)

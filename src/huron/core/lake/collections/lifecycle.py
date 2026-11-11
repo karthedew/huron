@@ -47,7 +47,6 @@ if TYPE_CHECKING:
     from huron.core.lake.catalogs.models import Catalog
     from huron.core.lake.schemas.registry import SchemaResolver
     from huron.core.lake.transaction import Transaction, UnitOfWork
-    from huron.core.lake.uploads.models import Removal
     from huron.core.security.rbac import Actor
     from huron.pkg.clock import Clock
     from huron.schema.validator import Problem
@@ -253,10 +252,9 @@ class Collections:
         removes any file.
 
         A collection with a pending commit request is :class:`CollectionBusy`: that request
-        still changes its directory. The files of its placed, uncommitted uploads are on disk
-        with no record: the delete
-        queues their removal, claimed for the caller, and forgets every upload of the
-        collection. The answer carries those removals and the collection's directory.
+        still changes its directory. The upload attempts and the commit requests of the
+        collection stay, without their collection. The answer carries the collection's
+        directory.
         """
         async with self._uow.transaction() as tx:
             authz = Authorizer(tx.grants)
@@ -275,7 +273,6 @@ class Collections:
                     {"file_count": collection.file_count},
                 )
             disk_path = (await collection_view(tx, collection, catalog)).disk_path
-            removals = await self._queue_placed_files(tx, collection, disk_path)
             await tx.collections.delete(collection.id)
             await self._audit(
                 tx,
@@ -284,7 +281,7 @@ class Collections:
                 collection,
                 {"identifier": collection.identifier},
             )
-            return DeletedCollection(disk_path, removals)
+            return DeletedCollection(disk_path)
 
     async def resolved_schema(self, actor: Actor, collection_id: uuid.UUID) -> dict[str, Any]:
         """The schema the collection's metadata validates against."""
@@ -350,18 +347,6 @@ class Collections:
             "only the collection's creator or a catalog admin may delete it",
             {"privilege": str(Privilege.COLLECTION_DELETE_ANY), "scope": "catalog"},
         )
-
-    async def _queue_placed_files(
-        self, tx: Transaction, collection: Collection, disk_path: str | None
-    ) -> tuple[Removal, ...]:
-        placed = await tx.uploads.placed(collection.id)
-        if not placed:
-            return ()
-        assert disk_path is not None
-        now = self._clock.now()
-        removals = tuple(upload.removal(disk_path, now) for upload in placed)
-        await tx.uploads.insert_removals(removals)
-        return removals
 
     async def _visible_states(
         self, authz: Authorizer, actor: Actor, catalog: Catalog

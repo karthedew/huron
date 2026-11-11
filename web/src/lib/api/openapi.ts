@@ -1,6 +1,19 @@
 // Generated from docs/openapi.json by web/scripts/generate-api-types.mjs — do not edit.
 // Regenerate with `npm run generate:api` after the API contract changes.
 
+/** A file that a commit adds or replaces: the sealed bytes of one upload. */
+export interface AddIn {
+	rel_path: string;
+	/** The sha256 of the file. A commit needs it; a dry run can leave it out. */
+	sha256?: string | null;
+	size: number;
+	/**
+	 * The current upload ID of a ready upload attempt. A commit needs it; a dry run can leave it out.
+	 * Format: uuid.
+	 */
+	upload_id?: string | null;
+}
+
 /** The registry entry to assign to a catalog. */
 export interface AssignIn {
 	/** Format: uuid. */
@@ -77,7 +90,7 @@ export interface CatalogWriteOut {
 	warnings: ShareWarningOut[];
 }
 
-/** The id tusd gives the new upload: the id of the API's upload row. */
+/** The id tusd gives the new upload: the upload ID that Huron issued for the attempt. */
 export interface ChangeFileInfo {
 	ID: string;
 }
@@ -104,6 +117,8 @@ export interface CollectionOut {
 	namespace: string;
 	organization: string;
 	path: string | null;
+	/** The commit request that holds the collection; null when none holds it. While a request is pending, the files and the version are those of the last commit that succeeded. */
+	pending_request: PendingRequestOut | null;
 	problems: ProblemOut[];
 	schema: SchemaRefOut;
 	schema_override: Record<string, unknown> | null;
@@ -121,6 +136,20 @@ export interface CollectionPatch {
 	schema_override?: Record<string, unknown> | null;
 }
 
+/** The body of a commit to one collection: at most 10,000 adds and removes together. */
+export interface CommitIn {
+	adds: AddIn[];
+	base_version: number;
+	host: string;
+	message?: string | null;
+	removes: string[];
+	/**
+	 * The client's ID of the request. A commit needs it; a dry run can leave it out. The same ID with the same body gets the saved outcome again.
+	 * Format: uuid.
+	 */
+	request_id?: string | null;
+}
+
 /** An applied commit. */
 export interface CommitOut {
 	actor: string;
@@ -135,12 +164,28 @@ export interface CommitOut {
 	removes: number;
 }
 
-/** What a successful commit answers; a dry run answers what the commit would make. */
-export interface CommitResultOut {
-	/** The commit's id; null for a dry run. */
-	commit_id: string | null;
+/** What a commit would make: the answer of a dry run. */
+export interface CommitPreviewOut {
 	file_count: number;
 	version: number;
+}
+
+/**
+ * The saved state of a commit request.
+ * 
+ * A ``succeeded`` request has its ``version``, ``file_count`` and ``commit_id``. A ``rejected``
+ * or ``blocked`` request has its ``refusal``.
+ */
+export interface CommitRequestOut {
+	/** null when the collection is deleted. */
+	collection_id: string | null;
+	commit_id: string | null;
+	file_count: number | null;
+	refusal: RefusalOut | null;
+	request_id: string;
+	/** rejected, accepted, blocked, succeeded or abandoned. */
+	state: string;
+	version: number | null;
 }
 
 /** A company ID token to exchange. */
@@ -159,7 +204,7 @@ export interface ExchangeOut {
 	token_type?: string;
 }
 
-/** Why the API could not place an upload. */
+/** Why an upload attempt failed. */
 export interface FailureOut {
 	code: string;
 	message: string;
@@ -214,7 +259,7 @@ export interface GroupsOut {
  * What tusd merges into its response to the client.
  * 
  * A refusal sets the status, the problem media type and the problem document as text. A
- * finished upload adds the receipt headers and keeps tusd's status.
+ * finished upload adds the header ``Huron-Upload-State`` and keeps tusd's status.
  */
 export interface HTTPResponse {
 	Body?: string | null;
@@ -251,8 +296,15 @@ export interface HookEvent {
 	Upload: HookUpload;
 }
 
-/** The client's request that made tusd send the hook; ``uri`` names the tus resource. */
+/**
+ * The client's request that made tusd send the hook.
+ * 
+ * ``uri`` names the tus resource. ``header`` holds the client's headers, each name with its
+ * values.
+ */
 export interface HookHTTPRequest {
+	Header?: Record<string, string[]>;
+	Method?: string;
 	URI?: string;
 }
 
@@ -265,18 +317,17 @@ export interface HookRequest {
 /**
  * The API's answer to a hook.
  * 
- * ``RejectUpload`` refuses a creation and ``RejectTermination`` a termination. A refused
- * ``pre-finish`` has only ``HTTPResponse``: tusd still counts that upload as finished.
+ * ``RejectUpload`` refuses a creation. A refused ``pre-finish`` has only ``HTTPResponse``:
+ * tusd still counts that upload as finished.
  */
 export interface HookResponse {
 	ChangeFileInfo?: ChangeFileInfo | null;
 	HTTPResponse?: HTTPResponse | null;
-	RejectTermination?: boolean | null;
 	RejectUpload?: boolean | null;
 }
 
 /** The blocking hooks tusd sends to the API. */
-export type HookType = 'pre-create' | 'pre-finish' | 'pre-terminate';
+export type HookType = 'pre-create' | 'pre-finish';
 
 /** The upload a hook is about. ``id`` is empty before ``pre-create`` names it. */
 export interface HookUpload {
@@ -368,6 +419,14 @@ export interface Page<T> {
 	next_cursor?: string | null;
 }
 
+/** The commit request that holds a collection. */
+export interface PendingRequestOut {
+	/** Format: date-time. */
+	since: string;
+	/** accepted, or blocked until an operator resolves it. */
+	state: string;
+}
+
 /** One validation problem. */
 export interface ProblemOut {
 	message: string;
@@ -380,6 +439,13 @@ export interface RecomputeOut {
 	active: number;
 	changed: number;
 	incomplete: number;
+}
+
+/** The problem that refused or blocked a commit request. */
+export interface RefusalOut {
+	code: string;
+	context: Record<string, unknown>;
+	detail: string;
 }
 
 /** A place that the repair could not fix. */
@@ -406,6 +472,20 @@ export interface RepairOut {
 	changed: string[];
 	failed: RepairFailureOut[];
 	warnings: ShareWarningOut[];
+}
+
+/**
+ * What a platform administrator does with a blocked request.
+ * 
+ * ``retry`` runs the entries that are not done again. ``abandon`` ends a request of which no
+ * entry is done, frees its collection and returns its uploads to ``ready``.
+ */
+export type Resolution = 'retry' | 'abandon';
+
+/** What a platform administrator does with the blocked commit request of a collection. */
+export interface ResolutionIn {
+	/** retry: run the entries that are not done again. abandon: end a request of which no entry is done, free the collection and make its uploads ready again. */
+	resolution: Resolution;
 }
 
 /** One role the caller holds. */
@@ -485,16 +565,18 @@ export type SortField = 'name' | 'created_by' | 'created_at';
 /** The lifecycle state of a collection. */
 export type State = 'draft' | 'active' | 'incomplete';
 
-/** An upload and its receipt, for its creator. */
-export interface UploadOut {
-	collection_id: string;
+/** An upload attempt and its current upload ID, for its owner. */
+export interface UploadAttemptOut {
+	attempt_id: string;
+	/** null when the collection is deleted. */
+	collection_id: string | null;
 	failure: FailureOut | null;
-	id: string;
 	rel_path: string;
-	sha256: string | null;
 	size: number;
-	/** pending, placed, failed, terminated or committed. */
+	/** receiving, sealing, ready, consumed, failed, cancelled or expired. */
 	state: string;
+	/** The current upload ID: the only ID that tusd takes bytes for. */
+	upload_id: string;
 }
 
 export interface ValidationError {

@@ -23,7 +23,6 @@ from tests.support.disk import (
 )
 
 PART = ".a.bin.1.huron-part"
-BACKUP = ".a.bin.1.huron-prev"
 
 
 @pytest.fixture
@@ -45,11 +44,8 @@ def parent(lake: Path, *names: str) -> Iterator[int]:
         yield descriptor
 
 
-def link_source(lake: Path, parent_fd: int, name: str) -> object:
-    """Link ``up/src`` to ``name`` in ``parent_fd``."""
-    inode = os.lstat(lake / "up" / "src").st_ino
-    with parent(lake, "up") as source_fd:
-        return posix.link_into_place(source_fd, "src", inode, parent_fd, name, PART, BACKUP)
+def names_in(directory: Path) -> list[str]:
+    return sorted(p.name for p in directory.iterdir())
 
 
 def copy_source(lake: Path, parent_fd: int, name: str) -> object:
@@ -77,7 +73,6 @@ PRIMITIVES: dict[str, Callable[[Path, int, str], object]] = {
     "make_dir": lambda lake, fd, name: posix.make_dir(fd, name, 0o750),
     "make_inheriting_dir": lambda lake, fd, name: posix.make_inheriting_dir(fd, name),
     "atomic_write": lambda lake, fd, name: posix.atomic_write(fd, name, b"x", 0o644, PART),
-    "link_into_place": link_source,
     "copy_sealed": copy_source,
     "link_once": link_once_source,
     "sync_directory": lambda lake, fd, name: posix.sync_directory(fd, name),
@@ -637,121 +632,6 @@ def test_parent_close_retains_an_active_interruption(
     with pytest.raises(OSError) as released:
         os.fstat(fd)
     assert released.value.errno == errno.EBADF
-
-
-def place(lake: Path, name: str = "a.bin", inode: int | None = None) -> str | None:
-    """Link ``up/src`` to ``a/<name>``; ``inode`` stands in for the measured one."""
-    measured = os.lstat(lake / "up" / "src").st_ino if inode is None else inode
-    with parent(lake, "up") as source_fd, parent(lake, "a") as fd:
-        return posix.link_into_place(source_fd, "src", measured, fd, name, PART, BACKUP)
-
-
-def names_in(directory: Path) -> list[str]:
-    return sorted(p.name for p in directory.iterdir())
-
-
-def test_link_into_place_links_a_new_name_without_a_backup(lake: Path) -> None:
-    assert place(lake) is None
-    assert os.path.samefile(lake / "a" / "a.bin", lake / "up" / "src")
-    assert names_in(lake / "a") == ["a.bin"]
-
-
-@pytest.mark.parametrize("stale", [(), (PART,), (BACKUP,), (PART, BACKUP)])
-def test_link_into_place_replaces_an_existing_file_and_keeps_its_bytes_in_a_backup(
-    lake: Path, stale: tuple[str, ...]
-) -> None:
-    destination = lake / "a" / "a.bin"
-    destination.write_bytes(b"old")
-    old_inode = os.lstat(destination).st_ino
-    for name in stale:
-        (lake / "a" / name).write_bytes(b"stale")
-    assert place(lake) == BACKUP
-    assert destination.read_bytes() == b"new"
-    assert os.path.samefile(destination, lake / "up" / "src")
-    backup = lake / "a" / BACKUP
-    assert (backup.read_bytes(), os.lstat(backup).st_ino) == (b"old", old_inode)
-    assert names_in(lake / "a") == [BACKUP, "a.bin"]
-
-
-def test_link_into_place_over_a_link_of_the_same_file_changes_nothing(lake: Path) -> None:
-    os.link(lake / "up" / "src", lake / "a" / "a.bin")
-    assert place(lake) is None
-    assert names_in(lake / "a") == ["a.bin"]
-
-
-def test_link_into_place_after_an_interrupted_replacement_reports_its_backup(lake: Path) -> None:
-    destination = lake / "a" / "a.bin"
-    destination.write_bytes(b"old")
-    os.link(destination, lake / "a" / BACKUP)
-    os.link(lake / "up" / "src", lake / "a" / PART)
-    os.rename(lake / "a" / PART, destination)
-    assert place(lake) == BACKUP
-    assert (lake / "a" / BACKUP).read_bytes() == b"old"
-    assert os.path.samefile(destination, lake / "up" / "src")
-
-
-def test_link_into_place_without_a_source_changes_nothing(lake: Path) -> None:
-    (lake / "a" / "a.bin").write_bytes(b"old")
-    inode = os.lstat(lake / "up" / "src").st_ino
-    (lake / "up" / "src").unlink()
-    with pytest.raises(FileNotFoundError):
-        place(lake, inode=inode)
-    assert (lake / "a" / "a.bin").read_bytes() == b"old"
-    assert names_in(lake / "a") == ["a.bin"]
-
-
-def test_link_into_place_refuses_a_source_with_another_inode(lake: Path) -> None:
-    with pytest.raises(posix.SourceMismatch):
-        place(lake, inode=os.lstat(lake / "up" / "src").st_ino + 1)
-    assert names_in(lake / "a") == []
-
-
-def test_link_into_place_refuses_a_source_that_is_a_link(lake: Path) -> None:
-    (lake / "up" / "real").write_bytes(b"x")
-    (lake / "up" / "src").unlink()
-    (lake / "up" / "src").symlink_to(lake / "up" / "real")
-    with pytest.raises(posix.SourceMismatch):
-        place(lake, inode=os.lstat(lake / "up" / "src").st_ino)
-    assert names_in(lake / "a") == []
-
-
-@pytest.mark.parametrize("planted", [PART, BACKUP])
-def test_link_into_place_refuses_a_part_or_backup_name_that_is_a_link(
-    lake: Path, planted: str
-) -> None:
-    outside = lake.parent / "outside"
-    (lake / "a" / "a.bin").write_bytes(b"old")
-    (lake / "a" / planted).symlink_to(outside / "file")
-    with pytest.raises(posix.SymlinkError) as refused:
-        place(lake)
-    assert refused.value.names == (planted,)
-    assert (lake / "a" / "a.bin").read_bytes() == b"old"
-    assert (outside / "file").read_bytes() == b"keep"
-
-
-def test_link_into_place_refuses_a_directory_at_the_destination_before_any_change(
-    lake: Path,
-) -> None:
-    (lake / "a" / "a.bin").mkdir()
-    with pytest.raises(IsADirectoryError) as refused:
-        place(lake)
-    assert refused.value.filename == "a.bin"
-    assert names_in(lake / "a") == ["a.bin"]
-
-
-def test_link_into_place_that_cannot_rename_keeps_the_old_file_alone(
-    lake: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (lake / "a" / "a.bin").write_bytes(b"old")
-
-    def refuse(source: str, target: str, **kwargs: int) -> None:
-        raise OSError(errno.EIO, "I/O error")
-
-    monkeypatch.setattr(os, "rename", refuse)
-    with pytest.raises(OSError, match="I/O error"):
-        place(lake)
-    assert (lake / "a" / "a.bin").read_bytes() == b"old"
-    assert names_in(lake / "a") == ["a.bin"]
 
 
 def test_remove_helpers_report_whether_anything_was_removed(lake: Path) -> None:

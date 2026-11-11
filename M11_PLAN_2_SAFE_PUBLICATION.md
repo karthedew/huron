@@ -400,7 +400,8 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
   `grep -rnE "latest_placements|measure_destination|drop_backup|ReceiptMode" src tests` prints
   nothing.
 - Dependencies: S6.
-- Status: pending
+- Status: complete (verification 5 passed, 2026-11-11; two fix passes beyond the limit of three,
+  authorized by the owner; see "Escalation")
 
 ### S8 Crash acceptance
 
@@ -797,3 +798,88 @@ location = /_huron_auth { internal; client_max_body_size 0; proxy_pass_request_b
   `huron-p00-20261110t045227-pg`, both Exited), 8 networks, 20 volumes.
 - OBSERVED after: the same names and states. Only the "Exited … ago" text differs. No
   `huron-s1-*` resource, stub or temporary lake is left. The verifier's run ended the same way.
+
+## Escalation
+
+Recorded 2026-11-11. Task S7 "Routes and removal of the old path" failed its third verification.
+The workflow stops here. S8 and S9 did not start.
+
+### State of the tree
+
+- HEAD is `2d995032` (S6). S1 to S6 are complete and committed. Nothing of plan 2 is pushed.
+- The S7 work is in the working tree and is not committed. It was not reverted, because the
+  tree is not broken: the third verifier ran every gate on it with exit code 0.
+  - `make gate`: 3580 passed, 2 deselected. 11242 statements, 2 missed
+    (`applications/cli/identifiers.py` 76-77, not touched by the task).
+  - `pytest -m contract`: 216 passed. `tests/integration/test_api_postgres.py`: 1 passed.
+  - Web: `npm run check` 0 errors, `npm test` 1649 passed, lint and build clean, Playwright 245
+    passed.
+  - `docs/openapi.json` and `web/src/lib/api/openapi.ts` are stable on regeneration.
+
+### The three verification reports
+
+| Verification | Verdict | Findings |
+| --- | --- | --- |
+| 1 | FAIL | `README.md` described seeded files that `make app` no longer has. One stale docstring in `core/metastore/uploads/__init__.py` |
+| 2 | FAIL | The deleted `tests/unit/lake/test_commits.py` held the only cursor-paging tests of `Commits.list_files` and `Commits.list_commits`. One README sentence had no scope |
+| 3 | FAIL | `Sealing.settle` (`applications/api/disk/sealing.py`) has no direct test, and no test asserts its 20 s limit. The `COMMIT_INVALID` row of `docs/api-errors.md` says that a `base_version` outside its range gets that code. The API answers 422 `REQUEST_INVALID` |
+
+Each verifier judged that the code and its behaviour on the real application match the task.
+Verification 2 ran six full HTTP stories on the memory store and on PostgreSQL. Verification 3
+ran its own story with 45 checks on each store, checked every S7 bullet, the removal, migration
+`0005`, the security of the new routes and the audit of the removed tests. No verification found
+a defect in the behaviour of the code. Each fix pass corrected all findings of the verification
+before it. Each new verifier then found a different small gap in tests or text.
+
+### Diagnosis
+
+The design did not fail. The task is too large for the loop of one implementation and three
+verifications:
+
+- S7 changes the wire protocol, each consumer (the CLI, the web, the seeds, the documents) and
+  removes the old path, in one task. Its diff changes or deletes more than 100 files and
+  removes 163 tests.
+- A verifier of such a diff finds some gap in text or tests each time. Three attempts are not
+  sufficient to reach zero findings, although the count and the weight of the findings fell
+  with each attempt.
+- The plan gave S7 no rule for the removal of tests. The audit "each removed test: the code is
+  gone, or a named test covers the behaviour" started only after verification 2.
+- Verification notes of S2 to S6 added 12 bullets to S7. The task grew while it waited.
+
+### Questions to answer before the work continues
+
+1. Is S7 accepted with one more bounded correction (direct tests of `Sealing.settle`, and the
+   `COMMIT_INVALID` row), followed by one more verification? Or is S7 divided?
+2. If S7 is divided: are these the parts? (a) the new routes, hooks and operations beside the
+   old path; (b) the CLI and the other consumers; (c) the removal and migration `0005`; (d) the
+   documents and the seeds.
+3. Does a task that deletes tests need an audit table of the removed tests as part of its
+   output?
+4. Does the limit of three verifications apply in the same way to a finding in text or tests
+   and to a finding in behaviour?
+
+### Next steps
+
+1. Run `/architectural-review` for the upload and publication path, with this section as its
+   input:
+   `/architectural-review src/huron/applications/api src/huron/core/lake src/huron/core/storage src/huron/applications/cli M11_PLAN_2_SAFE_PUBLICATION.md`
+2. Then run `/design-plan` for the same area. Give it this section and the output of the
+   review. It makes the corrected plan for S7 to S9.
+
+### Resolution
+
+Recorded 2026-11-11. The owner did not run the review. The owner authorized two more fix passes,
+each with one verification. S7 is complete.
+
+- Fix pass 4 added direct tests of `Sealing.settle` and corrected the `COMMIT_INVALID` row.
+  Verification 4 failed. Its mutations showed that the new tests did not pin the 20 s limit on
+  the attempt read or on the commit route, and that the row left out three causes.
+- Fix pass 5 changed tests and docs only: the attempt-read tests pin the limit from both sides,
+  a commit-route test covers a seal that continues after the limit, the `settle` tests are
+  deterministic, and the `COMMIT_INVALID` and `BASE_VERSION_CONFLICT` rows match the code.
+- Verification 5 passed with a fixed scope: eight mutations of the limit and of `settle`, each
+  caught in 3 of 3 runs, 20 runs of the changed test files, and the full gate.
+  - `make gate`: 3588 passed, 2 deselected. 2 statements missed
+    (`applications/cli/identifiers.py` 76-77).
+  - `uv run pytest -m contract`: 216 passed.
+- The four questions above stay open for the next plan that removes an old path.

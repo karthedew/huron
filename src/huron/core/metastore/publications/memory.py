@@ -48,8 +48,12 @@ class MemoryCommitRequests:
             None,
         )
 
-    async def lock(self, row_id: uuid.UUID) -> CommitOutcome | None:
+    async def find(self, row_id: uuid.UUID) -> CommitOutcome | None:
         """The request with ``row_id``."""
+        return self._state.commit_requests.get(row_id)
+
+    async def lock(self, row_id: uuid.UUID) -> CommitOutcome | None:
+        """The request with ``row_id``; transactions are already serialized."""
         return self._state.commit_requests.get(row_id)
 
     async def pending(self) -> Sequence[CommitOutcome]:

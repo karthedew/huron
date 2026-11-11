@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from huron.pkg.errors import HuronError, Invalid, register
 
 __all__ = [
-    "BACKUP_SUFFIX",
     "IDENTIFIER_MAX_BYTES",
     "LAKE_NAME_MAX_BYTES",
     "METADATA_FILE",
@@ -39,16 +38,12 @@ LAKE_NAME_MAX_BYTES = 255
 RESERVED_SEGMENTS = frozenset({"huron", "metadata"})
 METADATA_FILE = "metadata.json"
 PART_SUFFIX = ".huron-part"
-#: The suffix of the link that keeps a replaced file's bytes until its replacement is recorded.
-BACKUP_SUFFIX = ".huron-prev"
-#: The bytes that a placement's part or backup name adds to a file's name:
+#: The bytes that the temporary name of a publication adds to a file's name:
 #: ``.<name>.<upload UUID><suffix>``.
-_PLACEMENT_NAME_BYTES = (
-    len("..") + len(str(uuid.UUID(int=0))) + max(len(PART_SUFFIX), len(BACKUP_SUFFIX))
-)
-#: The most bytes of one segment of a ``rel_path``: the part and backup names of its file must
-#: still be names on the lake.
-REL_PATH_SEGMENT_MAX_BYTES = LAKE_NAME_MAX_BYTES - _PLACEMENT_NAME_BYTES
+_PUBLICATION_NAME_BYTES = len("..") + len(str(uuid.UUID(int=0))) + len(PART_SUFFIX)
+#: The most bytes of one segment of a ``rel_path``: the temporary name of its file must
+#: still be a name on the lake.
+REL_PATH_SEGMENT_MAX_BYTES = LAKE_NAME_MAX_BYTES - _PUBLICATION_NAME_BYTES
 
 NAME_INVALID = register("NAME_INVALID", 422, "Name invalid")
 
@@ -188,5 +183,5 @@ def _check_path_segment(segment: str, value: str) -> None:
         raise RelPathError("rel_path_separator", value)
     if len(segment.encode()) > REL_PATH_SEGMENT_MAX_BYTES:
         raise RelPathError("rel_path_segment", value)
-    if segment.startswith(".huron") or segment.endswith((PART_SUFFIX, BACKUP_SUFFIX)):
+    if segment.startswith(".huron") or segment.endswith(PART_SUFFIX):
         raise RelPathError("rel_path_reserved", value)

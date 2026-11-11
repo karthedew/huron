@@ -1,6 +1,54 @@
 {
   "components": {
     "schemas": {
+      "AddIn": {
+        "additionalProperties": false,
+        "description": "A file that a commit adds or replaces: the sealed bytes of one upload.",
+        "properties": {
+          "rel_path": {
+            "minLength": 1,
+            "title": "Rel Path",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The sha256 of the file. A commit needs it; a dry run can leave it out.",
+            "title": "Sha256"
+          },
+          "size": {
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "upload_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The current upload ID of a ready upload attempt. A commit needs it; a dry run can leave it out.",
+            "title": "Upload Id"
+          }
+        },
+        "required": [
+          "rel_path",
+          "size"
+        ],
+        "title": "AddIn",
+        "type": "object"
+      },
       "AssignIn": {
         "description": "The registry entry to assign to a catalog.",
         "properties": {
@@ -346,7 +394,7 @@
         "type": "object"
       },
       "ChangeFileInfo": {
-        "description": "The id tusd gives the new upload: the id of the API's upload row.",
+        "description": "The id tusd gives the new upload: the upload ID that Huron issued for the attempt.",
         "properties": {
           "ID": {
             "title": "Id",
@@ -455,6 +503,17 @@
             ],
             "title": "Path"
           },
+          "pending_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingRequestOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The commit request that holds the collection; null when none holds it. While a request is pending, the files and the version are those of the last commit that succeeded."
+          },
           "problems": {
             "items": {
               "$ref": "#/components/schemas/ProblemOut"
@@ -522,7 +581,8 @@
           "activated_at",
           "path",
           "problems",
-          "share_root"
+          "share_root",
+          "pending_request"
         ],
         "title": "CollectionOut",
         "type": "object"
@@ -556,6 +616,71 @@
           }
         },
         "title": "CollectionPatch",
+        "type": "object"
+      },
+      "CommitIn": {
+        "additionalProperties": false,
+        "description": "The body of a commit to one collection: at most 10,000 adds and removes together.",
+        "properties": {
+          "adds": {
+            "items": {
+              "$ref": "#/components/schemas/AddIn"
+            },
+            "title": "Adds",
+            "type": "array"
+          },
+          "base_version": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "host": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Host",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "removes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removes",
+            "type": "array"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The client's ID of the request. A commit needs it; a dry run can leave it out. The same ID with the same body gets the saved outcome again.",
+            "title": "Request Id"
+          }
+        },
+        "required": [
+          "base_version",
+          "adds",
+          "removes",
+          "host"
+        ],
+        "title": "CommitIn",
         "type": "object"
       },
       "CommitOut": {
@@ -620,21 +745,9 @@
         "title": "CommitOut",
         "type": "object"
       },
-      "CommitResultOut": {
-        "description": "What a successful commit answers; a dry run answers what the commit would make.",
+      "CommitPreviewOut": {
+        "description": "What a commit would make: the answer of a dry run.",
         "properties": {
-          "commit_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The commit's id; null for a dry run.",
-            "title": "Commit Id"
-          },
           "file_count": {
             "title": "File Count",
             "type": "integer"
@@ -646,10 +759,89 @@
         },
         "required": [
           "version",
-          "file_count",
-          "commit_id"
+          "file_count"
         ],
-        "title": "CommitResultOut",
+        "title": "CommitPreviewOut",
+        "type": "object"
+      },
+      "CommitRequestOut": {
+        "description": "The saved state of a commit request.\n\nA ``succeeded`` request has its ``version``, ``file_count`` and ``commit_id``. A ``rejected``\nor ``blocked`` request has its ``refusal``.",
+        "properties": {
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null when the collection is deleted.",
+            "title": "Collection Id"
+          },
+          "commit_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Id"
+          },
+          "file_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Count"
+          },
+          "refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefusalOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "state": {
+            "description": "rejected, accepted, blocked, succeeded or abandoned.",
+            "title": "State",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "request_id",
+          "state",
+          "collection_id",
+          "version",
+          "file_count",
+          "commit_id",
+          "refusal"
+        ],
+        "title": "CommitRequestOut",
         "type": "object"
       },
       "ExchangeIn": {
@@ -711,7 +903,7 @@
         "type": "object"
       },
       "FailureOut": {
-        "description": "Why the API could not place an upload.",
+        "description": "Why an upload attempt failed.",
         "properties": {
           "code": {
             "title": "Code",
@@ -911,7 +1103,7 @@
         "type": "object"
       },
       "HTTPResponse": {
-        "description": "What tusd merges into its response to the client.\n\nA refusal sets the status, the problem media type and the problem document as text. A\nfinished upload adds the receipt headers and keeps tusd's status.",
+        "description": "What tusd merges into its response to the client.\n\nA refusal sets the status, the problem media type and the problem document as text. A\nfinished upload adds the header ``Huron-Upload-State`` and keeps tusd's status.",
         "properties": {
           "Body": {
             "anyOf": [
@@ -1040,8 +1232,23 @@
         "type": "object"
       },
       "HookHTTPRequest": {
-        "description": "The client's request that made tusd send the hook; ``uri`` names the tus resource.",
+        "description": "The client's request that made tusd send the hook.\n\n``uri`` names the tus resource. ``header`` holds the client's headers, each name with its\nvalues.",
         "properties": {
+          "Header": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Header",
+            "type": "object"
+          },
+          "Method": {
+            "default": "",
+            "title": "Method",
+            "type": "string"
+          },
           "URI": {
             "default": "",
             "title": "Uri",
@@ -1069,7 +1276,7 @@
         "type": "object"
       },
       "HookResponse": {
-        "description": "The API's answer to a hook.\n\n``RejectUpload`` refuses a creation and ``RejectTermination`` a termination. A refused\n``pre-finish`` has only ``HTTPResponse``: tusd still counts that upload as finished.",
+        "description": "The API's answer to a hook.\n\n``RejectUpload`` refuses a creation. A refused ``pre-finish`` has only ``HTTPResponse``:\ntusd still counts that upload as finished.",
         "properties": {
           "ChangeFileInfo": {
             "anyOf": [
@@ -1091,17 +1298,6 @@
               }
             ]
           },
-          "RejectTermination": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rejecttermination"
-          },
           "RejectUpload": {
             "anyOf": [
               {
@@ -1121,8 +1317,7 @@
         "description": "The blocking hooks tusd sends to the API.",
         "enum": [
           "pre-create",
-          "pre-finish",
-          "pre-terminate"
+          "pre-finish"
         ],
         "title": "HookType",
         "type": "string"
@@ -1684,6 +1879,27 @@
         "title": "Page[SchemaOut]",
         "type": "object"
       },
+      "PendingRequestOut": {
+        "description": "The commit request that holds a collection.",
+        "properties": {
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          },
+          "state": {
+            "description": "accepted, or blocked until an operator resolves it.",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "since"
+        ],
+        "title": "PendingRequestOut",
+        "type": "object"
+      },
       "ProblemOut": {
         "description": "One validation problem.",
         "properties": {
@@ -1730,6 +1946,31 @@
           "changed"
         ],
         "title": "RecomputeOut",
+        "type": "object"
+      },
+      "RefusalOut": {
+        "description": "The problem that refused or blocked a commit request.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "context": {
+            "additionalProperties": true,
+            "title": "Context",
+            "type": "object"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail",
+          "context"
+        ],
+        "title": "RefusalOut",
         "type": "object"
       },
       "RepairFailureOut": {
@@ -1812,6 +2053,30 @@
           "failed"
         ],
         "title": "RepairOut",
+        "type": "object"
+      },
+      "Resolution": {
+        "description": "What a platform administrator does with a blocked request.\n\n``retry`` runs the entries that are not done again. ``abandon`` ends a request of which no\nentry is done, frees its collection and returns its uploads to ``ready``.",
+        "enum": [
+          "retry",
+          "abandon"
+        ],
+        "title": "Resolution",
+        "type": "string"
+      },
+      "ResolutionIn": {
+        "additionalProperties": false,
+        "description": "What a platform administrator does with the blocked commit request of a collection.",
+        "properties": {
+          "resolution": {
+            "$ref": "#/components/schemas/Resolution",
+            "description": "retry: run the entries that are not done again. abandon: end a request of which no entry is done, free the collection and make its uploads ready again."
+          }
+        },
+        "required": [
+          "resolution"
+        ],
+        "title": "ResolutionIn",
         "type": "object"
       },
       "RoleOut": {
@@ -2113,12 +2378,24 @@
         "title": "State",
         "type": "string"
       },
-      "UploadOut": {
-        "description": "An upload and its receipt, for its creator.",
+      "UploadAttemptOut": {
+        "description": "An upload attempt and its current upload ID, for its owner.",
         "properties": {
-          "collection_id": {
-            "title": "Collection Id",
+          "attempt_id": {
+            "title": "Attempt Id",
             "type": "string"
+          },
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null when the collection is deleted.",
+            "title": "Collection Id"
           },
           "failure": {
             "anyOf": [
@@ -2130,45 +2407,35 @@
               }
             ]
           },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
           "rel_path": {
             "title": "Rel Path",
             "type": "string"
-          },
-          "sha256": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sha256"
           },
           "size": {
             "title": "Size",
             "type": "integer"
           },
           "state": {
-            "description": "pending, placed, failed, terminated or committed.",
+            "description": "receiving, sealing, ready, consumed, failed, cancelled or expired.",
             "title": "State",
+            "type": "string"
+          },
+          "upload_id": {
+            "description": "The current upload ID: the only ID that tusd takes bytes for.",
+            "title": "Upload Id",
             "type": "string"
           }
         },
         "required": [
-          "id",
+          "attempt_id",
           "collection_id",
           "rel_path",
           "size",
           "state",
-          "sha256",
+          "upload_id",
           "failure"
         ],
-        "title": "UploadOut",
+        "title": "UploadAttemptOut",
         "type": "object"
       },
       "ValidationError": {
@@ -2276,6 +2543,60 @@
         "summary": "Openid Configuration",
         "tags": [
           "discovery"
+        ]
+      }
+    },
+    "/api/v1/admin/collections/{collection_id}/pending-request": {
+      "post": {
+        "description": "Retry or abandon the blocked commit request of a collection; for a platform admin.\n\nThe route names the collection, reads its pending request, and locks the collection before\nthe request. Another user gets 403 first; a process that is not the writer then gets 503.\n``retry`` makes the request ``accepted`` and starts its publication again. ``abandon`` is\npossible only when no entry of the request is done: the request becomes ``abandoned``, the\ncollection is free and the uploads are ``ready`` again.",
+        "operationId": "resolve_pending_request_api_v1_admin_collections__collection_id__pending_request_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Collection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolutionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitRequestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Pending Request",
+        "tags": [
+          "admin"
         ]
       }
     },
@@ -3969,7 +4290,7 @@
         ]
       },
       "post": {
-        "description": "Record added and removed files in one transaction, or refuse the whole commit.",
+        "description": "Publish added and removed files, or refuse the whole commit.\n\nThe answer is 200 when the commit succeeded, and 202 with the ``Location`` of the request's\nstate when it does not end within 5 seconds, when a storage error stops it for now, or when\nan operator must resolve it. A commit that names an upload of the caller that is not ready\nfirst runs the API's own seal check of that upload. An upload of another user is never\nchecked here: the commit refuses it as not found. The same request ID with the same body\ngets the saved outcome again.",
         "operationId": "commit_api_v1_collections__collection_id__commits_post",
         "parameters": [
           {
@@ -3983,13 +4304,13 @@
             }
           },
           {
-            "description": "Check the commit exactly as a real one (right, state, base version, paths) and answer what it would make; change nothing. Adds may leave out sha256.",
+            "description": "Check the commit as a real one, but not its uploads (right, pending commit, base version, paths), and answer what it would make; change nothing. Adds may leave out sha256 and upload_id, and the body may leave out request_id.",
             "in": "query",
             "name": "dry_run",
             "required": false,
             "schema": {
               "default": false,
-              "description": "Check the commit exactly as a real one (right, state, base version, paths) and answer what it would make; change nothing. Adds may leave out sha256.",
+              "description": "Check the commit as a real one, but not its uploads (right, pending commit, base version, paths), and answer what it would make; change nothing. Adds may leave out sha256 and upload_id, and the body may leave out request_id.",
               "title": "Dry Run",
               "type": "boolean"
             }
@@ -3999,9 +4320,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
+                "$ref": "#/components/schemas/CommitIn"
               }
             }
           },
@@ -4012,11 +4331,29 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommitResultOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/CommitRequestOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CommitPreviewOut"
+                    }
+                  ],
+                  "title": "Response Commit Api V1 Collections  Collection Id  Commits Post"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitRequestOut"
+                }
+              }
+            },
+            "description": "The request is accepted and not published yet, or blocked. The Location header names its state."
           },
           "422": {
             "content": {
@@ -4284,6 +4621,50 @@
         "summary": "Get Collection Schema",
         "tags": [
           "collections"
+        ]
+      }
+    },
+    "/api/v1/commit-requests/{request_id}": {
+      "get": {
+        "description": "The saved state of the caller's commit request; another user's request is not found.",
+        "operationId": "get_commit_request_api_v1_commit_requests__request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitRequestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Commit Request",
+        "tags": [
+          "files"
         ]
       }
     },
@@ -5081,9 +5462,53 @@
         ]
       }
     },
+    "/api/v1/upload-attempts/{attempt_id}": {
+      "get": {
+        "description": "The caller's upload attempt: its state and its current upload ID.\n\nAnother user's attempt is not found. In the writer, the read first runs the API's own seal\ncheck of a ``receiving`` or ``sealing`` attempt: a complete upload that no hook reported is\nsealed, and the read waits at most 20 seconds for the seal. A process that serves reads\nonly answers from the database and starts no seal.",
+        "operationId": "get_upload_attempt_api_v1_upload_attempts__attempt_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadAttemptOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Upload Attempt",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
     "/api/v1/uploads/auth": {
       "get": {
-        "description": "Whether the upload proxy may pass a request to tusd (204), or not (401, 403).\n\nA creation (``POST /files/``) needs a bearer token, which ``pre-create`` verifies. Any\nrequest on ``/files/<id>`` needs a valid token of the user who started upload ``<id>``.",
+        "description": "Whether the upload proxy may pass a request to tusd (204), or not (401, 403).\n\nA creation (``POST /files/``) needs a bearer token, which ``pre-create`` verifies. A request\non ``/files/<id>`` needs a valid token of the owner of the attempt whose current upload ID\nis ``<id>``, and the attempt must be ``receiving``. An allowed ``PATCH`` records activity on\nthe attempt.",
         "operationId": "authorize_api_v1_uploads_auth_get",
         "parameters": [
           {
@@ -5136,7 +5561,7 @@
     },
     "/api/v1/uploads/hooks": {
       "post": {
-        "description": "Answer one of tusd's blocking hooks: ``pre-create``, ``pre-finish`` or ``pre-terminate``.\n\n``pre-create`` starts the upload row and names the tus upload after it. ``pre-finish``\nplaces the finished upload and answers its receipt in the ``Huron-Upload-Id`` and\n``Huron-Sha256`` headers. ``pre-terminate`` ends an upload that was never placed.",
+        "description": "Answer one of tusd's blocking hooks: ``pre-create`` or ``pre-finish``.\n\n``pre-create`` applies the creation rule of upload attempts and names the tus upload with\nthe upload ID that Huron issued. ``pre-finish`` starts or joins the seal of the upload and\nwaits for it at most 20 seconds. It then answers the state in the ``Huron-Upload-State``\nheader: ``ready``, or ``sealing`` when the seal goes on and the client must read the\nattempt.",
         "operationId": "hooks_api_v1_uploads_hooks_post",
         "requestBody": {
           "content": {
@@ -5176,10 +5601,10 @@
         ]
       }
     },
-    "/api/v1/uploads/{upload_id}": {
-      "get": {
-        "description": "The state of an upload the caller started, its receipt and why it failed.",
-        "operationId": "get_upload_api_v1_uploads__upload_id__get",
+    "/api/v1/uploads/{upload_id}/cancel": {
+      "post": {
+        "description": "Cancel the caller's upload attempt that issued ``upload_id``.\n\n``upload_id`` can be any upload ID that Huron issued for the attempt. The attempt becomes\n``cancelled``, and the API removes the tusd files of every upload ID of the attempt. An\nattempt that ended already stays as it is. A commit that holds or consumed the attempt is\na conflict.",
+        "operationId": "cancel_upload_api_v1_uploads__upload_id__cancel_post",
         "parameters": [
           {
             "in": "path",
@@ -5197,7 +5622,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UploadOut"
+                  "$ref": "#/components/schemas/UploadAttemptOut"
                 }
               }
             },
@@ -5214,7 +5639,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Get Upload",
+        "summary": "Cancel Upload",
         "tags": [
           "uploads"
         ]
