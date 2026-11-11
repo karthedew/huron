@@ -253,7 +253,7 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
   directory blocks. A prune of a directory with a foreign file keeps it and is done.
 - Verification: `make gate`. The contract table of plan 1 has a row for each new port method.
 - Dependencies: S2.
-- Status: pending
+- Status: complete (verification 3 of 3 passed, 2026-11-10)
 
 ### S4 Metastore adapters
 
@@ -297,9 +297,15 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
 - Create or change, in `src/huron/applications/api/disk/` and `runtime.py`:
   - `sealing.py`: one tracked task for each upload ID. A second caller joins the same task. The
     task does not depend on the hook request: it continues when the hook's client goes away.
+    `copy_sealed` refuses an existing destination. A kill during a copy can leave a partial
+    object at the final name, so the seal task removes the object file of its `objects` row
+    before it copies again.
     The completeness check of the design: `.info` exists, no deferred length, the sizes agree,
     no `<id>.lock`. An upload with a lock file is skipped, not failed.
-  - `publications.py`: the materializer and `recover_pending` at startup.
+  - `publications.py`: the materializer and `recover_pending` at startup. Before it runs a
+    step, it checks the organization marker through the existing hold of the lake. On an
+    export that is not mounted, a removal step would see a missing directory and report done.
+    A missing parent of a seal's source is a failure to retry, not an end state.
   - `ownership.py`: the advisory lock, the keepalives, the exit on loss.
   - `capacity.py`: the three limits. The free-space check reads the filesystem of
     `.tus-uploads` and the filesystem of the object area.

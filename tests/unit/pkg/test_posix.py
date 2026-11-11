@@ -2,6 +2,7 @@
 
 import asyncio
 import errno
+import hashlib
 import os
 import stat
 from collections.abc import Callable, Iterator
@@ -11,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from huron.pkg.fs import posix
+from huron.pkg.hashing import EMPTY_SHA256
 from tests.support.disk import (
     WRITE_CLEANUP_FAILURES,
     cleanup_notes,
@@ -50,6 +52,22 @@ def link_source(lake: Path, parent_fd: int, name: str) -> object:
         return posix.link_into_place(source_fd, "src", inode, parent_fd, name, PART, BACKUP)
 
 
+def copy_source(lake: Path, parent_fd: int, name: str) -> object:
+    """Copy ``up/src`` to ``name`` in ``parent_fd``."""
+    source = os.open(lake / "up" / "src", os.O_RDONLY)
+    try:
+        return posix.copy_sealed(source, parent_fd, name, 3, 0o644)
+    finally:
+        os.close(source)
+
+
+def link_once_source(lake: Path, parent_fd: int, name: str) -> object:
+    """Link ``up/src`` to the new name ``name`` in ``parent_fd``."""
+    with parent(lake, "up") as source_fd:
+        posix.link_once(source_fd, "src", parent_fd, name)
+    return None
+
+
 PRIMITIVES: dict[str, Callable[[Path, int, str], object]] = {
     "entry": lambda lake, fd, name: posix.entry(fd, name),
     "open_file": lambda lake, fd, name: posix.open_file(fd, name),
@@ -60,6 +78,9 @@ PRIMITIVES: dict[str, Callable[[Path, int, str], object]] = {
     "make_inheriting_dir": lambda lake, fd, name: posix.make_inheriting_dir(fd, name),
     "atomic_write": lambda lake, fd, name: posix.atomic_write(fd, name, b"x", 0o644, PART),
     "link_into_place": link_source,
+    "copy_sealed": copy_source,
+    "link_once": link_once_source,
+    "sync_directory": lambda lake, fd, name: posix.sync_directory(fd, name),
     "remove_file": lambda lake, fd, name: posix.remove_file(fd, name),
     "remove_empty_dir": lambda lake, fd, name: posix.remove_empty_dir(fd, name),
 }
@@ -859,3 +880,211 @@ def test_walk_names_a_directory_that_a_link_replaced_from_the_walked_directory(
     finally:
         os.close(descriptor)
     assert refused.value.names == ("b", "c")
+
+
+def copy_to(lake: Path, name: str, size: int = 3) -> posix.SealedFile:
+    """Copy ``up/src`` to ``a/<name>`` with mode ``0644``, expecting ``size`` bytes."""
+    with parent(lake, "a") as fd:
+        source = os.open(lake / "up" / "src", os.O_RDONLY)
+        try:
+            return posix.copy_sealed(source, fd, name, size, 0o644)
+        finally:
+            os.close(source)
+
+
+def test_copy_sealed_writes_a_new_file_and_measures_it_on_a_new_descriptor(lake: Path) -> None:
+    os.umask(0o077)
+    sealed = copy_to(lake, "c")
+    copy = lake / "a" / "c"
+    assert sealed == posix.SealedFile(3, hashlib.sha256(b"new").hexdigest(), copy.stat().st_ino)
+    assert sealed.inode != (lake / "up" / "src").stat().st_ino
+    assert (copy.read_bytes(), stat.S_IMODE(copy.stat().st_mode)) == (b"new", 0o644)
+
+
+def test_copy_sealed_of_an_empty_file(lake: Path) -> None:
+    (lake / "up" / "src").write_bytes(b"")
+    assert copy_to(lake, "c", 0).sha256 == EMPTY_SHA256
+
+
+@pytest.mark.parametrize("kind", ["file", "dir"])
+def test_copy_sealed_never_replaces_an_existing_name(lake: Path, kind: str) -> None:
+    existing = lake / "a" / "c"
+    existing.mkdir() if kind == "dir" else existing.write_bytes(b"old")
+    before = snapshot(lake)
+    with pytest.raises(FileExistsError) as refused:
+        copy_to(lake, "c")
+    assert (type(refused.value), refused.value.errno, refused.value.filename) == (
+        FileExistsError,
+        errno.EEXIST,
+        "c",
+    )
+    assert snapshot(lake) == before
+
+
+def test_copy_sealed_syncs_the_directory_after_the_file(
+    lake: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    synced: list[str] = []
+    real = os.fsync
+
+    def recording(descriptor: int) -> None:
+        synced.append(Path(os.readlink(f"/proc/self/fd/{descriptor}")).name)
+        real(descriptor)
+
+    monkeypatch.setattr(os, "fsync", recording)
+    copy_to(lake, "c")
+    assert synced == ["c", "a"]
+
+
+def test_copy_sealed_stops_one_byte_after_the_expected_size(lake: Path) -> None:
+    endless = os.open("/dev/zero", os.O_RDONLY)
+    try:
+        with parent(lake, "a") as fd, pytest.raises(posix.SizeMismatch) as refused:
+            posix.copy_sealed(endless, fd, "c", 3, 0o644)
+    finally:
+        os.close(endless)
+    assert type(refused.value) is posix.SizeMismatch
+    assert (refused.value.size, refused.value.errno, refused.value.strerror) == (
+        4,
+        errno.EIO,
+        "the copy has 4 bytes",
+    )
+    assert not (lake / "a" / "c").exists()
+
+
+def test_copy_sealed_of_other_bytes_than_expected_removes_the_copy(lake: Path) -> None:
+    with pytest.raises(posix.SizeMismatch) as refused:
+        copy_to(lake, "c", size=5)
+    assert type(refused.value) is posix.SizeMismatch
+    assert (refused.value.size, refused.value.errno, refused.value.strerror) == (
+        3,
+        errno.EIO,
+        "the copy has 3 bytes",
+    )
+    assert not (lake / "a" / "c").exists()
+
+
+@pytest.mark.parametrize(
+    ("operation", "name", "after"),
+    [
+        ("fchmod", "c", 0),
+        ("write", "c", 0),
+        ("fsync", "c", 0),
+        ("close", "c", 0),
+        ("open", "c", 1),
+        ("fstat", "c", 0),
+        ("pread", "c", 0),
+        ("fsync", "a", 0),
+    ],
+)
+def test_a_failed_copy_removes_its_file(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, operation: str, name: str, after: int
+) -> None:
+    with monkeypatch.context() as patch:
+        primary = fail_file_io(patch, operation, name, errno.ENOSPC, after=after)
+        with pytest.raises(OSError) as refused:
+            copy_to(lake, "c")
+    assert refused.value is primary
+    assert cleanup_notes(refused.value) == []
+    assert not (lake / "a" / "c").exists()
+    assert (lake / "up" / "src").read_bytes() == b"new"
+
+
+@pytest.mark.parametrize(
+    "operation,cleanup",
+    [
+        ("write", (("close", 0),)),
+        ("write", (("unlink", 0),)),
+        ("write", (("close", 0), ("unlink", 0))),
+        ("fstat", (("close", 1),)),
+        ("pread", (("close", 1), ("unlink", 0))),
+    ],
+)
+def test_a_failed_copy_keeps_its_error_when_the_cleanup_fails_too(
+    lake: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    cleanup: tuple[tuple[str, int], ...],
+) -> None:
+    with monkeypatch.context() as patch:
+        primary = fail_file_io(patch, operation, "c", errno.ENOSPC)
+        for action, after in cleanup:
+            fail_file_io(patch, action, "c", errno.EIO, after=after)
+        with pytest.raises(OSError) as refused:
+            copy_to(lake, "c")
+    assert exception_chain(refused.value)[-1] is primary
+    notes = cleanup_notes(refused.value)
+    assert len(notes) == len(cleanup)
+    assert all(note.endswith("failed: [Errno 5] Input/output error") for note in notes)
+
+
+def test_link_once_gives_the_file_a_new_name_and_never_replaces_one(lake: Path) -> None:
+    with parent(lake, "a") as fd:
+        link_once_source(lake, fd, "l")
+        assert (lake / "a" / "l").stat().st_ino == (lake / "up" / "src").stat().st_ino
+        (lake / "a" / "d").mkdir()
+        for name in ("l", "d"):
+            with pytest.raises(FileExistsError) as refused:
+                link_once_source(lake, fd, name)
+            assert (type(refused.value), refused.value.errno) == (FileExistsError, errno.EEXIST)
+
+
+def test_link_once_across_two_filesystems_keeps_the_error_of_the_link(
+    lake: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    primary = fail_file_io(monkeypatch, "link", "src", errno.EXDEV)
+    with parent(lake, "a") as fd, pytest.raises(OSError) as refused:
+        link_once_source(lake, fd, "l")
+    assert refused.value is primary
+    assert not (lake / "a" / "l").exists()
+
+
+def test_sync_directory_flushes_a_directory_and_refuses_anything_else(
+    lake: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    synced: list[str] = []
+    real = os.fsync
+
+    def recording(descriptor: int) -> None:
+        synced.append(os.readlink(f"/proc/self/fd/{descriptor}"))
+        real(descriptor)
+
+    monkeypatch.setattr(os, "fsync", recording)
+    with parent(lake) as fd:
+        posix.sync_directory(fd, "a")
+    with parent(lake, "up") as fd:
+        with pytest.raises(NotADirectoryError) as not_directory:
+            posix.sync_directory(fd, "src")
+        with pytest.raises(FileNotFoundError) as missing:
+            posix.sync_directory(fd, "missing")
+    assert (type(not_directory.value), not_directory.value.errno) == (
+        NotADirectoryError,
+        errno.ENOTDIR,
+    )
+    assert (type(missing.value), missing.value.errno) == (FileNotFoundError, errno.ENOENT)
+    assert synced == [str(lake / "a")]
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_a_failed_sync_closes_the_directory_and_keeps_its_error(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, close_fails: bool
+) -> None:
+    opened: list[int] = []
+    real = os.fsync
+    primary = OSError(errno.EIO, os.strerror(errno.EIO))
+
+    def failing(descriptor: int) -> None:
+        opened.append(descriptor)
+        raise primary
+
+    monkeypatch.setattr(os, "fsync", failing)
+    if close_fails:
+        fail_file_io(monkeypatch, "close", "a", errno.EIO)
+    with parent(lake) as fd, pytest.raises(OSError) as refused:
+        posix.sync_directory(fd, "a")
+    monkeypatch.setattr(os, "fsync", real)
+    assert refused.value is primary
+    assert len(cleanup_notes(refused.value)) == int(close_fails)
+    with pytest.raises(OSError) as closed:
+        os.fstat(opened[0])
+    assert closed.value.errno == errno.EBADF

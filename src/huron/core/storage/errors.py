@@ -9,7 +9,14 @@ from huron.pkg.errors import HuronError, register
 if TYPE_CHECKING:
     from huron.core.storage.lakepath import LakePath
 
-__all__ = ["InheritanceFailed", "LakeUnavailable", "SourceGone", "StorageError", "SymlinkInLake"]
+__all__ = [
+    "InheritanceFailed",
+    "LakeUnavailable",
+    "SourceGone",
+    "SourceSizeMismatch",
+    "StorageError",
+    "SymlinkInLake",
+]
 
 STORAGE_FAILED = register("STORAGE_FAILED", 500, "Storage failed")
 SYMLINK_IN_LAKE = register("SYMLINK_IN_LAKE", 409, "Symbolic link in the lake")
@@ -62,3 +69,16 @@ class SourceGone(StorageError):
 
     def __init__(self, source: LakePath) -> None:
         super().__init__(f"the upload file {source} does not exist", {"path": str(source)})
+
+
+class SourceSizeMismatch(StorageError):
+    """The upload's file, or the copy of it, does not have the size that the seal expects.
+
+    tusd may still write to the file. Nothing was sealed, and no copy stays.
+    """
+
+    def __init__(self, source: LakePath, expected: int, size: int) -> None:
+        super().__init__(
+            f"the upload file {source} has {size} bytes, not {expected} bytes",
+            {"path": str(source), "expected": expected, "size": size},
+        )

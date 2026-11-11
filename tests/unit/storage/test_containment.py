@@ -10,6 +10,7 @@ otherwise.
 
 import copy
 import errno
+import hashlib
 import itertools
 import os
 from collections.abc import Callable, Iterator, Mapping
@@ -26,7 +27,9 @@ from huron.core.storage import (
     LakePath,
     LakeUnavailable,
     Outcome,
+    SealedFile,
     SourceGone,
+    SourceSizeMismatch,
     Storage,
     StorageError,
     SymlinkInLake,
@@ -43,6 +46,11 @@ PART = LakePath.of("a", "t.huron-part")
 LINK_PART, LINK_BACKUP = ".part", ".prev"
 #: The backup that ``link`` keeps when it replaces the file at :data:`NAME`.
 BACKUP = LakePath.of("a", LINK_BACKUP)
+#: Where ``link source``, ``link_once source`` and ``copy_sealed source`` put their file.
+DESTINATION = LakePath.of("up", "dst")
+#: The bytes of :data:`SOURCE` in the case ``resized_source``: not the 3 bytes that
+#: ``copy_sealed`` expects.
+RESIZED = b"longer"
 #: Where each case puts the place it asks for; any other case asks for :data:`NAME`.
 PLACES = {
     "parent_missing": LakePath.of("a", "gone", "t"),
@@ -199,14 +207,15 @@ SETUPS: dict[str, Callable[[Lake, LakePath], None]] = {
     ),
     "same_file_at_name": same_file,
     "source_missing": lambda lake, at: lake.storage.remove_file(SOURCE),
+    "resized_source": lambda lake, at: lake.storage.write_bytes(SOURCE, RESIZED, 0o644),
 }
 #: The parts of a case by group. A way part says that the parent is not a directory, a lock
-#: part that the parent is a directory without a permission, and the source part what is at
-#: the source of ``link`` or ``rename``. Every other part is an entry part: it states everything
-#: at the name and beside it.
+#: part that the parent is a directory without a permission, and a source part what is at the
+#: source of ``link``, ``link_once``, ``copy_sealed`` or ``rename``. Every other part is an
+#: entry part: it states everything at the name and beside it.
 WAY = frozenset({"parent_missing", "link_above", "file_above"})
 LOCK = frozenset({"unsearchable", "read_only"})
-SOURCES = frozenset({"source_missing"})
+SOURCES = frozenset({"source_missing", "resized_source"})
 ENTRIES = frozenset(SETUPS) - WAY - LOCK - SOURCES
 #: The pairs of groups whose parts cannot hold at once, with the reason.
 UNARRANGEABLE: dict[frozenset[str], str] = {
@@ -215,6 +224,7 @@ UNARRANGEABLE: dict[frozenset[str], str] = {
     frozenset({"way", "entry"}): "nothing is in a parent that is missing, a link or a file",
     frozenset({"lock"}): "a parent without search permission has no write permission either",
     frozenset({"entry"}): "each entry part states everything at the name and beside it",
+    frozenset({"source"}): "the source is one entry: missing or resized",
 }
 
 
@@ -255,6 +265,11 @@ def source_inode(storage: Storage) -> int:
     return 0 if found is None else found.inode
 
 
+def copied(storage: Storage, at: LakePath, sealed: SealedFile) -> tuple[int, str, bool]:
+    """The size and the sha256 of a copy, and whether the file at ``at`` has its inode."""
+    return sealed.size, sealed.sha256, sealed.inode == file_inode(storage, at)
+
+
 #: Each method: the entry it expects at its place, and the call.
 METHODS: dict[str, tuple[Kind, Callable[[Storage, LakePath], object]]] = {
     "stat": (None, lambda storage, at: storage.stat(at)),
@@ -281,12 +296,25 @@ METHODS: dict[str, tuple[Kind, Callable[[Storage, LakePath], object]]] = {
         "file",
         lambda storage, at: storage.link(
             at,
-            LakePath.of("up", "dst"),
+            DESTINATION,
             inode=file_inode(storage, at),
             part_name=LINK_PART,
             backup_name=LINK_BACKUP,
         ),
     ),
+    "copy_sealed": (
+        None,
+        lambda storage, at: copied(storage, at, storage.copy_sealed(SOURCE, at, len(b"new"))),
+    ),
+    "copy_sealed source": (
+        "file",
+        lambda storage, at: copied(
+            storage, DESTINATION, storage.copy_sealed(at, DESTINATION, len(b"x"))
+        ),
+    ),
+    "link_once": (None, lambda storage, at: storage.link_once(SOURCE, at)),
+    "link_once source": ("file", lambda storage, at: storage.link_once(at, DESTINATION)),
+    "sync_directory": ("dir", lambda storage, at: storage.sync_directory(at)),
     "rename": (None, lambda storage, at: storage.rename(SOURCE, at)),
     "rename source": ("file", lambda storage, at: storage.rename(at, LakePath.of("up", "moved"))),
     "remove_file": ("file", lambda storage, at: storage.remove_file(at)),
@@ -317,6 +345,8 @@ class Raises:
             )
         if self.error is SourceGone:
             return f"the upload file {self.path} does not exist"
+        if self.error is SourceSizeMismatch:
+            return f"the upload file {self.path} has {len(RESIZED)} bytes, not 3 bytes"
         if self.reason == "ENOENT":
             return f"{self.path} does not exist"
         if self.reason == "EACCES":
@@ -437,7 +467,7 @@ def table_rows() -> list[Row]:
         Row("link source", "parent_missing", PARENT_MISSING),
         *traversal_rows("link source"),
         Row("link source", "dir_at_name", Raises(SourceGone, "a/t")),
-        Row("link source", "read_only", Returns(None), {LakePath.of("up", "dst"): "file"}),
+        Row("link source", "read_only", Returns(None), {DESTINATION: "file"}),
         Row("rename", "same_file_at_name", Returns(None), {NAME: "file", SOURCE: "file"}),
     ]
     rows += [
@@ -466,7 +496,112 @@ def table_rows() -> list[Row]:
         Row("remove_directory", "file_at_name", Raises(StorageError, "a/t", "ENOTDIR")),
         Row("remove_directory", "read_only", DENIED),
     ]
-    return rows + combined_rows()
+    return rows + publication_rows() + combined_rows() + combined_publication_rows()
+
+
+#: The result of a copy of :data:`SOURCE` (``new``) and of a file that a case put (``x``).
+COPY_OF_SOURCE = Returns((3, hashlib.sha256(b"new").hexdigest(), True))
+COPY_OF_PUT = Returns((1, hashlib.sha256(b"x").hexdigest(), True))
+SOURCE_GONE = Raises(SourceGone, "up/src")
+RESIZED_SOURCE = Raises(SourceSizeMismatch, "up/src")
+SOURCE_MISSING = Raises(StorageError, "up/src", "ENOENT")
+EXISTS = Raises(StorageError, "a/t", "EEXIST")
+LOCKED_EXISTS = Raises(StorageError, "a/p/t", "EEXIST")
+LOCKED_DENIED = Raises(StorageError, "a/p/t", "EACCES")
+LOCKED_LINK = Raises(SymlinkInLake, "a/p/t")
+
+
+def publication_rows() -> list[Row]:
+    """The rows of the methods that seal and publish: ``copy_sealed``, ``link_once`` and
+    ``sync_directory``.
+    """
+    rows: list[Row] = []
+    for method, created in (("copy_sealed", COPY_OF_SOURCE), ("link_once", Returns(None))):
+        rows += [
+            Row(method, "missing", created, {NAME: "file"}),
+            Row(method, "parent_missing", PARENT_MISSING),
+            *traversal_rows(method),
+            Row(method, "dir_at_name", EXISTS),
+            Row(method, "file_at_name", EXISTS),
+            Row(method, "read_only", DENIED),
+        ]
+    rows += [
+        Row("copy_sealed", "source_missing", SOURCE_GONE),
+        Row("copy_sealed", "resized_source", RESIZED_SOURCE),
+        Row("link_once", "source_missing", SOURCE_MISSING),
+        Row("link_once", "same_file_at_name", EXISTS),
+    ]
+    rows += [
+        Row("copy_sealed source", "missing", Raises(SourceGone, "a/t")),
+        Row("copy_sealed source", "parent_missing", PARENT_MISSING),
+        *traversal_rows("copy_sealed source"),
+        Row("copy_sealed source", "dir_at_name", Raises(SourceGone, "a/t")),
+        Row("copy_sealed source", "read_only", COPY_OF_PUT, {DESTINATION: "file"}),
+        Row("link_once source", "missing", NAME_MISSING),
+        Row("link_once source", "parent_missing", PARENT_MISSING),
+        *traversal_rows("link_once source"),
+        Row("link_once source", "dir_at_name", Raises(StorageError, "a/t", "EISDIR")),
+        Row("link_once source", "read_only", Returns(None), {DESTINATION: "file"}),
+        Row("sync_directory", "missing", NAME_MISSING),
+        Row("sync_directory", "parent_missing", PARENT_MISSING),
+        *traversal_rows("sync_directory"),
+        Row("sync_directory", "file_at_name", Raises(StorageError, "a/t", "ENOTDIR")),
+        Row("sync_directory", "read_only", Returns(None)),
+    ]
+    return rows
+
+
+def combined_publication_rows() -> list[Row]:
+    """The rows of ``copy_sealed``, ``link_once`` and ``sync_directory`` where two cases hold
+    at once. Both methods with a source check the source first.
+    """
+    rows: list[Row] = []
+    for method, sources in (
+        ("copy_sealed", {"source_missing": SOURCE_GONE, "resized_source": RESIZED_SOURCE}),
+        ("link_once", {"source_missing": SOURCE_MISSING}),
+    ):
+        entries = ["missing", "link_at_name", "dir_at_name", "file_at_name"]
+        if method == "link_once":
+            entries.append("same_file_at_name")
+        for source, refused in sources.items():
+            rows += [
+                Row(method, f"{other}+{source}", refused)
+                for other in ["parent_missing", "link_above", "file_above", *sorted(LOCK), *entries]
+            ]
+        rows += [Row(method, f"unsearchable+{entry}", LOCKED_DENIED) for entry in entries]
+        rows += [
+            Row(method, "read_only+missing", LOCKED_DENIED),
+            Row(method, "read_only+link_at_name", LOCKED_LINK),
+            *(
+                Row(method, f"read_only+{entry}", LOCKED_EXISTS)
+                for entry in entries
+                if entry not in {"missing", "link_at_name"}
+            ),
+        ]
+    for method, missing, directory in (
+        ("copy_sealed source", Raises(SourceGone, "a/p/t"), Raises(SourceGone, "a/p/t")),
+        (
+            "link_once source",
+            Raises(StorageError, "a/p/t", "ENOENT"),
+            Raises(StorageError, "a/p/t", "EISDIR"),
+        ),
+        (
+            "sync_directory",
+            Raises(StorageError, "a/p/t", "ENOENT"),
+            Raises(StorageError, "a/p/t", "ENOTDIR"),
+        ),
+    ):
+        other = "file_at_name" if method == "sync_directory" else "dir_at_name"
+        rows += [
+            Row(method, f"unsearchable+{entry}", LOCKED_DENIED)
+            for entry in ("missing", "link_at_name", other)
+        ]
+        rows += [
+            Row(method, "read_only+missing", missing),
+            Row(method, "read_only+link_at_name", LOCKED_LINK),
+            Row(method, f"read_only+{other}", directory),
+        ]
+    return rows
 
 
 def combined_rows() -> list[Row]:
@@ -628,7 +763,7 @@ def combined_rows() -> list[Row]:
 
 
 ROWS = table_rows()
-ROW_COUNT = 264
+ROW_COUNT = 374
 
 
 def test_the_table_has_one_row_per_method_and_case() -> None:
@@ -697,7 +832,13 @@ def test_link_refuses_a_part_or_backup_name_that_is_not_one_name(
 
 def _public_class(error: StorageError) -> type[StorageError]:
     """The most specific public storage error class of ``error``."""
-    for public in (SymlinkInLake, SourceGone, InheritanceFailed, LakeUnavailable):
+    for public in (
+        SymlinkInLake,
+        SourceGone,
+        SourceSizeMismatch,
+        InheritanceFailed,
+        LakeUnavailable,
+    ):
         if isinstance(error, public):
             return public
     return StorageError

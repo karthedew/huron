@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import errno
 import grp
-import hashlib
 import os
 import stat
 from contextlib import contextmanager
@@ -14,20 +13,22 @@ from huron.core.storage.errors import (
     InheritanceFailed,
     LakeUnavailable,
     SourceGone,
+    SourceSizeMismatch,
     StorageError,
     SymlinkInLake,
 )
 from huron.core.storage.lakepath import LakePath
+from huron.core.storage.layout import FILE_MODE
 from huron.core.storage.ports import GroupOutcome, GroupResult, Outcome, Stat
 from huron.pkg.fs import posix
-from huron.pkg.hashing import CHUNK_SIZE
+from huron.pkg.hashing import CHUNK_SIZE, sha256_descriptor
 from huron.schema.naming import PART_SUFFIX, check_lake_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
     from pathlib import Path
 
-    from huron.core.storage.ports import Entry, StatKind
+    from huron.core.storage.ports import Entry, SealedFile, StatKind
 
 __all__ = ["AUTH_SYS_GROUPS", "PosixStorage"]
 
@@ -233,6 +234,57 @@ class PosixStorage:
                     source.name, destination.name, src_dir_fd=source_parent, dst_dir_fd=parent
                 )
 
+    def copy_sealed(
+        self, source: LakePath, destination: LakePath, expected_size: int
+    ) -> SealedFile:
+        """Copy the file ``source`` to the new file ``destination`` with mode ``0644``.
+
+        The source is opened and checked first: a missing source or one that is not a regular
+        file is ``SourceGone``, and a size other than ``expected_size`` is
+        ``SourceSizeMismatch``. Then :func:`~huron.pkg.fs.posix.copy_sealed` makes the copy, and
+        a failure names ``destination``.
+        """
+        with self._parent(source) as source_parent:
+            try:
+                descriptor = posix.open_file(source_parent, source.name)
+            except FileNotFoundError as error:
+                raise SourceGone(source) from error
+        try:
+            found = _guard(lambda: os.fstat(descriptor), source)
+            if not stat.S_ISREG(found.st_mode):
+                raise SourceGone(source)
+            if found.st_size != expected_size:
+                raise SourceSizeMismatch(source, expected_size, found.st_size)
+            with self._parent(destination) as parent:
+                try:
+                    return posix.copy_sealed(
+                        descriptor, parent, destination.name, expected_size, FILE_MODE
+                    )
+                except posix.SizeMismatch as error:
+                    raise SourceSizeMismatch(source, expected_size, error.size) from error
+        finally:
+            os.close(descriptor)
+
+    def link_once(self, source: LakePath, destination: LakePath) -> None:
+        """Hard-link the file ``source`` to the new name ``destination``; nothing is replaced.
+
+        A failure to look up ``source`` names ``source``; a failure of the link names
+        ``destination``, an ``EXDEV`` across two mounts included.
+        """
+        with self._parent(source) as source_parent:
+            found = posix.entry(source_parent, source.name)
+            if found is None:
+                raise _Missing(source)
+            if stat.S_ISDIR(found.st_mode):
+                raise _not_a_file(source, errno.EISDIR)
+            with self._parent(destination) as parent:
+                posix.link_once(source_parent, source.name, parent, destination.name)
+
+    def sync_directory(self, location: LakePath) -> None:
+        """Flush the directory ``location`` to disk with ``fsync``."""
+        with self._parent(location) as parent:
+            posix.sync_directory(parent, _name(location))
+
     def remove_file(self, location: LakePath, *, inode: int | None = None) -> Outcome:
         """Remove a file; with ``inode``, only while the file has that inode."""
         name = _name(location)
@@ -301,7 +353,7 @@ class _PosixFile:
 
     def sha256(self) -> str:
         """The sha256 of the bytes, read from the start of the descriptor."""
-        return _guard(self._digest, self._location)
+        return _guard(lambda: sha256_descriptor(self._descriptor), self._location)
 
     def set_mode(self, mode: int) -> None:
         """Give the file exactly ``mode`` through the descriptor."""
@@ -310,14 +362,6 @@ class _PosixFile:
     def close(self) -> None:
         """Release the descriptor."""
         os.close(self._descriptor)
-
-    def _digest(self) -> str:
-        digest = hashlib.sha256()
-        offset = 0
-        while block := os.pread(self._descriptor, CHUNK_SIZE, offset):
-            digest.update(block)
-            offset += len(block)
-        return digest.hexdigest()
 
 
 class _Missing(StorageError):

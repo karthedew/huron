@@ -33,6 +33,9 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
   - Provisioning also prepares `<root>/<org>/.huron-objects/` (mode 0700, service UID) for each
     organization, and `.tus-uploads`.
   - `huron adm check` skips `.huron-objects`. It is a reserved name, not drift.
+  - `huron adm check` reports a `.huron-link-probe-*` file that is older than one hour, in an
+    organization directory or its object area. A killed readiness probe can leave one. The
+    check does not remove it.
   - Provisioning must work with the API stopped. It reads its input from a file and makes no
     API request in that mode.
 - Verification: the old task's entry.

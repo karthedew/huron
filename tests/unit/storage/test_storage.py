@@ -22,7 +22,9 @@ from huron.core.storage import (
     LakePath,
     Marker,
     Outcome,
+    SealedFile,
     SourceGone,
+    SourceSizeMismatch,
     Stat,
     Storage,
     StorageError,
@@ -33,7 +35,7 @@ from huron.core.storage import (
 )
 from huron.core.storage.memory import MemoryStorage, Node
 from huron.core.storage.posix import PosixStorage
-from tests.support.disk import LAKE
+from tests.support.disk import LAKE, inject_fault
 
 BASE = LakePath.of("share")
 PART = ".a.bin.1.huron-part"
@@ -536,3 +538,171 @@ def test_memory_symlink_needs_its_parent_and_a_free_name(memory: MemoryStorage) 
     with pytest.raises(StorageError, match="d: File exists"):
         memory.symlink(LakePath.of("d"), "/outside")
     assert found(memory, LakePath.of("d")).kind == "dir"
+
+
+def write_in_place(share: Storage, location: LakePath, data: bytes) -> None:
+    """Change the bytes of the file at ``location`` in place, as tusd writes through its
+    descriptor: the inode stays.
+    """
+    if isinstance(share, PosixStorage):
+        with share.root.joinpath(*location.names).open("r+b") as handle:
+            handle.write(data)
+    else:
+        assert isinstance(share, MemoryStorage)
+        share.nodes[location].data = data
+
+
+@pytest.mark.parametrize("data", [b"payload", b""], ids=["bytes", "empty"])
+def test_copy_sealed_makes_a_new_file_that_a_later_write_to_the_source_does_not_change(
+    share: Storage, data: bytes
+) -> None:
+    share.write_bytes(at("upload"), data, 0o600)
+    source_inode = found(share, at("upload")).inode
+    sealed = share.copy_sealed(at("upload"), at("object"), len(data))
+    assert sealed == SealedFile(len(data), hashlib.sha256(data).hexdigest(), sealed.inode)
+    copy = found(share, at("object"))
+    assert (copy.inode, copy.mode, copy.size) == (sealed.inode, FILE_MODE, len(data))
+    assert sealed.inode != source_inode
+    write_in_place(share, at("upload"), b"PAYLOAD")
+    assert found(share, at("upload")).inode == source_inode
+    assert share.read_bytes(at("upload")) == b"PAYLOAD"
+    assert share.read_bytes(at("object")) == data
+
+
+@pytest.mark.parametrize(
+    ("operation", "place", "number"),
+    [
+        ("write", at("object"), errno.ENOSPC),
+        ("fsync", at("object"), errno.EIO),
+        ("fsync", BASE, errno.EIO),
+    ],
+    ids=["enospc", "file sync", "directory sync"],
+)
+def test_a_failed_copy_gives_no_object_and_can_run_again(
+    share: Storage, monkeypatch: pytest.MonkeyPatch, operation: str, place: LakePath, number: int
+) -> None:
+    share.write_bytes(at("upload"), b"payload", 0o600)
+    with monkeypatch.context() as patch:
+        inject_fault(share, patch, operation, place, number)
+        with pytest.raises(StorageError) as refused:
+            share.copy_sealed(at("upload"), at("object"), 7)
+    assert type(refused.value) is StorageError
+    assert refused.value.message == f"share/object: {os.strerror(number)}"
+    assert refused.value.context == {"path": "share/object"}
+    assert share.stat(at("object")) is None
+    assert share.copy_sealed(at("upload"), at("object"), 7).size == 7
+
+
+def test_copy_sealed_of_a_source_that_tusd_still_writes_is_a_size_mismatch(
+    lake: PosixStorage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lake.write_bytes(at("upload"), b"payload", 0o600)
+    real = os.pread
+    grown = False
+
+    def growing(descriptor: int, length: int, offset: int) -> bytes:
+        nonlocal grown
+        if not grown:
+            grown = True
+            with (lake.root / "share" / "upload").open("ab") as handle:
+                handle.write(b"+")
+        return real(descriptor, length, offset)
+
+    monkeypatch.setattr(os, "pread", growing)
+    with pytest.raises(SourceSizeMismatch) as refused:
+        lake.copy_sealed(at("upload"), at("object"), 7)
+    assert type(refused.value) is SourceSizeMismatch
+    assert refused.value.message == "the upload file share/upload has 8 bytes, not 7 bytes"
+    assert refused.value.context == {"path": "share/upload", "expected": 7, "size": 8}
+    assert lake.stat(at("object")) is None
+
+
+def test_link_once_gives_a_file_a_second_name(share: Storage) -> None:
+    share.write_bytes(at("object"), b"new", 0o644)
+    share.link_once(at("object"), at("a.bin"))
+    assert found(share, at("a.bin")).inode == found(share, at("object")).inode
+    assert share.read_bytes(at("a.bin")) == b"new"
+
+
+def test_link_once_across_two_mounts_is_refused_and_names_the_destination(
+    share: Storage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    share.write_bytes(at("object"), b"new", 0o644)
+    share.make_directory(at("mounted"), DIRECTORY_MODE)
+    if isinstance(share, MemoryStorage):
+        share.mounts.add(at("mounted"))
+    else:
+        inject_fault(share, monkeypatch, "link", at("mounted", "a.bin"), errno.EXDEV)
+    with pytest.raises(StorageError) as refused:
+        share.link_once(at("object"), at("mounted", "a.bin"))
+    assert type(refused.value) is StorageError
+    assert refused.value.message == f"share/mounted/a.bin: {os.strerror(errno.EXDEV)}"
+    assert refused.value.context == {"path": "share/mounted/a.bin"}
+    assert share.stat(at("mounted", "a.bin")) is None
+
+
+def test_a_failed_link_once_makes_no_name(share: Storage, monkeypatch: pytest.MonkeyPatch) -> None:
+    share.write_bytes(at("object"), b"new", 0o644)
+    inject_fault(share, monkeypatch, "link", at("a.bin"), errno.ENOSPC)
+    with pytest.raises(StorageError) as refused:
+        share.link_once(at("object"), at("a.bin"))
+    assert type(refused.value) is StorageError
+    assert refused.value.message == "share/a.bin: No space left on device"
+    assert refused.value.context == {"path": "share/a.bin"}
+    assert share.stat(at("a.bin")) is None
+    share.link_once(at("object"), at("a.bin"))
+    assert share.read_bytes(at("a.bin")) == b"new"
+
+
+def test_a_failed_sync_is_an_error_one_time(
+    share: Storage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inject_fault(share, monkeypatch, "fsync", BASE, errno.EIO)
+    with pytest.raises(StorageError) as refused:
+        share.sync_directory(BASE)
+    assert type(refused.value) is StorageError
+    assert refused.value.message == "share: Input/output error"
+    assert refused.value.context == {"path": "share"}
+    share.sync_directory(BASE)
+    share.sync_directory(LakePath())
+
+
+def test_memory_records_each_copy_link_and_sync(memory: MemoryStorage) -> None:
+    memory.write_bytes(LakePath.of("upload"), b"x", 0o600)
+    memory.copy_sealed(LakePath.of("upload"), LakePath.of("object"), 1)
+    memory.link_once(LakePath.of("object"), LakePath.of("a.bin"))
+    memory.sync_directory(LakePath())
+    assert memory.calls[-4:] == [
+        ("copy", LakePath.of("object")),
+        ("sync", LakePath()),
+        ("link", LakePath.of("a.bin")),
+        ("sync", LakePath()),
+    ]
+    assert memory.faults == {}
+
+
+def test_memory_links_only_inside_one_mount(memory: MemoryStorage) -> None:
+    for directory in (".huron-objects", "orgx", "orgx/.huron-objects", "orgx/coll"):
+        memory.make_directory(LakePath.parse(directory), 0o700)
+    memory.mounts.add(LakePath.of("orgx"))
+    memory.write_bytes(LakePath.of(".huron-objects", "x"), b"x", 0o644)
+    memory.write_bytes(LakePath.of("orgx", ".huron-objects", "x"), b"x", 0o644)
+    with pytest.raises(StorageError) as refused:
+        memory.link_once(LakePath.of(".huron-objects", "x"), LakePath.of("orgx", "coll", "y"))
+    assert type(refused.value) is StorageError
+    assert refused.value.message == "orgx/coll/y: Invalid cross-device link"
+    assert refused.value.context == {"path": "orgx/coll/y"}
+    memory.link_once(LakePath.of("orgx", ".huron-objects", "x"), LakePath.of("orgx", "coll", "y"))
+    assert memory.stat(LakePath.of("orgx", "coll", "y")) is not None
+
+
+def test_memory_renames_only_inside_one_mount(memory: MemoryStorage) -> None:
+    memory.make_directory(LakePath.of("orgx"), 0o700)
+    memory.mounts.add(LakePath.of("orgx"))
+    memory.write_bytes(LakePath.of("f"), b"x", 0o644)
+    with pytest.raises(StorageError) as refused:
+        memory.rename(LakePath.of("f"), LakePath.of("orgx", "f"))
+    assert type(refused.value) is StorageError
+    assert refused.value.message == "orgx/f: Invalid cross-device link"
+    assert refused.value.context == {"path": "orgx/f"}
+    assert memory.stat(LakePath.of("f")) is not None

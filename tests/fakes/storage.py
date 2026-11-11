@@ -11,15 +11,19 @@ from huron.core.storage import (
     LakeUnavailable,
     OpenFile,
     Outcome,
+    SealedFile,
     Stat,
     Storage,
 )
 from huron.core.storage.memory import MemoryStorage
 
-#: The methods of the ``Storage`` port that change the share.
+#: The methods of the ``Storage`` port that change the share. ``sync_directory`` changes no
+#: entry, so a read-only share allows it.
 WRITES = frozenset(
     {
+        "copy_sealed",
         "link",
+        "link_once",
         "make_directory",
         "make_inheriting_dir",
         "remove_directory",
@@ -89,6 +93,20 @@ class Subtree:
 
     def rename(self, source: LakePath, destination: LakePath) -> None:
         self.share.rename(self._in(source), self._in(destination))
+
+    def copy_sealed(
+        self, source: LakePath, destination: LakePath, expected_size: int
+    ) -> SealedFile:
+        return self.share.copy_sealed(self._in(source), self._in(destination), expected_size)
+
+    def link_once(self, source: LakePath, destination: LakePath) -> None:
+        self.share.link_once(self._in(source), self._in(destination))
+
+    def sync_directory(self, location: LakePath) -> None:
+        self.share.sync_directory(self._in(location))
+
+    def in_group(self, gid: int) -> bool:
+        return self.share.in_group(gid)
 
     def remove_file(self, location: LakePath, *, inode: int | None = None) -> Outcome:
         return self.share.remove_file(self._in(location), inode=inode)

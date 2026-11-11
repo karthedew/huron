@@ -11,6 +11,8 @@ __all__ = [
     "DIRECTORY_MODE",
     "FILE_MODE",
     "MARKER_FILE",
+    "OBJECT_DIR",
+    "OBJECT_DIR_MODE",
     "ORGANIZATION_MODE",
     "UPLOADS",
     "UPLOAD_DIR",
@@ -24,6 +26,9 @@ MARKER_FILE = ".huron"
 UPLOAD_DIR = ".tus-uploads"
 #: tusd's filestore on the lake.
 UPLOADS = LakePath.of(UPLOAD_DIR)
+#: The private area of sealed objects, directly in each organization directory. A publication
+#: links an object from it, and a hard link works only inside one mount.
+OBJECT_DIR = ".huron-objects"
 
 #: Everyone may traverse an organization directory; nobody but its owner and group may list it.
 ORGANIZATION_MODE = 0o2751
@@ -34,6 +39,8 @@ DIRECTORY_MODE = 0o2750
 FILE_MODE = 0o644
 #: tusd's filestore: only the service user.
 UPLOAD_DIR_MODE = 0o700
+#: The object area: only the service user, so an object is private until a publication links it.
+OBJECT_DIR_MODE = 0o700
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +61,11 @@ class OrganizationPlace:
     def directory(self) -> LakePath:
         """The organization's directory."""
         return self.base.joinpath(self.name)
+
+    @property
+    def objects(self) -> LakePath:
+        """The organization's object area, inside its directory and its mount."""
+        return self.directory.joinpath(OBJECT_DIR)
 
     @property
     def marker_directory(self) -> LakePath:

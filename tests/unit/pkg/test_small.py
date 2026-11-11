@@ -1,6 +1,7 @@
 """Canonical JSON, identifiers, clocks and hashing."""
 
 import hashlib
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,7 +11,7 @@ import rfc8785
 
 from huron.pkg.canonical import NotCanonicalizable, canonical_bytes, document_sha256
 from huron.pkg.clock import FrozenClock, SystemClock
-from huron.pkg.hashing import EMPTY_SHA256, sha256_file
+from huron.pkg.hashing import EMPTY_SHA256, sha256_descriptor, sha256_file
 from huron.pkg.identifiers import new_id, parse_id
 
 
@@ -96,3 +97,18 @@ def test_sha256_file_reads_in_chunks(tmp_path: Path) -> None:
     path = tmp_path / "f"
     path.write_bytes(data)
     assert sha256_file(path, chunk=11) == (3000, hashlib.sha256(data).hexdigest())
+
+
+@pytest.mark.parametrize("data", [b"", b"abc" * 1000], ids=["empty", "chunks"])
+def test_sha256_descriptor_reads_from_the_start_and_keeps_the_position(
+    tmp_path: Path, data: bytes
+) -> None:
+    path = tmp_path / "f"
+    path.write_bytes(data)
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.lseek(descriptor, len(data) // 2, os.SEEK_SET)
+        assert sha256_descriptor(descriptor, chunk=11) == hashlib.sha256(data).hexdigest()
+        assert os.lseek(descriptor, 0, os.SEEK_CUR) == len(data) // 2
+    finally:
+        os.close(descriptor)

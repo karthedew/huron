@@ -76,6 +76,28 @@ def fail_file_io(
     return error
 
 
+def inject_fault(
+    storage: Storage,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    location: LakePath,
+    number: int,
+) -> None:
+    """Make the next ``operation`` at ``location`` fail with ``number``, one time.
+
+    ``write`` and ``fsync`` fail the copy to the file ``location`` or the flush of the
+    directory ``location``, and ``link`` fails a hard link to the name ``location``. A
+    :class:`MemoryStorage` gets the fault in its ``faults``. On a :class:`PosixStorage` the
+    system call on a name equal to the last name of ``location`` fails.
+    """
+    if isinstance(storage, MemoryStorage):
+        storage.faults[(operation, location)] = number
+    elif operation == "link":
+        _fail_link(monkeypatch, location.name, number)
+    else:
+        fail_file_io(monkeypatch, operation, location.name, number)
+
+
 def fail_write_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     part: str,
@@ -209,6 +231,21 @@ class PausingStorage(PosixStorage):
             return opened
         self._paused = True
         return _PausedFile(opened, self.hashing, self.release)
+
+
+def _fail_link(monkeypatch: pytest.MonkeyPatch, name: str, number: int) -> None:
+    """Fail the first ``os.link`` to a name ``name`` with ``number``."""
+    real = os.link
+    armed = True
+
+    def failing(source: Any, destination: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal armed
+        if armed and Path(destination).name == name:
+            armed = False
+            raise OSError(number, os.strerror(number), "/untrusted/elsewhere")
+        real(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(os, "link", failing)
 
 
 class _PausedFile:

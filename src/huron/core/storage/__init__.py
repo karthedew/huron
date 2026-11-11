@@ -1,5 +1,5 @@
-"""The lake's layout, the storage port and adapters, directories, placement, repair, removal
-and locks.
+"""The lake's layout, the storage port and adapters, directories, placement, publication,
+repair, removal and locks.
 """
 
 from huron.core.storage.directories import DirectoryWriter
@@ -7,6 +7,7 @@ from huron.core.storage.errors import (
     InheritanceFailed,
     LakeUnavailable,
     SourceGone,
+    SourceSizeMismatch,
     StorageError,
     SymlinkInLake,
 )
@@ -15,6 +16,8 @@ from huron.core.storage.layout import (
     DIRECTORY_MODE,
     FILE_MODE,
     MARKER_FILE,
+    OBJECT_DIR,
+    OBJECT_DIR_MODE,
     ORGANIZATION_MODE,
     UPLOAD_DIR,
     UPLOAD_DIR_MODE,
@@ -45,10 +48,23 @@ from huron.core.storage.ports import (
     GroupResult,
     OpenFile,
     Outcome,
+    SealedFile,
     ShareReader,
     ShareWarning,
     Stat,
     Storage,
+)
+from huron.core.storage.publication import (
+    AddFile,
+    BlockReason,
+    MakeDirectory,
+    PruneDirectory,
+    Publisher,
+    RemoveDirectory,
+    RemoveFile,
+    Step,
+    StepOutcome,
+    StepResult,
 )
 from huron.core.storage.removal import prune
 from huron.core.storage.repair import (
@@ -64,11 +80,15 @@ __all__ = [
     "FILE_MODE",
     "MARKER_FILE",
     "MARKER_MODE",
+    "OBJECT_DIR",
+    "OBJECT_DIR_MODE",
     "ORGANIZATION_MODE",
     "SHARE_GROUP_PENDING",
     "UPLOADS",
     "UPLOAD_DIR",
     "UPLOAD_DIR_MODE",
+    "AddFile",
+    "BlockReason",
     "CollectionDirectoryMissing",
     "DirectoryWriter",
     "Entry",
@@ -79,6 +99,7 @@ __all__ = [
     "LakePath",
     "LakeUnavailable",
     "Linked",
+    "MakeDirectory",
     "Marker",
     "MarkerState",
     "Measured",
@@ -87,14 +108,23 @@ __all__ = [
     "Outcome",
     "PathLocks",
     "Placer",
+    "PruneDirectory",
+    "Publisher",
+    "RemoveDirectory",
+    "RemoveFile",
     "RepairFailure",
     "RepairResult",
     "RepairStep",
     "Repairer",
+    "SealedFile",
     "ShareReader",
     "ShareWarning",
     "SourceGone",
+    "SourceSizeMismatch",
     "Stat",
+    "Step",
+    "StepOutcome",
+    "StepResult",
     "Storage",
     "StorageError",
     "SymlinkInLake",

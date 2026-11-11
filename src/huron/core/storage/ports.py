@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from huron.pkg.fs.posix import Entry
+from huron.pkg.fs.posix import Entry, SealedFile
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -20,6 +20,7 @@ __all__ = [
     "GroupResult",
     "OpenFile",
     "Outcome",
+    "SealedFile",
     "ShareReader",
     "ShareWarning",
     "Stat",
@@ -213,6 +214,39 @@ class Storage(ShareReader, Protocol):
 
     def rename(self, source: LakePath, destination: LakePath) -> None:
         """Give the file at ``source`` the name ``destination``, replacing it atomically."""
+        ...
+
+    def copy_sealed(
+        self, source: LakePath, destination: LakePath, expected_size: int
+    ) -> SealedFile:
+        """Copy the bytes of the file ``source`` to the new file ``destination`` (mode ``0644``).
+
+        ``source`` can be on another filesystem. ``destination`` must not exist: an existing
+        entry is ``EEXIST``, and a link at it is ``SymlinkInLake``. The copy is synced, then
+        opened again read-only to measure its size, its sha256 and its inode, then its
+        directory is synced. So the returned object is durable by name and by content. It gets
+        a new inode, so a later write to ``source`` does not change it, and it is never opened
+        for a write again. A missing ``source``, or one that is not a regular file, is
+        ``SourceGone``. A missing directory above ``source`` is a ``StorageError`` (``ENOENT``),
+        as in every traversal. A ``source`` or a copy without ``expected_size`` bytes is
+        ``SourceSizeMismatch``. A failure after the create (``ENOSPC``, a failed sync of the
+        file or of its directory) removes the copy again.
+        """
+        ...
+
+    def link_once(self, source: LakePath, destination: LakePath) -> None:
+        """Hard-link the file ``source`` to the new name ``destination``.
+
+        An existing ``destination`` is never replaced: it is ``EEXIST``. A missing ``source``
+        is ``ENOENT`` and a directory at it ``EISDIR``. Both names must lie in one organization
+        directory, because a hard link fails across two filesystems or two mounts (``EXDEV``).
+        """
+        ...
+
+    def sync_directory(self, location: LakePath) -> None:
+        """Flush the directory ``location`` to disk, so that its new and removed names are
+        durable. A failed flush is an error.
+        """
         ...
 
     def remove_file(self, location: LakePath, *, inode: int | None = None) -> Outcome:

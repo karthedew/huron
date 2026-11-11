@@ -10,9 +10,23 @@ import stat
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from huron.core.storage.errors import InheritanceFailed, SourceGone, StorageError, SymlinkInLake
+from huron.core.storage.errors import (
+    InheritanceFailed,
+    SourceGone,
+    SourceSizeMismatch,
+    StorageError,
+    SymlinkInLake,
+)
 from huron.core.storage.lakepath import LakePath
-from huron.core.storage.ports import Entry, GroupOutcome, GroupResult, Outcome, Stat
+from huron.core.storage.layout import FILE_MODE
+from huron.core.storage.ports import (
+    Entry,
+    GroupOutcome,
+    GroupResult,
+    Outcome,
+    SealedFile,
+    Stat,
+)
 from huron.pkg.fs.posix import INHERITED_MODE, INHERITING_DIR_MODE
 from huron.schema.naming import PART_SUFFIX
 
@@ -56,6 +70,13 @@ class MemoryStorage:
     parent, as the server should, and ``umask`` takes bits from the mode of a new directory
     that gets no ``chmod``, as the process umask does. Each traversal refuses a symbolic link as
     the POSIX one does.
+
+    Each directory in ``mounts`` is the root of its own filesystem, and the root directory is
+    the first one. ``link_once`` and ``rename`` refuse two names on two filesystems with
+    ``EXDEV``, as the server does. ``faults`` maps an operation and a place to an error number
+    that the next such call raises one time: ``("write", p)`` and ``("fsync", p)`` fail a copy
+    to ``p``, ``("link", p)`` a link to ``p``, and ``("fsync", d)`` the flush of the directory
+    ``d``, also the flush at the end of a copy into ``d``.
     """
 
     def __init__(self, root: Path, uid: int = 1000, gid: int = 1000) -> None:
@@ -67,6 +88,8 @@ class MemoryStorage:
         self.nodes: dict[LakePath, Node] = {LakePath(): Node(mode=0o2771, inode=1)}
         self.denied: set[LakePath] = set()
         self.unreadable: set[LakePath] = set()
+        self.mounts: set[LakePath] = set()
+        self.faults: dict[tuple[str, LakePath], int] = {}
         self.inherits = True
         self.umask = 0o022
         self.calls: list[tuple[str, LakePath]] = []
@@ -285,12 +308,79 @@ class MemoryStorage:
         existing = self._final(destination)
         if existing is found:
             return
+        self._same_filesystem(source, destination)
         self._check(source.parent, destination)
         self._check(destination.parent, destination)
         if existing is not None and existing.kind == "dir":
             raise _error(destination, errno.EISDIR)
         self.nodes[destination] = self.nodes.pop(source)
         self.calls.append(("rename", destination))
+
+    def copy_sealed(
+        self, source: LakePath, destination: LakePath, expected_size: int
+    ) -> SealedFile:
+        """Copy the file ``source`` to a new node at ``destination`` with mode ``0644``.
+
+        The copy is a new node with a new inode, so a later change to the source's node does
+        not change it. The checks come in the order of the POSIX adapter: the source, then
+        the destination. An injected ``write`` or ``fsync`` fault at ``destination``, or an
+        ``fsync`` fault at its directory, fails the copy and leaves no node, as the POSIX
+        adapter removes its copy.
+        """
+        self._require_parent(source)
+        found = self._final(source)
+        if found is None or found.kind != "file":
+            raise SourceGone(source)
+        if len(found.data) != expected_size:
+            raise SourceSizeMismatch(source, expected_size, len(found.data))
+        self._require_parent(destination)
+        if self._final(destination) is not None:
+            raise _error(destination, errno.EEXIST)
+        self._check(destination.parent, destination)
+        self._fault("write", destination)
+        self._fault("fsync", destination)
+        self._fault("fsync", destination.parent, destination)
+        self._clock += 1
+        copy = Node(
+            "file",
+            FILE_MODE,
+            self.uid,
+            self._new_gid(destination.parent),
+            found.data,
+            self._clock,
+            next(self._inodes),
+        )
+        self.nodes[destination] = copy
+        self.calls += [("copy", destination), ("sync", destination.parent)]
+        return SealedFile(len(copy.data), hashlib.sha256(copy.data).hexdigest(), copy.inode)
+
+    def link_once(self, source: LakePath, destination: LakePath) -> None:
+        """Give the file at ``source`` the new name ``destination`` too; nothing is replaced.
+
+        The checks come in the order of the POSIX adapter and of ``link(2)``: the source, an
+        existing destination (``EEXIST``), another filesystem (``EXDEV``), then a refusal of
+        the destination's directory. An injected ``link`` fault at ``destination`` fails it.
+        """
+        self._require_parent(source)
+        found = self._final(source)
+        if found is None:
+            raise _error(source, errno.ENOENT)
+        if found.kind == "dir":
+            raise _error(source, errno.EISDIR)
+        self._require_parent(destination)
+        if self._final(destination) is not None:
+            raise _error(destination, errno.EEXIST)
+        self._same_filesystem(source, destination)
+        self._check(destination.parent, destination)
+        self._fault("link", destination)
+        self.nodes[destination] = found
+        self.calls.append(("link", destination))
+
+    def sync_directory(self, location: LakePath) -> None:
+        """Record the flush of the directory ``location``; an injected ``fsync`` fault fails it."""
+        self._directory(location)
+        self._fault("fsync", location)
+        self.calls.append(("sync", location))
 
     def remove_file(self, location: LakePath, *, inode: int | None = None) -> Outcome:
         """Remove a file; with ``inode``, only while the file has that inode.
@@ -418,6 +508,29 @@ class MemoryStorage:
         """Refuse a change in a denied ``directory``; the error names ``location``."""
         if directory in self.denied:
             raise _error(location, errno.EACCES)
+
+    def _same_filesystem(self, source: LakePath, destination: LakePath) -> None:
+        """Refuse a link or a rename across two filesystems (``EXDEV``); the error names
+        ``destination``.
+        """
+        if self._filesystem(source) != self._filesystem(destination):
+            raise _error(destination, errno.EXDEV)
+
+    def _filesystem(self, location: LakePath) -> LakePath:
+        """The mount that holds ``location``: the deepest of :attr:`mounts` above it, or the
+        root.
+        """
+        above = [m for m in self.mounts if location.names[: len(m.names)] == m.names]
+        return max(above, key=lambda mount: len(mount.names), default=LakePath())
+
+    def _fault(self, operation: str, location: LakePath, named: LakePath | None = None) -> None:
+        """Raise the error of an injected fault of ``operation`` at ``location``, one time.
+
+        The error names ``named`` when it is given, else ``location``.
+        """
+        number = self.faults.pop((operation, location), None)
+        if number is not None:
+            raise _error(location if named is None else named, number)
 
     def _new_gid(self, directory: LakePath) -> int:
         parent = self.nodes.get(directory)

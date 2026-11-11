@@ -16,6 +16,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from huron.pkg.hashing import CHUNK_SIZE, sha256_descriptor
+
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Iterator
     from pathlib import Path
@@ -30,13 +32,17 @@ __all__ = [
     "InheritanceError",
     "PartBlocked",
     "RootUnavailable",
+    "SealedFile",
+    "SizeMismatch",
     "SourceMismatch",
     "SymlinkError",
     "atomic_write",
     "change_group",
     "change_mode",
+    "copy_sealed",
     "entry",
     "link_into_place",
+    "link_once",
     "make_dir",
     "make_inheriting_dir",
     "open_beneath",
@@ -44,6 +50,7 @@ __all__ = [
     "open_file",
     "remove_empty_dir",
     "remove_file",
+    "sync_directory",
     "walk",
 ]
 
@@ -59,6 +66,8 @@ _STEP = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
 #: How a final name is opened to read it or to change it through its descriptor. A FIFO does not
 #: block the open, and a terminal does not become the controlling one.
 _FINAL = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC
+#: How :func:`copy_sealed` creates its file: only a new name, never through a link.
+_NEW_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +78,19 @@ class Entry:
     kind: EntryKind
     size: int
     mtime_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class SealedFile:
+    """A file that :func:`copy_sealed` wrote, measured on a new descriptor after its sync.
+
+    ``size`` is in bytes, ``sha256`` is the digest of the bytes and ``inode`` is the inode
+    number of the new file.
+    """
+
+    size: int
+    sha256: str
+    inode: int
 
 
 class SymlinkError(OSError):
@@ -85,6 +107,14 @@ class RootUnavailable(OSError):
 
 class SourceMismatch(OSError):
     """The source of :func:`link_into_place` is not a regular file with the expected inode."""
+
+
+class SizeMismatch(OSError):
+    """The copy of :func:`copy_sealed` does not have the expected size; ``size`` is its size."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__(errno.EIO, f"the copy has {size} bytes")
+        self.size = size
 
 
 class InheritanceError(OSError):
@@ -310,6 +340,61 @@ def link_into_place(
     return backup
 
 
+def copy_sealed(source_fd: int, parent_fd: int, name: str, size: int, mode: int) -> SealedFile:
+    """Copy the bytes of the open file ``source_fd`` to the new file ``name`` with exactly ``mode``.
+
+    The source can be on another filesystem: the bytes go through this process. ``name`` is
+    created only when it does not exist (``O_EXCL``), and the copy is synced to disk before it
+    is closed. The copy stops one byte after ``size``, so a source that grows without end
+    cannot fill the disk. A new read-only descriptor then measures the size, the sha256 and the
+    inode, so the result describes the bytes on the server and not a cache. Last, the directory
+    is synced, so the new name is durable too. The copy is never opened for a write again.
+    Raises :class:`SymlinkError` when ``name`` is a link, ``FileExistsError`` when it exists,
+    and :class:`SizeMismatch` when the copy does not have ``size`` bytes. A failure after the
+    create, a failed sync of the directory included, removes the copy again.
+    """
+    entry(parent_fd, name)
+    descriptor = os.open(name, _NEW_FILE, mode, dir_fd=parent_fd)
+    try:
+        _fill(descriptor, source_fd, size, mode)
+        sealed = _measure(parent_fd, name)
+        if sealed.size != size:
+            raise SizeMismatch(sealed.size)
+        _sync(parent_fd)
+    except BaseException as error:
+        with _cleanup_errors(error, f"remove {name!r}"):
+            os.unlink(name, dir_fd=parent_fd)
+        raise
+    return sealed
+
+
+def link_once(source_fd: int, source_name: str, parent_fd: int, name: str) -> None:
+    """Hard-link the file ``source_name`` to the new name ``name``; an existing name stays.
+
+    The source must be checked by the caller. Raises :class:`SymlinkError` when ``name`` is a
+    link, ``FileExistsError`` when it exists, and the error of ``link`` for every other
+    failure: ``EXDEV`` when the two names are on two filesystems or two mounts.
+    """
+    entry(parent_fd, name)
+    _link(source_fd, source_name, parent_fd, name)
+
+
+def sync_directory(parent_fd: int, name: str) -> None:
+    """Flush the directory ``name`` to disk, so that its new and removed names are durable.
+
+    Raises :class:`SymlinkError` when ``name`` is a link and ``NotADirectoryError`` when it is
+    not a directory.
+    """
+    descriptor = open_directory(parent_fd, name)
+    try:
+        os.fsync(descriptor)
+    except BaseException as error:
+        with _cleanup_errors(error, f"close {name!r}"):
+            os.close(descriptor)
+        raise
+    os.close(descriptor)
+
+
 def remove_file(parent_fd: int, name: str) -> bool:
     """Remove the file ``name``; ``False`` when it did not exist. A link is not removed."""
     if entry(parent_fd, name) is None:
@@ -386,6 +471,44 @@ def _write_part(parent_fd: int, name: str, data: bytes, mode: int) -> None:
             raise
         else:
             os.close(descriptor)
+
+
+def _fill(descriptor: int, source_fd: int, size: int, mode: int) -> None:
+    """Give the new file ``mode``, copy the bytes of ``source_fd`` into it, sync and close it.
+
+    The copy stops at the end of the source or one byte after ``size``: that byte is enough to
+    show that the source has another size.
+    """
+    try:
+        os.fchmod(descriptor, mode)
+        offset = 0
+        while offset <= size and (
+            block := os.pread(source_fd, min(CHUNK_SIZE, size + 1 - offset), offset)
+        ):
+            unwritten = memoryview(block)
+            while unwritten:
+                unwritten = unwritten[os.write(descriptor, unwritten) :]
+            offset += len(block)
+        os.fsync(descriptor)
+    except BaseException as error:
+        with _cleanup_errors(error, "close the copy"):
+            os.close(descriptor)
+        raise
+    os.close(descriptor)
+
+
+def _measure(parent_fd: int, name: str) -> SealedFile:
+    """The size, the sha256 and the inode of the file ``name``, read on a new descriptor."""
+    descriptor = open_file(parent_fd, name)
+    try:
+        info = os.fstat(descriptor)
+        sealed = SealedFile(info.st_size, sha256_descriptor(descriptor), info.st_ino)
+    except BaseException as error:
+        with _cleanup_errors(error, f"close {name!r}"):
+            os.close(descriptor)
+        raise
+    os.close(descriptor)
+    return sealed
 
 
 def _opened(parent_fd: int, name: str, flags: int, names: tuple[str, ...]) -> int:
