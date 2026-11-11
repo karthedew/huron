@@ -1,0 +1,177 @@
+{
+  "clone_groups": 25,
+  "clone_threshold": 0.8,
+  "groups": [
+    {
+      "files": [
+        "src/huron/applications/api/problems.py",
+        "src/huron/pkg/errors.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/admin.py",
+        "src/huron/applications/api/routes/v1/endpoints/uploads.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/catalogs.py",
+        "src/huron/applications/api/routes/v1/endpoints/namespaces.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/applications/api/routes/v1/endpoints/collections.py",
+        "src/huron/applications/api/routes/v1/endpoints/files.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/applications/cli/commands/get.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/lake/audit/log.py",
+        "src/huron/core/lake/files/commits.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/lake/catalogs/operations.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/lake/catalogs/operations.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/lake/catalogs/operations.py",
+        "src/huron/core/lake/collections/lifecycle.py",
+        "src/huron/core/lake/namespaces/operations.py",
+        "src/huron/core/lake/organizations/operations.py"
+      ],
+      "size": 5
+    },
+    {
+      "files": [
+        "src/huron/core/lake/catalogs/operations.py",
+        "src/huron/core/lake/organizations/grants.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/lake/namespaces/operations.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/lake/organizations/grants.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/lake/publications/operations.py",
+        "src/huron/core/lake/uploads/attempts.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/lake/uploads/attempts.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/lake/uploads/attempts.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/audit/postgres.py",
+        "src/huron/core/metastore/catalogs/postgres.py",
+        "src/huron/core/metastore/collections/postgres.py",
+        "src/huron/core/metastore/files/postgres.py",
+        "src/huron/core/metastore/namespaces/postgres.py",
+        "src/huron/core/metastore/uploads/postgres.py"
+      ],
+      "size": 10
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/collections/memory.py",
+        "src/huron/core/metastore/namespaces/memory.py",
+        "src/huron/core/metastore/schemas/memory.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/publications/memory.py",
+        "src/huron/core/metastore/uploads/memory.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/uploads/memory.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/metastore/uploads/postgres.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/security/broker/company.py",
+        "src/huron/core/security/broker/tokens.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/storage/memory.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/storage/memory.py"
+      ],
+      "size": 2
+    },
+    {
+      "files": [
+        "src/huron/core/storage/posix.py"
+      ],
+      "size": 3
+    },
+    {
+      "files": [
+        "src/huron/pkg/fs/posix.py"
+      ],
+      "size": 2
+    }
+  ],
+  "pyscn_version": "1.31.1",
+  "total_clones": 69
+}

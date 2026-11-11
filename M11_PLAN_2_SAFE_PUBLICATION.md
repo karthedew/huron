@@ -441,7 +441,8 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
 - Verification: `make gate` runs both commands and exits 0. The gate list of
   `.claude/commands/implement-markdown.md` and the `Makefile` agree.
 - Dependencies: S8.
-- Status: pending
+- Status: complete (verification 1 of 3 passed, 2026-11-11). `pyscn check src` found no dead code.
+  Baseline at 0.80: 69 cloned fragments of 872, 25 groups. `make gate`: 3850 passed.
 
 ## S1 results
 

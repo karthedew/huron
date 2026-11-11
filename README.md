@@ -417,5 +417,5 @@ has the details.
 ## Development
 
 `make gate` runs the full validation gate: ruff, mypy, ty, import-linter, the unit tier with coverage,
-radon, complexipy and the schema-map check. `make test-contract` and `make test-integration` run the
-PostgreSQL-backed tiers.
+radon, complexipy, the pyscn dead-code and complexity check, the clone baseline check and the
+schema-map check. `make test-contract` and `make test-integration` run the PostgreSQL-backed tiers.

@@ -49,6 +49,7 @@ dev = [
     "respx>=0.21",
     "radon>=6.0.1",
     "complexipy>=3.0",
+    "pyscn==1.31.1 ; platform_machine == 'x86_64' or sys_platform == 'darwin'",
     "types-jsonschema",
     "types-pyyaml",
     "asyncpg-stubs",

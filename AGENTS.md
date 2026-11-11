@@ -67,17 +67,19 @@ Run from the repository root; every command must exit 0 and radon must print not
 runs all of them.
 
 ```text
-uv run ruff check src tests scripts/cli_reference.py scripts/ste_check.py
-uv run ruff format --check src tests scripts/cli_reference.py scripts/ste_check.py
+uv run ruff check src tests scripts/check_duplication.py scripts/cli_reference.py scripts/ste_check.py
+uv run ruff format --check src tests scripts/check_duplication.py scripts/cli_reference.py scripts/ste_check.py
 uv run mypy
-uv run mypy scripts/cli_reference.py scripts/ste_check.py
+uv run mypy scripts/check_duplication.py scripts/cli_reference.py scripts/ste_check.py
 uv run ty check
-uv run ty check scripts/cli_reference.py scripts/ste_check.py
+uv run ty check scripts/check_duplication.py scripts/cli_reference.py scripts/ste_check.py
 uv run lint-imports
 uv run pytest -m "not integration" --cov=src/huron --cov-report=term-missing
 uv run radon cc src --min C
 uv run radon mi src --min B
 uv run complexipy src --max-complexity-allowed 15
+uv run --locked pyscn check src
+uv run --locked python scripts/check_duplication.py src
 uv run python scripts/check_schema_map.py
 uv run python scripts/cli_reference.py --check
 uv run python scripts/ste_check.py
@@ -86,6 +88,11 @@ uv run python scripts/ste_check.py
 `scripts/ste_check.py` fails on any hard `asd-ste100` rule in the docs and in the user-facing
 strings of the code. A sentence that must stay long for precision goes into its `KEPT` list, with
 the reason.
+
+`pyscn check` fails on dead code and on structural complexity. Correct each finding in the code.
+Do not add an exclusion. `scripts/check_duplication.py` fails when the clones at similarity 0.80
+increase above `scripts/duplication_baseline.json`. When the clones decrease, `--update-baseline`
+lowers the baseline. Only a reviewed manual edit raises it.
 
 The gate's pytest run includes the contract tier, so it needs PostgreSQL: `HURON_TEST_DATABASE_URL`
 (a server URL whose user may create databases) when set, otherwise a `postgres:16` testcontainer.
