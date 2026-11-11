@@ -37,6 +37,13 @@ collections = Table(
     Column("created_by", Text, nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("activated_at", DateTime(timezone=True), nullable=True),
+    Column(
+        "pending_request_id",
+        Uuid,
+        ForeignKey("huron.commit_requests.id", use_alter=True),
+        nullable=True,
+        unique=True,
+    ),
     UniqueConstraint("namespace_id", "name"),
     CheckConstraint("state in ('draft', 'active', 'incomplete')", name="state"),
     CheckConstraint("file_count >= 0", name="file_count"),

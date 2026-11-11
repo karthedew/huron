@@ -62,6 +62,57 @@ REVISION_0003 = {
 """What revision 0003 makes: its tables, the inode and share group columns, the inode check."""
 
 
+def test_publication_tables_arrive_with_revision_0004(database_url: str) -> None:
+    with migrated_database(with_database(database_url, "postgres")) as url:
+        assert asyncio.run(_revision_0004_objects(url)) == REVISION_0004
+        command.downgrade(alembic_config(url), "0003_uploads")
+        assert asyncio.run(_revision_0004_objects(url)) == set()
+        assert asyncio.run(_revision_0003_objects(url)) == REVISION_0003
+        command.upgrade(alembic_config(url), "head")
+        assert asyncio.run(_revision_0004_objects(url)) == REVISION_0004
+
+
+REVISION_0004 = {
+    "table objects",
+    "table staged_uploads",
+    "table staged_upload_ids",
+    "table commit_requests",
+    "table commit_entries",
+    "column files.object_id uuid null",
+    "column collections.pending_request_id uuid null",
+    "constraint uq_staged_uploads_subject_attempt_id",
+    "constraint pk_staged_upload_ids",
+    "constraint fk_staged_uploads_current_upload_id deferred",
+    "constraint uq_commit_requests_subject_request_id",
+    "constraint uq_files_object_id",
+    "constraint uq_collections_pending_request_id",
+}
+"""What revision 0004 makes: its tables, the two columns and the keys that the design names."""
+
+
+async def _revision_0004_objects(url: str) -> set[str]:
+    connection = await asyncpg.connect(url)
+    try:
+        rows = await connection.fetch(
+            "select 'table ' || table_name as name from information_schema.tables"
+            " where table_schema = 'huron' and table_name in ('objects', 'staged_uploads',"
+            " 'staged_upload_ids', 'commit_requests', 'commit_entries')"
+            " union all select 'column ' || table_name || '.' || column_name || ' ' || data_type"
+            " || case is_nullable when 'YES' then ' null' else ' not null' end"
+            " from information_schema.columns where table_schema = 'huron'"
+            " and column_name in ('object_id', 'pending_request_id')"
+            " and table_name in ('files', 'collections')"
+            " union all select 'constraint ' || conname"
+            " || case when condeferred then ' deferred' else '' end from pg_constraint"
+            " where conname in ('uq_staged_uploads_subject_attempt_id', 'pk_staged_upload_ids',"
+            " 'fk_staged_uploads_current_upload_id', 'uq_commit_requests_subject_request_id',"
+            " 'uq_files_object_id', 'uq_collections_pending_request_id')"
+        )
+    finally:
+        await connection.close()
+    return {row["name"] for row in rows}
+
+
 async def _revision_0003_objects(url: str) -> set[str]:
     connection = await asyncpg.connect(url)
     try:
@@ -72,6 +123,7 @@ async def _revision_0003_objects(url: str) -> set[str]:
             " || case is_nullable when 'YES' then ' null' else ' not null' end"
             " from information_schema.columns where table_schema = 'huron'"
             " and column_name in ('inode', 'share_group')"
+            " and table_name in ('uploads', 'removals', 'files', 'catalogs')"
             " union all select 'constraint ' || conname from pg_constraint"
             " where conname = 'ck_uploads_inode'"
         )

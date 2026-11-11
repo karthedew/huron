@@ -115,6 +115,11 @@ no `<id>.lock` file exists. A lock file means that tusd still works on the uploa
   neither the old object nor the new object blocks the request.
 - At startup the API continues every `accepted` and `blocked` request with the same code path.
 - A requested removal must be done before success. `KEPT` is not success.
+- A request leaves no empty directory that it made empty. The plan holds a prune entry for each
+  recorded directory that no kept file and no added file needs, deepest first, below the
+  collection directory only. A prune of a directory that holds a foreign file keeps the
+  directory and is done. This is different from the directory removal that clears the path for
+  an added file: that removal blocks on a foreign file.
 
 ### Operator exit
 
@@ -168,7 +173,8 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
 
 ### Schema
 
-- `0004_publication.py` adds `objects`, `staged_uploads`, `commit_requests`, `commit_entries`,
+- `0004_publication.py` adds `objects`, `staged_uploads`, `staged_upload_ids` (every issued
+  upload ID, unique across all attempts), `commit_requests`, `commit_entries`,
   `files.object_id` and `collections.pending_request_id`. These names are final.
 - `0005_drop_legacy_uploads.py` drops the old `uploads` and `removals` tables in task S7. It
   refuses when one of them holds a row.
@@ -204,7 +210,9 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
   - `src/huron/core/lake/publications/`: `models.py` (frozen dataclasses for the request, an
     entry, the outcome), `errors.py`, `planning.py` with `plan_entries(current, request)` that
     returns the entries in the fixed order: deepest removes first, parents before children for
-    adds, a file-to-directory change as remove then add.
+    adds, a file-to-directory change as remove then add, a prune entry for each directory that
+    the request makes empty. The prune is its own action in the entry values and in the
+    `commit_entries` check constraint.
   - `src/huron/core/lake/uploads/`: the values for the new upload states, the attempt with its
     current upload ID and the list of every issued upload ID, and the creation refusal that
     carries the state and the current ID.
@@ -220,7 +228,7 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
   downgrade, upgrade again, schema map.
 - Verification: `make gate`, `uv run pytest -m contract`.
 - Dependencies: S1.
-- Status: pending
+- Status: complete (verification 2 of 3 passed, 2026-11-10)
 
 ### S3 Storage steps
 
@@ -233,14 +241,16 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
     the object area into the organization directory.
   - `src/huron/core/storage/publication.py`: `Publisher.apply(step) -> StepResult`. It uses only
     the `Storage` port. Steps: add or replace (link to a unique temporary name, sync, rename,
-    sync), remove (unlink, sync), make directory, remove empty directory.
+    sync), remove (unlink, sync), make directory, remove empty directory, prune directory (a
+    directory that is not empty stays, and the step is done).
   - The value types of a step live in `core.storage`. `core.lake` must not import `core.storage`,
     so the API layer converts an entry to a step.
 - Tests over both adapters: a retry after each point of a step. The target is the old object, the
   new object, a foreign file, missing. A link at each path component. A foreign file in a
   directory to remove blocks, and the file stays. `ENOSPC` and a failed sync give no success.
   The copy has a different inode from the source, and a later write to the source does not
-  change the copy.
+  change the copy. A make-directory step on a directory that exists is done. An add over a
+  directory blocks. A prune of a directory with a foreign file keeps it and is done.
 - Verification: `make gate`. The contract table of plan 1 has a row for each new port method.
 - Dependencies: S2.
 - Status: pending
@@ -254,7 +264,9 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
   connections send the same request ID. Two requests for one collection. An upload consumed by
   two requests. Two first creations with the same subject and `attempt_id` give one row, and the
   second caller sees that row under its lock. A raw unique-violation error never reaches a
-  caller.
+  caller. Each check constraint of `staged_uploads`, `objects`, `commit_requests` and
+  `commit_entries` that has no test yet gets one. A seal that runs again uses the same
+  `objects` row. Add the domain value for an object.
 - Verification: `make gate`, `uv run pytest -m contract`.
 - Dependencies: S2.
 - Status: pending
@@ -325,13 +337,17 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
     upload is still not `ready`, the answer is 409 `UPLOAD_INELIGIBLE` with the state.
   - The CLI sends the new body with a new request ID and the upload IDs. Durable recovery is
     plan 3, task C3.
+  - Remove the old commit checks in `core/lake/files/commits.py` that the publication values
+    replace, and the old `CommitRequest`. Restore the error contract test fixture to import
+    only the application.
   - Remove: `Placer`, API `Placements`, `measure_destination`, the backup and undo code, the
     latest-placement lookup, the old upload and removal adapters, the version-1 commit body.
   - `migrations/versions/0005_drop_legacy_uploads.py`.
   - Update the memory seed, `docker/seed/run.mjs`, `web/e2e/support/`, `tests/support/`.
   - `make openapi`. From `web/`, `npm run generate:api`. Show the pending state on the collection
     page as read-only text.
-- Tests: HTTP 200, 202, 404 and 409 on the real application. The old body is refused. Each
+- Tests: HTTP 200, 202, 404 and 409 on the real application. The old body is refused. A
+  negative `base_version` is refused as a validation error, not as a database error. Each
   creation case and each refusal through the hook route. The pre-finish answer before and after
   the 20 s limit, with a controlled clock. Another user's token and a non-current upload ID on
   the authorization route. The attempt read seals a complete upload that no hook reported.

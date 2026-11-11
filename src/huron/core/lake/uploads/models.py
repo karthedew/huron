@@ -1,4 +1,4 @@
-"""Uploads: the rows behind resumable uploads, their receipts and the removal outbox."""
+"""Uploads: the rows behind resumable uploads, their receipts, the removal outbox and attempts."""
 
 from __future__ import annotations
 
@@ -13,11 +13,13 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 __all__ = [
+    "AttemptState",
     "Destination",
     "Failure",
     "ReceiptMode",
     "Removal",
     "Upload",
+    "UploadAttempt",
     "UploadState",
     "file_path",
 ]
@@ -41,6 +43,29 @@ class UploadState(StrEnum):
     FAILED = "failed"
     TERMINATED = "terminated"
     COMMITTED = "committed"
+
+
+class AttemptState(StrEnum):
+    """Where an upload attempt is in its life.
+
+    An attempt is ``receiving`` while tusd takes its bytes, ``sealing`` while the API copies the
+    complete upload into the object area, ``ready`` once the sealed object waits for a commit and
+    ``consumed`` by the commit that published it. ``failed``, ``cancelled`` and ``expired`` end an
+    attempt before a commit. Only a ``ready`` attempt can be published.
+    """
+
+    RECEIVING = "receiving"
+    SEALING = "sealing"
+    READY = "ready"
+    CONSUMED = "consumed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+    @property
+    def ended(self) -> bool:
+        """Whether the attempt ended before a commit, so that a new upload needs a new attempt."""
+        return self in _ENDED
 
 
 class ReceiptMode(StrEnum):
@@ -133,6 +158,42 @@ class Upload:
 
 
 @dataclass(frozen=True, slots=True)
+class UploadAttempt:
+    """One user's attempt to upload one file to one path of a collection.
+
+    ``subject`` and ``attempt_id`` are the key: the client chooses ``attempt_id`` when it creates
+    the upload. ``upload_ids`` holds every tusd upload ID that Huron issued for the attempt, in
+    the order of issue, and ``current_upload_id`` is one of them. Huron never issues one upload
+    ID two times, and only the current ID is authorized, sealed or published. ``collection_id``
+    is ``None`` once the collection is deleted. ``active_at`` is the time of the last activity,
+    from which ``upload_ttl`` counts. ``commit_request_id`` names the commit request that holds
+    or consumed the attempt. ``failure`` says why a ``failed`` attempt ended.
+    """
+
+    id: uuid.UUID
+    subject: str
+    attempt_id: uuid.UUID
+    collection_id: uuid.UUID | None
+    rel_path: str
+    size: int
+    state: AttemptState
+    current_upload_id: uuid.UUID
+    upload_ids: tuple[uuid.UUID, ...]
+    created_at: datetime
+    active_at: datetime
+    commit_request_id: uuid.UUID | None = None
+    failure: Failure | None = None
+
+    def __post_init__(self) -> None:
+        if self.current_upload_id not in self.upload_ids:
+            raise ValueError("the current upload ID must be one of the issued upload IDs")
+
+    def has_fields(self, collection_id: uuid.UUID, rel_path: str, size: int) -> bool:
+        """Whether a creation with these fields names this attempt and not a different file."""
+        return (self.collection_id, self.rel_path, self.size) == (collection_id, rel_path, size)
+
+
+@dataclass(frozen=True, slots=True)
 class Removal:
     """A file the API still has to unlink.
 
@@ -210,3 +271,6 @@ class Destination:
 
     directory: str
     rel_path: str
+
+
+_ENDED = frozenset({AttemptState.FAILED, AttemptState.CANCELLED, AttemptState.EXPIRED})

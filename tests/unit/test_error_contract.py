@@ -11,17 +11,26 @@ from huron.pkg.errors import error_codes
 ROOT = Path(__file__).resolve().parents[2]
 
 
+PATTERN = re.compile(r'register\(\s*"([A-Z_]+)"')
+
+
 @pytest.fixture(autouse=True)
 def every_code_registered() -> None:
-    """Import the API application, which imports every module that registers a code."""
+    """Import the API application and each module that registers a code.
+
+    A module of the lake can own codes that no route of the API raises yet.
+    """
     importlib.import_module("huron.applications.api.app")
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        if PATTERN.search(path.read_text()):
+            module = path.relative_to(ROOT / "src").with_suffix("").parts
+            importlib.import_module(".".join(module))
 
 
 def registered_in_source() -> list[str]:
-    pattern = re.compile(r'register\(\s*"([A-Z_]+)"')
     found: list[str] = []
     for path in sorted((ROOT / "src").rglob("*.py")):
-        found.extend(pattern.findall(path.read_text()))
+        found.extend(PATTERN.findall(path.read_text()))
     return found
 
 

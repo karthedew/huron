@@ -42,6 +42,7 @@ _AREAS = (
     "keys",
     "namespaces",
     "organizations",
+    "publications",
     "schemas",
     "uploads",
 )
