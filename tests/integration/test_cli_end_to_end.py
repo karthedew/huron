@@ -4,7 +4,6 @@ real directory standing in for the share, every role doing its part."""
 import asyncio
 import io
 import json
-import socket
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -26,7 +25,7 @@ from huron.core.storage.posix import PosixStorage
 from tests.fakes.groups import FakeGroups
 from tests.fakes.issuer import FakeIssuer
 from tests.fakes.prompter import ScriptedPrompter
-from tests.support.api import INSTANCE_ID, USERS, settings
+from tests.support.api import INSTANCE_ID, USERS, free_port, settings
 from tests.support.cli import LoopThread
 from tests.support.clock import frozen
 from tests.support.postgres import truncate
@@ -55,9 +54,7 @@ class Stack:
                 clock=self.clock,
             )
         )
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            self.port = probe.getsockname()[1]
+        self.port = free_port()
         config = uvicorn.Config(
             create_app(runtime=self.runtime),
             host="127.0.0.1",

@@ -1,11 +1,12 @@
 """An API over the in-memory store, with a fake company issuer and group directory."""
 
+import socket
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
@@ -14,9 +15,9 @@ from huron.applications.api.disk import PROBE_TIMEOUT
 from huron.applications.api.runtime import ClosableStore, Runtime, build_runtime
 from huron.applications.api.settings import Settings
 from huron.core.metastore.store import MemoryStore
-from huron.core.security.broker import TokenIssuer
+from huron.core.security.broker import KeyRing, TokenIssuer
 from huron.core.storage import MARKER_FILE, Marker, Storage, render_marker
-from huron.pkg.clock import FrozenClock
+from huron.pkg.clock import Clock, FrozenClock
 from tests.fakes.groups import FakeGroups
 from tests.fakes.issuer import AUDIENCE, ISSUER, FakeIssuer
 from tests.support.clock import frozen
@@ -61,6 +62,42 @@ def settings(**overrides: object) -> Settings:
     return Settings(**values)  # type: ignore[arg-type]
 
 
+def issue_token(ring: KeyRing, clock: Clock, service_settings: Settings, user: str) -> str:
+    """A Huron token for ``user`` with their groups in :data:`USERS`, signed with a key of
+    ``ring`` for the issuer, audience and lifetime of ``service_settings``.
+    """
+    issuer = TokenIssuer(
+        ring,
+        clock,
+        service_settings.issuer,
+        service_settings.audience,
+        service_settings.token_ttl,
+    )
+    token, _ = issuer.issue(user, user.title(), USERS[user])
+    return token
+
+
+def free_port() -> int:
+    """A TCP port on 127.0.0.1 that no socket uses now, for a server that a test starts."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+    return port
+
+
+class Caller(Protocol):
+    """A running service that a test calls over HTTP as one of :data:`USERS`."""
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        """The client whose base URL is the service."""
+        ...
+
+    async def headers(self, user: str, **extra: str) -> dict[str, str]:
+        """Authorization headers for ``user``, with ``extra``."""
+        ...
+
+
 @dataclass
 class Service:
     """A running in-process service and the means to call it."""
@@ -72,16 +109,7 @@ class Service:
 
     async def token(self, user: str) -> str:
         """A Huron token for ``user`` with their configured groups."""
-        ring = await self.runtime.ring()
-        issuer = TokenIssuer(
-            ring,
-            self.clock,
-            self.runtime.settings.issuer,
-            self.runtime.settings.audience,
-            self.runtime.settings.token_ttl,
-        )
-        token, _ = issuer.issue(user, user.title(), USERS[user])
-        return token
+        return issue_token(await self.runtime.ring(), self.clock, self.runtime.settings, user)
 
     async def headers(self, user: str, **extra: str) -> dict[str, str]:
         """Authorization headers for ``user``."""
@@ -129,7 +157,7 @@ async def service(
     await runtime.close()
 
 
-async def seed_service(api: Service) -> Service:
+async def seed_service[A: Caller](api: A) -> A:
     """The helio organization, catalog, grants and the solar-wind namespace, through the API."""
     c = api.client
     alice = await api.headers("alice")
@@ -172,7 +200,7 @@ async def seed_service(api: Service) -> Service:
 COLLECTION_METADATA = {"title": "Run 7", "description": "Solar wind run seven"}
 
 
-async def active_collection(api: Service, name: str = "run7") -> dict[str, Any]:
+async def active_collection(api: Caller, name: str = "run7") -> dict[str, Any]:
     """Create and activate collection ``name`` in the seeded solar-wind namespace, as dave."""
     created = await api.client.post(
         "/api/v1/catalogs/heliophysics/namespaces/solar-wind/collections",

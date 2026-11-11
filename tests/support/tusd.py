@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from huron.core.storage import UPLOAD_DIR
-from tests.support.api import Service, active_collection
+from tests.support.api import Caller, Service, active_collection
 
 HOOKS = "/api/v1/uploads/hooks"
 AUTH = "/api/v1/uploads/auth"
@@ -55,14 +55,14 @@ def problem_of(response: httpx.Response) -> dict[str, Any]:
     return problem
 
 
-class FakeTusd:
+class FakeTusd[A: Caller]:
     """Stands in for tusd in front of the service: it writes the upload files and calls hooks.
 
     ``upload_dir`` is the service's ``.tus-uploads``. Each hook sends the forwarded
     ``Authorization`` of ``user``, or none for ``user=None``.
     """
 
-    def __init__(self, api: Service, lake: Path) -> None:
+    def __init__(self, api: A, lake: Path) -> None:
         self.api = api
         self.upload_dir = lake / UPLOAD_DIR
 
@@ -103,16 +103,21 @@ class FakeTusd:
         self.receive(upload_id, data)
         return upload_id
 
-    def receive(self, upload_id: str, data: bytes, *, locked: bool = False) -> Path:
+    def receive(
+        self, upload_id: str, data: bytes, *, locked: bool = False, size: int | None = None
+    ) -> Path:
         """Write the upload's bytes and its ``.info`` file, as tusd's filestore does.
 
         ``locked`` adds the ``.lock`` file that tusd keeps while it works on the upload.
+        ``size`` is the declared size in ``.info``, by default the size of ``data``: a smaller
+        ``data`` is an upload that tusd still receives.
         """
         source = self.upload_dir / upload_id
         source.write_bytes(data)
         os.chmod(source, 0o600)
         info = self.upload_dir / f"{upload_id}.info"
-        document = {"ID": upload_id, "Size": len(data), "SizeIsDeferred": False, "Offset": 0}
+        declared = len(data) if size is None else size
+        document = {"ID": upload_id, "Size": declared, "SizeIsDeferred": False, "Offset": 0}
         info.write_text(json.dumps(document))
         os.chmod(info, 0o600)
         if locked:
@@ -140,7 +145,7 @@ class UploadTarget:
     collection_id: str
     version: int
     directory: Path
-    tusd: FakeTusd
+    tusd: FakeTusd[Service]
 
 
 async def upload_target(api: Service, lake: Path) -> UploadTarget:

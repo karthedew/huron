@@ -412,13 +412,16 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
 - Cases: a kill before and after each of copy, seal commit, acceptance, link, rename, unlink,
   entry done, final transaction. A two-file replace with one remove. The same request sent again
   after each kill. A late tusd completion after a newer commit. A late completion of an upload
-  ID that is not current. A pre-finish hook that answers 500, that answers 422, and that gets
-  no answer before the timeout: the attempt read then seals the upload. A kill of the API
-  during the pre-finish hook.
+  ID that is not current. A pre-finish hook that answers 500, and one that gets no answer
+  before the timeout: the attempt read then seals the upload. A pre-finish hook that answers
+  422: the attempt is `failed`, the attempt read does not seal the upload, and a commit that
+  names it is rejected. A kill of the API during the pre-finish hook.
 - Each case asserts the bytes, the version, the count, one audit record and the saved outcome.
 - Verification: `make gate`, `uv run pytest -m integration`. No skip is added.
 - Dependencies: S7.
-- Status: pending
+- Status: complete (verification 2 of 3 passed, 2026-11-11). 22 cases, no production change,
+  no defect found. `uv run pytest -m integration`: 23 passed, 1 skipped (the old skip of
+  `test_cli_end_to_end.py`).
 
 ### S9 Restore dead-code and clone detection
 
