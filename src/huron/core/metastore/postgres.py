@@ -17,8 +17,13 @@ from huron.core.metastore.grants.postgres import PostgresGrants
 from huron.core.metastore.keys.postgres import PostgresKeys
 from huron.core.metastore.namespaces.postgres import PostgresNamespaces
 from huron.core.metastore.organizations.postgres import PostgresOrganizations
+from huron.core.metastore.publications.postgres import PostgresCommitRequests
 from huron.core.metastore.schemas.postgres import PostgresSchemas
-from huron.core.metastore.uploads.postgres import PostgresUploads
+from huron.core.metastore.uploads.postgres import (
+    PostgresAttempts,
+    PostgresObjects,
+    PostgresUploads,
+)
 from huron.pkg.errors import Unavailable
 
 if TYPE_CHECKING:
@@ -51,6 +56,9 @@ class PostgresTransaction:
         self.files = PostgresFiles(connection)
         self.commits = PostgresCommits(connection)
         self.uploads = PostgresUploads(connection)
+        self.attempts = PostgresAttempts(connection)
+        self.objects = PostgresObjects(connection)
+        self.commit_requests = PostgresCommitRequests(connection)
         self.schemas = PostgresSchemas(connection)
         self.audit = PostgresAudit(connection)
         self.grants = PostgresGrants(connection)

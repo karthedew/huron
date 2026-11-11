@@ -1,4 +1,5 @@
-"""Uploads: the rows behind resumable uploads, their receipts, the removal outbox and attempts."""
+"""Uploads: the rows behind resumable uploads, their receipts, the removal outbox, attempts and
+the objects that seals make."""
 
 from __future__ import annotations
 
@@ -16,8 +17,10 @@ __all__ = [
     "AttemptState",
     "Destination",
     "Failure",
+    "ObjectState",
     "ReceiptMode",
     "Removal",
+    "StoredObject",
     "Upload",
     "UploadAttempt",
     "UploadState",
@@ -66,6 +69,19 @@ class AttemptState(StrEnum):
     def ended(self) -> bool:
         """Whether the attempt ended before a commit, so that a new upload needs a new attempt."""
         return self in _ENDED
+
+
+class ObjectState(StrEnum):
+    """Where a stored object is in its life.
+
+    An object is ``sealing`` while the API copies the bytes of its upload into the object area,
+    ``sealed`` once the copy has its measured size and SHA-256, and ``removed`` after cleanup
+    removed its file.
+    """
+
+    SEALING = "sealing"
+    SEALED = "sealed"
+    REMOVED = "removed"
 
 
 class ReceiptMode(StrEnum):
@@ -163,8 +179,9 @@ class UploadAttempt:
 
     ``subject`` and ``attempt_id`` are the key: the client chooses ``attempt_id`` when it creates
     the upload. ``upload_ids`` holds every tusd upload ID that Huron issued for the attempt, in
-    the order of issue, and ``current_upload_id`` is one of them. Huron never issues one upload
-    ID two times, and only the current ID is authorized, sealed or published. ``collection_id``
+    the order of their time of issue (the ID orders two that Huron issued at one time), and
+    ``current_upload_id`` is one of them. Huron never issues one upload ID two times, and only
+    the current ID is authorized, sealed or published. ``collection_id``
     is ``None`` once the collection is deleted. ``active_at`` is the time of the last activity,
     from which ``upload_ttl`` counts. ``commit_request_id`` names the commit request that holds
     or consumed the attempt. ``failure`` says why a ``failed`` attempt ended.
@@ -191,6 +208,27 @@ class UploadAttempt:
     def has_fields(self, collection_id: uuid.UUID, rel_path: str, size: int) -> bool:
         """Whether a creation with these fields names this attempt and not a different file."""
         return (self.collection_id, self.rel_path, self.size) == (collection_id, rel_path, size)
+
+
+@dataclass(frozen=True, slots=True)
+class StoredObject:
+    """The private copy that the seal of one upload ID makes in its organization's object area.
+
+    ``upload_id`` is the issued upload ID whose bytes the seal copies, and one upload ID has one
+    object: a seal that runs again uses the same object. ``path`` is the path of the copy in the
+    API's form. A ``sealed`` object has its ``size``, ``sha256``, ``inode`` (the unsigned 64-bit
+    inode number of the copy) and ``sealed_at``.
+    """
+
+    id: uuid.UUID
+    upload_id: uuid.UUID
+    path: str
+    state: ObjectState
+    created_at: datetime
+    size: int | None = None
+    sha256: str | None = None
+    inode: int | None = None
+    sealed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

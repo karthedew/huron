@@ -19,7 +19,7 @@ __all__ = ["PostgresCommits", "PostgresFiles"]
 
 _FILE_COLUMNS = (
     "collection_id, rel_path, rel_path_key, size, sha256, recorded_at, recorded_by, commit_id,"
-    " inode"
+    " inode, object_id"
 )
 _COMMIT_COLUMNS = (
     "id, collection_id, base_version, new_version, adds, removes, host, message, actor, created_at"
@@ -39,11 +39,12 @@ class PostgresFiles:
         await self._db.execute(
             f"insert into huron.files ({_FILE_COLUMNS})"
             " select * from unnest($1::uuid[], $2::text[], $3::text[], $4::bigint[], $5::text[],"
-            " $6::timestamptz[], $7::text[], $8::uuid[], $9::bigint[])"
+            " $6::timestamptz[], $7::text[], $8::uuid[], $9::bigint[], $10::uuid[])"
             " on conflict (collection_id, rel_path_key) do update set"
             " rel_path = excluded.rel_path, size = excluded.size, sha256 = excluded.sha256,"
             " recorded_at = excluded.recorded_at, recorded_by = excluded.recorded_by,"
-            " commit_id = excluded.commit_id, inode = excluded.inode",
+            " commit_id = excluded.commit_id, inode = excluded.inode,"
+            " object_id = excluded.object_id",
             *columns([_row(record) for record in records]),
         )
 
@@ -164,6 +165,7 @@ def _row(record: FileRecord) -> tuple[Any, ...]:
         r.recorded_by,
         r.commit_id,
         signed_inode(r.inode),
+        r.object_id,
     )
 
 

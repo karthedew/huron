@@ -46,7 +46,11 @@ UNSET = Unset()
 
 @dataclass(frozen=True, slots=True)
 class Collection:
-    """A collection row."""
+    """A collection row.
+
+    ``pending_request_id`` names the stored commit request (its row ID) that holds the
+    collection while that request is pending. A collection has at most one pending request.
+    """
 
     id: uuid.UUID
     catalog_id: uuid.UUID
@@ -62,6 +66,7 @@ class Collection:
     created_by: str
     updated_at: datetime
     activated_at: datetime | None = None
+    pending_request_id: uuid.UUID | None = None
 
     @property
     def settled(self) -> bool:

@@ -20,7 +20,7 @@ __all__ = ["PostgresCollections"]
 
 _COLUMNS = (
     "id, catalog_id, namespace_id, name, identifier, state, version, metadata, schema_override,"
-    " file_count, created_at, created_by, updated_at, activated_at"
+    " file_count, created_at, created_by, updated_at, activated_at, pending_request_id"
 )
 
 
@@ -36,7 +36,7 @@ class PostgresCollections:
         await unique(
             lambda: self._db.execute(
                 f"insert into huron.collections ({_COLUMNS}) values"
-                " ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+                " ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
                 c.id,
                 c.catalog_id,
                 c.namespace_id,
@@ -51,6 +51,7 @@ class PostgresCollections:
                 c.created_by,
                 c.updated_at,
                 c.activated_at,
+                c.pending_request_id,
             ),
             c.name,
         )
@@ -84,8 +85,8 @@ class PostgresCollections:
         c = collection
         await self._db.execute(
             "update huron.collections set state = $2, version = $3, metadata = $4,"
-            " schema_override = $5, file_count = $6, updated_at = $7, activated_at = $8"
-            " where id = $1",
+            " schema_override = $5, file_count = $6, updated_at = $7, activated_at = $8,"
+            " pending_request_id = $9 where id = $1",
             c.id,
             str(c.state),
             c.version,
@@ -94,10 +95,15 @@ class PostgresCollections:
             c.file_count,
             c.updated_at,
             c.activated_at,
+            c.pending_request_id,
         )
 
     async def delete(self, collection_id: uuid.UUID) -> None:
-        """Remove a collection with its commits and uploads; its removals stay, unlinked from it."""
+        """Remove a collection with its commits and uploads.
+
+        Its removals, upload attempts and commit requests stay, unlinked from it and from its
+        commits.
+        """
         await self._db.execute("delete from huron.collections where id = $1", collection_id)
 
     async def list_in_namespace(

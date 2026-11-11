@@ -1,17 +1,36 @@
 """Rows the domain never writes, which PostgreSQL refuses on its own."""
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
 import asyncpg
 import pytest
 
-from huron.core.lake.publications.models import EntryAction
-from huron.core.lake.uploads.models import Failure, Upload, UploadState
-from huron.core.metastore.postgres import PostgresStore
+from huron.core.lake.publications.models import CommitEntry, CommitOutcome, CommitState, EntryAction
+from huron.core.lake.uploads.models import (
+    AttemptState,
+    Failure,
+    StoredObject,
+    Upload,
+    UploadAttempt,
+    UploadState,
+)
+from huron.core.metastore.postgres import PostgresStore, PostgresTransaction
 from huron.pkg.identifiers import new_id
-from tests.contract.suite import collection, commit, placed, removal, tree, upload
+from tests.contract.suite import (
+    attempt,
+    collection,
+    commit,
+    outcome,
+    placed,
+    removal,
+    sealed,
+    stored_collection,
+    stored_object,
+    tree,
+    upload,
+)
 from tests.support.clock import START
 
 pytestmark = pytest.mark.contract
@@ -206,6 +225,161 @@ async def test_a_request_keeps_its_versions_and_count_at_zero_or_more(
             await connection.execute(
                 f"update huron.commit_requests set {column} = -1 where id = $1", request
             )
+    finally:
+        await connection.close()
+
+
+@pytest.mark.parametrize(
+    ("broken", "constraint"),
+    [
+        pytest.param(
+            lambda tx, row: tx.attempts.insert_or_lock(
+                replace(row, id=new_id(), attempt_id=new_id(), size=-1)
+            ),
+            "ck_staged_uploads_size",
+            id="negative size",
+        ),
+        pytest.param(
+            lambda tx, row: tx.attempts.update(replace(row, state=AttemptState.FAILED)),
+            "ck_staged_uploads_failure",
+            id="failed without failure",
+        ),
+        pytest.param(
+            lambda tx, row: tx.attempts.update(replace(row, state=AttemptState.CONSUMED)),
+            "ck_staged_uploads_consumed",
+            id="consumed without request",
+        ),
+    ],
+)
+async def test_an_attempt_row_keeps_its_state_and_columns_in_step(
+    uow: PostgresStore,
+    broken: Callable[[PostgresTransaction, UploadAttempt], Awaitable[object]],
+    constraint: str,
+) -> None:
+    owner = await stored_collection(uow)
+    row = attempt(owner)
+    async with uow.transaction() as tx:
+        await tx.attempts.insert_or_lock(row)
+    with pytest.raises(asyncpg.CheckViolationError) as refused:
+        async with uow.transaction() as tx:
+            await broken(tx, row)
+    assert refused.value.constraint_name == constraint
+
+
+@pytest.mark.parametrize(
+    ("broken", "check"),
+    [
+        pytest.param(lambda row: replace(sealed(row), size=-1), "size", id="negative size"),
+        pytest.param(
+            lambda row: replace(sealed(row), sha256="F" * 64), "sha256", id="upper case sha256"
+        ),
+        pytest.param(lambda row: replace(row, sha256="f" * 63), "sha256", id="short sha256"),
+        pytest.param(
+            lambda row: replace(sealed(row), size=None), "sealed", id="sealed without size"
+        ),
+        pytest.param(
+            lambda row: replace(sealed(row), sha256=None), "sealed", id="sealed without sha256"
+        ),
+        pytest.param(
+            lambda row: replace(sealed(row), inode=None), "sealed", id="sealed without inode"
+        ),
+        pytest.param(
+            lambda row: replace(sealed(row), sealed_at=None), "sealed", id="sealed without time"
+        ),
+    ],
+)
+async def test_an_object_row_keeps_its_state_and_columns_in_step(
+    uow: PostgresStore, broken: Callable[[StoredObject], StoredObject], check: str
+) -> None:
+    owner = await stored_collection(uow)
+    upload = attempt(owner)
+    row = stored_object(upload.current_upload_id)
+    async with uow.transaction() as tx:
+        await tx.attempts.insert_or_lock(upload)
+        await tx.objects.insert_or_lock(row)
+    with pytest.raises(asyncpg.CheckViolationError) as refused:
+        async with uow.transaction() as tx:
+            await tx.objects.update(broken(row))
+    assert refused.value.constraint_name == f"ck_objects_{check}"
+
+
+@pytest.mark.parametrize(
+    ("broken", "constraint"),
+    [
+        pytest.param(
+            lambda tx, row: tx.commit_requests.insert_or_lock(
+                replace(row, id=new_id(), request_id=new_id(), body_digest="B" * 64)
+            ),
+            "ck_commit_requests_body_digest",
+            id="upper case digest",
+        ),
+        pytest.param(
+            lambda tx, row: tx.commit_requests.update(
+                replace(row, state=CommitState.SUCCEEDED, file_count=0)
+            ),
+            "ck_commit_requests_succeeded",
+            id="succeeded without version",
+        ),
+        pytest.param(
+            lambda tx, row: tx.commit_requests.update(
+                replace(row, state=CommitState.SUCCEEDED, version=2)
+            ),
+            "ck_commit_requests_succeeded",
+            id="succeeded without count",
+        ),
+        pytest.param(
+            lambda tx, row: tx.commit_requests.update(replace(row, state=CommitState.REJECTED)),
+            "ck_commit_requests_refusal",
+            id="rejected without refusal",
+        ),
+        pytest.param(
+            lambda tx, row: tx.commit_requests.update(replace(row, state=CommitState.BLOCKED)),
+            "ck_commit_requests_refusal",
+            id="blocked without refusal",
+        ),
+        pytest.param(
+            lambda tx, row: tx.commit_requests.insert_entries(
+                row.id, [CommitEntry(-1, EntryAction.MAKE_DIRECTORY, "d")]
+            ),
+            "ck_commit_entries_ordinal",
+            id="negative entry ordinal",
+        ),
+    ],
+)
+async def test_a_request_row_keeps_its_state_and_columns_in_step(
+    uow: PostgresStore,
+    broken: Callable[[PostgresTransaction, CommitOutcome], Awaitable[object]],
+    constraint: str,
+) -> None:
+    owner = await stored_collection(uow)
+    row = outcome(owner)
+    async with uow.transaction() as tx:
+        await tx.commit_requests.insert_or_lock(row)
+    with pytest.raises(asyncpg.CheckViolationError) as refused:
+        async with uow.transaction() as tx:
+            await broken(tx, row)
+    assert refused.value.constraint_name == constraint
+
+
+@pytest.mark.parametrize("table", ["staged_uploads", "objects", "commit_requests"])
+async def test_a_publication_row_refuses_an_unknown_state(
+    uow: PostgresStore, database_url: str, table: str
+) -> None:
+    owner = await stored_collection(uow)
+    upload, request = attempt(owner), outcome(owner)
+    made = stored_object(upload.current_upload_id)
+    async with uow.transaction() as tx:
+        await tx.attempts.insert_or_lock(upload)
+        await tx.objects.insert_or_lock(made)
+        await tx.commit_requests.insert_or_lock(request)
+    row_id = {"staged_uploads": upload.id, "objects": made.id, "commit_requests": request.id}
+    connection = await asyncpg.connect(database_url)
+    try:
+        with pytest.raises(asyncpg.CheckViolationError) as refused:
+            await connection.execute(
+                f"update huron.{table} set state = 'paused' where id = $1", row_id[table]
+            )
+        assert refused.value.constraint_name == f"ck_{table}_state"
     finally:
         await connection.close()
 

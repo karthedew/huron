@@ -15,8 +15,9 @@ from huron.core.metastore.keys.memory import MemoryKeys
 from huron.core.metastore.memory import MemoryState
 from huron.core.metastore.namespaces.memory import MemoryNamespaces
 from huron.core.metastore.organizations.memory import MemoryOrganizations
+from huron.core.metastore.publications.memory import MemoryCommitRequests
 from huron.core.metastore.schemas.memory import MemorySchemas
-from huron.core.metastore.uploads.memory import MemoryUploads
+from huron.core.metastore.uploads.memory import MemoryAttempts, MemoryObjects, MemoryUploads
 
 if TYPE_CHECKING:
     import uuid
@@ -37,6 +38,9 @@ class MemoryTransaction:
         self.files = MemoryFiles(state)
         self.commits = MemoryCommits(state)
         self.uploads = MemoryUploads(state)
+        self.attempts = MemoryAttempts(state)
+        self.objects = MemoryObjects(state)
+        self.commit_requests = MemoryCommitRequests(state)
         self.schemas = MemorySchemas(state)
         self.audit = MemoryAudit(state)
         self.grants = MemoryGrants(state)

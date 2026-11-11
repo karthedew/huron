@@ -16,8 +16,9 @@ if TYPE_CHECKING:
     from huron.core.lake.files.ports import CommitStore, FileStore
     from huron.core.lake.namespaces.ports import NamespaceStore
     from huron.core.lake.organizations.ports import OrganizationStore
+    from huron.core.lake.publications.ports import CommitRequestStore
     from huron.core.lake.schemas.ports import SchemaStore
-    from huron.core.lake.uploads.ports import UploadStore
+    from huron.core.lake.uploads.ports import AttemptStore, ObjectStore, UploadStore
     from huron.core.security.broker.keys import KeyStore
     from huron.core.security.rbac.grants import Scope
 
@@ -33,7 +34,11 @@ class GrantStore(GrantReader, GrantWriter, Protocol):
 
 
 class Transaction(Protocol):
-    """One database transaction: every area's store sharing one connection."""
+    """One database transaction: every area's store sharing one connection.
+
+    A transaction that locks rows of several kinds locks them in one order: the catalog, the
+    collection row, the commit request row, the upload attempt rows, then the object rows.
+    """
 
     @property
     def organizations(self) -> OrganizationStore:
@@ -68,6 +73,21 @@ class Transaction(Protocol):
     @property
     def uploads(self) -> UploadStore:
         """The uploads store."""
+        ...
+
+    @property
+    def attempts(self) -> AttemptStore:
+        """The upload attempts store."""
+        ...
+
+    @property
+    def objects(self) -> ObjectStore:
+        """The stored objects store."""
+        ...
+
+    @property
+    def commit_requests(self) -> CommitRequestStore:
+        """The commit requests store."""
         ...
 
     @property

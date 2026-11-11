@@ -3,6 +3,8 @@
 import asyncio
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 
 import asyncpg
@@ -15,16 +17,19 @@ from huron.core.lake.errors import NameTaken
 from huron.core.lake.files.errors import BaseVersionConflict
 from huron.core.lake.files.models import CommitRequest, FileAdd
 from huron.core.lake.namespaces.errors import NamespaceNotEmpty
+from huron.core.lake.publications.models import CommitState, Refusal
 from huron.core.lake.schemas.models import BASE_SCHEMA_NAME
 from huron.core.lake.uploads.errors import UploadNotFound
-from huron.core.lake.uploads.models import Upload
+from huron.core.lake.uploads.models import AttemptState, Upload
 from huron.core.metastore.catalogs.postgres import PostgresCatalogs
 from huron.core.metastore.collections.postgres import PostgresCollections
-from huron.core.metastore.postgres import PostgresStore
+from huron.core.metastore.postgres import PostgresStore, PostgresTransaction
 from huron.core.metastore.uploads.postgres import PostgresUploads
 from huron.pkg.errors import NotFound
+from huron.pkg.identifiers import new_id
 from huron.schema.validator import Validator
-from tests.support.clock import frozen
+from tests.contract.suite import attempt, outcome, sealed, stored_collection, stored_object
+from tests.support.clock import START, frozen
 from tests.support.lake import (
     CATALOG_ADMIN,
     CONTRIBUTOR,
@@ -332,6 +337,128 @@ async def test_a_share_group_change_with_a_catalog_delete_never_fails_in_the_dat
         await lake.catalogs.get(ORG_ADMIN, "doomed")
 
 
+async def test_two_first_creations_of_one_attempt_give_one_attempt(
+    uow: PostgresStore, database_url: str
+) -> None:
+    owner = await stored_collection(uow)
+    first = attempt(owner)
+    second = replace(attempt(owner, size=9), attempt_id=first.attempt_id)
+    reissued = new_id()
+    async with uow.transaction() as tx:
+        assert await tx.attempts.insert_or_lock(first) == first
+        late = _Held(uow, lambda tx: tx.attempts.insert_or_lock(second))
+        await _done_or_waiting_for_a_lock(late.task, database_url)
+        assert not late.result.done()
+        await tx.attempts.issue(first.id, reissued, START + timedelta(minutes=1))
+    seen = await late.wait()
+    assert seen == replace(
+        first, current_upload_id=reissued, upload_ids=(first.current_upload_id, reissued)
+    )
+    await _locked_elsewhere(database_url, "staged_uploads", first.id)
+    await late.close()
+    async with uow.transaction() as tx:
+        assert await tx.attempts.lock_uploads(second.upload_ids) == {}
+        assert await tx.attempts.get("dave", first.attempt_id) == seen
+
+
+async def test_two_connections_that_send_one_request_id_give_one_request(
+    uow: PostgresStore, database_url: str
+) -> None:
+    owner = await stored_collection(uow)
+    first = outcome(owner)
+    second = replace(outcome(owner), request_id=first.request_id, body_digest="c" * 64)
+    refusal = Refusal("BASE_VERSION_CONFLICT", "stale", {"current_version": 3})
+    rejected = replace(first, state=CommitState.REJECTED, refusal=refusal)
+    async with uow.transaction() as tx:
+        assert await tx.commit_requests.insert_or_lock(first) == first
+        late = _Held(uow, lambda tx: tx.commit_requests.insert_or_lock(second))
+        await _done_or_waiting_for_a_lock(late.task, database_url)
+        assert not late.result.done()
+        await tx.commit_requests.update(rejected)
+    assert await late.wait() == rejected
+    await _locked_elsewhere(database_url, "commit_requests", first.id)
+    await late.close()
+    async with uow.transaction() as tx:
+        assert await tx.commit_requests.lock(second.id) is None
+
+
+async def test_a_second_request_for_one_collection_sees_the_first_hold_it(
+    uow: PostgresStore, database_url: str
+) -> None:
+    owner = await stored_collection(uow)
+    first, second = outcome(owner), outcome(owner)
+    async with uow.transaction() as tx:
+        await tx.commit_requests.insert_or_lock(first)
+        await tx.commit_requests.insert_or_lock(second)
+    async with uow.transaction() as tx:
+        locked = await tx.collections.lock(owner.id)
+        assert locked == owner
+        late = _Held(uow, lambda tx: tx.collections.lock(owner.id))
+        await _done_or_waiting_for_a_lock(late.task, database_url)
+        assert not late.result.done()
+        await tx.collections.update(replace(owner, pending_request_id=first.id))
+    assert await late.wait() == replace(owner, pending_request_id=first.id)
+    await late.close()
+
+
+async def test_a_second_request_for_one_upload_sees_the_first_hold_it(
+    uow: PostgresStore, database_url: str
+) -> None:
+    owner = await stored_collection(uow)
+    first, second, upload = outcome(owner), outcome(owner), attempt(owner)
+    ready = replace(upload, state=AttemptState.READY)
+    async with uow.transaction() as tx:
+        await tx.commit_requests.insert_or_lock(first)
+        await tx.commit_requests.insert_or_lock(second)
+        await tx.attempts.insert_or_lock(upload)
+        await tx.attempts.update(ready)
+    held = replace(ready, commit_request_id=first.id)
+    async with uow.transaction() as tx:
+        current = upload.current_upload_id
+        assert await tx.attempts.lock_uploads(upload.upload_ids) == {current: ready}
+        late = _Held(uow, lambda tx: tx.attempts.lock_uploads(upload.upload_ids))
+        await _done_or_waiting_for_a_lock(late.task, database_url)
+        assert not late.result.done()
+        await tx.attempts.update(held)
+    assert await late.wait() == {current: held}
+    await late.close()
+
+
+async def test_a_seal_that_runs_again_on_another_connection_uses_the_same_object(
+    uow: PostgresStore, database_url: str
+) -> None:
+    owner = await stored_collection(uow)
+    upload = attempt(owner)
+    made = stored_object(upload.current_upload_id)
+    again = stored_object(upload.current_upload_id, "helio/.huron-objects/again")
+    async with uow.transaction() as tx:
+        await tx.attempts.insert_or_lock(upload)
+    async with uow.transaction() as tx:
+        assert await tx.objects.insert_or_lock(made) == made
+        late = _Held(uow, lambda tx: tx.objects.insert_or_lock(again))
+        await _done_or_waiting_for_a_lock(late.task, database_url)
+        assert not late.result.done()
+        await tx.objects.update(sealed(made))
+    assert await late.wait() == sealed(made)
+    await _locked_elsewhere(database_url, "objects", made.id)
+    await late.close()
+
+
+async def test_idle_attempts_skip_an_attempt_that_another_transaction_holds(
+    uow: PostgresStore,
+) -> None:
+    owner = await stored_collection(uow)
+    busy, idle = attempt(owner), attempt(owner, minute=1)
+    async with uow.transaction() as tx:
+        await tx.attempts.insert_or_lock(busy)
+        await tx.attempts.insert_or_lock(idle)
+    holder = _Held(uow, lambda tx: tx.attempts.lock_uploads(busy.upload_ids))
+    assert await holder.wait() == {busy.current_upload_id: busy}
+    async with uow.transaction() as tx:
+        assert await tx.attempts.lock_idle(START + timedelta(hours=1), 10) == [idle]
+    await holder.close()
+
+
 async def _done_or_waiting_for_a_lock(task: asyncio.Task[Any], database_url: str) -> None:
     """Return once ``task`` is done or a transaction of this database waits for a lock.
 
@@ -347,5 +474,45 @@ async def _done_or_waiting_for_a_lock(task: asyncio.Task[Any], database_url: str
                 await asyncio.sleep(0.01)
     except TimeoutError:
         pytest.fail("the task did not finish or wait for a lock within 5 seconds")
+    finally:
+        await connection.close()
+
+
+class _Held[T]:
+    """A transaction in a task of its own that runs ``work``, then stays open until closed."""
+
+    def __init__(
+        self, uow: PostgresStore, work: Callable[[PostgresTransaction], Awaitable[T]]
+    ) -> None:
+        self.result: asyncio.Future[T] = asyncio.get_running_loop().create_future()
+        self._release = asyncio.Event()
+        self.task = asyncio.create_task(self._run(uow, work))
+
+    async def wait(self) -> T:
+        """The result of ``work``; fail the test when it takes more than 5 seconds."""
+        async with asyncio.timeout(5):
+            return await self.result
+
+    async def close(self) -> None:
+        """Commit the transaction and end the task."""
+        self._release.set()
+        await self.task
+
+    async def _run(
+        self, uow: PostgresStore, work: Callable[[PostgresTransaction], Awaitable[T]]
+    ) -> None:
+        async with uow.transaction() as tx:
+            self.result.set_result(await work(tx))
+            await self._release.wait()
+
+
+async def _locked_elsewhere(database_url: str, table: str, row_id: uuid.UUID) -> None:
+    """Fail unless another transaction holds the row of ``table`` with ``row_id`` locked."""
+    connection = await asyncpg.connect(database_url)
+    try:
+        with pytest.raises(asyncpg.LockNotAvailableError):
+            await connection.fetchval(
+                f"select id from huron.{table} where id = $1 for update nowait", row_id
+            )
     finally:
         await connection.close()

@@ -24,6 +24,7 @@ PORTS = [
     "huron.core.lake.namespaces.ports",
     "huron.core.lake.collections.ports",
     "huron.core.lake.files.ports",
+    "huron.core.lake.publications.ports",
     "huron.core.lake.schemas.ports",
     "huron.core.lake.uploads.ports",
 ]

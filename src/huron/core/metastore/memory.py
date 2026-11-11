@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
     from huron.core.lake.audit.models import AuditEntry
     from huron.core.lake.catalogs.models import Catalog
@@ -14,8 +15,9 @@ if TYPE_CHECKING:
     from huron.core.lake.files.models import Commit, FileRecord
     from huron.core.lake.namespaces.models import Namespace
     from huron.core.lake.organizations.models import Organization
+    from huron.core.lake.publications.models import CommitEntry, CommitOutcome
     from huron.core.lake.schemas.models import SchemaEntry
-    from huron.core.lake.uploads.models import Removal, Upload
+    from huron.core.lake.uploads.models import Removal, StoredObject, Upload, UploadAttempt
     from huron.core.security.broker.keys import SigningKey
     from huron.core.security.rbac import Role, Scope
 
@@ -24,7 +26,10 @@ __all__ = ["MemoryState"]
 
 @dataclass(slots=True)
 class MemoryState:
-    """Every table as a dictionary keyed by primary key."""
+    """Every table as a dictionary keyed by primary key.
+
+    ``issued`` maps each issued upload ID to the row ID of its attempt and its time of issue.
+    """
 
     organizations: dict[uuid.UUID, Organization] = field(default_factory=dict)
     catalogs: dict[uuid.UUID, Catalog] = field(default_factory=dict)
@@ -38,6 +43,11 @@ class MemoryState:
     keys: dict[str, SigningKey] = field(default_factory=dict)
     uploads: dict[uuid.UUID, Upload] = field(default_factory=dict)
     removals: dict[uuid.UUID, Removal] = field(default_factory=dict)
+    attempts: dict[uuid.UUID, UploadAttempt] = field(default_factory=dict)
+    issued: dict[uuid.UUID, tuple[uuid.UUID, datetime]] = field(default_factory=dict)
+    objects: dict[uuid.UUID, StoredObject] = field(default_factory=dict)
+    commit_requests: dict[uuid.UUID, CommitOutcome] = field(default_factory=dict)
+    commit_entries: dict[tuple[uuid.UUID, int], CommitEntry] = field(default_factory=dict)
 
     def copy(self) -> MemoryState:
         """A copy whose tables can change without touching this state."""
@@ -55,4 +65,9 @@ class MemoryState:
             keys=dict(self.keys),
             uploads=dict(self.uploads),
             removals=dict(self.removals),
+            attempts=dict(self.attempts),
+            issued=dict(self.issued),
+            objects=dict(self.objects),
+            commit_requests=dict(self.commit_requests),
+            commit_entries=dict(self.commit_entries),
         )

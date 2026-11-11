@@ -49,6 +49,9 @@ no `<id>.lock` file exists. A lock file means that tusd still works on the uploa
 
 - One seal task runs for each upload ID. A second caller joins the same task.
 - A seal starts only for a row in `receiving`, and only for the current upload ID of that row.
+- One exception: a kill of the API during a seal leaves the row in `sealing` with no task. A
+  `sealing` row for which this process has no seal task starts a new seal. One writer makes
+  this safe.
 - The comparison of the server hash with the client's `sha256` at commit is the last defence.
 
 ### Uploads
@@ -82,6 +85,8 @@ no `<id>.lock` file exists. A lock file means that tusd still works on the uploa
 - An upload expires `upload_ttl` after its last activity. Activity is a `PATCH` that the
   authorization check allowed, or the end of a seal. The default is 7 days. The value is a
   setting. A `receiving` row that is older than `upload_ttl` is treated as expired.
+- Expiry applies to `receiving` and `sealing` rows, and to a `ready` row that no commit request
+  holds. A seal that ends on an expired row only makes private bytes to remove.
 - A cancel goes through the API. It removes the tusd files of every upload ID of the attempt.
   tusd's own termination is disabled.
 - A commit consumes an upload one time. A cancelled, expired or consumed upload is never
@@ -147,8 +152,8 @@ task D6) describes the manual procedure.
 
 ### Capacity
 
-- Settings: `max_upload_bytes` (one file), `max_staged_bytes` (all uploads that are not consumed,
-  counted two times for the tusd file and the copy), `min_free_bytes` (from `statvfs`).
+- Settings: `max_upload_bytes` (one file), `max_staged_bytes` (all uploads in `receiving`,
+  `sealing` or `ready`, counted two times for the tusd file and the copy), `min_free_bytes` (from `statvfs`).
 - The free-space check reads both filesystems: the one of `.tus-uploads` and the one of the
   organization's object area.
 - `begin` refuses with 429 `CAPACITY_EXCEEDED` when a limit does not hold. The pre-create hook
@@ -269,7 +274,7 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
   `objects` row. Add the domain value for an object.
 - Verification: `make gate`, `uv run pytest -m contract`.
 - Dependencies: S2.
-- Status: pending
+- Status: complete (verification 2 of 3 passed, 2026-11-10)
 
 ### S5 Domain operations
 
@@ -282,10 +287,18 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
     `finalize`, `resolve`.
   - A refusal with a valid body is saved as `rejected`. Save it in a transaction that commits.
     Raise the error after the commit.
+  - The request value refuses a `base_version` below 0 or above 2^31-1, so that no value
+    outside the column range reaches an adapter.
+  - `abandon` clears the request from each upload that it returns to `ready`. If not, the
+    upload never expires.
+  - An operation does not catch `NameTaken` and continue in the same transaction. On
+    PostgreSQL that transaction is ended.
 - Tests on the memory store and on PostgreSQL: each defect F1 to F6 as a test that fails on the
   current code path. One test for each of the six creation cases. No upload ID is issued two
   times. A seal of an ID that is not current is refused. A `receiving` row past `upload_ttl` is
-  expired. Stale base, revoked privilege, bad tree, ineligible upload. The same request
+  expired. A `sealing` row past `upload_ttl` is expired. A `sealing` row with no task starts a
+  new seal. Two adds that name one upload ID are refused. Stale base, revoked privilege, bad
+  tree, ineligible upload. The same request
   two times. Cancel against finish. Expiry at the boundary with a controlled clock. Finalize two
   times. `abandon` with zero and with one done step.
 - Verification: `make gate`, `uv run pytest -m contract`.
@@ -329,7 +342,8 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
 - Create or change:
   - Routes: the commit route with the new body, the status route,
     `POST /api/v1/uploads/{id}/cancel`, the admin resolve route, `pending_request` in the
-    collection view.
+    collection view. The admin resolve route names the collection, not the request: it reads
+    the collection's pending request, then locks the collection before the request.
   - The pre-create hook: the six creation cases, and the refusal of a deferred length, a
     concatenation part or final, and a creation request with a body. Each 409 carries the state
     and the current upload ID where the case has them.

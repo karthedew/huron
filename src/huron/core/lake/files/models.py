@@ -19,6 +19,8 @@ class FileRecord:
     """One file recorded in a collection.
 
     ``inode`` is the inode of the receipt that proved the record, ``None`` without one.
+    ``object_id`` names the sealed object that a commit request published at the path, ``None``
+    for a file that no sealed object holds.
     """
 
     collection_id: uuid.UUID
@@ -30,6 +32,7 @@ class FileRecord:
     recorded_by: str
     commit_id: uuid.UUID
     inode: int | None = None
+    object_id: uuid.UUID | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Render for the API."""

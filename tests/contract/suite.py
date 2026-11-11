@@ -21,9 +21,25 @@ from huron.core.lake.files.models import Commit, FileRecord
 from huron.core.lake.listing import Listed, ListOrder, Position, SortDirection, SortField
 from huron.core.lake.namespaces.models import Namespace
 from huron.core.lake.organizations.models import Organization
+from huron.core.lake.publications.models import (
+    CommitEntry,
+    CommitOutcome,
+    CommitState,
+    EntryAction,
+    Refusal,
+)
 from huron.core.lake.schemas.models import SchemaEntry
 from huron.core.lake.transaction import UnitOfWork
-from huron.core.lake.uploads.models import Failure, Removal, Upload, UploadState
+from huron.core.lake.uploads.models import (
+    AttemptState,
+    Failure,
+    ObjectState,
+    Removal,
+    StoredObject,
+    Upload,
+    UploadAttempt,
+    UploadState,
+)
 from huron.core.security.broker.keys import generate_key
 from huron.core.security.rbac import PLATFORM, Role, Scope
 from huron.pkg.canonical import canonical_bytes
@@ -105,6 +121,15 @@ async def tree(uow: UnitOfWork) -> tuple[Organization, Catalog, Namespace]:
         await tx.catalogs.insert(cat)
         await tx.namespaces.insert(ns)
     return org, cat, ns
+
+
+async def stored_collection(uow: UnitOfWork) -> Collection:
+    """Seed the tree of :func:`tree` and one active collection ``run7`` in its namespace."""
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+    return owner
 
 
 async def test_a_failed_transaction_leaves_nothing_behind(uow: UnitOfWork) -> None:
@@ -557,6 +582,410 @@ async def test_removals_keep_their_claim_and_inodes_of_the_whole_unsigned_range(
         later = claimed_at + timedelta(hours=1)
         reclaimed = await tx.uploads.claim_removals(later, later, 10)
         assert reclaimed == [replace(row, claimed_at=later) for row in rows]
+
+
+def attempt(
+    owner: Collection, subject: str = "dave", *, size: int = 4, minute: int = 0
+) -> UploadAttempt:
+    """A ``receiving`` attempt with one issued upload ID, active since ``minute``."""
+    upload_id = new_id()
+    at = START + timedelta(minutes=minute)
+    return UploadAttempt(
+        new_id(),
+        subject,
+        new_id(),
+        owner.id,
+        "a.txt",
+        size,
+        AttemptState.RECEIVING,
+        upload_id,
+        (upload_id,),
+        at,
+        at,
+    )
+
+
+def outcome(
+    owner: Collection,
+    subject: str = "dave",
+    *,
+    state: CommitState = CommitState.ACCEPTED,
+    minute: int = 0,
+) -> CommitOutcome:
+    """A stored commit request of ``subject`` for ``owner``, created at ``minute``."""
+    at = START + timedelta(minutes=minute)
+    refusal = Refusal("BASE_VERSION_CONFLICT", "stale", {"current_version": 3})
+    held = state in (CommitState.REJECTED, CommitState.BLOCKED)
+    return CommitOutcome(
+        new_id(),
+        subject,
+        new_id(),
+        owner.id,
+        "b" * 64,
+        1,
+        "h",
+        None,
+        state,
+        at,
+        at,
+        refusal=refusal if held else None,
+    )
+
+
+def stored_object(upload_id: uuid.UUID, path: str | None = None) -> StoredObject:
+    """The ``sealing`` object of ``upload_id``."""
+    return StoredObject(
+        new_id(),
+        upload_id,
+        path or f"helio/.huron-objects/{upload_id}",
+        ObjectState.SEALING,
+        START,
+    )
+
+
+def sealed(stored: StoredObject, inode: int = 7) -> StoredObject:
+    """``stored`` once its seal measured 4 bytes."""
+    return replace(
+        stored,
+        state=ObjectState.SEALED,
+        size=4,
+        sha256=SHA,
+        inode=inode,
+        sealed_at=START + timedelta(minutes=1),
+    )
+
+
+async def test_an_attempt_key_gives_one_attempt_of_one_subject(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    first = attempt(owner)
+    twin = replace(attempt(owner, size=9), attempt_id=first.attempt_id)
+    elsewhere = replace(attempt(owner, "erin"), attempt_id=first.attempt_id)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        assert await tx.attempts.insert_or_lock(first) == first
+        assert await tx.attempts.insert_or_lock(twin) == first
+        assert await tx.attempts.insert_or_lock(elsewhere) == elsewhere
+    async with uow.transaction() as tx:
+        assert await tx.attempts.get("dave", first.attempt_id) == first
+        assert await tx.attempts.get("erin", first.attempt_id) == elsewhere
+        assert await tx.attempts.get("dave", new_id()) is None
+        assert await tx.attempts.lock_uploads(twin.upload_ids) == {}
+    reused = replace(
+        attempt(owner), current_upload_id=first.current_upload_id, upload_ids=first.upload_ids
+    )
+    with pytest.raises(NameTaken) as taken:
+        async with uow.transaction() as tx:
+            await tx.attempts.insert_or_lock(reused)
+    assert taken.value.context == {"name": str(reused.attempt_id)}
+
+
+async def test_an_attempt_keeps_every_issued_id_in_the_order_of_issue(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    first = attempt(owner)
+    (oldest,) = first.upload_ids
+    late, later, tied = uuid.UUID(int=2), uuid.UUID(int=3), uuid.UUID(int=1)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.attempts.insert_or_lock(first)
+        await tx.attempts.issue(first.id, later, START + timedelta(minutes=1))
+        await tx.attempts.issue(first.id, late, START + timedelta(minutes=2))
+        await tx.attempts.issue(first.id, tied, START + timedelta(minutes=2))
+        await tx.attempts.issue(new_id(), new_id(), START)
+    reissued = replace(first, current_upload_id=tied, upload_ids=(oldest, later, tied, late))
+    async with uow.transaction() as tx:
+        assert await tx.attempts.get("dave", first.attempt_id) == reissued
+        assert await tx.attempts.lock_uploads([oldest, late, new_id()]) == {
+            oldest: reissued,
+            late: reissued,
+        }
+        assert await tx.attempts.lock_uploads([]) == {}
+    with pytest.raises(NameTaken) as taken:
+        async with uow.transaction() as tx:
+            await tx.attempts.issue(first.id, oldest, START)
+    assert taken.value.context == {"name": str(oldest)}
+
+
+async def test_an_attempt_update_writes_its_state_activity_request_and_failure_only(
+    uow: UnitOfWork,
+) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    first, request = attempt(owner), outcome(owner)
+    active = START + timedelta(minutes=5)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.commit_requests.insert_or_lock(request)
+        await tx.attempts.insert_or_lock(first)
+        consumed = replace(
+            first, state=AttemptState.CONSUMED, active_at=active, commit_request_id=request.id
+        )
+        await tx.attempts.update(replace(consumed, rel_path="b.txt", size=9, created_at=active))
+        await tx.attempts.update(attempt(owner))
+    async with uow.transaction() as tx:
+        assert await tx.attempts.get("dave", first.attempt_id) == consumed
+        failure = Failure("SEAL_FAILED", "the copy is short")
+        failed = replace(first, state=AttemptState.FAILED, failure=failure)
+        await tx.attempts.update(failed)
+        assert await tx.attempts.get("dave", first.attempt_id) == failed
+
+
+async def test_an_attempt_outlives_its_collection(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner, other = collection(cat, ns, "run7"), collection(cat, ns, "run8")
+    gone, kept = attempt(owner), attempt(other)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.collections.insert(other)
+        await tx.attempts.insert_or_lock(gone)
+        await tx.attempts.insert_or_lock(kept)
+    async with uow.transaction() as tx:
+        await tx.collections.delete(owner.id)
+    async with uow.transaction() as tx:
+        assert await tx.attempts.get("dave", gone.attempt_id) == replace(gone, collection_id=None)
+        assert await tx.attempts.get("dave", kept.attempt_id) == kept
+
+
+async def test_idle_attempts_and_staged_bytes(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    request = outcome(owner)
+    receiving, ready = attempt(owner, size=1, minute=2), attempt(owner, size=2, minute=1)
+    oldest, boundary = attempt(owner, size=4), attempt(owner, size=8, minute=10)
+    sealing, late_sealing = attempt(owner, size=16, minute=3), attempt(owner, size=32, minute=10)
+    states = {
+        AttemptState.READY: 64,
+        AttemptState.CONSUMED: 128,
+        AttemptState.CANCELLED: 256,
+        AttemptState.EXPIRED: 512,
+        AttemptState.FAILED: 1024,
+    }
+    others = {state: attempt(owner, size=size) for state, size in states.items()}
+    async with uow.transaction() as tx:
+        assert await tx.attempts.staged_bytes() == 0
+        await tx.collections.insert(owner)
+        await tx.commit_requests.insert_or_lock(request)
+        for row in (receiving, ready, oldest, boundary, sealing, late_sealing, *others.values()):
+            await tx.attempts.insert_or_lock(row)
+        await tx.attempts.update(replace(ready, state=AttemptState.READY))
+        for row in (sealing, late_sealing):
+            await tx.attempts.update(replace(row, state=AttemptState.SEALING))
+        for state, row in others.items():
+            held = request.id if state in (AttemptState.READY, AttemptState.CONSUMED) else None
+            failure = Failure("SEAL_FAILED", "short") if state is AttemptState.FAILED else None
+            changed = replace(row, state=state, commit_request_id=held, failure=failure)
+            await tx.attempts.update(changed)
+    before = START + timedelta(minutes=10)
+    async with uow.transaction() as tx:
+        idle = await tx.attempts.lock_idle(before, 10)
+        assert [row.id for row in idle] == [oldest.id, ready.id, receiving.id, sealing.id]
+        assert [row.id for row in await tx.attempts.lock_idle(before, 1)] == [oldest.id]
+        assert await tx.attempts.lock_idle(START, 10) == []
+        assert await tx.attempts.staged_bytes() == 1 + 2 + 4 + 8 + 16 + 32 + 64
+
+
+async def test_a_seal_that_runs_again_uses_the_same_object(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    first, second = attempt(owner), attempt(owner)
+    made = stored_object(first.current_upload_id)
+    again = stored_object(first.current_upload_id, "helio/.huron-objects/again")
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.attempts.insert_or_lock(first)
+        await tx.attempts.insert_or_lock(second)
+        assert await tx.objects.insert_or_lock(made) == made
+        assert await tx.objects.insert_or_lock(again) == made
+        await tx.objects.update(sealed(made))
+        await tx.objects.update(sealed(again))
+    async with uow.transaction() as tx:
+        assert await tx.objects.insert_or_lock(again) == sealed(made)
+        removed = replace(sealed(made), state=ObjectState.REMOVED)
+        await tx.objects.update(replace(removed, path="ignored", created_at=START - timedelta(1)))
+        assert await tx.objects.lock_uploads([first.current_upload_id, new_id()]) == {
+            first.current_upload_id: removed
+        }
+        assert await tx.objects.lock_uploads([]) == {}
+    with pytest.raises(NameTaken) as taken:
+        async with uow.transaction() as tx:
+            await tx.objects.insert_or_lock(stored_object(second.current_upload_id, made.path))
+    assert taken.value.context == {"name": made.path}
+
+
+async def test_objects_keep_inodes_of_the_whole_unsigned_range(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    attempts = [attempt(owner) for _ in INODES]
+    objects = [stored_object(row.current_upload_id) for row in attempts]
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        for row, made, inode in zip(attempts, objects, INODES, strict=True):
+            await tx.attempts.insert_or_lock(row)
+            await tx.objects.insert_or_lock(made)
+            await tx.objects.update(sealed(made, inode))
+    async with uow.transaction() as tx:
+        found = await tx.objects.lock_uploads([made.upload_id for made in objects])
+        assert found == {
+            made.upload_id: sealed(made, inode) for made, inode in zip(objects, INODES, strict=True)
+        }
+
+
+async def test_a_request_key_gives_one_request_of_one_subject(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    first = outcome(owner)
+    twin = replace(outcome(owner), request_id=first.request_id, body_digest="c" * 64)
+    elsewhere = replace(outcome(owner, "erin"), request_id=first.request_id)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        assert await tx.commit_requests.insert_or_lock(first) == first
+        assert await tx.commit_requests.insert_or_lock(twin) == first
+        assert await tx.commit_requests.insert_or_lock(elsewhere) == elsewhere
+    async with uow.transaction() as tx:
+        assert await tx.commit_requests.get("dave", first.request_id) == first
+        assert await tx.commit_requests.get("erin", first.request_id) == elsewhere
+        assert await tx.commit_requests.get("dave", new_id()) is None
+        assert await tx.commit_requests.lock(first.id) == first
+        assert await tx.commit_requests.lock(twin.id) is None
+    clash = replace(first, request_id=new_id())
+    with pytest.raises(NameTaken) as taken:
+        async with uow.transaction() as tx:
+            await tx.commit_requests.insert_or_lock(clash)
+    assert taken.value.context == {"name": str(clash.request_id)}
+
+
+async def test_a_request_update_writes_its_state_result_refusal_and_time_only(
+    uow: UnitOfWork,
+) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    first, made = outcome(owner), commit(owner)
+    later = START + timedelta(minutes=3)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.commits.insert(made)
+        await tx.commit_requests.insert_or_lock(first)
+        refusal = Refusal("FILE_BLOCKED", "a foreign file", {"rel_paths": ["a/b"], "n": 2**53 + 1})
+        blocked = replace(first, state=CommitState.BLOCKED, refusal=refusal, updated_at=later)
+        await tx.commit_requests.update(replace(blocked, host="ignored", base_version=7))
+        assert await tx.commit_requests.lock(first.id) == blocked
+        succeeded = replace(
+            first,
+            state=CommitState.SUCCEEDED,
+            version=2,
+            file_count=0,
+            commit_id=made.id,
+            updated_at=later,
+        )
+        await tx.commit_requests.update(succeeded)
+        await tx.commit_requests.update(outcome(owner))
+    async with uow.transaction() as tx:
+        assert await tx.commit_requests.get("dave", first.request_id) == succeeded
+        assert await tx.commit_requests.pending() == []
+    async with uow.transaction() as tx:
+        await tx.collections.delete(owner.id)
+    async with uow.transaction() as tx:
+        orphan = replace(succeeded, collection_id=None, commit_id=None)
+        assert await tx.commit_requests.get("dave", first.request_id) == orphan
+
+
+async def test_pending_requests_are_the_accepted_and_blocked_ones_oldest_first(
+    uow: UnitOfWork,
+) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    blocked = outcome(owner, state=CommitState.BLOCKED, minute=1)
+    accepted, tied = outcome(owner, minute=2), outcome(owner, minute=2)
+    ended = [
+        outcome(owner, state=state)
+        for state in (CommitState.REJECTED, CommitState.SUCCEEDED, CommitState.ABANDONED)
+    ]
+    ended[1] = replace(ended[1], version=2, file_count=1)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        assert await tx.commit_requests.pending() == []
+        for row in (tied, accepted, blocked, *ended):
+            await tx.commit_requests.insert_or_lock(row)
+    async with uow.transaction() as tx:
+        assert await tx.commit_requests.pending() == [blocked, accepted, tied]
+
+
+async def test_request_entries_keep_their_order_and_their_first_done_time(
+    uow: UnitOfWork,
+) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    request, upload = outcome(owner), attempt(owner)
+    entries = [
+        CommitEntry(2, EntryAction.ADD_FILE, "d/a.txt", upload.current_upload_id),
+        CommitEntry(0, EntryAction.REMOVE_FILE, "A.txt"),
+        CommitEntry(1, EntryAction.MAKE_DIRECTORY, "d"),
+    ]
+    done, later = START + timedelta(minutes=1), START + timedelta(minutes=2)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.attempts.insert_or_lock(upload)
+        await tx.commit_requests.insert_or_lock(request)
+        await tx.commit_requests.insert_entries(request.id, entries)
+        await tx.commit_requests.insert_entries(request.id, [])
+        assert await tx.commit_requests.entries(new_id()) == []
+    async with uow.transaction() as tx:
+        await tx.commit_requests.mark_done(request.id, 1, done)
+        await tx.commit_requests.mark_done(request.id, 1, later)
+        await tx.commit_requests.mark_done(request.id, 9, later)
+    async with uow.transaction() as tx:
+        assert await tx.commit_requests.entries(request.id) == [
+            entries[1],
+            replace(entries[2], done_at=done),
+            entries[0],
+        ]
+    for duplicate in (
+        [CommitEntry(1, EntryAction.PRUNE_DIRECTORY, "e")],
+        [CommitEntry(5, EntryAction.PRUNE_DIRECTORY, "e")] * 2,
+    ):
+        with pytest.raises(NameTaken) as taken:
+            async with uow.transaction() as tx:
+                await tx.commit_requests.insert_entries(request.id, duplicate)
+        assert taken.value.context == {"name": str(request.id)}
+
+
+async def test_a_collection_names_the_request_that_holds_it(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    request = outcome(owner)
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.commit_requests.insert_or_lock(request)
+        await tx.collections.update(replace(owner, pending_request_id=request.id))
+    async with uow.transaction() as tx:
+        assert await tx.collections.lock(owner.id) == replace(owner, pending_request_id=request.id)
+        await tx.collections.update(owner)
+    async with uow.transaction() as tx:
+        assert await tx.collections.get(owner.id) == owner
+
+
+async def test_files_name_the_sealed_objects_that_hold_them(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    made = commit(owner)
+    first, second = attempt(owner), attempt(owner)
+    objects = [stored_object(first.current_upload_id), stored_object(second.current_upload_id)]
+    record = FileRecord(
+        owner.id, "a.txt", "a.txt", 4, SHA, START, "t", made.id, 7, object_id=objects[0].id
+    )
+    async with uow.transaction() as tx:
+        await tx.collections.insert(owner)
+        await tx.commits.insert(made)
+        for row, stored in zip((first, second), objects, strict=True):
+            await tx.attempts.insert_or_lock(row)
+            await tx.objects.insert_or_lock(stored)
+        await tx.files.upsert_many([record])
+    async with uow.transaction() as tx:
+        assert await tx.files.get_many(owner.id, ["a.txt"]) == [record]
+        replaced = replace(record, object_id=objects[1].id)
+        await tx.files.upsert_many([replaced])
+        assert await tx.files.list(owner.id, None, 10) == [replaced]
 
 
 async def test_schemas(uow: UnitOfWork) -> None:
