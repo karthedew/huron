@@ -1,5 +1,5 @@
-"""The lake's layout, the storage port and adapters, directories, placement, publication,
-repair, removal and locks.
+"""The lake's layout, the storage port and adapters, directories, placement, seals,
+publication, repair, removal and locks.
 """
 
 from huron.core.storage.directories import DirectoryWriter
@@ -44,6 +44,7 @@ from huron.core.storage.placement import (
 from huron.core.storage.ports import (
     SHARE_GROUP_PENDING,
     Entry,
+    FreeSpace,
     GroupOutcome,
     GroupResult,
     OpenFile,
@@ -74,6 +75,7 @@ from huron.core.storage.repair import (
     RepairResult,
     RepairStep,
 )
+from huron.core.storage.sealing import Completeness, Inspection, Sealer
 
 __all__ = [
     "DIRECTORY_MODE",
@@ -90,12 +92,15 @@ __all__ = [
     "AddFile",
     "BlockReason",
     "CollectionDirectoryMissing",
+    "Completeness",
     "DirectoryWriter",
     "Entry",
     "FailureReason",
+    "FreeSpace",
     "GroupOutcome",
     "GroupResult",
     "InheritanceFailed",
+    "Inspection",
     "LakePath",
     "LakeUnavailable",
     "Linked",
@@ -117,6 +122,7 @@ __all__ = [
     "RepairStep",
     "Repairer",
     "SealedFile",
+    "Sealer",
     "ShareReader",
     "ShareWarning",
     "SourceGone",

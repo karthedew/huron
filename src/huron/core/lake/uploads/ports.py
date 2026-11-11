@@ -60,6 +60,15 @@ class AttemptStore(Protocol):
         """The total declared size of the ``receiving``, ``sealing`` and ``ready`` attempts."""
         ...
 
+    async def spent(self, upload_ids: Collection[uuid.UUID]) -> set[uuid.UUID]:
+        """The IDs of ``upload_ids`` whose tusd files no attempt needs any more.
+
+        A spent ID is an issued ID that is not the current ID of its attempt, or any ID of an
+        attempt that is ``consumed``, ``failed``, ``cancelled`` or ``expired``. An ID that Huron
+        never issued is not spent.
+        """
+        ...
+
     async def issue(self, attempt_id: uuid.UUID, upload_id: uuid.UUID, issued_at: datetime) -> None:
         """Issue ``upload_id`` for the stored attempt with row ID ``attempt_id``.
 
@@ -94,6 +103,16 @@ class ObjectStore(Protocol):
         self, upload_ids: Collection[uuid.UUID]
     ) -> Mapping[uuid.UUID, StoredObject]:
         """The object of each of ``upload_ids`` that has one, by upload ID, locked in that order."""
+        ...
+
+    async def unreferenced(self, after: uuid.UUID | None, limit: int) -> Sequence[StoredObject]:
+        """Up to ``limit`` objects that no row needs any more, in the order of their IDs.
+
+        Such an object is not ``removed``. Its upload ID is not the current ID of its attempt,
+        or its attempt is ``consumed``, ``failed``, ``cancelled`` or ``expired``. No file row
+        names the object, and no entry of an ``accepted`` or ``blocked`` request names its
+        upload ID. With ``after``, only objects with a greater ID come. The rows are not locked.
+        """
         ...
 
     async def update(self, stored: StoredObject) -> None:

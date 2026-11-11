@@ -874,3 +874,65 @@ def inode_of(storage: Storage, location: LakePath) -> int:
     found = storage.stat(location)
     assert found is not None
     return found.inode
+
+
+class Reader:
+    """A writer whose lock another process holds."""
+
+    writable = False
+
+
+async def test_the_upload_directory_is_guarded_by_the_marker_at_the_root(
+    disk: LakeDisk, storage: MemoryStorage
+) -> None:
+    located = disk.in_uploads("x")
+    place = OrganizationPlace(".tus-uploads", LakePath(), own_marker=False)
+    assert located == Located(place, UPLOADS.joinpath("x"))
+    assert disk.in_uploads().location == UPLOADS
+    assert await disk.work(located, lambda: "done") == "done"
+    storage.remove_file(LakePath.of(MARKER_FILE))
+    with pytest.raises(LakeUnavailable, match=r"no \.huron marker"):
+        await disk.work(located, lambda: None)
+
+
+async def test_readiness_links_from_the_object_area_into_each_declared_organization(
+    declared_disk: LakeDisk, storage: MemoryStorage, clock: FrozenClock
+) -> None:
+    await declared_disk.open()
+    assert await declared_disk.ready() is False  # no organization directory is mounted
+    for place in PLACES.values():
+        mark(storage, place.directory, place.name)
+    clock.advance(PROBE_TTL)
+    assert await declared_disk.ready() is True
+    for place in PLACES.values():
+        area = storage.stat(place.objects)
+        assert area is not None and area.mode == 0o700
+        assert storage.is_empty(place.objects)
+        assert [name for name in storage.nodes if name.parent == place.directory] == [
+            place.directory.joinpath(MARKER_FILE),
+            place.objects,
+        ]
+    storage.mounts.add(PLACES["space"].objects)
+    clock.advance(PROBE_TTL)
+    assert await declared_disk.ready() is False
+
+
+async def test_a_reader_writes_nothing_and_its_gate_refuses_every_step(
+    storage: MemoryStorage, clock: FrozenClock
+) -> None:
+    disk = lake_disk(storage, clock, places=PLACES, writer=Reader())
+    try:
+        assert await disk.ready() is False
+        storage.make_directory(UPLOADS, UPLOAD_DIR_MODE)
+        calls = list(storage.calls)
+        clock.advance(PROBE_TTL)
+        assert await disk.ready() is True
+        assert storage.calls == calls
+        with pytest.raises(LakeUnavailable) as refused:
+            await disk.work(disk.locate("helio"), lambda: None)
+        assert refused.value.context == {"reason": "writer_lock"}
+        storage.unreadable.add(LakePath())
+        clock.advance(PROBE_TTL)
+        assert await disk.ready() is False
+    finally:
+        disk.close()

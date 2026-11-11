@@ -6,6 +6,7 @@ from typing import Any
 
 from huron.core.storage import (
     Entry,
+    FreeSpace,
     GroupResult,
     LakePath,
     LakeUnavailable,
@@ -107,6 +108,9 @@ class Subtree:
 
     def in_group(self, gid: int) -> bool:
         return self.share.in_group(gid)
+
+    def free_space(self, location: LakePath) -> FreeSpace:
+        return self.share.free_space(self._in(location))
 
     def remove_file(self, location: LakePath, *, inode: int | None = None) -> Outcome:
         return self.share.remove_file(self._in(location), inode=inode)

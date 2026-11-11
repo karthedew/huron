@@ -21,6 +21,7 @@ from huron.core.storage.lakepath import LakePath
 from huron.core.storage.layout import FILE_MODE
 from huron.core.storage.ports import (
     Entry,
+    FreeSpace,
     GroupOutcome,
     GroupResult,
     Outcome,
@@ -36,7 +37,10 @@ if TYPE_CHECKING:
 
     from huron.core.storage.ports import StatKind
 
-__all__ = ["MemoryStorage", "Node", "NodeKind"]
+__all__ = ["FREE_BYTES", "MemoryStorage", "Node", "NodeKind"]
+
+#: The free bytes of a filesystem of a :class:`MemoryStorage` that its ``free`` does not name.
+FREE_BYTES = 2**40
 
 type NodeKind = Literal["dir", "file", "symlink"]
 
@@ -76,7 +80,9 @@ class MemoryStorage:
     ``EXDEV``, as the server does. ``faults`` maps an operation and a place to an error number
     that the next such call raises one time: ``("write", p)`` and ``("fsync", p)`` fail a copy
     to ``p``, ``("link", p)`` a link to ``p``, and ``("fsync", d)`` the flush of the directory
-    ``d``, also the flush at the end of a copy into ``d``.
+    ``d``, also the flush at the end of a copy into ``d``. ``free`` maps a mount to the bytes
+    that are free on its filesystem. A mount that ``free`` does not name has :data:`FREE_BYTES`
+    free.
     """
 
     def __init__(self, root: Path, uid: int = 1000, gid: int = 1000) -> None:
@@ -90,6 +96,7 @@ class MemoryStorage:
         self.unreadable: set[LakePath] = set()
         self.mounts: set[LakePath] = set()
         self.faults: dict[tuple[str, LakePath], int] = {}
+        self.free: dict[LakePath, int] = {}
         self.inherits = True
         self.umask = 0o022
         self.calls: list[tuple[str, LakePath]] = []
@@ -381,6 +388,14 @@ class MemoryStorage:
         self._directory(location)
         self._fault("fsync", location)
         self.calls.append(("sync", location))
+
+    def free_space(self, location: LakePath) -> FreeSpace:
+        """The free space of the filesystem of the directory ``location``: its bytes of
+        :attr:`free`, and the inode of its mount as the filesystem.
+        """
+        self._directory(location)
+        mount = self._filesystem(location)
+        return FreeSpace(self.nodes[mount].inode, self.free.get(mount, FREE_BYTES))
 
     def remove_file(self, location: LakePath, *, inode: int | None = None) -> Outcome:
         """Remove a file; with ``inode``, only while the file has that inode.

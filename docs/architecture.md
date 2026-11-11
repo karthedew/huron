@@ -45,6 +45,9 @@ The routes are these:
   `organizations_managed`, `uploads_url`, `service_user` and `upload_hook_timeout`.
 - `/readyz`: readiness. It answers 503 until the database and the signing keys are usable. With
   `lake_path`, the check `lake` also needs a `.tus-uploads` directory that the API can write.
+  The API also makes a hard link from the object area into each declared organization directory,
+  then removes it. A second API process that finds the writer lock held writes nothing. Its
+  check `lake` needs only the `.tus-uploads` directory, and it serves reads only.
 - `/.well-known/openid-configuration` and `/jwks.json`: discovery documents, so that other systems
   can check Huron tokens.
 

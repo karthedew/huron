@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 __all__ = [
     "SHARE_GROUP_PENDING",
     "Entry",
+    "FreeSpace",
     "GroupOutcome",
     "GroupResult",
     "OpenFile",
@@ -47,6 +48,18 @@ class Stat:
     gid: int
     inode: int
     size: int
+
+
+@dataclass(frozen=True, slots=True)
+class FreeSpace:
+    """The free space of one filesystem.
+
+    ``filesystem`` tells two filesystems apart: two places with the same value draw on the same
+    free space. ``free`` is the number of bytes that this process can still write there.
+    """
+
+    filesystem: int
+    free: int
 
 
 class Outcome(StrEnum):
@@ -246,6 +259,13 @@ class Storage(ShareReader, Protocol):
     def sync_directory(self, location: LakePath) -> None:
         """Flush the directory ``location`` to disk, so that its new and removed names are
         durable. A failed flush is an error.
+        """
+        ...
+
+    def free_space(self, location: LakePath) -> FreeSpace:
+        """The free space of the filesystem that holds the directory ``location``.
+
+        A missing ``location`` is ``ENOENT``, and a file at it ``ENOTDIR``.
         """
         ...
 

@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from huron.applications.api.disk import PROBE_TIMEOUT, LakeDisk
+from huron.applications.api.disk import PROBE_TIMEOUT, LakeDisk, Writer
 from huron.core.storage import MARKER_FILE, LakePath, OpenFile, OrganizationPlace, Storage
 from huron.core.storage.memory import MemoryStorage
 from huron.core.storage.posix import PosixStorage
@@ -149,13 +149,20 @@ def lake_disk(
     *,
     places: Mapping[str, OrganizationPlace] | None = None,
     probe_timeout: float = PROBE_TIMEOUT,
+    writer: Writer | None = None,
 ) -> LakeDisk:
-    """The lake's disk over ``storage``; ``places`` are the declared organizations.
+    """The lake's disk over ``storage``; ``places`` are the declared organizations, and
+    ``writer`` says whether this process writes.
 
     The caller closes it.
     """
     return LakeDisk(
-        storage, places or {}, str(INSTANCE_ID), clock=clock, probe_timeout=probe_timeout
+        storage,
+        places or {},
+        str(INSTANCE_ID),
+        clock=clock,
+        probe_timeout=probe_timeout,
+        writer=writer,
     )
 
 

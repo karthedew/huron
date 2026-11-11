@@ -495,3 +495,39 @@ async def test_expiry_takes_at_most_the_limit_the_oldest_activity_first(
     publishing.clock.advance(TTL + timedelta(seconds=1))
     assert [attempt.id for attempt in await publishing.attempts.expire(1)] == [older.id]
     assert [attempt.rel_path for attempt in await publishing.attempts.expire(1)] == ["newer"]
+
+
+# A failed upload.
+
+
+async def test_fail_ends_a_receiving_or_sealing_attempt_with_the_size_mismatch(
+    publishing: Publishing,
+) -> None:
+    receiving = await begin(publishing)
+    failed = await publishing.attempts.fail(receiving.current_upload_id, len(DATA) + 3)
+    message = f"the upload declared {len(DATA)} bytes, but the file has {len(DATA) + 3} bytes"
+    assert failed == replace(
+        receiving,
+        state=AttemptState.FAILED,
+        failure=Failure("UPLOAD_SIZE_MISMATCH", message),
+    )
+    assert await publishing.attempt(receiving) == failed
+    sealing = await publishing.receiving(CONTRIBUTOR, "b.cdf", DATA)
+    await publishing.attempts.start_seal(sealing.current_upload_id)
+    ended = await publishing.attempts.fail(sealing.current_upload_id, 0)
+    assert ended.state is AttemptState.FAILED
+
+
+async def test_fail_leaves_another_state_and_an_id_that_is_not_current(
+    publishing: Publishing,
+) -> None:
+    first = await begin(publishing)
+    current = await begin(publishing)
+    assert await publishing.attempts.fail(first.current_upload_id, 1) == current
+    ready = await publishing.ready(CONTRIBUTOR, "b.cdf", DATA)
+    assert await publishing.attempts.fail(ready.current_upload_id, 1) == ready
+    assert await publishing.attempt(current) == current
+    unknown = new_id()
+    with pytest.raises(UploadNotFound) as missing:
+        await publishing.attempts.fail(unknown, 1)
+    assert missing.value.context == {"upload": str(unknown)}

@@ -64,6 +64,7 @@ def downgrade() -> None:
     op.drop_column("files", "object_id", schema="huron")
     op.drop_index(op.f("ix_commit_entries_upload_id"), table_name="commit_entries", schema="huron")
     op.drop_table("commit_entries", schema="huron")
+    op.drop_index("ix_objects_present", table_name="objects", schema="huron")
     op.drop_table("objects", schema="huron")
     op.drop_constraint(
         "fk_staged_uploads_current_upload_id", "staged_uploads", schema="huron", type_="foreignkey"
@@ -264,6 +265,13 @@ def _create_objects() -> None:
         sa.UniqueConstraint("path", name=op.f("uq_objects_path")),
         sa.UniqueConstraint("upload_id", name=op.f("uq_objects_upload_id")),
         schema="huron",
+    )
+    op.create_index(
+        "ix_objects_present",
+        "objects",
+        ["id"],
+        schema="huron",
+        postgresql_where=sa.text("state <> 'removed'"),
     )
 
 

@@ -9,11 +9,12 @@ from huron.pkg.errors import HuronError, register
 if TYPE_CHECKING:
     import uuid
 
-__all__ = ["CollectionBusy", "CommitRequestNotFound", "RequestIdConflict"]
+__all__ = ["CollectionBusy", "CommitRequestNotFound", "PublicationBlocked", "RequestIdConflict"]
 
 REQUEST_ID_CONFLICT = register("REQUEST_ID_CONFLICT", 409, "Request ID conflict")
 COMMIT_REQUEST_NOT_FOUND = register("COMMIT_REQUEST_NOT_FOUND", 404, "Commit request not found")
 COLLECTION_BUSY = register("COLLECTION_BUSY", 409, "Collection busy")
+PUBLICATION_BLOCKED = register("PUBLICATION_BLOCKED", 409, "Publication blocked")
 
 
 class RequestIdConflict(HuronError):
@@ -51,4 +52,21 @@ class CollectionBusy(HuronError):
             "the collection has a pending commit. Wait until that commit ends."
             " A new commit needs a new request ID",
             {"collection_id": str(collection_id)},
+        )
+
+
+class PublicationBlocked(HuronError):
+    """A filesystem step of an accepted request found an entry that the request does not expect.
+
+    The request is ``blocked`` with this refusal until a platform administrator resolves it.
+    ``detail`` tells the operator what the step found at ``path``. ``reason`` names the kind of
+    entry, and ``ordinal`` names the entry of the request.
+    """
+
+    error_code = PUBLICATION_BLOCKED
+
+    def __init__(self, ordinal: int, reason: str, path: str, detail: str) -> None:
+        super().__init__(
+            f"{detail} A platform administrator must resolve the commit request",
+            {"ordinal": ordinal, "reason": reason, "path": path},
         )

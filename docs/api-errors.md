@@ -22,7 +22,7 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `GROUP_DIRECTORY_UNAVAILABLE` | 503 | The LDAP group directory could not answer during the token exchange. |
 | `INTERNAL` | 500 | An unexpected error occurred. `context.request_id` matches the service log. |
 | `INVALID_CURSOR` | 400 | This listing did not produce the paging cursor. |
-| `LAKE_UNAVAILABLE` | 503 | The API cannot write the lake. `lake_path` does not open as a directory, or the API cannot write it. Or the marker that guards the organization is missing or names a different instance or organization. `context` names the path. A repair route of a service without `lake_path` also answers it. |
+| `LAKE_UNAVAILABLE` | 503 | The API cannot write the lake. `lake_path` does not open as a directory, or the API cannot write it. Or the marker that guards the organization is missing or names a different instance or organization. Or a different API process holds the writer lock, so this process does not write the lake. `context` names the path or the reason. A repair route of a service without `lake_path` also answers it. |
 | `METADATA_INVALID` | 422 | The metadata does not satisfy the schema of the collection, or it has a value that JSON cannot hold (rule `json`). NaN, infinity and a lone surrogate are such values. `context.problems` lists each problem. |
 | `NAMESPACE_NOT_EMPTY` | 409 | The namespace still has child namespaces or collections. Draft collections count. |
 | `NAME_INVALID` | 422 | A name breaks a naming rule. `context.rule` names the rule. |
@@ -32,6 +32,7 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `ORGANIZATION_DECLARED` | 409 | The service configuration declares the organization. The API cannot delete it. Its role groups at organization scope (`org_admin`, `catalog_admin`, `contributor` and `reader`) are the `groups` in its declaration. Delete its declaration from the service configuration, or change `groups.<role>` in the service configuration. |
 | `ORGANIZATION_NOT_EMPTY` | 409 | The organization still has catalogs. |
 | `PRECONDITION_REQUIRED` | 428 | A request that writes to a collection needs an `If-Match` header with the quoted version of the collection. |
+| `PUBLICATION_BLOCKED` | 409 | A step of an accepted commit found an entry on the lake that the commit does not expect. The API did not change that entry. The commit request is blocked until a platform administrator resolves it. The refusal of the request has this code. `context.ordinal` names the entry of the request, `context.path` names the entry on the lake and `context.reason` tells what the step found. The reasons are `foreign_entry`, `directory_missing`, `directory_not_empty`, `object_missing`, `symbolic_link` and `inode_unknown`. The reason `inode_unknown` means that Huron does not know the inode of a file to delete, so it cannot tell that file from a different file. |
 | `REQUEST_ID_CONFLICT` | 409 | The commit has the request ID of an earlier commit, but a different body. Use a new request ID for a new commit. `context.request_id` names the request. |
 | `REQUEST_INVALID` | 422 | The request is not valid, or it names something that Huron does not accept. `context` tells what is wrong. |
 | `SCHEMA_INCOMPATIBLE` | 422 | A schema contradicts the schema that it extends. It changes the type of a required property, or it has no base schema. |
@@ -48,7 +49,7 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `UPLOAD_RECEIPT_MISSING` | 422 | The commit adds a file that has no upload receipt. A receipt is good only for the same user, path, size and sha256, and only until `upload_ttl` ends. A later upload to the same path, by any user, cancels the receipt. `context.rel_path` names the file. |
 | `UPLOAD_SIZE_MISMATCH` | 422 | The uploaded file does not have the size that the upload declared. `context.declared` and `context.received` give the two sizes. |
 | `UPLOAD_STATE_CONFLICT` | 409 | The state of the upload does not allow the operation. `context.state` and `context.allowed` tell why. A creation that names an upload attempt with an upload also gets this code. Then `context.attempt_id` names the attempt and `context.state` gives its state. If the attempt did not end, `context.upload_id` names its current upload. |
-| `UPLOAD_TOO_LARGE` | 413 | The upload declares more bytes than `upload_max_size`, the largest file that the service accepts. A new upload attempt also gets this code when it declares more bytes than the limit for one file. `context.size` gives the declared size and `context.maximum` gives the limit. |
+| `UPLOAD_TOO_LARGE` | 413 | The upload declares more bytes than `upload_max_size`, the largest file that the service accepts. A new upload attempt also gets this code when it declares more bytes than `max_upload_bytes`, the limit for one file of an upload attempt. `context.size` gives the declared size and `context.maximum` gives the limit. |
 | `VERSION_CONFLICT` | 412 | `If-Match` names an older version. `context.current_version` names the current version. |
 
 ## Refusals of a commit request

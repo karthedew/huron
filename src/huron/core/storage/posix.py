@@ -19,7 +19,7 @@ from huron.core.storage.errors import (
 )
 from huron.core.storage.lakepath import LakePath
 from huron.core.storage.layout import FILE_MODE
-from huron.core.storage.ports import GroupOutcome, GroupResult, Outcome, Stat
+from huron.core.storage.ports import FreeSpace, GroupOutcome, GroupResult, Outcome, Stat
 from huron.pkg.fs import posix
 from huron.pkg.hashing import CHUNK_SIZE, sha256_descriptor
 from huron.schema.naming import PART_SUFFIX, check_lake_name
@@ -284,6 +284,22 @@ class PosixStorage:
         """Flush the directory ``location`` to disk with ``fsync``."""
         with self._parent(location) as parent:
             posix.sync_directory(parent, _name(location))
+
+    def free_space(self, location: LakePath) -> FreeSpace:
+        """The free space of the filesystem of the directory ``location``.
+
+        ``free`` is ``f_bavail`` blocks of ``f_frsize`` bytes from ``fstatvfs``, and
+        ``filesystem`` is the device number from ``fstat``, which two mounts of one
+        filesystem share.
+        """
+        with self._parent(location) as parent:
+            descriptor = posix.open_directory(parent, _name(location))
+        try:
+            device = _guard(lambda: os.fstat(descriptor), location).st_dev
+            found = _guard(lambda: os.fstatvfs(descriptor), location)
+        finally:
+            os.close(descriptor)
+        return FreeSpace(device, found.f_bavail * found.f_frsize)
 
     def remove_file(self, location: LakePath, *, inode: int | None = None) -> Outcome:
         """Remove a file; with ``inode``, only while the file has that inode."""

@@ -1,9 +1,9 @@
 """Upload attempts: create them, seal their bytes, cancel and expire them.
 
 The API calls these for tusd's hooks, for its own seal check and for its cleanup. ``begin``,
-``cancel`` and ``get`` act for the uploading user. ``start_seal``, ``finish_seal`` and ``expire``
-record the API's own work, so they take no actor. No operation touches the filesystem: the
-caller gives each fact that only the filesystem knows.
+``cancel`` and ``get`` act for the uploading user. ``by_upload``, ``start_seal``, ``finish_seal``,
+``fail`` and ``expire`` serve the API's own work, so they take no actor. No operation touches the
+filesystem: the caller gives each fact that only the filesystem knows.
 
 Every transaction takes its row locks in one order: the collection row, the commit request row,
 the upload attempt rows, then the object rows. ``begin`` locks the collection before the attempt,
@@ -184,6 +184,26 @@ class Attempts:
             await tx.attempts.update(finished)
             return finished
 
+    async def fail(self, upload_id: uuid.UUID, received: int) -> UploadAttempt:
+        """End the attempt of ``upload_id`` whose upload can never get its declared size.
+
+        tusd's files show ``received`` bytes, which is not the size of the attempt. The
+        attempt becomes ``failed`` with ``UPLOAD_SIZE_MISMATCH``. Only the current upload ID of
+        a ``receiving`` or ``sealing`` attempt fails its attempt: any other attempt stays as it
+        is. Raises :class:`UploadNotFound` for an ID that Huron never issued.
+        """
+        async with self._uow.transaction() as tx:
+            attempt = (await tx.attempts.lock_uploads([upload_id])).get(upload_id)
+            if attempt is None:
+                raise UploadNotFound(upload_id)
+            if attempt.current_upload_id != upload_id or attempt.state not in _UNFINISHED:
+                return attempt
+            mismatch = UploadSizeMismatch(attempt.size, received)
+            failure = Failure(mismatch.code, mismatch.message)
+            failed = replace(attempt, state=AttemptState.FAILED, failure=failure)
+            await tx.attempts.update(failed)
+            return failed
+
     async def cancel(self, actor: Actor, attempt_id: uuid.UUID) -> UploadAttempt:
         """End the actor's attempt that no commit uses; the attempt becomes ``cancelled``.
 
@@ -223,6 +243,18 @@ class Attempts:
             for attempt in expired:
                 await tx.attempts.update(attempt)
             return expired
+
+    async def by_upload(self, upload_id: uuid.UUID) -> UploadAttempt:
+        """The attempt that Huron issued ``upload_id`` for, whether the ID is current or not.
+
+        The API's own seal check reads the state and the size here, so it takes no actor.
+        Raises :class:`UploadNotFound` for an ID that Huron never issued.
+        """
+        async with self._uow.transaction() as tx:
+            attempt = (await tx.attempts.lock_uploads([upload_id])).get(upload_id)
+        if attempt is None:
+            raise UploadNotFound(upload_id)
+        return attempt
 
     async def get(self, actor: Actor, attempt_id: uuid.UUID) -> UploadAttempt:
         """The actor's attempt with ``attempt_id``; another actor's attempt is not found."""
@@ -307,6 +339,7 @@ class Attempts:
 
 
 _CANCELLABLE = (AttemptState.RECEIVING, AttemptState.SEALING, AttemptState.READY)
+_UNFINISHED = frozenset({AttemptState.RECEIVING, AttemptState.SEALING})
 
 
 def _raised[T](result: T | HuronError) -> T:

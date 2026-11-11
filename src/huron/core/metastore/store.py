@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import AsyncGenerator
 
-__all__ = ["MemoryStore", "MemoryTransaction"]
+__all__ = ["MemoryStore", "MemoryTransaction", "MemoryWriterLock"]
 
 
 class MemoryTransaction:
@@ -54,11 +54,21 @@ class MemoryTransaction:
 
 
 class MemoryStore:
-    """A unit of work whose transactions run one at a time and commit by swapping state."""
+    """A unit of work whose transactions run one at a time and commit by swapping state.
+
+    ``writer`` is the :class:`MemoryWriterLock` that holds the store's writer lock, ``None``
+    when no lock holds it. A test that sets it to ``None`` drops the lock of its holder, as a
+    lost connection does on PostgreSQL.
+    """
 
     def __init__(self, state: MemoryState | None = None) -> None:
         self.state = state or MemoryState()
+        self.writer: MemoryWriterLock | None = None
         self._lock = asyncio.Lock()
+
+    def writer_lock(self) -> MemoryWriterLock:
+        """A writer lock of this store: two runtimes on one store share it."""
+        return MemoryWriterLock(self)
 
     @asynccontextmanager
     async def transaction(self) -> AsyncGenerator[MemoryTransaction]:
@@ -70,3 +80,26 @@ class MemoryStore:
 
     async def close(self) -> None:
         """Nothing to release."""
+
+
+class MemoryWriterLock:
+    """The writer lock of a :class:`MemoryStore`: one holder at a time."""
+
+    def __init__(self, store: MemoryStore) -> None:
+        self._store = store
+
+    async def acquire(self) -> bool:
+        """Take the lock; ``False`` when another lock of the store holds it."""
+        if self._store.writer is not None:
+            return False
+        self._store.writer = self
+        return True
+
+    async def held(self) -> bool:
+        """Whether this lock still holds the store's writer lock."""
+        return self._store.writer is self
+
+    async def release(self) -> None:
+        """Give the lock back when this lock holds it."""
+        if self._store.writer is self:
+            self._store.writer = None

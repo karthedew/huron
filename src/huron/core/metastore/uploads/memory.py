@@ -6,7 +6,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from huron.core.lake.errors import NameTaken
-from huron.core.lake.uploads.models import AttemptState, UploadState
+from huron.core.lake.uploads.models import AttemptState, ObjectState, UploadState
 
 if TYPE_CHECKING:
     import uuid
@@ -192,6 +192,14 @@ class MemoryAttempts:
             attempt.size for attempt in self._state.attempts.values() if attempt.state in _STAGED
         )
 
+    async def spent(self, upload_ids: Collection[uuid.UUID]) -> set[uuid.UUID]:
+        """The issued IDs of ``upload_ids`` that are not current or whose attempt is final."""
+        return {
+            upload_id
+            for upload_id in upload_ids
+            if upload_id in self._state.issued and _spent(self._state, upload_id)
+        }
+
     async def issue(self, attempt_id: uuid.UUID, upload_id: uuid.UUID, issued_at: datetime) -> None:
         """Store ``upload_id`` for the attempt and make it the current ID."""
         stored = self._state.attempts.get(attempt_id)
@@ -254,6 +262,27 @@ class MemoryObjects:
         found = (stored for stored in self._state.objects.values() if stored.upload_id in wanted)
         return {stored.upload_id: stored for stored in sorted(found, key=lambda o: o.upload_id)}
 
+    async def unreferenced(self, after: uuid.UUID | None, limit: int) -> Sequence[StoredObject]:
+        """The objects that no row needs, in the order of their IDs, after ``after``."""
+        named = {record.object_id for record in self._state.files.values()}
+        pending = {
+            entry.upload_id
+            for (owner, _), entry in self._state.commit_entries.items()
+            if self._state.commit_requests[owner].pending
+        }
+        found = sorted(
+            (
+                stored
+                for stored in self._state.objects.values()
+                if (after is None or stored.id > after)
+                and stored.id not in named
+                and stored.upload_id not in pending
+                and self._removable(stored)
+            ),
+            key=lambda stored: stored.id,
+        )
+        return found[:limit]
+
     async def update(self, stored: StoredObject) -> None:
         """Replace the state, the size, the SHA-256, the inode and the seal time."""
         found = self._state.objects.get(stored.id)
@@ -267,10 +296,17 @@ class MemoryObjects:
                 sealed_at=stored.sealed_at,
             )
 
+    def _removable(self, stored: StoredObject) -> bool:
+        """Whether ``stored`` is not removed and its upload ID is spent."""
+        return stored.state is not ObjectState.REMOVED and _spent(self._state, stored.upload_id)
+
 
 _PLACEMENTS = frozenset({UploadState.PLACED, UploadState.COMMITTED})
 _STAGED = frozenset({AttemptState.RECEIVING, AttemptState.SEALING, AttemptState.READY})
 _UNSEALED = frozenset({AttemptState.RECEIVING, AttemptState.SEALING})
+_FINAL = frozenset(
+    {AttemptState.CONSUMED, AttemptState.FAILED, AttemptState.CANCELLED, AttemptState.EXPIRED}
+)
 
 
 def _idle(attempt: UploadAttempt) -> bool:
@@ -278,6 +314,12 @@ def _idle(attempt: UploadAttempt) -> bool:
     return attempt.state in _UNSEALED or (
         attempt.state is AttemptState.READY and attempt.commit_request_id is None
     )
+
+
+def _spent(state: MemoryState, upload_id: uuid.UUID) -> bool:
+    """Whether the issued ``upload_id`` is not current, or its attempt is final."""
+    attempt = state.attempts[state.issued[upload_id][0]]
+    return attempt.current_upload_id != upload_id or attempt.state in _FINAL
 
 
 def _taken(name: str) -> NameTaken:

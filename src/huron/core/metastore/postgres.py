@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -31,7 +32,16 @@ if TYPE_CHECKING:
 
     from huron.core.metastore.rows import Db
 
-__all__ = ["BOOTSTRAP_LOCK", "PostgresStore", "PostgresTransaction", "lock_key"]
+__all__ = [
+    "BOOTSTRAP_LOCK",
+    "KEEPALIVES",
+    "WRITER_APPLICATION",
+    "WRITER_LOCK",
+    "PostgresStore",
+    "PostgresTransaction",
+    "PostgresWriterLock",
+    "lock_key",
+]
 
 
 def lock_key(namespace: str, value: uuid.UUID) -> int:
@@ -42,6 +52,20 @@ def lock_key(namespace: str, value: uuid.UUID) -> int:
 
 BOOTSTRAP_LOCK = uuid.UUID("0192b6a0-b007-7000-8000-000000000000")
 """The value whose ``bootstrap`` advisory-lock key serializes service bootstraps."""
+
+WRITER_LOCK = uuid.UUID("0192b6a0-7717-7000-8000-000000000000")
+"""The value whose ``writer`` advisory-lock key the one writer of the lake holds."""
+
+WRITER_APPLICATION = "huron-writer"
+"""The ``application_name`` of the writer's connection, so that an operator can find it."""
+
+KEEPALIVES = {
+    "tcp_keepalives_idle": "30",
+    "tcp_keepalives_interval": "10",
+    "tcp_keepalives_count": "3",
+}
+"""The TCP keepalives of the writer's connection, in seconds and probes. The server then ends
+the session of a writer that died within about a minute, and so frees the lock."""
 
 
 class PostgresTransaction:
@@ -100,6 +124,10 @@ class PostgresStore:
             await self._pool.close()
             self._pool = None
 
+    def writer_lock(self) -> PostgresWriterLock:
+        """The writer lock of the lake, on a connection of its own outside the pool."""
+        return PostgresWriterLock(self._dsn)
+
     async def ping(self) -> bool:
         """Whether a trivial query succeeds."""
         if self._pool is None:
@@ -117,6 +145,61 @@ class PostgresStore:
             raise Unavailable("the database pool is not open")
         async with self._pool.acquire() as connection, connection.transaction():
             yield PostgresTransaction(connection)
+
+
+class PostgresWriterLock:
+    """The session advisory lock of the one writer, on a dedicated connection.
+
+    The lock lives as long as the session, so it ends when the process or the connection ends.
+    The connection asks the server for TCP keepalives (:data:`KEEPALIVES`). A check of the lock
+    is a query on that connection that must answer within ``timeout`` seconds.
+    """
+
+    def __init__(self, dsn: str, *, timeout: float = 5.0) -> None:
+        self._dsn = dsn
+        self._timeout = timeout
+        self._connection: asyncpg.Connection[asyncpg.Record] | None = None
+
+    async def acquire(self) -> bool:
+        """Take the lock without a wait; ``False`` when another session holds it.
+
+        Raises ``Unavailable`` when the database is unreachable.
+        """
+        try:
+            connection = await asyncpg.connect(
+                self._dsn, server_settings={**KEEPALIVES, "application_name": WRITER_APPLICATION}
+            )
+        except (OSError, asyncpg.PostgresError) as error:
+            raise Unavailable("the database is unreachable") from error
+        key = lock_key("writer", WRITER_LOCK)
+        if not await connection.fetchval("select pg_try_advisory_lock($1)", key):
+            connection.terminate()
+            return False
+        self._connection = connection
+        return True
+
+    async def held(self) -> bool:
+        """Whether the connection of the lock still answers, so that its session holds the lock."""
+        connection = self._connection
+        if connection is None:
+            return False
+        try:
+            answer = await asyncio.wait_for(connection.fetchval("select true"), self._timeout)
+        except (
+            OSError,
+            TimeoutError,
+            asyncpg.PostgresError,
+            asyncpg.InterfaceError,
+            asyncpg.InternalClientError,
+        ):
+            return False
+        return answer is True
+
+    async def release(self) -> None:
+        """Close the connection: that ends the session and releases the lock."""
+        connection, self._connection = self._connection, None
+        if connection is not None:
+            connection.terminate()
 
 
 async def _init_connection(connection: asyncpg.Connection[asyncpg.Record]) -> None:

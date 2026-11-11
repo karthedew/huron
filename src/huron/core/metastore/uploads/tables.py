@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -167,5 +168,9 @@ objects = Table(
         " and inode is not null and sealed_at is not null)",
         name="sealed",
     ),
+    Index("ix_objects_present", "id", postgresql_where=text("state <> 'removed'")),
 )
-"""The private copy that the seal of one upload ID makes, at ``path`` in the API's form."""
+"""The private copy that the seal of one upload ID makes, at ``path`` in the API's form.
+
+``ix_objects_present`` holds the objects that are not ``removed``, so that a cleanup reads only
+those and not every object that it removed before."""

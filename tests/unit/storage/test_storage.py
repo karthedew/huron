@@ -16,6 +16,7 @@ from huron.core.storage import (
     MARKER_FILE,
     ORGANIZATION_MODE,
     UPLOAD_DIR_MODE,
+    FreeSpace,
     GroupOutcome,
     GroupResult,
     InheritanceFailed,
@@ -33,7 +34,7 @@ from huron.core.storage import (
     render_marker,
     verify_marker,
 )
-from huron.core.storage.memory import MemoryStorage, Node
+from huron.core.storage.memory import FREE_BYTES, MemoryStorage, Node
 from huron.core.storage.posix import PosixStorage
 from tests.support.disk import LAKE, inject_fault
 
@@ -706,3 +707,23 @@ def test_memory_renames_only_inside_one_mount(memory: MemoryStorage) -> None:
     assert refused.value.message == "orgx/f: Invalid cross-device link"
     assert refused.value.context == {"path": "orgx/f"}
     assert memory.stat(LakePath.of("f")) is not None
+
+
+def test_free_space_names_one_filesystem_for_two_directories_of_one_mount(share: Storage) -> None:
+    share.make_directory(at("a"), 0o750)
+    share.make_directory(at("b"), 0o750)
+    first, second = share.free_space(at("a")), share.free_space(at("b"))
+    assert first.filesystem == second.filesystem
+    assert first.free > 0
+
+
+def test_free_space_of_a_memory_mount_is_its_own() -> None:
+    memory = MemoryStorage(LAKE, uid=1000, gid=1000)
+    outer, mount = LakePath.of("a"), LakePath.of("a", "m")
+    memory.make_directory(outer, 0o750)
+    memory.make_directory(mount, 0o750)
+    memory.mounts.add(mount)
+    memory.free[mount] = 5
+    assert memory.free_space(outer) == FreeSpace(1, FREE_BYTES)
+    assert memory.free_space(mount) == FreeSpace(memory.nodes[mount].inode, 5)
+    assert memory.nodes[mount].inode != 1

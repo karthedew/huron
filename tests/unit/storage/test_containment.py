@@ -315,6 +315,7 @@ METHODS: dict[str, tuple[Kind, Callable[[Storage, LakePath], object]]] = {
     "link_once": (None, lambda storage, at: storage.link_once(SOURCE, at)),
     "link_once source": ("file", lambda storage, at: storage.link_once(at, DESTINATION)),
     "sync_directory": ("dir", lambda storage, at: storage.sync_directory(at)),
+    "free_space": ("dir", lambda storage, at: storage.free_space(at).free > 0),
     "rename": (None, lambda storage, at: storage.rename(SOURCE, at)),
     "rename source": ("file", lambda storage, at: storage.rename(at, LakePath.of("up", "moved"))),
     "remove_file": ("file", lambda storage, at: storage.remove_file(at)),
@@ -509,11 +510,13 @@ EXISTS = Raises(StorageError, "a/t", "EEXIST")
 LOCKED_EXISTS = Raises(StorageError, "a/p/t", "EEXIST")
 LOCKED_DENIED = Raises(StorageError, "a/p/t", "EACCES")
 LOCKED_LINK = Raises(SymlinkInLake, "a/p/t")
+#: The methods that act on a directory and change no entry.
+DIRECTORY_METHODS = ("sync_directory", "free_space")
 
 
 def publication_rows() -> list[Row]:
-    """The rows of the methods that seal and publish: ``copy_sealed``, ``link_once`` and
-    ``sync_directory``.
+    """The rows of the methods that seal and publish: ``copy_sealed``, ``link_once``,
+    ``sync_directory`` and ``free_space``.
     """
     rows: list[Row] = []
     for method, created in (("copy_sealed", COPY_OF_SOURCE), ("link_once", Returns(None))):
@@ -542,12 +545,15 @@ def publication_rows() -> list[Row]:
         *traversal_rows("link_once source"),
         Row("link_once source", "dir_at_name", Raises(StorageError, "a/t", "EISDIR")),
         Row("link_once source", "read_only", Returns(None), {DESTINATION: "file"}),
-        Row("sync_directory", "missing", NAME_MISSING),
-        Row("sync_directory", "parent_missing", PARENT_MISSING),
-        *traversal_rows("sync_directory"),
-        Row("sync_directory", "file_at_name", Raises(StorageError, "a/t", "ENOTDIR")),
-        Row("sync_directory", "read_only", Returns(None)),
     ]
+    for method, read_only in (("sync_directory", None), ("free_space", True)):
+        rows += [
+            Row(method, "missing", NAME_MISSING),
+            Row(method, "parent_missing", PARENT_MISSING),
+            *traversal_rows(method),
+            Row(method, "file_at_name", Raises(StorageError, "a/t", "ENOTDIR")),
+            Row(method, "read_only", Returns(read_only)),
+        ]
     return rows
 
 
@@ -585,13 +591,16 @@ def combined_publication_rows() -> list[Row]:
             Raises(StorageError, "a/p/t", "ENOENT"),
             Raises(StorageError, "a/p/t", "EISDIR"),
         ),
-        (
-            "sync_directory",
-            Raises(StorageError, "a/p/t", "ENOENT"),
-            Raises(StorageError, "a/p/t", "ENOTDIR"),
+        *(
+            (
+                directory_method,
+                Raises(StorageError, "a/p/t", "ENOENT"),
+                Raises(StorageError, "a/p/t", "ENOTDIR"),
+            )
+            for directory_method in DIRECTORY_METHODS
         ),
     ):
-        other = "file_at_name" if method == "sync_directory" else "dir_at_name"
+        other = "file_at_name" if method in DIRECTORY_METHODS else "dir_at_name"
         rows += [
             Row(method, f"unsearchable+{entry}", LOCKED_DENIED)
             for entry in ("missing", "link_at_name", other)
@@ -763,7 +772,7 @@ def combined_rows() -> list[Row]:
 
 
 ROWS = table_rows()
-ROW_COUNT = 374
+ROW_COUNT = 388
 
 
 def test_the_table_has_one_row_per_method_and_case() -> None:

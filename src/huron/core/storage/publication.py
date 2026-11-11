@@ -63,13 +63,19 @@ class StepOutcome(StrEnum):
 
 
 class BlockReason(StrEnum):
-    """Why a step is blocked."""
+    """Why a step is blocked.
+
+    ``inode_unknown`` comes from the caller, not from :meth:`Publisher.apply`: a removal of a
+    file whose inode Huron never learned cannot tell that file from another file, so the caller
+    makes no step for it.
+    """
 
     FOREIGN_ENTRY = "foreign_entry"
     DIRECTORY_MISSING = "directory_missing"
     DIRECTORY_NOT_EMPTY = "directory_not_empty"
     OBJECT_MISSING = "object_missing"
     SYMBOLIC_LINK = "symbolic_link"
+    INODE_UNKNOWN = "inode_unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,6 +357,9 @@ _DETAILS = {
     BlockReason.OBJECT_MISSING: "The sealed object {path} does not exist or is another file.",
     BlockReason.SYMBOLIC_LINK: (
         "{path} is a symbolic link. The lake must not contain symbolic links. Remove it."
+    ),
+    BlockReason.INODE_UNKNOWN: (
+        "Huron does not know the inode of {path}. Huron did not remove it."
     ),
 }
 

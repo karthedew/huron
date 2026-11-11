@@ -44,6 +44,10 @@ def test_the_subtree_copies_links_and_syncs_below_its_base(share: MemoryStorage)
     subtree.sync_directory(LakePath())
     assert share.calls[-1] == ("sync", BASE)
     assert subtree.in_group(1000) is True
+    share.mounts.add(BASE)
+    share.free[BASE] = 9
+    assert subtree.free_space(LakePath()) == share.free_space(BASE)
+    assert subtree.free_space(LakePath()).free == 9
 
 
 @pytest.mark.parametrize("method", ["copy_sealed", "link_once"])

@@ -119,6 +119,8 @@ no `<id>.lock` file exists. A lock file means that tusd still works on the uploa
 - A step retries safely. A target that already is the new object is done. A target that is
   neither the old object nor the new object blocks the request.
 - At startup the API continues every `accepted` and `blocked` request with the same code path.
+  The periodic loop does the same for each `accepted` request that has no running task, so a
+  transient storage error does not hold a collection until a restart.
 - A requested removal must be done before success. `KEPT` is not success.
 - A request leaves no empty directory that it made empty. The plan holds a prune entry for each
   recorded directory that no kept file and no added file needs, deepest first, below the
@@ -155,7 +157,7 @@ task D6) describes the manual procedure.
 - Settings: `max_upload_bytes` (one file), `max_staged_bytes` (all uploads in `receiving`,
   `sealing` or `ready`, counted two times for the tusd file and the copy), `min_free_bytes` (from `statvfs`).
 - The free-space check reads both filesystems: the one of `.tus-uploads` and the one of the
-  organization's object area.
+  organization's object area. When they are one filesystem, the upload counts two times there.
 - `begin` refuses with 429 `CAPACITY_EXCEEDED` when `max_staged_bytes` or `min_free_bytes` does
   not hold. A file above `max_upload_bytes` gets 413 `UPLOAD_TOO_LARGE`, because it can never
   fit and "send it again later" would be wrong. The pre-create hook refuses an upload with no
@@ -341,7 +343,7 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
   filesystem on each of the two sides refuses.
 - Verification: `make gate`, `uv run pytest -m contract`.
 - Dependencies: S5.
-- Status: pending
+- Status: complete (verification 2 of 3 passed, 2026-11-11)
 
 ### S7 Routes and removal of the old path
 
@@ -357,7 +359,12 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
   - The pre-finish hook: start or join the seal, wait at most 20 s, then answer with the result
     or with `Huron-Upload-State: sealing`.
   - The authorization route for nginx: the token's subject is the owner, and the upload ID is
-    the current ID of an attempt in `receiving`. An allowed `PATCH` records activity.
+    the current ID of an attempt in `receiving`. An allowed `PATCH` records activity. Add the
+    attempt operation that records it, and a read of an attempt by upload ID that takes no
+    row lock.
+  - The cancel route removes the tusd files of every issued upload ID through the
+    orchestration, not only at the next cleanup run.
+  - The attempt read in a read-only process answers from the database and starts no seal.
   - `GET /api/v1/upload-attempts/{attempt_id}`: returns the state and the current upload ID to
     the owner, and runs the API's own seal check.
   - Error text: replace the `sealing` flag of `UploadIneligible` with two named constructors,
@@ -365,6 +372,12 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
     upload in an end state tells the client to start a new upload. The conflict of a cancel
     on a held upload does not list `ready` as allowed. The `STATE_CONFLICT` row names
     `context.request_id` and the limit of 20 entries.
+  - Settings: remove `upload_max_size` and the old `upload_ttl` with the old path, so that
+    `max_upload_bytes` and `attempt_ttl` are the only ones. The `sweep_interval` text says that
+    the loop also continues accepted requests. The capacity refusal on one filesystem says
+    that the upload needs its size two times.
+  - Readiness says not ready after the writer lock is lost. The lock-loss test helper ends
+    only the sessions of its own database.
   - A commit that names an upload that is not `ready` runs the seal check one time. If the
     upload is still not `ready`, the answer is 409 `UPLOAD_INELIGIBLE` with the state.
   - The CLI sends the new body with a new request ID and the upload IDs. Durable recovery is

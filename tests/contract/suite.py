@@ -831,6 +831,111 @@ async def test_objects_keep_inodes_of_the_whole_unsigned_range(uow: UnitOfWork) 
         }
 
 
+def ended(row: UploadAttempt, state: AttemptState, request: CommitOutcome) -> UploadAttempt:
+    """``row`` in ``state``, with the request that consumed it or the failure that ended it."""
+    held = request.id if state is AttemptState.CONSUMED else None
+    failure = Failure("SEAL_FAILED", "short") if state is AttemptState.FAILED else None
+    return replace(row, state=state, commit_request_id=held, failure=failure)
+
+
+async def test_spent_upload_ids_are_not_current_or_of_a_final_attempt(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    request = outcome(owner)
+    receiving, reissued, ready = attempt(owner), attempt(owner), attempt(owner)
+    finals = {
+        state: attempt(owner)
+        for state in (
+            AttemptState.CONSUMED,
+            AttemptState.FAILED,
+            AttemptState.CANCELLED,
+            AttemptState.EXPIRED,
+        )
+    }
+    current = new_id()
+    async with uow.transaction() as tx:
+        assert await tx.attempts.spent([]) == set()
+        await tx.collections.insert(owner)
+        await tx.commit_requests.insert_or_lock(request)
+        for row in (receiving, reissued, ready, *finals.values()):
+            await tx.attempts.insert_or_lock(row)
+        await tx.attempts.issue(reissued.id, current, START + timedelta(minutes=1))
+        await tx.attempts.update(replace(ready, state=AttemptState.READY))
+        for state, row in finals.items():
+            await tx.attempts.update(ended(row, state, request))
+    asked = [
+        receiving.current_upload_id,
+        reissued.current_upload_id,
+        current,
+        ready.current_upload_id,
+        new_id(),
+        *(row.current_upload_id for row in finals.values()),
+    ]
+    async with uow.transaction() as tx:
+        assert await tx.attempts.spent(asked) == {
+            reissued.current_upload_id,
+            *(row.current_upload_id for row in finals.values()),
+        }
+
+
+async def test_unreferenced_objects_are_spent_and_named_by_no_row(uow: UnitOfWork) -> None:
+    _, cat, ns = await tree(uow)
+    owner = collection(cat, ns, "run7")
+    made, pending = commit(owner), outcome(owner)
+    consumer, finished = (
+        replace(outcome(owner, state=CommitState.SUCCEEDED), version=2, file_count=1)
+        for _ in range(2)
+    )
+    rows = {
+        name: attempt(owner)
+        for name in ("published", "replaced", "ready", "held", "cancelled", "pending", "done")
+    }
+    rows["removed"], rows["superseded"] = attempt(owner), attempt(owner)
+    objects = {name: stored_object(row.current_upload_id) for name, row in rows.items()}
+    states = {
+        "published": AttemptState.CONSUMED,
+        "replaced": AttemptState.CONSUMED,
+        "ready": AttemptState.READY,
+        "held": AttemptState.READY,
+        "cancelled": AttemptState.CANCELLED,
+        "pending": AttemptState.EXPIRED,
+        "done": AttemptState.EXPIRED,
+        "removed": AttemptState.EXPIRED,
+    }
+    record = FileRecord(
+        owner.id, "a.txt", "a.txt", 4, SHA, START, "t", made.id, 7, objects["published"].id
+    )
+    async with uow.transaction() as tx:
+        assert await tx.objects.unreferenced(None, 10) == []
+        await tx.collections.insert(owner)
+        await tx.commits.insert(made)
+        for request in (consumer, pending, finished):
+            await tx.commit_requests.insert_or_lock(request)
+        for name, row in rows.items():
+            await tx.attempts.insert_or_lock(row)
+            await tx.objects.insert_or_lock(objects[name])
+        for name, state in states.items():
+            await tx.attempts.update(ended(rows[name], state, consumer))
+        await tx.attempts.issue(rows["superseded"].id, new_id(), START + timedelta(minutes=1))
+        await tx.objects.update(replace(objects["removed"], state=ObjectState.REMOVED))
+        await tx.objects.update(sealed(objects["replaced"]))
+        await tx.files.upsert_many([record])
+        for request, name in ((pending, "pending"), (finished, "done"), (pending, "held")):
+            entry = CommitEntry(
+                len(name), EntryAction.ADD_FILE, f"{name}.txt", rows[name].current_upload_id
+            )
+            await tx.commit_requests.insert_entries(request.id, [entry])
+    now = {**objects, "replaced": sealed(objects["replaced"])}
+    expected = sorted(
+        (now[name] for name in ("replaced", "cancelled", "done", "superseded")),
+        key=lambda stored: stored.id,
+    )
+    async with uow.transaction() as tx:
+        assert await tx.objects.unreferenced(None, 10) == expected
+        assert await tx.objects.unreferenced(None, 1) == expected[:1]
+        assert await tx.objects.unreferenced(expected[1].id, 10) == expected[2:]
+
+
 async def test_a_request_key_gives_one_request_of_one_subject(uow: UnitOfWork) -> None:
     _, cat, ns = await tree(uow)
     owner = collection(cat, ns, "run7")

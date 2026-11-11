@@ -141,6 +141,16 @@ class Settings(BaseSettings):
     the file's list. ``log_level`` is a standard level name in any case; another value fails
     startup. An organization without a root lies directly below ``lake_path``. When
     ``lake_path`` is set, every declared root must be ``lake_path`` or lie below it.
+
+    Upload attempts have their own settings. ``attempt_ttl`` is how long an attempt lives after
+    its last activity (default 7 days). ``max_upload_bytes`` is the largest file of one attempt.
+    ``max_staged_bytes`` is the most bytes that the staged attempts can use, with the bytes of
+    each attempt counted two times for tusd's file and its sealed copy. ``0`` is no limit for
+    both. ``min_free_bytes`` is the space that the filesystem of ``.tus-uploads`` and the
+    filesystem of the object area must keep free after a new upload (default 1 GiB). The upload
+    counts two times on one filesystem that holds both, and one time on each of two.
+    ``sweep_interval`` is the time between two cleanup runs. ``upload_ttl`` and
+    ``upload_max_size`` are the settings of the receipt uploads.
     """
 
     model_config = SettingsConfigDict(env_prefix="HURON_", extra="ignore")
@@ -169,6 +179,10 @@ class Settings(BaseSettings):
     )
     removal_interval: Duration = timedelta(seconds=60)
     sweep_interval: Duration = timedelta(minutes=10)
+    attempt_ttl: Duration = timedelta(days=7)
+    max_upload_bytes: int = Field(default=0, ge=0)
+    max_staged_bytes: int = Field(default=0, ge=0)
+    min_free_bytes: int = Field(default=1 << 30, ge=0)
     service_uid: int = Field(default_factory=os.getuid, ge=0)
     service_group: str | None = None
 
@@ -196,7 +210,12 @@ class Settings(BaseSettings):
         return value.upper() if isinstance(value, str) else value
 
     @field_validator(
-        "upload_ttl", "upload_hook_timeout", "removal_interval", "sweep_interval", mode="before"
+        "upload_ttl",
+        "upload_hook_timeout",
+        "removal_interval",
+        "sweep_interval",
+        "attempt_ttl",
+        mode="before",
     )
     @classmethod
     def _seconds(cls, value: Any) -> Any:

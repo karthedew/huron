@@ -1,5 +1,7 @@
 """The API's hold on the lake: where API paths are, which marker guards them, and the gate.
 
+Only the one writer of the lake (:mod:`huron.applications.api.disk.ownership`) passes the gate.
+
 The lake is a ``hard`` NFS mount, so a disk call can block without end during an outage. All
 disk work therefore runs in dedicated pools of worker threads, never in the event loop or the
 default executor, and readiness waits for its probe only for a bounded time. The hashes of
@@ -22,12 +24,14 @@ import structlog
 from huron.core.storage import (
     FILE_MODE,
     MARKER_FILE,
+    UPLOAD_DIR,
     UPLOAD_DIR_MODE,
     UPLOADS,
     LakePath,
     LakeUnavailable,
     OrganizationPlace,
     PathLocks,
+    Publisher,
     StorageError,
     SymlinkInLake,
     verify_marker,
@@ -48,6 +52,7 @@ __all__ = [
     "LakeDisk",
     "Located",
     "Run",
+    "Writer",
 ]
 
 #: The worker threads of the disk pool, which runs every disk call but the hashes of uploads.
@@ -82,12 +87,22 @@ class Run(Protocol):
         ...
 
 
+class Writer(Protocol):
+    """Whether this process is the one writer of the lake."""
+
+    @property
+    def writable(self) -> bool:
+        """Whether this process can start a filesystem step now."""
+        ...
+
+
 class LakeDisk:
     """The lake that this process alone writes, behind the one gate :meth:`hold`.
 
     ``places`` are the declared organizations; any other organization lies directly below the
     root and shares the marker there. The locks serialize the disk work of one place within
-    this process.
+    this process. With ``writer``, only while ``writer`` is writable does the gate pass, and
+    without it the gate always passes.
     """
 
     def __init__(
@@ -98,8 +113,11 @@ class LakeDisk:
         *,
         clock: Clock,
         probe_timeout: float = PROBE_TIMEOUT,
+        writer: Writer | None = None,
     ) -> None:
         self._storage = storage
+        self._writer = writer
+        self._publisher = Publisher(storage)
         self._places = dict(places)
         self._instance_id = instance_id
         self._clock = clock
@@ -123,22 +141,35 @@ class LakeDisk:
         self._hash_pool.shutdown(wait=False, cancel_futures=True)
 
     async def ready(self) -> bool:
-        """Whether this process can write the upload directory.
+        """Whether this process can write the upload directory and publish into each declared
+        organization.
 
-        The answer is kept for :data:`PROBE_TTL`. A probe that does not answer within the
+        The writer writes and removes a file in the upload directory, then makes and removes a
+        real hard link from the object area into each declared organization directory
+        (:meth:`Publisher.probe`), each after the marker check. A process that is not the
+        writer writes nothing: it checks only that the upload directory is a directory. The
+        answer is kept for :data:`PROBE_TTL`. A probe that does not answer within the
         timeout counts as ``False``; while it still runs, no second probe starts.
         """
         now = self._clock.now()
         if self._probed is not None and now - self._probed[0] < PROBE_TTL:
             return self._probed[1]
         if self._probe is None or self._probe.done():
-            self._probe = self._submit(self._writable)
+            self._probe = self._submit(self._probed_lake)
         try:
             ready = await asyncio.wait_for(asyncio.shield(self._probe), self._probe_timeout)
         except TimeoutError:
             ready = False
         self._probed = (now, ready)
         return ready
+
+    def in_uploads(self, *names: str) -> Located:
+        """The place of ``names`` in tusd's upload directory; no disk call.
+
+        The marker at the lake's root guards the upload directory.
+        """
+        place = OrganizationPlace(UPLOAD_DIR, LakePath(), own_marker=False)
+        return Located(place, UPLOADS.joinpath(*names))
 
     def locate(self, api_path: str) -> Located:
         """The place of an API path (``<organization>/…``); no disk call.
@@ -191,6 +222,12 @@ class LakeDisk:
         return asyncio.get_running_loop().run_in_executor(self._pool, action)
 
     def _checked[T](self, place: OrganizationPlace, action: Callable[[], T]) -> T:
+        if not self._writes():
+            raise LakeUnavailable(
+                "this API process does not hold the writer lock. Another API process writes"
+                " the lake",
+                {"reason": "writer_lock"},
+            )
         organization = place.name if place.own_marker else None
         try:
             verify_marker(self._storage, place.marker_directory, self._instance_id, organization)
@@ -210,14 +247,35 @@ class LakeDisk:
                 f"the API cannot write the lake: {error.message}", error.context
             ) from error
 
-    def _writable(self) -> bool:
-        probe = UPLOADS.joinpath(f"{MARKER_FILE}-ready-{uuid.uuid4().hex}")
+    def _writes(self) -> bool:
+        return self._writer is None or self._writer.writable
+
+    def _probed_lake(self) -> bool:
+        if not self._writes():
+            return self._uploads_directory()
+        return self._writable() and all(self._linkable(place) for place in self._places.values())
+
+    def _uploads_directory(self) -> bool:
         try:
             found = self._storage.stat(UPLOADS)
-            if found is None or found.kind != "dir":
-                return False
+        except StorageError:
+            return False
+        return found is not None and found.kind == "dir"
+
+    def _writable(self) -> bool:
+        probe = UPLOADS.joinpath(f"{MARKER_FILE}-ready-{uuid.uuid4().hex}")
+        if not self._uploads_directory():
+            return False
+        try:
             self._storage.write_bytes(probe, b"", FILE_MODE)
             self._storage.remove_file(probe)
+        except StorageError:
+            return False
+        return True
+
+    def _linkable(self, place: OrganizationPlace) -> bool:
+        try:
+            self._checked(place, lambda: self._publisher.probe(place))
         except StorageError:
             return False
         return True

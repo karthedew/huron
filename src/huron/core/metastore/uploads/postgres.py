@@ -47,6 +47,11 @@ _ATTEMPT_SELECT = (
     " from huron.staged_uploads s"
 )
 _OBJECT_COLUMNS = "id, upload_id, path, state, created_at, size, sha256, inode, sealed_at"
+#: An issued ID ``i`` of the attempt ``s`` whose tusd files and object no row needs.
+_SPENT = (
+    "(i.upload_id <> s.current_upload_id"
+    " or s.state in ('consumed', 'failed', 'cancelled', 'expired'))"
+)
 
 
 class PostgresUploads:
@@ -251,6 +256,16 @@ class PostgresAttempts:
         )
         return total
 
+    async def spent(self, upload_ids: Collection[uuid.UUID]) -> set[uuid.UUID]:
+        """The issued IDs of ``upload_ids`` that are not current or whose attempt is final."""
+        rows = await self._db.fetch(
+            "select i.upload_id from huron.staged_upload_ids i"
+            " join huron.staged_uploads s on s.id = i.staged_upload_id"
+            f" where i.upload_id = any($1::uuid[]) and {_SPENT}",
+            list(upload_ids),
+        )
+        return {row["upload_id"] for row in rows}
+
     async def issue(self, attempt_id: uuid.UUID, upload_id: uuid.UUID, issued_at: datetime) -> None:
         """Store ``upload_id`` for the attempt and make it the current ID, in one statement."""
         await unique(
@@ -351,6 +366,29 @@ class PostgresObjects:
             list(upload_ids),
         )
         return {row["upload_id"]: _object(row) for row in rows}
+
+    async def unreferenced(self, after: uuid.UUID | None, limit: int) -> Sequence[StoredObject]:
+        """The objects that no row needs, in the order of their IDs, after ``after``.
+
+        The partial index ``ix_objects_present`` gives the objects that are not ``removed``,
+        and each condition is one index look-up for such an object, so a run reads no removed
+        object.
+        """
+        rows = await self._db.fetch(
+            f"select {_OBJECT_COLUMNS} from huron.objects o"
+            " where o.state <> 'removed' and ($1::uuid is null or o.id > $1)"
+            " and exists (select 1 from huron.staged_upload_ids i"
+            " join huron.staged_uploads s on s.id = i.staged_upload_id"
+            f" where i.upload_id = o.upload_id and {_SPENT})"
+            " and not exists (select 1 from huron.files f where f.object_id = o.id)"
+            " and not exists (select 1 from huron.commit_entries e"
+            " join huron.commit_requests r on r.id = e.commit_request_id"
+            " where e.upload_id = o.upload_id and r.state in ('accepted', 'blocked'))"
+            " order by o.id limit $2",
+            after,
+            limit,
+        )
+        return [_object(row) for row in rows]
 
     async def update(self, stored: StoredObject) -> None:
         """Replace the state, the size, the SHA-256, the inode and the seal time."""

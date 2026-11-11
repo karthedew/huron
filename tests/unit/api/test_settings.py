@@ -263,6 +263,9 @@ def test_the_lake_and_upload_settings_have_their_defaults(required: pytest.Monke
     assert settings.upload_hook_timeout == timedelta(minutes=15)
     assert settings.removal_interval == timedelta(seconds=60)
     assert settings.sweep_interval == timedelta(minutes=10)
+    assert settings.attempt_ttl == timedelta(days=7)
+    assert (settings.max_upload_bytes, settings.max_staged_bytes) == (0, 0)
+    assert settings.min_free_bytes == 1 << 30
     assert settings.service_uid == os.getuid()
     assert settings.service_group is None
 
@@ -276,6 +279,10 @@ def test_the_lake_and_upload_settings_are_read(required: pytest.MonkeyPatch) -> 
         "HURON_UPLOAD_HOOK_TIMEOUT": "1800",
         "HURON_REMOVAL_INTERVAL": "PT30S",
         "HURON_SWEEP_INTERVAL": "300",
+        "HURON_ATTEMPT_TTL": "86400",
+        "HURON_MAX_UPLOAD_BYTES": "1024",
+        "HURON_MAX_STAGED_BYTES": "4096",
+        "HURON_MIN_FREE_BYTES": "0",
         "HURON_SERVICE_UID": "1000700000",
         "HURON_SERVICE_GROUP": "huron-svc",
     }
@@ -290,6 +297,9 @@ def test_the_lake_and_upload_settings_are_read(required: pytest.MonkeyPatch) -> 
     assert settings.upload_hook_timeout == timedelta(minutes=30)
     assert settings.removal_interval == timedelta(seconds=30)
     assert settings.sweep_interval == timedelta(minutes=5)
+    assert settings.attempt_ttl == timedelta(days=1)
+    assert (settings.max_upload_bytes, settings.max_staged_bytes) == (1024, 4096)
+    assert settings.min_free_bytes == 0
     assert (settings.service_uid, settings.service_group) == (1000700000, "huron-svc")
 
 
@@ -312,6 +322,10 @@ def test_the_file_sets_the_lake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         ("HURON_REMOVAL_INTERVAL", "-1"),
         ("HURON_SWEEP_INTERVAL", "0"),
         ("HURON_UPLOAD_MAX_SIZE", "-1"),
+        ("HURON_ATTEMPT_TTL", "0"),
+        ("HURON_MAX_UPLOAD_BYTES", "-1"),
+        ("HURON_MAX_STAGED_BYTES", "-1"),
+        ("HURON_MIN_FREE_BYTES", "-1"),
         ("HURON_SERVICE_UID", "-1"),
         ("HURON_LAKE_PATH", "data1/huron"),
         ("HURON_LAKE_PATH", "/data1/../huron"),
