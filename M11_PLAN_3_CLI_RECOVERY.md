@@ -96,7 +96,17 @@ This section replaces the CLI recovery rules of decision D-8 and the state files
 
 - Create or change:
   - `uploads.py`: save the attempt before creation, keep the IDs on a timeout, ask for the state
-    before a resume. Use the creation rule that plan 2 task S1 recorded.
+    before a resume. The rules, from the design of plan 2:
+    - Read the attempt (`GET /api/v1/upload-attempts/{attempt_id}`) before each creation and
+      each resume.
+    - Build the upload URL from the configured `uploads_url` and the upload ID. Do not use the
+      host of a `Location` header.
+    - Handle each 409 of the creation rule: resume on the named current ID, wait on `sealing`,
+      use the upload on `ready`, start a new `attempt_id` after an end state.
+    - After a `HEAD` that shows a complete upload, after a failed final `PATCH`, and after the
+      answer `Huron-Upload-State: sealing`: read the attempt and poll it with the one deadline.
+    - An empty file is recovered through its `attempt_id` in the same way.
+    - A chunk is at most 64 MiB.
   - `sync.py`: the pending commit, the status read, the same-body resend. Remove `_recover`,
     `_PLACED` and the branch that forgets an upload after a timeout.
   - `commands/status.py`: show the pending commit and the upload states.
@@ -106,7 +116,8 @@ This section replaces the CLI recovery rules of decision D-8 and the state files
   the collection version between the send and the retry: the stage stays until the status says
   `succeeded`. A kill before the send, after the send, and before the state write of a success.
   A final `PATCH` that answers 500, 502, 504 or nothing. A timeout does not make a second upload.
-  The deadline includes the request time.
+  The deadline includes the request time. Each 409 kind of the creation rule. A `Location`
+  header with another host is not followed.
 - Verification: `make gate`. `grep -rnE "_recover|_PLACED" src/huron` prints nothing.
 - Dependencies: C2, and plan 2 task S7.
 - Status: pending

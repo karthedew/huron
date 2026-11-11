@@ -21,25 +21,72 @@ one `Storage` port, the full `MemoryStorage`, the two pools, the marker checks, 
 
 ### Objects
 
-- When tusd finishes an upload, the API copies the bytes into a new file in a private object
-  area. The API syncs the file, opens it again, and measures the size and the SHA-256.
+- A seal copies the bytes of a complete tusd upload into a new file in a private object area.
+  The API syncs the file, opens it again, and measures the size and the SHA-256.
 - The sealed file is never opened for a write again. tusd can keep a descriptor on its own file.
   That descriptor cannot change the copy.
-- The object area must be on the same filesystem as the collection, because publication uses a
-  hard link. Organizations can have different roots. Task S1 records where the object area is.
+- The object area of an organization is `<root>/<org>/.huron-objects/`, with mode 0700. It is
+  inside the organization directory, because publication uses a hard link and a hard link fails
+  across two mounts. `.huron-objects` is a reserved name. Every walk and `huron adm check` skip
+  it.
+- `.tus-uploads` can be on another filesystem. The seal copy can cross filesystems. A hard link
+  is made only inside one organization directory.
+- Readiness makes a real hard link from the object area into each organization directory, then
+  removes it. A failure makes the API not ready.
 - The API publishes with a hard link to a unique temporary name, then a rename over the target.
   Huron creates no symbolic link.
+
+A seal starts from one of two places. tusd does not guarantee that its pre-finish hook runs, so
+the hook alone is not sufficient.
+
+- The pre-finish hook.
+- The API's own check. It runs when the client reads the upload attempt and when a commit names
+  the upload. A periodic scan is optional.
+
+The API's own check seals an upload only when all of these are true: the `.info` file exists,
+the length is not deferred, the data file size equals the `.info` size and the declared size, and
+no `<id>.lock` file exists. A lock file means that tusd still works on the upload.
+
+- One seal task runs for each upload ID. A second caller joins the same task.
+- A seal starts only for a row in `receiving`, and only for the current upload ID of that row.
+- The comparison of the server hash with the client's `sha256` at commit is the last defence.
 
 ### Uploads
 
 - States: `receiving`, `sealing`, `ready`, `consumed`. End states before a commit: `failed`,
   `cancelled`, `expired`.
-- The client sends an `attempt_id` (UUID) at creation. The same `attempt_id` with the same fields
-  gives the same upload. Different fields give a conflict.
-- An upload expires `upload_ttl` after its last activity. Activity is a received chunk or the end
-  of a seal. The default is 7 days. The value is a setting.
+- The client sends an `attempt_id` (UUID) at creation. The key of an attempt is the subject and
+  the `attempt_id`.
+- tusd truncates the data file when an upload ID is created a second time. Thus Huron never
+  gives one upload ID to tusd two times. The attempt row keeps every upload ID that Huron issued
+  for it. One of them is the current ID. Only the current ID is authorized, sealed or published.
+- The creation rule runs under the lock of the attempt row. Two first requests that race must
+  give one row. The second request then gets case 3 or case 4.
+
+| Case | Attempt row | Result |
+| --- | --- | --- |
+| 1 | No row | Create the row in `receiving` with a new UUID as the current ID |
+| 2 | A row with different fields | 409 conflict |
+| 3 | `receiving`, and the current ID has an `.info` file | 409 that names the current ID. The client resumes |
+| 4 | `receiving`, and the current ID has no `.info` file | A new UUID becomes the current ID. The old ID is an orphan that cleanup removes by ID |
+| 5 | `sealing`, `ready` or `consumed` | 409 with the state and the current ID |
+| 6 | `failed`, `cancelled` or `expired` | 409 with the state. A new upload needs a new `attempt_id` |
+
+- The pre-create hook also refuses a deferred length, a partial or final upload of a
+  concatenation, and a creation request that carries a body.
+- The pre-finish hook is short. It starts or joins the seal task. It answers with the result
+  when the seal ends in approximately 20 s. If not, it answers with the header
+  `Huron-Upload-State: sealing`, and the client polls the API.
+- A failed, cancelled or timed-out pre-finish hook is not sent again by tusd, and tusd can
+  finish the upload although the hook refused. The API's own check covers these cases.
+- An upload expires `upload_ttl` after its last activity. Activity is a `PATCH` that the
+  authorization check allowed, or the end of a seal. The default is 7 days. The value is a
+  setting. A `receiving` row that is older than `upload_ttl` is treated as expired.
+- A cancel goes through the API. It removes the tusd files of every upload ID of the attempt.
+  tusd's own termination is disabled.
 - A commit consumes an upload one time. A cancelled, expired or consumed upload is never
-  published. A late tusd completion for such an upload only makes private bytes to remove.
+  published. A late tusd completion for such an upload, or for an ID that is not current, only
+  makes private bytes to remove.
 
 ### Commit requests
 
@@ -83,6 +130,9 @@ task D6) describes the manual procedure.
 ### One writer
 
 - The deployment runs one API replica and one tusd.
+- After tusd is killed, a stale `<id>.lock` file makes each request for that upload fail with
+  500. A step removes all lock files in `.tus-uploads` before tusd starts. This is safe only
+  because one tusd runs and the old one is gone.
 - At startup the API takes a PostgreSQL session advisory lock on a dedicated connection with TCP
   keepalives. A second API that finds the lock held serves reads only.
 - When the connection drops, the API starts no new filesystem step and exits. The platform
@@ -94,8 +144,27 @@ task D6) describes the manual procedure.
 
 - Settings: `max_upload_bytes` (one file), `max_staged_bytes` (all uploads that are not consumed,
   counted two times for the tusd file and the copy), `min_free_bytes` (from `statvfs`).
+- The free-space check reads both filesystems: the one of `.tus-uploads` and the one of the
+  organization's object area.
 - `begin` refuses with 429 `CAPACITY_EXCEEDED` when a limit does not hold. The pre-create hook
   refuses an upload with no declared length.
+
+### tusd and nginx settings
+
+The S1 results give the full flag list and the nginx block. They bind. The rules:
+
+- tusd: `-disable-download`, `-disable-termination`, `-disable-concatenation`,
+  `-max-size=<max_upload_bytes>`, `-hooks-enabled-events=pre-create,pre-finish`,
+  `-hooks-http-timeout=60s`, `-hooks-http-retry=3`, `-request-completion-timeout=60s`,
+  `-network-timeout=2m`. No `post-receive` hook.
+- The hook timeout is longer than the 20 s wait of the pre-finish route. The completion timeout
+  is not shorter than that wait. The network timeout is longer than the hook timeout.
+- nginx: `X-Forwarded-Host` and `X-Forwarded-Proto` have fixed configured values, never a value
+  from the client. `Forwarded` is empty. `/_huron_auth` has `client_max_body_size 0`. `/files/`
+  has `65m`, the creation request has `1m`. `proxy_request_buffering off`.
+  `proxy_read_timeout 120s`.
+- The client builds the upload URL from its configured `uploads_url` and the upload ID. It does
+  not trust a `Location` header for the host. A chunk is at most 64 MiB.
 
 ### Schema
 
@@ -136,8 +205,12 @@ task D6) describes the manual procedure.
     entry, the outcome), `errors.py`, `planning.py` with `plan_entries(current, request)` that
     returns the entries in the fixed order: deepest removes first, parents before children for
     adds, a file-to-directory change as remove then add.
-  - `src/huron/core/lake/uploads/`: the values for the new upload states.
+  - `src/huron/core/lake/uploads/`: the values for the new upload states, the attempt with its
+    current upload ID and the list of every issued upload ID, and the creation refusal that
+    carries the state and the current ID.
   - `migrations/versions/0004_publication.py` and the tables modules in `core/metastore/`.
+    `staged_uploads` is unique on subject and `attempt_id`. The issued upload IDs are unique
+    across all attempts.
   - `pyproject.toml`: add the new `core.lake` package to the import contracts.
   - Error codes `REQUEST_ID_CONFLICT`, `COMMIT_REQUEST_NOT_FOUND`, `COLLECTION_BUSY`,
     `UPLOAD_INELIGIBLE`, `CAPACITY_EXCEEDED` in the registry and `docs/api-errors.md`.
@@ -154,7 +227,10 @@ task D6) describes the manual procedure.
 - Create or change:
   - `src/huron/core/storage/ports.py`, `posix.py`, `memory.py`, `src/huron/pkg/fs/posix.py`:
     `copy_sealed(source, destination, expected_size) -> SealedFile(size, sha256, inode)` with an
-    exclusive create, `link_once(source, destination)`, `sync_directory(location)`.
+    exclusive create, `link_once(source, destination)`, `sync_directory(location)`. The source
+    of `copy_sealed` can be on another filesystem. `link_once` links only inside one
+    organization directory. A link probe for readiness makes and removes a real hard link from
+    the object area into the organization directory.
   - `src/huron/core/storage/publication.py`: `Publisher.apply(step) -> StepResult`. It uses only
     the `Storage` port. Steps: add or replace (link to a unique temporary name, sync, rename,
     sync), remove (unlink, sync), make directory, remove empty directory.
@@ -176,7 +252,9 @@ task D6) describes the manual procedure.
   request row, upload rows, object rows.
 - Tests in the shared contract suite and `tests/contract/test_postgres_races.py`: two
   connections send the same request ID. Two requests for one collection. An upload consumed by
-  two requests. A raw unique-violation error never reaches a caller.
+  two requests. Two first creations with the same subject and `attempt_id` give one row, and the
+  second caller sees that row under its lock. A raw unique-violation error never reaches a
+  caller.
 - Verification: `make gate`, `uv run pytest -m contract`.
 - Dependencies: S2.
 - Status: pending
@@ -185,13 +263,17 @@ task D6) describes the manual procedure.
 
 - Create or change:
   - `core/lake/uploads/attempts.py`: `begin`, `start_seal`, `finish_seal`, `cancel`, `expire`,
-    `get`. The exact creation rule comes from S1.
+    `get`. `begin` implements the six cases of the creation rule in the design. It receives
+    the fact "the current ID has an `.info` file" from its caller. `start_seal` accepts only a
+    row in `receiving` and only its current upload ID.
   - `core/lake/publications/operations.py`: `submit`, `status`, `next_entries`, `mark_done`,
     `finalize`, `resolve`.
   - A refusal with a valid body is saved as `rejected`. Save it in a transaction that commits.
     Raise the error after the commit.
 - Tests on the memory store and on PostgreSQL: each defect F1 to F6 as a test that fails on the
-  current code path. Stale base, revoked privilege, bad tree, ineligible upload. The same request
+  current code path. One test for each of the six creation cases. No upload ID is issued two
+  times. A seal of an ID that is not current is refused. A `receiving` row past `upload_ttl` is
+  expired. Stale base, revoked privilege, bad tree, ineligible upload. The same request
   two times. Cancel against finish. Expiry at the boundary with a controlled clock. Finalize two
   times. `abandon` with zero and with one done step.
 - Verification: `make gate`, `uv run pytest -m contract`.
@@ -201,16 +283,24 @@ task D6) describes the manual procedure.
 ### S6 Orchestration in the API
 
 - Create or change, in `src/huron/applications/api/disk/` and `runtime.py`:
-  - `sealing.py`: one tracked task for each upload. A second hook call waits for the same task.
+  - `sealing.py`: one tracked task for each upload ID. A second caller joins the same task. The
+    task does not depend on the hook request: it continues when the hook's client goes away.
+    The completeness check of the design: `.info` exists, no deferred length, the sizes agree,
+    no `<id>.lock`. An upload with a lock file is skipped, not failed.
   - `publications.py`: the materializer and `recover_pending` at startup.
   - `ownership.py`: the advisory lock, the keepalives, the exit on loss.
-  - `capacity.py`: the three limits.
-  - `cleanup.py`: remove the objects and tusd files of uploads in an end state, and objects that
-    no file row and no pending entry names. Select by database ID only. Never by age or by name.
+  - `capacity.py`: the three limits. The free-space check reads the filesystem of
+    `.tus-uploads` and the filesystem of the object area.
+  - `cleanup.py`: remove the objects and tusd files of uploads in an end state, the tusd files
+    of every issued upload ID that is not current, and objects that no file row and no pending
+    entry names. Select by database ID only. Never by age or by name.
   - No database transaction waits for a filesystem call.
 - Tests: a storage error leaves the request pending and gives no success. A second run completes
   it one time. A foreign target blocks. A second runtime on the same database serves reads only.
   Loss of the lock connection stops new steps. Cleanup never touches a file that a row names.
+  A complete upload with no hook call is sealed by the check. An upload with a lock file, a
+  deferred length or a short data file is not sealed. Two callers get one seal. A full
+  filesystem on each of the two sides refuses.
 - Verification: `make gate`, `uv run pytest -m contract`.
 - Dependencies: S5.
 - Status: pending
@@ -219,9 +309,20 @@ task D6) describes the manual procedure.
 
 - Intent: one change of the wire protocol, with all its consumers.
 - Create or change:
-  - Routes: the commit route with the new body, the status route, the upload hooks that only
-    seal, `POST /api/v1/uploads/{id}/cancel`, `GET /api/v1/upload-attempts/{attempt_id}`, the
-    admin resolve route, `pending_request` in the collection view.
+  - Routes: the commit route with the new body, the status route,
+    `POST /api/v1/uploads/{id}/cancel`, the admin resolve route, `pending_request` in the
+    collection view.
+  - The pre-create hook: the six creation cases, and the refusal of a deferred length, a
+    concatenation part or final, and a creation request with a body. Each 409 carries the state
+    and the current upload ID where the case has them.
+  - The pre-finish hook: start or join the seal, wait at most 20 s, then answer with the result
+    or with `Huron-Upload-State: sealing`.
+  - The authorization route for nginx: the token's subject is the owner, and the upload ID is
+    the current ID of an attempt in `receiving`. An allowed `PATCH` records activity.
+  - `GET /api/v1/upload-attempts/{attempt_id}`: returns the state and the current upload ID to
+    the owner, and runs the API's own seal check.
+  - A commit that names an upload that is not `ready` runs the seal check one time. If the
+    upload is still not `ready`, the answer is 409 `UPLOAD_INELIGIBLE` with the state.
   - The CLI sends the new body with a new request ID and the upload IDs. Durable recovery is
     plan 3, task C3.
   - Remove: `Placer`, API `Placements`, `measure_destination`, the backup and undo code, the
@@ -230,7 +331,10 @@ task D6) describes the manual procedure.
   - Update the memory seed, `docker/seed/run.mjs`, `web/e2e/support/`, `tests/support/`.
   - `make openapi`. From `web/`, `npm run generate:api`. Show the pending state on the collection
     page as read-only text.
-- Tests: HTTP 200, 202, 404 and 409 on the real application. The old body is refused.
+- Tests: HTTP 200, 202, 404 and 409 on the real application. The old body is refused. Each
+  creation case and each refusal through the hook route. The pre-finish answer before and after
+  the 20 s limit, with a controlled clock. Another user's token and a non-current upload ID on
+  the authorization route. The attempt read seals a complete upload that no hook reported.
 - Verification: `make gate`, `uv run pytest -m contract`, the web gate of AGENTS.md.
   `grep -rnE "latest_placements|measure_destination|drop_backup|ReceiptMode" src tests` prints
   nothing.
@@ -245,7 +349,10 @@ task D6) describes the manual procedure.
   kills the process, starts a new one, and reads the rows and the files.
 - Cases: a kill before and after each of copy, seal commit, acceptance, link, rename, unlink,
   entry done, final transaction. A two-file replace with one remove. The same request sent again
-  after each kill. A late tusd completion after a newer commit.
+  after each kill. A late tusd completion after a newer commit. A late completion of an upload
+  ID that is not current. A pre-finish hook that answers 500, that answers 422, and that gets
+  no answer before the timeout: the attempt read then seals the upload. A kill of the API
+  during the pre-finish hook.
 - Each case asserts the bytes, the version, the count, one audit record and the saved outcome.
 - Verification: `make gate`, `uv run pytest -m integration`. No skip is added.
 - Dependencies: S7.

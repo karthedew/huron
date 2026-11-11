@@ -30,8 +30,9 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
     commit a directory can hold a mix of old and new files.
   - The check reports these entries and never removes them: a temporary name of a publication, a
     `.nfs*` file, a `.snapshot` directory, a file that no row names.
-  - Provisioning also prepares the object area and `.tus-uploads` at the place that plan 2 task
-    S1 recorded, with the modes that the service UID needs.
+  - Provisioning also prepares `<root>/<org>/.huron-objects/` (mode 0700, service UID) for each
+    organization, and `.tus-uploads`.
+  - `huron adm check` skips `.huron-objects`. It is a reserved name, not drift.
   - Provisioning must work with the API stopped. It reads its input from a file and makes no
     API request in that mode.
 - Verification: the old task's entry.
@@ -42,8 +43,12 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
 
 - Changes to the old task:
   - Images: `tusproject/tusd:v2.10.1` and `nginx:1.31.8`, with `--pull=never`.
-  - The tusd flags and the nginx template come from plan 2 task S1. No unconditional removal of
-    tusd lock files.
+  - The tusd flags and the nginx block are those of "Recommended tusd flags" and "Recommended
+    nginx configuration" in the S1 results of plan 2.
+  - A step removes the stale `*.lock` files in `.tus-uploads` before tusd starts. This is safe
+    only with one tusd, after the old one is gone. The stack must not start a second tusd.
+  - Tests through nginx: a chunk of 64 MiB passes, and a `PATCH` of 2 MiB passes the
+    authorization location.
   - `scripts/dev-login.sh` stays as it is.
   - The integration tests cover: new, overwrite, remove, empty file, resume after an interrupted
     `PATCH`, a final `PATCH` with no answer, a late completion after a newer commit, a token of
@@ -60,7 +65,10 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
 - Changes to the old task:
   - One API replica with the `Recreate` strategy. The manifest test fails on a replica count
     other than 1.
-  - No init container that removes lock files.
+  - One tusd, in the same pod or with the same `Recreate` rule. A step before tusd starts
+    removes the stale `*.lock` files in `.tus-uploads`. The manifest test fails when this step
+    is present and the replica count is not 1.
+  - Readiness includes the hard-link probe of plan 2 for each organization directory.
   - `terminationGracePeriodSeconds` is longer than the longest seal that the settings allow.
   - Readiness: probe timeout 3 s, period 5 s, failure threshold 3. Liveness does no NFS call.
   - The smoke test logs in on the host only. It copies no token into a pod. It runs
