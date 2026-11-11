@@ -98,7 +98,7 @@ def home(tmp_path: Path) -> Path:
     state = LocalState(state_root(child_environment(root)))
     state.check_out("c-1", "cat.ns.x", 3, "o/cat/ns/x")
     with state.changing("c-1") as working:
-        working.adds = [StagedAdd("a.txt", "/data/a.txt", 5)]
+        working.adds = [StagedAdd("a.txt", "/data/a.txt", 5, 10, "ab" * 32)]
     Config(current_collection="c-1").save(root / "config" / "huron" / "config.yaml")
     for name in ("b.txt", "c.txt"):
         (tmp_path / name).write_text(name)
@@ -213,7 +213,7 @@ def test_working_copies_are_listed_by_identifier_and_a_draft_alone_is_no_copy(
 def test_a_change_is_written_when_its_block_ends(state: LocalState) -> None:
     state.check_out("c-1", "cat.ns.x", 2, None)
     with state.changing("c-1") as working:
-        working.adds.append(StagedAdd("a.txt", "/data/a.txt", 5))
+        working.adds.append(StagedAdd("a.txt", "/data/a.txt", 5, 10, "ab" * 32))
         assert staged_paths(state) == []
     assert staged_paths(state) == ["a.txt"]
 
@@ -234,13 +234,14 @@ def test_a_change_of_a_collection_without_a_working_copy_is_refused(state: Local
     assert raised.value.hint == "run `huron checkout <identifier>`"
 
 
-def test_the_same_file_means_the_same_path_source_size_and_modification_time() -> None:
-    add = StagedAdd("a.txt", "/data/a.txt", 5, 10, attempt_id="t")
-    assert add.same_file(StagedAdd("a.txt", "/data/a.txt", 5, 10, sha256="f" * 64))
-    assert not add.same_file(StagedAdd("b.txt", "/data/a.txt", 5, 10))
-    assert not add.same_file(StagedAdd("a.txt", "/data/b.txt", 5, 10))
-    assert not add.same_file(StagedAdd("a.txt", "/data/a.txt", 6, 10))
-    assert not add.same_file(StagedAdd("a.txt", "/data/a.txt", 5, 11))
+def test_the_same_file_means_the_same_path_source_size_modification_time_and_hash() -> None:
+    add = StagedAdd("a.txt", "/data/a.txt", 5, 10, "a" * 64, attempt_id="t")
+    assert add.same_file(StagedAdd("a.txt", "/data/a.txt", 5, 10, "a" * 64, upload_id="u"))
+    assert not add.same_file(StagedAdd("b.txt", "/data/a.txt", 5, 10, "a" * 64))
+    assert not add.same_file(StagedAdd("a.txt", "/data/b.txt", 5, 10, "a" * 64))
+    assert not add.same_file(StagedAdd("a.txt", "/data/a.txt", 6, 10, "a" * 64))
+    assert not add.same_file(StagedAdd("a.txt", "/data/a.txt", 5, 11, "a" * 64))
+    assert not add.same_file(StagedAdd("a.txt", "/data/a.txt", 5, 10, "b" * 64))
 
 
 # Refused files.
@@ -364,6 +365,18 @@ def test_an_unknown_format_version_is_refused_and_not_changed(
                 "adds": [{"rel_path": "a", "source": "/a", "size": 1, "copied": True}],
             }
         ),
+        json.dumps(
+            {
+                "format": 1,
+                "collection_id": "c-1",
+                "identifier": "x",
+                "path": None,
+                "base_version": 3,
+                "adds": [
+                    {"rel_path": "a", "source": "/a", "size": 1, "mtime_ns": None, "sha256": None}
+                ],
+            }
+        ),
         json.dumps(OTHER_COLLECTION),
     ],
     ids=[
@@ -376,6 +389,7 @@ def test_an_unknown_format_version_is_refused_and_not_changed(
         "base version as text",
         "unknown key",
         "unknown add key",
+        "add without its modification time and hash",
         "another collection",
     ],
 )

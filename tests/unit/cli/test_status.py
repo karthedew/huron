@@ -239,7 +239,7 @@ def test_status_all_in_json_names_each_collections_own_catalog_and_organization(
 def test_status_all_of_a_copy_in_another_catalog_names_its_organization(ready: Cli) -> None:
     ready.state.check_out("c-1", "terra.ground.site1", 2, "geo/terra/ground/site1")
     with ready.state.changing("c-1") as working:
-        working.adds = [StagedAdd("x.txt", "/src/x.txt", 3)]
+        working.adds = [StagedAdd("x.txt", "/src/x.txt", 3, 10, "ab" * 32)]
     assert lines(ready, "status", "--all")[0] == (
         "On collection terra.ground.site1 (version 2) in catalog terra, organization geo"
     )

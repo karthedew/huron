@@ -1,11 +1,13 @@
 """``huron push`` asks the service to check the commit before it uploads a byte."""
 
+import hashlib
 import json
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+import pytest
 
 from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
@@ -40,7 +42,7 @@ def watch(cli: Cli, on_dry_run: Callable[[httpx.Request], None]) -> list[httpx.R
     return sent
 
 
-def test_a_push_sends_a_dry_run_with_sizes_before_uploading(
+def test_a_push_sends_a_dry_run_with_the_recorded_sizes_and_hashes_before_uploading(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     ready.ok("add", str(write(tmp_path, "a.txt", "alpha")))
@@ -51,13 +53,14 @@ def test_a_push_sends_a_dry_run_with_sizes_before_uploading(
     dry, real = sent
     assert dry.url.params["dry_run"] == "true" and "dry_run" not in real.url.params
     preview = json.loads(dry.content)
-    assert preview["adds"] == [{"rel_path": "a.txt", "size": 5}]
+    alpha = hashlib.sha256(b"alpha").hexdigest()
+    assert preview["adds"] == [{"rel_path": "a.txt", "size": 5, "sha256": alpha}]
     assert preview["base_version"] == 3 and preview["message"] == "first"
     assert "request_id" not in preview
     committed = json.loads(real.content)
     assert uuid.UUID(committed["request_id"])
     (add,) = committed["adds"]
-    assert len(add["sha256"]) == 64 and uuid.UUID(add["upload_id"])
+    assert add["sha256"] == alpha and uuid.UUID(add["upload_id"])
     assert share.stat(COLLECTION.joinpath("a.txt")) is not None
 
 
@@ -74,7 +77,7 @@ def test_a_readers_push_is_refused_and_leaves_the_share_untouched(
     assert uploads(ready) == []
     stage = ready.working()
     assert [add.rel_path for add in stage.adds] == ["a.txt"]
-    assert stage.adds[0].sha256 is None
+    assert (stage.adds[0].attempt_id, stage.adds[0].upload_id) == (None, None)
 
 
 def test_a_base_version_conflict_is_reported_before_uploading(
@@ -109,13 +112,32 @@ def test_a_push_behind_the_service_uploads_nothing(
     assert share.calls == calls and uploads(ready) == []
 
 
-def test_a_resumed_push_sends_the_hashes_it_already_knows(
-    ready: Cli, share: MemoryStorage, tmp_path: Path
+def lose_the_commit(cli: Cli) -> None:
+    """Drop the connection of the next commit before the service reads it."""
+    cli.router.fail_commits = "before"
+
+
+def drop_the_upload(cli: Cli) -> None:
+    """Drop the connection of the next ``PATCH`` after three bytes, before the service seals it."""
+    assert cli.tus is not None
+    cli.tus.drop_after = 3
+
+
+@pytest.mark.parametrize(
+    ("stop", "sealed"),
+    [(lose_the_commit, True), (drop_the_upload, False)],
+    ids=["after the seal", "before the seal"],
+)
+def test_a_resumed_push_sends_the_known_hashes_and_the_sealed_uploads(
+    ready: Cli, share: MemoryStorage, tmp_path: Path, stop: Callable[[Cli], None], sealed: bool
 ) -> None:
     ready.ok("add", str(write(tmp_path, "a.txt", "alpha")))
-    ready.router.fail_commits = "before"
+    stop(ready)
     assert ready.run("push").exit_code == 1
+    (stopped,) = ready.working().adds
+    assert stopped.upload_id is not None
     sent = watch(ready, lambda _: None)
     ready.ok("push")
     (add,) = json.loads(sent[0].content)["adds"]
-    assert add["size"] == 5 and len(add["sha256"]) == 64 and uuid.UUID(add["upload_id"])
+    assert add["size"] == 5 and len(add["sha256"]) == 64
+    assert add.get("upload_id") == (stopped.upload_id if sealed else None)

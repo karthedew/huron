@@ -69,8 +69,19 @@ def add(
         bool, typer.Option("--recursive", "-r", help="Stage directories.")
     ] = False,
 ) -> None:
-    """Stage local files for the next push."""
-    staged = stage_paths(services(ctx), current(services(ctx)), paths, rename, recursive)
+    """Stage local files for the next push.
+
+    The CLI records the size, the modification time and the sha256 of each file. `huron push`
+    stops when a file changed after you staged it. The CLI does not follow symbolic links. In a
+    directory, the CLI does not stage a symbolic link, a special file or a file that it cannot
+    read. It gives a warning for each one. When you name such a file, the command stops.
+    """
+    found = services(ctx)
+    staged, skipped = stage_paths(found, current(found), paths, rename, recursive)
+    for entry in skipped:
+        found.err.print(
+            f"warning: the CLI did not stage {entry.path}: {entry.reason}", markup=False
+        )
     for item in staged:
         say(ctx, f"staged {item.rel_path} ({item.size} bytes)")
 

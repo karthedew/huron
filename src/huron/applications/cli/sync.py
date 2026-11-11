@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -16,8 +15,9 @@ from huron.applications.cli.client import ApiClient
 from huron.applications.cli.errors import ApiError, CliError, ExitCode, UsageError
 from huron.applications.cli.localstate import StagedAdd, WorkingState
 from huron.applications.cli.services import Services
+from huron.applications.cli.sources import SkippedEntry, collect_sources
 from huron.applications.cli.uploads import Uploader, UploadService
-from huron.schema.naming import RelPathError, check_rel_path, rel_path_key
+from huron.schema.naming import rel_path_key
 
 __all__ = [
     "COMMIT_POLL",
@@ -112,18 +112,20 @@ def stage_paths(
     paths: list[Path],
     rename: str | None,
     recursive: bool,
-) -> list[StagedAdd]:
-    """Stage local files (and, with ``recursive``, directories) for the next push."""
-    if rename is not None and len(paths) != 1:
-        raise UsageError("`--as` needs exactly one file")
-    staged: list[StagedAdd] = []
-    for path in paths:
-        staged.extend(_collect(path, rename, recursive))
+) -> tuple[list[StagedAdd], list[SkippedEntry]]:
+    """Stage local files (and, with ``recursive``, directories) for the next push.
+
+    Each add records the size, the modification time and the sha256 of its file, read before
+    the state lock is taken. An add replaces a staged add of the same path and unstages its
+    removal. Returns the adds and the entries of the directories that the walk skipped; see
+    :func:`~huron.applications.cli.sources.collect_sources`.
+    """
+    staged, skipped = collect_sources(paths, rename, recursive)
     keys = {rel_path_key(add.rel_path) for add in staged}
     with services.state.changing(working.collection_id) as stage:
         stage.adds = [add for add in stage.adds if rel_path_key(add.rel_path) not in keys] + staged
         stage.removes = [path for path in stage.removes if rel_path_key(path) not in keys]
-    return staged
+    return staged, skipped
 
 
 def unstage_or_remove(
@@ -157,9 +159,11 @@ def push(services: Services, working: WorkingState, message: str | None) -> Push
     The push holds the push lock of the working copy from start to end. The service checks the
     commit with a dry run first, so a push it would refuse (no right to write files, a pending
     commit, a stale base version, a removed file that is not recorded) fails before any byte is
-    uploaded. The stage records each upload attempt, so a push that stops continues on the next
-    push. The commit names each upload by its ID, under a new request ID. A file staged while
-    the push runs stays staged for the next push.
+    uploaded. Before it sends a file, the push checks that the size and the modification time
+    are those that ``huron add`` recorded, and a change stops the push. The stage records each
+    upload attempt, so a push that stops continues on the next push. The commit names each
+    upload by its ID and the recorded sha256, under a new request ID. A file staged while the
+    push runs stays staged for the next push.
     """
     with services.state.push_lock(working.collection_id):
         stage = current(services)
@@ -236,34 +240,6 @@ def _stage_removal(
     return RmAction.STAGED_REMOVE, found["rel_path"]
 
 
-def _collect(path: Path, rename: str | None, recursive: bool) -> list[StagedAdd]:
-    if path.is_symlink():
-        raise UsageError(f"{path} is a symbolic link. Stage the file that it points to")
-    if path.is_dir():
-        if not recursive:
-            raise UsageError(f"{path} is a directory", hint="use `--recursive`")
-        found: list[StagedAdd] = []
-        for root, _, names in os.walk(path):
-            for name in sorted(names):
-                file = Path(root) / name
-                if not file.is_symlink():
-                    found.append(_staged(file, file.relative_to(path).as_posix()))
-        return found
-    if not path.is_file():
-        raise UsageError(f"{path} does not exist")
-    return [_staged(path, rename or path.name)]
-
-
-def _staged(path: Path, rel_path: str) -> StagedAdd:
-    try:
-        check_rel_path(rel_path)
-    except RelPathError as error:
-        raise UsageError(
-            f"{rel_path!r} is not a valid path in a collection ({error.rule})"
-        ) from error
-    return StagedAdd(rel_path, str(path.resolve()), path.stat().st_size)
-
-
 def _uploader(services: Services, api: ApiClient) -> Uploader:
     """The tus client for the service's upload endpoint; refuses when there is none."""
     service = UploadService.from_health(api.get("/healthz", auth=False))
@@ -292,8 +268,8 @@ def _save_attempt(services: Services, collection_id: str, sent: StagedAdd) -> No
     with services.state.changing(collection_id) as stage:
         for add in stage.adds:
             if add.same_file(sent):
-                add.sha256, add.attempt_id = sent.sha256, sent.attempt_id
-                add.upload_id, add.attempt_state = sent.upload_id, sent.attempt_state
+                add.attempt_id, add.upload_id = sent.attempt_id, sent.upload_id
+                add.attempt_state = sent.attempt_state
 
 
 def _preflight(
@@ -324,14 +300,13 @@ def _commit(
 def _commit_body(services: Services, stage: WorkingState, message: str | None) -> dict[str, Any]:
     """The commit body without its request ID.
 
-    Each add names its sealed upload and the sha256 of the bytes that the push sent. An add not
-    yet uploaded has neither, which a dry run accepts.
+    Each add has the size and the sha256 that ``huron add`` recorded, and the ID of its upload
+    once the service sealed it. A dry run accepts an add without an upload.
     """
     adds: list[dict[str, Any]] = []
     for add in stage.adds:
-        entry: dict[str, Any] = {"rel_path": add.rel_path, "size": add.size}
-        if add.sha256 is not None and add.upload_id is not None:
-            entry["sha256"] = add.sha256
+        entry: dict[str, Any] = {"rel_path": add.rel_path, "size": add.size, "sha256": add.sha256}
+        if add.attempt_state == "ready" and add.upload_id is not None:
             entry["upload_id"] = add.upload_id
         adds.append(entry)
     body: dict[str, Any] = {

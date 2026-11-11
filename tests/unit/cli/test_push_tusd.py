@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import timedelta
@@ -308,7 +309,7 @@ def test_a_retried_push_skips_the_sealed_uploads(ready: Cli, tmp_path: Path) -> 
     staged(ready, tmp_path, "b.txt", b"bravo")
     ready.router.fail_commits = "before"
     assert ready.run("push").exit_code == 1
-    assert all(add.sha256 is not None for add in stage(ready).adds)
+    assert all(add.attempt_state == "ready" for add in stage(ready).adds)
     tus(ready).requests.clear()
     retried = ready.ok("push")
     assert tus(ready).requests == []
@@ -316,33 +317,86 @@ def test_a_retried_push_skips_the_sealed_uploads(ready: Cli, tmp_path: Path) -> 
     assert recorded(ready) == {"a.txt": sha(b"alpha"), "b.txt": sha(b"bravo")}
 
 
-def test_a_file_changed_after_its_upload_is_uploaded_again(
+def touch_later(path: Path) -> None:
+    """Move the modification time of ``path`` one second later, keeping its bytes."""
+    later = path.stat().st_mtime_ns + 1_000_000_000
+    os.utime(path, ns=(later, later))
+
+
+def rewrite_as_link(path: Path) -> None:
+    """Put a link to a copy of ``path`` at ``path``, with the same bytes and times."""
+    info = path.stat()
+    target = path.with_name(f"{path.name}.target")
+    target.write_bytes(path.read_bytes())
+    os.utime(target, ns=(info.st_atime_ns, info.st_mtime_ns))
+    path.unlink()
+    path.symlink_to(target)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda path: path.write_bytes(b"alphabet"),
+        lambda path: path.write_bytes(b"alp"),
+        lambda path: (path.write_bytes(b"bravo"), touch_later(path)),
+        rewrite_as_link,
+    ],
+    ids=["grows", "shrinks", "same size and a new modification time", "replaced by a link"],
+)
+def test_a_file_that_changed_after_add_stops_the_push_with_its_name(
+    ready: Cli, tmp_path: Path, change: Callable[[Path], object]
+) -> None:
+    source = staged(ready, tmp_path, "a.txt", b"alpha")
+    change(source)
+    refused = ready.run("push")
+    assert refused.exit_code == 2
+    assert f"{source} changed after you staged it as a.txt" in refused.stderr
+    assert f"run `huron add {source} --as a.txt`. To unstage it, run `huron rm a.txt`" in (
+        refused.stderr
+    )
+    assert tus(ready).requests == [] and recorded(ready) == {}
+
+
+def test_a_file_removed_after_add_stops_the_push_with_its_name(ready: Cli, tmp_path: Path) -> None:
+    staged(ready, tmp_path, "a.txt", b"alpha").unlink()
+    refused = ready.run("push")
+    assert refused.exit_code == 2
+    assert (
+        f"the CLI cannot read {tmp_path / 'a.txt'}, which you staged as a.txt:"
+        " No such file or directory"
+    ) in refused.stderr
+    assert tus(ready).requests == []
+
+
+def test_a_change_that_keeps_the_size_and_modification_time_fails_the_commit(
+    ready: Cli, tmp_path: Path
+) -> None:
+    source = staged(ready, tmp_path, "a.txt", b"alpha")
+    info = source.stat()
+    source.write_bytes(b"bravo")
+    os.utime(source, ns=(info.st_atime_ns, info.st_mtime_ns))
+    refused = ready.run("push")
+    assert [method for method, _ in tus(ready).requests] == ["POST", "PATCH"]
+    assert refused.exit_code == 6 and "[UPLOAD_INELIGIBLE]" in refused.stderr
+    assert "holds a different file" in refused.stderr
+    assert recorded(ready) == {}
+
+
+def test_a_file_changed_after_its_upload_is_uploaded_again_once_staged_again(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:
     source = staged(ready, tmp_path, "a.txt", b"alpha")
     ready.router.fail_commits = "before"
     assert ready.run("push").exit_code == 1
     source.write_bytes(b"bravo")
+    touch_later(source)
+    assert "changed after you staged it" in ready.run("push").stderr
+    ready.ok("add", str(source))
     tus(ready).requests.clear()
     ready.ok("push")
     assert [method for method, _ in tus(ready).requests] == ["POST", "PATCH"]
     assert share.read_bytes(COLLECTION.joinpath("a.txt")) == b"bravo"
     assert recorded(ready) == {"a.txt": sha(b"bravo")}
-
-
-def test_a_file_that_changed_size_after_add_is_refused(ready: Cli, tmp_path: Path) -> None:
-    source = staged(ready, tmp_path, "a.txt", b"alpha")
-    source.write_bytes(b"longer")
-    refused = ready.run("push")
-    assert refused.exit_code == 2 and "changed after you staged it" in refused.stderr
-    assert f"run `huron add {source}`" in refused.stderr
-    assert tus(ready).requests == []
-
-
-def test_a_file_removed_after_add_is_refused(ready: Cli, tmp_path: Path) -> None:
-    staged(ready, tmp_path, "a.txt", b"alpha").unlink()
-    refused = ready.run("push")
-    assert refused.exit_code == 2 and "changed after you staged it" in refused.stderr
 
 
 def test_an_upload_whose_bytes_all_arrived_is_sealed_by_the_next_push(
@@ -418,9 +472,10 @@ def uploader(endpoint: Endpoint, lines: list[str], chunk_size: int = 4) -> Uploa
 
 
 def local(tmp_path: Path, data: bytes) -> StagedAdd:
+    """The add of a new local file ``f.bin`` that holds ``data``, as ``huron add`` records it."""
     source = tmp_path / "f.bin"
     source.write_bytes(data)
-    return StagedAdd("f.bin", str(source), len(data))
+    return StagedAdd("f.bin", str(source), len(data), source.stat().st_mtime_ns, sha(data))
 
 
 def created(location: str = f"/files/{U1}") -> httpx.Response:
@@ -463,7 +518,7 @@ def test_the_uploader_sends_chunks_with_a_progress_line(tmp_path: Path) -> None:
         "uploaded f.bin (10 bytes)",
     ]
     assert add.attempt_id is not None
-    assert (add.upload_id, add.sha256) == (U1, sha(data))
+    assert (add.upload_id, add.attempt_state) == (U1, "ready")
     assert saved == [(add.attempt_id, None), (add.attempt_id, U1)]
     assert [str(request.url) for request in endpoint.sent[1:]] == [f"{TUS_URL}{U1}"] * 3
     offsets = [request.headers["Upload-Offset"] for request in endpoint.sent[1:]]
@@ -522,7 +577,11 @@ def test_a_commit_refused_after_the_uploads_keeps_the_uploads(ready: Cli, tmp_pa
     refused = ready.run("push")
     assert refused.exit_code == 6 and "BASE_VERSION_CONFLICT" in refused.stderr
     (add,) = stage(ready).adds
-    assert (add.sha256, add.upload_id is not None) == (sha(b"alpha"), True)
+    assert (add.sha256, add.attempt_state, add.upload_id is not None) == (
+        sha(b"alpha"),
+        "ready",
+        True,
+    )
 
 
 def read_timeout(request: httpx.Request) -> float | None:
@@ -549,7 +608,7 @@ def test_the_creation_of_an_empty_file_waits_for_the_hook(tmp_path: Path) -> Non
     add = local(tmp_path, b"")
     uploader(endpoint, []).upload("c1", add, lambda: None)
     assert [read_timeout(request) for request in endpoint.sent] == [70.0]
-    assert (add.upload_id, add.sha256) == (U1, sha(b""))
+    assert (add.upload_id, add.attempt_state) == (U1, "ready")
 
 
 def test_a_late_final_answer_reads_the_upload_attempt(tmp_path: Path) -> None:
@@ -558,7 +617,7 @@ def test_a_late_final_answer_reads_the_upload_attempt(tmp_path: Path) -> None:
     endpoint = Endpoint(created(), httpx.ReadTimeout("late"), attempt_state("ready"))
     add = local(tmp_path, data)
     uploader(endpoint, lines).upload("c1", add, lambda: None)
-    assert add.sha256 == sha(data) and lines == ["uploaded f.bin (3 bytes)"]
+    assert add.attempt_state == "ready" and lines == ["uploaded f.bin (3 bytes)"]
     assert endpoint.sent[-1].url.path == f"/api/v1/upload-attempts/{add.attempt_id}"
 
 
@@ -569,7 +628,7 @@ def test_an_answer_that_says_the_seal_goes_on_reads_the_attempt_until_it_is_read
     endpoint = Endpoint(created(), sealing, attempt_state("sealing"), attempt_state("ready"))
     add = local(tmp_path, b"abc")
     uploader(endpoint, []).upload("c1", add, lambda: None)
-    assert add.sha256 == sha(b"abc")
+    assert add.attempt_state == "ready"
     assert len(endpoint.sent) == 4
 
 
@@ -579,7 +638,7 @@ def test_a_late_answer_to_the_creation_of_an_empty_file_reads_the_attempt(
     endpoint = Endpoint(httpx.ReadTimeout("late"), attempt_state("ready"))
     add = local(tmp_path, b"")
     uploader(endpoint, []).upload("c1", add, lambda: None)
-    assert (add.upload_id, add.sha256) == (U1, sha(b""))
+    assert (add.upload_id, add.attempt_state) == (U1, "ready")
 
 
 @pytest.mark.parametrize(
@@ -595,18 +654,22 @@ def test_a_late_answer_to_the_creation_of_an_empty_file_reads_the_attempt(
 def test_an_upload_that_is_gone_or_ended_says_so(
     tmp_path: Path, state: httpx.Response, message: str
 ) -> None:
-    endpoint = Endpoint(created(), httpx.Response(504), state)
-    add = local(tmp_path, b"abc")
-    saved: list[str | None] = []
+    # The service forgot the sealed attempt of an earlier push, so the push starts a new one.
+    forgotten = httpx.Response(404, json={"code": "NOT_FOUND", "detail": "gone"})
+    endpoint = Endpoint(forgotten, created(), httpx.Response(504), state)
+    add = resumable(tmp_path, b"abc", attempt_state="ready")
+    saved: list[tuple[str | None, str | None]] = []
     with pytest.raises(CliError) as raised:
-        uploader(endpoint, []).upload("c1", add, lambda: saved.append(add.upload_id))
+        uploader(endpoint, []).upload(
+            "c1", add, lambda: saved.append((add.upload_id, add.attempt_state))
+        )
     assert raised.value.message == message
     assert raised.value.hint == (
         "run `huron push` again. The next push starts a new upload of the file"
     )
-    assert saved == [None, U1, None]
-    assert (add.attempt_id, add.upload_id) == (None, None)
-    assert len(endpoint.sent) == 3
+    assert saved == [(None, None), (U1, None), (None, None)]
+    assert (add.attempt_id, add.upload_id, add.attempt_state) == (None, None, None)
+    assert len(endpoint.sent) == 4
 
 
 def test_a_failed_attempt_says_why(tmp_path: Path) -> None:
@@ -662,10 +725,13 @@ def test_a_dropped_chunk_reports_the_service_unreachable(tmp_path: Path) -> None
     assert add.upload_id == U1
 
 
-def resumable(tmp_path: Path, data: bytes, sha256: str | None = None) -> StagedAdd:
-    """A staged add whose earlier push created the attempt ``a1`` with the upload :data:`U1`."""
+def resumable(tmp_path: Path, data: bytes, attempt_state: str | None = None) -> StagedAdd:
+    """A staged add whose earlier push created the attempt ``a1`` with the upload :data:`U1`.
+
+    ``attempt_state`` is the mark that the earlier push left on the attempt.
+    """
     add = local(tmp_path, data)
-    add.attempt_id, add.upload_id, add.sha256 = "a1", U1, sha256
+    add.attempt_id, add.upload_id, add.attempt_state = "a1", U1, attempt_state
     return add
 
 
@@ -674,9 +740,20 @@ def test_a_resumed_upload_that_is_sealing_is_read_until_it_is_ready(tmp_path: Pa
     endpoint = Endpoint(attempt_state("sealing"), attempt_state("sealing"), attempt_state("ready"))
     add = resumable(tmp_path, b"abc")
     uploader(endpoint, lines).upload("c1", add, lambda: None)
-    assert (add.attempt_id, add.upload_id, add.sha256) == ("a1", U1, sha(b"abc"))
+    assert (add.attempt_id, add.upload_id, add.attempt_state) == ("a1", U1, "ready")
     assert lines == ["uploaded f.bin (3 bytes)"]
     assert [request.url.path for request in endpoint.sent] == ["/api/v1/upload-attempts/a1"] * 3
+
+
+def test_a_resumed_upload_that_ended_is_forgotten_with_its_mark(tmp_path: Path) -> None:
+    endpoint = Endpoint(attempt_state("sealing"), attempt_state("cancelled"))
+    add = resumable(tmp_path, b"abc", attempt_state="ready")
+    saved: list[tuple[str | None, str | None, str | None]] = []
+    with pytest.raises(CliError, match=r"the upload of f\.bin is cancelled"):
+        uploader(endpoint, []).upload(
+            "c1", add, lambda: saved.append((add.attempt_id, add.upload_id, add.attempt_state))
+        )
+    assert saved == [(None, None, None)]
 
 
 def test_a_resumed_upload_whose_bytes_tusd_holds_reads_the_attempt(tmp_path: Path) -> None:
@@ -684,13 +761,5 @@ def test_a_resumed_upload_whose_bytes_tusd_holds_reads_the_attempt(tmp_path: Pat
     endpoint = Endpoint(attempt_state("receiving"), head, attempt_state("ready"))
     add = resumable(tmp_path, b"abc")
     uploader(endpoint, []).upload("c1", add, lambda: None)
-    assert add.sha256 == sha(b"abc")
+    assert add.attempt_state == "ready"
     assert [request.method for request in endpoint.sent] == ["GET", "HEAD", "GET"]
-
-
-def test_a_resumed_upload_of_a_file_that_changed_starts_a_new_attempt(tmp_path: Path) -> None:
-    endpoint = Endpoint(attempt_state("ready"), created(), ready_answer(3))
-    add = resumable(tmp_path, b"abc", sha256=sha(b"xyz"))
-    uploader(endpoint, []).upload("c1", add, lambda: None)
-    assert add.attempt_id != "a1" and add.sha256 == sha(b"abc")
-    assert [request.method for request in endpoint.sent] == ["GET", "POST", "PATCH"]

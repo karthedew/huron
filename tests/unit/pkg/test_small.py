@@ -11,7 +11,7 @@ import rfc8785
 
 from huron.pkg.canonical import NotCanonicalizable, canonical_bytes, document_sha256
 from huron.pkg.clock import FrozenClock, SystemClock
-from huron.pkg.hashing import EMPTY_SHA256, sha256_descriptor, sha256_file
+from huron.pkg.hashing import sha256_descriptor
 from huron.pkg.identifiers import new_id, parse_id
 
 
@@ -84,19 +84,6 @@ def test_frozen_clock_moves_only_when_advanced() -> None:
 
 def test_system_clock_is_aware() -> None:
     assert SystemClock().now().tzinfo is UTC
-
-
-def test_sha256_file_of_an_empty_file(tmp_path: Path) -> None:
-    path = tmp_path / "empty"
-    path.write_bytes(b"")
-    assert sha256_file(path) == (0, EMPTY_SHA256)
-
-
-def test_sha256_file_reads_in_chunks(tmp_path: Path) -> None:
-    data = b"abc" * 1000
-    path = tmp_path / "f"
-    path.write_bytes(data)
-    assert sha256_file(path, chunk=11) == (3000, hashlib.sha256(data).hexdigest())
 
 
 @pytest.mark.parametrize("data", [b"", b"abc" * 1000], ids=["empty", "chunks"])

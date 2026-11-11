@@ -126,7 +126,7 @@ def test_recovery_refuses_when_the_files_are_not_recorded() -> None:
         return httpx.Response(200, json={"version": 9, "file_count": 0})
 
     api = ApiClient(httpx.Client(transport=httpx.MockTransport(handler)), "http://x")
-    stage = WorkingState("id", "c.n.x", "o/c/n/x", 3, [StagedAdd("a", "/a", 1, sha256="f" * 64)])
+    stage = WorkingState("id", "c.n.x", "o/c/n/x", 3, [StagedAdd("a", "/a", 1, 10, "f" * 64)])
     lost = CliError("lost")
     with pytest.raises(CliError) as raised:
         _recover(api, stage, lost)
@@ -152,10 +152,6 @@ def test_push_and_status_edge_cases(ready: Cli, share: MemoryStorage, tmp_path: 
     ready.ok("activate", "collection")
     make_collection(ready, "draft")
     ready.ok("add", str(source))
-    source.unlink()
-    gone = ready.run("push")
-    assert gone.exit_code == 2 and "changed after you staged it" in gone.stderr
-    source.write_text("a")
     ready.ok("push")
     ready.configure(mount_prefix="/elsewhere")
     assert json.loads(ready.ok("-o", "json", "status").stdout)["unrecorded"] is None

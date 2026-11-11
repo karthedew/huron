@@ -104,17 +104,18 @@ class Tokens:
 class StagedAdd:
     """A local file to upload into the collection at ``rel_path``.
 
-    ``size``, ``mtime_ns`` and ``sha256`` describe the source file: the commit sends ``size``
-    and ``sha256``. ``attempt_id`` names the upload attempt before its creation, ``upload_id``
-    the tus upload once it is created, and ``attempt_state`` the last state of the attempt that
-    the CLI read, so a later push continues the upload.
+    ``size``, ``mtime_ns`` and ``sha256`` describe the source file when ``huron add`` read it:
+    a push checks the size and the modification time, and the commit sends the size and the
+    sha256. ``attempt_id`` names the upload attempt before its creation, ``upload_id`` the tus
+    upload once it is created, so a later push continues the upload. ``attempt_state`` is
+    ``"ready"`` once the service sealed the upload and ``None`` before that.
     """
 
     rel_path: str
     source: str
     size: int
-    mtime_ns: int | None = None
-    sha256: str | None = None
+    mtime_ns: int
+    sha256: str
     attempt_id: str | None = None
     upload_id: str | None = None
     attempt_state: str | None = None
@@ -122,12 +123,13 @@ class StagedAdd:
     __pydantic_config__ = _STRICT
 
     def same_file(self, other: StagedAdd) -> bool:
-        """Whether ``other`` stages the same source file at the same path."""
-        return (self.rel_path, self.source, self.size, self.mtime_ns) == (
+        """Whether ``other`` stages the same file, as ``huron add`` read it, at the same path."""
+        return (self.rel_path, self.source, self.size, self.mtime_ns, self.sha256) == (
             other.rel_path,
             other.source,
             other.size,
             other.mtime_ns,
+            other.sha256,
         )
 
 

@@ -91,7 +91,18 @@ This section replaces the CLI recovery rules of decision D-8 and the state files
   Two names that are equal after NFC and case folding. A component of 206 and of 207 bytes.
 - Verification: `make gate`.
 - Dependencies: C1.
-- Status: pending
+- Status: complete (2026-11-11). Verification 1 failed on four small findings. Verification 2
+  passed after one fix pass.
+  - The work added `src/huron/applications/cli/sources.py` and changed `uploads.py`: the
+    uploader does not hash, it sends from the descriptor that the check opened, and
+    `attempt_state` is `"ready"` after the service sealed the upload.
+  - The format version of `working.json` stays 1. A file from C1 with staged adds that have no
+    `mtime_ns` and `sha256` is refused as not valid and is not changed.
+  - `sha256_file` in `src/huron/pkg/hashing.py` had no caller left and was removed.
+  - Coverage on the unit run: 11463 statements and 2 missed before, 11524 statements and 2
+    missed after (`applications/cli/identifiers.py` 76-77). `fail_under` did not change.
+  - Gate of verification 2: `make gate` exit 0, 4086 passed, 24 deselected, duplication 69
+    clones in 25 groups. `uv run pytest -m integration`: 23 passed, 1 skipped.
 
 ### C3 Durable attempts and exact commit recovery
 
@@ -226,6 +237,26 @@ Recorded 2026-11-11 for a new session. Read [M11_PLANS.md](M11_PLANS.md) first.
   - C2: `mtime_ns` and `sha256` of a staged add are in `working.json` and are empty until C2.
   - C3: `_recover` in `sync.py` remains. A file that the user unstages during its upload is
     still committed by that push. The pending commit closes this.
+  - C3, from the verifications of C2:
+    - `attempt_state` of a staged add holds only `"ready"` or nothing. C3 extends it.
+    - After the service refuses a commit because an upload holds a different file
+      (`UPLOAD_INELIGIBLE`), each push repeats the refusal until the user runs `huron add` again.
+      The message has no hint to stage the file again.
+    - The push check runs for each file immediately before its send, not for all files before
+      the first send. A change in a later file stops the push after the earlier uploads.
+    - The hint `huron rm <rel_path>` is not correct for a path that starts with `-`.
+  - C4, from the verifications of C2:
+    - `docs/concepts/raw-ingest.md` lines 128-132 say that `add` reads only the size. No task
+      owns these lines. Correct them in C4 or in plan 4, task D6.
+    - `IMPLEMENTATION_PLAN.md` line 2969 names `sha256_file`, which C2 removed.
+  - Owner decisions that C2 left open, not in a task:
+    - A named directory that the CLI cannot list gives a warning and exit code 0. A named file
+      that the CLI cannot read stops the command with exit code 2.
+    - The help of `add` says "The CLI does not follow symbolic links". A link in a parent
+      component of a named path is followed, and the file is recorded at its real location.
+    - `huron add a.txt a.txt` gives a collision message that names the same path two times.
+    - `src/huron/pkg/hashing.py` keeps `EMPTY_SHA256`, which only tests use, and a
+      `from __future__ import annotations` line that it does not need.
   - C4: the exit-code table of `docs/user-guide.md` does not name the busy locks (exit code 6)
     or the format, read and save errors (exit code 1). `mount_prefix` matters to `huron adm`
     only.
