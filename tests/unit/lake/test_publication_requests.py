@@ -14,6 +14,7 @@ from huron.core.lake.publications.errors import (
     RequestIdConflict,
 )
 from huron.core.lake.publications.models import (
+    MAX_BASE_VERSION,
     MAX_ENTRIES,
     CommitAdd,
     CommitEntry,
@@ -21,7 +22,9 @@ from huron.core.lake.publications.models import (
     CommitRequest,
     CommitState,
     EntryAction,
+    EntryTarget,
     Refusal,
+    Resolution,
 )
 from tests.support.clock import START
 
@@ -80,7 +83,7 @@ def test_a_changed_field_changes_the_digest(changes: dict[str, Any]) -> None:
 
 
 def test_a_request_of_the_maximum_size_is_accepted() -> None:
-    adds = tuple(add(f"d/{n}.txt") for n in range(MAX_ENTRIES // 2))
+    adds = tuple(add(f"d/{n}.txt", uuid.UUID(int=n)) for n in range(MAX_ENTRIES // 2))
     removes = tuple(f"r/{n}.txt" for n in range(MAX_ENTRIES // 2))
     made = request(adds, removes)
     assert len(made.adds) + len(made.removes) == MAX_ENTRIES == 10_000
@@ -92,6 +95,38 @@ def test_a_request_with_one_entry_too_many_is_refused() -> None:
     with pytest.raises(CommitTooLarge) as caught:
         request(adds, removes)
     assert caught.value.context == {"entries": 10_001, "maximum": 10_000}
+
+
+@pytest.mark.parametrize("base_version", [0, MAX_BASE_VERSION])
+def test_a_base_version_at_the_bounds_of_the_column_is_accepted(base_version: int) -> None:
+    assert replace(BASE, base_version=base_version).base_version == base_version
+
+
+@pytest.mark.parametrize("base_version", [-1, MAX_BASE_VERSION + 1])
+def test_a_base_version_outside_the_column_is_refused(base_version: int) -> None:
+    with pytest.raises(CommitInvalid) as caught:
+        replace(BASE, base_version=base_version)
+    assert caught.value.context == {"base_version": base_version, "maximum": 2**31 - 1}
+    assert caught.value.message == "the base_version must be from 0 to 2147483647"
+
+
+def test_two_adds_that_name_one_upload_are_refused() -> None:
+    with pytest.raises(CommitInvalid) as caught:
+        request((add("a.txt"), add("b.txt")))
+    assert caught.value.context == {
+        "rel_path": "b.txt",
+        "other": "a.txt",
+        "upload_id": str(UPLOAD_ID),
+    }
+
+
+def test_an_entry_target_has_no_old_inode_and_no_source_by_default() -> None:
+    target = EntryTarget(CommitEntry(0, EntryAction.MAKE_DIRECTORY, "d"), "helio/c/n/x/d")
+    assert (target.old_inode, target.source) == (None, None)
+
+
+def test_an_operator_can_retry_or_abandon_a_request() -> None:
+    assert [str(each) for each in Resolution] == ["retry", "abandon"]
 
 
 def test_an_empty_request_is_accepted() -> None:
@@ -166,7 +201,8 @@ def test_a_refusal_keeps_the_code_detail_and_context_of_its_error() -> None:
     refusal = Refusal.of(CollectionBusy(COLLECTION_ID))
     assert refusal == Refusal(
         "COLLECTION_BUSY",
-        "the collection has a pending commit. Send the commit again when that commit ends",
+        "the collection has a pending commit. Wait until that commit ends."
+        " A new commit needs a new request ID",
         {"collection_id": str(COLLECTION_ID)},
     )
     assert refusal.as_dict() == {

@@ -9,7 +9,7 @@ from huron.core.lake.collections.metadata import render_sidecar
 from huron.core.lake.collections.models import Collection, CollectionView
 from huron.core.lake.errors import VersionConflict
 from huron.core.security.rbac import Privilege, Scope
-from huron.pkg.errors import NotFound
+from huron.pkg.errors import Conflict, NotFound
 from huron.pkg.paging import CursorValue, Page, decode_cursor, encode_cursor
 
 if TYPE_CHECKING:
@@ -33,6 +33,7 @@ __all__ = [
     "find_organization",
     "page_of",
     "rendered_sidecar",
+    "require_file_writer",
 ]
 
 
@@ -86,6 +87,23 @@ async def find_collection(
     ):
         raise missing
     return found, catalog
+
+
+async def require_file_writer(
+    authz: Authorizer, actor: Actor, collection: Collection, catalog: Catalog, verb: str
+) -> None:
+    """Raise unless the actor may write files to ``collection`` and the collection takes files.
+
+    The actor needs ``COLLECTION_WRITE_FILES`` on the catalog (:class:`Forbidden`), and the
+    collection must be active or incomplete (:class:`Conflict`). ``verb`` names the write in the
+    message of the conflict, for example ``upload`` or ``commit``.
+    """
+    await authz.require(actor, Privilege.COLLECTION_WRITE_FILES, Scope.catalog(catalog.id))
+    if not collection.settled:
+        raise Conflict(
+            f"you can {verb} files only to an active or incomplete collection",
+            {"state": str(collection.state), "allowed": ["active", "incomplete"]},
+        )
 
 
 async def collection_view(

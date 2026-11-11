@@ -20,6 +20,7 @@ __all__ = [
     "ObjectState",
     "ReceiptMode",
     "Removal",
+    "Seal",
     "StoredObject",
     "Upload",
     "UploadAttempt",
@@ -209,6 +210,45 @@ class UploadAttempt:
         """Whether a creation with these fields names this attempt and not a different file."""
         return (self.collection_id, self.rel_path, self.size) == (collection_id, rel_path, size)
 
+    @property
+    def idle(self) -> bool:
+        """Whether the attempt can expire: ``receiving`` or ``sealing``, or ``ready`` and held by
+        no commit request.
+        """
+        return self.state in _UNSEALED or (
+            self.state is AttemptState.READY and self.commit_request_id is None
+        )
+
+    def lapsed(self, before: datetime) -> bool:
+        """Whether the attempt is idle and its last activity is before ``before``.
+
+        ``before`` is the current time minus ``upload_ttl``, so a lapsed attempt is expired.
+        """
+        return self.idle and self.active_at < before
+
+
+@dataclass(frozen=True, slots=True)
+class Seal:
+    """A seal that may run: copy the tusd file of ``attempt``'s current upload ID to the path
+    of ``stored``, and measure the copy.
+
+    ``attempt`` is ``sealing``. ``stored`` is the one object of the upload ID, so a seal that
+    runs again has the same path.
+    """
+
+    attempt: UploadAttempt
+    stored: StoredObject
+
+    @property
+    def upload_id(self) -> uuid.UUID:
+        """The tusd upload ID whose file the seal copies."""
+        return self.stored.upload_id
+
+    @property
+    def size(self) -> int:
+        """The number of bytes that the tusd file and the copy must have."""
+        return self.attempt.size
+
 
 @dataclass(frozen=True, slots=True)
 class StoredObject:
@@ -312,3 +352,4 @@ class Destination:
 
 
 _ENDED = frozenset({AttemptState.FAILED, AttemptState.CANCELLED, AttemptState.EXPIRED})
+_UNSEALED = frozenset({AttemptState.RECEIVING, AttemptState.SEALING})

@@ -13,11 +13,16 @@ from huron.core.lake.files.errors import (
     FileNotRecorded,
 )
 from huron.core.lake.files.models import Commit, CommitRequest, CommitResult, FileAdd, FileRecord
-from huron.core.lake.lookups import collection_path, cursor_value, find_collection, page_of
+from huron.core.lake.lookups import (
+    collection_path,
+    cursor_value,
+    find_collection,
+    page_of,
+    require_file_writer,
+)
 from huron.core.lake.uploads.errors import UploadReceiptMissing
 from huron.core.lake.uploads.models import ReceiptMode, Removal
 from huron.core.security.rbac import Authorizer, Privilege, Scope
-from huron.pkg.errors import Conflict
 from huron.pkg.identifiers import new_id, parse_id
 from huron.pkg.paging import Page, clamp_limit
 from huron.schema.loader import load_document
@@ -113,12 +118,7 @@ class Commits:
             collection, catalog = await find_collection(
                 tx, authz, actor, collection_id=collection_id, lock=True
             )
-            await authz.require(actor, Privilege.COLLECTION_WRITE_FILES, Scope.catalog(catalog.id))
-            if not collection.settled:
-                raise Conflict(
-                    "you can commit files only to an active or incomplete collection",
-                    {"state": str(collection.state), "allowed": ["active", "incomplete"]},
-                )
+            await require_file_writer(authz, actor, collection, catalog, "commit")
             remove_keys = [rel_path_key(path) for path in request.removes]
             recorded = {
                 record.rel_path_key: record

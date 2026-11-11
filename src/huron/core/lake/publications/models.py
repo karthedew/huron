@@ -14,9 +14,11 @@ if TYPE_CHECKING:
     import uuid
     from datetime import datetime
 
+    from huron.core.lake.uploads.models import StoredObject
     from huron.pkg.errors import HuronError
 
 __all__ = [
+    "MAX_BASE_VERSION",
     "MAX_ENTRIES",
     "CommitAdd",
     "CommitEntry",
@@ -24,11 +26,16 @@ __all__ = [
     "CommitRequest",
     "CommitState",
     "EntryAction",
+    "EntryTarget",
     "Refusal",
+    "Resolution",
 ]
 
 MAX_ENTRIES = 10_000
 """The most adds and removes that one commit request can hold together."""
+
+MAX_BASE_VERSION = 2**31 - 1
+"""The largest version that a collection can have: the largest value of its version column."""
 
 
 class CommitState(StrEnum):
@@ -44,6 +51,17 @@ class CommitState(StrEnum):
     BLOCKED = "blocked"
     SUCCEEDED = "succeeded"
     ABANDONED = "abandoned"
+
+
+class Resolution(StrEnum):
+    """What a platform administrator does with a blocked request.
+
+    ``retry`` runs the entries that are not done again. ``abandon`` ends a request of which no
+    entry is done, frees its collection and returns its uploads to ``ready``.
+    """
+
+    RETRY = "retry"
+    ABANDON = "abandon"
 
 
 class EntryAction(StrEnum):
@@ -89,7 +107,8 @@ class CommitRequest:
     ``request_id``. A request holds at most :data:`MAX_ENTRIES` adds and removes together. Each
     path is a valid path in a collection, and no two paths have the same key after NFC and case
     folding. Each add has a size of 0 or more and a sha256 of 64 lowercase hexadecimal
-    characters. A request that breaks a rule cannot be made.
+    characters. No two adds name one upload. ``base_version`` is from 0 to
+    :data:`MAX_BASE_VERSION`. A request that breaks a rule cannot be made.
     """
 
     request_id: uuid.UUID
@@ -102,9 +121,11 @@ class CommitRequest:
 
     def __post_init__(self) -> None:
         _check_entry_count(len(self.adds) + len(self.removes))
+        _check_base_version(self.base_version)
         for add in self.adds:
             _check_add(add)
         _check_paths([add.rel_path for add in self.adds], list(self.removes))
+        _check_uploads(self.adds)
 
     def digest(self) -> str:
         """The sha256 of the canonical body.
@@ -141,6 +162,23 @@ class CommitEntry:
     rel_path: str
     upload_id: uuid.UUID | None = None
     done_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EntryTarget:
+    """An entry that is not done, with the facts that its filesystem step needs.
+
+    ``path`` is the path of the entry in the API's form: the directory of the collection, then
+    the ``rel_path`` of the entry. ``old_inode`` is the inode of the recorded file at exactly
+    that path before the request, ``None`` when no file is recorded there or Huron never learned
+    its inode. ``source`` is the sealed object that an ``add_file`` entry links, ``None`` for the
+    other actions.
+    """
+
+    entry: CommitEntry
+    path: str
+    old_inode: int | None = None
+    source: StoredObject | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +255,14 @@ def _check_entry_count(entries: int) -> None:
         )
 
 
+def _check_base_version(base_version: int) -> None:
+    if not 0 <= base_version <= MAX_BASE_VERSION:
+        raise CommitInvalid(
+            f"the base_version must be from 0 to {MAX_BASE_VERSION}",
+            {"base_version": base_version, "maximum": MAX_BASE_VERSION},
+        )
+
+
 def _check_add(add: CommitAdd) -> None:
     if add.size < 0:
         raise CommitInvalid(
@@ -245,3 +291,18 @@ def _check_paths(adds: list[str], removes: list[str]) -> None:
                 "a path appears twice in the commit", {"rel_path": path, "other": keys[key]}
             )
         keys[key] = path
+
+
+def _check_uploads(adds: tuple[CommitAdd, ...]) -> None:
+    named: dict[uuid.UUID, str] = {}
+    for add in adds:
+        if add.upload_id in named:
+            raise CommitInvalid(
+                "two adds name one upload",
+                {
+                    "rel_path": add.rel_path,
+                    "other": named[add.upload_id],
+                    "upload_id": str(add.upload_id),
+                },
+            )
+        named[add.upload_id] = add.rel_path

@@ -49,7 +49,11 @@ async def make_world(settings: LakeSettings = SETTINGS) -> World:
 
 async def seed(world: World) -> None:
     """Organization ``helio``, catalog ``heliophysics`` with grants, namespace ``solar-wind``."""
-    lake = world.lake
+    await seed_lake(world.lake)
+
+
+async def seed_lake(lake: Lake) -> None:
+    """:func:`seed` for a lake over any store."""
     await lake.organizations.create(PLATFORM_ADMIN, "helio", "Heliophysics", "Sun and wind")
     await lake.grants.set_organization_role(
         PLATFORM_ADMIN, "helio", Role.ORG_ADMIN, ["helio-org-admins"]

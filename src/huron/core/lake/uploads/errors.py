@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from huron.core.lake.uploads.models import AttemptState
@@ -14,7 +15,9 @@ if TYPE_CHECKING:
     from huron.core.lake.uploads.models import UploadAttempt, UploadState
 
 __all__ = [
+    "AttemptIdConflict",
     "CapacityExceeded",
+    "IneligibleReason",
     "UploadAttemptRefused",
     "UploadIneligible",
     "UploadNotFound",
@@ -31,6 +34,7 @@ UPLOAD_TOO_LARGE = register("UPLOAD_TOO_LARGE", 413, "Upload too large")
 UPLOAD_RECEIPT_MISSING = register("UPLOAD_RECEIPT_MISSING", 422, "Upload receipt missing")
 UPLOAD_INELIGIBLE = register("UPLOAD_INELIGIBLE", 409, "Upload ineligible")
 CAPACITY_EXCEEDED = register("CAPACITY_EXCEEDED", 429, "Capacity exceeded")
+ATTEMPT_ID_CONFLICT = register("ATTEMPT_ID_CONFLICT", 409, "Attempt ID conflict")
 
 
 class UploadNotFound(HuronError):
@@ -108,18 +112,60 @@ class UploadAttemptRefused(HuronError):
         super().__init__(_refusal(self.state, self.upload_id), context)
 
 
+class IneligibleReason(StrEnum):
+    """Why a commit or a seal cannot use an upload.
+
+    ``state``: the attempt is not in the state that the operation needs. ``superseded``: the
+    upload ID is not the current upload ID of its attempt. ``held``: a pending commit request
+    holds the upload. ``different_file``: the upload is for another collection or path, or its
+    size or its server sha256 is not the size or the sha256 of the add.
+    """
+
+    STATE = "state"
+    SUPERSEDED = "superseded"
+    HELD = "held"
+    DIFFERENT_FILE = "different_file"
+
+
 class UploadIneligible(HuronError):
-    """A commit names an upload that is not ready, so the commit cannot publish it."""
+    """A commit or a seal names an upload that it cannot use.
+
+    ``state`` is the state of the attempt of the upload, and ``reason`` tells why. With
+    ``sealing`` the message is for a seal that cannot start, which has only the reasons
+    ``state`` and ``superseded``. Otherwise it is for a commit request: a client that sends the
+    commit again uses a new request ID, because the request ID keeps this refusal.
+    """
 
     error_code = UPLOAD_INELIGIBLE
 
-    def __init__(self, upload_id: uuid.UUID, state: AttemptState) -> None:
+    def __init__(
+        self,
+        upload_id: uuid.UUID,
+        state: AttemptState,
+        reason: IneligibleReason = IneligibleReason.STATE,
+        *,
+        sealing: bool = False,
+    ) -> None:
+        messages = _SEAL_REFUSALS if sealing else _COMMIT_REFUSALS
         super().__init__(
-            f"upload {upload_id} is {state}. A commit can publish only a ready upload."
-            " Read the upload attempt, then send the commit again",
-            {"upload_id": str(upload_id), "state": str(state)},
+            messages[reason].format(upload_id=upload_id, state=state),
+            {"upload_id": str(upload_id), "state": str(state), "reason": str(reason)},
         )
         self.state = state
+        self.reason = reason
+
+
+class AttemptIdConflict(HuronError):
+    """A creation names an attempt that Huron knows with another collection, path or size."""
+
+    error_code = ATTEMPT_ID_CONFLICT
+
+    def __init__(self, attempt_id: uuid.UUID) -> None:
+        super().__init__(
+            f"upload attempt {attempt_id} is for a different file."
+            " Use a new attempt_id for a new upload",
+            {"attempt_id": str(attempt_id)},
+        )
 
 
 class CapacityExceeded(HuronError):
@@ -133,6 +179,33 @@ class CapacityExceeded(HuronError):
             " Send the upload again later",
             {"limit": limit, "requested": requested, "available": available},
         )
+
+
+_AGAIN = " Read the upload attempt, then send the commit again with a new request ID"
+_COMMIT_REFUSALS = {
+    IneligibleReason.STATE: (
+        "upload {upload_id} is {state}. A commit can publish only a ready upload." + _AGAIN
+    ),
+    IneligibleReason.SUPERSEDED: (
+        "upload {upload_id} is not the current upload of its attempt." + _AGAIN
+    ),
+    IneligibleReason.HELD: (
+        "a pending commit holds upload {upload_id}. A commit can publish an upload one time"
+    ),
+    IneligibleReason.DIFFERENT_FILE: (
+        "upload {upload_id} holds a different file. Its collection, path, size or sha256"
+        " is not the value of the add"
+    ),
+}
+_SEAL_REFUSALS = {
+    IneligibleReason.STATE: (
+        "upload {upload_id} is {state}. Huron cannot start a seal of it. Read the upload attempt"
+    ),
+    IneligibleReason.SUPERSEDED: (
+        "upload {upload_id} is not the current upload of its attempt."
+        " Huron cannot start a seal of it. Read the upload attempt"
+    ),
+}
 
 
 def _refusal(state: AttemptState, upload_id: uuid.UUID | None) -> str:

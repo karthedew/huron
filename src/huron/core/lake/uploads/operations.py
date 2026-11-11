@@ -21,7 +21,7 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from huron.core.lake.lookups import collection_view, find_collection
+from huron.core.lake.lookups import collection_view, find_collection, require_file_writer
 from huron.core.lake.uploads.errors import (
     UploadNotFound,
     UploadSizeMismatch,
@@ -35,8 +35,8 @@ from huron.core.lake.uploads.models import (
     Upload,
     UploadState,
 )
-from huron.core.security.rbac import Authorizer, Privilege, Scope
-from huron.pkg.errors import Conflict, Invalid
+from huron.core.security.rbac import Authorizer
+from huron.pkg.errors import Invalid
 from huron.pkg.identifiers import new_id
 from huron.pkg.paging import clamp_limit
 from huron.schema.naming import check_rel_path, rel_path_key
@@ -234,12 +234,7 @@ async def _writable(
     collection, catalog = await find_collection(
         tx, authz, actor, collection_id=collection_id, lock=lock
     )
-    await authz.require(actor, Privilege.COLLECTION_WRITE_FILES, Scope.catalog(catalog.id))
-    if not collection.settled:
-        raise Conflict(
-            "you can upload files only to an active or incomplete collection",
-            {"state": str(collection.state), "allowed": ["active", "incomplete"]},
-        )
+    await require_file_writer(authz, actor, collection, catalog, "upload")
     return collection, catalog
 
 

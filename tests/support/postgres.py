@@ -8,14 +8,15 @@ started. Each test session gets a fresh database migrated to head.
 import asyncio
 import os
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from urllib.parse import urlsplit, urlunsplit
 
 import asyncpg
 from alembic import command
 from alembic.config import Config
 
+from huron.core.metastore.postgres import PostgresStore
 from huron.core.metastore.tables import SCHEMA, load_all
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -69,6 +70,18 @@ async def truncate(url: str) -> None:
         await connection.execute(f"truncate {tables} restart identity cascade")
     finally:
         await connection.close()
+
+
+@asynccontextmanager
+async def empty_store(url: str) -> AsyncIterator[PostgresStore]:
+    """A connected store over the database ``url``, emptied first."""
+    await truncate(url)
+    store = PostgresStore(url, pool_size=4)
+    await store.connect()
+    try:
+        yield store
+    finally:
+        await store.close()
 
 
 async def _admin(url: str, statement: str) -> None:

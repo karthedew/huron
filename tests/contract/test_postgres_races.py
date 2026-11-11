@@ -42,6 +42,7 @@ from tests.support.lake import (
     seed,
     settled_collection,
 )
+from tests.support.publication import publishing_over
 
 pytestmark = pytest.mark.contract
 SHA = "e" * 64
@@ -459,17 +460,65 @@ async def test_idle_attempts_skip_an_attempt_that_another_transaction_holds(
     await holder.close()
 
 
-async def _done_or_waiting_for_a_lock(task: asyncio.Task[Any], database_url: str) -> None:
-    """Return once ``task`` is done or a transaction of this database waits for a lock.
+async def test_two_first_submissions_of_one_request_give_one_saved_outcome(
+    uow: PostgresStore, database_url: str
+) -> None:
+    publishing = await publishing_over(uow)
+    request = publishing.request(2)
+    holder = _Held(uow, lambda tx: tx.collections.lock(publishing.collection_id))
+    await holder.wait()
+    submits = [
+        asyncio.create_task(publishing.publications.submit(CONTRIBUTOR, request)) for _ in range(2)
+    ]
+    await _done_or_waiting_for_a_lock(submits[1], database_url, waiting=2)
+    await holder.close()
+    first, second = await asyncio.gather(*submits)
+    assert first == second
+    assert first.state is CommitState.ACCEPTED
+    assert (await publishing.collection()).pending_request_id == first.id
+
+
+async def test_a_finalize_that_waits_for_an_abandon_changes_nothing(
+    uow: PostgresStore, database_url: str
+) -> None:
+    publishing = await publishing_over(uow)
+    outcome = await publishing.publications.submit(CONTRIBUTOR, publishing.request(2))
+    blocked = await publishing.publications.block(outcome, Refusal("STORAGE_FAILED", "blocked", {}))
+    abandoned = replace(blocked, state=CommitState.ABANDONED)
+
+    async def abandon(tx: PostgresTransaction) -> None:
+        collection = await tx.collections.lock(publishing.collection_id)
+        assert collection is not None
+        await tx.commit_requests.update(abandoned)
+        await tx.collections.update(replace(collection, pending_request_id=None))
+
+    holder = _Held(uow, abandon)
+    await holder.wait()
+    late = asyncio.create_task(publishing.publications.finalize(outcome))
+    await _done_or_waiting_for_a_lock(late, database_url)
+    assert not late.done()
+    await holder.close()
+    assert await late == abandoned
+    assert (await publishing.collection()).version == 2
+
+
+async def _done_or_waiting_for_a_lock(
+    task: asyncio.Task[Any], database_url: str, waiting: int = 1
+) -> None:
+    """Return once ``task`` is done or ``waiting`` transactions of this database wait for a lock.
 
     Fail the test when neither happens within 5 seconds.
     """
     connection = await asyncpg.connect(database_url)
     try:
         async with asyncio.timeout(5):
-            while not task.done() and not await connection.fetchval(
-                "select exists (select from pg_locks l join pg_stat_activity a on a.pid = l.pid"
-                " where not l.granted and a.datname = current_database())"
+            while not task.done() and (
+                await connection.fetchval(
+                    "select count(distinct a.pid) from pg_locks l"
+                    " join pg_stat_activity a on a.pid = l.pid"
+                    " where not l.granted and a.datname = current_database()"
+                )
+                < waiting
             ):
                 await asyncio.sleep(0.01)
     except TimeoutError:

@@ -6,11 +6,12 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 
 | Code | Status | Meaning |
 | --- | --- | --- |
+| `ATTEMPT_ID_CONFLICT` | 409 | A creation has the `attempt_id` of an earlier upload attempt, but a different collection, path or size. `context.attempt_id` names the attempt. Use a new `attempt_id` for a new upload. |
 | `BASE_VERSION_CONFLICT` | 409 | The base version of the commit is older than the current version of the collection. Run `huron pull`. `context.current_version` names the current version. |
 | `CAPACITY_EXCEEDED` | 429 | The service does not have the space for the upload now. `context.limit` names the limit that stops the upload. `context.requested` and `context.available` give the numbers of bytes. Send the upload again later. |
 | `CATALOG_NOT_EMPTY` | 409 | The catalog still has namespaces. |
 | `COLLECTIONS_NOT_ALLOWED` | 409 | The namespace does not allow collections. |
-| `COLLECTION_BUSY` | 409 | The collection has a pending commit. A collection accepts one commit at a time. Send the commit again when the pending commit ends. |
+| `COLLECTION_BUSY` | 409 | The collection has a pending commit. A collection accepts one commit at a time. A delete of the collection also gets this code. Wait until the pending commit ends. Then send the commit again with a new request ID. The request ID of the refused commit keeps this refusal. A refused delete can be sent again. |
 | `COLLECTION_NOT_EMPTY` | 409 | The collection still has recorded files. |
 | `COMMIT_INVALID` | 422 | The commit body is not valid. It breaks the commit schema or a path rule, or it has the same path twice. |
 | `COMMIT_REQUEST_NOT_FOUND` | 404 | The commit request does not exist, or a different user sent it. `context.request_id` names the request. |
@@ -36,19 +37,28 @@ Every error is an RFC 9457 `application/problem+json` document. The document has
 | `SCHEMA_INCOMPATIBLE` | 422 | A schema contradicts the schema that it extends. It changes the type of a required property, or it has no base schema. |
 | `SCHEMA_INVALID` | 422 | A schema document is outside the allowed subset of JSON Schema, or it has a value that JSON cannot hold (rule `json`). |
 | `SCHEMA_SCOPE` | 422 | A catalog or a schema uses a schema of a different organization. |
-| `STATE_CONFLICT` | 409 | The state of the object does not allow the operation. `context.state` and `context.allowed` tell why. |
+| `STATE_CONFLICT` | 409 | The state of the object does not allow the operation. `context.state` and `context.allowed` tell why. A refused end of a commit request names its entries instead. `context.open` lists the entries that are not done, and `context.done` lists the entries that are done. |
 | `STORAGE_FAILED` | 500 | An operation on the share failed. The API reports it for its disk work, and the CLI reports it when it cannot use the share. The share is missing, has no marker or a marker for a different instance or organization, or is not writable. `context.path` names the path. |
 | `SYMLINK_IN_LAKE` | 409 | A name on the path of a disk operation is a symbolic link. The lake must not contain symbolic links. The API does not change the disk, and it does not delete the link. The storage administrator deletes it. `context.path` is the lake path of the link. |
 | `TOKEN_INVALID` | 401 | The bearer token or the company token is not valid, or it expired. |
 | `UNAUTHENTICATED` | 401 | The request has no bearer token. |
 | `UPLOADS_DISABLED` | 404 | The service has no `lake_path`, so it serves no upload route. The upload routes are `POST /api/v1/uploads/hooks`, `GET /api/v1/uploads/auth` and `GET /api/v1/uploads/{id}`. |
-| `UPLOAD_INELIGIBLE` | 409 | The commit names an upload that is not ready. A commit can publish only a ready upload. `context.upload_id` names the upload, and `context.state` gives its state. Read the upload attempt, then send the commit again. |
+| `UPLOAD_INELIGIBLE` | 409 | A commit or a seal names an upload that it cannot use. `context.upload_id` names the upload, `context.state` gives the state of its attempt and `context.reason` tells why. The reason `state` means that the upload is not ready for the commit, or that the seal cannot start in that state. The reason `superseded` means that the upload is not the current upload of its attempt. Only a commit gives the reasons `held` and `different_file`. The reason `held` means that a pending commit holds the upload. The reason `different_file` means that the upload is for a different collection or path, or its size or sha256 is not the value of the add. Read the upload attempt. To send a refused commit again, use a new request ID. |
 | `UPLOAD_NOT_FOUND` | 404 | The upload does not exist, or the caller did not start it. |
 | `UPLOAD_RECEIPT_MISSING` | 422 | The commit adds a file that has no upload receipt. A receipt is good only for the same user, path, size and sha256, and only until `upload_ttl` ends. A later upload to the same path, by any user, cancels the receipt. `context.rel_path` names the file. |
 | `UPLOAD_SIZE_MISMATCH` | 422 | The uploaded file does not have the size that the upload declared. `context.declared` and `context.received` give the two sizes. |
 | `UPLOAD_STATE_CONFLICT` | 409 | The state of the upload does not allow the operation. `context.state` and `context.allowed` tell why. A creation that names an upload attempt with an upload also gets this code. Then `context.attempt_id` names the attempt and `context.state` gives its state. If the attempt did not end, `context.upload_id` names its current upload. |
-| `UPLOAD_TOO_LARGE` | 413 | The upload declares more bytes than `upload_max_size`. `context.maximum` gives the limit. |
+| `UPLOAD_TOO_LARGE` | 413 | The upload declares more bytes than `upload_max_size`, the largest file that the service accepts. A new upload attempt also gets this code when it declares more bytes than the limit for one file. `context.size` gives the declared size and `context.maximum` gives the limit. |
 | `VERSION_CONFLICT` | 412 | `If-Match` names an older version. `context.current_version` names the current version. |
+
+## Refusals of a commit request
+
+The server keeps the outcome of each commit request under the request ID of its creator. A
+refusal after the server found the collection is also kept, with the state `rejected`. These
+refusals include `BASE_VERSION_CONFLICT`, `COLLECTION_BUSY`, `COMMIT_INVALID`,
+`FILE_NOT_RECORDED`, `FORBIDDEN`, `STATE_CONFLICT`, `UPLOAD_INELIGIBLE` and `UPLOAD_NOT_FOUND`. The
+same request ID and the same body get the kept refusal again. Thus a client sends a corrected or
+repeated commit with a new request ID.
 
 ## Errors after a commit
 

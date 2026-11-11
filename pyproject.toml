@@ -188,6 +188,7 @@ forbidden_modules = [
     "huron.core.lake.schemas.registry",
     "huron.core.lake.schemas.completeness",
     "huron.core.lake.uploads.operations",
+    "huron.core.lake.uploads.attempts",
     "huron.core.lake.repairs.operations",
     "huron.core.lake.publications.operations",
 ]

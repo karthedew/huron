@@ -156,8 +156,12 @@ task D6) describes the manual procedure.
   `sealing` or `ready`, counted two times for the tusd file and the copy), `min_free_bytes` (from `statvfs`).
 - The free-space check reads both filesystems: the one of `.tus-uploads` and the one of the
   organization's object area.
-- `begin` refuses with 429 `CAPACITY_EXCEEDED` when a limit does not hold. The pre-create hook
-  refuses an upload with no declared length.
+- `begin` refuses with 429 `CAPACITY_EXCEEDED` when `max_staged_bytes` or `min_free_bytes` does
+  not hold. A file above `max_upload_bytes` gets 413 `UPLOAD_TOO_LARGE`, because it can never
+  fit and "send it again later" would be wrong. The pre-create hook refuses an upload with no
+  declared length.
+- A saved rejection is final for its request ID. A client that sends the work again uses a new
+  request ID. This includes a `COLLECTION_BUSY` refusal.
 
 ### tusd and nginx settings
 
@@ -303,7 +307,7 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
   times. `abandon` with zero and with one done step.
 - Verification: `make gate`, `uv run pytest -m contract`.
 - Dependencies: S3, S4.
-- Status: pending
+- Status: complete (verification 2 of 3 passed, 2026-11-11)
 
 ### S6 Orchestration in the API
 
@@ -326,6 +330,9 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
     of every issued upload ID that is not current, and objects that no file row and no pending
     entry names. Select by database ID only. Never by age or by name.
   - No database transaction waits for a filesystem call.
+  - Build `Attempts` and `Publications` in `runtime.py` with the object directory name of
+    `core.storage` and a new setting for the 7-day `upload_ttl` of an attempt. A blocked
+    request whose entries are all done can be finalized: the materializer expects this.
 - Tests: a storage error leaves the request pending and gives no success. A second run completes
   it one time. A foreign target blocks. A second runtime on the same database serves reads only.
   Loss of the lock connection stops new steps. Cleanup never touches a file that a row names.
@@ -353,6 +360,11 @@ The S1 results give the full flag list and the nginx block. They bind. The rules
     the current ID of an attempt in `receiving`. An allowed `PATCH` records activity.
   - `GET /api/v1/upload-attempts/{attempt_id}`: returns the state and the current upload ID to
     the owner, and runs the API's own seal check.
+  - Error text: replace the `sealing` flag of `UploadIneligible` with two named constructors,
+    so that a seal refusal with a commit-only reason cannot be built. A commit that names an
+    upload in an end state tells the client to start a new upload. The conflict of a cancel
+    on a held upload does not list `ready` as allowed. The `STATE_CONFLICT` row names
+    `context.request_id` and the limit of 20 entries.
   - A commit that names an upload that is not `ready` runs the seal check one time. If the
     upload is still not `ready`, the answer is 409 `UPLOAD_INELIGIBLE` with the state.
   - The CLI sends the new body with a new request ID and the upload IDs. Durable recovery is

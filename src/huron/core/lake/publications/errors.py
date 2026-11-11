@@ -38,12 +38,17 @@ class CommitRequestNotFound(HuronError):
 
 
 class CollectionBusy(HuronError):
-    """The collection has a pending commit request, so it accepts no other request now."""
+    """The collection has a pending commit request, so it accepts no other request now.
+
+    A collection delete gets this refusal too. A commit request keeps it under its request ID,
+    so the client sends the commit again with a new request ID.
+    """
 
     error_code = COLLECTION_BUSY
 
     def __init__(self, collection_id: uuid.UUID) -> None:
         super().__init__(
-            "the collection has a pending commit. Send the commit again when that commit ends",
+            "the collection has a pending commit. Wait until that commit ends."
+            " A new commit needs a new request ID",
             {"collection_id": str(collection_id)},
         )

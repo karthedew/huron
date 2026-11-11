@@ -32,6 +32,7 @@ from huron.core.lake.lookups import (
     page_of,
     rendered_sidecar,
 )
+from huron.core.lake.publications.errors import CollectionBusy
 from huron.core.security.rbac import Authorizer, Privilege, Scope
 from huron.pkg.errors import Conflict, Forbidden
 from huron.pkg.identifiers import new_id
@@ -251,7 +252,9 @@ class Collections:
         the version are checked, so the CLI can learn the delete will be refused before it
         removes any file.
 
-        The files of its placed, uncommitted uploads are on disk with no record: the delete
+        A collection with a pending commit request is :class:`CollectionBusy`: that request
+        still changes its directory. The files of its placed, uncommitted uploads are on disk
+        with no record: the delete
         queues their removal, claimed for the caller, and forgets every upload of the
         collection. The answer carries those removals and the collection's directory.
         """
@@ -264,6 +267,8 @@ class Collections:
             check_version(collection.version, expected_version)
             if dry_run:
                 return None
+            if collection.pending_request_id is not None:
+                raise CollectionBusy(collection.id)
             if collection.file_count:
                 raise CollectionNotEmpty(
                     f"collection {collection.identifier} still has {collection.file_count} files",

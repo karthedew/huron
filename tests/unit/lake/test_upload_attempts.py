@@ -2,10 +2,17 @@
 
 import uuid
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
 
-from huron.core.lake.uploads.errors import CapacityExceeded, UploadAttemptRefused, UploadIneligible
+from huron.core.lake.uploads.errors import (
+    AttemptIdConflict,
+    CapacityExceeded,
+    IneligibleReason,
+    UploadAttemptRefused,
+    UploadIneligible,
+)
 from huron.core.lake.uploads.models import AttemptState, UploadAttempt
 from tests.support.clock import START
 
@@ -122,12 +129,104 @@ def test_a_refusal_of_an_ended_attempt_names_its_state_only(state: AttemptState)
     )
 
 
-def test_an_ineligible_upload_names_the_upload_and_its_state() -> None:
+def test_an_ineligible_upload_names_the_upload_its_state_and_the_reason() -> None:
     error = UploadIneligible(CURRENT, AttemptState.SEALING)
     assert (error.code, error.status) == ("UPLOAD_INELIGIBLE", 409)
-    assert error.state is AttemptState.SEALING
-    assert error.context == {"upload_id": str(CURRENT), "state": "sealing"}
-    assert error.message.startswith(f"upload {CURRENT} is sealing.")
+    assert (error.state, error.reason) == (AttemptState.SEALING, IneligibleReason.STATE)
+    assert error.context == {"upload_id": str(CURRENT), "state": "sealing", "reason": "state"}
+    assert error.message == (
+        f"upload {CURRENT} is sealing. A commit can publish only a ready upload."
+        " Read the upload attempt, then send the commit again with a new request ID"
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "message"),
+    [
+        (
+            IneligibleReason.SUPERSEDED,
+            f"upload {FIRST} is not the current upload of its attempt."
+            " Read the upload attempt, then send the commit again with a new request ID",
+        ),
+        (
+            IneligibleReason.HELD,
+            f"a pending commit holds upload {FIRST}. A commit can publish an upload one time",
+        ),
+        (
+            IneligibleReason.DIFFERENT_FILE,
+            f"upload {FIRST} holds a different file. Its collection, path, size or sha256"
+            " is not the value of the add",
+        ),
+    ],
+)
+def test_an_ineligible_upload_tells_each_reason(reason: IneligibleReason, message: str) -> None:
+    error = UploadIneligible(FIRST, AttemptState.READY, reason)
+    assert (error.message, error.reason) == (message, reason)
+    assert error.context == {"upload_id": str(FIRST), "state": "ready", "reason": str(reason)}
+
+
+@pytest.mark.parametrize(
+    ("reason", "message"),
+    [
+        (
+            IneligibleReason.STATE,
+            f"upload {FIRST} is cancelled. Huron cannot start a seal of it."
+            " Read the upload attempt",
+        ),
+        (
+            IneligibleReason.SUPERSEDED,
+            f"upload {FIRST} is not the current upload of its attempt."
+            " Huron cannot start a seal of it. Read the upload attempt",
+        ),
+    ],
+)
+def test_a_seal_that_cannot_start_tells_its_reason_without_a_commit(
+    reason: IneligibleReason, message: str
+) -> None:
+    error = UploadIneligible(FIRST, AttemptState.CANCELLED, reason, sealing=True)
+    assert (error.code, error.message, error.reason) == ("UPLOAD_INELIGIBLE", message, reason)
+    assert error.context == {
+        "upload_id": str(FIRST),
+        "state": "cancelled",
+        "reason": str(reason),
+    }
+
+
+def test_an_attempt_id_conflict_names_the_attempt() -> None:
+    error = AttemptIdConflict(ATTEMPT_ID)
+    assert (error.code, error.status) == ("ATTEMPT_ID_CONFLICT", 409)
+    assert error.context == {"attempt_id": str(ATTEMPT_ID)}
+    assert error.message == (
+        f"upload attempt {ATTEMPT_ID} is for a different file."
+        " Use a new attempt_id for a new upload"
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "held", "idle"),
+    [
+        (AttemptState.RECEIVING, False, True),
+        (AttemptState.SEALING, False, True),
+        (AttemptState.READY, False, True),
+        (AttemptState.READY, True, False),
+        (AttemptState.CONSUMED, True, False),
+        (AttemptState.FAILED, False, False),
+        (AttemptState.CANCELLED, False, False),
+        (AttemptState.EXPIRED, False, False),
+    ],
+)
+def test_only_an_unsealed_or_free_ready_attempt_is_idle(
+    state: AttemptState, held: bool, idle: bool
+) -> None:
+    attempt = replace(ATTEMPT, state=state, commit_request_id=ATTEMPT.id if held else None)
+    assert attempt.idle is idle
+
+
+def test_an_idle_attempt_lapses_only_when_its_activity_is_before_the_limit() -> None:
+    later = START + timedelta(microseconds=1)
+    assert ATTEMPT.lapsed(later)
+    assert not ATTEMPT.lapsed(START)
+    assert not replace(ATTEMPT, state=AttemptState.EXPIRED).lapsed(later)
 
 
 def test_exceeded_capacity_names_the_limit_and_the_bytes() -> None:
