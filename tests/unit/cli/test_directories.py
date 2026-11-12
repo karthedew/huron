@@ -4,7 +4,7 @@ The CLI sees the share through :class:`ReadOnlyShare`, so a write call fails the
 """
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import httpx
@@ -15,7 +15,13 @@ from huron.core.storage import MARKER_FILE, LakePath, Marker, render_marker
 from huron.core.storage.memory import MemoryStorage
 from tests.fakes.storage import ReadOnlyShare, rooted
 from tests.support.cli import Cli
-from tests.unit.cli.conftest import CATALOG, PREFIX, make_collection
+from tests.unit.cli.conftest import (
+    ANSWERS,
+    CATALOG,
+    PREFIX,
+    make_collection,
+    share_group_warning,
+)
 from tests.unit.cli.test_collections import BASE_ANSWERS
 
 RUN7 = CATALOG.joinpath("solar-wind", "run7")
@@ -286,3 +292,133 @@ def test_verify_catalog_checks_the_marker_of_the_catalogs_organization(
     services, _, _ = seeded_cli.services()
     with pytest.raises(StorageFailure):
         services.mount().verify_catalog("heliophysics")
+
+
+@pytest.mark.parametrize(
+    ("argv", "said", "catalog"),
+    [
+        (
+            ("create", "catalog", "geophysics", "--org", "helio", "--share-group", "geo-readers"),
+            "Catalog geophysics is ready. To select it, run `huron catalog geophysics`",
+            "geophysics",
+        ),
+        (
+            ("set", "catalog", "heliophysics", "--share-group", "geo-readers"),
+            "The share group of catalog heliophysics is geo-readers",
+            "heliophysics",
+        ),
+    ],
+    ids=["create", "set"],
+)
+def test_a_share_group_that_the_api_cannot_set_names_the_provisioning_step(
+    seeded_cli: Cli, argv: tuple[str, ...], said: str, catalog: str
+) -> None:
+    cli = seeded_cli
+    cli.login_as("bob")
+    result = cli.ok(*argv)
+    assert result.stdout == f"{said}\n"
+    assert result.stderr.splitlines() == share_group_warning(
+        "geo-readers", "this machine does not know the group geo-readers"
+    )
+    view = json.loads(cli.ok("-o", "json", "describe", "catalog", catalog).stdout)
+    assert view["share_group"] == "geo-readers"
+
+
+def test_set_catalog_sets_and_clears_the_share_group(
+    seeded_cli: Cli, share: MemoryStorage, requests: list[tuple[str, str]]
+) -> None:
+    cli = seeded_cli
+    share.groups["helio-staff"] = 2000
+    share.member_of.add(2000)
+    cli.login_as("bob")
+    assert cli.ok("set", "catalog", "heliophysics", "--share-group", "helio-staff").stdout == (
+        "The share group of catalog heliophysics is helio-staff\n"
+    )
+    assert share.nodes[CATALOG].gid == 2000
+    cleared = cli.ok("set", "catalog", "heliophysics", "--no-share-group")
+    assert (cleared.stdout, cleared.stderr) == ("Catalog heliophysics has no share group\n", "")
+    assert share.nodes[CATALOG].gid == share.gid
+    assert changes(requests) == [("PATCH", "/api/v1/catalogs/heliophysics")] * 2
+    view = json.loads(cli.ok("-o", "json", "describe", "catalog", "heliophysics").stdout)
+    assert view["share_group"] is None
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ((), "use `--share-group <group>` or `--no-share-group`"),
+        (
+            ("--share-group", "g", "--no-share-group"),
+            "use `--share-group` or `--no-share-group`, not both",
+        ),
+    ],
+    ids=["neither", "both"],
+)
+def test_set_catalog_needs_exactly_one_share_group_option(
+    seeded_cli: Cli, requests: list[tuple[str, str]], options: tuple[str, ...], message: str
+) -> None:
+    seeded_cli.login_as("bob")
+    refused = seeded_cli.run("set", "catalog", "heliophysics", *options)
+    assert refused.exit_code == 2 and f"error: {message}" in refused.stderr
+    assert changes(requests) == []
+
+
+def nothing(cli: Cli) -> None:
+    """No collection is needed."""
+
+
+def reserve_draft(cli: Cli) -> None:
+    """Reserve and check out the draft solar-wind.run7."""
+    cli.ok("catalog", "heliophysics")
+    cli.prompter.answers.extend(BASE_ANSWERS)
+    cli.ok("create", "collection", "solar-wind.run7", "--draft")
+
+
+def draft_metadata(cli: Cli) -> None:
+    """Create the active solar-wind.run7 and save a metadata draft for it."""
+    cli.ok("catalog", "heliophysics")
+    cli.prompter.answers.extend(ANSWERS)
+    cli.ok("create", "collection", "solar-wind.run7")
+    make_collection(cli)
+    cli.state.write_draft(cli.config_current(), {"title": "Run 7b", "description": "d"})
+
+
+RUN7_REPAIR = "huron adm repair heliophysics.solar-wind.run7"
+
+
+@pytest.mark.parametrize(
+    ("user", "prepare", "argv", "repair"),
+    [
+        ("alice", nothing, ("create", "org", "geo"), "huron adm repair --org geo"),
+        (
+            "bob",
+            nothing,
+            ("create", "catalog", "geophysics", "--org", "helio"),
+            "huron --catalog geophysics adm repair geophysics",
+        ),
+        (
+            "carol",
+            nothing,
+            ("--catalog", "heliophysics", "create", "namespace", "solar-wind.l0", "--parents"),
+            "huron --catalog heliophysics adm repair heliophysics.solar-wind.l0",
+        ),
+        ("dave", reserve_draft, ("activate", "collection"), RUN7_REPAIR),
+        ("dave", draft_metadata, ("publish", "meta"), RUN7_REPAIR),
+    ],
+    ids=["org", "catalog", "namespace", "activate", "publish"],
+)
+def test_a_kept_change_whose_directory_failed_names_its_repair(
+    seeded_cli: Cli,
+    share: MemoryStorage,
+    user: str,
+    prepare: Callable[[Cli], None],
+    argv: tuple[str, ...],
+    repair: str,
+) -> None:
+    cli = seeded_cli
+    cli.login_as(user)
+    prepare(cli)
+    share.remove_file(LakePath.of(MARKER_FILE))
+    failed = cli.run(*argv)
+    assert failed.exit_code == 1 and "[LAKE_UNAVAILABLE]" in failed.stderr
+    assert failed.stderr.splitlines()[-1] == f"hint: to make the directory again, run `{repair}`"

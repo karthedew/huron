@@ -15,9 +15,12 @@ from huron.applications.cli.commands.common import (
     api,
     fetch_collection,
     fetch_namespace,
+    hint_repair,
     read_document,
+    repair_command,
     say,
     services,
+    warn_share_groups,
 )
 from huron.applications.cli.errors import CliError, ExitCode, UsageError
 from huron.applications.cli.services import Services
@@ -40,7 +43,10 @@ edit_app = typer.Typer(help="Edit the metadata draft of a collection.", no_args_
 validate_app = typer.Typer(help="Check a metadata draft against its schema.", no_args_is_help=True)
 publish_app = typer.Typer(help="Publish a metadata draft.", no_args_is_help=True)
 set_app = typer.Typer(
-    help="Set the schema override of a collection, or the settings of a namespace.",
+    help=(
+        "Set the schema override of a collection, the settings of a namespace or the share group"
+        " of a catalog."
+    ),
     no_args_is_help=True,
 )
 unset_app = typer.Typer(help="Clear the schema override of a collection.", no_args_is_help=True)
@@ -187,6 +193,38 @@ def set_namespace(
     say(ctx, f"namespace {view['identifier']} {state} collections")
 
 
+@set_app.command("catalog")
+def set_catalog(
+    ctx: typer.Context,
+    catalog: Annotated[str, typer.Argument(help="The name of the catalog.")],
+    share_group: Annotated[
+        str | None,
+        typer.Option(
+            "--share-group", help="The POSIX group whose members can read the catalog directory."
+        ),
+    ] = None,
+    no_share_group: Annotated[
+        bool, typer.Option("--no-share-group", help="Clear the share group of the catalog.")
+    ] = False,
+) -> None:
+    """Change the share group of a catalog (Org Admin).
+
+    The API tries to give the catalog directory the share group. When you clear the share group,
+    the API tries to give the directory the group of the service. If the API cannot set the
+    group, the storage administrator must set the group.
+    """
+    if no_share_group and share_group is not None:
+        raise UsageError("use `--share-group` or `--no-share-group`, not both")
+    if not no_share_group and share_group is None:
+        raise UsageError("use `--share-group <group>` or `--no-share-group`")
+    view = api(ctx).patch(f"/api/v1/catalogs/{catalog}", json={"share_group": share_group})
+    warn_share_groups(ctx, view["warnings"])
+    if share_group is None:
+        say(ctx, f"Catalog {catalog} has no share group")
+    else:
+        say(ctx, f"The share group of catalog {catalog} is {share_group}")
+
+
 @unset_app.command("override")
 def unset_override(ctx: typer.Context, identifier: CollectionArgument = None) -> None:
     """Clear the schema override of the collection."""
@@ -204,11 +242,12 @@ def _patch(ctx: typer.Context, collection: dict[str, Any], body: dict[str, Any])
     found = services(ctx)
     if _follows(found, collection):
         refuse_pending(found, str(collection["id"]))
-    updated: dict[str, Any] = api(ctx).patch(
-        f"/api/v1/collections/{collection['id']}",
-        json=body,
-        headers=if_match(int(collection["version"])),
-    )
+    with hint_repair(repair_command(ctx, collection["catalog"], collection["identifier"])):
+        updated: dict[str, Any] = api(ctx).patch(
+            f"/api/v1/collections/{collection['id']}",
+            json=body,
+            headers=if_match(int(collection["version"])),
+        )
     with found.state.locked():
         if _follows(found, collection):
             checkout(found, updated)

@@ -7,9 +7,9 @@ description: The commands of the Manage panel of huron --help.
 
 The commands `huron --help` lists under **Manage**.
 
-| Command                                 | Description                                                                        |
-| --------------------------------------- | ---------------------------------------------------------------------------------- |
-| [`create`](/docs/reference/cli/create/) | Create an organization, catalog, namespace or collection.                          |
-| [`delete`](/docs/reference/cli/delete/) | Delete an empty organization, catalog or namespace, or a collection and its files. |
-| [`set`](/docs/reference/cli/set/)       | Set the schema override of a collection, or the settings of a namespace.           |
-| [`unset`](/docs/reference/cli/unset/)   | Clear the schema override of a collection.                                         |
+| Command                                 | Description                                                                                           |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [`create`](/docs/reference/cli/create/) | Create an organization, catalog, namespace or collection.                                             |
+| [`delete`](/docs/reference/cli/delete/) | Delete an empty organization, catalog or namespace, or a collection and its files.                    |
+| [`set`](/docs/reference/cli/set/)       | Set the schema override of a collection, the settings of a namespace or the share group of a catalog. |
+| [`unset`](/docs/reference/cli/unset/)   | Clear the schema override of a collection.                                                            |

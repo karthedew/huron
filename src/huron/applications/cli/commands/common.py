@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 
 from huron.applications.cli.client import ApiClient, if_match
-from huron.applications.cli.errors import CliError, ExitCode, UsageError
+from huron.applications.cli.errors import (
+    SHARE_GROUP_HINT,
+    ApiError,
+    CliError,
+    ExitCode,
+    UsageError,
+    repair_hint,
+)
 from huron.applications.cli.identifiers import collection_candidates, namespace_candidates
 from huron.applications.cli.output import Column, OutputFormat, render, render_one
 from huron.applications.cli.services import Services
@@ -34,10 +42,12 @@ __all__ = [
     "fetch_collection",
     "fetch_namespace",
     "grant_sources",
+    "hint_repair",
     "locate",
     "organization_columns",
     "organization_path",
     "read_document",
+    "repair_command",
     "say",
     "services",
     "set_groups",
@@ -45,6 +55,7 @@ __all__ = [
     "show_list",
     "table_mode",
     "tree_command",
+    "warn_share_groups",
 ]
 
 CollectionArgument = Annotated[
@@ -237,16 +248,41 @@ def locate(
 
 
 def tree_command(ctx: typer.Context, catalog: str | None = None) -> str:
-    """The command that shows the tree of ``catalog``. The default is the catalog in view.
+    """The command that shows the tree of ``catalog``. The default is the catalog in view."""
+    return _in_catalog(ctx, catalog or services(ctx).catalog(), "tree")
 
-    ``huron tree`` shows only the saved current catalog. A different catalog, such as a
-    ``--catalog`` override or the catalog of a full identifier, needs ``--catalog``.
+
+def repair_command(ctx: typer.Context, catalog: str, identifier: str) -> str:
+    """The command that repairs the directories of ``identifier`` in ``catalog``."""
+    return _in_catalog(ctx, catalog, f"adm repair {identifier}")
+
+
+@contextmanager
+def hint_repair(repair: str) -> Generator[None]:
+    """Give the command line ``repair`` as the hint of a disk failure after a kept change.
+
+    The API keeps the rows of a create, an activation or a metadata change when its disk work
+    fails afterwards, so running the verb again does not help.
     """
-    found = services(ctx)
-    target = catalog or found.catalog()
-    if target is None or target == found.config.current_catalog:
-        return "huron tree"
-    return f"huron --catalog {target} tree"
+    try:
+        yield
+    except ApiError as error:
+        error.hint = repair_hint(error.code, repair) or error.hint
+        raise
+
+
+def warn_share_groups(ctx: typer.Context, warnings: Sequence[Mapping[str, Any]]) -> None:
+    """Print each share-group warning of an answer on standard error, then what to do."""
+    err = services(ctx).err
+    for warning in warnings:
+        err.print(
+            f"warning: the catalog directory does not have the group {warning['group']}:"
+            f" {warning['detail']} [{warning['code']}]",
+            markup=False,
+            highlight=False,
+        )
+    if warnings:
+        err.print(f"hint: {SHARE_GROUP_HINT}", markup=False, highlight=False)
 
 
 def fetch_catalog(ctx: typer.Context, name: str) -> dict[str, Any]:
@@ -268,10 +304,11 @@ def activate(ctx: typer.Context, collection: dict[str, Any]) -> dict[str, Any]:
     has a pending commit.
     """
     refuse_pending(services(ctx), str(collection["id"]))
-    activated: dict[str, Any] = api(ctx).post(
-        f"/api/v1/collections/{collection['id']}/activate",
-        headers=if_match(int(collection["version"])),
-    )
+    with hint_repair(repair_command(ctx, collection["catalog"], collection["identifier"])):
+        activated: dict[str, Any] = api(ctx).post(
+            f"/api/v1/collections/{collection['id']}/activate",
+            headers=if_match(int(collection["version"])),
+        )
     checkout(services(ctx), activated)
     return activated
 
@@ -306,6 +343,18 @@ def read_document(path: Path) -> dict[str, object]:
     if not isinstance(document, dict):
         raise UsageError(f"{path} must hold a JSON object")
     return document
+
+
+def _in_catalog(ctx: typer.Context, catalog: str | None, command: str) -> str:
+    """The command line ``huron <command>`` that acts in ``catalog``.
+
+    A later command resolves identifiers against the saved current catalog only. A different
+    catalog, such as a ``--catalog`` override or the catalog of a full identifier, needs
+    ``--catalog``.
+    """
+    if catalog is None or catalog == services(ctx).config.current_catalog:
+        return f"huron {command}"
+    return f"huron --catalog {catalog} {command}"
 
 
 def _not_found_hint(ctx: typer.Context, candidates: Sequence[Identifier]) -> str | None:

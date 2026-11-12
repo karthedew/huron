@@ -6,6 +6,7 @@ from enum import IntEnum
 from typing import Any
 
 __all__ = [
+    "SHARE_GROUP_HINT",
     "ApiError",
     "CliError",
     "ExitCode",
@@ -13,7 +14,14 @@ __all__ = [
     "StorageFailure",
     "UsageError",
     "exit_code_for",
+    "repair_hint",
 ]
+
+#: What to do about a ``SHARE_GROUP_PENDING`` warning: the catalog directory lacks its group.
+SHARE_GROUP_HINT = (
+    "to set the group on disk, run `huron adm provision-catalogs --emit-script`"
+    " as the storage administrator"
+)
 
 
 class ExitCode(IntEnum):
@@ -96,6 +104,21 @@ def exit_code_for(code: str, status: int) -> ExitCode:
     return ExitCode.FAILED
 
 
+def repair_hint(code: str | None, repair: str) -> str | None:
+    """The hint for ``code`` when the API kept a change but its disk work failed, else ``None``.
+
+    ``repair`` is the ``huron adm repair`` command that makes the directory of the change again.
+    """
+    if code in {"STORAGE_FAILED", "LAKE_UNAVAILABLE"}:
+        return f"to make the directory again, run `{repair}`"
+    if code == "SYMLINK_IN_LAKE":
+        return (
+            "the storage administrator must remove the symbolic link."
+            f" Then the storage administrator must run `{repair}`"
+        )
+    return None
+
+
 _EXACT = {
     "UNAUTHENTICATED": ExitCode.NOT_LOGGED_IN,
     "TOKEN_INVALID": ExitCode.NOT_LOGGED_IN,
@@ -118,6 +141,7 @@ _HINTS = {
     "VERSION_CONFLICT": "run `huron pull`",
     "UNAUTHENTICATED": "run `huron login`",
     "TOKEN_INVALID": "run `huron login`",
+    "COLLECTION_BUSY": "to see the state of the collection, run `huron status`",
     "ORGANIZATIONS_MANAGED": (
         "the service configuration declares the organizations."
         " To prepare their directories, run `huron adm provision-orgs`"

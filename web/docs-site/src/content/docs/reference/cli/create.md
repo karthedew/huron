@@ -54,6 +54,9 @@ huron create org [OPTIONS] NAME
 
 Create a catalog (Org Admin). The API creates its directory on the share.
 
+With `--share-group`, the API also tries to give the directory that group. If the API cannot
+set the group, the storage administrator must set the group.
+
 ```text
 huron create catalog [OPTIONS] NAME
 ```
@@ -72,6 +75,7 @@ huron create catalog [OPTIONS] NAME
 | `--schema`       | str  |         | The ID of the schema to assign.                                           |
 | `--display-name` | str  |         | A human-readable name.                                                    |
 | `--description`  | str  |         | A description of what the catalog holds.                                  |
+| `--share-group`  | str  |         | The POSIX group whose members can read the catalog directory.             |
 
 ## `huron create namespace`
 

@@ -12,9 +12,12 @@ from huron.applications.cli.commands.common import (
     activate,
     api,
     explain_missing_organization,
+    hint_repair,
     read_document,
+    repair_command,
     say,
     services,
+    warn_share_groups,
 )
 from huron.applications.cli.errors import ApiError, UsageError
 from huron.applications.cli.identifiers import resolve_collection, resolve_namespace
@@ -47,7 +50,8 @@ def create_org(
     case, a storage admin prepares their directories with `huron adm provision-orgs`.
     """
     body = {"name": name, "display_name": display_name, "description": description}
-    api(ctx).post("/api/v1/organizations", json=body)
+    with hint_repair(f"huron adm repair --org {name}"):
+        api(ctx).post("/api/v1/organizations", json=body)
     say(ctx, f"organization {name} ready")
 
 
@@ -67,8 +71,18 @@ def create_catalog(
     ] = None,
     display_name: Annotated[str, typer.Option(help="A human-readable name.")] = "",
     description: Annotated[str, typer.Option(help="A description of what the catalog holds.")] = "",
+    share_group: Annotated[
+        str | None,
+        typer.Option(
+            "--share-group", help="The POSIX group whose members can read the catalog directory."
+        ),
+    ] = None,
 ) -> None:
-    """Create a catalog (Org Admin). The API creates its directory on the share."""
+    """Create a catalog (Org Admin). The API creates its directory on the share.
+
+    With `--share-group`, the API also tries to give the directory that group. If the API cannot
+    set the group, the storage administrator must set the group.
+    """
     owner = organization or services(ctx).organization()
     if owner is None:
         raise UsageError(
@@ -80,12 +94,15 @@ def create_catalog(
         "schema_id": schema,
         "display_name": display_name,
         "description": description,
+        "share_group": share_group,
     }
     try:
-        api(ctx).post(f"/api/v1/organizations/{owner}/catalogs", json=body)
+        with hint_repair(repair_command(ctx, name, name)):
+            created = api(ctx).post(f"/api/v1/organizations/{owner}/catalogs", json=body)
     except ApiError as error:
         explain_missing_organization(ctx, owner, error)
         raise
+    warn_share_groups(ctx, created["warnings"])
     say(ctx, f"Catalog {name} is ready. To select it, run `huron catalog {name}`")
 
 
@@ -169,10 +186,11 @@ def _walk_through(ctx: typer.Context, collection: dict[str, Any]) -> dict[str, A
 
 def _create(ctx: typer.Context, catalog: str, path: str, allow: bool) -> dict[str, object]:
     parent, _, name = path.rpartition(".")
-    view: dict[str, object] = api(ctx).post(
-        f"/api/v1/catalogs/{catalog}/namespaces",
-        json={"parent": parent, "name": name, "collections_allowed": allow},
-    )
+    with hint_repair(repair_command(ctx, catalog, f"{catalog}.{path}")):
+        view: dict[str, object] = api(ctx).post(
+            f"/api/v1/catalogs/{catalog}/namespaces",
+            json={"parent": parent, "name": name, "collections_allowed": allow},
+        )
     return view
 
 

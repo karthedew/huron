@@ -10,8 +10,21 @@ from rich.console import Console
 
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.config import Config, config_path
-from huron.applications.cli.errors import ApiError, CliError, ExitCode, exit_code_for
-from huron.applications.cli.identifiers import qualify, resolve_collection, resolve_namespace
+from huron.applications.cli.errors import (
+    SHARE_GROUP_HINT,
+    ApiError,
+    CliError,
+    ExitCode,
+    exit_code_for,
+    repair_hint,
+)
+from huron.applications.cli.identifiers import (
+    parent_candidates,
+    qualify,
+    resolve_collection,
+    resolve_identifier,
+    resolve_namespace,
+)
 from huron.applications.cli.output import Column, OutputFormat, render, render_one
 from tests.support.cli import Cli
 
@@ -102,6 +115,11 @@ def test_identifiers_resolve_against_the_current_catalog() -> None:
         resolve_collection("ns", "helio")
     with pytest.raises(CliError):
         resolve_namespace("Bad", None)
+    assert str(resolve_identifier("ns.x", "helio")) == "helio.ns.x"
+    assert resolve_identifier("helio", "helio").catalog == "helio"
+    for invalid in (resolve_identifier, parent_candidates):
+        with pytest.raises(CliError):
+            invalid("Bad", None)
 
 
 def test_api_errors_map_to_exit_codes() -> None:
@@ -123,6 +141,42 @@ def test_api_errors_map_to_exit_codes() -> None:
     error = ApiError.from_problem(409, {"code": "BASE_VERSION_CONFLICT", "detail": "pull"})
     assert error.hint == "run `huron pull`"
     assert ApiError.from_problem(500, {"code": "X"}).message == "HTTP 500"
+
+
+def test_a_busy_collection_hints_the_status_command() -> None:
+    error = ApiError.from_problem(409, {"code": "COLLECTION_BUSY", "detail": "pending commit"})
+    assert error.exit_code is ExitCode.CONFLICT
+    assert error.hint == "to see the state of the collection, run `huron status`"
+
+
+def test_a_pending_share_group_hints_the_provisioning_script() -> None:
+    assert SHARE_GROUP_HINT == (
+        "to set the group on disk, run `huron adm provision-catalogs --emit-script`"
+        " as the storage administrator"
+    )
+
+
+REPAIR = "huron adm repair heliophysics.solar-wind"
+
+
+@pytest.mark.parametrize(
+    ("code", "hint"),
+    [
+        ("STORAGE_FAILED", f"to make the directory again, run `{REPAIR}`"),
+        ("LAKE_UNAVAILABLE", f"to make the directory again, run `{REPAIR}`"),
+        (
+            "SYMLINK_IN_LAKE",
+            "the storage administrator must remove the symbolic link."
+            f" Then the storage administrator must run `{REPAIR}`",
+        ),
+        ("NAME_TAKEN", None),
+        (None, None),
+    ],
+)
+def test_only_a_disk_failure_after_a_kept_change_hints_the_repair(
+    code: str | None, hint: str | None
+) -> None:
+    assert repair_hint(code, REPAIR) == hint
 
 
 def test_client_retries_reads_maps_errors_and_pages() -> None:

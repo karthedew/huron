@@ -298,7 +298,9 @@ exits with code 1 when it has findings.
 The check does not repair directories. API grants and the catalog's filesystem share group are separate.
 A grant change does not change directory permissions. The API repair endpoints use database rows to plan directory work, not a filesystem scan.
 Missing setgid bits or wrong groups below a catalog need the storage administrator.
-The current CLI has no `adm repair`, `adm provision-catalogs` or `adm apply-acl` command.
+
+[`huron adm repair`](/docs/reference/cli/adm/#huron-adm-repair) calls the API repair endpoints.
+The current CLI has no `adm provision-catalogs` or `adm apply-acl` command.
 See [Grant changes and directory repair](access-and-roles.md#grant-changes-and-directory-repair) before requesting repair.
 
 [Reading huron adm check](../operator.md#reading-huron-adm-check) tells what to do for each

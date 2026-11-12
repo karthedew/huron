@@ -183,8 +183,10 @@ Missing setgid bits or wrong groups below a catalog require the storage administ
 Repair does not change the permissions of data files and does not recursively replace directory groups.
 When repair writes `metadata.json`, the new file has mode `0644`.
 
-The current CLI has no `adm repair`, `adm provision-catalogs` or `adm apply-acl` command.
-Report directory failures to the storage administrator rather than run those commands.
+[`huron adm repair`](/docs/reference/cli/adm/#huron-adm-repair) calls these endpoints. It prints each
+changed path, each share-group warning and each failed path with its reason and detail.
+The current CLI has no `adm provision-catalogs` or `adm apply-acl` command.
+Report a failed path to the storage administrator.
 The [API error reference](../api-errors.md) links to the authoritative repair failure schema.
 
 ## Seeing grants

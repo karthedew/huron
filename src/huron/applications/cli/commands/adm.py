@@ -1,4 +1,4 @@
-"""``huron adm``: roles, directory modes, organization mounts, drift checks and schemas."""
+"""``huron adm``: roles, directory modes, organization mounts, drift checks, repairs and schemas."""
 
 from __future__ import annotations
 
@@ -18,10 +18,13 @@ from huron.applications.cli.commands.common import (
     say,
     services,
     set_groups,
+    show,
     show_list,
     table_mode,
+    warn_share_groups,
 )
 from huron.applications.cli.errors import ApiError, StorageFailure, UsageError
+from huron.applications.cli.identifiers import resolve_identifier
 from huron.applications.cli.inventory import CatalogInventory, take_inventory
 from huron.applications.cli.mount import (
     PREFIX_MARKER_HINT,
@@ -58,7 +61,7 @@ SHARE = "Share"
 SCHEMAS = "Schemas"
 
 adm_app = typer.Typer(
-    help="Run administration tasks: roles, directory modes, drift checks and schemas.",
+    help="Run administration tasks: roles, directory modes, drift checks, repairs and schemas.",
     no_args_is_help=True,
 )
 publish_app = typer.Typer(help="Publish a schema.", no_args_is_help=True)
@@ -247,6 +250,51 @@ def provision_orgs(
         )
 
 
+@adm_app.command("repair", rich_help_panel=SHARE)
+def repair(
+    ctx: typer.Context,
+    identifier: Annotated[
+        str | None,
+        typer.Argument(help="`catalog`, `catalog.namespace` or `catalog.namespace.name`."),
+    ] = None,
+    recursive: Annotated[
+        bool,
+        typer.Option(
+            "--recursive",
+            help="Also repair each namespace and each collection below the identifier.",
+        ),
+    ] = False,
+    organization: Annotated[
+        str | None, typer.Option("--org", help="Repair the directory of this organization.")
+    ] = None,
+) -> None:
+    """Repair missing directories and wrong permission bits through the API.
+
+    With an identifier, the API repairs each directory from the catalog to the identifier
+    (Catalog Admin). It also tries to give the catalog directory its share group. It writes each
+    `metadata.json` that has wrong content. A draft collection has no directory. With `--org`, the
+    API repairs the directory of the organization (Org Admin).
+
+    The command shows each path that the API changed and each path that it could not repair.
+    The exit code is 8 when the API could not repair a path.
+    """
+    route, body = _repair_request(ctx, identifier, organization, recursive)
+    result = api(ctx).post(route, json=body)
+    if not table_mode(ctx):
+        show(ctx, result)
+    warn_share_groups(ctx, result["warnings"])
+    for path in result["changed"]:
+        say(ctx, f"changed {path}")
+    failed = result["failed"]
+    for failure in failed:
+        say(ctx, f"failed {failure['path']} ({failure['reason']}): {failure['detail']}")
+    if failed:
+        paths = "path" if len(failed) == 1 else "paths"
+        raise StorageFailure(f"the API could not repair {len(failed)} {paths}")
+    if not result["changed"]:
+        say(ctx, "The API changed nothing")
+
+
 def declared_groups_hint(role: str) -> str:
     """The hint for a 409 ``ORGANIZATION_DECLARED`` on an organization-wide ``role``."""
     return (
@@ -337,6 +385,23 @@ def _inherited(ctx: typer.Context, role: str, group: str, target: _GrantTarget) 
             f" run `huron adm revoke {role} {group} --org {organization}`"
         ),
     )
+
+
+def _repair_request(
+    ctx: typer.Context, identifier: str | None, organization: str | None, recursive: bool
+) -> tuple[str, dict[str, Any] | None]:
+    """The repair route of ``identifier`` or of ``organization``, and its body."""
+    if organization is not None:
+        if identifier is not None:
+            raise UsageError("use an identifier or `--org`, not both")
+        if recursive:
+            raise UsageError("use `--recursive` only with an identifier")
+        return f"/api/v1/organizations/{organization}/repair", None
+    if identifier is None:
+        raise UsageError("use an identifier or `--org <org>`")
+    target = resolve_identifier(identifier, services(ctx).catalog())
+    body = {"target": str(target), "recursive": recursive}
+    return f"/api/v1/catalogs/{target.catalog}/repair", body
 
 
 def _set_role(ctx: typer.Context, role: str, target: _GrantTarget, groups: list[str]) -> None:

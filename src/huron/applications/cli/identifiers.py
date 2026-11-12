@@ -19,6 +19,7 @@ __all__ = [
     "parent_candidates",
     "qualify",
     "resolve_collection",
+    "resolve_identifier",
     "resolve_namespace",
 ]
 
@@ -49,6 +50,21 @@ def resolve_namespace(text: str, catalog: str | None) -> Identifier:
         raise UsageError(
             f"{text!r} is not a namespace identifier ({error.rule})",
             hint="use `catalog.namespace`, or select a catalog with `huron catalog <name>`",
+        ) from error
+
+
+def resolve_identifier(text: str, catalog: str | None) -> Identifier:
+    """A catalog, namespace or collection identifier from what the user typed.
+
+    The segments after the catalog are the namespace path of the answer, because only the API
+    knows whether the last one names a collection.
+    """
+    try:
+        return _catalog_or_namespace(qualify(text, catalog))
+    except NamingError as error:
+        raise UsageError(
+            f"{text!r} is not an identifier ({error.rule})",
+            hint="use `catalog`, `catalog.namespace` or `catalog.namespace.name`",
         ) from error
 
 

@@ -21,7 +21,11 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
   - No ACL reminder in any message.
 - Verification: the old task's entry, and the web gate when `web/src/lib/cli.ts` changes.
 - Dependencies: plans 1 to 3.
-- Status: pending
+- Status: complete (verification 3 of 3 passed, 2026-11-12). Verifications 1 and 2 failed on small
+  findings in the tests and the help text. Coverage: 11680 statements with 2 missed before,
+  11755 with 0 missed after. `web/src/lib/cli.ts` did not change, so the web gate did not run.
+  For D2: `docs/concepts/raw-ingest.md` and `docs/concepts/access-and-roles.md` still say that
+  the CLI has no `adm provision-catalogs`.
 
 ### D2 The check and provisioning (old M11.9)
 

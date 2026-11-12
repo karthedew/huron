@@ -53,18 +53,18 @@ Every command also takes `--help`, which prints the same reference in the termin
 
 ### [Manage](/docs/reference/cli/panels/manage/)
 
-| Command                                 | Description                                                                        |
-| --------------------------------------- | ---------------------------------------------------------------------------------- |
-| [`create`](/docs/reference/cli/create/) | Create an organization, catalog, namespace or collection.                          |
-| [`delete`](/docs/reference/cli/delete/) | Delete an empty organization, catalog or namespace, or a collection and its files. |
-| [`set`](/docs/reference/cli/set/)       | Set the schema override of a collection, or the settings of a namespace.           |
-| [`unset`](/docs/reference/cli/unset/)   | Clear the schema override of a collection.                                         |
+| Command                                 | Description                                                                                           |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [`create`](/docs/reference/cli/create/) | Create an organization, catalog, namespace or collection.                                             |
+| [`delete`](/docs/reference/cli/delete/) | Delete an empty organization, catalog or namespace, or a collection and its files.                    |
+| [`set`](/docs/reference/cli/set/)       | Set the schema override of a collection, the settings of a namespace or the share group of a catalog. |
+| [`unset`](/docs/reference/cli/unset/)   | Clear the schema override of a collection.                                                            |
 
 ### [Administration](/docs/reference/cli/panels/administration/)
 
-| Command                           | Description                                                                 |
-| --------------------------------- | --------------------------------------------------------------------------- |
-| [`adm`](/docs/reference/cli/adm/) | Run administration tasks: roles, directory modes, drift checks and schemas. |
+| Command                           | Description                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------ |
+| [`adm`](/docs/reference/cli/adm/) | Run administration tasks: roles, directory modes, drift checks, repairs and schemas. |
 
 ### [Settings](/docs/reference/cli/panels/settings/)
 

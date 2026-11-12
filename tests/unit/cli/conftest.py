@@ -87,3 +87,16 @@ def make_collection(
     assert cli.lake is not None
     cli.lake.write_bytes(location.joinpath("metadata.json"), sidecar, FILE_MODE)
     return location
+
+
+def share_group_warning(group: str, detail: str) -> list[str]:
+    """The standard error of a command whose answer says that the API could not set ``group``.
+
+    The hint line is written out in full, so that a change to the hint text fails the tests.
+    """
+    return [
+        f"warning: the catalog directory does not have the group {group}: {detail}"
+        " [SHARE_GROUP_PENDING]",
+        "hint: to set the group on disk, run `huron adm provision-catalogs --emit-script`"
+        " as the storage administrator",
+    ]
