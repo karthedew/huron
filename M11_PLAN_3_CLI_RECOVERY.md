@@ -144,7 +144,13 @@ This section replaces the CLI recovery rules of decision D-8 and the state files
   blocks, the 10,000-entry limit, the state root on a local filesystem, the source checks.
 - Verification: `make gate`, `make docs-check`.
 - Dependencies: C3.
-- Status: pending
+- Status: complete (2026-11-11). Verifications 1 and 2 failed on sentences that said more than
+  the code does. Verification 3 passed after two fix passes.
+  - The work changed `docs/user-guide.md` and one sentence of `docs/concepts/raw-ingest.md`
+    (the staging paragraph). It changed no code and no test.
+  - Gate of verification 3: `make gate` exit 0, 4183 passed, 24 deselected, 11680 statements, 2
+    missed (`applications/cli/identifiers.py` 76-77), duplication 69 clones in 25 groups.
+    `make docs-check` exit 0. `uv run pytest -m integration`: 23 passed, 1 skipped.
 
 ## Escalation
 
@@ -459,3 +465,26 @@ verification 5 and to commit.
   blocks (exit code 6), the 10,000-entry limit (exit code 7), the UPLOAD column and the
   pending-commit line of `status`, the resume in the same push after a dropped connection, and
   that a file that the user unstages during its upload is not in the commit.
+
+## Plan 3 complete
+
+Recorded 2026-11-11. C1 to C4 are complete and pushed.
+
+- Open notes from the work on C4, not in a task:
+  - The Handoff note "`mount_prefix` matters to `huron adm` only" is not exact. The code also
+    uses it for the PATH column of `huron org` and for the check of unrecorded files in
+    `huron status`.
+  - `docs/concepts/raw-ingest.md`: the sections "The push, step by step" and "When a push
+    stops" describe the old copy path, and step 6 of the activation says that the CLI writes
+    `metadata.json`. `docs/user-guide.md` links to these sections. Plan 4, task D6 owns them.
+  - `docs/user-guide.md`: the glossary row "share" says that each machine that runs the CLI
+    mounts the share. A push does not need the mount.
+  - `docs/user-guide.md`: "the service refuses the commit with `UPLOAD_INELIGIBLE` and exit code
+    6" names the exit code of the CLI as a part of the refusal of the service.
+  - `IMPLEMENTATION_PLAN.md` line 2969 names `sha256_file`, which C2 removed.
+  - Code: `_unfinished` in `sync.py` gives the message "did not finish it in 600 seconds" for a
+    `rejected` request that has no refusal. `collect_sources` ignores `--as` for a directory
+    with `--recursive`. `rm`, `pull` and `checkout` read the service before they refuse for a
+    commit with no result.
+- The open owner decisions of C2 and C3 are in "Handoff", "Escalation of C3" and "Owner decision
+  and verification 4".

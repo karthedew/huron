@@ -129,8 +129,8 @@ relative to that directory. The CLI makes these checks:
 - It refuses a path that breaks a path rule, such as a reserved name.
 - When you stage a path again, the new add replaces the old one and unstages a removal of that path.
 
-The CLI reads the size of each file when you stage it. It does not read the contents until the
-push.
+The CLI reads each file when you stage it, and records its size, its modification time and its
+SHA-256 hash.
 
 `huron rm <path>` unstages an add or a removal of that path. When nothing is staged for a recorded
 file, `huron rm` stages its removal. The CLI asks the service which files it records. A path that
