@@ -14,7 +14,7 @@ from huron.applications.cli.errors import CliError, ExitCode, UsageError
 from huron.applications.cli.identifiers import collection_candidates, namespace_candidates
 from huron.applications.cli.output import Column, OutputFormat, render, render_one
 from huron.applications.cli.services import Services
-from huron.applications.cli.sync import checkout
+from huron.applications.cli.sync import checkout, refuse_pending
 from huron.schema.naming import Identifier
 
 __all__ = [
@@ -263,8 +263,11 @@ def fetch_catalog(ctx: typer.Context, name: str) -> dict[str, Any]:
 def activate(ctx: typer.Context, collection: dict[str, Any]) -> dict[str, Any]:
     """Activate the collection through the API and check it out.
 
-    The API creates the directory and writes ``metadata.json``. The CLI writes nothing.
+    The API creates the directory and writes ``metadata.json``. The CLI writes nothing. Refuses
+    before the activation while the working copy of the collection or the current working copy
+    has a pending commit.
     """
+    refuse_pending(services(ctx), str(collection["id"]))
     activated: dict[str, Any] = api(ctx).post(
         f"/api/v1/collections/{collection['id']}/activate",
         headers=if_match(int(collection["version"])),

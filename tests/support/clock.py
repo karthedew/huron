@@ -1,7 +1,8 @@
-"""A fixed starting instant for tests, an event loop clock that moves only when told, and turns
-of the event loop that let due timers fire."""
+"""A fixed starting instant for tests, clocks that move only when told, and turns of the event
+loop that let due timers fire."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from huron.pkg.clock import FrozenClock
@@ -44,3 +45,28 @@ class LoopClock:
     def advance(self, seconds: float) -> None:
         """Move the loop's time forward by ``seconds``."""
         self._now += seconds
+
+
+class MonotonicClock:
+    """A monotonic clock that moves only when ``sleep`` or ``advance`` is called.
+
+    ``slept`` lists the seconds of each sleep. ``on_sleep`` runs after each sleep.
+    """
+
+    def __init__(self) -> None:
+        self.now = 100.0
+        self.slept: list[float] = []
+        self.on_sleep: Callable[[], None] = lambda: None
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        """Record a sleep of ``seconds`` and move the clock forward by them."""
+        self.slept.append(seconds)
+        self.advance(seconds)
+        self.on_sleep()
+
+    def advance(self, seconds: float) -> None:
+        """Move the clock forward by ``seconds``, as a request that takes them does."""
+        self.now += seconds

@@ -132,7 +132,11 @@ This section replaces the CLI recovery rules of decision D-8 and the state files
   header with another host is not followed.
 - Verification: `make gate`. `grep -rnE "_recover|_PLACED" src/huron` prints nothing.
 - Dependencies: C2, and plan 2 task S7.
-- Status: pending
+- Status: complete (2026-11-11). Five verifications failed, the last two on text only. The
+  owner decided the design gap, authorized two more fix passes, and authorized the commit after
+  the last docstring correction with no further verification agent; see "Escalation of C3".
+  - Coverage on the unit run: 11524 statements and 2 missed before, 11680 statements and 2
+    missed after (`applications/cli/identifiers.py` 76-77). `fail_under` did not change.
 
 ### C4 User guide
 
@@ -265,3 +269,193 @@ Recorded 2026-11-11 for a new session. Read [M11_PLANS.md](M11_PLANS.md) first.
     the unlink fails. The push steps in `docs/concepts/raw-ingest.md` and
     `docs/adr/0008-uploads-through-tusd.md` describe the old copy path (plan 4, task D6).
   - Plan 4: D4 needs a cluster context, D5 needs the storage operator, D7 needs Helm 3.
+
+## Escalation of C3
+
+Recorded 2026-11-11. Task C3 "Durable attempts and exact commit recovery" failed its third
+verification. The workflow stops here. C4 did not start.
+
+### State of the tree
+
+- HEAD is `eac88cb2` (C2), not pushed. C1 is pushed as `5d25bcea`.
+- The C3 work is in the working tree and is not committed: 25 entries below `src`, `tests` and
+  `web/docs-site/src/content/docs/reference/cli`. It was not reverted, because the tree is not
+  broken: the third verifier ran every gate on it with exit code 0.
+  - `make gate`: 4160 passed, 24 deselected. 11658 statements, 2 missed
+    (`applications/cli/identifiers.py` 76-77, not touched by the task). Before the task: 11524
+    statements, 2 missed. `pyscn check` passes. Duplication: 69 clones, 25 groups, equal to the
+    baseline.
+  - `uv run pytest -m integration`: 23 passed, 1 skipped (the old skip of
+    `test_cli_end_to_end.py`).
+  - `grep -rnE "_recover|_PLACED" src/huron` prints nothing.
+
+### The three verifications
+
+1. FAIL. One medium finding and four small findings.
+   - Medium: `create collection`, `activate` and the checkout after a metadata patch gave the
+     refusal for a pending commit after the service change was complete.
+   - Small: the push hint at the deadline said `huron get files`. A read that timed out at the
+     deadline was reported as "the Huron API is unreachable". Two docstrings in `localstate.py`
+     were out of date. `uploads.py` had a method and a function with the name `_unsealed`.
+   - The verifier accepted the choices of the implementer: a 4xx answer to the commit clears the
+     pending commit, `checkout` refuses when the current working copy has a pending commit, a
+     success removes only the committed entries, and an empty commit is sent.
+2. FAIL. Two small findings. The five corrections of fix pass 1 were confirmed.
+   - The rule in `ApiClient._send` that raises the deadline signal only for a timeout had no
+     test.
+   - A final `PATCH`, or the creation of an empty file, that lost its connection after the body
+     was sent did not read the attempt. Only `httpx.ReadTimeout` was a lost answer.
+3. FAIL. One medium finding, in the tests only. The two corrections of fix pass 2 were confirmed
+   with mutations, and the production code agrees with the task text and the design.
+   - Fix pass 2 made `httpx.ReadError` and `httpx.RemoteProtocolError` a lost answer. Five tests
+     that use `FakeTus.drop_after` then failed, because the fake raised `ReadError` for a
+     `PATCH` of which tusd kept a part. Fix pass 2 changed the fake to raise `httpx.WriteError`
+     (`tests/support/tus.py`, line 146), and the five tests passed with their old assertions.
+   - A probe on a real socket with httpx 0.28.1 shows that the client never raises `WriteError`
+     for this fault. It raises `RemoteProtocolError`, or `ReadError` after a reset. Both are a
+     lost answer.
+   - With a correct error in the fake, the five tests fail. The real CLI polls the attempt,
+     which stays `receiving`, until the deadline of the seal. It then stops with exit code 8 and
+     "the service did not seal ... in N seconds". The next push resumes the upload. The tests
+     expect exit code 1 and "is unreachable".
+   - The five tests: in `tests/unit/cli/test_push_tusd.py`,
+     `test_a_dropped_patch_continues_on_the_next_push`,
+     `test_an_upload_that_tusd_lost_gets_a_new_upload_id_in_the_same_attempt`,
+     `test_an_upload_whose_bytes_all_arrived_is_sealed_by_the_next_push` and
+     `test_the_fake_tusd_refuses_requests_without_the_tus_headers`; in
+     `tests/unit/cli/test_push_preflight.py`,
+     `test_a_resumed_push_sends_the_known_hashes_and_the_sealed_uploads[before the seal]`.
+   - The verifier's assessment: the finding can be corrected in the current plan, in the tests
+     only. The plan is not at fault for the finding.
+
+### Diagnosis
+
+- The plan is sound for all that the task text requires. Each verifier confirmed the three kill
+  points, the exact resend, the rule that the CLI keeps each upload, the one deadline and the
+  full test list.
+- The third failure came from the second fix pass. The correction of finding 2 changed what a
+  dropped `PATCH` does, and five tests of the old behaviour failed. The fix agent changed the
+  fake, not the expectations. The assignment of the orchestrator told it to change no other
+  function and to add nothing, and it did not tell it what to do when the correction made an
+  existing test incorrect.
+- One design gap is below the finding. The design says: after a failed final `PATCH`, read the
+  attempt and poll it with the one deadline. It does not say what the CLI does when the attempt
+  is `receiving` because bytes are missing. The code obeys the text: it polls for the full
+  `upload_hook_timeout` (15 minutes by default) and then says that the service did not seal the
+  file. For a file of 64 MiB or less, each dropped connection during the `PATCH` gives this
+  wait. The correct assertions of the five tests depend on the answer to this gap.
+
+### Questions
+
+1. When the attempt is `receiving` after a lost answer to the final `PATCH`, what does the CLI
+   do?
+   - (a) Keep the poll to the deadline, then exit code 8. The next push resumes. The five tests
+     then assert this behaviour.
+   - (b) Send a `HEAD`. If the offset is less than the size, resume in the same push. Poll only
+     when the upload is complete.
+   - (c) Keep the poll, with a shorter limit than the hook timeout for a `receiving` attempt.
+2. Does the owner accept C3 with one more bounded correction and one more verification, as for
+   C1? With answer (a) the correction is in the tests only. With (b) or (c) it changes
+   `uploads.py` also.
+3. Does a fix pass get a rule for a correction that makes an existing test incorrect: change
+   the expectation of the test, and do not change a fake to keep an old assertion?
+
+### Notes for the owner from the three verifications, not findings
+
+- An empty commit is sent when the user unstages each file during the uploads. The collection
+  version increases.
+- A 4xx answer to the commit with no problem document (a proxy answer) keeps the pending
+  commit. Each push repeats the refusal while `add` and `rm` refuse.
+- A working copy that is not current and has a pending commit cannot be checked out, and `push`
+  uses only the current working copy. Only a hand edit of `config.yaml` or
+  `delete collection` gets there.
+- A second identity that logs in on the same OS account while a commit is pending gets 404 for
+  the status and sends the same body again as that identity.
+- A blocked commit waits 600 s before the push reports it. No test covers a 4xx answer that the
+  service does not save (422).
+- `tests/integration/test_cli_end_to_end.py` (skipped) builds `Services` with a sleep that does
+  nothing and the real monotonic clock. A wait in that test runs for the full deadline.
+
+### Next steps
+
+1. The rule of the workflow: run
+   `/architectural-review src/huron/applications/cli M11_PLAN_3_CLI_RECOVERY.md`, with this
+   section as its input.
+2. Then run `/design-plan` for the same area. Give it this section and the output of the review.
+
+### Owner decision and verification 4
+
+Recorded 2026-11-11. The owner did not run the review. The owner answered question 1 with (b)
+and authorized one more fix pass and one more verification.
+
+- The decision, which is part of the design of "Uploads and commits": when the attempt is
+  `receiving` after a lost answer to the final `PATCH`, the CLI sends a `HEAD`. If the offset is
+  less than the size, it resumes in the same push. It polls only when the upload is complete.
+- Fix pass 3 applied the decision in `uploads.py`. A resume in the same push needs progress:
+  when the lost request moved no byte, the push stops with the IDs kept. `FakeTus.drop_after`
+  raises `httpx.RemoteProtocolError`. The five tests assert the real behaviour.
+- Verification 4: FAIL, two small findings, both text in `uploads.py`. The verifier ran every
+  gate with exit code 0 (`make gate`: 4181 passed, 24 deselected, 11676 statements, 2 missed;
+  duplication 69 clones in 25 groups; integration 23 passed, 1 skipped) and caught 15 of 16
+  mutations. It confirmed the decision, the correction of the fake and the full task.
+  1. A final `PATCH` that answers 500, 502 or 504 and moved no byte gives "the upload service at
+     ... is unreachable: HTTP 500". The service answered. The correction: use the existing
+     text "the upload service answered HTTP <status>" with the same hint, and add 500 and 504 to
+     the test that has only 502.
+  2. The docstring of `_follow_unclear` says that each send starts later in the file, so the
+     sends end. This is not true when the `HEAD` answers 404 or 410: the CLI makes a new
+     creation and sends from offset 0.
+- The C3 work stays in the working tree and is not committed.
+- Notes of verification 4 for the owner, not findings:
+  - The branch for an upload that tusd lost has no limit. A tusd that loses each new upload
+    after its final `PATCH` loses its answer makes one push repeat the creation until a
+    `RecursionError` (245 creations in a probe). No state is lost. A real tusd does not do this
+    more than one time. A limit of one new creation for each push is the smallest bound.
+  - Each resume is a recursive call. About 326 resumes in one push that each move one byte or
+    more give a `RecursionError`. No state is lost.
+  - The creation of an empty file with a lost answer polls a `receiving` attempt to the hook
+    timeout. The decision names the final `PATCH` only.
+  - Between the attempt read and the new `HEAD`, a seal that starts gives a 403 and exit code 4.
+    The IDs are kept and the next push continues.
+  - No test covers the `_record` call in `_follow_unclear`.
+
+### Verification 5
+
+Recorded 2026-11-11. The owner authorized fix pass 4 and one more verification.
+
+- Fix pass 4 corrected the two findings of verification 4. A final `PATCH` that answers 500,
+  502 or 504 and moved no byte gives "the upload service answered HTTP <status>" with the hint
+  to run `huron push` again. The docstring of `_follow_unclear` no longer says that the sends
+  end in each case.
+- Verification 5: FAIL, one small finding, text only. The verifier ran every gate with exit
+  code 0 (`make gate`: 4183 passed, 24 deselected, 11680 statements, 2 missed; duplication 69
+  clones in 25 groups; integration 23 passed, 1 skipped) and caught 20 of 21 mutations. The one
+  that was not caught is the `_record` call that is recorded above.
+  - The new docstring of `_follow_unclear` has two sentences that say more than the code does.
+    "In each other state of the attempt the push waits for the seal" is true for `sealing`
+    only: a `ready` attempt is accepted immediately, and an attempt that ended or that the
+    service does not know stops the push. "The push reads the attempt until the service sealed
+    it" does not name the hook timeout.
+  - The correction that the verifier gives: "The upload is complete: the push reads the attempt
+    until the service sealed it or the hook timeout passed." and "In each other state, a
+    `sealing` attempt is read until the seal ends or the deadline passes. A `ready` attempt is
+    accepted. An attempt that ended, or that the service does not know, stops the push with its
+    error, and the IDs stay recorded."
+- The C3 work stays in the working tree and is not committed.
+
+### Resolution of C3
+
+Recorded 2026-11-11. The owner told the orchestrator to apply the two sentences of
+verification 5 and to commit.
+
+- The orchestrator changed the docstring of `_follow_unclear` in `uploads.py` to the text that
+  verification 5 gave. No code changed.
+- The orchestrator ran the gates on the final tree: `make gate` exit 0, 4183 passed, 24
+  deselected, 11680 statements, 2 missed (`applications/cli/identifiers.py` 76-77), `pyscn check`
+  passes, duplication 69 clones in 25 groups. `uv run pytest -m integration`: 23 passed, 1
+  skipped. `grep -rnE "_recover|_PLACED" src/huron` prints nothing.
+- No independent verification ran after the docstring correction.
+- For C4, `docs/user-guide.md` must describe: the pending commit and the commands that it
+  blocks (exit code 6), the 10,000-entry limit (exit code 7), the UPLOAD column and the
+  pending-commit line of `status`, the resume in the same push after a dropped connection, and
+  that a file that the user unstages during its upload is not in the commit.

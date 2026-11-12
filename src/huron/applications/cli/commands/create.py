@@ -18,7 +18,7 @@ from huron.applications.cli.commands.common import (
 )
 from huron.applications.cli.errors import ApiError, UsageError
 from huron.applications.cli.identifiers import resolve_collection, resolve_namespace
-from huron.applications.cli.sync import checkout
+from huron.applications.cli.sync import checkout, refuse_pending
 from huron.applications.cli.walkthrough import fill
 
 __all__ = ["create_app", "register"]
@@ -138,6 +138,7 @@ def create_collection(
     parsed = resolve_collection(identifier, found.catalog())
     document = read_document(metadata) if metadata else None
     base = f"/api/v1/catalogs/{parsed.catalog}/namespaces/{parsed.namespace}"
+    refuse_pending(found)
     collection = api(ctx).post(
         f"{base}/collections", json={"name": parsed.name, "metadata": document}
     )

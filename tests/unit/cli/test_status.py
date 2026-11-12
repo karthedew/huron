@@ -35,6 +35,7 @@ REPORT_KEYS = {
     "removes",
     "unrecorded",
     "staged",
+    "pending_commit",
 }
 
 
@@ -91,9 +92,10 @@ def test_status_with_nothing_staged_says_how_to_stage(ready: Cli) -> None:
 def test_status_lists_staged_adds_and_removes_in_a_table(staged: Cli, tmp_path: Path) -> None:
     shown = lines(staged, "status")
     assert shown[0] == f"On collection {RUN7} (version 4, up to date) {WHERE}"
-    assert shown[1].split() == ["STAGED", "PATH", "SIZE", "FROM"]
-    assert shown[2].split() == ["add", "b.txt", "2.0", "KiB", str((tmp_path / "a.txt").resolve())]
-    assert shown[3].split() == ["remove", "a.txt", "-", "-"]
+    assert shown[1].split() == ["STAGED", "PATH", "SIZE", "UPLOAD", "FROM"]
+    source = str((tmp_path / "a.txt").resolve())
+    assert shown[2].split() == ["add", "b.txt", "2.0", "KiB", "-", source]
+    assert shown[3].split() == ["remove", "a.txt", "-", "-", "-"]
     assert shown[4:] == [PUSH_HINT]
 
 
@@ -144,9 +146,10 @@ def test_status_json_keeps_every_key_and_adds_the_staged_rows(staged: Cli, tmp_p
     assert (report["adds"], report["removes"], report["behind"]) == (["b.txt"], ["a.txt"], False)
     source = str((tmp_path / "a.txt").resolve())
     assert report["staged"] == [
-        {"action": "add", "rel_path": "b.txt", "size": 2000, "source": source},
-        {"action": "remove", "rel_path": "a.txt", "size": None, "source": None},
+        {"action": "add", "rel_path": "b.txt", "size": 2000, "upload": None, "source": source},
+        {"action": "remove", "rel_path": "a.txt", "size": None, "upload": None, "source": None},
     ]
+    assert report["pending_commit"] is None
     assert "staged" in staged.ok("-o", "yaml", "status").stdout
 
 
@@ -247,14 +250,39 @@ def test_status_all_of_a_copy_in_another_catalog_names_its_organization(ready: C
 
 def test_status_table_wraps_a_long_source_path_instead_of_cutting_its_file_name() -> None:
     source = "/very/long/" + "directory/" * 12 + "the-file-name.bin"
-    row = {"action": "add", "rel_path": "the-file-name.bin", "size": 3000, "source": source}
-    out = Console(width=60, color_system=None, record=True)
+    row = {
+        "action": "add",
+        "rel_path": "the-file-name.bin",
+        "size": 3000,
+        "upload": None,
+        "source": source,
+    }
+    out = Console(width=72, color_system=None, record=True)
     with out.capture() as captured:
         render(out, [row], STAGED_COLUMNS, OutputFormat.TABLE)
     shown = captured.get()
     assert "…" not in shown
     folded = "".join(line.split()[-1] for line in shown.splitlines()[1:])
     assert folded.endswith("the-file-name.bin")
+
+
+def test_status_shows_the_upload_state_of_each_add_and_the_pending_commit(
+    staged: Cli, tmp_path: Path
+) -> None:
+    staged.ok("rm", "a.txt")
+    staged.router.fail_commits = "before"
+    assert staged.run("push").exit_code == 1
+    pending = staged.working().pending_commit
+    assert pending is not None
+    shown = lines(staged, "status")
+    assert shown[2].split()[:5] == ["add", "b.txt", "2.0", "KiB", "ready"]
+    assert shown[3:] == [
+        f"The CLI did not get the result of the commit request {pending.request_id}."
+        " To get the result, run `huron push`"
+    ]
+    report = json.loads(staged.ok("-o", "json", "status").stdout)
+    assert report["pending_commit"] == pending.request_id
+    assert [row["upload"] for row in report["staged"]] == ["ready"]
 
 
 def test_rm_twice_unstages_the_removal_and_rm_of_an_add_says_so(staged: Cli) -> None:

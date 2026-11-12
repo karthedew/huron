@@ -107,8 +107,9 @@ class StagedAdd:
     ``size``, ``mtime_ns`` and ``sha256`` describe the source file when ``huron add`` read it:
     a push checks the size and the modification time, and the commit sends the size and the
     sha256. ``attempt_id`` names the upload attempt before its creation, ``upload_id`` the tus
-    upload once it is created, so a later push continues the upload. ``attempt_state`` is
-    ``"ready"`` once the service sealed the upload and ``None`` before that.
+    upload once it is created, so a later push continues the upload. ``attempt_state`` is the
+    last state of the attempt that the CLI read from the service (``receiving``, ``sealing``,
+    ``ready`` or an end state), and ``None`` before the first read.
     """
 
     rel_path: str
@@ -148,8 +149,8 @@ class WorkingState:
     """One working copy: the collection, the version the stage is based on, and the stage.
 
     ``path`` is the collection's directory below the mount prefix, ``None`` for a draft.
-    ``pending_commit`` is the commit request that the CLI sent and whose outcome it did not
-    read yet.
+    ``pending_commit`` is the request ID and the exact body of a commit whose result the CLI
+    does not have. The CLI saves it before it sends the commit.
     """
 
     collection_id: str

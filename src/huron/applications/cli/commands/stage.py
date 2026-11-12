@@ -114,10 +114,14 @@ def push_command(
         str | None, typer.Option("-m", "--message", help="The commit message.")
     ] = None,
 ) -> None:
-    """Upload the staged files and commit them."""
+    """Upload the staged files and commit them.
+
+    When the CLI did not get the result of the last commit, the push first gets that result,
+    or sends the same commit again. It then does nothing else.
+    """
     found = services(ctx)
     working = current(found)
-    if working.empty:
+    if working.empty and working.pending_commit is None:
         say(ctx, "Nothing is staged. There is nothing to push")
         return
     result = push(found, working, message)

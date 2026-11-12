@@ -9,6 +9,9 @@ sidebar:
 
 Show where you are, and the staged changes and drift of the current collection.
 
+The UPLOAD column gives the last state of the upload of each staged file. When the CLI did
+not get the result of the last commit, the status gives the ID of that commit request.
+
 With `--all`, show all working copies on this machine that hold staged changes. A `*` marks
 the current collection. The CLI compares only the current collection with the service and
 the share. Each entry names the catalog and the organization of its collection.

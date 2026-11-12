@@ -118,9 +118,11 @@ def lose_the_commit(cli: Cli) -> None:
 
 
 def drop_the_upload(cli: Cli) -> None:
-    """Drop the connection of the next ``PATCH`` after three bytes, before the service seals it."""
+    """Drop the connection of the next ``PATCH`` before tusd keeps a byte, so the push stops
+    before the service seals the upload.
+    """
     assert cli.tus is not None
-    cli.tus.drop_after = 3
+    cli.tus.drop_after = 0
 
 
 @pytest.mark.parametrize(

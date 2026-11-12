@@ -27,7 +27,7 @@ from tests.fakes.issuer import ISSUER, FakeIssuer
 from tests.fakes.prompter import ScriptedPrompter
 from tests.fakes.storage import rooted
 from tests.support.api import USERS, settings
-from tests.support.clock import START, frozen
+from tests.support.clock import START, MonotonicClock, frozen
 from tests.support.lake import CONTRIBUTOR
 from tests.support.tus import TUS_URL, FakeTus
 
@@ -155,7 +155,8 @@ class Cli:
         self.http = httpx.Client(transport=transport)
         self.prompter = ScriptedPrompter()
         self.opened: list[str] = []
-        self.slept: list[float] = []
+        self.monotonic = MonotonicClock()
+        self.slept = self.monotonic.slept
         self.home = home
         config = Config(api_url=API, issuer=ISSUER, mount_prefix=str(mount_prefix))
         self.config_path = home / "config" / "huron" / "config.yaml"
@@ -177,11 +178,12 @@ class Cli:
             out=Console(file=out, width=200, color_system=None, soft_wrap=True),
             err=Console(file=err, width=200, color_system=None, soft_wrap=True),
             prompter=self.prompter,
-            sleep=self.slept.append,
+            sleep=self.monotonic.sleep,
             open_browser=self.opened.append,
             hostname="ws1",
             storage_factory=self.storage_factory,
             provision_storage=self.storage_factory,
+            monotonic=self.monotonic,
         )
         return services, out, err
 

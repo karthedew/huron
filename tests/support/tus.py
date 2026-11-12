@@ -46,6 +46,8 @@ class FakeTus:
     - ``info_size``: the next creation writes this size into the ``.info`` file.
     - ``hold_lock``: the final ``PATCH`` leaves a ``.lock`` file and sends no ``pre-finish``,
       as when tusd died during the hook.
+    - ``lose``: tusd runs the next request of this method in full, then its answer does not
+      reach the client in time.
 
     As tusd does, it answers 412 to a request without ``Tus-Resumable: 1.0.0`` and 415 to a
     ``PATCH`` whose ``Content-Type`` is not ``application/offset+octet-stream``.
@@ -63,12 +65,20 @@ class FakeTus:
         self.location_base: str | None = None
         self.info_size: int | None = None
         self.hold_lock = False
+        self.lose: str | None = None
         self._service = service
         self._lake = lake
         self._upload_dir = UPLOADS
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         """Answer one tus request as nginx and tusd do."""
+        response = self._answer(request)
+        if self.lose == request.method:
+            self.lose = None
+            raise httpx.ReadTimeout("the answer is late", request=request)
+        return response
+
+    def _answer(self, request: httpx.Request) -> httpx.Response:
         self.requests.append((request.method, request.url.path))
         refused = self._authorize(request)
         if refused is not None:
@@ -133,7 +143,9 @@ class FakeTus:
         self._lake.write_bytes(source, (self._lake.read_bytes(source) or b"") + body, 0o600)
         upload.offset += len(body)
         if dropped is not None:
-            raise httpx.ReadError("connection reset", request=request)
+            raise httpx.RemoteProtocolError(
+                "Server disconnected without sending a response.", request=request
+            )
         answer = httpx.Response(204, headers={"Upload-Offset": str(upload.offset)})
         if upload.offset < upload.length:
             return answer

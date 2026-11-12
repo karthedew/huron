@@ -1,9 +1,13 @@
 """The tus client of ``huron push``: it uploads staged files to tusd through the upload proxy.
 
-Each staged add gets one upload attempt. The add records the attempt's ID before the creation
-and the upload ID after it, so a later push continues the upload, or skips it when the service
-sealed it. The client builds each upload address from ``uploads_url`` and the upload ID, never
-from the host of a ``Location`` header. It sends a file only when the file has the size and the
+Each staged add gets one upload attempt. The add records the attempt's ID before the creation,
+and the upload ID and the attempt's state after each answer, so a push that stops keeps both
+IDs. Before each creation and each resume the client reads the attempt on the service, and it
+continues, waits for the seal or starts a new attempt from that state. It never forgets an
+upload: only an attempt that ended is replaced by a new one.
+
+The client builds each upload address from ``uploads_url`` and the upload ID, never from the
+host of a ``Location`` header. It sends a file only when the file has the size and the
 modification time that ``huron add`` recorded. The commit sends the sha256 that ``huron add``
 recorded, and the service compares it with the sha256 of the sealed bytes.
 """
@@ -16,13 +20,14 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, TypeGuard
 from urllib.parse import urlsplit
 
 import httpx
 
 from huron import __version__
 from huron.applications.cli.client import ApiClient
+from huron.applications.cli.deadline import Deadline, DeadlinePassed, poll
 from huron.applications.cli.errors import ApiError, CliError, ExitCode
 from huron.applications.cli.localstate import StagedAdd
 from huron.applications.cli.sources import open_source, source_changed
@@ -36,13 +41,22 @@ POLL_INTERVAL = 5.0
 
 _TUS_VERSION = "1.0.0"
 _STATE_HEADER = "Huron-Upload-State"
-#: The answers of a final ``PATCH`` after which the attempt's state tells what happened.
+#: The answers of a request that finishes an upload after which the attempt's state tells what
+#: happened.
 _UNKNOWN_OUTCOME = frozenset({500, 502, 504})
+#: The transport errors of a request that reached the service but whose answer was lost: it
+#: came too late, or the connection dropped while the service worked on it.
+_LOST_ANSWER = (httpx.ReadTimeout, httpx.ReadError, httpx.RemoteProtocolError)
 _UNSEALED = frozenset({"receiving", "sealing"})
+#: The states of an attempt whose upload the client can still use; any other state ended it.
+_LIVE = frozenset({"receiving", "sealing", "ready"})
 _GONE = frozenset({404, 410})
+#: The code of the creation refusal that names the attempt's state and its current upload ID.
+_STATE_CONFLICT = "UPLOAD_STATE_CONFLICT"
 #: The seconds a finishing request waits beyond the hook timeout, for tusd and the proxy.
 _FINISH_MARGIN = 60.0
 _NEW_UPLOAD_HINT = "run `huron push` again. The next push starts a new upload of the file"
+_CONTINUE_HINT = "run `huron push` again. The next push continues the upload"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,8 +89,9 @@ class UploadService:
 class Uploader:
     """Uploads staged files to tusd as the logged-in user.
 
-    ``token`` gives the Huron token for each request, ``sleep`` waits between two reads of an
-    attempt's state and ``report`` prints one progress line.
+    ``token`` gives the Huron token for each request. ``deadline`` gives the deadline of one
+    wait for a seal, which lasts the service's hook timeout. ``report`` prints one progress
+    line.
     """
 
     def __init__(
@@ -86,7 +101,7 @@ class Uploader:
         token: Callable[[], str],
         service: UploadService,
         *,
-        sleep: Callable[[float], None],
+        deadline: Callable[[float], Deadline],
         report: Callable[[str], None],
         chunk_size: int = CHUNK_SIZE,
     ) -> None:
@@ -94,7 +109,7 @@ class Uploader:
         self._api = api
         self._token = token
         self._service = service
-        self._sleep = sleep
+        self._deadline = deadline
         self._report = report
         self._chunk_size = chunk_size
         # The request that finishes an upload waits while the service seals it.
@@ -103,79 +118,105 @@ class Uploader:
         )
 
     def upload(self, collection_id: str, add: StagedAdd, save: Callable[[], None]) -> None:
-        """Upload the file of ``add`` and mark its attempt ``ready`` once the service sealed it.
+        """Upload the file of ``add`` until the service sealed it; its attempt is then ``ready``.
 
-        The file must have the size and the modification time that ``huron add`` recorded. An
-        upload that an earlier push started continues where it stopped, and one that the
-        service sealed is not sent again. ``save`` stores the stage; the uploader calls it each
-        time it changes the attempt that ``add`` records.
+        The file must have the size and the modification time that ``huron add`` recorded.
+        ``save`` stores the stage: the uploader calls it each time it changes what ``add``
+        records, first with the attempt ID before the creation. An upload that an earlier push
+        started continues where it stopped, and one that the service sealed is not sent again.
         """
         with open_source(add) as source:
-            if add.attempt_id is not None and self._resume(add, source, save):
-                return
-            self._create(collection_id, add, source, save)
+            file = _File(collection_id, add, source, save)
+            if add.attempt_id is None:
+                self._start_attempt(file)
+            self._follow(file, self._attempt(file))
 
-    def _resume(self, add: StagedAdd, source: BinaryIO, save: Callable[[], None]) -> bool:
-        """Finish or skip the recorded attempt of ``add``; ``False`` when a new one must start.
+    def _follow(self, file: _File, attempt: _Attempt | None, *, refused: bool = False) -> None:
+        """Continue from the state of the attempt on the service; ``None`` before its creation.
 
-        A new attempt starts when the service does not know the attempt, when it ended, and when
-        tusd lost its bytes.
+        ``refused`` when the state comes from a refused creation, which must not create again.
         """
-        assert add.attempt_id is not None
-        attempt = self._attempt(add.attempt_id)
-        if attempt is None or add.upload_id not in (None, attempt["upload_id"]):
-            return False
-        add.upload_id, state = attempt["upload_id"], attempt["state"]
-        if state == "ready":
-            self._accept(add, earlier=True)
-            return True
-        if state == "sealing":
-            self._settle(add, save)
-            return True
-        if state == "receiving":
-            offset = self._offset(add)
-            if offset is not None:
-                self._send(add, source, offset, save)
-                return True
-        return False
+        if attempt is None:
+            self._create(file)
+        elif attempt.state not in _LIVE:
+            self._start_attempt(file)
+            self._follow(file, self._attempt(file))
+        elif attempt.state == "ready":
+            self._accept(file, attempt.upload_id, earlier=True)
+        else:
+            self._record(file, attempt.state, attempt.upload_id)
+            if attempt.state == "sealing":
+                self._settle(file)
+            else:
+                self._resume(file, may_create=not refused)
 
-    def _create(
-        self, collection_id: str, add: StagedAdd, source: BinaryIO, save: Callable[[], None]
-    ) -> None:
+    def _start_attempt(self, file: _File) -> None:
+        """Give the add a new attempt ID, and save it before any creation sends it."""
+        add = file.add
         add.attempt_id, add.upload_id, add.attempt_state = str(uuid.uuid4()), None, None
-        save()
+        file.save()
+
+    def _create(self, file: _File) -> None:
+        """Create the upload of the recorded attempt, or follow the state of a refusal."""
+        add = file.add
+        assert add.attempt_id is not None
         metadata = {
             "attempt_id": add.attempt_id,
-            "collection": collection_id,
+            "collection": file.collection_id,
             "rel_path": add.rel_path,
         }
         headers = {"Upload-Length": str(add.size), "Upload-Metadata": _metadata(metadata)}
         if add.size == 0:
             # tusd finishes an empty upload in the creation request.
             response = self._finishing("POST", self._service.url, headers)
-            if response is None or response.status_code in _UNKNOWN_OUTCOME:
-                self._settle(add, save)
+            if not _decisive(response):
+                self._settle(file)
                 return
         else:
             response = self._request("POST", self._service.url, headers)
-        _check(response)
-        add.upload_id = _upload_id_of(response)
-        save()
-        if add.size == 0:
-            self._finish(add, response, save)
+        refusal = _refusal_of(response)
+        if refusal is not None:
+            self._follow(file, refusal, refused=True)
             return
-        self._send(add, source, 0, save)
+        _check(response)
+        self._record(file, "receiving", _upload_id_of(response))
+        if add.size == 0:
+            self._finish(file, response)
+        else:
+            self._send(file, 0)
 
-    def _send(
-        self, add: StagedAdd, source: BinaryIO, offset: int, save: Callable[[], None]
-    ) -> None:
-        """Send the bytes of ``add`` from ``offset``, read from its open ``source``."""
+    def _resume(self, file: _File, *, may_create: bool) -> None:
+        """Continue the current upload from the bytes that tusd holds.
+
+        When tusd does not have the upload, a new creation under the same attempt ID asks the
+        service for a new upload ID, if ``may_create``.
+        """
+        upload_id = file.add.upload_id
+        assert upload_id is not None
+        self._continue_from(file, self._offset(upload_id, missing_ok=may_create))
+
+    def _continue_from(self, file: _File, offset: int | None) -> None:
+        """Continue the current upload from ``offset``, the bytes that tusd holds.
+
+        ``None`` when tusd does not have the upload: a new creation under the same attempt ID
+        replaces it. A complete upload is not sent again; the push waits for its seal.
+        """
+        if offset is None:
+            self._create(file)
+        elif offset == file.add.size:
+            self._settle(file)
+        else:
+            self._send(file, offset)
+
+    def _send(self, file: _File, offset: int) -> None:
+        """Send the bytes of the add from ``offset`` up to its size, read from its open file."""
+        add = file.add
         assert add.upload_id is not None
         address = self._service.address(add.upload_id)
-        source.seek(offset)
+        file.source.seek(offset)
         position = offset
-        while position < add.size:
-            block = source.read(min(self._chunk_size, add.size - position))
+        while True:
+            block = file.source.read(min(self._chunk_size, add.size - position))
             if not block:
                 raise source_changed(add)
             start, position = position, position + len(block)
@@ -184,107 +225,159 @@ class Uploader:
                 "Content-Type": "application/offset+octet-stream",
             }
             if position == add.size:
-                self._finish(add, self._finishing("PATCH", address, headers, block), save)
+                answer = self._finishing("PATCH", address, headers, block)
+                if _decisive(answer):
+                    self._finish(file, answer)
+                else:
+                    self._follow_unclear(file, start, answer)
                 return
             _check(self._request("PATCH", address, headers, block))
             self._report(f"sent {position} of {add.size} bytes of {add.rel_path}")
-        self._settle(add, save)
 
-    def _finish(
-        self, add: StagedAdd, response: httpx.Response | None, save: Callable[[], None]
-    ) -> None:
+    def _finish(self, file: _File, response: httpx.Response) -> None:
         """Read the answer of the request that finished the upload.
 
-        A request that timed out (``None``) tells as little as a 504, so the attempt's state
-        decides. So does an answer that says the seal goes on.
+        An answer that says the seal goes on is followed by reads of the attempt.
         """
-        if response is None or response.status_code in _UNKNOWN_OUTCOME:
-            self._settle(add, save)
-            return
         _check(response)
         if response.headers.get(_STATE_HEADER) == "ready":
-            self._accept(add)
+            self._accept(file, file.add.upload_id)
             return
-        self._settle(add, save)
+        self._settle(file)
 
-    def _settle(self, add: StagedAdd, save: Callable[[], None]) -> None:
-        """Accept the upload once the service sealed it; report why it did not seal it.
+    def _follow_unclear(
+        self, file: _File, start: int, answer: httpx.Response | httpx.TransportError
+    ) -> None:
+        """Continue from the attempt's state after the final ``PATCH`` from offset ``start`` lost
+        its answer, or got an ``answer`` that tells as little.
 
-        The attempt and its upload ID stay recorded while the seal can still end, so the next
-        push reads the attempt again. An attempt that ended is forgotten, and the next push
-        starts a new one.
+        A ``receiving`` attempt can lack bytes of that request, so a ``HEAD`` asks tusd for the
+        upload:
+
+        - The upload is complete: the push reads the attempt until the service sealed it or the
+          hook timeout passed.
+        - Bytes are missing and the request moved the offset forward: the push sends the rest
+          from that offset, so each such send starts later in the file.
+        - tusd no longer has the upload: a new creation under the same attempt ID replaces it,
+          and the push sends the file from the start.
+
+        When the request moved no byte, the push stops and keeps the IDs and the state for the
+        next push. In each other state, a ``sealing`` attempt is read until the seal ends or the
+        deadline passes. A ``ready`` attempt is accepted. An attempt that ended, or that the
+        service does not know, stops the push with its error, and the IDs stay recorded.
         """
-        assert add.attempt_id is not None
-        attempt = self._wait(add.attempt_id)
-        if attempt is not None and attempt["state"] == "ready":
-            add.upload_id = attempt["upload_id"]
-            self._accept(add)
+        deadline = self._deadline(self._service.hook_timeout)
+        attempt = self._first_read(file, deadline)
+        if attempt is None or attempt.state != "receiving" or attempt.upload_id is None:
+            self._wait(file, deadline, attempt)
             return
-        if attempt is None or attempt["state"] not in _UNSEALED:
-            add.attempt_id = add.upload_id = add.attempt_state = None
-            save()
-        raise self._unsealed(add, attempt)
+        self._record(file, attempt.state, attempt.upload_id)
+        offset = self._offset(attempt.upload_id, missing_ok=True)
+        if offset is not None and offset <= start:
+            if isinstance(answer, httpx.Response):
+                raise _answered(answer, hint=_CONTINUE_HINT)
+            raise self._unreachable(answer)
+        self._continue_from(file, offset)
 
-    def _unsealed(self, add: StagedAdd, attempt: dict[str, Any] | None) -> CliError:
-        """The error for an upload that the service did not seal."""
+    def _settle(self, file: _File) -> None:
+        """Read the attempt until the service sealed it, or until the hook timeout passed."""
+        deadline = self._deadline(self._service.hook_timeout)
+        self._wait(file, deadline, self._first_read(file, deadline))
+
+    def _first_read(self, file: _File, deadline: Deadline) -> _Attempt | None:
+        """The first read of the attempt in a wait for its seal until ``deadline``.
+
+        A read that times out at the deadline ends the wait.
+        """
+        try:
+            return self._attempt(file, deadline)
+        except DeadlinePassed:
+            raise self._late(file.add) from None
+
+    def _wait(self, file: _File, deadline: Deadline, first: _Attempt | None) -> None:
+        """Read the attempt after its read ``first`` until the service sealed it, or until
+        ``deadline``.
+
+        An attempt that is not sealed keeps its IDs and its last state, so the next push reads
+        it again. A read that times out at the deadline ends the wait.
+        """
+        attempt = poll(
+            first,
+            lambda: self._attempt(file, deadline),
+            _is_unsealed,
+            deadline,
+            POLL_INTERVAL,
+        )
         if attempt is None:
-            return CliError(
-                f"the service has no record of the upload of {add.rel_path}",
+            raise CliError(
+                f"the service has no record of the upload of {file.add.rel_path}",
                 ExitCode.STORAGE,
                 hint=_NEW_UPLOAD_HINT,
             )
-        state = attempt["state"]
-        if state == "failed":
-            failure = attempt["failure"] or {}
+        if attempt.state == "ready":
+            self._accept(file, attempt.upload_id)
+            return
+        self._record(file, attempt.state, attempt.upload_id)
+        raise self._unsealed(file.add, attempt)
+
+    def _unsealed(self, add: StagedAdd, attempt: _Attempt) -> CliError:
+        """The error for an upload that the service did not seal."""
+        if attempt.state == "failed":
+            failure = attempt.failure or {}
             return CliError(
                 f"the service did not seal {add.rel_path}: {failure.get('message')}",
                 ExitCode.STORAGE,
                 code=failure.get("code"),
             )
-        if state in _UNSEALED:
-            seconds = math.ceil(self._service.hook_timeout)
-            return CliError(
-                f"the service did not seal {add.rel_path} in {seconds} seconds",
-                ExitCode.STORAGE,
-                hint="run `huron push` again. The next push reads the state of the upload",
-            )
+        if attempt.state in _UNSEALED:
+            return self._late(add)
         return CliError(
-            f"the upload of {add.rel_path} is {state}", ExitCode.STORAGE, hint=_NEW_UPLOAD_HINT
+            f"the upload of {add.rel_path} is {attempt.state}",
+            ExitCode.STORAGE,
+            hint=_NEW_UPLOAD_HINT,
         )
 
-    def _wait(self, attempt_id: str) -> dict[str, Any] | None:
-        """Read the attempt until it is sealed or ended, for at most the hook timeout."""
-        waited = 0.0
-        while True:
-            attempt = self._attempt(attempt_id)
-            unsealed = attempt is not None and attempt["state"] in _UNSEALED
-            if not unsealed or waited >= self._service.hook_timeout:
-                return attempt
-            self._sleep(POLL_INTERVAL)
-            waited += POLL_INTERVAL
+    def _late(self, add: StagedAdd) -> CliError:
+        """The error for an upload that the service did not seal before the hook timeout."""
+        seconds = math.ceil(self._service.hook_timeout)
+        return CliError(
+            f"the service did not seal {add.rel_path} in {seconds} seconds",
+            ExitCode.STORAGE,
+            hint="run `huron push` again. The next push reads the state of the upload",
+        )
 
-    def _accept(self, add: StagedAdd, *, earlier: bool = False) -> None:
-        add.attempt_state = "ready"
+    def _accept(self, file: _File, upload_id: str | None, *, earlier: bool = False) -> None:
+        self._record(file, "ready", upload_id)
         if earlier:
-            self._report(f"{add.rel_path} is on the service from an earlier push")
+            self._report(f"{file.add.rel_path} is on the service from an earlier push")
         else:
-            self._report(f"uploaded {add.rel_path} ({add.size} bytes)")
+            self._report(f"uploaded {file.add.rel_path} ({file.add.size} bytes)")
 
-    def _attempt(self, attempt_id: str) -> dict[str, Any] | None:
-        """The attempt as the API records it; ``None`` when the API does not know it."""
+    def _record(self, file: _File, state: str, upload_id: str | None) -> None:
+        """Record the attempt's state and current upload ID; save them when they changed."""
+        add = file.add
+        if (add.attempt_state, add.upload_id) != (state, upload_id):
+            add.attempt_state, add.upload_id = state, upload_id
+            file.save()
+
+    def _attempt(self, file: _File, deadline: Deadline | None = None) -> _Attempt | None:
+        """The attempt of the add as the API records it; ``None`` when the API does not know it."""
         try:
-            attempt: dict[str, Any] = self._api.get(f"/api/v1/upload-attempts/{attempt_id}")
+            found: dict[str, Any] = self._api.get(
+                f"/api/v1/upload-attempts/{file.add.attempt_id}", deadline=deadline
+            )
         except ApiError as error:
             if error.code == "NOT_FOUND":
                 return None
             raise
-        return attempt
+        return _Attempt(str(found["state"]), found["upload_id"], found.get("failure"))
 
-    def _offset(self, add: StagedAdd) -> int | None:
-        """The bytes tusd holds of the recorded upload; ``None`` when tusd does not have it."""
-        assert add.upload_id is not None
-        response = self._request("HEAD", self._service.address(add.upload_id), {})
-        if response.status_code in _GONE:
+    def _offset(self, upload_id: str, *, missing_ok: bool) -> int | None:
+        """The bytes tusd holds of an upload; ``None`` when tusd does not have it and
+        ``missing_ok``.
+        """
+        response = self._request("HEAD", self._service.address(upload_id), {})
+        if missing_ok and response.status_code in _GONE:
             return None
         _check(response)
         return int(response.headers["Upload-Offset"])
@@ -299,12 +392,14 @@ class Uploader:
 
     def _finishing(
         self, method: str, url: str, headers: dict[str, str], content: bytes | None = None
-    ) -> httpx.Response | None:
-        """Send a request that can finish an upload; ``None`` when its answer is too late."""
+    ) -> httpx.Response | httpx.TransportError:
+        """Send a request that can finish an upload; the transport error when its answer is
+        lost.
+        """
         try:
             return self._send_request(method, url, headers, content, self._finish_timeout)
-        except httpx.ReadTimeout:
-            return None
+        except _LOST_ANSWER as error:
+            return error
         except httpx.TransportError as error:
             raise self._unreachable(error) from error
 
@@ -325,11 +420,64 @@ class Uploader:
         return self._http.request(method, url, headers=sent, content=content, timeout=timeout)
 
     def _unreachable(self, error: httpx.TransportError) -> CliError:
+        """The error for a request that got no answer from the upload service, with its
+        transport error.
+        """
         return CliError(
             f"the upload service at {self._service.url} is unreachable: {error}",
             ExitCode.FAILED,
-            hint="run `huron push` again. The next push continues the upload",
+            hint=_CONTINUE_HINT,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _File:
+    """One staged add to upload, with its open source file and the function that saves it."""
+
+    collection_id: str
+    add: StagedAdd
+    source: BinaryIO
+    save: Callable[[], None]
+
+
+@dataclass(frozen=True, slots=True)
+class _Attempt:
+    """An upload attempt as the service gives it: its state and its current upload ID.
+
+    A refused creation of an attempt that ended names no upload ID. ``failure`` is the problem
+    of a ``failed`` attempt.
+    """
+
+    state: str
+    upload_id: str | None
+    failure: dict[str, Any] | None = None
+
+
+def _decisive(answer: httpx.Response | httpx.TransportError) -> TypeGuard[httpx.Response]:
+    """Whether ``answer`` tells how a request that finishes an upload ended; after any other
+    answer the attempt's state tells.
+    """
+    return isinstance(answer, httpx.Response) and answer.status_code not in _UNKNOWN_OUTCOME
+
+
+def _is_unsealed(attempt: _Attempt | None) -> bool:
+    return attempt is not None and attempt.state in _UNSEALED
+
+
+def _refusal_of(response: httpx.Response) -> _Attempt | None:
+    """The attempt that a creation refusal of the attempt's state names; ``None`` for any other
+    answer.
+    """
+    if response.status_code != httpx.codes.CONFLICT:
+        return None
+    try:
+        document = response.json()
+    except ValueError:
+        return None
+    if not isinstance(document, dict) or document.get("code") != _STATE_CONFLICT:
+        return None
+    context = document.get("context") or {}
+    return _Attempt(str(context["state"]), context.get("upload_id"))
 
 
 def _metadata(values: Mapping[str, str]) -> str:
@@ -375,4 +523,11 @@ def _check(response: httpx.Response) -> None:
             "this upload belongs to another user, or it does not take bytes now",
             ExitCode.FORBIDDEN,
         )
-    raise CliError(f"the upload service answered HTTP {response.status_code}", ExitCode.FAILED)
+    raise _answered(response)
+
+
+def _answered(response: httpx.Response, *, hint: str | None = None) -> CliError:
+    """The error for an answer of the upload service that tells no more than its status."""
+    return CliError(
+        f"the upload service answered HTTP {response.status_code}", ExitCode.FAILED, hint=hint
+    )

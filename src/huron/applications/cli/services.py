@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,7 @@ from rich.console import Console
 
 from huron.applications.cli.client import ApiClient
 from huron.applications.cli.config import Config
+from huron.applications.cli.deadline import Deadline
 from huron.applications.cli.errors import UsageError
 from huron.applications.cli.localstate import LocalState
 from huron.applications.cli.login import Oidc, Session
@@ -30,7 +32,8 @@ class Services:
 
     ``storage_factory`` gives the read-only storage of :class:`Mount` rooted at a directory of
     this machine. ``provision_storage`` gives the writable storage of the provision commands,
-    which the storage admin runs, rooted at the mount prefix.
+    which the storage admin runs, rooted at the mount prefix. ``monotonic`` is the clock of
+    the waits, with ``sleep``.
     """
 
     environ: Mapping[str, str]
@@ -47,6 +50,7 @@ class Services:
     hostname: str
     storage_factory: Callable[[Path], ShareReader]
     provision_storage: Callable[[Path], Storage] = PosixStorage
+    monotonic: Callable[[], float] = time.monotonic
     output: OutputFormat = OutputFormat.TABLE
     catalog_override: str | None = None
     _session: Session | None = field(default=None, repr=False)
@@ -66,6 +70,10 @@ class Services:
     def api(self) -> ApiClient:
         """The API client, authenticated as the logged-in user."""
         return ApiClient(self.http, self.config.api_url, self.session().token, self.sleep)
+
+    def deadline(self, seconds: float) -> Deadline:
+        """A deadline ``seconds`` from now, for one wait."""
+        return Deadline(seconds, self.monotonic, self.sleep)
 
     def mount(self) -> Mount:
         """The share as this machine sees it; one per command, so its checks are cached."""

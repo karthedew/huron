@@ -9,6 +9,9 @@ sidebar:
 
 Upload the staged files and commit them.
 
+When the CLI did not get the result of the last commit, the push first gets that result,
+or sends the same commit again. It then does nothing else.
+
 Panel: [Collection](/docs/reference/cli/panels/collection/).
 
 ## Usage

@@ -1,4 +1,4 @@
-"""Edge paths of the CLI: entry point, prompts, recovery and failure branches."""
+"""Edge paths of the CLI: entry point, prompts and failure branches."""
 
 import json
 import sys
@@ -8,12 +8,9 @@ import httpx
 import pytest
 
 from huron.applications.cli import main as entry
-from huron.applications.cli.client import ApiClient
 from huron.applications.cli.errors import CliError
-from huron.applications.cli.localstate import StagedAdd, WorkingState
 from huron.applications.cli.login import Oidc
 from huron.applications.cli.prompts import QuestionaryPrompter
-from huron.applications.cli.sync import _recover
 from huron.core.storage import LakePath
 from huron.core.storage.memory import MemoryStorage
 from tests.fakes.issuer import ISSUER, FakeIssuer
@@ -117,20 +114,6 @@ def test_loopback_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(login, "_LOOPBACK_TIMEOUT", 0.05)
     with pytest.raises(CliError, match="did not answer in time"):
         client.loopback_flow(lambda url: None)
-
-
-def test_recovery_refuses_when_the_files_are_not_recorded() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/files"):
-            return httpx.Response(200, json={"items": [], "next_cursor": None})
-        return httpx.Response(200, json={"version": 9, "file_count": 0})
-
-    api = ApiClient(httpx.Client(transport=httpx.MockTransport(handler)), "http://x")
-    stage = WorkingState("id", "c.n.x", "o/c/n/x", 3, [StagedAdd("a", "/a", 1, 10, "f" * 64)])
-    lost = CliError("lost")
-    with pytest.raises(CliError) as raised:
-        _recover(api, stage, lost)
-    assert raised.value is lost
 
 
 @pytest.fixture

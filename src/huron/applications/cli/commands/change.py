@@ -20,7 +20,8 @@ from huron.applications.cli.commands.common import (
     services,
 )
 from huron.applications.cli.errors import CliError, ExitCode, UsageError
-from huron.applications.cli.sync import checkout
+from huron.applications.cli.services import Services
+from huron.applications.cli.sync import checkout, refuse_pending
 from huron.applications.cli.walkthrough import fill, merge_diff, review
 from huron.schema.validator import SchemaInvalid, check_schema_document
 
@@ -195,14 +196,26 @@ def unset_override(ctx: typer.Context, identifier: CollectionArgument = None) ->
 
 
 def _patch(ctx: typer.Context, collection: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    """Change ``collection``, and check out the change when its working copy is at its version.
+
+    That checkout refuses while a working copy has a pending commit, so the same refusal comes
+    before the change.
+    """
     found = services(ctx)
+    if _follows(found, collection):
+        refuse_pending(found, str(collection["id"]))
     updated: dict[str, Any] = api(ctx).patch(
         f"/api/v1/collections/{collection['id']}",
         json=body,
         headers=if_match(int(collection["version"])),
     )
     with found.state.locked():
-        copy = found.state.working(str(collection["id"]))
-        if copy is not None and copy.base_version == int(collection["version"]):
+        if _follows(found, collection):
             checkout(found, updated)
     return updated
+
+
+def _follows(found: Services, collection: dict[str, Any]) -> bool:
+    """Whether a working copy of ``collection`` is at the version of ``collection``."""
+    copy = found.state.working(str(collection["id"]))
+    return copy is not None and copy.base_version == int(collection["version"])

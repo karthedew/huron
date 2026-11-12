@@ -33,6 +33,7 @@ from huron.applications.cli.localstate import (
     write_atomically,
 )
 from tests.support.cli import Cli
+from tests.support.clock import MonotonicClock
 from tests.support.disk import snapshot
 from tests.support.state_child import POINTS, Child, child_environment
 
@@ -50,23 +51,6 @@ KIND_HINT = (
     " Move it to a different location. Then run the command again"
 )
 CAUSE_HINT = "correct the cause that the error message gives. Then run the command again"
-
-
-class FakeClock:
-    """A monotonic clock that moves only when ``sleep`` is called."""
-
-    def __init__(self) -> None:
-        self.now = 100.0
-        self.slept: list[float] = []
-        self.on_sleep: Callable[[], None] = lambda: None
-
-    def __call__(self) -> float:
-        return self.now
-
-    def sleep(self, seconds: float) -> None:
-        self.slept.append(seconds)
-        self.now += seconds
-        self.on_sleep()
 
 
 @pytest.fixture
@@ -552,7 +536,7 @@ def test_two_processes_that_change_the_stage_give_two_changes(
 def test_the_state_lock_waits_for_the_holder_then_fails_with_exit_code_6(
     state: LocalState,
 ) -> None:
-    clock = FakeClock()
+    clock = MonotonicClock()
     waiting = LocalState(state.root, clock=clock, sleep=clock.sleep)
     state.root.mkdir(parents=True)
     holder = hold(state.root / "state.lock")
@@ -570,7 +554,7 @@ def test_the_state_lock_waits_for_the_holder_then_fails_with_exit_code_6(
 
 
 def test_the_state_lock_is_taken_when_the_holder_releases_it_in_time(state: LocalState) -> None:
-    clock = FakeClock()
+    clock = MonotonicClock()
     waiting = LocalState(state.root, clock=clock, sleep=clock.sleep)
     state.root.mkdir(parents=True)
     holder = hold(state.root / "state.lock")
@@ -612,7 +596,7 @@ def test_the_kernel_releases_the_locks_of_a_killed_process(
 
 
 def test_a_nested_use_of_the_state_lock_in_one_process_does_not_wait(state: LocalState) -> None:
-    clock = FakeClock()
+    clock = MonotonicClock()
     nested = LocalState(state.root, clock=clock, sleep=clock.sleep)
     with nested.locked():
         with nested.locked():
@@ -1223,7 +1207,7 @@ def test_commands_refuse_a_working_copy_of_a_newer_format(ready: Cli, tmp_path: 
 def test_a_command_fails_with_exit_code_6_when_another_holds_the_state_lock(
     ready: Cli, tmp_path: Path
 ) -> None:
-    clock = FakeClock()
+    clock = MonotonicClock()
     ready.state = LocalState(ready.state.root, clock=clock, sleep=clock.sleep)
     holder = hold(ready.state.root / "state.lock")
     source = tmp_path / "b.txt"

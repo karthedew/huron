@@ -194,15 +194,6 @@ def test_others_cannot_delete_or_push(ready: Cli, share: MemoryStorage, tmp_path
     assert ready.run("push").exit_code == 4
 
 
-def test_a_lost_commit_response_is_recovered(ready: Cli, tmp_path: Path) -> None:
-    create(ready)
-    (a,) = files(tmp_path, **{"a.txt": "alpha"})
-    ready.ok("add", str(a))
-    ready.router.fail_commits = "after"
-    assert "3 → 4" in ready.ok("push").stdout
-    assert json.loads(ready.ok("-o", "json", "status").stdout)["your_version"] == 4
-
-
 def test_an_interrupted_push_resumes_without_copying_again(
     ready: Cli, share: MemoryStorage, tmp_path: Path
 ) -> None:

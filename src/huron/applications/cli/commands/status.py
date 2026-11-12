@@ -24,9 +24,11 @@ STAGED_COLUMNS = [
     Column("STAGED", lambda row: row["action"]),
     Column("PATH", lambda row: row["rel_path"]),
     Column("SIZE", lambda row: None if row["size"] is None else human_size(row["size"])),
+    Column("UPLOAD", lambda row: row["upload"]),
     Column("FROM", lambda row: row["source"], overflow="fold"),
 ]
-"""The table of staged changes; ``-`` stands for what a remove has not.
+"""The table of staged changes; ``-`` stands for what a remove has not, and for the upload state
+of an add before its upload starts.
 
 A long source path wraps rather than losing its end, the file name that tells rows apart.
 """
@@ -84,8 +86,11 @@ class CopyStatus:
         return f"On collection {self.working.identifier} ({version}){where}"
 
     def report(self, organization: str | None, catalog: str | None) -> dict[str, object]:
-        """The machine-readable status, with ``organization`` and ``catalog`` of the context."""
-        view = self.collection
+        """The machine-readable status, with ``organization`` and ``catalog`` of the context.
+
+        ``pending_commit`` is the request ID of the commit whose result the CLI did not get.
+        """
+        view, pending = self.collection, self.working.pending_commit
         return {
             "organization": organization,
             "catalog": catalog,
@@ -98,6 +103,7 @@ class CopyStatus:
             "removes": list(self.working.removes),
             "unrecorded": self.unrecorded,
             "staged": staged_rows(self.working),
+            "pending_commit": None if pending is None else pending.request_id,
         }
 
 
@@ -107,13 +113,23 @@ def register(app: typer.Typer, panel: str) -> None:
 
 
 def staged_rows(stage: WorkingState) -> list[dict[str, object]]:
-    """The staged adds then removes, as ``{action, rel_path, size, source}`` rows."""
+    """The staged adds then removes, as ``{action, rel_path, size, upload, source}`` rows.
+
+    ``upload`` is the last state of the add's upload attempt that the CLI read on the service,
+    ``None`` before its upload starts and for a remove.
+    """
     adds: list[dict[str, object]] = [
-        {"action": "add", "rel_path": add.rel_path, "size": add.size, "source": add.source}
+        {
+            "action": "add",
+            "rel_path": add.rel_path,
+            "size": add.size,
+            "upload": add.attempt_state,
+            "source": add.source,
+        }
         for add in stage.adds
     ]
     removes: list[dict[str, object]] = [
-        {"action": "remove", "rel_path": path, "size": None, "source": None}
+        {"action": "remove", "rel_path": path, "size": None, "upload": None, "source": None}
         for path in stage.removes
     ]
     return adds + removes
@@ -129,6 +145,9 @@ def status(
     ] = False,
 ) -> None:
     """Show where you are, and the staged changes and drift of the current collection.
+
+    The UPLOAD column gives the last state of the upload of each staged file. When the CLI did
+    not get the result of the last commit, the status gives the ID of that commit request.
 
     With `--all`, show all working copies on this machine that hold staged changes. A `*` marks
     the current collection. The CLI compares only the current collection with the service and
@@ -218,7 +237,14 @@ def _section(ctx: typer.Context, item: CopyStatus, *, alone: bool) -> None:
         show_list(ctx, rows, STAGED_COLUMNS)
     if item.current:
         _drift(ctx, item)
-    if not rows:
+    pending = item.working.pending_commit
+    if pending is not None:
+        say(
+            ctx,
+            f"The CLI did not get the result of the commit request {pending.request_id}."
+            " To get the result, run `huron push`",
+        )
+    elif not rows:
         if alone:
             say(ctx, NOTHING_STAGED)
     elif item.current:

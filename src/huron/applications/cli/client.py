@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from huron import __version__
+from huron.applications.cli.deadline import Deadline, DeadlinePassed
 from huron.applications.cli.errors import ApiError, CliError, ExitCode
 
 __all__ = ["ApiClient", "if_match"]
@@ -40,13 +41,19 @@ class ApiClient:
         params: dict[str, Any] | list[tuple[str, Any]] | None = None,
         headers: dict[str, str] | None = None,
         auth: bool = True,
+        deadline: Deadline | None = None,
     ) -> httpx.Response:
-        """Send a request; any non-2xx answer raises :class:`ApiError`."""
+        """Send a request; any non-2xx answer raises :class:`ApiError`.
+
+        With ``deadline``, the time that remains limits the timeout of the request and each
+        sleep before the CLI sends a GET again. A request that times out when no time remains
+        raises :class:`~huron.applications.cli.deadline.DeadlinePassed`.
+        """
         sent = {"User-Agent": f"huron-cli/{__version__}", **(headers or {})}
         if auth and self._token is not None:
             sent["Authorization"] = f"Bearer {self._token()}"
         url = path if path.startswith("http") else f"{self._base}{path}"
-        response = self._send(method, url, json, params, sent)
+        response = self._send(method, url, json, params, sent, deadline)
         if response.is_success:
             return response
         raise _error(response)
@@ -88,20 +95,33 @@ class ApiClient:
         json: Any,
         params: Any,
         headers: dict[str, str],
+        deadline: Deadline | None,
     ) -> httpx.Response:
         attempts = _RETRIES + 1 if method == "GET" else 1
         for attempt in range(attempts):
+            timeout = self._http.timeout if deadline is None else deadline.limit(self._http.timeout)
             try:
-                return self._http.request(method, url, json=json, params=params, headers=headers)
+                return self._http.request(
+                    method, url, json=json, params=params, headers=headers, timeout=timeout
+                )
             except httpx.TransportError as error:
-                if attempt + 1 == attempts:
+                timed_out = isinstance(error, httpx.TimeoutException)
+                if timed_out and deadline is not None and deadline.remaining() <= 0:
+                    raise DeadlinePassed from error
+                if attempt + 1 == attempts or not self._pause(0.5 * (attempt + 1), deadline):
                     raise CliError(
                         f"the Huron API at {self._base} is unreachable: {error}",
                         ExitCode.FAILED,
                         hint="to check `api_url`, run `huron config show`",
                     ) from error
-                self._sleep(0.5 * (attempt + 1))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _pause(self, seconds: float, deadline: Deadline | None) -> bool:
+        """Sleep before a GET is sent again; ``False`` when the deadline leaves no time."""
+        if deadline is None:
+            self._sleep(seconds)
+            return True
+        return deadline.pause(seconds)
 
 
 def if_match(version: int) -> dict[str, str]:

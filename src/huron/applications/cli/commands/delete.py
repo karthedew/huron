@@ -123,5 +123,5 @@ def _remove_files(ctx: typer.Context, collection: dict[str, Any]) -> int:
         "removes": removes,
         "host": services(ctx).hostname,
     }
-    commit = send_commit(api(ctx), str(collection["id"]), body, services(ctx).sleep)
+    commit = send_commit(api(ctx), str(collection["id"]), body, services(ctx).deadline)
     return int(commit["version"])
