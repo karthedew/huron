@@ -3,15 +3,21 @@ import { randomUUID } from "node:crypto";
 import { DispatchJournal, claimsConflict, normalizeDispatch, type DispatchProfile, type DispatchRecord } from "./dispatch-state.js";
 
 const model = { providerID: "openai", modelID: "gpt-6-astra" };
-const efforts: Record<string, "low" | "max"> = {
+const efforts: Record<string, "low" | "medium" | "max"> = {
   "markdown-orchestrator": "low", "markdown-implementer": "low", "markdown-reviewer": "low",
+  "markdown-implementer-medium": "medium", "markdown-reviewer-medium": "medium",
   "markdown-implementer-max": "max", "markdown-reviewer-max": "max",
 };
+const profiles = {
+  preparatory: { suffix: "", effort: "low" },
+  medium: { suffix: "-medium", effort: "medium" },
+  maximum: { suffix: "-max", effort: "max" },
+} as const;
 
 function selection(role: string, profile: DispatchProfile) {
   const base = role === "verification" ? "markdown-reviewer" : "markdown-implementer";
-  return { profile, agent: profile === "maximum" ? `${base}-max` : base,
-    model: "openai/gpt-6-astra", reasoningEffort: profile === "maximum" ? "max" : "low" };
+  const { suffix, effort } = profiles[profile];
+  return { profile, agent: `${base}${suffix}`, model: "openai/gpt-6-astra", reasoningEffort: effort };
 }
 
 function field(value: unknown, key: string): unknown {
@@ -166,13 +172,13 @@ const plugin: Plugin = async ({ client, directory, worktree }) => {
     },
     tool: {
       implementation_start: tool({
-        description: "Launch an Astra child with preparatory (Low) or maximum (Max) profile; omission defaults to maximum. Code and legacy-exclusive require maximum. Final complete qualification must explicitly use maximum. Code is exclusive; non-code overlaps only with nonconflicting claims. Poll implementation_status.",
+        description: "Launch an Astra child with preparatory (Low), medium (Medium), or maximum (Max) profile. Classified omission defaults to medium. Legacy-exclusive omission defaults to maximum. Code and legacy-exclusive reject Low. Final complete qualification requires explicit verification/review/maximum.\n\nCode is exclusive. Non-code overlaps only with nonconflicting claims. Poll implementation_status.",
         args: {
           role: tool.schema.enum(["implementation", "fix", "verification"]),
           title: tool.schema.string().min(1),
           prompt: tool.schema.string().min(1).describe("Complete self-contained assignment, including the validation gate and 15-minute progress contract."),
           activity: tool.schema.enum(["code", "discovery", "planning", "prototype", "review"]).optional(),
-          profile: tool.schema.enum(["preparatory", "maximum"]).optional(),
+          profile: tool.schema.enum(["preparatory", "medium", "maximum"]).optional(),
           claims: tool.schema.array(tool.schema.object({ resource: tool.schema.string().regex(/^(\*|[a-z][a-z0-9:._-]{0,95})$/), mode: tool.schema.enum(["read", "write"]) }).strict()).min(1).max(32).optional(),
         },
         async execute(args, context) {

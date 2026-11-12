@@ -1,13 +1,15 @@
 ---
-name: implementation-plan
+name: huron-implementation-plan
 description: Turn reviewed Huron design and prototype evidence into self-contained executable phase plans. Use for /implementation-plan and revising phase scope, gates or blockers.
 ---
 
 # Self-contained phase planning
 
-Resolve profile in every phase: maximum Astra for actual implementation/fixes and
-final complete qualification; explicit preparatory is allowed for non-code planning.
-Omission defaults to maximum, not permission to downgrade code or final gates.
+Resolve profile in every phase: medium Astra for ordinary implementation/fixes/reviews,
+or explicitly selected maximum. Final complete qualification requires explicit
+verification/review/maximum. Non-code planning permits preparatory.
+New classified omission defaults to medium. Legacy-exclusive omission stays maximum.
+Neither default permits Low code or substitutes for explicit final qualification.
 
 Read [orchestration](../../workflows/orchestration.md),
 [verification](../../workflows/verification.md) and the

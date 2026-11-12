@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createOpencodeClient } from "@opencode-ai/sdk";
+import { tool } from "@opencode-ai/plugin";
 import plugin from "../.test-build/implementation.js";
-import { mkdtemp, mkdir, readFile, writeFile, unlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { inspect } from "node:util";
+
+const profileEfforts = { preparatory: "low", medium: "medium", maximum: "max" };
+const agentEfforts = {
+  "markdown-orchestrator": "low", "markdown-implementer": "low", "markdown-reviewer": "low",
+  "markdown-implementer-medium": "medium", "markdown-reviewer-medium": "medium",
+  "markdown-implementer-max": "max", "markdown-reviewer-max": "max",
+};
+const variants = () => Object.fromEntries(Object.values(profileEfforts).map(effort => [effort, { reasoningEffort: effort, disabled: false }]));
 
 async function setup() {
   const directory = await mkdtemp("/tmp/opencode/dispatch-test-");
@@ -35,8 +44,7 @@ async function setup() {
         return state.statusFailure ? new Response("unavailable", { status: 503 }) : Response.json(state.statuses);
       }
        if (url.pathname === "/agent") return Response.json(
-         ["markdown-implementer", "markdown-reviewer", "markdown-implementer-max", "markdown-reviewer-max"].map(name => {
-           const effort = name.endsWith("-max") ? "max" : "low";
+          Object.entries(agentEfforts).filter(([name]) => name !== "markdown-orchestrator").map(([name, effort]) => {
            const agent = { name, mode: "subagent", variant: effort,
              model: { providerID: "openai", modelID: "gpt-6-astra" },
              options: { reasoningEffort: state.configured ? effort : "high" } };
@@ -45,7 +53,7 @@ async function setup() {
          }));
       if (url.pathname === "/config/providers") return Response.json({
          providers: state.available ? [{ id: "openai", models: { "gpt-6-astra": {
-           variants: state.variants ?? { low: { reasoningEffort: "low" }, max: { reasoningEffort: "max", disabled: false } },
+            variants: state.variants ?? variants(),
          } } }] : [],
       });
       if (url.pathname === "/session") {
@@ -70,13 +78,24 @@ async function setup() {
   });
   const recreate = () => plugin({ client, directory, worktree: directory });
   const hooks = await recreate();
-  const context = { sessionID: "parent", agent: "markdown-orchestrator", metadata() {} };
+  const context = { sessionID: "parent", agent: "markdown-orchestrator", metadata(value) { state.metadata = value; } };
   return {
     state, hooks, context, directory, recreate,
     start: (role = "implementation", extra = {}) => hooks.tool.implementation_start.execute({ role, title: "slice", prompt: "complete assignment", ...extra }, context),
     poll: (sessionID = "child") => hooks.tool.implementation_status.execute({ sessionID }, context),
   };
 }
+
+test("the advertised launch schema preserves explicit classification and all profiles", async () => {
+  const { hooks, state } = await setup();
+  const schema = tool.schema.object(hooks.tool.implementation_start.args);
+  for (const profile of Object.keys(profileEfforts)) {
+    const assignment = { role: "verification", title: "review", prompt: "complete assignment",
+      activity: "review", profile, claims: [{ resource: "plan:review", mode: "read" }] };
+    assert.deepEqual(schema.parse(assignment), assignment);
+  }
+  assert.deepEqual(state.calls, []);
+});
 
 test("launch returns a pollable child with the configured model and role", async () => {
   for (const role of ["implementation", "fix", "verification"]) {
@@ -238,10 +257,10 @@ test("nested launch is refused and fixed Astra profiles are enforced only for wo
   output.options.reasoningEffort = "high";
   await hooks["chat.params"]({ agent: "general", model: {} }, output);
   assert.equal(output.options.reasoningEffort, "high");
-  for (const agent of ["markdown-orchestrator", "markdown-implementer", "markdown-reviewer", "markdown-implementer-max", "markdown-reviewer-max"]) {
-    output.options.reasoningEffort = agent.endsWith("-max") ? "low" : "max";
+  for (const [agent, effort] of Object.entries(agentEfforts)) {
+    output.options.reasoningEffort = "high";
     await hooks["chat.params"]({ agent, model: { id: "gpt-6-astra", providerID: "openai" } }, output);
-    assert.equal(output.options.reasoningEffort, agent.endsWith("-max") ? "max" : "low");
+    assert.equal(output.options.reasoningEffort, effort);
     await assert.rejects(hooks["chat.params"]({ agent, model: { id: "gpt-6-astra", providerID: "other" } }, output), /refusing substitution/);
     context.agent = agent === "markdown-orchestrator" ? "markdown-unknown" : agent;
     await assert.rejects(start(), /Only markdown-orchestrator/);
@@ -270,17 +289,25 @@ const terminal = () => [{ info: { id: "final", role: "assistant", time: { create
 
 test("profiles select fixed typed agents and persist accurate configured ownership", async () => {
   for (const role of ["implementation", "fix", "verification"]) {
-    for (const profile of ["preparatory", "maximum"]) {
+    for (const [profile, effort] of Object.entries(profileEfforts)) {
       const { start, state, poll, recreate, context, directory } = await setup();
-      const activity = role === "verification" ? "review" : profile === "maximum" ? "code" : "planning";
+      const activity = role === "verification" ? "review" : profile === "preparatory" ? "planning" : "code";
       const result = JSON.parse(await start(role, { ...classified(activity), profile }));
-      const effort = profile === "maximum" ? "max" : "low";
-      const agent = `markdown-${role === "verification" ? "reviewer" : "implementer"}${profile === "maximum" ? "-max" : ""}`;
+      const agent = `markdown-${role === "verification" ? "reviewer" : "implementer"}${effort === "low" ? "" : `-${effort}`}`;
       assert.deepEqual(result.configured, { profile, agent, model: "openai/gpt-6-astra", reasoningEffort: effort });
       assert.equal(result.reasoningEffort, undefined);
       const payload = state.calls.find(call => call.path.endsWith("prompt_async")).body;
       assert.equal(payload.agent, agent);
       assert.equal(payload.variant, undefined);
+      const created = state.calls.find(call => call.path === "/session" && call.method === "POST");
+      assert.deepEqual(created.body, { parentID: context.sessionID, title: "slice" });
+      assert.equal(state.children[0].parentID, context.sessionID);
+      assert.equal(state.metadata.metadata.sessionID, result.sessionID);
+      assert.equal(state.metadata.metadata.dispatchID, result.dispatchID);
+      const envelope = JSON.parse(payload.parts[0].text.split("\n")[1]);
+      assert.equal(envelope.childID, result.sessionID);
+      assert.equal(envelope.profile, profile);
+      assert.equal(envelope.parentID, context.sessionID);
       const ledger = JSON.parse(await readFile(join(directory, ".agents/.dispatch-state/ledger.json"), "utf8"));
       assert.equal(ledger.version, 1);
       assert.equal(ledger.records[0].version, 2);
@@ -299,9 +326,28 @@ test("profiles select fixed typed agents and persist accurate configured ownersh
   }
 });
 
+test("classified omission selects medium while legacy omission stays maximum for every role", async () => {
+  for (const role of ["implementation", "fix", "verification"]) {
+    for (const activity of role === "verification" ? ["discovery", "review"] : ["code", "planning", "prototype"]) {
+      const { start } = await setup();
+      const result = JSON.parse(await start(role, classified(activity)));
+      assert.equal(result.configured.profile, "medium");
+      assert.equal(result.configured.reasoningEffort, "medium");
+    }
+    for (const profile of [undefined, "medium", "maximum"]) {
+      const { start } = await setup();
+      const result = JSON.parse(await start(role, { profile }));
+      assert.equal(result.activity, "legacy-exclusive");
+      assert.deepEqual(result.claims, [{ resource: "*", mode: "write" }]);
+      assert.equal(result.configured.profile, profile ?? "maximum");
+      assert.equal(result.configured.reasoningEffort, profileEfforts[profile ?? "maximum"]);
+    }
+  }
+});
+
 test("profile downgrades and malformed selectors reject before all API or journal effects", async () => {
   const { start, state, directory, hooks } = await setup();
-  for (const profile of [null, "", "max", " maximum", "high", 1, {}, []]) {
+  for (const profile of [null, "", "max", " maximum", "Medium", "medium ", "low", "high", 1, {}, []]) {
     assert.equal(hooks.tool.implementation_start.args.profile.safeParse(profile).success, false);
     await assert.rejects(start("implementation", { ...classified("planning"), profile }), /Invalid dispatch/);
   }
@@ -313,26 +359,27 @@ test("profile downgrades and malformed selectors reject before all API or journa
   }
   assert.equal(state.calls.length, 0);
   await assert.rejects(readFile(join(directory, ".agents/.dispatch-state/ledger.json")), { code: "ENOENT" });
+  await assert.rejects(stat(join(directory, ".agents/.dispatch-state")), { code: "ENOENT" });
 });
 
 test("fixed agent and registered variant mismatches fail closed before reservation", async () => {
-  for (const profile of ["preparatory", "maximum"]) {
+  for (const [profile, effort] of Object.entries(profileEfforts)) {
     for (const mutate of [agent => { agent.name = "unavailable"; }, agent => { agent.model.providerID = "other"; },
       agent => { agent.model.modelID = "other"; }, agent => { agent.mode = "primary"; },
       agent => { delete agent.variant; }, agent => { agent.variant = "high"; },
       agent => { agent.options.reasoningEffort = "high"; }, agent => { delete agent.options; },
       agent => { agent.options = null; }]) {
       const { start, state, directory } = await setup();
-      state.agentMutation = mutate;
+      const selected = `markdown-implementer${effort === "low" ? "" : `-${effort}`}`;
+      state.agentMutation = agent => { if (agent.name === selected) mutate(agent); };
       await assert.rejects(start("implementation", { ...classified("planning"), profile }), /fixed Astra profile/);
       assert.equal(state.calls.some(call => call.method === "POST"), false);
       await assert.rejects(readFile(join(directory, ".agents/.dispatch-state/ledger.json")), { code: "ENOENT" });
     }
-    const effort = profile === "maximum" ? "max" : "low";
-    for (const variant of [undefined, null, [], "max", {}, { reasoningEffort: "high" },
+    for (const variant of [undefined, null, [], "max", {}, ...["low", "medium", "max", "high"].filter(other => other !== effort).map(other => ({ reasoningEffort: other })),
       { reasoningEffort: effort, disabled: true }, { reasoningEffort: effort, disabled: "false" }]) {
       const { start, state, directory } = await setup();
-      state.variants = { [effort]: variant };
+      state.variants = { ...variants(), [effort]: variant };
       await assert.rejects(start("verification", { ...classified("review"), profile }), /variant mapping/);
       assert.equal(state.calls.some(call => call.method === "POST"), false);
       await assert.rejects(readFile(join(directory, ".agents/.dispatch-state/ledger.json")), { code: "ENOENT" });
@@ -341,7 +388,7 @@ test("fixed agent and registered variant mismatches fail closed before reservati
 });
 
 test("historical records retain absence of profile through status and appended dispatches", async () => {
-  const { start, state, poll, directory, hooks, context } = await setup();
+  const { start, state, poll, directory, hooks, context, recreate } = await setup();
   await start("implementation", { ...classified("planning"), profile: "preparatory" });
   const path = join(directory, ".agents/.dispatch-state/ledger.json");
   const ledger = JSON.parse(await readFile(path, "utf8"));
@@ -362,10 +409,21 @@ test("historical records retain absence of profile through status and appended d
   assert.deepEqual(appended.records[0], historical);
   assert.equal(appended.records[1].version, 2);
   assert.equal(appended.records[1].profile, "maximum");
+  await start("verification", { ...classified("review"), profile: "preparatory" });
+  const prior = JSON.parse(await readFile(path, "utf8"));
+  await start("verification", { ...classified("review"), profile: "medium" });
+  const mixed = JSON.parse(await readFile(path, "utf8"));
+  assert.deepEqual(mixed.records.slice(0, 3), prior.records);
+  assert.equal(mixed.records[3].profile, "medium");
+  const restored = await recreate();
+  const children = JSON.parse(await restored.tool.implementation_status.execute({}, context));
+  assert.deepEqual(children.map(child => child.ownership.profile), ["not-recorded", "maximum", "preparatory", "medium"]);
+  assert.equal(children[0].ownership.configured, null);
+  assert.equal(children[3].ownership.configured.reasoningEffort, "medium");
 });
 
 test("profile persists before each remote boundary and uncertain reads never invent acceptance", async () => {
-  for (const profile of ["preparatory", "maximum"]) {
+  for (const profile of Object.keys(profileEfforts)) {
     const { start, state, directory, poll } = await setup();
     const readRecord = async () => JSON.parse(await readFile(join(directory, ".agents/.dispatch-state/ledger.json"), "utf8")).records[0];
     state.afterCreate = async () => {
@@ -388,9 +446,9 @@ test("profile persists before each remote boundary and uncertain reads never inv
   }
 });
 
-test("concurrent scheduling is unchanged across preparatory and maximum profiles", async () => {
-  for (const first of ["preparatory", "maximum"]) {
-    for (const second of ["preparatory", "maximum"]) {
+test("concurrent scheduling is unchanged across all profile pairs", async () => {
+  for (const first of Object.keys(profileEfforts)) {
+    for (const second of Object.keys(profileEfforts)) {
       const { start, state } = await setup();
       await start("implementation", { ...classified("planning", "first"), profile: first });
       await start("verification", { ...classified("review", "second", "read"), profile: second });
@@ -418,32 +476,40 @@ test("all explicit non-code activities overlap only with independent ownership",
 });
 
 test("code and every legacy role exclude non-code in both admission orders", async () => {
-  for (const role of ["implementation", "fix", "verification"]) {
-    for (const explicit of role === "verification" ? [false] : [false, true]) {
-      for (const reverse of [false, true]) {
-        const { start, state } = await setup();
-        const exclusive = () => start(role, explicit ? classified("code", "unrelated", "read") : {});
-        const independent = () => start("verification", classified("discovery", "other", "read"));
-        await (reverse ? independent() : exclusive());
-        await assert.rejects(reverse ? exclusive() : independent(), /active or indeterminate/);
-        assert.equal(state.children.length, 1);
+  for (const profile of ["medium", "maximum"]) {
+    for (const otherProfile of Object.keys(profileEfforts)) {
+      for (const role of ["implementation", "fix", "verification"]) {
+        for (const explicit of role === "verification" ? [false] : [false, true]) {
+          for (const reverse of [false, true]) {
+            const { start, state } = await setup();
+            const exclusive = () => start(role, { ...(explicit ? classified("code", "unrelated", "read") : {}), profile });
+            const independent = () => start("verification", { ...classified("discovery", "other", "read"), profile: otherProfile });
+            await (reverse ? independent() : exclusive());
+            await assert.rejects(reverse ? exclusive() : independent(), /active or indeterminate/);
+            assert.equal(state.children.length, 1);
+          }
+        }
       }
     }
   }
 });
 
 test("exact labels share read claims but writes and wildcards conflict", async () => {
-  for (const [a, b, left, right, conflict] of [
-    ["read", "read", "shared", "shared", false], ["read", "write", "shared", "shared", true],
-    ["write", "read", "shared", "shared", true], ["write", "write", "shared", "shared", true],
-    ["read", "write", "*", "other", true], ["write", "read", "other", "*", true],
-    ["read", "read", "*", "other", false], ["write", "write", "plan", "plan:other", false],
-  ]) {
-    const { start, state } = await setup();
-    await start("implementation", classified("planning", left, a));
-    const next = start("implementation", classified("planning", right, b));
-    if (conflict) await assert.rejects(next, /active or indeterminate/); else await next;
-    assert.equal(state.children.length, conflict ? 1 : 2);
+  for (const first of Object.keys(profileEfforts)) {
+    for (const second of Object.keys(profileEfforts)) {
+      for (const [a, b, left, right, conflict] of [
+        ["read", "read", "shared", "shared", false], ["read", "write", "shared", "shared", true],
+        ["write", "read", "shared", "shared", true], ["write", "write", "shared", "shared", true],
+        ["read", "write", "*", "other", true], ["write", "read", "other", "*", true],
+        ["read", "read", "*", "other", false], ["write", "write", "plan", "plan:other", false],
+      ]) {
+        const { start, state } = await setup();
+        await start("implementation", { ...classified("planning", left, a), profile: first });
+        const next = start("implementation", { ...classified("planning", right, b), profile: second });
+        if (conflict) await assert.rejects(next, /active or indeterminate/); else await next;
+        assert.equal(state.children.length, conflict ? 1 : 2);
+      }
+    }
   }
 });
 
@@ -464,34 +530,39 @@ test("invalid explicit requests reject before creation or reservation", async ()
 });
 
 test("create and prompt uncertainty persist without replay across recreation", async () => {
-  for (const failure of ["createFailure", "dispatchFailure"]) {
-    const { start, state, recreate, context } = await setup();
-    state[failure] = true;
-    const result = JSON.parse(await start("implementation", classified("planning")));
-    assert.equal(result.state, failure === "createFailure" ? "creation-indeterminate" : "dispatch-indeterminate");
-    assert.equal(result.configured.profile, "maximum");
-    assert.equal(result.configured.reasoningEffort, "max");
-    assert.equal(result.providerAcceptance, "not-proven");
-    assert.ok(result.dispatchID);
-    assert.equal(result.sessionID, failure === "createFailure" ? undefined : "child");
-    const restored = await recreate();
-    await assert.rejects(restored.tool.implementation_start.execute({ role: "verification", title: "independent", prompt: "read", ...classified("discovery", "other") }, context), /active or indeterminate/);
-    assert.equal(state.children.length, 1);
-    assert.equal(state.calls.filter(call => call.path.endsWith("prompt_async")).length, failure === "createFailure" ? 0 : 1);
+  for (const [profile, effort] of Object.entries(profileEfforts)) {
+    for (const failure of ["createFailure", "dispatchFailure"]) {
+      const { start, state, recreate, context } = await setup();
+      state[failure] = true;
+      const result = JSON.parse(await start("implementation", { ...classified("planning"), profile }));
+      assert.equal(result.state, failure === "createFailure" ? "creation-indeterminate" : "dispatch-indeterminate");
+      assert.equal(result.configured.profile, profile);
+      assert.equal(result.configured.reasoningEffort, effort);
+      assert.equal(result.providerAcceptance, "not-proven");
+      assert.ok(result.dispatchID);
+      assert.equal(result.sessionID, failure === "createFailure" ? undefined : "child");
+      const restored = await recreate();
+      await assert.rejects(restored.tool.implementation_start.execute({ role: "verification", title: "independent", prompt: "read", ...classified("discovery", "other") }, context), /active or indeterminate/);
+      assert.equal(state.children.length, 1);
+      assert.equal(state.calls.filter(call => call.path.endsWith("prompt_async")).length, failure === "createFailure" ? 0 : 1);
+    }
   }
 });
 
 test("save failure after remote I/O is uncertainty and preserves child identity", async () => {
-  for (const hook of ["afterCreate", "afterPrompt"]) {
-    const { start, state, directory } = await setup();
-    state[hook] = () => writeFile(join(directory, ".agents/.dispatch-state/ledger.json"), "corrupt");
-    const result = JSON.parse(await start());
-    assert.equal(result.state, "dispatch-indeterminate");
-    assert.equal(result.sessionID, "child");
-    assert.equal(result.configured.profile, "maximum");
-    assert.equal(result.providerAcceptance, "not-proven");
-    await assert.rejects(start(), /Invalid dispatch/);
-    assert.equal(state.children.length, 1);
+  for (const [profile, effort] of Object.entries(profileEfforts)) {
+    for (const hook of ["afterCreate", "afterPrompt"]) {
+      const { start, state, directory } = await setup();
+      state[hook] = () => writeFile(join(directory, ".agents/.dispatch-state/ledger.json"), "corrupt");
+      const result = JSON.parse(await start("implementation", { ...classified("planning"), profile }));
+      assert.equal(result.state, "dispatch-indeterminate");
+      assert.equal(result.sessionID, "child");
+      assert.equal(result.configured.profile, profile);
+      assert.equal(result.configured.reasoningEffort, effort);
+      assert.equal(result.providerAcceptance, "not-proven");
+      await assert.rejects(start(), /Invalid dispatch/);
+      assert.equal(state.children.length, 1);
+    }
   }
 });
 

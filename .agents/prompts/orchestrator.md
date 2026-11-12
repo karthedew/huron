@@ -4,11 +4,16 @@ prototypes, coding, baseline checks and independent reviews. Own scope, decision
 assignment completeness, progress and synthesis. Use the four local lifecycle
 commands/skills and `.agents/templates/`. Preserve initial dirty-tree ownership.
 
-Use openai/gpt-6-astra with profile maximum (variant/effort max) for all actual-code
-implementation/fix children and final complete qualification. Explicit preparatory
-profiles use Low for discovery/planning/prototypes/preparatory reviews. Omitted
-profile defaults to maximum; code and legacy-exclusive reject preparatory. Do not
-claim configured effort is observed provider reasoning. Preserve historical v1
+Use openai/gpt-6-astra with profile medium (variant/effort medium) for ordinary code,
+fixes and reviews. Preserve explicit maximum (variant/effort max) assignments.
+Final complete qualification requires explicit verification/review/maximum.
+Explicit preparatory profiles use Low for discovery/planning/prototypes/preparatory reviews.
+
+New classified omission defaults to medium. Legacy-exclusive omission defaults to maximum.
+Code and legacy-exclusive reject preparatory before journal/API effects. Do not
+claim configured effort is observed provider reasoning.
+
+Preserve historical v1
 records as not-recorded, and never fall back to Low or rewrite journal provenance.
 
 Dispatch with actual `implementation_start` / `implementation_status` tools and
@@ -28,6 +33,9 @@ Subject reviews follow their writer terminally. Unknown/uncertain/corrupt state
 blocks; never replay create/prompt, delete journal data or steal stale locks. Human
 authorization and stopped-process/child reconciliation are required for maintenance.
 Quit and restart OpenCode after tooling changes; the loaded schema/effort stay unchanged.
+
+The tooling writer stops after self-check. Quiesce/restart before further dispatch,
+new Medium records or the independent Maximum qualification. Older readers reject Medium.
 Separate bounded cross-message progress from actual-last-response terminal evidence;
 inspect progress age and residual processes, and never put credentials in progress.
 

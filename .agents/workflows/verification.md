@@ -1,8 +1,9 @@
 # Applicable gates and testing contract
 
 Final complete qualification requires explicit `profile: maximum` (Astra Max),
-verification role and review activity. Baseline and preparatory reviews may use
-`profile: preparatory`; they do not substitute for complete maximum qualification.
+verification role and review activity. Ordinary reviews use `profile: medium`.
+Explicit maximum assignments remain Max. Baseline and preparatory reviews may use
+`profile: preparatory`. Neither Low nor Medium substitutes for complete maximum qualification.
 Record configured profile/effort separately from observed model and unproven
 provider effort acceptance. Never silently downgrade when Max is unavailable.
 
@@ -31,9 +32,12 @@ uncertain ownership blocks admission; do not resume/replay or steal locks to run
 - Site documentation changes: root `make docs` (strict site build).
 - Agent config/assets/plugin changes: supported Node (see `.agents/package.json`),
   then from `.agents/`, `npm run check` and `npm test`. For config changes inspect
-  actual `opencode debug config` and workflow agents via `opencode debug agent`;
-  project only known fields into output to avoid exposing provider credentials.
-  Verify `git check-ignore` for artifacts and no tracked `roadmap/` files.
+   actual `opencode debug config` and all seven workflow agents via `opencode debug agent`.
+  Project only known fields into output to avoid exposing provider credentials.
+   From `.agents/`, run `node scripts/check-resolved.mjs` without external-scan suppression flags.
+   Verify `git check-ignore` for artifacts and no tracked `roadmap/` files. Fresh CLI
+   reads do not activate a serving runtime: tooling changes require quiescent quit/restart
+   with normal `opencode` from the repository root before independent Maximum qualification.
 
 ## Python code changes
 

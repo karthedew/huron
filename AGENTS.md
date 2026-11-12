@@ -61,6 +61,11 @@ Enforced by import-linter (`pyproject.toml`):
 | Documentation, CLI help and messages, API error messages, web CLI hint titles | `asd-ste100` |
 | `AGENTS.md`, `CLAUDE.md`, skills (load before editing) | `writing-for-agents` |
 
+For agent-tooling or lifecycle work, read the [orchestration contract](.agents/workflows/orchestration.md)
+and [verification contract](.agents/workflows/verification.md). The approved skill sources are in
+[the agent-assets guide](.agents/README.md). Tooling changes require a quiescent quit/restart before further dispatch.
+Start normal `opencode` from the repository root. Running sessions keep their loaded profile and policy.
+
 ## Gate
 
 Run from the repository root; every command must exit 0 and radon must print nothing. `make gate`
@@ -281,9 +286,16 @@ After a visible change, capture each changed page with Playwright at 390×844, 8
 scrolls sideways, long identifiers and paths wrap, and focus rings show whole. Check filled
 controls and sub-navigations in forced colors.
 
-### Offline
+### Offline and approved setup
 
-Nothing is downloaded or installed: no `npm install`, `npx --yes` or `npx playwright install`, so
-no new dependencies, and Chromium is Playwright's only browser. The harness runs the API with
-`uv run --offline --no-sync`. The `svelte-code-writer` autofixer (`npx @sveltejs/mcp`) is not
-installed: report it as not run.
+Normal checks use installed, locked dependencies. For an assigned setup, `npm ci` may restore
+the existing lockfile's dependencies. With the project-installed Playwright CLI,
+`npx playwright install chromium` may install only its matching Chromium. Verify that local CLI
+first. This is not permission for npx to fetch a package. This exception permits no unsolicited dependency or lockfile
+upgrade, broad `npx --yes`, or automatic image pull.
+
+Cached containers may run only with assigned isolated resources, explicit ownership and
+`--pull=never`. This does not authorize changes to developer services. Chromium remains the only
+Playwright browser. The harness runs the API with `uv run --offline --no-sync`. The unavailable
+`svelte-code-writer` autofixer (`npx @sveltejs/mcp`) must be reported as not run. The setup exception
+does not permit its installation. An assignment can prohibit all setup, as this tooling migration does.

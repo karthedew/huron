@@ -35,7 +35,10 @@ test("normalization preserves assignment text and validates activity, roles and 
     for (const activity of ["code", "planning", "prototype", "discovery", "review"]) {
       const valid = (["discovery", "review"].includes(activity)) === (role === "verification");
       const action = () => normalizeDispatch({ ...args, role, activity, claims: [{ resource: "a", mode: "read" }] });
-      if (valid) assert.equal(action().activity, activity); else assert.throws(action);
+      if (valid) {
+        assert.equal(action().activity, activity);
+        assert.equal(action().profile, "medium");
+      } else assert.throws(action);
     }
   }
 });
@@ -57,15 +60,19 @@ test("claim conflict is symmetric and does not infer path or prefix aliases", ()
 test("mixed historical and profiled records retain values across all durable states", async () => {
   const { worktree, journal, root, record } = await setup();
   const old = structuredClone(record);
-  const current = { ...record, version: 2, dispatchID: randomUUID(), profile: "maximum", activity: "code" };
+  const retained = [record, ...["preparatory", "maximum"].map(profile => ({
+    ...record, version: 2, dispatchID: randomUUID(), profile,
+  }))];
+  const current = { ...record, version: 2, dispatchID: randomUUID(), profile: "medium", activity: "code" };
   await journal.withAdmission(async locked => {
+    await locked.saveRecords(retained);
     for (const state of ["creating", "dispatching", "submitted"]) {
       current.state = state;
       if (state !== "creating") current.childID = "new-child";
-      await locked.saveRecords([record, current]);
+      await locked.saveRecords([...retained, current]);
       const restored = await DispatchJournal.at(worktree);
       const bytes = await readFile(join(root, "ledger.json"), "utf8");
-      assert.deepEqual(await restored.readRecords(), [old, current]);
+      assert.deepEqual(await restored.readRecords(), [old, ...retained.slice(1), current]);
       assert.equal(await readFile(join(root, "ledger.json"), "utf8"), bytes);
     }
   });
@@ -78,6 +85,7 @@ test("profile record versions and unsafe persisted downgrades are rejected witho
     value => { value.version = 2; },
     value => { value.version = 2; value.profile = null; },
     value => { value.version = 2; value.profile = "max"; },
+    ...["Medium", "medium ", "unknown", "", {}, [], 1].map(profile => value => { value.version = 2; value.profile = profile; }),
     value => { value.version = 3; value.profile = "maximum"; },
     value => { value.version = 2; value.profile = "preparatory"; value.activity = "code"; },
     value => { value.version = 2; value.profile = "preparatory"; value.activity = "legacy-exclusive";

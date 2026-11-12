@@ -1,7 +1,8 @@
 # Prototype evidence: <phase/question>
 
-- Explicit profile and evidence limits: preparatory may be used for isolated probes;
-  maximum is required for actual live code and final complete qualification. Report
+- Record explicit profile and evidence limits. Preparatory may be used for isolated probes.
+  Actual live code uses medium or explicitly selected maximum in a code dispatch.
+  Final complete qualification requires explicit verification/review/maximum. Report
   configured effort separately from observed model; no invented provider proof.
 
 - Question and design-plan source; explicit non-production scope.

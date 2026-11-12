@@ -1,8 +1,9 @@
 # Self-contained worker assignment
 
 - Phase/task and plan path; role and attempt (review N of at most 3).
-- Explicit profile: maximum for actual code/fixes and final complete qualification;
-  preparatory only for non-code preparation. Record requested/recorded profile,
+- Explicit profile: medium for ordinary code/fixes/reviews, maximum when explicitly
+  selected. Final complete qualification requires maximum with verification/review.
+  Preparatory is only for non-code preparation. Record requested/recorded profile,
   configured effort, observed model and provider acceptance not-proven separately.
 - Explicit activity (code/discovery/planning/prototype/review) and exact read/write
   claims; canonical resource dictionary mapping each label to files/services/artifacts.
@@ -13,7 +14,7 @@
 - Exact ownership: allowed files/symbols, exclusions, existing dirty/untracked work.
 - Full acceptance criteria, interface signatures/examples and explicit deletions.
 - Prototype question, result, evidence and limitations (copy essential conclusions).
-- Required local skills, each named with its `.agents/skills/<name>/SKILL.md` path.
+- Required skills, each named with its approved source path from `.agents/README.md`.
 - Resolved runtime/model settings, child progress delivery and evidence destination.
 - Actual loaded schema/restart status; per-child start/last-progress/observed times,
   progress age and separate actual-last-response terminal evidence. No credentials

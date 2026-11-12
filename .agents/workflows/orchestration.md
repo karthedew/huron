@@ -8,14 +8,24 @@ without spawning nested agents or claiming independent verification.
 
 ## OpenCode readiness and dispatch
 
-The default primary is Low `markdown-orchestrator`. All five workflow agents use
-`openai/gpt-6-astra`; never substitute models. Explicit `preparatory` profile selects
-the Low implementer/reviewer; `maximum` selects their fixed Max counterparts with
-variant and reasoning effort `max`. Their prompts and permissions are identical.
-Omitted profile defaults to maximum. Code and legacy-exclusive requests must be
-maximum, and final complete qualification explicitly uses verification/review/maximum.
-Preparatory reviews are not final complete qualification. Reject unavailable Max;
-never silently downgrade or claim prompt wording changed the provider effort.
+The default primary and lifecycle commands remain Low `markdown-orchestrator`.
+All seven workflow agents use `openai/gpt-6-astra`. Never substitute models.
+`preparatory` selects Low, `medium` selects Medium, and `maximum` selects Max,
+with variant and reasoning effort `low`, `medium`, and `max` respectively.
+
+Each role's counterparts share the same prompt and permissions. Ordinary code,
+fixes and reviews use explicit medium. An explicit maximum assignment stays Max.
+Final complete qualification explicitly uses verification/review/maximum.
+Preparatory and Medium reviews are not final complete qualification.
+
+For a new classified request, omitted profile defaults to medium.
+When a request supplies neither activity nor claims, an omitted profile defaults to maximum for legacy-exclusive. Explicit
+medium or maximum may be legacy-exclusive. The dispatcher rejects Low for code and legacy-exclusive
+before journal or API effects.
+
+Reject an unavailable selected capability.
+Never silently substitute another capability. Never claim prompt wording changed provider effort.
+
 Check actual tool availability before dispatch: the local plugin exposes
 `implementation_start(role, title, prompt, activity?, claims?, profile?)` and
 `implementation_status(sessionID?)`. Quit and restart OpenCode after plugin, prompt
@@ -35,8 +45,8 @@ Role controls agent permissions; activity controls scheduling, not edit authorit
 | Isolated ignored throwaway experiment | `implementation` or `fix` | `prototype` | `markdown-implementer` |
 | Actual source/config/tooling/test implementation or fix | `implementation` or `fix` | `code` | `markdown-implementer` |
 
-The table names the Low counterparts; profile maximum selects the same worker with
-the `-max` suffix. Actual code always uses `markdown-implementer-max`. Record
+The table names the Low counterparts. Medium selects the `-medium` suffix and
+maximum selects `-max`. Actual code uses Medium or explicitly assigned Max. Record
 requested/recorded profile and configured effort separately from observed model.
 Receipt/status `providerAcceptance: not-proven` is not a provider effort measurement.
 Final complete qualification uses `markdown-reviewer-max`, even when read-only.
@@ -87,7 +97,16 @@ not a multi-host scheduler or guaranteed NFS/power-loss protocol.
 New dispatch records/envelopes are v2 with required profile, inside the v1 ledger
 container. Valid old v1 records remain unchanged, report `not-recorded`/configured
 null and never gain invented Max provenance. Quiesce and restart before v2 writes:
-old readers cannot read v2; no mixed launchers, destructive migration or silent rollback.
+v1-only readers cannot read v2, and older two-profile readers reject Medium v2 records.
+Do not mix launchers. New Medium records require all these conditions:
+
+- All workers are terminal.
+- The parent reconciled owned processes.
+- OpenCode quit/restarted from the repository root with normal `opencode`.
+
+Reads never apply new-request defaults to history. No destructive migration, backfill
+or silent rollback. A tooling writer stops after its self-check. Independent Maximum
+qualification follows the parent's restart, not another dispatch in the stale runtime.
 
 Record the returned session ID immediately, then poll at least once per minute
 using bounded waits. Relay progress promptly and at least every 15 minutes; keep

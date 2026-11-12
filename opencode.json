@@ -2,7 +2,9 @@
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "markdown-orchestrator",
   "instructions": ["AGENTS.md"],
-  "skills": { "paths": [".agents/skills"] },
+  "skills": {
+    "paths": [".agents/skills", "~/.agents/skills/writing-for-agents", ".claude/skills/asd-ste100"]
+  },
   "permission": {
     "skill": {
       "*": "deny",
@@ -13,11 +15,13 @@
       "svelte-core-bestpractices": "allow",
       "tailwind-design-system": "allow",
       "playwright-cli": "allow",
-      "design-plan": "allow",
-      "prototype": "allow",
-      "implementation-plan": "allow",
-      "implement-markdown": "allow",
-      "customize-opencode": "allow"
+      "huron-design-plan": "allow",
+      "huron-prototype": "allow",
+      "huron-implementation-plan": "allow",
+      "huron-implement-markdown": "allow",
+      "customize-opencode": "allow",
+      "writing-for-agents": "allow",
+      "asd-ste100": "allow"
     }
   },
   "plugin": ["./.agents/plugins/implementation.ts"],
@@ -38,7 +42,7 @@
       "template": "{file:./.agents/commands/implementation-plan.md}"
     },
     "implement-markdown": {
-      "description": "Execute a markdown plan with exclusive Astra Max code workers and pollable subagents.",
+      "description": "Execute a markdown plan with exclusive Astra Medium code workers and final Max qualification.",
       "agent": "markdown-orchestrator",
       "model": "openai/gpt-6-astra",
       "variant": "low",
@@ -63,6 +67,24 @@
       "variant": "low",
       "options": { "reasoningEffort": "low" },
       "permission": { "task": "deny", "implementation_start": "deny" }
+    },
+    "markdown-implementer-medium": {
+      "description": "Implements or fixes one exclusive code slice with Astra Medium. Never delegates.",
+      "prompt": "{file:./.agents/prompts/implementer.md}",
+      "mode": "subagent",
+      "model": "openai/gpt-6-astra",
+      "variant": "medium",
+      "options": { "reasoningEffort": "medium" },
+      "permission": { "task": "deny", "implementation_start": "deny" }
+    },
+    "markdown-reviewer-medium": {
+      "description": "Independently reviews one assigned slice with Astra Medium. Stays read-only. Does not provide final qualification.",
+      "prompt": "{file:./.agents/prompts/reviewer.md}",
+      "mode": "subagent",
+      "model": "openai/gpt-6-astra",
+      "variant": "medium",
+      "options": { "reasoningEffort": "medium" },
+      "permission": { "edit": "deny", "task": "deny", "implementation_start": "deny" }
     },
     "markdown-implementer-max": {
       "description": "Implements or fixes one exclusive code slice with Astra Max; never delegates.",

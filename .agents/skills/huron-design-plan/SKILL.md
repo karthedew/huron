@@ -1,12 +1,13 @@
 ---
-name: design-plan
+name: huron-design-plan
 description: Plan Huron changes from verified code and documentation evidence. Use for /design-plan or revising a design after implementation review exposes a plan defect.
 ---
 
 # Evidence-based design and roadmap
 
-Choose explicit preparatory profile for non-code design/planning/review when suitable;
-future actual code and final complete qualification must use maximum Astra profile.
+Choose explicit preparatory profile for non-code design/planning/review when suitable.
+Ordinary future code/fixes/reviews use medium or explicitly selected maximum Astra.
+Final complete qualification requires explicit verification/review/maximum.
 
 Read [orchestration](../../workflows/orchestration.md),
 [verification](../../workflows/verification.md), the

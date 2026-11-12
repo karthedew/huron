@@ -8,9 +8,20 @@ OpenCode's root [configuration](../opencode.json) explicitly registers `commands
 of a tool-specific project directory. Command metadata belongs in that configuration;
 the command Markdown files contain prompt bodies.
 
+Do not keep legacy dispatcher plugins or lifecycle commands under `.opencode/`.
+OpenCode discovers both singular and plural plugin and command directories there.
+Those definitions can override the explicit registrations on every restart.
+The asset and resolved-config checks reject these legacy entrypoints.
+Keep backups outside OpenCode's discovery directories.
+
 `/implement-markdown PLAN.md` reads [the shared workflow](workflows/implement-markdown.md).
-It uses fixed `markdown-*` agents on Astra: Low for explicit preparation, Max for
-actual code and final complete qualification. The default primary remains Low
+It uses seven fixed `markdown-*` agents on Astra:
+
+- Low serves explicit preparation.
+- Medium serves ordinary code/fixes/reviews.
+- Max serves explicitly selected assignments and final complete qualification.
+
+The default primary remains Low
 `markdown-orchestrator`. The lifecycle is `/design-plan` → `/prototype` →
 `/implementation-plan` → `/implement-markdown`; all four commands load canonical
 local skills. Read [orchestration](workflows/orchestration.md) and
@@ -26,18 +37,30 @@ in `CONTEXT.md`. Legacy plan relocation requires its own assigned slice.
 
 Retained capability skills: `oop-design`, `fastapi`, `postgresql-table-design`,
 `svelte-code-writer`, `svelte-core-bestpractices`, `tailwind-design-system`, and
-`playwright-cli`. Lifecycle skills: `design-plan`, `prototype`,
-`implementation-plan`, `implement-markdown`. Read the actual local files; no home
-copy or node_modules symlink is a project dependency. Playwright's adapted official
+`playwright-cli`. Lifecycle skills: `huron-design-plan`, `huron-prototype`,
+`huron-implementation-plan`, `huron-implement-markdown`. These eleven use `.agents/skills`.
+The four public slash commands keep their unprefixed names. No generic lifecycle skill aliases remain.
+Two additional approved sources are explicitly registered, without vendor copies:
+
+- `writing-for-agents`: `~/.agents/skills/writing-for-agents/SKILL.md` (including
+  its skill-mechanics reference before skill edits).
+- `asd-ste100`: `.claude/skills/asd-ste100/SKILL.md`.
+
+The portable `~/` path resolves at startup to that workstation's home directory.
+Missing sources are actionable blockers. Supply the approved source. Restart OpenCode.
+Do not widen explicit source registrations or use a permissive fallback. Playwright's adapted official
 1.62.1 source and references are documented in its
 [provenance](skills/playwright-cli/PROVENANCE.md).
 
-`permission.skill` defaults to deny, allowing only this local set and built-in
+`permission.skill` defaults to deny, allowing only these thirteen skills and built-in
 `customize-opencode`. Skill permissions match names, not paths: verify resolved
 locations after reload and use the canonical files explicitly. Global copies stay
 untouched. The old issue/spec/ticket lifecycle is retired. `skills-lock.json` retains
 only the still-applicable upstream Tailwind entry; locally authored/adapted assets
 are maintained here, not attributed to obsolete installer hashes.
+
+Normal startup retains external skill discovery. Discovery does not grant permission to load a skill.
+Unrelated external skills do not fail the checker. The required skills must still resolve to their approved sources.
 
 The plugin's config hook suppresses inherited `architectural-review` and
 `execute_plan` commands for this project; use the local design/revision and
@@ -47,37 +70,26 @@ never edits global configuration or skills.
 ## Setup
 
 Use a Node version satisfying `package.json`'s engine range (required by the locked
-tool dependencies). Run `npm ci --ignore-scripts` from `.agents/`. After workers and
-owned processes are quiescent, quit and restart OpenCode **from the repository root
-through the project launcher**:
+tool dependencies). Run `npm ci --ignore-scripts` from `.agents/`.
+With cached packages, use `npm ci --offline --ignore-scripts --no-audit --no-fund`.
+An installation under `.opencode/` does not supply the canonical tooling's dependencies.
+After workers and owned processes are quiescent, quit and restart OpenCode from the repository root:
 
 ```sh
-sh .agents/scripts/opencode-project.sh
+opencode
 ```
 
-The launcher exports the supported `OPENCODE_DISABLE_EXTERNAL_SKILLS=1` before
-`exec opencode "$@"`, forwarding arguments, exit status and signals without a wrapper
-process. No executable-bit change is needed. In OpenCode 1.18.34, discovered skill
-files are parsed concurrently and same-name resolution is not reliable precedence:
-a home `prototype` can replace the canonical project skill even with `skills.paths`
-configured. The flag disables automatic external `.agents`/`.claude` scans at home
-and project scopes; the explicit `.agents/skills` registration still loads all 11
-canonical skills. Global assets remain untouched. This addresses the current
-external home-skill collision, not all possible duplicates: normal OpenCode skill
-directories and additional configured skill paths can still introduce collisions.
-
-**The flag must apply to the serving OpenCode process.** If using `serve` or `web`,
-start that process through the launcher with its existing arguments after quiescing
-and stopping the old owned instance; do not start a competing server. Attaching a
-flagged client to an unflagged server does not change the server environment or its
-cached skills. Installing the launcher or checking a fresh CLI does not activate
-the fix in an already running session; serving-runtime activation remains pending
-until quit/restart through the launcher and verification after restart.
+No launcher or external-scan suppression flag is required.
+The optional `scripts/opencode-project.sh` only forwards arguments, exit status and signals.
+The Huron lifecycle namespace avoids collisions with generic external lifecycle names.
+Same-name copies can still collide, so check required source locations after restart.
+Keep existing serving arguments when restarting an owned `serve` or `web` process.
+Do not start a competing server. Fresh CLI checks do not activate an existing serving process.
 
 Configuration and the local plugin are loaded at startup. The OpenAI provider must already have
 access to `gpt-6-astra`; this project does not install credentials or substitute
 another model. Inspect configuration from the repository root with
-`sh .agents/scripts/opencode-project.sh debug agent markdown-orchestrator`
+`opencode debug agent markdown-orchestrator`
 and the corresponding implementer/reviewer names.
 
 ## Dispatch and polling — restart required
@@ -96,12 +108,20 @@ processes are quiescent, with one coordinating parent and one existing local ser
   Actual code is exclusive against every worker/check in either order. Non-code
   overlaps only with nonconflicting claims. Omit both fields for `legacy-exclusive`;
   partial/invalid arguments reject, never infer activity from assignment prose.
-- `profile` is `preparatory` (Low) or `maximum` (Max); omission conservatively means
-  maximum. Actual code and legacy-exclusive requests reject preparatory profiles.
+- `profile` is `preparatory` (Low), `medium` (Medium), or `maximum` (Max).
+  New classified requests without a profile default to medium.
+  When a request supplies neither activity nor claims, its omitted profile stays maximum for legacy-exclusive.
+  Explicit medium or maximum may be legacy-exclusive. Exclusion stays the same.
+  Actual code and legacy-exclusive reject preparatory before journal/API effects.
+
   Final complete qualification must explicitly request maximum with verification/review.
-  The fixed Max implementer/reviewer agents share their counterparts' exact prompts
+  The fixed Medium/Max implementer/reviewer agents share their counterparts' exact prompts
   and permissions. Capability checks refuse absent/disabled/mismatched registered
-  variants before reservation; there is no Low fallback or arbitrary model selector.
+  variants before reservation. There is no fallback or arbitrary model selector.
+
+  The installed SDK's `promptAsync` has no typed variant field. Dispatch uses the
+  fixed agent. The `chat.params` hook enforces that agent's exact reasoning effort.
+  Native OpenCode children retain parentID, asynchronous submission and navigable IDs.
 - Receipts contain `configured` profile/agent/model/effort and
   `providerAcceptance: 'not-proven'`, including uncertain dispatch outcomes. Status
   keeps observed assistant model separate; model identity does not prove reasoning
@@ -147,11 +167,25 @@ parents must not manually resume or run outside checks racing admitted work.
 ## Durable state and recovery
 
 `.agents/.dispatch-state/` is private runtime data, not disposable build output.
+Never commit this directory, `.agents/.dispatch-archive/`, or `.agents/.test-build/`.
+The asset check rejects tracked copies, even when ignore rules cover their paths.
+An authorized recovery may preserve a copied journal under `.agents/.dispatch-archive/`.
+Do not replace a journal's worktree or session identities to make it pass validation.
 The ledger container stays v1. New records/envelopes are v2 and require a profile;
 valid historical v1 records remain unchanged and must not acquire invented profiles.
 Reads never migrate state. Appending under admission preserves old record values.
-Old readers reject v2, so quiesce all invocations and restart before the first new
-dispatch; do not mix old/new launchers, erase the journal or silently roll back.
+V1-only readers reject v2. Older two-profile readers also reject Medium v2 records.
+Before any new Medium record or further dispatch:
+
+1. Quiesce all invocations.
+2. Reconcile owned processes.
+3. Quit/restart OpenCode.
+
+Do not mix launchers. Do not erase the journal. Do not backfill history.
+This workflow prohibits silent rollback. New-request defaults never apply to reads.
+
+After tooling edits, the writer stops at self-check. The parent restarts before the
+independent Maximum qualification. The current serving session does not change effort.
 The journal validates version/worktree/records, persists reservations before remote
 create, then dispatching before prompt and submitted after acknowledgement. File and
 directory fsync plus atomic rename persist records; an exclusive-create lock with
@@ -185,29 +219,31 @@ They prove fixed-profile dispatch payloads, downgrade rejection, historical reco
 preservation, progress bounds/privacy, model enforcement, exclusive
 code and conflict admission, durable uncertainty and parent isolation. Real filesystem
 and subprocess tests prove local lock ownership/recreation and crash-lock refusal,
-not live server completeness, worker compliance or power-loss portability. Asset checks validate
-command/skill/template references, local-only skill inventory and the allowlist.
+not live server completeness, worker compliance or power-loss portability. Asset checks cover
+command/skill/template references, the exact approved skill sources and the allowlist.
 A live model run is a
 separate smoke test and consumes provider quota.
 
 After changing registration, inspect the resolved commands and workflow agents with
-the project launcher and `debug config` / `debug agent markdown-orchestrator` arguments.
-Keep any credential-bearing provider configuration out of shared diagnostic output;
-prefer the safe checker below.
+`opencode debug config` and `opencode debug agent markdown-orchestrator`.
+Keep any credential-bearing provider configuration out of shared diagnostic output.
+Use the safe checker below.
 
 From `.agents/`:
 
 ```sh
-OPENCODE_DISABLE_EXTERNAL_SKILLS=1 node scripts/check-resolved.mjs
+node scripts/check-resolved.mjs
 ```
 
-This checks actual resolved config, workflow agents and canonical skill locations
-while printing only safe summaries. It rejects a missing or different flag before
-any CLI invocation rather than silently setting it. It invokes fresh installed
-OpenCode CLI processes and makes no child/model calls; success proves their
-environment and inventory, not the active serving process or its cached skills.
-Always quit and restart OpenCode through the launcher after config, plugin, prompt
-or skill changes; the running session keeps the previously loaded tools and permissions.
+This checks the single canonical dispatcher, resolved commands, workflow agents and canonical skill locations
+while printing only safe summaries. Run it without external-scan suppression flags.
+The checker does not set suppression flags. It permits unrelated discovered skills without granting skill permissions.
+It invokes fresh installed OpenCode CLI processes and makes no child/model calls.
+Success proves their inventory, not the active serving process or its cached skills.
+Always quit and restart normal OpenCode after config, plugin, prompt or skill changes.
+The running session keeps the previously loaded tools and permissions.
+The legacy `.claude/commands/implement-markdown.md` is not the resolved OpenCode
+entrypoint. It remains outside this migration. Do not re-enable it as a dispatch bypass.
 
 References: [configuration schema](https://opencode.ai/config.json),
 [plugins](https://opencode.ai/docs/plugins/), and

@@ -1,7 +1,8 @@
 # Design and local roadmap: <name>
 
-Resolve explicit profile: preparatory may be used for design work; future actual
-code and final complete qualification require maximum Astra, never a Low fallback.
+Resolve explicit profile. Preparatory may be used for design work. Ordinary future
+code/fixes/reviews use medium Astra or explicitly selected maximum, never a Low fallback.
+Final complete qualification requires explicit verification/review/maximum.
 
 ## Goal, scope and authority
 User outcome, exclusions, settled decisions and relevant design/glossary records.

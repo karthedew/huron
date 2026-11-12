@@ -1,13 +1,14 @@
 ---
-name: prototype
+name: huron-prototype
 description: Run a bounded throwaway experiment to resolve a Huron design question before phase planning. Use for /prototype, state-model experiments and UI exploration.
 ---
 
 # Prototype a decision, capture evidence
 
 An explicit preparatory profile may run isolated throwaway probes, never live code.
-Actual-code dispatch and final complete qualification require maximum Astra profile;
-report configured selection separately from observed model/provider acceptance.
+Actual-code dispatch uses medium or explicitly selected maximum Astra profile.
+Final complete qualification requires explicit verification/review/maximum.
+Report configured selection separately from observed model/provider acceptance.
 
 Read [orchestration](../../workflows/orchestration.md),
 [verification](../../workflows/verification.md) and the

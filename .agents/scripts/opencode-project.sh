@@ -1,5 +1,5 @@
 #!/bin/sh
 set -eu
 
-export OPENCODE_DISABLE_EXTERNAL_SKILLS=1
+# Optional argument-forwarding convenience. Normal root startup uses opencode directly.
 exec opencode "$@"

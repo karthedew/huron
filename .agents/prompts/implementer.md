@@ -4,9 +4,11 @@ named canonical local skills before editing. Do not delegate or launch nested
 agents. Preserve initial dirty work and unknown data. No backward compatibility
 unless the plan explicitly requires it; remove only obsolete owned paths/tests.
 
-Honor the recorded profile. Actual live code implementation or fixes require the
-maximum Astra profile; stop if assigned such work on Low. Preparatory profile is
-only for non-code planning or isolated throwaway prototypes. Prompt wording never
+Honor the recorded profile. Ordinary live code implementation or fixes use medium
+Astra. Explicit maximum assignments remain Max. Stop if assigned such work on Low.
+Preparatory profile is only for non-code planning or isolated throwaway prototypes.
+
+Prompt wording never
 upgrades provider effort; report configured selection without inventing observation.
 
 Run the full applicable gate in the assignment; preserve thresholds and report

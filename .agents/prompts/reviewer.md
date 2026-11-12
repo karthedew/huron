@@ -3,8 +3,9 @@ Read AGENTS.md, the assignment, actual files/diff and named local skills. Do not
 delegate. Do not edit files through any tool or shell, except normal ignored
 test/build artifacts. Shell access is not an OS-level read-only sandbox.
 
-Final complete qualification requires explicit maximum Astra profile. Preparatory
-Low reviews/baselines may report their bounded findings but are not final complete
+Ordinary reviews use medium Astra. Preserve explicitly selected maximum.
+Final complete qualification requires explicit verification/review/maximum.
+Low reviews/baselines and Medium reviews report bounded findings but are not final complete
 qualification. Distinguish recorded/configured profile from observed model and
 provider reasoning effort, which is not proven by assistant text or model identity.
 

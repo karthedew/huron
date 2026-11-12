@@ -8,7 +8,7 @@ export type DispatchClaim = { resource: string; mode: "read" | "write" };
 type Role = "implementation" | "fix" | "verification";
 type Activity = "code" | "discovery" | "planning" | "prototype" | "review" | "legacy-exclusive";
 type Classification = { role: Role; activity: Activity; claims: DispatchClaim[] };
-export type DispatchProfile = "preparatory" | "maximum";
+export type DispatchProfile = "preparatory" | "medium" | "maximum";
 type RecordBase = Classification & {
   dispatchID: string; worktree: string; parentID: string; childID?: string;
   createdAt: string; state: "creating" | "dispatching" | "submitted";
@@ -51,7 +51,7 @@ function classify(role: unknown, activity: unknown, resources: unknown): Classif
 }
 
 function validateProfile(value: unknown, activity: Activity): DispatchProfile {
-  if (value !== "preparatory" && value !== "maximum") throw invalid();
+  if (value !== "preparatory" && value !== "medium" && value !== "maximum") throw invalid();
   if (value === "preparatory" && (activity === "code" || activity === "legacy-exclusive")) throw invalid();
   return value;
 }
@@ -61,7 +61,8 @@ export function normalizeDispatch(value: unknown): Classification & { title: str
   if (typeof args.title !== "string" || !args.title.trim() ||
       typeof args.prompt !== "string" || !args.prompt.trim()) throw invalid();
   const classification = classify(args.role, args.activity, args.claims);
-  const profile = validateProfile(args.profile === undefined ? "maximum" : args.profile, classification.activity);
+  const defaultProfile = classification.activity === "legacy-exclusive" ? "maximum" : "medium";
+  const profile = validateProfile(args.profile === undefined ? defaultProfile : args.profile, classification.activity);
   return { ...classification, profile, title: args.title.trim(), prompt: args.prompt };
 }
 

@@ -2,15 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { lifecycle, modelVariantIssues, normalizedPermissionRules, root, skills, workflowAgents } from "./check-assets.mjs";
-
-if (process.env.OPENCODE_DISABLE_EXTERNAL_SKILLS !== "1") {
-  console.error("Resolved checks require OPENCODE_DISABLE_EXTERNAL_SKILLS=1 before invoking OpenCode. " +
-    "Quit/restart the serving process from the repository root with sh .agents/scripts/opencode-project.sh; " +
-    "a flagged attached client is insufficient. From .agents/, run " +
-    "OPENCODE_DISABLE_EXTERNAL_SKILLS=1 node scripts/check-resolved.mjs (fresh CLI only, not serving-process verification).");
-  process.exit(1);
-}
+import { discoveryIssues, lifecycle, modelVariantIssues, normalizedPermissionRules, requiredSkills, resolvedPluginIssues, root, skillLocations, skillPaths, sourcePath, workflowAgents } from "./check-assets.mjs";
 
 // OpenCode can exit before large pipe writes drain. A private regular file also
 // keeps raw resolved provider configuration out of terminal/log output.
@@ -44,7 +36,14 @@ function action(agent, permission, pattern = "*") {
 }
 
 try {
+  const discovery = discoveryIssues(root);
+  assert.ok(discovery.length === 0, discovery.join("; "));
   const config = debug(["config"]);
+  assert.ok(JSON.stringify((config.skills?.paths ?? []).map(path => sourcePath(path)).sort()) ===
+    JSON.stringify(skillPaths.map(path => sourcePath(path)).sort()) && !config.skills?.urls?.length,
+    "Resolved skill sources must be exactly the approved explicit directories. Preserve explicit source registrations");
+  const plugins = resolvedPluginIssues(config);
+  assert.ok(plugins.length === 0, plugins.join("; "));
   assert.ok(config.default_agent === "markdown-orchestrator", "Resolved default primary differs");
   for (const name of lifecycle) {
     assert.ok(config.command?.[name]?.agent === "markdown-orchestrator", `Resolved command agent differs: ${name}`);
@@ -54,7 +53,9 @@ try {
   for (const name of ["architectural-review", "execute_plan"]) {
     assert.ok(!config.command?.[name], `Retired inherited command remains: ${name}`);
   }
-  console.log("Resolved config: canonical lifecycle, default orchestrator, retired competing commands absent");
+  assert.ok(config.command["implement-markdown"].model === "openai/gpt-6-astra" &&
+    config.command["implement-markdown"].variant === "low", "Resolved implementation command profile differs");
+  console.log("Resolved config: one canonical dispatcher, canonical lifecycle, default orchestrator, retired competing commands absent");
 
   const resolved = new Map();
   for (const [name, { role, effort }] of Object.entries(workflowAgents)) {
@@ -67,17 +68,17 @@ try {
     assert.ok(action(agent, "task") === "deny", `Task permission differs: ${name}`);
     if (role !== "orchestrator") assert.ok(action(agent, "implementation_start") === "deny", `Worker can delegate: ${name}`);
     if (role === "reviewer") assert.ok(action(agent, "edit") === "deny", "Reviewer can edit");
-    for (const skill of [...skills, "customize-opencode"]) {
+    for (const skill of [...requiredSkills, "customize-opencode"]) {
       assert.ok(action(agent, "skill", skill) === "allow", `Required skill denied: ${name}/${skill}`);
     }
-    for (const skill of ["wayfinder", "to-spec", "to-tickets", "grilling", "code-review", "writing-for-agents", "unknown-skill"]) {
+    for (const skill of ["*", ...lifecycle, "wayfinder", "to-spec", "to-tickets", "grilling", "code-review", "asd=ste100", "unknown-skill"]) {
       assert.ok(action(agent, "skill", skill) === "deny", `Rejected global skill allowed: ${name}/${skill}`);
     }
-    if (effort === "max") {
+    if (effort !== "low") {
       const counterpart = resolved.get(`markdown-${role}`);
       assert.ok(agent.prompt === counterpart.prompt &&
         JSON.stringify(normalizedPermissionRules(agent.permission)) === JSON.stringify(normalizedPermissionRules(counterpart.permission)),
-        `Resolved maximum counterpart prompt/permissions differ: ${name}`);
+        `Resolved profile counterpart prompt/permissions differ: ${name}`);
     }
     resolved.set(name, agent);
     console.log(`Resolved ${name}: canonical prompt, Astra ${effort} and bounded permissions OK`);
@@ -90,16 +91,16 @@ try {
   catch { throw new Error("Registered Astra metadata could not be parsed; raw output withheld"); }
   const modelIssues = modelVariantIssues(astra);
   assert.ok(modelIssues.length === 0, modelIssues.join("; "));
-  console.log("Registered openai/gpt-6-astra: low -> low, max -> max; provider acceptance not proven");
+  console.log("Registered openai/gpt-6-astra: low -> low, medium -> medium, max -> max. Provider acceptance remains not proven");
 
   const inventory = debug(["skill"]);
   assert.ok(Array.isArray(inventory), "Unexpected resolved skill inventory shape");
-  for (const name of skills) {
-    const skill = inventory.find(item => item.name === name);
-    assert.ok(skill?.location === resolve(root, `.agents/skills/${name}/SKILL.md`),
-      `Skill did not resolve to canonical local path: ${name}`);
+  for (const [name, location] of Object.entries(skillLocations())) {
+    const matches = inventory.filter(item => item.name === name);
+    assert.ok(matches.length === 1 && matches[0].location === location,
+      `Skill did not resolve to approved source: ${name}. Supply ${location}. Then restart OpenCode`);
   }
-  console.log(`Resolved skills: all ${skills.length} project skills use canonical local paths`);
+  console.log(`Resolved skills: all ${requiredSkills.length} required skills use approved explicit sources. Unrelated external skills are permitted in discovery`);
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

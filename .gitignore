@@ -25,6 +25,7 @@ htmlcov/
 /.pyscn/reports/
 /p3-evidence/
 /duplication-evidence/
+/roadmap/
 
 # macOS
 .DS_Store

@@ -46,8 +46,9 @@ Every unresolved decision/evidence gap with owner and next action. Ready require
 no execution blockers and independent plan review. No silent placeholder decisions.
 
 ## Execution ledger
-Record explicit profile: maximum for actual code/fixes and final complete qualification,
-preparatory only for preparation. Keep configured effort separate from observed model
+Record explicit profile: medium for ordinary code/fixes/reviews. Preserve explicit maximum.
+Final complete qualification requires explicit verification/review/maximum.
+Preparatory is only for preparation. Keep configured effort separate from observed model
 and provider acceptance not-proven; historical absent profiles remain not-recorded.
 Baseline, task/role/attempt, model, child ID, start/last progress time, current command,
 findings/verdict, review count (max 3), owned diff and remaining tasks.

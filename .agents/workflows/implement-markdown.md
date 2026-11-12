@@ -7,10 +7,12 @@ complete applicable gates, not a blanket Python gate.
 
 ## Preflight
 
-Resolve explicit profile as well as activity/claims. Actual code implementation
-and fixes require `profile: maximum`, as does final complete qualification.
-Baseline/planning reviews may explicitly use preparatory; omitted profile defaults
-to maximum. Verify loaded schema and fixed-agent configuration after restart,
+Resolve explicit profile as well as activity/claims. Ordinary code implementation,
+fixes and reviews use `profile: medium`. Explicit maximum assignments remain Max.
+Final complete qualification requires explicit verification/review/maximum.
+Baseline/planning reviews may explicitly use preparatory. New classified omission
+defaults to medium. Legacy-exclusive omission defaults to maximum. Low cannot run
+code or legacy-exclusive. Verify loaded schema and fixed-agent configuration after restart,
 distinguishing configured effort from observed assistant model/provider acceptance.
 
 1. Confirm scope, ownership and runtime readiness. Record existing tracked and
@@ -70,3 +72,5 @@ Read bounded progress separately from actual-last-response terminal evidence. Ne
 resume children outside admission, replay uncertain create/prompt, reset journal data
 or steal a stale lock. Recovery needs human authorization and child/process evidence.
 Quit and restart OpenCode after tooling changes; the loaded schema and effort stay unchanged.
+The tooling writer stops after the complete self-check. Quiesce and restart before
+any further dispatch or Medium record. The independent Maximum review runs afterward.

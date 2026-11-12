@@ -39,7 +39,7 @@ function classify(role, activity, resources) {
     return { role: role, activity: activity, claims: claims(resources) };
 }
 function validateProfile(value, activity) {
-    if (value !== "preparatory" && value !== "maximum")
+    if (value !== "preparatory" && value !== "medium" && value !== "maximum")
         throw invalid();
     if (value === "preparatory" && (activity === "code" || activity === "legacy-exclusive"))
         throw invalid();
@@ -51,7 +51,8 @@ export function normalizeDispatch(value) {
         typeof args.prompt !== "string" || !args.prompt.trim())
         throw invalid();
     const classification = classify(args.role, args.activity, args.claims);
-    const profile = validateProfile(args.profile === undefined ? "maximum" : args.profile, classification.activity);
+    const defaultProfile = classification.activity === "legacy-exclusive" ? "maximum" : "medium";
+    const profile = validateProfile(args.profile === undefined ? defaultProfile : args.profile, classification.activity);
     return { ...classification, profile, title: args.title.trim(), prompt: args.prompt };
 }
 export function claimsConflict(left, right) {
