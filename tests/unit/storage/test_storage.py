@@ -14,6 +14,7 @@ from huron.core.storage import (
     DIRECTORY_MODE,
     FILE_MODE,
     MARKER_FILE,
+    OBJECT_DIR,
     ORGANIZATION_MODE,
     UPLOAD_DIR_MODE,
     FreeSpace,
@@ -23,16 +24,19 @@ from huron.core.storage import (
     LakePath,
     Marker,
     Outcome,
+    PermissionDenied,
     SealedFile,
     SourceSizeMismatch,
     Stat,
     Storage,
     StorageError,
+    is_ignored_entry,
     is_reserved_entry,
     read_marker,
     render_marker,
     verify_marker,
 )
+from huron.core.storage.layout import LINK_PROBE_PREFIX, SNAPSHOT_DIR, UNWALKED
 from huron.core.storage.memory import FREE_BYTES, MemoryStorage, Node
 from huron.core.storage.posix import PosixStorage
 from tests.support.disk import LAKE, inject_fault
@@ -51,6 +55,26 @@ def test_reserved_entries() -> None:
     assert is_reserved_entry("x/a.bin.huron-part")
     assert is_reserved_entry(".huron")
     assert not is_reserved_entry("sub/metadata.json")
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "ignored"),
+    [
+        ("metadata.json", True),
+        ("x/.nfs000000000123abcd00000001", True),
+        (".nfs1", True),
+        ("x/a.bin.huron-part", True),
+        ("a.nfs", False),
+        ("x/data.bin", False),
+    ],
+)
+def test_ignored_entries_are_huron_s_own_and_the_nfs_client_s(rel_path: str, ignored: bool) -> None:
+    assert is_ignored_entry(rel_path) is ignored
+
+
+def test_the_reserved_names_of_the_lake() -> None:
+    assert UNWALKED == {OBJECT_DIR, SNAPSHOT_DIR} == {".huron-objects", ".snapshot"}
+    assert LINK_PROBE_PREFIX == ".huron-link-probe-"
 
 
 def test_files_and_the_upload_directory_have_their_modes() -> None:
@@ -97,6 +121,7 @@ def test_stat_of_a_file_a_directory_and_a_missing_name(share: Storage) -> None:
     share.write_bytes(at("f"), b"abc", 0o640)
     file = found(share, at("f"))
     assert (file.kind, file.mode, file.size) == ("file", 0o640, 3)
+    assert (file.uid, file.gid) == (found(share, BASE).uid, found(share, BASE).gid)
     assert found(share, BASE).kind == "dir"
     assert found(share, BASE).mode == 0o2750
     assert found(share, LakePath()).kind == "dir"
@@ -125,6 +150,60 @@ def test_walk_is_top_down_and_sorted(share: Storage) -> None:
         (("b", "c.txt"), "file"),
     ]
     assert entries[2].size == 5
+
+
+def test_walk_reports_the_mode_owner_and_group_of_each_entry(share: Storage) -> None:
+    share.write_bytes(at("f"), b"abc", 0o640)
+    (entry,) = share.walk(BASE)
+    file = found(share, at("f"))
+    assert (entry.mode, entry.uid, entry.gid, entry.errno) == (0o640, file.uid, file.gid, None)
+
+
+def test_walk_without_recursion_yields_the_entries_directly_in_the_directory(
+    share: Storage,
+) -> None:
+    share.make_directory(at("b"), DIRECTORY_MODE)
+    share.write_bytes(at("b", "c.txt"), b"", 0o644)
+    share.write_bytes(at("a.txt"), b"", 0o644)
+    entries = share.walk(BASE, recursive=False)
+    assert [(e.names, e.kind) for e in entries] == [(("a.txt",), "file"), (("b",), "dir")]
+
+
+def test_walk_never_enters_the_object_area_or_the_snapshots(share: Storage) -> None:
+    for name in sorted(UNWALKED):
+        share.make_directory(at(name), DIRECTORY_MODE)
+        share.write_bytes(at(name, "inside"), b"", 0o644)
+    assert [(e.names, e.kind) for e in share.walk(BASE)] == [
+        ((".huron-objects",), "dir"),
+        ((".snapshot",), "dir"),
+    ]
+    assert [e.names for e in share.walk(at(OBJECT_DIR))] == [("inside",)]
+
+
+def test_walk_yields_a_directory_below_that_it_cannot_list_as_unreadable_and_goes_on(
+    share: Storage, temporary_mode: Callable[[Path, int], None]
+) -> None:
+    share.make_directory(at("closed"), DIRECTORY_MODE)
+    share.write_bytes(at("closed", "f"), b"", 0o644)
+    share.write_bytes(at("later"), b"", 0o644)
+    if isinstance(share, PosixStorage):
+        temporary_mode(share.root / "share" / "closed", 0o000)
+    else:
+        assert isinstance(share, MemoryStorage)
+        share.unreadable.add(at("closed"))
+    entries = list(share.walk(BASE))
+    assert [(e.names, e.kind, e.errno) for e in entries] == [
+        (("closed",), "unreadable", errno.EACCES),
+        (("later",), "file", None),
+    ]
+    assert [e.kind for e in share.walk(BASE, recursive=False)] == ["dir", "file"]
+
+
+def test_set_owner_keeps_an_owner_and_group_that_the_entry_has(share: Storage) -> None:
+    share.write_bytes(at("f"), b"", 0o644)
+    file = found(share, at("f"))
+    assert share.set_owner(at("f"), file.uid, file.gid) is False
+    assert share.set_owner(BASE, file.uid, file.gid) is False
 
 
 def test_make_directory_gives_exactly_the_mode_and_keeps_an_existing_one(share: Storage) -> None:
@@ -190,6 +269,49 @@ def test_mode_and_group_change_on_a_directory_this_process_cannot_read(
     assert found(share, at("closed")).mode == DIRECTORY_MODE
 
 
+def change_open_file_mode(storage: Storage, location: LakePath) -> None:
+    opened = storage.open_file(location)
+    assert opened is not None
+    try:
+        opened.set_mode(FILE_MODE)
+    finally:
+        opened.close()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda storage, location: storage.set_owner(location, 4242, 4343),
+        lambda storage, location: storage.set_mode(location, FILE_MODE),
+        change_open_file_mode,
+    ],
+    ids=["set_owner", "set_mode", "open_file"],
+)
+def test_a_change_of_owner_or_mode_that_the_filesystem_refuses_is_permission_denied(
+    share: Storage,
+    monkeypatch: pytest.MonkeyPatch,
+    change: Callable[[Storage, LakePath], object],
+) -> None:
+    share.write_bytes(at("f"), b"", 0o600)
+    if isinstance(share, PosixStorage):
+
+        def refuse(*args: object, **kwargs: object) -> None:
+            raise PermissionError(errno.EPERM, os.strerror(errno.EPERM))
+
+        for name in ("chown", "chmod", "fchmod"):
+            monkeypatch.setattr(os, name, refuse)
+    else:
+        assert isinstance(share, MemoryStorage)
+        share.nodes[at("f")].uid = 7
+    with pytest.raises(PermissionDenied) as refused:
+        change(share, at("f"))
+    assert (refused.value.message, refused.value.context) == (
+        "permission denied on share/f",
+        {"path": "share/f", "error": os.strerror(errno.EPERM)},
+    )
+    assert found(share, at("f")).mode == 0o600
+
+
 def test_a_directory_this_process_cannot_list_is_named_by_walk_and_is_empty(
     share: Storage, temporary_mode: Callable[[Path, int], None]
 ) -> None:
@@ -200,7 +322,7 @@ def test_a_directory_this_process_cannot_list_is_named_by_walk_and_is_empty(
         assert isinstance(share, MemoryStorage)
         share.unreadable.add(at("closed"))
     for refused in (lambda: list(share.walk(at("closed"))), lambda: share.is_empty(at("closed"))):
-        with pytest.raises(StorageError) as raised:
+        with pytest.raises(PermissionDenied) as raised:
             refused()
         assert (raised.value.message, raised.value.context["path"]) == (
             "permission denied on share/closed",
@@ -274,30 +396,33 @@ def test_posix_root_that_does_not_open_is_lake_unavailable(tmp_path: Path) -> No
     assert str(tmp_path) not in refused.value.message
 
 
-def test_posix_permission_errors_are_storage_errors(lake: PosixStorage) -> None:
-    lake.make_directory(at("closed"), DIRECTORY_MODE)
-    lake.write_bytes(at("closed", "f"), b"x", 0o644)
-    os.chmod(lake.root / "share" / "closed", 0)
-    try:
-        with pytest.raises(StorageError, match="permission denied on share/closed/f") as refused:
-            lake.read_bytes(at("closed", "f"))
-        assert refused.value.context == {"path": "share/closed/f", "error": "Permission denied"}
-        with pytest.raises(StorageError, match="permission denied"):
-            list(lake.walk(at("closed")))
-    finally:
-        os.chmod(lake.root / "share" / "closed", 0o750)
+def test_posix_set_owner_changes_the_owner_and_group_without_following_a_link(
+    lake: PosixStorage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, int, int, bool]] = []
+
+    def chown(path: str, uid: int, gid: int, *, dir_fd: int, follow_symlinks: bool) -> None:
+        calls.append((path, uid, gid, follow_symlinks))
+
+    monkeypatch.setattr(os, "chown", chown)
+    assert lake.set_owner(BASE, 4242, 4343) is True
+    assert calls == [("share", 4242, 4343, False)]
 
 
-def test_posix_walk_refuses_a_directory_below_that_it_cannot_list(lake: PosixStorage) -> None:
-    lake.make_directory(at("open"), DIRECTORY_MODE)
-    lake.make_directory(at("open", "closed"), DIRECTORY_MODE)
-    os.chmod(lake.root / "share" / "open" / "closed", 0)
-    try:
-        with pytest.raises(StorageError, match="permission denied on share/open") as refused:
-            list(lake.walk(at("open")))
-        assert refused.value.code == "STORAGE_FAILED"
-    finally:
-        os.chmod(lake.root / "share" / "open" / "closed", 0o750)
+def test_posix_walk_reports_a_listing_that_fails_as_a_storage_error(
+    lake: PosixStorage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(descriptor: int) -> object:
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(os, "scandir", failing)
+    with pytest.raises(StorageError) as refused:
+        list(lake.walk(BASE))
+    assert (refused.value.message, refused.value.code) == (
+        "share: Input/output error",
+        "STORAGE_FAILED",
+    )
+    assert not isinstance(refused.value, PermissionDenied)
 
 
 def test_posix_other_errors_keep_their_reason(
@@ -421,13 +546,36 @@ def test_memory_make_directory_drops_setgid_outside_the_callers_groups(
     assert (made.gid, made.mode) == (1000, 0o2750)
 
 
-def test_memory_walk_refuses_an_unreadable_directory_below(memory: MemoryStorage) -> None:
+def test_memory_set_owner_needs_root_for_another_owner(memory: MemoryStorage) -> None:
+    memory.member_of.add(2001)
     memory.make_directory(LakePath.of("d"), DIRECTORY_MODE)
-    memory.make_directory(LakePath.of("d", "e"), DIRECTORY_MODE)
-    memory.unreadable.add(LakePath.of("d", "e"))
-    with pytest.raises(StorageError) as refused:
-        list(memory.walk(LakePath.of("d")))
-    assert refused.value.message == "permission denied on d"
+    for uid, gid in ((7, 1000), (1000, 2002)):
+        with pytest.raises(PermissionDenied) as refused:
+            memory.set_owner(LakePath.of("d"), uid, gid)
+        assert refused.value.context == {"path": "d", "error": os.strerror(errno.EPERM)}
+    assert memory.set_owner(LakePath.of("d"), 1000, 2001) is True
+    with pytest.raises(PermissionDenied) as refused:
+        memory.set_owner(LakePath(), 1000, 1000)
+    assert refused.value.context == {"path": "", "error": os.strerror(errno.EPERM)}
+    with pytest.raises(StorageError, match="missing does not exist"):
+        memory.set_owner(LakePath.of("missing"), 1000, 1000)
+    memory.uid = 0
+    assert memory.set_owner(LakePath.of("d"), 7, 2002) is True
+    assert (found(memory, LakePath.of("d")).uid, found(memory, LakePath.of("d")).gid) == (7, 2002)
+    assert memory.calls[-1] == ("chown", LakePath.of("d"))
+
+
+def test_memory_root_changes_the_mode_and_group_of_any_entry(memory: MemoryStorage) -> None:
+    memory.uid = 0
+    memory.nodes[LakePath.of("d")] = Node(mode=0o755, uid=7, gid=7, inode=50)
+    assert memory.set_mode(LakePath.of("d"), DIRECTORY_MODE) is True
+    assert memory.set_group(LakePath.of("d"), 2002) == GroupResult(GroupOutcome.CHANGED)
+    assert (found(memory, LakePath.of("d")).mode, found(memory, LakePath.of("d")).gid) == (
+        DIRECTORY_MODE,
+        2002,
+    )
+    assert memory.make_directory(LakePath.of("d", "e"), DIRECTORY_MODE) is True
+    assert found(memory, LakePath.of("d", "e")).mode == DIRECTORY_MODE
 
 
 def test_memory_set_mode_needs_the_owner(memory: MemoryStorage) -> None:
@@ -436,8 +584,9 @@ def test_memory_set_mode_needs_the_owner(memory: MemoryStorage) -> None:
     memory.member_of.discard(0)
     assert memory.set_mode(LakePath.of("d"), DIRECTORY_MODE) is True
     assert found(memory, LakePath.of("d")).mode == 0o750
-    with pytest.raises(StorageError, match="permission denied"):
+    with pytest.raises(PermissionDenied) as refused:
         memory.set_mode(LakePath(), 0o755)
+    assert refused.value.context == {"path": "", "error": os.strerror(errno.EPERM)}
 
 
 def test_memory_in_group_is_membership_of_member_of(memory: MemoryStorage) -> None:
@@ -475,14 +624,6 @@ def test_memory_write_bytes_gives_a_file_the_group_of_a_setgid_parent(
     memory.write_bytes(LakePath.of("plain", "own"), b"", 0o644)
     assert found(memory, LakePath.of("plain", "own")).gid == 1000
     assert memory.calls[-1] == ("write", LakePath.of("plain", "own"))
-
-
-def test_memory_open_file_of_a_foreign_file_cannot_change_its_mode(memory: MemoryStorage) -> None:
-    memory.nodes[LakePath.of("theirs")] = Node("file", 0o600, 0, 0)
-    opened = memory.open_file(LakePath.of("theirs"))
-    assert opened is not None
-    with pytest.raises(StorageError, match="permission denied"):
-        opened.set_mode(FILE_MODE)
 
 
 def test_memory_without_inheritance_refuses_new_directories(memory: MemoryStorage) -> None:

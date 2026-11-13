@@ -6,6 +6,7 @@ from huron.core.storage.directories import DirectoryWriter
 from huron.core.storage.errors import (
     InheritanceFailed,
     LakeUnavailable,
+    PermissionDenied,
     SourceGone,
     SourceSizeMismatch,
     StorageError,
@@ -23,6 +24,7 @@ from huron.core.storage.layout import (
     UPLOAD_DIR_MODE,
     UPLOADS,
     OrganizationPlace,
+    is_ignored_entry,
     is_reserved_entry,
 )
 from huron.core.storage.locks import PathLocks
@@ -102,6 +104,7 @@ __all__ = [
     "OrganizationPlace",
     "Outcome",
     "PathLocks",
+    "PermissionDenied",
     "PruneDirectory",
     "Publisher",
     "RemoveDirectory",
@@ -123,6 +126,7 @@ __all__ = [
     "Storage",
     "StorageError",
     "SymlinkInLake",
+    "is_ignored_entry",
     "is_reserved_entry",
     "marker_state",
     "read_marker",

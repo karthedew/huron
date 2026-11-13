@@ -37,7 +37,10 @@ does not change how the filesystem treats names. Keep the recorded spelling when
 
 Some names belong to Huron: `metadata.json` at
 the top of the collection, any segment that starts with `.huron`, and any segment that ends with
-`.huron-part`. You cannot stage a file with one of these names.
+`.huron-part`. Other names belong to the storage and to NFS clients: a segment named `.snapshot`
+and any segment that starts with `.nfs`. You cannot stage a file with one of these names. In a
+directory, `huron add --recursive` does not stage an entry named `.snapshot` or `.nfs*`, and does
+not look into it. It gives a warning for each one.
 
 A relative path has at most 1,024 UTF-8 bytes, with at most 206 bytes in each segment. It uses `/`
 between segments and has no leading or trailing `/`. Huron refuses empty segments, `.` and `..`,
@@ -279,28 +282,42 @@ document of the service.
 
 `huron adm check` compares what the service records with what the share holds. It first checks the
 directory and the marker of each organization. It does not check ACLs: Huron uses none.
-Then it checks each catalog that you can read, or only the catalog of `--catalog`. It skips the
-catalogs of an organization when its own directory or marker is missing or wrong. These findings
-concern raw ingest:
+Then it checks each catalog that you can read, or only the catalog of `--catalog`.
+
+A declared organization and an organization with its own root need a marker in their own
+directory. The check skips the catalogs of such an organization when its directory is missing or
+is a symbolic link. It also skips them when that marker is missing, is a symbolic link or is wrong.
+Other findings in the organization directory do not stop the check of its catalogs.
+
+These findings concern raw ingest:
 
 | Finding | Meaning |
 | --- | --- |
-| `file_missing` | The service records a file that is not on the share. |
+| `file_missing` | The service records a file that is not on the share. The check does not report a recorded file below a directory that it cannot read. |
 | `file_changed` | The size of the file is not the recorded size. With `--hash`, also: the SHA-256 hash is not the recorded hash. |
-| `file_unrecorded` | A file in the directory of a collection that no commit records. |
-| `stale_part` | A `.huron-part` file older than one hour. |
+| `file_unrecorded` | A file in the directory of a collection that no commit records, or a file directly in a catalog or namespace directory. |
+| `stale_part` | Information: a `.huron-part` file in a collection, older than one hour. It is the temporary name of a stopped publication, or the part file of a stopped write of `metadata.json`. |
 | `sidecar_stale` | `metadata.json` is missing or does not agree with the service. |
+| `pending_commit` | Information: a commit request holds the collection. Until the request ends, the directory can hold old and new files, so the check does not compare the files. |
+| `nfs_file` | Information: a `.nfs*` file, which an NFS client keeps for a removed file that a process holds open. A collection cannot record a `.nfs*` name, so the check does not compare this file with a record. |
+| `snapshot_dir` | Information: a `.snapshot` directory, in which the storage can show its snapshots. A collection cannot record a path with a `.snapshot` segment, so the check does not read this directory. |
 
 Without `--hash`, the check compares only the size of each file. Thus it does not find a change
 that keeps the size. `huron adm check --hash` reads each file and calculates its hash. The command
-exits with code 1 when it has findings.
+exits with code 1 when it has findings. It exits with code 2 when it cannot use the share, for
+example when the share is not mounted.
+
+The check only reads the share. It does not remove or change an entry that it reports, or any
+other entry. An entry that the account cannot read is an `unreadable` finding, and the check
+continues. Only the service user can read the object area `.huron-objects` of an organization.
+The check skips the object area for every other account.
 
 The check does not repair directories. API grants and the catalog's filesystem share group are separate.
 A grant change does not change directory permissions. The API repair endpoints use database rows to plan directory work, not a filesystem scan.
 Missing setgid bits or wrong groups below a catalog need the storage administrator.
 
 [`huron adm repair`](/docs/reference/cli/adm/#huron-adm-repair) calls the API repair endpoints.
-The current CLI has no `adm provision-catalogs` or `adm apply-acl` command.
+[`huron adm provision-catalogs`](/docs/reference/cli/adm/#huron-adm-provision-catalogs) is the step of the storage administrator for the setgid bits and the groups.
 See [Grant changes and directory repair](access-and-roles.md#grant-changes-and-directory-repair) before requesting repair.
 
 [Reading huron adm check](../operator.md#reading-huron-adm-check) tells what to do for each

@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING
 from huron.core.storage.errors import (
     InheritanceFailed,
     LakeUnavailable,
+    PermissionDenied,
     SourceGone,
     SourceSizeMismatch,
     StorageError,
     SymlinkInLake,
 )
 from huron.core.storage.lakepath import LakePath
-from huron.core.storage.layout import FILE_MODE
+from huron.core.storage.layout import FILE_MODE, UNWALKED
 from huron.core.storage.ports import FreeSpace, GroupOutcome, GroupResult, Outcome, Stat
 from huron.pkg.fs import posix
 from huron.pkg.hashing import CHUNK_SIZE, sha256_descriptor
@@ -63,7 +64,8 @@ class PosixStorage:
         if info is None:
             return None
         kind = _kind(info.st_mode)
-        return Stat(kind, stat.S_IMODE(info.st_mode), info.st_gid, info.st_ino, info.st_size)
+        mode = stat.S_IMODE(info.st_mode)
+        return Stat(kind, mode, info.st_uid, info.st_gid, info.st_ino, info.st_size)
 
     def read_bytes(self, location: LakePath) -> bytes | None:
         """The bytes of a file, or ``None`` when it does not exist."""
@@ -88,12 +90,16 @@ class PosixStorage:
             finally:
                 os.close(descriptor)
 
-    def walk(self, location: LakePath) -> Iterator[Entry]:
-        """Every entry below the directory, top-down and sorted; a link is yielded, not entered."""
+    def walk(self, location: LakePath, *, recursive: bool = True) -> Iterator[Entry]:
+        """Every entry below the directory, top-down and sorted; a link is yielded, not entered.
+
+        Without ``recursive``, only the entries directly in the directory. The walk does not
+        enter a directory named in :data:`~huron.core.storage.layout.UNWALKED`.
+        """
         with self._parent(location) as parent:
             descriptor = posix.open_directory(parent, _name(location))
         try:
-            yield from posix.walk(descriptor)
+            yield from posix.walk(descriptor, _entering if recursive else _staying)
         except posix.SymlinkError as error:
             raise SymlinkInLake(location.joinpath(*error.names)) from error
         except OSError as error:
@@ -140,6 +146,16 @@ class PosixStorage:
         with self._parent(location) as parent:
             return posix.change_mode(parent, _name(location), mode)
 
+    def set_owner(self, location: LakePath, uid: int, gid: int) -> bool:
+        """Give the entry the owner ``uid`` and the group ``gid``; ``False`` when it has them.
+
+        A ``chown`` that fails with ``EACCES`` or ``EPERM`` is ``PermissionDenied``; any other
+        failure is a ``StorageError``. Each error names ``location``, except a ``SymlinkInLake``
+        for a link on the way, which names the link.
+        """
+        with self._parent(location) as parent:
+            return posix.change_owner(parent, _name(location), uid, gid)
+
     def set_group(self, location: LakePath, group: str | int) -> GroupResult:
         """Give the entry the group ``group``, a name or a gid.
 
@@ -153,7 +169,7 @@ class PosixStorage:
         try:
             with self._parent(location) as parent:
                 try:
-                    changed = posix.change_group(parent, _name(location), gid)
+                    changed = posix.change_owner(parent, _name(location), -1, gid)
                 except posix.ChangeRefused as error:
                     return GroupResult(GroupOutcome.PENDING, f"{location}: {error.strerror}")
         except _Missing as missing:
@@ -376,6 +392,14 @@ def _name(location: LakePath) -> str:
     return location.name or "."
 
 
+def _entering(names: tuple[str, ...]) -> bool:
+    return names[-1] not in UNWALKED
+
+
+def _staying(names: tuple[str, ...]) -> bool:
+    return False
+
+
 def _kind(mode: int) -> StatKind:
     if stat.S_ISDIR(mode):
         return "dir"
@@ -392,8 +416,8 @@ def _guard[T](action: Callable[[], T], location: LakePath) -> T:
 def _storage_error(location: LakePath, error: OSError) -> StorageError:
     if isinstance(error, FileNotFoundError):
         return _Missing(location)
-    if isinstance(error, PermissionError):
-        return StorageError(
+    if error.errno in {errno.EACCES, errno.EPERM}:
+        return PermissionDenied(
             f"permission denied on {location}", {"path": str(location), "error": error.strerror}
         )
     return StorageError(f"{location}: {error.strerror}", {"path": str(location)})

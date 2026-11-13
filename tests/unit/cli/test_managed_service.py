@@ -52,8 +52,13 @@ ORGANIZATIONS = [
 
 @pytest.fixture
 def roots() -> MemoryStorage:
-    """Both roots exist and belong to alice, the storage admin; the mount prefix is unmarked."""
+    """Both roots exist and belong to alice, the storage admin; the mount prefix is unmarked.
+
+    The mount prefix belongs to the service user and group.
+    """
     storage = MemoryStorage(PREFIX)
+    lake = storage.nodes[LakePath()]
+    lake.uid, lake.gid = storage.uid, storage.gid
     for root in (HELIO_BASE, GEO_BASE):
         storage.add_directory(root, uid=storage.uid)
     return storage
@@ -63,6 +68,7 @@ def roots() -> MemoryStorage:
 def managed(tmp_path: Path, roots: MemoryStorage) -> Iterator[Cli]:
     running = Cli(tmp_path, rooted(roots), PREFIX, organizations=ORGANIZATIONS)
     running.login_as("alice")
+    running.report_service_user(roots.uid, roots.gid)
     yield running
     running.close()
 
@@ -193,6 +199,7 @@ def inheriting(tmp_path: Path, roots: MemoryStorage) -> Iterator[Cli]:
         organizations=INHERITING,
     )
     running.login_as("alice")
+    running.report_service_user(roots.uid, roots.gid)
     running.ok("adm", "provision-orgs")
     running.login_as("bob")
     running.ok("create", "catalog", "heliophysics", "--org", "helio")

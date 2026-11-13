@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Literal
 from huron.pkg.hashing import CHUNK_SIZE, sha256_descriptor
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Iterator
+    from collections.abc import Callable, Generator, Iterable, Iterator
     from pathlib import Path
 
 __all__ = [
@@ -36,8 +36,8 @@ __all__ = [
     "SizeMismatch",
     "SymlinkError",
     "atomic_write",
-    "change_group",
     "change_mode",
+    "change_owner",
     "copy_sealed",
     "entry",
     "link_once",
@@ -58,7 +58,7 @@ INHERITING_DIR_MODE = 0o750
 #: The mode of a directory that :func:`make_inheriting_dir` keeps: ``0750`` and the setgid bit.
 INHERITED_MODE = INHERITING_DIR_MODE | statmodule.S_ISGID
 
-type EntryKind = Literal["file", "dir", "symlink", "other"]
+type EntryKind = Literal["file", "dir", "symlink", "other", "unreadable"]
 
 _STEP = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
 #: How a final name is opened to read it or to change it through its descriptor. A FIFO does not
@@ -70,12 +70,23 @@ _NEW_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 @dataclass(frozen=True, slots=True)
 class Entry:
-    """One entry that :func:`walk` found; ``names`` lead to it from the walked directory."""
+    """One entry that :func:`walk` found; ``names`` lead to it from the walked directory.
+
+    ``mode`` holds the permission bits with the setgid bit, and ``uid`` and ``gid`` are the
+    owner and the group. An entry of the kind ``unreadable`` is one that the walk could not
+    stat, or a directory that it could not open for listing. ``errno`` is the error number of
+    that failure, and ``None`` for every other entry. An entry that could not be stat'ed has
+    zero in its other numbers.
+    """
 
     names: tuple[str, ...]
     kind: EntryKind
     size: int
     mtime_ns: int
+    mode: int
+    uid: int
+    gid: int
+    errno: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +134,7 @@ class PartBlocked(OSError):
 
 
 class ChangeRefused(OSError):
-    """The filesystem refused the ``chown`` of :func:`change_group`."""
+    """The filesystem refused the ``chown`` of :func:`change_owner`."""
 
 
 class FileError(OSError):
@@ -205,23 +216,26 @@ def change_mode(parent_fd: int, name: str, mode: int) -> bool:
     return True
 
 
-def change_group(parent_fd: int, name: str, gid: int) -> bool:
-    """Give the entry ``name`` the group ``gid``; ``False`` when it has it already.
+def change_owner(parent_fd: int, name: str, uid: int, gid: int) -> bool:
+    """Give the entry ``name`` the owner ``uid`` and the group ``gid``; ``-1`` keeps either one.
 
-    The change is ``fchownat`` with ``AT_SYMLINK_NOFOLLOW`` on the parent's descriptor, so it
-    needs no read access to the entry and never reaches the target of a link. A link that takes
-    the name's place after the check gets the group itself, and the ``lstat`` after the change
-    refuses it with :class:`SymlinkError`. Raises ``FileNotFoundError`` when ``name`` does not
-    exist, and :class:`ChangeRefused` when the filesystem refuses the ``chown``.
+    Returns ``False`` when the entry has them already. The change is ``fchownat`` with
+    ``AT_SYMLINK_NOFOLLOW`` on the parent's descriptor, so it needs no read access to the entry
+    and never reaches the target of a link. A link that takes the name's place after the check
+    gets the owner itself, and the ``lstat`` after the change refuses it with
+    :class:`SymlinkError`. Raises ``FileNotFoundError`` when ``name`` does not exist, and
+    :class:`ChangeRefused` when the filesystem refuses the ``chown``.
     """
-    current = _existing(parent_fd, name).st_gid
-    if current != gid:
+    current = _existing(parent_fd, name)
+    found = (current.st_uid, current.st_gid)
+    wanted = (found[0] if uid == -1 else uid, found[1] if gid == -1 else gid)
+    if wanted != found:
         try:
-            os.chown(name, -1, gid, dir_fd=parent_fd, follow_symlinks=False)
+            os.chown(name, uid, gid, dir_fd=parent_fd, follow_symlinks=False)
         except OSError as error:
             raise ChangeRefused(error.errno, error.strerror, name) from error
     entry(parent_fd, name)
-    return current != gid
+    return wanted != found
 
 
 def open_directory(parent_fd: int, name: str) -> int:
@@ -366,14 +380,19 @@ def remove_empty_dir(parent_fd: int, name: str) -> bool:
     return True
 
 
-def walk(directory_fd: int) -> Iterator[Entry]:
+def walk(
+    directory_fd: int, enter: Callable[[tuple[str, ...]], bool] = lambda names: True
+) -> Iterator[Entry]:
     """Every entry below ``directory_fd``, top-down and sorted by name; links are not entered.
 
-    A directory comes before its entries. A directory that a link replaces during the walk
-    raises :class:`SymlinkError` with the names from ``directory_fd`` to it. ``directory_fd``
-    must be open for reading, as :func:`open_directory` opens it.
+    A directory comes before its entries. The walk enters a directory only when ``enter``
+    accepts the names that lead to it. A name that the walk cannot stat, and a directory that
+    it cannot open for listing, are entries of the kind ``unreadable``. The walk does not
+    enter them and goes on. A directory that a link replaces during the walk raises
+    :class:`SymlinkError` with the names from ``directory_fd`` to it. ``directory_fd`` must be
+    open for reading, as :func:`open_directory` opens it.
     """
-    yield from _walk(directory_fd, ())
+    yield from _walk(directory_fd, (), enter)
 
 
 @contextmanager
@@ -519,23 +538,59 @@ def _link(source_fd: int, source_name: str, parent_fd: int, name: str) -> None:
     os.link(source_name, name, src_dir_fd=source_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
 
 
-def _walk(directory_fd: int, prefix: tuple[str, ...]) -> Iterator[Entry]:
+def _walk(
+    directory_fd: int, prefix: tuple[str, ...], enter: Callable[[tuple[str, ...]], bool]
+) -> Iterator[Entry]:
     with os.scandir(directory_fd) as iterator:
         found = sorted(iterator, key=lambda item: item.name)
     for item in found:
         names = (*prefix, item.name)
-        info = item.stat(follow_symlinks=False)
+        try:
+            info = item.stat(follow_symlinks=False)
+        except OSError as error:
+            yield Entry(names, "unreadable", 0, 0, 0, 0, 0, error.errno)
+            continue
         kind = _kind(info.st_mode)
-        yield Entry(names, kind, info.st_size, info.st_mtime_ns)
-        if kind == "dir":
-            try:
-                child = open_directory(directory_fd, item.name)
-            except SymlinkError as error:
-                raise SymlinkError(names) from error
-            try:
-                yield from _walk(child, names)
-            finally:
-                os.close(child)
+        if kind == "dir" and enter(names):
+            yield from _walk_directory(directory_fd, names, info, enter)
+        else:
+            yield _entry(names, kind, info)
+
+
+def _walk_directory(
+    parent_fd: int,
+    names: tuple[str, ...],
+    info: os.stat_result,
+    enter: Callable[[tuple[str, ...]], bool],
+) -> Iterator[Entry]:
+    """The directory ``names`` in ``parent_fd`` and, when it opens for listing, its entries."""
+    try:
+        child = open_directory(parent_fd, names[-1])
+    except SymlinkError as error:
+        raise SymlinkError(names) from error
+    except OSError as error:
+        yield _entry(names, "unreadable", info, error.errno)
+        return
+    yield _entry(names, "dir", info)
+    try:
+        yield from _walk(child, names, enter)
+    finally:
+        os.close(child)
+
+
+def _entry(
+    names: tuple[str, ...], kind: EntryKind, info: os.stat_result, number: int | None = None
+) -> Entry:
+    return Entry(
+        names,
+        kind,
+        info.st_size,
+        info.st_mtime_ns,
+        statmodule.S_IMODE(info.st_mode),
+        info.st_uid,
+        info.st_gid,
+        number,
+    )
 
 
 def _kind(mode: int) -> EntryKind:

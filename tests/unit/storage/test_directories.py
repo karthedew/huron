@@ -248,6 +248,28 @@ def test_a_collection_with_other_entries_is_kept(collection: Lake) -> None:
     ]
 
 
+@pytest.mark.parametrize("name", [".snapshot", ".huron-objects"])
+def test_a_snapshot_or_object_directory_in_a_collection_is_not_entered_or_removed(
+    collection: Lake, name: str
+) -> None:
+    storage = collection.storage
+    reserved = COLLECTION.joinpath("a", name)
+    storage.make_directory(reserved, 0o777)
+    storage.make_directory(reserved.joinpath("empty"), 0o755)
+    storage.write_bytes(reserved.joinpath(".c.bin.1.huron-part"), b"x", FILE_MODE)
+    storage.make_directory(COLLECTION.joinpath(name), 0o777)
+    assert collection.writer.remove_collection(COLLECTION) is Outcome.KEPT
+    assert [entry.names for entry in storage.walk(COLLECTION)] == [
+        (name,),
+        ("a",),
+        ("a", name),
+    ]
+    assert [entry.names for entry in storage.walk(reserved)] == [
+        (".c.bin.1.huron-part",),
+        ("empty",),
+    ]
+
+
 def test_a_link_in_a_collection_keeps_the_directory(collection: Lake) -> None:
     link = COLLECTION.joinpath("a", "link")
     plant_symlink(collection.storage, link)

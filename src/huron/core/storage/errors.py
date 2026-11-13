@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 __all__ = [
     "InheritanceFailed",
     "LakeUnavailable",
+    "PermissionDenied",
     "SourceGone",
     "SourceSizeMismatch",
     "StorageError",
@@ -27,6 +28,15 @@ class StorageError(HuronError):
     """The share could not be used: missing, unmarked or unwritable."""
 
     error_code = STORAGE_FAILED
+
+
+class PermissionDenied(StorageError):
+    """The account that runs the process may not read or change the place on the lake.
+
+    ``context["path"]`` is the lake path of the place, or its absolute path in an error of
+    :class:`~huron.core.storage.provision.Provisioner`. ``context["error"]`` is the system's
+    text of the error number (``EACCES`` or ``EPERM``).
+    """
 
 
 class SymlinkInLake(StorageError):

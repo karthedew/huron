@@ -34,6 +34,7 @@ REPORT_KEYS = {
     "adds",
     "removes",
     "unrecorded",
+    "unreadable",
     "staged",
     "pending_commit",
 }
@@ -106,6 +107,66 @@ def test_status_names_unrecorded_files_on_the_share(staged: Cli, share: MemorySt
     shown = lines(staged, "status")
     assert "Unrecorded files on the share: deep/other.txt, stray.txt" in shown
     assert shown[-1] == PUSH_HINT
+
+
+def test_status_does_not_name_nfs_files_or_what_a_snapshot_directory_holds(
+    staged: Cli, share: MemoryStorage
+) -> None:
+    share.write_bytes(RUN7_DIR.joinpath(".nfs000000000123abcd00000001"), b"x", 0o600)
+    share.make_directory(RUN7_DIR.joinpath(".snapshot"), 0o777)
+    share.write_bytes(RUN7_DIR.joinpath(".snapshot", "copy.txt"), b"x", 0o644)
+    share.write_bytes(RUN7_DIR.joinpath("stray.txt"), b"x", 0o644)
+    report = json.loads(staged.ok("-o", "json", "status").stdout)
+    assert (report["unrecorded"], report["unreadable"]) == (["stray.txt"], [])
+
+
+def test_status_names_the_entries_that_it_cannot_read_and_goes_on(
+    staged: Cli, share: MemoryStorage
+) -> None:
+    share.make_directory(RUN7_DIR.joinpath("closed"), 0o2750)
+    share.write_bytes(RUN7_DIR.joinpath("closed", "hidden.txt"), b"x", 0o644)
+    share.unreadable.add(RUN7_DIR.joinpath("closed"))
+    share.write_bytes(RUN7_DIR.joinpath(".nfs000000000123abcd00000001"), b"x", 0o600)
+    share.write_bytes(RUN7_DIR.joinpath("stray.txt"), b"x", 0o644)
+    shown = lines(staged, "status")
+    assert "Unrecorded files on the share: stray.txt" in shown
+    assert (
+        "The CLI cannot read these entries on the share: helio/heliophysics/solar-wind/run7/closed"
+    ) in shown
+    report = json.loads(staged.ok("-o", "json", "status").stdout)
+    assert (report["unrecorded"], report["unreadable"]) == (
+        ["stray.txt"],
+        ["helio/heliophysics/solar-wind/run7/closed"],
+    )
+
+
+def test_status_names_a_collection_directory_that_it_cannot_list(
+    staged: Cli, share: MemoryStorage
+) -> None:
+    share.unreadable.add(RUN7_DIR)
+    report = json.loads(staged.ok("-o", "json", "status").stdout)
+    assert (report["unrecorded"], report["unreadable"]) == (
+        [],
+        ["helio/heliophysics/solar-wind/run7"],
+    )
+    share.unreadable.add(RUN7_DIR.parent)
+    report = json.loads(staged.ok("-o", "json", "status").stdout)
+    assert report["unreadable"] == ["helio/heliophysics/solar-wind/run7"]
+
+
+def test_status_refuses_a_collection_directory_that_is_a_link(
+    staged: Cli, share: MemoryStorage
+) -> None:
+    for location in [p for p in share.nodes if p.names[: len(RUN7_DIR.names)] == RUN7_DIR.names]:
+        del share.nodes[location]
+    share.symlink(RUN7_DIR, "/etc")
+    refused = staged.run("status")
+    assert refused.exit_code == 1
+    assert refused.stderr.splitlines() == [
+        "error: helio/heliophysics/solar-wind/run7 is a symbolic link. The lake must not contain"
+        " symbolic links. Remove it. [SYMLINK_IN_LAKE]"
+    ]
+    assert refused.stdout == ""
 
 
 def test_status_says_when_the_share_is_not_mounted(staged: Cli) -> None:

@@ -266,6 +266,12 @@ staged file until the push is complete.
   code 2 and stages nothing. To give one file a different path, use `--as <path>`.
 - Each name in a path in the collection can have at most 206 bytes in UTF-8. A longer name stops
   the command with exit code 2.
+- Some names belong to Huron, to the storage or to an NFS client. A path in the collection
+  cannot have these names: `metadata.json` at the top, `.snapshot`, a name that starts with
+  `.huron` or `.nfs`, or a name that ends with `.huron-part`. Such a path stops the command
+  with exit code 2. In a
+  directory, the command does not stage an entry named `.snapshot` or `.nfs*`, and does not look
+  into it. It gives a warning for each one.
 
 Before `push` sends a file, it compares the size and the modification time of the file with the
 recorded values. When the file changed, or the CLI cannot read it, the push stops with exit code 2
@@ -423,13 +429,13 @@ delete, so you lose nothing of yours.
 | --- | --- |
 | 0 | success |
 | 1 | failure (also findings from `huron adm check`). Also: a state directory on NFS, or a state file that the CLI cannot read or save or whose format it does not know |
-| 2 | usage: wrong arguments, no current collection, no current catalog, a file that `huron add` cannot stage, a staged file that changed or that the CLI cannot read |
+| 2 | usage: wrong arguments, no current collection, no current catalog, a file that `huron add` cannot stage, a staged file that changed or that the CLI cannot read. Also: `huron adm check` cannot use the share |
 | 3 | not logged in |
 | 4 | forbidden |
 | 5 | not found |
 | 6 | conflict: stale version, not empty, name taken. Also: a lock that another command holds. A command that stops because the CLI did not get the result of the last commit. A blocked or abandoned commit |
 | 7 | validation: metadata, schema or names, more than 10,000 staged changes |
-| 8 | the directory of an organization or the share is missing or not writable, or its marker is missing or names a different instance or organization. Also: the service did not seal an upload |
+| 8 | the directory of an organization or the share is missing or not writable, or its marker is missing or names a different instance or organization. Also: the service did not seal an upload. When `huron adm check` cannot use the share, it stops with code 2, not 8 |
 | 130 | cancelled |
 
 An error prints `error: <message> [<code>]` and often a `hint:` line.

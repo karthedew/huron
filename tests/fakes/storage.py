@@ -1,6 +1,7 @@
 """Views of an in-memory share: one rooted at a directory below its root, and a read-only one."""
 
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from huron.core.storage import (
     SealedFile,
     Stat,
     Storage,
+    SymlinkInLake,
 )
 from huron.core.storage.memory import MemoryStorage
 
@@ -31,29 +33,37 @@ WRITES = frozenset(
         "rename",
         "set_group",
         "set_mode",
+        "set_owner",
         "write_bytes",
     }
 )
 
 
 class Subtree:
-    """The storage of ``share`` rooted at its directory ``base``, as a POSIX storage there."""
+    """The storage of ``share`` rooted at its directory ``base``, as a POSIX storage there.
+
+    When ``stat`` or ``read_bytes`` meets a link below ``base``, the error names the link by
+    its path below ``base``, as a POSIX storage there names it. A link at ``base`` gets the
+    empty path. Every other error keeps its path in the share.
+    """
 
     def __init__(self, share: MemoryStorage, base: LakePath) -> None:
         self.share = share
         self.base = base
 
     def stat(self, location: LakePath) -> Stat | None:
-        return self.share.stat(self._in(location))
+        with self._rooted():
+            return self.share.stat(self._in(location))
 
     def read_bytes(self, location: LakePath) -> bytes | None:
-        return self.share.read_bytes(self._in(location))
+        with self._rooted():
+            return self.share.read_bytes(self._in(location))
 
     def is_empty(self, location: LakePath) -> bool:
         return self.share.is_empty(self._in(location))
 
-    def walk(self, location: LakePath) -> Iterator[Entry]:
-        return self.share.walk(self._in(location))
+    def walk(self, location: LakePath, *, recursive: bool = True) -> Iterator[Entry]:
+        return self.share.walk(self._in(location), recursive=recursive)
 
     def open_file(self, location: LakePath) -> OpenFile | None:
         return self.share.open_file(self._in(location))
@@ -66,6 +76,9 @@ class Subtree:
 
     def set_mode(self, location: LakePath, mode: int) -> bool:
         return self.share.set_mode(self._in(location), mode)
+
+    def set_owner(self, location: LakePath, uid: int, gid: int) -> bool:
+        return self.share.set_owner(self._in(location), uid, gid)
 
     def set_group(self, location: LakePath, group: str | int) -> GroupResult:
         return self.share.set_group(self._in(location), group)
@@ -101,6 +114,16 @@ class Subtree:
 
     def _in(self, location: LakePath) -> LakePath:
         return self.base.joinpath(*location.names)
+
+    @contextmanager
+    def _rooted(self) -> Iterator[None]:
+        try:
+            yield
+        except SymlinkInLake as error:
+            names = LakePath.parse(str(error.context["path"])).names
+            if names[: len(self.base.names)] != self.base.names:
+                raise
+            raise SymlinkInLake(LakePath.of(*names[len(self.base.names) :])) from error
 
 
 def rooted(share: MemoryStorage) -> Callable[[Path], Any]:

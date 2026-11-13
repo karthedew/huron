@@ -108,6 +108,13 @@ class Mount:
         """The service's instance id, from ``GET /healthz``."""
         return str(self._service_health()["instance_id"])
 
+    def service_user(self) -> Mapping[str, Any] | None:
+        """The service user's ``uid``, ``gid`` and ``group`` from ``GET /healthz``; ``None``
+        when the service does not report them.
+        """
+        found = self._service_health().get("service_user")
+        return None if found is None else dict(found)
+
     def managed(self) -> bool:
         """Whether the service configuration declares the organizations (``GET /healthz``)."""
         return bool(self._service_health().get("organizations_managed"))

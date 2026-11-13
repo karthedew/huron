@@ -185,9 +185,20 @@ When repair writes `metadata.json`, the new file has mode `0644`.
 
 [`huron adm repair`](/docs/reference/cli/adm/#huron-adm-repair) calls these endpoints. It prints each
 changed path, each share-group warning and each failed path with its reason and detail.
-The current CLI has no `adm provision-catalogs` or `adm apply-acl` command.
 Report a failed path to the storage administrator.
 The [API error reference](../api-errors.md) links to the authoritative repair failure schema.
+
+The storage administrator sets the groups below a catalog with
+[`huron adm provision-catalogs`](/docs/reference/cli/adm/#huron-adm-provision-catalogs).
+The command selects each catalog that has a directory without the setgid bit or the group of the catalog.
+A directory that the command cannot read does not select a catalog.
+`huron adm check` reports that directory as `unreadable`.
+
+For each selected catalog, the command gives each directory of the catalog the group of the catalog
+and the mode `2750`. Files keep their group and mode.
+The command does not enter or change a `.snapshot` or `.huron-objects` directory.
+With `--emit-script`, the command prints a shell script for root, with one `find` line for each selected catalog.
+The `find` line does not skip a `.snapshot` or `.huron-objects` directory.
 
 ## Seeing grants
 

@@ -22,5 +22,7 @@ path_segments = st.text(
         value not in {".", ".."}
         and not value.startswith(".huron")
         and not value.endswith(".huron-part")
+        and value != ".snapshot"
+        and not value.startswith(".nfs")
     )
 )

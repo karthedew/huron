@@ -18,6 +18,7 @@ from huron.schema.naming import (
     check_rel_path,
     check_segment,
     collection_identifier,
+    is_storage_name,
     namespace_identifier,
     parse_identifier,
     rel_path_key,
@@ -121,6 +122,12 @@ def test_valid_relative_paths_are_accepted(parts: list[str]) -> None:
         ("x/.huronstate", "rel_path_reserved"),
         ("x.bin.huron-part", "rel_path_reserved"),
         ("x/.y.bin.huron-part", "rel_path_reserved"),
+        (".snapshot/a.txt", "rel_path_reserved"),
+        ("x/.snapshot/hourly.0/a.txt", "rel_path_reserved"),
+        ("x/.snapshot", "rel_path_reserved"),
+        (".nfs000000000123abcd00000001", "rel_path_reserved"),
+        ("x/.nfsconfig", "rel_path_reserved"),
+        (".nfs/a.txt", "rel_path_reserved"),
     ],
 )
 def test_invalid_relative_paths_name_the_broken_rule(value: str, rule: str) -> None:
@@ -141,6 +148,21 @@ def test_a_segment_leaves_room_for_the_temporary_name_of_a_publication() -> None
 def test_metadata_json_below_the_root_is_an_ordinary_file() -> None:
     assert check_rel_path("sub/metadata.json") == "sub/metadata.json"
     assert check_rel_path("metadata.json.d/x") == "metadata.json.d/x"
+
+
+def test_names_near_the_storage_names_are_ordinary() -> None:
+    for value in ("snapshot/a.txt", ".snapshots/a", "x/a.snapshot", "nfs.txt", "a.nfs", ".NFS1"):
+        assert check_rel_path(value) == value
+
+
+def test_storage_names_are_the_snapshot_directory_and_nfs_files() -> None:
+    assert is_storage_name(".snapshot")
+    assert is_storage_name(".nfs")
+    assert is_storage_name(".nfs000000000123abcd00000001")
+    assert not is_storage_name(".snapshots")
+    assert not is_storage_name("snapshot")
+    assert not is_storage_name(".NFS1")
+    assert not is_storage_name("x.nfs")
 
 
 def test_keys_fold_case() -> None:

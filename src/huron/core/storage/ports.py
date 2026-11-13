@@ -40,11 +40,13 @@ type StatKind = Literal["file", "dir", "other"]
 class Stat:
     """One entry on the lake, never a symbolic link.
 
-    ``mode`` holds the permission bits with the setgid bit; ``inode`` is the inode number.
+    ``mode`` holds the permission bits with the setgid bit, ``uid`` and ``gid`` are the owner
+    and the group, and ``inode`` is the inode number.
     """
 
     kind: StatKind
     mode: int
+    uid: int
     gid: int
     inode: int
     size: int
@@ -147,7 +149,8 @@ class ShareReader(Protocol):
     """Read-only operations on the lake.
 
     Every place is a :class:`LakePath` below the storage root. A symbolic link at any step of
-    it raises ``SymlinkInLake``; only :meth:`walk` reports a link, and never enters it.
+    it raises ``SymlinkInLake``; only :meth:`walk` reports a link, and never enters it. A place
+    that the process may not search or list raises ``PermissionDenied``.
     """
 
     def stat(self, location: LakePath) -> Stat | None:
@@ -162,8 +165,14 @@ class ShareReader(Protocol):
         """Whether the directory has no entry; a link counts as an entry."""
         ...
 
-    def walk(self, location: LakePath) -> Iterator[Entry]:
-        """Every entry below the directory, top-down and sorted by name."""
+    def walk(self, location: LakePath, *, recursive: bool = True) -> Iterator[Entry]:
+        """Every entry below the directory, top-down and sorted by name.
+
+        Without ``recursive``, only the entries directly in the directory. A walk never enters
+        a link or a directory named in :data:`~huron.core.storage.layout.UNWALKED`. An entry
+        that the walk cannot stat or list is an entry of the kind ``unreadable``, which the
+        walk does not enter. A directory ``location`` that cannot be listed is an error.
+        """
         ...
 
     def open_file(self, location: LakePath) -> OpenFile | None:
@@ -172,7 +181,11 @@ class ShareReader(Protocol):
 
 
 class Storage(ShareReader, Protocol):
-    """Every operation on the lake, writes included."""
+    """Every operation on the lake, writes included.
+
+    A place that the process may not change raises ``PermissionDenied``. The one exception is
+    :meth:`set_group`, which answers a refused change with ``PENDING``.
+    """
 
     def make_directory(self, location: LakePath, mode: int) -> bool:
         """Create a directory with exactly ``mode`` (its parent must exist); ``True`` if made.
@@ -191,6 +204,14 @@ class Storage(ShareReader, Protocol):
 
     def set_mode(self, location: LakePath, mode: int) -> bool:
         """Give the entry exactly ``mode``; ``True`` when the mode changed."""
+        ...
+
+    def set_owner(self, location: LakePath, uid: int, gid: int) -> bool:
+        """Give the entry the owner ``uid`` and the group ``gid``; ``True`` when one changed.
+
+        A change that the process may not make is ``PermissionDenied``. Only the storage
+        administrator gives an entry another owner.
+        """
         ...
 
     def set_group(self, location: LakePath, group: str | int) -> GroupResult:

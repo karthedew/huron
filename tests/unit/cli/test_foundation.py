@@ -1,5 +1,6 @@
 """The CLI's root app, configuration, state, output and API client."""
 
+import grp
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,7 @@ from huron.applications.cli.identifiers import (
     resolve_namespace,
 )
 from huron.applications.cli.output import Column, OutputFormat, render, render_one
+from huron.applications.cli.services import system_gid
 from tests.support.cli import Cli
 
 
@@ -228,3 +230,8 @@ def test_domain_errors_are_reported_with_their_code(cli: Cli, monkeypatch) -> No
     monkeypatch.setattr(Config, "as_dict", refuse)
     result = cli.run("config", "show")
     assert result.exit_code == 7 and "[NAME_INVALID]" in result.stderr
+
+
+def test_system_gid_reads_the_group_database_of_this_machine() -> None:
+    assert system_gid(grp.getgrgid(os.getgid()).gr_name) == os.getgid()
+    assert system_gid("no-such-group-xyz") is None

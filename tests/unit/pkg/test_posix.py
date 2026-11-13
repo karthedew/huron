@@ -69,7 +69,7 @@ PRIMITIVES: dict[str, Callable[[Path, int, str], object]] = {
     "open_file": lambda lake, fd, name: posix.open_file(fd, name),
     "open_directory": lambda lake, fd, name: posix.open_directory(fd, name),
     "change_mode": lambda lake, fd, name: posix.change_mode(fd, name, 0o600),
-    "change_group": lambda lake, fd, name: posix.change_group(fd, name, os.getgid()),
+    "change_owner": lambda lake, fd, name: posix.change_owner(fd, name, -1, os.getgid()),
     "make_dir": lambda lake, fd, name: posix.make_dir(fd, name, 0o750),
     "make_inheriting_dir": lambda lake, fd, name: posix.make_inheriting_dir(fd, name),
     "atomic_write": lambda lake, fd, name: posix.atomic_write(fd, name, b"x", 0o644, PART),
@@ -649,6 +649,17 @@ def test_remove_helpers_report_whether_anything_was_removed(lake: Path) -> None:
     assert refused.value.errno == errno.ENOTEMPTY
 
 
+def walked(
+    directory: Path, enter: Callable[[tuple[str, ...]], bool] | None = None
+) -> list[posix.Entry]:
+    """Every entry that :func:`posix.walk` yields below ``directory``."""
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        return list(posix.walk(descriptor) if enter is None else posix.walk(descriptor, enter))
+    finally:
+        os.close(descriptor)
+
+
 def test_walk_is_top_down_sorted_and_never_enters_a_link(lake: Path) -> None:
     outside = lake.parent / "outside"
     (lake / "a" / "b").mkdir()
@@ -656,11 +667,7 @@ def test_walk_is_top_down_sorted_and_never_enters_a_link(lake: Path) -> None:
     (lake / "a" / "a.txt").write_bytes(b"1")
     (lake / "a" / "link").symlink_to(outside)
     os.mkfifo(lake / "a" / "pipe")
-    descriptor = os.open(lake / "a", os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        entries = list(posix.walk(descriptor))
-    finally:
-        os.close(descriptor)
+    entries = walked(lake / "a")
     assert [(e.names, e.kind) for e in entries] == [
         (("a.txt",), "file"),
         (("b",), "dir"),
@@ -671,13 +678,70 @@ def test_walk_is_top_down_sorted_and_never_enters_a_link(lake: Path) -> None:
     assert entries[2].size == 5
 
 
-def test_change_mode_and_change_group_act_through_the_entry(lake: Path) -> None:
+def test_walk_reports_the_mode_owner_and_group_of_each_entry(lake: Path) -> None:
+    os.chmod(lake / "up" / "src", 0o640)
+    (entry,) = walked(lake / "up")
+    info = os.lstat(lake / "up" / "src")
+    assert (entry.mode, entry.uid, entry.gid, entry.errno) == (
+        0o640,
+        info.st_uid,
+        info.st_gid,
+        None,
+    )
+    assert entry.mtime_ns == info.st_mtime_ns
+
+
+@pytest.mark.parametrize("mode", [0o000, 0o100, 0o300])
+def test_walk_yields_a_directory_it_cannot_list_as_unreadable_and_goes_on(
+    lake: Path, temporary_mode: Callable[[Path, int], None], mode: int
+) -> None:
+    (lake / "a" / "closed" / "inner").mkdir(parents=True)
+    (lake / "a" / "later.txt").write_bytes(b"x")
+    temporary_mode(lake / "a" / "closed", mode)
+    entries = walked(lake / "a")
+    assert [(e.names, e.kind, e.errno) for e in entries] == [
+        (("closed",), "unreadable", errno.EACCES),
+        (("later.txt",), "file", None),
+    ]
+    assert entries[0].mode == mode
+
+
+def test_walk_yields_a_name_it_cannot_stat_as_unreadable(
+    lake: Path, temporary_mode: Callable[[Path, int], None]
+) -> None:
+    (lake / "a" / "listed" / "f").mkdir(parents=True)
+    temporary_mode(lake / "a" / "listed", 0o400)
+    assert [(e.names, e.kind, e.errno, e.mode, e.size) for e in walked(lake / "a")] == [
+        (("listed",), "dir", None, 0o400, os.lstat(lake / "a" / "listed").st_size),
+        (("listed", "f"), "unreadable", errno.EACCES, 0, 0),
+    ]
+
+
+def test_walk_enters_only_the_directories_that_it_is_asked_to(lake: Path) -> None:
+    (lake / "a" / "in" / "x").mkdir(parents=True)
+    (lake / "a" / "out" / "y").mkdir(parents=True)
+    asked: list[tuple[str, ...]] = []
+
+    def enter(names: tuple[str, ...]) -> bool:
+        asked.append(names)
+        return names[-1] != "out"
+
+    assert [(e.names, e.kind) for e in walked(lake / "a", enter)] == [
+        (("in",), "dir"),
+        (("in", "x"), "dir"),
+        (("out",), "dir"),
+    ]
+    assert asked == [("in",), ("in", "x"), ("out",)]
+
+
+def test_change_mode_and_change_owner_act_through_the_entry(lake: Path) -> None:
     (lake / "a" / "d").mkdir()
-    gid = os.lstat(lake / "up" / "src").st_gid
+    info = os.lstat(lake / "up" / "src")
     with parent(lake, "up") as fd:
         assert posix.change_mode(fd, "src", 0o600) is True
         assert posix.change_mode(fd, "src", 0o600) is False
-        assert posix.change_group(fd, "src", gid) is False
+        assert posix.change_owner(fd, "src", info.st_uid, info.st_gid) is False
+        assert posix.change_owner(fd, "src", -1, -1) is False
         with pytest.raises(FileNotFoundError):
             posix.change_mode(fd, "missing", 0o600)
     assert stat.S_IMODE(os.lstat(lake / "up" / "src").st_mode) == 0o600
@@ -686,8 +750,9 @@ def test_change_mode_and_change_group_act_through_the_entry(lake: Path) -> None:
     assert stat.S_IMODE(os.lstat(lake / "a" / "d").st_mode) == 0o2750
 
 
-def test_change_group_changes_the_group_without_following_a_link(
-    lake: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("kept", ["uid", "gid", "neither"])
+def test_change_owner_changes_the_owner_and_group_without_following_a_link(
+    lake: Path, monkeypatch: pytest.MonkeyPatch, kept: str
 ) -> None:
     changed: list[tuple[str, int, int, bool]] = []
 
@@ -695,19 +760,21 @@ def test_change_group_changes_the_group_without_following_a_link(
         changed.append((path, uid, gid, follow_symlinks))
 
     monkeypatch.setattr(os, "chown", chown)
-    other = os.lstat(lake / "up" / "src").st_gid + 1
+    info = os.lstat(lake / "up" / "src")
+    uid = -1 if kept == "uid" else info.st_uid + 1
+    gid = -1 if kept == "gid" else info.st_gid + 1
     with parent(lake, "up") as fd:
-        assert posix.change_group(fd, "src", other) is True
+        assert posix.change_owner(fd, "src", uid, gid) is True
         with pytest.raises(FileNotFoundError):
-            posix.change_group(fd, "missing", other)
-    assert changed == [("src", -1, other, False)]
+            posix.change_owner(fd, "missing", uid, gid)
+    assert changed == [("src", uid, gid, False)]
 
 
-def test_change_group_reports_a_refused_chown(lake: Path) -> None:
+def test_change_owner_reports_a_refused_chown(lake: Path) -> None:
     group = os.lstat(lake / "up" / "src").st_gid
     other = next(gid for gid in range(1, 65536) if gid != group and gid not in os.getgroups())
     with parent(lake, "up") as fd, pytest.raises(posix.ChangeRefused) as refused:
-        posix.change_group(fd, "src", other)
+        posix.change_owner(fd, "src", -1, other)
     assert (refused.value.errno, refused.value.filename) == (errno.EPERM, "src")
     assert os.lstat(lake / "up" / "src").st_gid == group
 
@@ -721,7 +788,7 @@ def test_a_directory_this_process_cannot_read_changes_its_mode_and_group(
     temporary_mode(unreadable, mode)
     gid = os.lstat(unreadable).st_gid
     with parent(lake, "a") as fd:
-        assert posix.change_group(fd, "d", gid) is False
+        assert posix.change_owner(fd, "d", -1, gid) is False
         assert posix.change_mode(fd, "d", 0o2750) is True
     assert stat.S_IMODE(os.lstat(unreadable).st_mode) == 0o2750
 

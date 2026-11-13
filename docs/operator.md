@@ -206,18 +206,34 @@ together with its member grants. But that Catalog Admin does not grant organizat
    huron adm verify-mounts
    ```
 
-`provision-orgs` requires that the root exists. It never creates a root. It does these steps:
+`provision-orgs` requires that the lake path and each root exist. It never creates a root. For the
+lake path (the `mount_prefix` of the CLI), it does these steps:
 
-1. It creates `<root>/<org>` with mode 2771.
-2. It applies the ACL of the organization: the platform group and the Org Admin groups. With
-   `acl_backend: none`, it applies modes only.
+1. It gives the lake path the service user and group, and the mode `2751`.
+2. It makes `<lake_path>/.tus-uploads` with mode `0700` for the service user and group.
+3. It writes the marker `<lake_path>/.huron`, which names the `HURON_INSTANCE_ID` of the service.
+
+For each declared organization, it does these steps:
+
+1. It makes `<root>/<org>` when it does not exist. It gives the directory the service user and
+   group, and the mode `2751`. No step is recursive.
+2. It makes the object area `<root>/<org>/.huron-objects` with mode `0700` for the service user
+   and group.
 3. It writes the marker `<root>/<org>/.huron`, which names the `HURON_INSTANCE_ID` of the service
    and the organization.
 
 `provision-orgs` is idempotent. It refuses to overwrite a marker that names another instance or
-another organization. Without `--org`, it provisions every declared organization. Sometimes only
-`root` may write to the root. Then `huron adm provision-orgs --emit-script > provision.sh` prints
-the same `mkdir`, `chmod`, `chgrp`, `setfacl` and marker steps as a shell script to run as root.
+another organization. Without `--org`, it provisions every declared organization.
+
+Without `--config`, the service user and group come from `GET /healthz`. `--uid` and `--gid`
+replace them. The command refuses to start when it does not know both. Usually only `root` may change the owner.
+Then `huron adm provision-orgs --emit-script > provision.sh` prints the same steps as a shell
+script to run as root. The script refuses a symbolic link at each path that it changes.
+
+`provision-orgs` also works while the API is stopped. With `--config <file>`, it reads the declared
+organizations, `instance_id`, `service_uid` and `service_group` from the service configuration file
+(`huron.yaml`). It then sends no request to the API. A `lake_path` in the file must be the
+`mount_prefix` of the CLI.
 
 The CLI refuses to touch the directory of an organization unless its marker names the instance id
 of the service and the organization. Thus the CLI cannot write into an export in these cases:
@@ -366,15 +382,21 @@ and reconcile.
 | --- | --- |
 | `org_dir_missing`, `org_marker_missing` | The storage admin runs `huron adm provision-orgs --org <org>`. For an organization that is neither declared nor rooted, use `huron create org` and `huron adm provision-orgs`. Check that the export is mounted at its root. |
 | `org_marker_mismatch` | The marker names another instance or organization. The wrong export is mounted at this root, or the CLI points at another service. Fix the mount or `api_url`. Never edit the marker by hand. |
-| `org_acl_drift` | The owner of the organization directory runs `huron adm provision-orgs --org <org>` again. |
+| `stale_link_probe` | Information: a readiness probe stopped and left a `.huron-link-probe-*` file in the organization directory or its object area. Only the service user sees a probe file in the object area. The check keeps it. The storage admin can delete it. |
 | `org_undeclared` | A warning. The configuration no longer declares the organization. Thus the CLI cannot find its directory and does not check its catalogs. Declare it again with its root, or empty it and delete it ([Configuration](#configuration)). |
 | `namespace_dir_missing`, `collection_dir_missing` | Run `huron create namespace …` or `huron activate collection` again. Both commands fix the directories. |
-| `file_missing` | Restore the file. Or commit its removal with `huron rm` and `huron push`. |
+| `file_missing` | The service records a file that is not on the share. Restore the file. Or commit its removal with `huron rm` and `huron push`. The check does not report a recorded file below a directory that it cannot read. |
 | `file_changed` | Someone wrote outside the CLI. Push the file again or restore it. |
-| `file_unrecorded`, `dir_unrecorded` | Stage it and push it, or delete it. |
+| `file_unrecorded`, `dir_unrecorded` | An entry that no row names. In a collection, stage the file and push it, or delete it. Directly in a catalog or namespace directory, delete the entry. |
 | `sidecar_stale` | `huron publish meta` (or any metadata change) writes `metadata.json` again. |
-| `acl_drift` | The owner of the directory runs `huron adm apply-acl <identifier>`. A storage admin can `chown` the directories whose owners left. |
-| `stale_part` | An interrupted copy. The next push uses it again or replaces it. Or delete it. |
+| `stale_part` | Information: a `.huron-part` file in a collection, older than one hour. It is the temporary name of a stopped publication, or the part file of a stopped write of `metadata.json`. The check keeps it. Delete the file when no commit request holds the collection. |
+| `pending_commit` | Information: a commit request holds the collection. Its directory can hold old and new files until the request ends. A blocked request needs a platform admin. |
+| `nfs_file` | Information: an NFS client keeps a deleted file while a process holds it open. The client deletes the file when the process closes it. The check reports these files in an organization directory and below a catalog. A collection cannot record a name that starts with `.nfs`, so the check does not compare the file with a record. |
+| `snapshot_dir` | Information: the storage shows its snapshots in a `.snapshot` directory, in an organization directory or below a catalog. A collection cannot record a path with a `.snapshot` segment, so the check does not read that directory. |
+| `mode_drift` | A directory or file has the wrong mode or the wrong owner. Or an organization directory does not have the service group. Or a directory below a catalog does not have the setgid bit or the group of the catalog directory. For an organization directory, the storage admin runs `huron adm provision-orgs --org <org>`. For the directory of a catalog, a namespace or a collection, `huron adm repair <identifier> --recursive` fixes the permission bits. For the setgid bit or the group, the storage admin runs `huron adm provision-catalogs`. The storage admin changes the mode of a file and the owner of an entry below an organization directory. |
+| `share_group_mismatch` | The storage admin runs `huron adm provision-catalogs`. When this machine does not know the share group, check the group database of the machine. |
+| `unreadable` | The account that runs the check cannot read the entry. Run the check as the service user, or as an account in the service group and in every share group. |
+| `symbolic_link` | The lake must not contain symbolic links. The storage admin deletes the link. Huron never follows it or deletes it. |
 | `incomplete` | The metadata no longer satisfies the catalog schema. Edit the metadata and publish it. |
 | `stale_draft` | Activate the draft or delete it. |
 

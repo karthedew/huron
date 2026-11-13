@@ -27,6 +27,7 @@ from huron.core.storage import (
     LakePath,
     LakeUnavailable,
     Outcome,
+    PermissionDenied,
     SealedFile,
     SourceGone,
     SourceSizeMismatch,
@@ -237,6 +238,16 @@ def source_inode(storage: Storage) -> int:
     return 0 if found is None else found.inode
 
 
+def same_owner(storage: Storage, at: LakePath) -> bool:
+    """Give ``at`` the owner and the group that the entries of ``a`` have; whether one changed.
+
+    The caller owns them, and ``a`` passes its group down to every entry made below it.
+    """
+    holder = storage.stat(LakePath.of("a"))
+    assert holder is not None
+    return storage.set_owner(at, holder.uid, holder.gid)
+
+
 def copied(storage: Storage, at: LakePath, sealed: SealedFile) -> tuple[int, str, bool]:
     """The size and the sha256 of a copy, and whether the file at ``at`` has its inode."""
     return sealed.size, sealed.sha256, sealed.inode == file_inode(storage, at)
@@ -253,6 +264,7 @@ METHODS: dict[str, tuple[Kind, Callable[[Storage, LakePath], object]]] = {
     "make_inheriting_dir": (None, lambda storage, at: storage.make_inheriting_dir(at)),
     "set_mode": ("dir", lambda storage, at: storage.set_mode(at, 0o700)),
     "set_group": ("dir", lambda storage, at: storage.set_group(at, 0)),
+    "set_owner": ("dir", same_owner),
     "write_bytes": (None, lambda storage, at: storage.write_bytes(at, b"y", 0o644)),
     "copy_sealed": (
         None,
@@ -284,7 +296,9 @@ class Returns:
 
 @dataclass(frozen=True)
 class Raises:
-    """The method raises ``error`` that names ``path``; ``reason`` gives its message."""
+    """The method raises ``error`` that names ``path``; ``reason`` gives the message of a plain
+    :class:`StorageError`.
+    """
 
     error: type[StorageError]
     path: str
@@ -300,11 +314,18 @@ class Raises:
             return f"the upload file {self.path} does not exist"
         if self.error is SourceSizeMismatch:
             return f"the upload file {self.path} has {len(RESIZED)} bytes, not 3 bytes"
+        if self.error is PermissionDenied:
+            return f"permission denied on {self.path}"
         if self.reason == "ENOENT":
             return f"{self.path} does not exist"
-        if self.reason == "EACCES":
-            return f"permission denied on {self.path}"
         return f"{self.path}: {os.strerror(getattr(errno, self.reason))}"
+
+    def context(self) -> dict[str, object]:
+        if self.error is PermissionDenied:
+            return {"path": self.path, "error": os.strerror(errno.EACCES)}
+        if self.error is SourceSizeMismatch:
+            return {"path": self.path, "expected": 3, "size": len(RESIZED)}
+        return {"path": self.path}
 
 
 @dataclass(frozen=True)
@@ -325,7 +346,7 @@ LINK_ABOVE = Raises(SymlinkInLake, "a/l")
 FILE_ABOVE = Raises(StorageError, "a/f/t", "ENOTDIR")
 NAME_MISSING = Raises(StorageError, "a/t", "ENOENT")
 PARENT_MISSING = Raises(StorageError, "a/gone/t", "ENOENT")
-DENIED = Raises(StorageError, "a/p/t", "EACCES")
+DENIED = Raises(PermissionDenied, "a/p/t")
 
 
 def traversal_rows(method: str) -> list[Row]:
@@ -350,7 +371,7 @@ def table_rows() -> list[Row]:
         ]
     for method in ("read_bytes", "open_file"):
         rows.append(Row(method, "dir_at_name", Raises(StorageError, "a/t", "EISDIR")))
-    for method in ("is_empty", "walk", "set_mode"):
+    for method in ("is_empty", "walk", "set_mode", "set_owner"):
         rows += [
             Row(method, "missing", NAME_MISSING),
             Row(method, "parent_missing", PARENT_MISSING),
@@ -369,6 +390,7 @@ def table_rows() -> list[Row]:
         ]
     rows += [
         Row("set_mode", "file_at_name", Returns(True)),
+        Row("set_owner", "file_at_name", Returns(False)),
         Row(
             "set_group", "missing", Returns(GroupResult(GroupOutcome.PENDING, "a/t does not exist"))
         ),
@@ -416,7 +438,7 @@ def table_rows() -> list[Row]:
         Row("rename source", "parent_missing", PARENT_MISSING),
         *traversal_rows("rename source"),
         Row("rename source", "dir_at_name", Raises(StorageError, "a/t", "EISDIR")),
-        Row("rename source", "read_only", Raises(StorageError, "up/moved", "EACCES")),
+        Row("rename source", "read_only", Raises(PermissionDenied, "up/moved")),
     ]
     rows += [
         Row("remove_directory", "nonempty_dir", Returns(Outcome.KEPT)),
@@ -444,7 +466,6 @@ RESIZED_SOURCE = Raises(SourceSizeMismatch, "up/src")
 SOURCE_MISSING = Raises(StorageError, "up/src", "ENOENT")
 EXISTS = Raises(StorageError, "a/t", "EEXIST")
 LOCKED_EXISTS = Raises(StorageError, "a/p/t", "EEXIST")
-LOCKED_DENIED = Raises(StorageError, "a/p/t", "EACCES")
 LOCKED_LINK = Raises(SymlinkInLake, "a/p/t")
 #: The methods that act on a directory and change no entry.
 DIRECTORY_METHODS = ("sync_directory", "free_space")
@@ -510,9 +531,9 @@ def combined_publication_rows() -> list[Row]:
                 Row(method, f"{other}+{source}", refused)
                 for other in ["parent_missing", "link_above", "file_above", *sorted(LOCK), *entries]
             ]
-        rows += [Row(method, f"unsearchable+{entry}", LOCKED_DENIED) for entry in entries]
+        rows += [Row(method, f"unsearchable+{entry}", DENIED) for entry in entries]
         rows += [
-            Row(method, "read_only+missing", LOCKED_DENIED),
+            Row(method, "read_only+missing", DENIED),
             Row(method, "read_only+link_at_name", LOCKED_LINK),
             *(
                 Row(method, f"read_only+{entry}", LOCKED_EXISTS)
@@ -538,7 +559,7 @@ def combined_publication_rows() -> list[Row]:
     ):
         other = "file_at_name" if method in DIRECTORY_METHODS else "dir_at_name"
         rows += [
-            Row(method, f"unsearchable+{entry}", LOCKED_DENIED)
+            Row(method, f"unsearchable+{entry}", DENIED)
             for entry in ("missing", "link_at_name", other)
         ]
         rows += [
@@ -557,6 +578,8 @@ def combined_rows() -> list[Row]:
             ("stat", "missing"),
             ("set_mode", "missing"),
             ("set_mode", "file_at_name"),
+            ("set_owner", "missing"),
+            ("set_owner", "file_at_name"),
             ("set_group", "missing"),
             ("set_group", "file_at_name"),
             ("read_bytes", "dir_at_name"),
@@ -596,84 +619,81 @@ def combined_rows() -> list[Row]:
         Row("remove_directory", "read_only+nonempty_dir", DENIED),
     ]
     rows += [
-        Row("stat", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("read_bytes", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("read_bytes", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("is_empty", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("is_empty", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("walk", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("walk", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("open_file", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("open_file", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("make_directory", "unsearchable+dir_at_name", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("stat", "unsearchable+link_at_name", DENIED),
+        Row("read_bytes", "unsearchable+link_at_name", DENIED),
+        Row("read_bytes", "unsearchable+missing", DENIED),
+        Row("is_empty", "unsearchable+link_at_name", DENIED),
+        Row("is_empty", "unsearchable+missing", DENIED),
+        Row("walk", "unsearchable+link_at_name", DENIED),
+        Row("walk", "unsearchable+missing", DENIED),
+        Row("open_file", "unsearchable+link_at_name", DENIED),
+        Row("open_file", "unsearchable+missing", DENIED),
+        Row("make_directory", "unsearchable+dir_at_name", DENIED),
         Row("make_directory", "read_only+link_at_name", Raises(SymlinkInLake, "a/p/t")),
-        Row("make_directory", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("make_directory", "read_only+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("make_directory", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("make_directory", "unsearchable+link_at_name", DENIED),
+        Row("make_directory", "read_only+missing", DENIED),
+        Row("make_directory", "unsearchable+missing", DENIED),
         Row(
             "make_inheriting_dir",
             "unsearchable+dir_at_name",
-            Raises(StorageError, "a/p/t", "EACCES"),
+            DENIED,
         ),
         Row("make_inheriting_dir", "read_only+link_at_name", Raises(SymlinkInLake, "a/p/t")),
         Row(
             "make_inheriting_dir",
             "unsearchable+link_at_name",
-            Raises(StorageError, "a/p/t", "EACCES"),
+            DENIED,
         ),
-        Row("make_inheriting_dir", "read_only+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("make_inheriting_dir", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("set_mode", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("set_group", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("write_bytes", "unsearchable+dir_at_part", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("write_bytes", "unsearchable+file_at_name", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("make_inheriting_dir", "read_only+missing", DENIED),
+        Row("make_inheriting_dir", "unsearchable+missing", DENIED),
+        Row("set_mode", "unsearchable+link_at_name", DENIED),
+        Row("set_owner", "unsearchable+link_at_name", DENIED),
+        Row("set_group", "unsearchable+link_at_name", DENIED),
+        Row("write_bytes", "unsearchable+dir_at_part", DENIED),
+        Row("write_bytes", "unsearchable+file_at_name", DENIED),
         Row("write_bytes", "read_only+link_at_name", Raises(SymlinkInLake, "a/p/t")),
-        Row("write_bytes", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("write_bytes", "unsearchable+link_at_name", DENIED),
         Row("write_bytes", "read_only+link_at_part", Raises(SymlinkInLake, "a/p/t.huron-part")),
-        Row("write_bytes", "unsearchable+link_at_part", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("write_bytes", "read_only+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("write_bytes", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("write_bytes", "unsearchable+old_part", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("write_bytes", "read_only+part_and_dir", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("write_bytes", "unsearchable+part_and_dir", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("write_bytes", "unsearchable+link_at_part", DENIED),
+        Row("write_bytes", "read_only+missing", DENIED),
+        Row("write_bytes", "unsearchable+missing", DENIED),
+        Row("write_bytes", "unsearchable+old_part", DENIED),
+        Row("write_bytes", "read_only+part_and_dir", DENIED),
+        Row("write_bytes", "unsearchable+part_and_dir", DENIED),
         Row("rename", "dir_at_name+source_missing", Raises(StorageError, "up/src", "ENOENT")),
         Row("rename", "file_above+source_missing", Raises(StorageError, "up/src", "ENOENT")),
         Row("rename", "file_at_name+source_missing", Raises(StorageError, "up/src", "ENOENT")),
-        Row("rename", "unsearchable+file_at_name", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("rename", "unsearchable+file_at_name", DENIED),
         Row("rename", "link_above+source_missing", Raises(StorageError, "up/src", "ENOENT")),
         Row("rename", "read_only+link_at_name", Raises(SymlinkInLake, "a/p/t")),
         Row("rename", "link_at_name+source_missing", Raises(StorageError, "up/src", "ENOENT")),
-        Row("rename", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
-        Row("rename", "read_only+missing", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("rename", "unsearchable+link_at_name", DENIED),
+        Row("rename", "read_only+missing", DENIED),
         Row("rename", "missing+source_missing", Raises(StorageError, "up/src", "ENOENT")),
-        Row("rename", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("rename", "unsearchable+missing", DENIED),
         Row("rename", "read_only+same_file_at_name", Returns(None)),
         Row("rename", "same_file_at_name+source_missing", Raises(StorageError, "up/src", "ENOENT")),
-        Row("rename", "unsearchable+same_file_at_name", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("rename", "unsearchable+same_file_at_name", DENIED),
         Row("rename", "unsearchable+source_missing", Raises(StorageError, "up/src", "ENOENT")),
         Row("rename source", "read_only+link_at_name", Raises(SymlinkInLake, "a/p/t")),
-        Row("rename source", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("rename source", "unsearchable+link_at_name", DENIED),
         Row("rename source", "read_only+missing", Raises(StorageError, "a/p/t", "ENOENT")),
-        Row("rename source", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("rename source", "unsearchable+missing", DENIED),
         Row("remove_file", "read_only+link_at_name", Raises(SymlinkInLake, "a/p/t")),
-        Row("remove_file", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("remove_file", "unsearchable+link_at_name", DENIED),
         Row("remove_file", "read_only+missing", Returns(Outcome.MISSING)),
-        Row("remove_file", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
+        Row("remove_file", "unsearchable+missing", DENIED),
         Row("remove_directory", "read_only+link_at_name", Raises(SymlinkInLake, "a/p/t")),
-        Row(
-            "remove_directory", "unsearchable+link_at_name", Raises(StorageError, "a/p/t", "EACCES")
-        ),
+        Row("remove_directory", "unsearchable+link_at_name", DENIED),
         Row("remove_directory", "read_only+missing", Returns(Outcome.MISSING)),
-        Row("remove_directory", "unsearchable+missing", Raises(StorageError, "a/p/t", "EACCES")),
-        Row(
-            "remove_directory", "unsearchable+nonempty_dir", Raises(StorageError, "a/p/t", "EACCES")
-        ),
+        Row("remove_directory", "unsearchable+missing", DENIED),
+        Row("remove_directory", "unsearchable+nonempty_dir", DENIED),
     ]
     return rows
 
 
 ROWS = table_rows()
-ROW_COUNT = 331
+ROW_COUNT = 341
 
 
 def test_the_table_has_one_row_per_method_and_case() -> None:
@@ -709,7 +729,7 @@ def test_each_port_method_answers_each_case_as_the_table_says(lake: Lake, row: R
         with pytest.raises(StorageError) as raised:
             call(lake.storage, at)
         assert _public_class(raised.value) is expected.error
-        assert raised.value.context["path"] == expected.path
+        assert raised.value.context == expected.context()
         assert raised.value.message == expected.message()
         if not row.after:
             assert lake.state() == before
@@ -729,6 +749,7 @@ def test_walk_yields_a_link_and_never_enters_it(lake: Lake) -> None:
 def _public_class(error: StorageError) -> type[StorageError]:
     """The most specific public storage error class of ``error``."""
     for public in (
+        PermissionDenied,
         SymlinkInLake,
         SourceGone,
         SourceSizeMismatch,

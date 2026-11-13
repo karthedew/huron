@@ -28,12 +28,13 @@ huron adm [OPTIONS] COMMAND [ARGS]...
 
 **Share**
 
-| Command                                                 | Description                                                                                 |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [`huron adm check`](#huron-adm-check)                   | Report drift between the service and the share. The exit code is 1 when there are findings. |
-| [`huron adm verify-mounts`](#huron-adm-verify-mounts)   | Check that the directory of each organization is mounted and has this service's marker.     |
-| [`huron adm provision-orgs`](#huron-adm-provision-orgs) | Mark the lake path and prepare each declared organization below its root (storage admin).   |
-| [`huron adm repair`](#huron-adm-repair)                 | Repair missing directories and wrong permission bits through the API.                       |
+| Command                                                         | Description                                                                                 |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [`huron adm check`](#huron-adm-check)                           | Report drift between the service and the share. The exit code is 1 when there are findings. |
+| [`huron adm verify-mounts`](#huron-adm-verify-mounts)           | Check that the directory of each organization is mounted and has this service's marker.     |
+| [`huron adm provision-orgs`](#huron-adm-provision-orgs)         | Prepare the lake path and each declared organization below its root (storage admin).        |
+| [`huron adm provision-catalogs`](#huron-adm-provision-catalogs) | Give each catalog directory and its directories the group of the catalog (storage admin).   |
+| [`huron adm repair`](#huron-adm-repair)                         | Repair missing directories and wrong permission bits through the API.                       |
 
 **Schemas**
 
@@ -97,10 +98,25 @@ huron adm revoke [OPTIONS] ROLE GROUP
 
 Report drift between the service and the share. The exit code is 1 when there are findings.
 
-The check starts with the organization directories. It skips the catalogs of an
-organization when the marker in its own directory is missing or wrong. It also skips the
-catalogs of an organization that the managed service configuration no longer declares, when
-the mount prefix is not its share (`org_undeclared`).
+The check stops with the exit code 2 when the CLI cannot use the share, for example when the
+share is not mounted.
+
+The check starts with the organization directories. A declared organization and an
+organization with its own root need a marker in their own directory. The check skips the
+catalogs of such an organization when its directory is missing or is a symbolic link. It
+also skips them when that marker is missing, is a symbolic link or is wrong. Other findings
+in the organization directory do not stop the check of its catalogs. The check also skips
+the catalogs of an organization that the managed service configuration no longer declares,
+when the mount prefix is not its share (`org_undeclared`). The other organizations need the
+marker at the mount prefix. When that marker is missing, is a symbolic link or is wrong, the
+check stops with the exit code 2.
+
+The check only reads the share. It does not remove or change an entry.
+
+The check reports each entry that it cannot read as `unreadable`. A complete check needs the
+service user, for example in an API pod. An account in the service group and in every share
+group can also do a complete check. Only the service user sees the probe files in the object
+area of each organization.
 
 ```text
 huron adm check [OPTIONS]
@@ -129,13 +145,21 @@ huron adm verify-mounts [OPTIONS]
 
 ## `huron adm provision-orgs`
 
-Mark the lake path and prepare each declared organization below its root (storage admin).
+Prepare the lake path and each declared organization below its root (storage admin).
 
 The lake path is `mount_prefix` on this machine. The lake path and each root must exist.
-The command writes a marker for this service at the lake path. When an organization
-directory does not exist, the command creates it. The command sets the mode of the directory
-and writes a marker for this service and the organization. You can run the command again
-safely.
+The command gives the lake path the service user and group, and the mode 2751. It makes
+`.tus-uploads` and writes a marker for this service at the lake path. You can run the
+command again safely.
+
+For each organization, the command makes the directory when it does not exist. It gives the
+directory the service user and group, and the mode 2751. It makes the object area
+`.huron-objects` with the mode 0700 for the service user and group. Then it writes a marker
+for this service and the organization.
+
+The command gets the organizations and the service user from the API. With `--config`, it
+reads them from the service configuration file and sends no request to the API. Use
+`--config` when the API is stopped.
 
 ```text
 huron adm provision-orgs [OPTIONS]
@@ -143,11 +167,50 @@ huron adm provision-orgs [OPTIONS]
 
 ### Options
 
-| Option          | Type | Default | Description                                                   |
-| --------------- | ---- | ------- | ------------------------------------------------------------- |
-| `--org`         | str  |         | Prepare only this declared organization.                      |
-| `--dry-run`     | flag |         | Print the planned steps. Do not change anything.              |
-| `--emit-script` | flag |         | Print an equivalent shell script, for roots that `root` owns. |
+| Option          | Type      | Default | Description                                                                                                         |
+| --------------- | --------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `--org`         | str       |         | Prepare only this declared organization.                                                                            |
+| `--dry-run`     | flag      |         | Print the planned steps. Do not change anything.                                                                    |
+| `--emit-script` | flag      |         | Print an equivalent shell script, for roots that `root` owns.                                                       |
+| `--uid`         | int range |         | The uid of the service user. The default comes from the API or from `--config`.                                     |
+| `--gid`         | int range |         | The gid of the service group. The default comes from the API or from `--config`.                                    |
+| `--config`      | path      |         | Read the organizations and the service user from this service configuration file. Do not send a request to the API. |
+
+## `huron adm provision-catalogs`
+
+Give each catalog directory and its directories the group of the catalog (storage admin).
+
+The group of a catalog is its share group. For a catalog without a share group, it is the
+service group.
+
+The command selects each catalog whose directory does not have the group of the catalog or
+the setgid bit. It also selects a catalog when a directory in it does not have the setgid
+bit or the group of the catalog directory. An entry that the command cannot read does not
+select a catalog. `huron adm check` reports that entry as `unreadable`.
+
+For each selected catalog, the command gives the catalog directory and every directory in it
+the group of the catalog and the mode 2750. Files keep their group and mode. When the
+command cannot read a directory in a selected catalog, it changes nothing in that catalog.
+
+The command does not enter a `.snapshot` or `.huron-objects` directory. It does not
+change that directory, and that directory does not select a catalog.
+
+With `--emit-script`, the command prints a shell script for root and changes nothing. The
+script has one `find` line for each selected catalog. The `find` line does not skip a
+`.snapshot` or `.huron-objects` directory.
+
+```text
+huron adm provision-catalogs [OPTIONS]
+```
+
+### Options
+
+| Option          | Type      | Default | Description                                                                                        |
+| --------------- | --------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `--catalog`     | str       |         | Prepare only this catalog.                                                                         |
+| `--dry-run`     | flag      |         | Print the planned steps. Do not change anything.                                                   |
+| `--emit-script` | flag      |         | Print a shell script for root. Do not change anything.                                             |
+| `--gid`         | int range |         | The gid of the service group, for a catalog without a share group. The default comes from the API. |
 
 ## `huron adm repair`
 

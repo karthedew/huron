@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 import typer
@@ -13,7 +13,7 @@ from huron.applications.cli.commands.context import (
     checked_out,
     context_report,
     organization_in_view,
-    unrecorded_files,
+    share_files,
 )
 from huron.applications.cli.localstate import WorkingState
 from huron.applications.cli.output import Column, human_size
@@ -46,13 +46,15 @@ class CopyStatus:
     copies, which are read from the state directory alone. ``organization`` is the collection's
     own: the service's for the checked-out copy, the first segment of the recorded path
     (``<organization>/<catalog>/…``) for the others. ``unrecorded`` is ``None`` when the share is
-    not mounted here, and is only checked for the checked-out copy.
+    not mounted here, and is only checked for the checked-out copy. ``unreadable`` are the
+    entries of the collection's directory that the CLI cannot read there.
     """
 
     working: WorkingState
     collection: dict[str, Any] | None = None
     organization: str | None = None
     unrecorded: list[str] | None = None
+    unreadable: list[str] = field(default_factory=list)
 
     @property
     def current(self) -> bool:
@@ -102,6 +104,7 @@ class CopyStatus:
             "adds": [add.rel_path for add in self.working.adds],
             "removes": list(self.working.removes),
             "unrecorded": self.unrecorded,
+            "unreadable": self.unreadable,
             "staged": staged_rows(self.working),
             "pending_commit": None if pending is None else pending.request_id,
         }
@@ -214,11 +217,11 @@ def _show_every(ctx: typer.Context, statuses: list[CopyStatus]) -> None:
 def _checked_out_status(ctx: typer.Context, working: WorkingState) -> CopyStatus:
     found = services(ctx)
     collection: dict[str, Any] = found.api().get(f"/api/v1/collections/{working.collection_id}")
+    files = share_files(ctx, collection)
+    if files is None:
+        return CopyStatus(working, collection, collection.get("organization"))
     return CopyStatus(
-        working,
-        collection,
-        collection.get("organization"),
-        unrecorded_files(ctx, collection),
+        working, collection, collection.get("organization"), files.unrecorded, files.unreadable
     )
 
 
@@ -265,5 +268,7 @@ def _drift(ctx: typer.Context, item: CopyStatus) -> None:
         )
     elif item.unrecorded:
         say(ctx, f"Unrecorded files on the share: {', '.join(item.unrecorded)}")
+    if item.unreadable:
+        say(ctx, f"The CLI cannot read these entries on the share: {', '.join(item.unreadable)}")
     if item.behind:
         say(ctx, "Your working copy is behind the service. Run `huron pull`")

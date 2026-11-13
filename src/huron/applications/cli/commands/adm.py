@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import typer
-from rich.console import Console
 
 from huron.applications.cli.commands.common import (
     api,
@@ -23,7 +23,13 @@ from huron.applications.cli.commands.common import (
     table_mode,
     warn_share_groups,
 )
-from huron.applications.cli.errors import ApiError, StorageFailure, UsageError
+from huron.applications.cli.errors import (
+    ApiError,
+    CliError,
+    ExitCode,
+    StorageFailure,
+    UsageError,
+)
 from huron.applications.cli.identifiers import resolve_identifier
 from huron.applications.cli.inventory import CatalogInventory, take_inventory
 from huron.applications.cli.mount import (
@@ -34,10 +40,16 @@ from huron.applications.cli.mount import (
     Site,
 )
 from huron.applications.cli.output import Column
+from huron.applications.cli.provisioning import (
+    Provisioning,
+    below_lake_path,
+    from_file,
+    from_service,
+)
 from huron.applications.cli.services import Services
 from huron.core.storage import (
     LakePath,
-    Marker,
+    LakeUnavailable,
     MarkerState,
     OrganizationPlace,
     StorageError,
@@ -52,7 +64,13 @@ from huron.core.storage.check import (
     check,
     check_organization,
 )
-from huron.core.storage.provision import OrganizationTarget, Provisioner, provision_script
+from huron.core.storage.provision import (
+    CatalogTarget,
+    Provisioner,
+    catalog_script,
+    provision_catalogs,
+    provision_script,
+)
 
 __all__ = ["adm_app", "declared_groups_hint", "register"]
 
@@ -98,7 +116,6 @@ UNDECLARED = "undeclared"
 
 #: The ``provision-orgs`` row name of the lake path's steps.
 LAKE_PATH = "lake path"
-STEP_COLUMNS = [Column("ORG", lambda r: r["organization"]), Column("STEP", lambda r: r["step"])]
 
 FINDING_COLUMNS = [
     Column("SEVERITY", lambda f: f["severity"]),
@@ -163,10 +180,25 @@ def check_share(
 ) -> None:
     """Report drift between the service and the share. The exit code is 1 when there are findings.
 
-    The check starts with the organization directories. It skips the catalogs of an
-    organization when the marker in its own directory is missing or wrong. It also skips the
-    catalogs of an organization that the managed service configuration no longer declares, when
-    the mount prefix is not its share (`org_undeclared`).
+    The check stops with the exit code 2 when the CLI cannot use the share, for example when the
+    share is not mounted.
+
+    The check starts with the organization directories. A declared organization and an
+    organization with its own root need a marker in their own directory. The check skips the
+    catalogs of such an organization when its directory is missing or is a symbolic link. It
+    also skips them when that marker is missing, is a symbolic link or is wrong. Other findings
+    in the organization directory do not stop the check of its catalogs. The check also skips
+    the catalogs of an organization that the managed service configuration no longer declares,
+    when the mount prefix is not its share (`org_undeclared`). The other organizations need the
+    marker at the mount prefix. When that marker is missing, is a symbolic link or is wrong, the
+    check stops with the exit code 2.
+
+    The check only reads the share. It does not remove or change an entry.
+
+    The check reports each entry that it cannot read as `unreadable`. A complete check needs the
+    service user, for example in an API pod. An account in the service group and in every share
+    group can also do a complete check. Only the service user sees the probe files in the object
+    area of each organization.
     """
     found = services(ctx)
     names = [catalog] if catalog else [c["name"] for c in api(ctx).pages("/api/v1/catalogs")]
@@ -174,7 +206,10 @@ def check_share(
     organizations = {str(i.catalog["organization"]) for i in inventories}
     if catalog is None:
         organizations |= {str(o["name"]) for o in api(ctx).pages("/api/v1/organizations")}
-    findings = _drift(found, organizations, inventories, hash_files)
+    try:
+        findings = _drift(found, organizations, inventories, hash_files)
+    except (StorageFailure, LakeUnavailable) as stopped:
+        raise _stopped_check(stopped) from stopped
     show_list(ctx, [f.as_dict() for f in findings], FINDING_COLUMNS)
     if findings:
         raise typer.Exit(1)
@@ -216,38 +251,134 @@ def provision_orgs(
             "--emit-script", help="Print an equivalent shell script, for roots that `root` owns."
         ),
     ] = False,
+    uid: Annotated[
+        int | None,
+        typer.Option(
+            "--uid",
+            min=0,
+            help="The uid of the service user. The default comes from the API or from `--config`.",
+        ),
+    ] = None,
+    gid: Annotated[
+        int | None,
+        typer.Option(
+            "--gid",
+            min=0,
+            help="The gid of the service group. The default comes from the API or from `--config`.",
+        ),
+    ] = None,
+    config: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            help=(
+                "Read the organizations and the service user from this service configuration"
+                " file. Do not send a request to the API."
+            ),
+        ),
+    ] = None,
 ) -> None:
-    """Mark the lake path and prepare each declared organization below its root (storage admin).
+    """Prepare the lake path and each declared organization below its root (storage admin).
 
     The lake path is `mount_prefix` on this machine. The lake path and each root must exist.
-    The command writes a marker for this service at the lake path. When an organization
-    directory does not exist, the command creates it. The command sets the mode of the directory
-    and writes a marker for this service and the organization. You can run the command again
-    safely.
+    The command gives the lake path the service user and group, and the mode 2751. It makes
+    `.tus-uploads` and writes a marker for this service at the lake path. You can run the
+    command again safely.
+
+    For each organization, the command makes the directory when it does not exist. It gives the
+    directory the service user and group, and the mode 2751. It makes the object area
+    `.huron-objects` with the mode 0700 for the service user and group. Then it writes a marker
+    for this service and the organization.
+
+    The command gets the organizations and the service user from the API. With `--config`, it
+    reads them from the service configuration file and sends no request to the API. Use
+    `--config` when the API is stopped.
+    """
+    found = services(ctx)
+    prefix = Path(found.config.mount_prefix)
+    source = _provisioning(ctx, config, prefix)
+    owner = source.owner(uid, gid)
+    lake, targets = source.targets(prefix, found.config.api_url, owner, organization)
+    if emit_script:
+        _print_script(found, provision_script(str(prefix), lake, owner, targets))
+        return
+    provisioner = Provisioner(found.provision_storage(prefix), str(prefix))
+    jobs: list[tuple[str, Callable[[], list[str]]]] = [
+        (LAKE_PATH, partial(provisioner.prepare_lake, lake, owner, dry_run=dry_run))
+    ]
+    jobs += [
+        (target.place.name, partial(provisioner.provision, target, dry_run=dry_run))
+        for target in targets
+    ]
+    _ORGANIZATION_STEPS.run(ctx, jobs)
+
+
+@adm_app.command("provision-catalogs", rich_help_panel=SHARE)
+def provision_catalogs_command(
+    ctx: typer.Context,
+    catalog: Annotated[
+        str | None, typer.Option("--catalog", help="Prepare only this catalog.")
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print the planned steps. Do not change anything.")
+    ] = False,
+    emit_script: Annotated[
+        bool,
+        typer.Option(
+            "--emit-script", help="Print a shell script for root. Do not change anything."
+        ),
+    ] = False,
+    gid: Annotated[
+        int | None,
+        typer.Option(
+            "--gid",
+            min=0,
+            help=(
+                "The gid of the service group, for a catalog without a share group."
+                " The default comes from the API."
+            ),
+        ),
+    ] = None,
+) -> None:
+    """Give each catalog directory and its directories the group of the catalog (storage admin).
+
+    The group of a catalog is its share group. For a catalog without a share group, it is the
+    service group.
+
+    The command selects each catalog whose directory does not have the group of the catalog or
+    the setgid bit. It also selects a catalog when a directory in it does not have the setgid
+    bit or the group of the catalog directory. An entry that the command cannot read does not
+    select a catalog. `huron adm check` reports that entry as `unreadable`.
+
+    For each selected catalog, the command gives the catalog directory and every directory in it
+    the group of the catalog and the mode 2750. Files keep their group and mode. When the
+    command cannot read a directory in a selected catalog, it changes nothing in that catalog.
+
+    The command does not enter a `.snapshot` or `.huron-objects` directory. It does not
+    change that directory, and that directory does not select a catalog.
+
+    With `--emit-script`, the command prints a shell script for root and changes nothing. The
+    script has one `find` line for each selected catalog. The `find` line does not skip a
+    `.snapshot` or `.huron-objects` directory.
     """
     found = services(ctx)
     mount = found.mount()
-    lake = Marker(1, found.config.api_url, mount.instance_id())
-    targets = [_target(lake, mount, view) for view in _declared(ctx, organization)]
+    targets = _catalog_targets(ctx, catalog, gid)
+    storage = found.provision_storage(mount.prefix)
+    selected = provision_catalogs(storage, targets, found.gid_of)
     if emit_script:
-        script = provision_script(str(mount.prefix), lake, targets)
-        found.out.print(script, markup=False, highlight=False, end="", soft_wrap=True)
+        _print_script(found, catalog_script(str(mount.prefix), selected))
         return
-    provisioner = Provisioner(found.provision_storage(mount.prefix), str(mount.prefix))
-    rows, failed = _provision(found.err, provisioner, lake, targets, dry_run)
-    if table_mode(ctx):
-        for row in rows:
-            say(ctx, f"{row['organization']}: {row['step']}")
-    else:
-        show_list(ctx, rows, STEP_COLUMNS)
-    if failed:
-        raise StorageFailure(
-            f"the CLI could not prepare {len(failed)} of {len(targets) + 1} directories:"
-            f" {', '.join(failed)}",
-            hint=(
-                "when only `root` may write to a root, run `huron adm provision-orgs --emit-script`"
-            ),
-        )
+    if not selected and table_mode(ctx):
+        say(ctx, "No catalog needs a new group or mode")
+    provisioner = Provisioner(storage, str(mount.prefix))
+    _CATALOG_STEPS.run(
+        ctx,
+        [
+            (target.location.name, partial(provisioner.provision_catalog, target, dry_run=dry_run))
+            for target in selected
+        ],
+    )
 
 
 @adm_app.command("repair", rich_help_panel=SHARE)
@@ -413,6 +544,24 @@ def _set_role(ctx: typer.Context, role: str, target: _GrantTarget, groups: list[
         raise
 
 
+@dataclass(frozen=True, slots=True)
+class _Service:
+    """What the check expects of the share from the service: the service user's uid and the
+    gid of the service group, each ``None`` when ``GET /healthz`` does not report it, and the
+    time of the check.
+    """
+
+    owner: int | None
+    gid: int | None
+    now: datetime
+
+    @classmethod
+    def of(cls, user: Mapping[str, Any] | None, now: datetime) -> _Service:
+        if user is None:
+            return cls(None, None, now)
+        return cls(int(user["uid"]), int(user["gid"]), now)
+
+
 def _drift(
     found: Services,
     organizations: Iterable[str],
@@ -421,7 +570,8 @@ def _drift(
 ) -> list[Finding]:
     """Organization findings first, then those of each catalog its organization lets us see."""
     mount = found.mount()
-    findings, blocked = _organizations_pass(mount, organizations)
+    service = _Service.of(mount.service_user(), found.clock.now())
+    findings, blocked = _organizations_pass(mount, organizations, service)
     for inventory in inventories:
         organization = str(inventory.catalog["organization"])
         if organization in blocked:
@@ -431,13 +581,23 @@ def _drift(
             base,
             check(
                 mount.reader(base),
-                _directories(inventory),
-                _collections(inventory),
-                found.clock.now(),
+                _catalog(inventory, service),
+                _namespaces(inventory, service),
+                _collections(inventory, service),
+                service.now,
+                groups=found.gid_of,
                 hash_files=hash_files,
             ),
         )
     return findings
+
+
+def _stopped_check(error: StorageFailure | LakeUnavailable) -> CliError:
+    """``error``, which stopped the check, with the exit code 2 that ``huron adm check`` gives
+    for an error that stops it. The message, the hint and the error code stay the same.
+    """
+    hint = error.hint if isinstance(error, StorageFailure) else None
+    return CliError(error.message, ExitCode.USAGE, hint=hint, code=error.code)
 
 
 def _shown(base: Path, findings: Iterable[Finding]) -> list[Finding]:
@@ -446,20 +606,22 @@ def _shown(base: Path, findings: Iterable[Finding]) -> list[Finding]:
 
 
 def _organizations_pass(
-    mount: Mount, organizations: Iterable[str]
+    mount: Mount, organizations: Iterable[str], service: _Service
 ) -> tuple[list[Finding], set[str]]:
     """Organization findings, and the organizations whose directory forbids looking further."""
     findings: list[Finding] = []
     blocked: set[str] = set()
     for organization in sorted(organizations):
-        here, stop = _organization_findings(mount, organization)
+        here, stop = _organization_findings(mount, organization, service)
         findings += here
         if stop:
             blocked.add(organization)
     return findings, blocked
 
 
-def _organization_findings(mount: Mount, organization: str) -> tuple[list[Finding], bool]:
+def _organization_findings(
+    mount: Mount, organization: str, service: _Service
+) -> tuple[list[Finding], bool]:
     """The findings of one organization, and whether its catalogs must not be looked at.
 
     An organization without its own marker needs the mount prefix's marker; one the managed
@@ -478,14 +640,15 @@ def _organization_findings(mount: Mount, organization: str) -> tuple[list[Findin
             return [warning], True
         mount.verify_prefix()
     expected = ExpectedOrganization(
-        organization, LakePath.of(organization), mount.instance_id(), site.own_marker
+        organization,
+        LakePath.of(organization),
+        mount.instance_id(),
+        site.own_marker,
+        group=service.gid,
+        owner=service.owner,
     )
-    found = _shown(site.base, check_organization(mount.reader(site.base), expected))
-    return found, site.own_marker and _has_error(found)
-
-
-def _has_error(findings: Iterable[Finding]) -> bool:
-    return any(finding.severity is Severity.ERROR for finding in findings)
+    found = check_organization(mount.reader(site.base), expected, service.now)
+    return _shown(site.base, found), expected.untrusted(found)
 
 
 def _mount_verdict(ctx: typer.Context, rows: Iterable[tuple[str, dict[str, str]]]) -> bool:
@@ -514,69 +677,68 @@ def _mount_row(mount: Mount, site: Site) -> tuple[str, dict[str, str]]:
     return "prefix", {"organization": name, "path": f"{directory} (prefix)", "state": prefix}
 
 
-def _declared(ctx: typer.Context, organization: str | None) -> list[dict[str, Any]]:
-    declared = [o for o in api(ctx).pages("/api/v1/organizations") if o.get("declared")]
-    if organization is None:
-        return declared
-    chosen = [o for o in declared if o["name"] == organization]
-    if not chosen:
+def _provisioning(ctx: typer.Context, config: Path | None, prefix: Path) -> Provisioning:
+    """The input of ``provision-orgs``: the service configuration file, else the API."""
+    if config is not None:
+        return from_file(config, prefix, services(ctx).gid_of)
+    return from_service(services(ctx).mount(), list(api(ctx).pages("/api/v1/organizations")))
+
+
+def _catalog_targets(
+    ctx: typer.Context, catalog: str | None, gid: int | None
+) -> list[CatalogTarget]:
+    """The catalog step of every catalog, or only ``catalog``. ``gid`` is the service group
+    for a catalog without a share group; ``service_user`` of ``GET /healthz`` gives it
+    otherwise.
+    """
+    mount = services(ctx).mount()
+    if catalog is None:
+        views = list(api(ctx).pages("/api/v1/catalogs"))
+    else:
+        views = [api(ctx).get(f"/api/v1/catalogs/{catalog}")]
+    user = mount.service_user()
+    if gid is None and user is not None:
+        gid = int(user["gid"])
+    return [_catalog_target(mount, view, gid) for view in views]
+
+
+def _catalog_target(
+    mount: Mount, view: Mapping[str, Any], service_gid: int | None
+) -> CatalogTarget:
+    """The catalog step of the catalog ``view``, below the lake path, after the marker check."""
+    site = mount.verify(str(view["organization"]))
+    place = OrganizationPlace(site.name, below_lake_path(mount.prefix, site), site.own_marker)
+    group = view.get("share_group") or service_gid
+    if group is None:
         raise UsageError(
-            f"the service configuration does not declare organization {organization}",
-            hint="to see the organizations and their paths, run `huron get orgs`",
+            f"catalog {view['name']} has no share group, and the CLI does not know the service"
+            " group",
+            hint="use `--gid <gid>`",
         )
-    return chosen
+    return CatalogTarget(place, place.directory.joinpath(str(view["name"])), group)
 
 
-def _target(lake: Marker, mount: Mount, view: dict[str, Any]) -> OrganizationTarget:
-    """The provisioning of a declared organization, whose root lies below the lake path."""
-    site = mount.site_of_view(view)
-    if not site.base.is_relative_to(mount.prefix):
-        raise UsageError(
-            f"the root {site.base} of organization {site.name} is not below the lake path"
-            f" {mount.prefix}",
-            hint="set `mount_prefix` to the directory where this machine mounts `lake_path`",
-        )
-    base = LakePath.of(*site.base.relative_to(mount.prefix).parts)
-    place = OrganizationPlace(site.name, base, own_marker=True)
-    return OrganizationTarget(place, replace(lake, organization=site.name))
+def _print_script(found: Services, script: str) -> None:
+    found.out.print(script, markup=False, highlight=False, end="", soft_wrap=True)
 
 
-def _provision(
-    err: Console,
-    provisioner: Provisioner,
-    lake: Marker,
-    targets: Iterable[OrganizationTarget],
-    dry_run: bool,
-) -> tuple[list[dict[str, str]], list[str]]:
-    """The steps of the lake path, then of each organization, and the names that failed."""
-    jobs: list[tuple[str, Callable[[], list[str]]]] = [
-        (LAKE_PATH, partial(provisioner.mark_lake, lake, dry_run=dry_run))
-    ]
-    jobs += [
-        (target.place.name, partial(provisioner.provision, target, dry_run=dry_run))
-        for target in targets
-    ]
-    rows: list[dict[str, str]] = []
-    failed: list[str] = []
-    for name, job in jobs:
-        try:
-            steps = job()
-        except StorageError as error:
-            err.print(f"error: {name}: {error.message}", markup=False, highlight=False)
-            failed.append(name)
-            continue
-        rows += [{"organization": name, "step": step} for step in steps]
-    return rows, failed
+def _catalog(inventory: CatalogInventory, service: _Service) -> ExpectedDirectory:
+    """The catalog directory: its share group by name, else the service group by gid."""
+    share_group = inventory.catalog.get("share_group")
+    group = share_group if share_group else service.gid
+    return ExpectedDirectory(
+        inventory.catalog["name"], inventory.disk_path, group=group, owner=service.owner
+    )
 
 
-def _directories(inventory: CatalogInventory) -> list[ExpectedDirectory]:
+def _namespaces(inventory: CatalogInventory, service: _Service) -> list[ExpectedDirectory]:
     return [
-        ExpectedDirectory(identifier, disk_path)
-        for identifier, disk_path in inventory.directories()
+        ExpectedDirectory(n["identifier"], n["disk_path"], owner=service.owner)
+        for n in inventory.namespaces
     ]
 
 
-def _collections(inventory: CatalogInventory) -> list[ExpectedCollection]:
+def _collections(inventory: CatalogInventory, service: _Service) -> list[ExpectedCollection]:
     return [
         ExpectedCollection(
             identifier=c["identifier"],
@@ -585,6 +747,8 @@ def _collections(inventory: CatalogInventory) -> list[ExpectedCollection]:
             disk_path=c.get("path"),
             files=c.get("files", {}),
             sidecar=c.get("sidecar"),
+            pending=(c.get("pending_request") or {}).get("state"),
+            owner=service.owner,
         )
         for c in inventory.collections
     ]
@@ -602,3 +766,59 @@ class _GrantTarget:
     organization: str | None = None
     catalog: str | None = None
     inherited: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _Steps:
+    """How a provision command reports its jobs: each step under the job's name in the column
+    ``key``, and a failure that names the jobs that failed as ``noun`` with ``hint``.
+    """
+
+    key: str
+    header: str
+    noun: str
+    hint: str
+
+    def run(self, ctx: typer.Context, jobs: list[tuple[str, Callable[[], list[str]]]]) -> None:
+        """Run each job, show its steps, and fail when a job failed; the other jobs still run."""
+        rows: list[dict[str, str]] = []
+        failed: list[str] = []
+        for name, job in jobs:
+            try:
+                steps = job()
+            except StorageError as error:
+                services(ctx).err.print(
+                    f"error: {name}: {error.message}", markup=False, highlight=False
+                )
+                failed.append(name)
+                continue
+            rows += [{self.key: name, "step": step} for step in steps]
+        if table_mode(ctx):
+            for row in rows:
+                say(ctx, f"{row[self.key]}: {row['step']}")
+        else:
+            columns = [
+                Column(self.header, lambda r: r[self.key]),
+                Column("STEP", lambda r: r["step"]),
+            ]
+            show_list(ctx, rows, columns)
+        if failed:
+            raise StorageFailure(
+                f"the CLI could not prepare {len(failed)} of {len(jobs)} {self.noun}:"
+                f" {', '.join(failed)}",
+                hint=self.hint,
+            )
+
+
+_ORGANIZATION_STEPS = _Steps(
+    "organization",
+    "ORG",
+    "directories",
+    "when only `root` may write to a root, run `huron adm provision-orgs --emit-script`",
+)
+_CATALOG_STEPS = _Steps(
+    "catalog",
+    "CATALOG",
+    "catalogs",
+    "when only `root` may change the groups, run `huron adm provision-catalogs --emit-script`",
+)

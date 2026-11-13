@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import grp
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -23,7 +24,15 @@ from huron.core.storage import ShareReader, Storage
 from huron.core.storage.posix import PosixStorage
 from huron.pkg.clock import Clock
 
-__all__ = ["Services"]
+__all__ = ["Services", "system_gid"]
+
+
+def system_gid(name: str) -> int | None:
+    """The gid of the group ``name`` in this machine's group database, or ``None``."""
+    try:
+        return grp.getgrnam(name).gr_gid
+    except KeyError:
+        return None
 
 
 @dataclass
@@ -33,7 +42,8 @@ class Services:
     ``storage_factory`` gives the read-only storage of :class:`Mount` rooted at a directory of
     this machine. ``provision_storage`` gives the writable storage of the provision commands,
     which the storage admin runs, rooted at the mount prefix. ``monotonic`` is the clock of
-    the waits, with ``sleep``.
+    the waits, with ``sleep``. ``gid_of`` gives the gid of a group name on this machine,
+    ``None`` for a name that it does not know.
     """
 
     environ: Mapping[str, str]
@@ -50,6 +60,7 @@ class Services:
     hostname: str
     storage_factory: Callable[[Path], ShareReader]
     provision_storage: Callable[[Path], Storage] = PosixStorage
+    gid_of: Callable[[str], int | None] = system_gid
     monotonic: Callable[[], float] = time.monotonic
     output: OutputFormat = OutputFormat.TABLE
     catalog_override: str | None = None

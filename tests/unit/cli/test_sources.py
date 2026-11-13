@@ -113,6 +113,43 @@ def test_a_walk_skips_and_reports_links_special_files_and_unreadable_entries(
     ]
 
 
+def test_a_walk_skips_and_reports_snapshot_and_nfs_entries_and_does_not_enter_them(
+    source: Path,
+) -> None:
+    write(source / "kept.txt")
+    write(source / ".snapshot" / "hourly.0" / "kept.txt")
+    write(source / "deep" / ".nfs000000000123abcd00000001")
+    write(source / ".nfsdirectory" / "inside.txt")
+    write(source / ".snapshots" / "a.txt")
+    staged, skipped = collect_sources([source], None, recursive=True)
+    assert [add.rel_path for add in staged] == [".snapshots/a.txt", "kept.txt"]
+    reason = "a collection cannot have this name"
+    assert skipped == [
+        SkippedEntry(source / ".nfsdirectory", reason),
+        SkippedEntry(source / ".snapshot", reason),
+        SkippedEntry(source / "deep" / ".nfs000000000123abcd00000001", reason),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "rename"),
+    [
+        (".nfs000000000123abcd00000001", None),
+        ("a.txt", ".snapshot/a.txt"),
+        ("a.txt", "docs/.nfsconfig"),
+    ],
+    ids=["named nfs file", "snapshot segment", "nfs segment"],
+)
+def test_a_named_path_with_a_snapshot_or_nfs_segment_refuses_the_add(
+    source: Path, name: str, rename: str | None
+) -> None:
+    with pytest.raises(UsageError) as raised:
+        collect_sources([write(source / name)], rename, recursive=False)
+    assert raised.value.message == (
+        f"{rename or name!r} is not a valid path in a collection (rel_path_reserved)"
+    )
+
+
 def test_a_named_directory_that_cannot_be_listed_is_reported(
     source: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -283,11 +320,14 @@ def test_a_source_that_cannot_be_read_is_refused_with_the_reason(
 
 def test_add_warns_for_each_skipped_entry_and_stages_the_rest(ready: Cli, source: Path) -> None:
     write(source / "a.txt", b"alpha")
+    write(source / ".snapshot" / "a.txt")
     (source / "link").symlink_to(source / "a.txt")
     os.mkfifo(source / "pipe")
     added = ready.ok("add", str(source), "--recursive")
     assert added.stdout.splitlines() == ["staged a.txt (5 bytes)"]
     assert added.stderr.splitlines() == [
+        f"warning: the CLI did not stage {source / '.snapshot'}: a collection cannot have this"
+        " name",
         f"warning: the CLI did not stage {source / 'link'}: it is a symbolic link",
         f"warning: the CLI did not stage {source / 'pipe'}: it is not a regular file",
     ]

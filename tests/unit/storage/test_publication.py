@@ -25,6 +25,7 @@ from huron.core.storage import (
     LakePath,
     MakeDirectory,
     OrganizationPlace,
+    PermissionDenied,
     PruneDirectory,
     Publisher,
     RemoveDirectory,
@@ -666,9 +667,9 @@ def test_a_refused_permission_with_an_intact_way_is_an_error(
     else:
         assert isinstance(lake.storage, PosixStorage)
         temporary_mode(lake.storage.root.joinpath(*COLLECTION.names), 0o2550)
-    with pytest.raises(StorageError) as refused:
+    with pytest.raises(PermissionDenied) as refused:
         lake.apply(step)
-    assert type(refused.value) is StorageError
+    assert type(refused.value) is PermissionDenied
     assert refused.value.message == f"permission denied on {step.temporary}"
     assert refused.value.context == {"path": str(step.temporary), "error": "Permission denied"}
 

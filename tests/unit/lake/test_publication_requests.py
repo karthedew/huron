@@ -160,6 +160,14 @@ def test_a_path_that_is_not_in_nfc_is_refused() -> None:
     assert caught.value.context == {"rel_path": decomposed, "rule": "rel_path_nfc"}
 
 
+@pytest.mark.parametrize("rel_path", [".snapshot/a.txt", "d/.nfs000000000123abcd00000001"])
+def test_an_add_with_a_snapshot_or_nfs_segment_is_refused(rel_path: str) -> None:
+    with pytest.raises(CommitInvalid) as caught:
+        request((add(rel_path),))
+    assert caught.value.message == f"{rel_path!r} is not a valid path"
+    assert caught.value.context == {"rel_path": rel_path, "rule": "rel_path_reserved"}
+
+
 def test_a_remove_that_is_not_a_valid_path_is_refused() -> None:
     with pytest.raises(CommitInvalid) as caught:
         request(removes=("../escape.txt",))

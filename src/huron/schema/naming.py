@@ -13,11 +13,13 @@ __all__ = [
     "IDENTIFIER_MAX_BYTES",
     "LAKE_NAME_MAX_BYTES",
     "METADATA_FILE",
+    "NFS_PREFIX",
     "PART_SUFFIX",
     "REL_PATH_MAX_BYTES",
     "REL_PATH_SEGMENT_MAX_BYTES",
     "RESERVED_SEGMENTS",
     "SEGMENT_MAX_BYTES",
+    "SNAPSHOT_DIR",
     "Identifier",
     "NamingError",
     "RelPathError",
@@ -25,6 +27,7 @@ __all__ = [
     "check_rel_path",
     "check_segment",
     "collection_identifier",
+    "is_storage_name",
     "namespace_identifier",
     "parse_identifier",
     "rel_path_key",
@@ -38,6 +41,10 @@ LAKE_NAME_MAX_BYTES = 255
 RESERVED_SEGMENTS = frozenset({"huron", "metadata"})
 METADATA_FILE = "metadata.json"
 PART_SUFFIX = ".huron-part"
+#: The directory of the storage's snapshots, which an NFS server can show in a directory.
+SNAPSHOT_DIR = ".snapshot"
+#: The start of the name that an NFS client gives a removed file that a process holds open.
+NFS_PREFIX = ".nfs"
 #: The bytes that the temporary name of a publication adds to a file's name:
 #: ``.<name>.<upload UUID><suffix>``.
 _PUBLICATION_NAME_BYTES = len("..") + len(str(uuid.UUID(int=0))) + len(PART_SUFFIX)
@@ -142,7 +149,12 @@ def collection_identifier(text: str) -> Identifier:
 
 
 def check_rel_path(value: str) -> str:
-    """Return ``value`` when it is a valid path in a collection; raises :class:`RelPathError`."""
+    """Return ``value`` when it is a valid path in a collection; raises :class:`RelPathError`.
+
+    The rule ``rel_path_reserved`` refuses ``metadata.json`` at the top, a segment that starts
+    with ``.huron`` or ends with ``.huron-part``, and a segment that :func:`is_storage_name`
+    accepts.
+    """
     if unicodedata.normalize("NFC", value) != value:
         raise RelPathError("rel_path_nfc", value)
     if not value or len(value.encode()) > REL_PATH_MAX_BYTES:
@@ -173,6 +185,15 @@ def check_lake_name(value: str) -> str:
     return value
 
 
+def is_storage_name(name: str) -> bool:
+    """Whether a storage or an NFS client can make an entry with the name ``name``: the
+    ``.snapshot`` directory of a storage, or a ``.nfs*`` file of an NFS client.
+
+    No path in a collection has a segment with such a name.
+    """
+    return name == SNAPSHOT_DIR or name.startswith(NFS_PREFIX)
+
+
 def rel_path_key(value: str) -> str:
     """The case-folded key that decides whether two paths collide."""
     return unicodedata.normalize("NFC", value.casefold())
@@ -183,5 +204,5 @@ def _check_path_segment(segment: str, value: str) -> None:
         raise RelPathError("rel_path_separator", value)
     if len(segment.encode()) > REL_PATH_SEGMENT_MAX_BYTES:
         raise RelPathError("rel_path_segment", value)
-    if segment.startswith(".huron") or segment.endswith(PART_SUFFIX):
+    if segment.startswith(".huron") or segment.endswith(PART_SUFFIX) or is_storage_name(segment):
         raise RelPathError("rel_path_reserved", value)

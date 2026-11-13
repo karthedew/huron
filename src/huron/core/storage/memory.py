@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING, Literal
 
 from huron.core.storage.errors import (
     InheritanceFailed,
+    PermissionDenied,
     SourceGone,
     SourceSizeMismatch,
     StorageError,
     SymlinkInLake,
 )
 from huron.core.storage.lakepath import LakePath
-from huron.core.storage.layout import FILE_MODE
+from huron.core.storage.layout import FILE_MODE, UNWALKED
 from huron.core.storage.ports import (
     Entry,
     FreeSpace,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from huron.core.storage.ports import StatKind
+    from huron.pkg.fs.posix import EntryKind
 
 __all__ = ["FREE_BYTES", "MemoryStorage", "Node", "NodeKind"]
 
@@ -67,9 +69,12 @@ class MemoryStorage:
     """A :class:`Storage` over a dictionary of nodes keyed by :class:`LakePath`.
 
     ``root`` is the directory the root node stands for. The caller has the numbers ``uid`` and
-    ``gid``. ``groups`` is the machine's group database (name to gid), and ``member_of`` the
-    gids the caller may give an entry it owns. A directory in ``denied`` refuses every change
-    to its entries, and a directory in ``unreadable`` cannot be searched or listed.
+    ``gid``; ``uid`` 0 is root, who may give any entry any owner. ``groups`` is the machine's
+    group database (name to gid), and ``member_of`` the gids the caller may give an entry it
+    owns. A directory in ``denied`` refuses each new, replaced, renamed or removed entry in
+    it, but not a change of the mode, the owner or the group of an entry. A directory in
+    ``unreadable`` cannot be searched or listed: a walk that would enter it yields it as
+    ``unreadable``.
     ``inherits`` is whether a new directory inherits the setgid bit and the group of a setgid
     parent, as the server should, and ``umask`` takes bits from the mode of a new directory
     that gets no ``chmod``, as the process umask does. Each traversal refuses a symbolic link as
@@ -126,7 +131,7 @@ class MemoryStorage:
         if node is None:
             return None
         kind: StatKind = "dir" if node.kind == "dir" else "file"
-        return Stat(kind, node.mode, node.gid, node.inode, len(node.data))
+        return Stat(kind, node.mode, node.uid, node.gid, node.inode, len(node.data))
 
     def read_bytes(self, location: LakePath) -> bytes | None:
         """The bytes of the file at ``location``, or ``None``."""
@@ -142,10 +147,16 @@ class MemoryStorage:
         self._directory(location)
         return not any(self._children(location))
 
-    def walk(self, location: LakePath) -> Iterator[Entry]:
-        """Every entry below the directory, top-down and sorted by name; links are not entered."""
+    def walk(self, location: LakePath, *, recursive: bool = True) -> Iterator[Entry]:
+        """Every entry below the directory, top-down and sorted by name; links are not entered.
+
+        Without ``recursive``, only the entries directly in the directory. The walk does not
+        enter a directory named in :data:`~huron.core.storage.layout.UNWALKED`. When the walk
+        would enter a directory in :attr:`unreadable`, it yields that directory as
+        ``unreadable`` (``EACCES``) and does not enter it.
+        """
         self._directory(location)
-        yield from self._walk(location, ())
+        yield from self._walk(location, (), recursive)
 
     def open_file(self, location: LakePath) -> _MemoryFile | None:
         """The file at ``location`` opened read-only, or ``None``."""
@@ -195,20 +206,42 @@ class MemoryStorage:
         return True
 
     def set_mode(self, location: LakePath, mode: int) -> bool:
-        """Give the entry ``mode``; like ``chmod``, it drops setgid outside the caller's groups."""
+        """Give the entry ``mode``; like ``chmod``, it drops setgid outside the caller's groups.
+
+        Only the owner and root may.
+        """
         node = self._lookup(location)
         if node is None:
             raise _error(location, errno.ENOENT)
         if node.mode == mode:
             return False
-        if node.uid != self.uid:
+        if node.uid != self.uid and self.uid != 0:
             raise _error(location, errno.EPERM)
         node.mode = self._settable(mode, node.gid)
         self.calls.append(("chmod", location))
         return True
 
+    def set_owner(self, location: LakePath, uid: int, gid: int) -> bool:
+        """Give the entry the owner ``uid`` and the group ``gid``; ``False`` when it has them.
+
+        Root may give any owner. Another caller may only keep its own entry's owner and give
+        it a group of :attr:`member_of`; any other change is ``EPERM``.
+        """
+        node = self._lookup(location)
+        if node is None:
+            raise _error(location, errno.ENOENT)
+        if (node.uid, node.gid) == (uid, gid):
+            return False
+        if self.uid != 0 and (node.uid != self.uid or uid != self.uid or gid not in self.member_of):
+            raise _error(location, errno.EPERM)
+        node.uid, node.gid = uid, gid
+        self.calls.append(("chown", location))
+        return True
+
     def set_group(self, location: LakePath, group: str | int) -> GroupResult:
-        """Give the entry the group ``group``; only an owner who is a member of the group may."""
+        """Give the entry the group ``group``; only root, or an owner who is a member of the
+        group, may.
+        """
         gid = group if isinstance(group, int) else self.groups.get(group)
         if gid is None:
             return GroupResult.unknown(f"{group}")
@@ -217,7 +250,7 @@ class MemoryStorage:
             return GroupResult(GroupOutcome.PENDING, f"{location} does not exist")
         if node.gid == gid:
             return GroupResult(GroupOutcome.UNCHANGED)
-        if node.uid != self.uid or gid not in self.member_of:
+        if self.uid != 0 and (node.uid != self.uid or gid not in self.member_of):
             return GroupResult(GroupOutcome.PENDING, f"{location}: {os.strerror(errno.EPERM)}")
         node.gid = gid
         self.calls.append(("chgrp", location))
@@ -458,13 +491,16 @@ class MemoryStorage:
     def _children(self, location: LakePath) -> Iterator[LakePath]:
         return (p for p in self.nodes if p.parent == location and p != location)
 
-    def _walk(self, top: LakePath, prefix: tuple[str, ...]) -> Iterator[Entry]:
+    def _walk(self, top: LakePath, prefix: tuple[str, ...], recursive: bool) -> Iterator[Entry]:
         for child in sorted(self._children(top.joinpath(*prefix)), key=lambda p: p.name):
             node, names = self.nodes[child], (*prefix, child.name)
-            yield Entry(names, node.kind, len(node.data), node.mtime_ns)
-            if node.kind == "dir":
-                self._search(child, top)
-                yield from self._walk(top, names)
+            entered = recursive and node.kind == "dir" and child.name not in UNWALKED
+            if entered and child in self.unreadable:
+                yield _entry(names, node, "unreadable", errno.EACCES)
+                continue
+            yield _entry(names, node, node.kind)
+            if entered:
+                yield from self._walk(top, names, recursive)
 
     def _search(self, directory: LakePath, location: LakePath) -> None:
         """Refuse a ``directory`` that cannot be searched; the error names ``location``, the
@@ -508,7 +544,7 @@ class MemoryStorage:
         return self.gid
 
     def _settable(self, mode: int, gid: int) -> int:
-        return mode if gid in self.member_of else mode & ~stat.S_ISGID
+        return mode if self.uid == 0 or gid in self.member_of else mode & ~stat.S_ISGID
 
 
 class _MemoryFile:
@@ -536,11 +572,15 @@ class _MemoryFile:
         """Nothing to release."""
 
 
+def _entry(names: tuple[str, ...], node: Node, kind: EntryKind, number: int | None = None) -> Entry:
+    return Entry(names, kind, len(node.data), node.mtime_ns, node.mode, node.uid, node.gid, number)
+
+
 def _error(location: LakePath, number: int) -> StorageError:
     """The error the POSIX adapter maps ``number`` at ``location`` to."""
     if number in {errno.EACCES, errno.EPERM}:
         context = {"path": str(location), "error": os.strerror(number)}
-        return StorageError(f"permission denied on {location}", context)
+        return PermissionDenied(f"permission denied on {location}", context)
     if number == errno.ENOENT:
         return StorageError(f"{location} does not exist", {"path": str(location)})
     return StorageError(f"{location}: {os.strerror(number)}", {"path": str(location)})

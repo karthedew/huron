@@ -21,7 +21,7 @@ from typing import BinaryIO
 from huron.applications.cli.errors import CliError, ExitCode, UsageError
 from huron.applications.cli.localstate import StagedAdd
 from huron.pkg.hashing import sha256_descriptor
-from huron.schema.naming import RelPathError, check_rel_path, rel_path_key
+from huron.schema.naming import RelPathError, check_rel_path, is_storage_name, rel_path_key
 
 __all__ = ["SkippedEntry", "collect_sources", "open_source", "source_changed"]
 
@@ -29,6 +29,7 @@ __all__ = ["SkippedEntry", "collect_sources", "open_source", "source_changed"]
 _READ_SOURCE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 _LINK = "it is a symbolic link"
 _NOT_REGULAR = "it is not a regular file"
+_STORAGE_NAME = "a collection cannot have this name"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,8 +48,11 @@ def collect_sources(
     A named path must be a regular file, or a directory with ``recursive``; ``rename`` gives its
     one file another path in the collection. The walk of a directory does not follow links. It
     skips a link, an entry that is not a regular file or a directory, and an entry that it cannot
-    read. A path that breaks a path rule, and two paths that are the same in a collection, refuse
-    the whole add before the CLI reads a file.
+    read. It also skips each entry named ``.snapshot`` or ``.nfs*``, which a storage or an NFS
+    client can make (:func:`~huron.schema.naming.is_storage_name`), and does not enter it. The
+    path rules refuse these names, so a named file with such a name, or ``rename`` with such a
+    segment, refuses the add. A path that breaks a path rule, and two paths that are the same in
+    a collection, refuse the whole add before the CLI reads a file.
     """
     if rename is not None and len(paths) != 1:
         raise UsageError("`--as` needs exactly one file")
@@ -142,7 +146,9 @@ def _walk(top: Path, directory: Path, skipped: list[SkippedEntry]) -> Iterator[_
         return
     for entry in entries:
         path = Path(entry.path)
-        if entry.is_symlink():
+        if is_storage_name(entry.name):
+            skipped.append(SkippedEntry(path, _STORAGE_NAME))
+        elif entry.is_symlink():
             skipped.append(SkippedEntry(path, _LINK))
         elif entry.is_dir(follow_symlinks=False):
             yield from _walk(top, path, skipped)

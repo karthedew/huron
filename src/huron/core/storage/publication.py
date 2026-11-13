@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 from huron.core.storage.errors import StorageError, SymlinkInLake
 from huron.core.storage.lakepath import LakePath
-from huron.core.storage.layout import FILE_MODE, MARKER_FILE, OBJECT_DIR, OBJECT_DIR_MODE
+from huron.core.storage.layout import FILE_MODE, LINK_PROBE_PREFIX, OBJECT_DIR, OBJECT_DIR_MODE
 from huron.core.storage.ports import Outcome
 from huron.schema.naming import PART_SUFFIX
 
@@ -228,7 +228,7 @@ class Publisher:
         if self._storage.make_directory(area, OBJECT_DIR_MODE):
             self._storage.sync_directory(place.directory)
         self._storage.set_mode(area, OBJECT_DIR_MODE)
-        name = f"{MARKER_FILE}-link-probe-{uuid.uuid4().hex}"
+        name = f"{LINK_PROBE_PREFIX}{uuid.uuid4().hex}"
         source, link = area.joinpath(name), place.directory.joinpath(name)
         self._storage.write_bytes(source, b"", FILE_MODE)
         try:

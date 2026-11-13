@@ -210,6 +210,10 @@ async def test_a_creation_refuses_a_bad_path_and_a_negative_size(publishing: Pub
     with pytest.raises(RelPathError) as long_name:
         await begin(publishing, rel_path="d/" + "n" * 207)
     assert long_name.value.rule == "rel_path_segment"
+    for storage_name in ("d/.snapshot/a.txt", "d/.nfs000000000123abcd00000001"):
+        with pytest.raises(RelPathError) as reserved:
+            await begin(publishing, rel_path=storage_name)
+        assert reserved.value.rule == "rel_path_reserved"
     with pytest.raises(Invalid) as raised:
         await begin(publishing, size=-1)
     assert raised.value.context == {"size": -1}

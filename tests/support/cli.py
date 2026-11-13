@@ -89,6 +89,8 @@ class Router(httpx.BaseTransport):
         self.tus: httpx.BaseTransport | None = None
         self.fail_commits: str | None = None
         self.observe: Callable[[httpx.Request], None] | None = None
+        #: Values that the answer of ``GET /healthz`` gets on top of the service's.
+        self.health: dict[str, Any] = {}
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.host == "idp.test":
@@ -103,7 +105,10 @@ class Router(httpx.BaseTransport):
                 raise httpx.ConnectError("connection refused", request=request)
             self._service.handle_request(request)
             raise httpx.ReadError("connection reset", request=request)
-        return self._service.handle_request(request)
+        response = self._service.handle_request(request)
+        if request.url.path == "/healthz" and self.health:
+            return httpx.Response(response.status_code, json={**response.json(), **self.health})
+        return response
 
 
 class Cli:
@@ -164,6 +169,8 @@ class Cli:
         self.state = LocalState(home / "state" / "huron")
         self.storage_factory = storage_factory
         self.environ: dict[str, str] = {}
+        #: This machine's group database: a group name to its gid.
+        self.gids: dict[str, int] = {}
 
     def services(self) -> tuple[Services, io.StringIO, io.StringIO]:
         out, err = io.StringIO(), io.StringIO()
@@ -183,6 +190,7 @@ class Cli:
             hostname="ws1",
             storage_factory=self.storage_factory,
             provision_storage=self.storage_factory,
+            gid_of=self.gids.get,
             monotonic=self.monotonic,
         )
         return services, out, err
@@ -198,6 +206,10 @@ class Cli:
             f"huron {' '.join(argv)} → {result.exit_code}\n{result.stderr}"
         )
         return result
+
+    def report_service_user(self, uid: int, gid: int, group: str = "huron") -> None:
+        """Make ``GET /healthz`` report the service user, as a service with a service group."""
+        self.router.health["service_user"] = {"uid": uid, "gid": gid, "group": group}
 
     def login_as(self, user: str) -> None:
         ring = self.loop.call(self.runtime.ring())

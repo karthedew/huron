@@ -26,15 +26,6 @@ class CatalogInventory:
         """The catalog directory relative to the share prefix."""
         return f"{self.catalog['organization']}/{self.catalog['name']}"
 
-    def directories(self) -> Iterator[tuple[str, str]]:
-        """``(identifier, disk_path)`` of the catalog and its namespaces, parents first.
-
-        The collections are in :attr:`collections`.
-        """
-        yield self.catalog["name"], self.disk_path
-        for namespace in self.namespaces:
-            yield namespace["identifier"], namespace["disk_path"]
-
 
 def take_inventory(api: ApiClient, catalog: str, *, files: bool) -> CatalogInventory:
     """Walk the catalog's namespace tree and collections; with ``files``, their recorded files."""

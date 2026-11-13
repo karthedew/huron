@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from huron.core.storage.errors import StorageError
-from huron.core.storage.layout import FILE_MODE, ORGANIZATION_MODE
+from huron.core.storage.layout import FILE_MODE, ORGANIZATION_MODE, UNWALKED
 from huron.core.storage.ports import Outcome
 from huron.schema.naming import METADATA_FILE, PART_SUFFIX
 
@@ -91,16 +91,17 @@ class DirectoryWriter:
         A collection without recorded files holds no published file. This removes
         ``metadata.json``, part files and the subdirectories that are then empty, the deepest
         entries first. A symbolic link below is not removed and keeps the directories above it,
-        with the log event
-        ``disk.link_found``. The directory stays (``KEPT``) while any entry is in it. A missing
-        directory is ``MISSING``.
+        with the log event ``disk.link_found``. The walk does not enter a ``.snapshot`` or
+        ``.huron-objects`` directory, and this removes neither of them: the path rules refuse
+        both names in a collection, so Huron puts no file in them. The directory stays
+        (``KEPT``) while any entry is in it. A missing directory is ``MISSING``.
         """
         if self._storage.stat(location) is None:
             return Outcome.MISSING
         entries = sorted(self._storage.walk(location), key=_depth, reverse=True)
         for entry in entries:
             found = location.joinpath(*entry.names)
-            if entry.kind == "dir":
+            if entry.kind == "dir" and entry.names[-1] not in UNWALKED:
                 self._storage.remove_directory(found)
             elif entry.kind == "symlink":
                 _log.warning("disk.link_found", path=str(found))
