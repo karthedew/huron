@@ -390,17 +390,27 @@ roles have grants at organization scope. The web image comes from `web/Container
 `deploy/README.md` give the steps.
 
 For development, the Makefile starts one of two Docker stacks. They use the same ports, so each
-start stops the other stack first.
+start stops the other stack first. In both, the API holds the lake `/data1/huron`, and nginx and
+tusd take uploads on port 1080. `make app` publishes that port on 127.0.0.1 only. With
+`make uploads`, nginx uses host networking and listens on port 1080 of each network interface.
 
 - `make up` (`docker-compose.yml`) starts PostgreSQL and Keycloak. Then `make migrate` applies the
-  migrations, and `make api` runs the API on the host with `dev.env` and `huron.dev.yaml`.
+  migrations, and `make api` runs the API on the host with `dev.env` and `huron.dev.yaml`. The
+  API does not start when the directory `/data1/huron` does not exist.
+  `make uploads` (`docker-compose.uploads.yml`) runs nginx and tusd with host networking.
 - `make app` (`docker-compose.app.yml`) runs PostgreSQL, the migrations, Keycloak, the group
-  directory, the API, a one-time seed and the web. All containers share one network namespace, and
-  the ports are on 127.0.0.1 only. The web is at `http://localhost:3000`. The API has no lake, so
-  it takes no upload and no commit, and the seeded collections have no files.
+  directory, the lake preparation, the API, tusd, nginx, a one-time seed and the web. All
+  containers share one network namespace, and the ports are on 127.0.0.1 only. The web is at
+  `http://localhost:3000`. The containers that use the lake run as the host user.
+
+tusd runs in one container. Before that container starts tusd, it removes the lock files of
+`.tus-uploads`. This is safe because the stack starts no second tusd, and the old tusd process is
+gone when its container starts again.
 
 `make app` mounts `huron.dev.yaml` into the API and recreates the API when the file changes.
-`make down` stops both stacks and keeps their data. `make app-reset` deletes the data of `make app`.
+`make down` stops the stacks and keeps their data. `make app-reset` deletes the database of
+`make app`, and the lake stays. The next seed then stops at the catalog directories of the earlier
+seed, so delete them first. `README.md` gives the steps in "Start again with an empty database".
 
 ## Logging
 

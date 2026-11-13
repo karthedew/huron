@@ -1,0 +1,97 @@
+# The upload proxy in front of tusd: nginx asks the API (GET /api/v1/uploads/auth) before it
+# passes a request to tusd, and streams each body to tusd. The image's entrypoint renders this
+# file with envsubst into /tmp/nginx-uploads.conf, and NGINX_ENVSUBST_FILTER limits it to three
+# variables:
+#   HURON_API_UPSTREAM   the API, host:port (127.0.0.1:8080 in make app and make api)
+#   HURON_UPLOADS_HOST   the public authority of the uploads URL, host:port, a fixed value
+#   HURON_UPLOADS_PROTO  the public scheme of the uploads URL, http or https, a fixed value
+# tusd (-behind-proxy) builds Location from X-Forwarded-Host and X-Forwarded-Proto. nginx sets
+# them to the fixed values, never to a value of the client, and clears Forwarded.
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+events { worker_connections 1024; }
+http {
+    log_format huron '$remote_addr "$request_method $uri" $status $request_length $request_time';
+    access_log /dev/stdout huron;           # never logs Authorization
+    client_body_temp_path /tmp/client-body;
+    proxy_temp_path /tmp/proxy;
+    fastcgi_temp_path /tmp/fastcgi;
+    uwsgi_temp_path /tmp/uwsgi;
+    scgi_temp_path /tmp/scgi;
+    proxy_cache_path /tmp/auth-cache levels=1 keys_zone=huron_auth:1m max_size=16m inactive=60s;
+    server_tokens off;
+
+    # The upload id of /files/<id>; empty for a creation, which is never cached.
+    map $request_uri $huron_upload_id { "~^/files/(?<id>[0-9a-f-]{36})(\?|$)" $id; default ""; }
+    map $huron_upload_id $huron_no_cache { "" 1; default 0; }
+    # A request without Authorization is never cached.
+    map $http_authorization $huron_no_auth { "" 1; default 0; }
+
+    upstream tusd { server 127.0.0.1:1081; keepalive 16; }
+    upstream api  { server ${HURON_API_UPSTREAM}; keepalive 16; }
+
+    server {
+        listen 1080;
+        client_body_timeout 300s;
+        send_timeout 300s;
+        proxy_http_version 1.1;
+        proxy_redirect off;
+        proxy_set_header Connection "";
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Host "${HURON_UPLOADS_HOST}";
+        proxy_set_header X-Forwarded-Proto "${HURON_UPLOADS_PROTO}";
+        proxy_set_header Forwarded "";      # tusd applies Forwarded after X-Forwarded-*
+
+        location = /files/ {                # creation: POST
+            error_page 418 = @tus_options;
+            if ($request_method = OPTIONS) { return 418; }
+            auth_request /_huron_auth;
+            client_max_body_size 1m;        # a creation carries no bytes
+            proxy_request_buffering off;
+            proxy_buffering off;
+            proxy_read_timeout 120s;
+            proxy_pass http://tusd;
+        }
+        location /files/ {                  # HEAD and PATCH of /files/<id>
+            error_page 418 = @tus_options;
+            if ($request_method = OPTIONS) { return 418; }
+            auth_request /_huron_auth;
+            client_max_body_size 65m;       # a chunk of the CLI is at most 64 MiB
+            proxy_request_buffering off;
+            proxy_buffering off;
+            proxy_send_timeout 300s;
+            proxy_read_timeout 120s;        # above the 20 s seal wait of pre-finish
+            proxy_pass http://tusd;
+        }
+        location @tus_options {             # OPTIONS without auth_request
+            proxy_pass http://tusd;
+        }
+        location = /_huron_auth {
+            internal;
+            client_max_body_size 0;         # the subrequest keeps the length of the body
+            proxy_pass http://api/api/v1/uploads/auth;
+            proxy_method GET;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header Connection "";
+            proxy_set_header X-Original-Method $request_method;
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_connect_timeout 2s;
+            proxy_read_timeout 10s;
+            proxy_cache huron_auth;
+            proxy_cache_key "$request_method|$huron_upload_id|$http_authorization";
+            proxy_cache_valid 204 30s;
+            proxy_cache_methods GET;
+            proxy_no_cache $huron_no_cache $huron_no_auth;
+            proxy_cache_bypass $huron_no_cache $huron_no_auth;
+            proxy_ignore_headers Cache-Control Expires Set-Cookie Vary;
+        }
+        location = /readyz {                # tusd answers OPTIONS /files/ with Tus-Version
+            proxy_method OPTIONS;
+            proxy_pass http://tusd/files/;
+        }
+        location = /livez { return 204; }
+        location / { return 404; }
+    }
+}

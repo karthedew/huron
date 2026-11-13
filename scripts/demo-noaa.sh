@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Load the NOAA Planetary K-index demo into a running `make app` stack: `make demo-noaa`.
+# Load the NOAA Planetary K-index demo into a running stack whose API takes uploads (`make app`, or
+# `make api` with `make uploads`): `make demo-noaa`.
 #
 # It creates the catalog planetary in the organization noaa (declared in huron.dev.yaml) with
 # examples/noaa/load.sh, from the raw NOAA SWPC files that examples/noaa/fetch.py downloads:
@@ -15,13 +16,14 @@
 #      that download, so they change nothing; NOAA_REFRESH=1 fetches again, which brings the
 #      reissued current quarter and today's snapshot. NOAA_RAW=<dir> uses an existing fetch.py
 #      output directory instead and downloads nothing;
-#   5. runs `huron adm provision-orgs` (safe to re-run) and examples/noaa/load.sh;
+#   5. sets the CLI's mount_prefix to the lake path HURON_LAKE_PATH (default /data1/huron), runs
+#      `huron adm provision-orgs` (safe to re-run) and examples/noaa/load.sh;
 #   6. prints `huron --catalog planetary tree` and the files under noaa's directory.
 #
-# Every step is idempotent: a second run reports every catalog entry as skipped and pushes nothing.
-# After `make app-reset` the database is empty but /data1/huron is not: the directories and files
-# of the earlier load are reused (the create commands accept an existing directory, a push replaces
-# the file at the same path) and nothing on the share is deleted.
+# Every step is idempotent: a second run reports every catalog entry as skipped, and it uploads
+# and commits nothing. After `make app-reset` the database is empty but the lake is not: the load
+# then stops at a directory of the earlier load that is not empty. Empty the noaa directory of the
+# lake (keep its .huron and .huron-objects) before the next run.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -96,6 +98,8 @@ else
 fi
 
 # --- 5. the organization directories and the catalog ---------------------------------------------
+# provision-orgs takes the lake path from mount_prefix.
+huron config set mount_prefix "${HURON_LAKE_PATH:-/data1/huron}" >/dev/null
 huron adm provision-orgs
 ORG="$org" CATALOG="$catalog" HURON="$huron_bin" TREE=0 \
   "$repo/examples/noaa/load.sh" "$raw"

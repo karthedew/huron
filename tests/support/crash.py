@@ -338,17 +338,22 @@ async def until(check: Callable[[], Awaitable[bool]], what: str) -> None:
 class ChildApi:
     """The API in a child process over ``database_url`` and the lake ``lake``.
 
-    ``state`` holds the child's configuration, its log, the arm and the stop signal. The object
-    calls the child as one of the test users (:class:`~tests.support.api.Caller`), and keeps
-    that role over each new start: :attr:`client` then names the new child.
+    ``state`` holds the child's configuration, its log, the arm and the stop signal.
+    ``overrides`` are more settings of the child, each a value that JSON can hold, such as
+    ``uploads_url``. The object calls the child as one of the test users
+    (:class:`~tests.support.api.Caller`), and keeps that role over each new start:
+    :attr:`client` then names the new child.
     """
 
-    def __init__(self, database_url: str, lake: Path, state: Path) -> None:
+    def __init__(self, database_url: str, lake: Path, state: Path, **overrides: Any) -> None:
         state.mkdir(parents=True, exist_ok=True)
         self._database_url = database_url
         self._lake = lake
         self._state = state
-        self._settings = settings(store="postgres", database_url=database_url, lake_path=lake)
+        self._overrides = overrides
+        self._settings = settings(
+            store="postgres", database_url=database_url, lake_path=lake, **overrides
+        )
         self._process: subprocess.Popen[bytes] | None = None
         self._client: httpx.AsyncClient | None = None
         self._ring: KeyRing | None = None
@@ -390,6 +395,7 @@ class ChildApi:
                     "lake": str(self._lake),
                     "state": str(self._state),
                     "port": port,
+                    "overrides": self._overrides,
                 }
             )
         )
@@ -521,7 +527,10 @@ async def _serve(configuration: dict[str, Any]) -> None:
     store = StoppingStore(configuration["database_url"], stops)
     await store.connect()
     service_settings = settings(
-        store="postgres", database_url=configuration["database_url"], lake_path=lake
+        store="postgres",
+        database_url=configuration["database_url"],
+        lake_path=lake,
+        **configuration["overrides"],
     )
     configure_logging(service_settings.log_level)
     runtime = await build_runtime(

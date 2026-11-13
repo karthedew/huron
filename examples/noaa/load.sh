@@ -20,10 +20,9 @@
 # metadata is republished (huron edit meta --file, then huron publish meta) only when it differs
 # from what the collection holds. A second run with the same RAW_DIR changes nothing.
 #
-# Directories and files left on the share by an earlier load whose records are gone (after
-# `make app-reset`, which deletes the database but not /data1) are reused: the create commands
-# accept an existing directory and bring its mode in line, and a push replaces a file at the same
-# path through a part file. Nothing on the share is deleted.
+# Directories left on the share by an earlier load whose records are gone (after `make app-reset`,
+# which deletes the database but not the lake) stop the load: a create command accepts an existing
+# directory only when it is empty. Nothing on the share is deleted.
 #
 # Environment: ORG (noaa), CATALOG (planetary), HURON (the command that runs the CLI; default
 # `uv run --quiet --project <repo> huron`), TREE (1; 0 skips the closing `huron tree`).

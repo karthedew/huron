@@ -27,11 +27,13 @@
  * realm), HURON_SEED_CLIENT_ID (a client with the password grant) and HURON_SEED_FIXTURE_DIR
  * (the directory holding seed.mjs and fixture.mjs).
  *
- * A commit publishes sealed uploads, so the seed commits files only with HURON_SEED_LAKE_DIR: the
- * API's lake, mounted into the seed's container, into whose `.tus-uploads` the seed writes the
- * bytes of each upload (`publishCommits` of seed.mjs). Without it, the collections stay without
- * files, and the seed says so.
+ * A commit publishes sealed uploads. The seed reads `uploads_url` from the API's `/healthz` and
+ * sends the bytes of each file with tus through the upload proxy and tusd: a creation, then
+ * `PATCH` requests of at most 64 MiB (none for an empty file), each with the token of the fixture
+ * user. Then it commits the files (`publishCommits` of seed.mjs). When the API takes no uploads
+ * (`uploads_url` is null), the collections stay without files, and the seed says so.
  */
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -40,11 +42,12 @@ const API_URL = setting('HURON_SEED_API_URL');
 const ISSUER = setting('HURON_SEED_ISSUER');
 const CLIENT_ID = setting('HURON_SEED_CLIENT_ID');
 const FIXTURE_DIR = setting('HURON_SEED_FIXTURE_DIR');
-const LAKE_DIR = process.env.HURON_SEED_LAKE_DIR || null;
 
 /** The development password of the fixture's creators in the realm. */
 const PASSWORD = 'password';
 const WAIT_SECONDS = 180;
+/** The most bytes of one tus `PATCH`, as in the CLI. */
+const CHUNK_SIZE = 64 * 1024 * 1024;
 
 /** Seed, then exit: the shim's server would keep the process alive. */
 async function main() {
@@ -64,10 +67,13 @@ async function main() {
 			const api = new SeedApi(API_URL, (username) =>
 				seeding.huronToken({ apiUrl: API_URL, issuer: shim.url }, username)
 			);
-			if (LAKE_DIR === null) {
-				console.log('seed: no HURON_SEED_LAKE_DIR, so the collections get no files');
+			const health = await (await fetch(`${API_URL}/healthz`)).json();
+			const uploadsUrl = health.uploads_url ?? null;
+			if (uploadsUrl === null) {
+				console.log('seed: the API takes no uploads, so the collections get no files');
 			}
-			const created = await seedFixture(api, fixture, seeding.publishCommits);
+			const publish = uploadsUrl === null ? null : publisher(api, seeding, uploadsUrl);
+			const created = await seedFixture(api, fixture, publish);
 			console.log(
 				created.length > 0
 					? `seed: created the catalogs ${created.join(', ')}`
@@ -87,10 +93,11 @@ async function main() {
  * Seed what is missing and return the names of the catalogs created.
  * @param {SeedApi} api
  * @param {Record<string, any>} fixture The exports of fixture.mjs.
- * @param {Function} publishCommits The function of seed.mjs that uploads and commits files.
+ * @param {Publish | null} publish Uploads and commits the files of a collection; `null` when
+ *   the API takes no uploads.
  * @returns {Promise<string[]>}
  */
-async function seedFixture(api, fixture, publishCommits) {
+async function seedFixture(api, fixture, publish) {
 	const { ORGANIZATIONS, CATALOGS, NAMESPACES, COLLECTIONS, SCHEMAS } = fixture;
 	const organizations = new Set();
 	for (const organization of ORGANIZATIONS) {
@@ -122,7 +129,7 @@ async function seedFixture(api, fixture, publishCommits) {
 		});
 	}
 	for (const collection of COLLECTIONS.filter((entry) => fresh.has(entry.catalog))) {
-		await createCollection(api, collection, publishCommits);
+		await createCollection(api, collection, publish);
 	}
 	for (const schema of SCHEMAS) {
 		const catalogs = schema.assignedTo.filter((/** @type {string} */ name) => fresh.has(name));
@@ -177,12 +184,12 @@ async function ensureOrganization(api, organization) {
 
 /**
  * A draft with its metadata and schema override, activated unless it stays a draft, then its
- * commits in order when the seed has the lake.
+ * commits in order when the API takes uploads.
  * @param {SeedApi} api
  * @param {Record<string, any>} collection A fixture collection.
- * @param {Function} publishCommits The function of seed.mjs that uploads and commits files.
+ * @param {Publish | null} publish
  */
-async function createCollection(api, collection, publishCommits) {
+async function createCollection(api, collection, publish) {
 	const actor = collection.createdBy;
 	let draft = await api.call(
 		actor,
@@ -203,9 +210,103 @@ async function createCollection(api, collection, publishCommits) {
 	const active = await api.call(actor, 'POST', ['collections', draft.id, 'activate'], undefined, {
 		'if-match': `"${draft.version}"`
 	});
-	if (LAKE_DIR === null) return;
+	if (publish !== null) await publish(collection, draft.id, active.version);
+}
+
+/**
+ * Uploads and commits the files of a fixture collection, given its ID and its version after the
+ * activation.
+ * @callback Publish
+ * @param {Record<string, any>} collection
+ * @param {string} id
+ * @param {number} version
+ * @returns {Promise<void>}
+ */
+
+/**
+ * The `Publish` function that sends each file with tus to `uploadsUrl` (`tusUpload`), then
+ * commits the files with `publishCommits` of seed.mjs.
+ * @param {SeedApi} api
+ * @param {Record<string, any>} seeding The exports of seed.mjs.
+ * @param {string} uploadsUrl The `uploads_url` of the API.
+ * @returns {Publish}
+ */
+function publisher(api, seeding, uploadsUrl) {
 	const call = (/** @type {any[]} */ ...args) => api.call(...args);
-	await publishCommits(call, LAKE_DIR, collection, draft.id, active.version);
+	const upload = tusUpload(api, uploadsUrl, (/** @type {any[]} */ ...args) =>
+		seeding.waitForSeal(call, ...args)
+	);
+	return (collection, id, version) => seeding.publishCommits(call, upload, collection, id, version);
+}
+
+/**
+ * The upload function of seed.mjs over tus. For each file it sends the creation `POST` to
+ * `uploadsUrl`, then the bytes in `PATCH` requests of at most `CHUNK_SIZE` bytes, each with the
+ * user's token. An empty file has no `PATCH`: tusd finishes it in the creation. The address of
+ * each `PATCH` is `uploadsUrl` and the upload ID, never the host of `Location`. Then it waits for
+ * the seal with `wait`.
+ * @param {SeedApi} api
+ * @param {string} uploadsUrl
+ * @param {(actor: string, attemptId: string, state: unknown, what: string) => Promise<void>} wait
+ * @returns {(actor: string, collectionId: string, relPath: string, content: Buffer) => Promise<string>}
+ */
+function tusUpload(api, uploadsUrl, wait) {
+	return async (actor, collectionId, relPath, content) => {
+		const what = `${collectionId}/${relPath}`;
+		const attemptId = randomUUID();
+		const metadata = {
+			attempt_id: attemptId,
+			collection: collectionId,
+			rel_path: relPath
+		};
+		const tus = {
+			'tus-resumable': '1.0.0',
+			authorization: `Bearer ${await api.token(actor)}`
+		};
+		let answer = await fetch(uploadsUrl, {
+			method: 'POST',
+			headers: {
+				...tus,
+				'upload-length': String(content.length),
+				'upload-metadata': Object.entries(metadata)
+					.map(([key, value]) => `${key} ${Buffer.from(value).toString('base64')}`)
+					.join(',')
+			},
+			signal: AbortSignal.timeout(120_000)
+		});
+		await tusCheck(answer, 201, `the creation of the upload of ${what}`);
+		const uploadId = new URL(String(answer.headers.get('location')), uploadsUrl).pathname
+			.split('/')
+			.pop();
+		const address = `${uploadsUrl.replace(/\/$/, '')}/${uploadId}`;
+		for (let offset = 0; offset < content.length; offset += CHUNK_SIZE) {
+			answer = await fetch(address, {
+				method: 'PATCH',
+				headers: {
+					...tus,
+					'upload-offset': String(offset),
+					'content-type': 'application/offset+octet-stream'
+				},
+				body: content.subarray(offset, offset + CHUNK_SIZE),
+				signal: AbortSignal.timeout(120_000)
+			});
+			await tusCheck(answer, 204, `a PATCH of the upload of ${what}`);
+		}
+		await wait(actor, attemptId, answer.headers.get('huron-upload-state'), what);
+		return String(uploadId);
+	};
+}
+
+/**
+ * Throw unless a tus request answered `status`.
+ * @param {Response} answer
+ * @param {number} status
+ * @param {string} what
+ */
+async function tusCheck(answer, status, what) {
+	if (answer.status === status) return;
+	const body = (await answer.text()).slice(0, 600);
+	throw new Error(`${what} answered ${answer.status}: ${body}`);
 }
 
 /**
@@ -345,6 +446,14 @@ class SeedApi {
 		});
 	}
 
+	/**
+	 * The Huron token of a user, exchanged once.
+	 * @param {string} username
+	 */
+	token(username) {
+		return this.#token(username);
+	}
+
 	/** @param {string} username */
 	#token(username) {
 		let token = this.#tokens.get(username);
@@ -436,9 +545,15 @@ async function answer(request, tokenEndpoint, creators) {
 		console.error(
 			`seed: no ID token for ${JSON.stringify(username)}, not a creator in fixture.mjs`
 		);
-		return { status: 403, body: { error: 'only the fixture creators get ID tokens' } };
+		return {
+			status: 403,
+			body: { error: 'only the fixture creators get ID tokens' }
+		};
 	}
-	return { status: 200, body: { id_token: await idToken(tokenEndpoint, username) } };
+	return {
+		status: 200,
+		body: { id_token: await idToken(tokenEndpoint, username) }
+	};
 }
 
 /**
@@ -450,7 +565,10 @@ async function answer(request, tokenEndpoint, creators) {
 async function idToken(tokenEndpoint, username) {
 	const response = await fetch(tokenEndpoint, {
 		method: 'POST',
-		headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+		headers: {
+			accept: 'application/json',
+			'content-type': 'application/x-www-form-urlencoded'
+		},
 		body: new URLSearchParams({
 			grant_type: 'password',
 			client_id: CLIENT_ID,

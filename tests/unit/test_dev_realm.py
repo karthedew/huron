@@ -111,7 +111,7 @@ def test_the_services_on_the_api_image_never_look_for_it_in_a_registry() -> None
         for name, service in SERVICES.items()
         if name != "api" and service.get("image") == SERVICES["api"]["image"]
     }
-    assert policies == {"migrate": "never", "groups": "never"}
+    assert policies == {"migrate": "never", "lake-init": "never", "groups": "never"}
 
 
 def test_the_docker_keycloak_keeps_its_in_memory_realm_while_it_runs() -> None:

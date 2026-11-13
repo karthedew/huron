@@ -1,0 +1,85 @@
+# The upload proxy (nginx) and tusd, for the API on the host (`make api`): `make uploads` starts
+# them and `make uploads-down` stops them. docker-compose.app.yml (`make app`) extends these two
+# services and puts them in its shared network namespace.
+#
+# Both services use host networking: nginx listens on port 1080, and tusd on 127.0.0.1:1081. Both
+# reach the API at 127.0.0.1:8080. They run as the host user (HURON_UID:HURON_GID) with the lake
+# HURON_LAKE_SOURCE bound read-write at HURON_LAKE_PATH. HURON_LAKE_PATH must be the `lake_path`
+# of the API. The Makefile sets the four variables. The defaults below apply only without the
+# Makefile.
+#
+# The images are cached on the development machine. pull_policy: never keeps Compose from a
+# pull, and a missing image is an error.
+name: huron-uploads
+
+services:
+  uploads:
+    image: tusproject/tusd:v2.10.1
+    pull_policy: never
+    network_mode: host
+    user: "${HURON_UID:-1000}:${HURON_GID:-1000}"
+    environment:
+      HURON_UPLOAD_DIR: ${HURON_LAKE_PATH:-/data1/huron}/.tus-uploads
+    # tusd keeps a lock file with its process ID for each upload that it works on. After an
+    # unclean stop, a new tusd finds its own process ID in an old lock file and refuses the
+    # upload. So this container removes the lock files before it starts tusd. This is safe
+    # only because it is the one tusd of the stack and its old process is gone. A separate
+    # one-shot service would run again on each `docker compose up`, also while tusd runs.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        cd "$$HURON_UPLOAD_DIR" && rm -f -- *.lock *.lock.* *.stop
+        exec tusd "$$@"
+      - tusd
+    # The flags of "Recommended tusd flags" in M11_PLAN_2_SAFE_PUBLICATION.md. -max-size=0 is no
+    # limit, the same as the default max_upload_bytes of the API.
+    command:
+      - -host=127.0.0.1
+      - -port=1081
+      - -base-path=/files/
+      - -upload-dir=${HURON_LAKE_PATH:-/data1/huron}/.tus-uploads
+      - -behind-proxy
+      - -disable-download
+      - -disable-termination
+      - -disable-concatenation
+      - -max-size=0
+      - -file-perms=0600
+      - -dir-perms=0700
+      - -hooks-http=http://127.0.0.1:8080/api/v1/uploads/hooks
+      - -hooks-http-forward-headers=Authorization
+      - -hooks-enabled-events=pre-create,pre-finish
+      - -hooks-http-timeout=60s
+      - -hooks-http-retry=3
+      - -hooks-http-backoff=1s
+      - -request-completion-timeout=60s
+      - -network-timeout=2m
+    volumes:
+      - ${HURON_LAKE_SOURCE:-/data1/huron}:${HURON_LAKE_PATH:-/data1/huron}
+
+  uploads-proxy:
+    image: nginx:1.31.8
+    pull_policy: never
+    network_mode: host
+    user: "${HURON_UID:-1000}:${HURON_GID:-1000}"
+    environment:
+      NGINX_ENVSUBST_TEMPLATE_DIR: /etc/huron
+      NGINX_ENVSUBST_TEMPLATE_SUFFIX: .template
+      NGINX_ENVSUBST_OUTPUT_DIR: /tmp
+      NGINX_ENVSUBST_FILTER: ^HURON_(API_UPSTREAM|UPLOADS_HOST|UPLOADS_PROTO)$$
+      HURON_API_UPSTREAM: 127.0.0.1:8080
+      HURON_UPLOADS_HOST: 127.0.0.1:1080
+      HURON_UPLOADS_PROTO: http
+    # Compose keeps the image's entrypoint, which renders the template, so the start line is
+    # `command:`.
+    command: ["nginx", "-c", "/tmp/nginx-uploads.conf", "-g", "daemon off;"]
+    volumes:
+      - ./deploy/openshift/nginx-uploads.conf.template:/etc/huron/nginx-uploads.conf.template:ro
+    healthcheck:
+      # nginx answers /readyz from tusd's OPTIONS /files/, so this checks both.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:1080/readyz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s

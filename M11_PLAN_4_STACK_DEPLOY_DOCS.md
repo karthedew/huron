@@ -70,7 +70,117 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
 - Verification: the old task's entry, `uv run pytest -m integration`, `scripts/e2e.sh`,
   `make demo-noaa` two times.
 - Dependencies: D2.
-- Status: pending
+- Status: complete (verification 5 passed, 2026-11-12). Verifications 1 to 4 failed. The owner
+  raised the limit to 10 verifications after the third. The runs at the last verification:
+  `make gate` with 4515 tests passed, 39 deselected, 0 skipped, 12332 statements, 0 missed and
+  68 clones in 25 groups against the baseline of 69 in 25; `uv run pytest -m integration` with
+  39 passed; the web gate; `scripts/e2e.sh`; `make demo-noaa` two times on a private stack,
+  where the second run made no upload and no commit. `make app` and `make up` were not run
+  with their default project names: their parts ran in private projects. See "Escalation (D3,
+  2026-11-12)" for the verification reports, the owner decisions, a defect for a later task
+  and an open question for the owner. The record of the fix passes follows. Verification 4
+  failed on one documentation finding: the two
+  development stacks share one lake and keep separate databases, and no document said so.
+  - Fix pass 5, text only:
+    - `README.md` has a section "One lake, two databases". It says that the catalog directories
+      of one stack stop the seed, the demo or a create of the same catalog on the other stack
+      with `STORAGE_FAILED`. It gives the two ways before a change: delete the directories as in
+      step 2 of the reset procedure, or give one stack a lake of its own, with the variables for
+      `make app`, `make api`, `make uploads` and `make demo-noaa`. It also says that a token of
+      one stack is not valid on the other. The Quick start, the reset procedure,
+      `web/README.md` and `examples/noaa/README.md` link to it.
+    - The custom-lake paragraph of `README.md` says that each later `make app` needs the three
+      variables again, that `make demo-noaa` needs `HURON_LAKE_PATH`, and that the variables must
+      not be exported.
+    - The repair command of `examples/noaa/README.md` uses `$HOME` in place of `~`.
+    - An interaction review asked, for each ordered pair of the development commands, the
+      custom lake, `scripts/e2e.sh`, the web e2e tests and the integration tier, whether the
+      second still works as the documents say after the first. It looked at the shared lake and
+      its markers, `.tus-uploads`, the two database volumes, the ports, the CLI configuration and
+      tokens, the image tags and the owner of the files. It used the Makefile, the compose files,
+      the scripts and the code, and ran no stack.
+  - `make gate` after fix pass 5 exits 0: 4515 passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+  - Earlier: verification 3 failed on one documentation finding in `README.md`: four places said
+    to run `make app-reset` and then `make app` with no step between them. The owner raised the
+    limit to 10 verifications for each D task on 2026-11-12.
+  - Fix pass 4, text only:
+    - `README.md` has one procedure, "Start again with an empty database": `make app-reset`,
+      delete the catalog directories in the three organization directories and keep `.huron`
+      and `.huron-objects`, then `make app`. The four places give it or link to it. It also says
+      what to do when `make app` already failed in that way.
+    - `examples/noaa/README.md` links to the procedure. It also tells how to continue after a
+      load stopped and its catalog directory was deleted: `huron adm repair planetary
+      --recursive` with the CLI of the demo, then `make demo-noaa` again. A run on a private
+      stack confirmed the error and this recovery.
+    - `docs/architecture.md` gives port 1080 for each stack: `make app` publishes it on
+      127.0.0.1, and nginx of `make uploads` listens on each interface.
+    - A sweep by behaviour listed what D3 changed in the development workflow. It then read the
+      stack parts of `README.md`, `web/README.md`, `examples/noaa/README.md`,
+      `docs/architecture.md`, `docs/operator.md`, `AGENTS.md`, `CONTEXT.md`, the `Makefile`, the
+      compose files, `huron.dev.yaml`, `dev.env`, `web/.env.example`, the headers of the scripts
+      and `docker/seed/run.mjs`. It fixed more sentences that D3 made false. Examples: the API
+      of `make api` does not start without `/data1/huron`, and `make app` and `make uploads`
+      stop each other first. It did not read the other files of the repository.
+  - `make gate` after fix pass 4 exits 0: 4515 passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+  - Earlier: fix pass 3 was done. Verification 2 failed on one documentation finding:
+    `examples/noaa/README.md` said that `make app` takes no uploads and that `load.sh` reuses
+    the directories of a load after `make app-reset`.
+  - Fix pass 3, text only: `examples/noaa/README.md` now names the two stacks of
+    `make demo-noaa`, its steps and the second run. After `make app-reset`, the load stops at
+    the catalog directory that is not empty, so delete that directory and keep `.huron` and
+    `.huron-objects`. `web/README.md` says that the seed with `make api` needs `make uploads`
+    and a prepared lake. A sweep of the tracked text files found no other sentence that D3
+    made false.
+  - `make gate` after fix pass 3 exits 0: 4515 passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+  - Earlier: verification 1 failed on three findings:
+    - F1: no integration test of an overwrite beside a part file of an earlier attempt.
+    - F2: the seed of `make app` did not send its files through the proxy and tusd.
+    - F3: the containers of the upload stack leaked when the stack of the CLI test failed to
+      start.
+    - Fix pass 2:
+      - F1: a new test pushes an overwrite of `a.txt` beside `.a.txt.<UUID>.huron-part`. The new
+        bytes are published, and the part file keeps its bytes.
+      - F2: `docker/seed/run.mjs` reads `uploads_url` and sends each file with tus (a creation,
+        then `PATCH` requests of at most 64 MiB, the user's token on each). `seed.mjs` keeps the
+        lake path for the web e2e stack, which has no tusd. The seed no longer mounts the lake,
+        and it waits for the healthy proxy.
+      - F3: `UploadStack.start` and the stack of the CLI test remove what they started when a
+        step fails. Unit tests fake the container runtime at the `subprocess` boundary. A real
+        failure (a held proxy port) left no container.
+      - Also: tusd of `make app` starts after `lake-init`. The stale commit of the late-completion
+        test must give `BASE_VERSION_CONFLICT`. The tests read the hook timeout from the compose
+        file.
+    - `make gate` exits 0: 4515 passed, 39 deselected, 0 skipped. 12332 statements, 0 missed. 68
+      clones in 25 groups against the baseline of 69 in 25.
+    - `uv run pytest -m integration`: 39 passed, 0 skipped, 119 s.
+    - Web gate: `npm run check` 0 errors and 0 warnings, `npm test` 1649 passed, `npm run lint`
+      and `npm run build` exit 0, `npm run test:e2e` 245 passed.
+    - `scripts/e2e.sh`: exit 0 in 38 s. Both pushes went through the proxy and tusd
+      ("version 2 → 3, +2 −0 files", then "version 3 → 4, +2 −1 files"), and it ended with
+      "e2e: ok".
+    - One private stack (project `huron-d3demo`, its own API image, a lake in a scratch
+      directory, `HURON_DEV_CONFIG` with that lake as `lake_path` and as each root):
+      - tusd started after `lake-init` ended. A second `docker compose up` ran `lake-init` again
+        and did not restart tusd.
+      - The seed: exit 0 in 9 s. The proxy answered 124 `POST /files/` with 201 and 124 `PATCH`
+        with 204. All 124 attempts are consumed, and 3 commit requests succeeded.
+      - `make demo-noaa` run 1: exit 0 in 53 s, six uploads and six commits.
+      - `make demo-noaa` run 2: exit 0 in 30 s. Each collection printed "nothing to push" and
+        "metadata unchanged". The commits (9), the upload attempts (130) and the requests to the
+        proxy (130 `POST`, 130 `PATCH`) did not change. Each collection stayed at version 3.
+    - Adaptations to plan 2, for the verifier to judge. A link in place of a namespace directory
+      blocks the commit (202, state `blocked`, `PUBLICATION_BLOCKED` with the reason
+      `symbolic_link`), because the pre-finish hook now only seals into the object area. A commit
+      that names an upload that is not `ready` gets 409 `UPLOAD_INELIGIBLE`. This replaces the
+      commit without a receipt.
+    - Choices where the plan is silent or old. The lock step runs in the tusd container before
+      `exec tusd`, not in a one-shot `uploads-init`: a second `docker compose up` starts a
+      finished one-shot service again while tusd runs. The fixed forwarded host and scheme are two
+      more template variables, `HURON_UPLOADS_HOST` and `HURON_UPLOADS_PROTO`. The integration
+      tests have no skip without Docker: they fail.
 
 ### D4 Kustomize base and the local cluster (old M11.11)
 
@@ -393,3 +503,112 @@ Question for the owner:
 ### Owner decisions after verification 7 (2026-11-12)
 
 1. One more fix pass and one more verification for D2 are authorized.
+
+## Escalation (D3, 2026-11-12)
+
+Verification 3 of 3 failed. The workflow stopped. No fourth fix pass was made.
+
+### State of the tree
+
+The D3 work is in the working tree and is not committed. The tree is green. The verifier's
+runs at verification 3:
+
+- `make gate`: exit 0. 4515 tests passed, 39 deselected, 0 skipped. 12332 statements, 0
+  missed. 68 clones in 25 groups against the baseline of 69 in 25.
+- `uv run pytest -m integration`: 39 passed, 0 skipped.
+- The web gate: `npm run check`, `npm test` (1649 passed), `npm run lint`, `npm run build` and
+  `npm run test:e2e` (245 passed) all pass.
+- `scripts/e2e.sh`: exit 0.
+- `make demo-noaa` two times on a private stack: the two runs exit 0. The second run made no
+  upload and no commit.
+- `make app` itself was not run. It builds the web image again with a tag that the owner
+  uses. Each part of it, but not the web, ran on a private stack.
+
+### Verification 1 (FAIL: three findings)
+
+1. The integration test "an overwrite over a part file left by an earlier attempt" of old
+   M11.10 was missing.
+2. The seed of `make app` did not go through the proxy and tusd. Old M11.10 says that a seeded
+   file goes through them.
+3. `tests/integration/test_cli_end_to_end.py` left its containers when the stack did not
+   start.
+
+Fix pass 2 cleared the three findings. Verification 2 confirmed this.
+
+### Verification 2 (FAIL: one documentation finding)
+
+1. `examples/noaa/README.md` said that the API of `make app` has no lake and no tusd. Its
+   section "After `make app-reset`" said that the load uses the directories of an earlier
+   load again. D3 made the two statements false.
+
+Fix pass 3 cleared the finding. Verification 3 confirmed this.
+
+### Verification 3 (FAIL: one documentation finding)
+
+1. `README.md` tells the reader to run `make app-reset` and then `make app` with no step
+   between them. D3 made this false in four places: line 295, lines 299 to 303, lines 346 to
+   348 and line 362. A seed of `make app` now makes the catalog directories in the lake.
+   `make app-reset` keeps the lake. The next seed then gets `STORAGE_FAILED`, because a create
+   command adopts only an empty directory, and `make app` fails. The paragraph of D3 at lines
+   305 to 310 gives the correct procedure and contradicts the four places. The verifier
+   confirmed the failure and the correct procedure on a private stack. Smallest fix, text
+   only: make the four places give the procedure of lines 305 to 310.
+
+Residual notes, not findings:
+
+- After a load stops, the catalog row stays in the database. If the reader then deletes the
+  directory, the next load stops with a different error and a hint for `adm repair`.
+- `docs/architecture.md` line 393 says that nginx listens on 127.0.0.1:1080 in the two stacks.
+  With `make uploads`, nginx listens on each interface.
+
+### Diagnosis
+
+The plan is implementable. No verification found a defect in the stacks or the code after fix
+pass 2. The findings of verifications 2 and 3 are of one class: D3 changed what `make app` and
+`make app-reset` do, and an older text that D3 did not edit became false. The sweep of fix
+pass 3 searched for terms. It did not find the four places, because the text there has none
+of the terms.
+
+### Questions for the owner
+
+1. Do you authorize one more fix pass and one more verification for this finding?
+2. `make app-reset` keeps the lake, and the next `make app` fails until the reader deletes the
+   catalog directories. Is a procedure in `README.md` sufficient, or must `make app-reset`
+   also empty the catalog directories of the development lake?
+
+### Owner decisions (2026-11-12)
+
+1. Each D task of this plan can have up to 10 verifications.
+2. The owner gave no answer to question 2. So `make app-reset` keeps the lake, and `README.md`
+   gives the procedure.
+
+### Verification 4 (2026-11-12): FAIL
+
+1. The two development stacks share one lake and keep separate databases, and no document said
+   so. `make app` keeps its rows in the volume `huron-app_postgres-data`. `make up` and
+   `make api` keep their rows in the volume `huron_postgres-data`. Both stacks read
+   `huron.dev.yaml`, whose `lake_path` is `/data1/huron`. A seed, `make demo-noaa` or a create
+   command on one stack makes catalog directories in the lake. The database of the other stack
+   does not record them. A create command adopts only an empty directory. So the seed, the demo
+   or a create on the other stack stops at its first catalog with `STORAGE_FAILED`. The
+   verifier confirmed this with the host seed command of `web/README.md`: exit 1 with that 500.
+
+### Defect for a later task
+
+The verifier judged this defect outside D3. It comes from D1 (commit `a433b469`).
+
+- `repair_hint` in `src/huron/applications/cli/errors.py` (lines 107 to 117) gives the hint "to
+  make the directory again, run `huron … adm repair …`". `hint_repair` in
+  `src/huron/applications/cli/commands/common.py` (line 261) applies it to `create org`,
+  `create catalog` and `create namespace`. It gives the hint for each `STORAGE_FAILED`, also for
+  "exists and is not an empty directory".
+- A repair then adopts the directory that is not empty (`Repairer._run`,
+  `src/huron/core/storage/repair.py` lines 161 to 172) and exits 0. The files that no row
+  records stay in the catalog.
+- Smallest fix: give no repair hint for that refusal, or make the repair refuse a directory that
+  is not empty and that no row records. Add a test.
+
+### Question for the owner (after verification 4)
+
+1. Must `make app` and `make up` with `make api` have different default lake directories, so
+   that one stack cannot stop the other?

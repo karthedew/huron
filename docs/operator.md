@@ -403,13 +403,17 @@ and reconcile.
 ## Pre-release check
 
 `scripts/e2e.sh` starts the backend of the Docker stack (`docker-compose.app.yml`) as its own
-compose project. The project has an empty database and an override configuration. That
-configuration puts the organization roots in a temporary directory, so the script does not need
-`/data1`. The script then does these steps:
+compose project. The backend includes the lake preparation, tusd and the upload proxy. The project
+has an empty database and an override configuration. That configuration puts the lake path and the
+organization roots in a temporary directory, so the script does not need `/data1`. The lake has
+the same path on the host and in the containers, and the containers run as you. The script then
+does these steps:
 
 1. It logs in as the development users.
-2. It prepares the organization directories with `huron adm provision-orgs`.
+2. It runs `huron adm provision-orgs`, which finds the lake prepared and changes nothing.
 3. It follows the user guide in the stack.
-4. It deletes the project, its volume and its API image `huron-e2e-api:dev`.
+4. It pushes new files, an overwrite, an empty file and a removal through the upload proxy and tusd.
+5. It deletes the project, its volume and its API image `huron-e2e-api:dev`.
 
-The script needs the ports of `make app` and `make up`. Stop both first with `make down`.
+The script needs the ports of `make app` and `make up`, and port 1080. Stop the stacks first with
+`make down`.

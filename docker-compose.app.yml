@@ -10,6 +10,13 @@
 # The service configuration is huron.dev.yaml, mounted into the API: edit it and run `make app`
 # again to apply it (the Makefile passes its hash, which recreates the API).
 #
+# The lake is the host directory HURON_LAKE_SOURCE, bound read-write at HURON_LAKE_PATH in the
+# containers that use it. HURON_LAKE_PATH must be the `lake_path` of the service configuration.
+# These containers run as the host user (HURON_UID:HURON_GID), so the files on the lake belong to
+# you. The Makefile sets these variables from `id` and the defaults /data1/huron. The defaults
+# below apply only without the Makefile. `lake-init` prepares the lake before the API starts, and
+# `uploads-proxy` and `uploads` (docker-compose.uploads.yml) take uploads on 127.0.0.1:1080.
+#
 # The health checks probe every second or two while a service starts and every 30 s after it is
 # up: the API and the group directory log each probe.
 name: huron-app
@@ -23,6 +30,7 @@ services:
       - "127.0.0.1:8081:8081" # Keycloak
       - "127.0.0.1:8082:8082" # group directory
       - "127.0.0.1:5432:5432" # PostgreSQL
+      - "127.0.0.1:1080:1080" # upload proxy
 
   postgres:
     image: postgres:16
@@ -95,17 +103,38 @@ services:
       start_period: 30s
       start_interval: 1s
 
+  lake-init:
+    image: ${HURON_API_IMAGE:-huron-app-api:dev}
+    pull_policy: never
+    network_mode: service:net
+    user: "${HURON_UID:-1000}:${HURON_GID:-1000}"
+    # Prepares the lake path and the declared organizations from the service configuration with
+    # `huron adm provision-orgs --config`, which sends no request to the API. It runs before
+    # the API on each start, and a second run changes nothing.
+    command: ["python", "/opt/huron/dev-provision.py", "--config", "/etc/huron/huron.yaml"]
+    environment:
+      XDG_CONFIG_HOME: /tmp/config
+      XDG_STATE_HOME: /tmp/state
+    volumes:
+      - ./scripts/dev-provision.py:/opt/huron/dev-provision.py:ro
+      - ${HURON_DEV_CONFIG:-./huron.dev.yaml}:/etc/huron/huron.yaml:ro
+      - ${HURON_LAKE_SOURCE:-/data1/huron}:${HURON_LAKE_PATH:-/data1/huron}
+
   api:
     build: {context: ., dockerfile: Containerfile}
     # scripts/e2e.sh sets HURON_API_IMAGE to an image of its own: Compose labels each image it
     # builds with the project, so a shared tag would flip between two images and strand one.
     image: ${HURON_API_IMAGE:-huron-app-api:dev}
     network_mode: service:net
+    user: "${HURON_UID:-1000}:${HURON_GID:-1000}"
     env_file: dev.env
     environment:
       # The service configuration, huron.dev.yaml unless HURON_DEV_CONFIG names another file
       # (scripts/e2e.sh does). Over dev.env's HURON_CONFIG_FILE, a path on the host.
       HURON_CONFIG_FILE: /etc/huron/huron.yaml
+      # The service user and group: the host user, who owns the lake.
+      HURON_SERVICE_UID: ${HURON_UID:-1000}
+      HURON_SERVICE_GROUP: ${HURON_GROUP:-huron}
     # Compose recreates a container when its configuration changes, never when the content of a
     # bind-mounted file does, and a file an editor replaces stays the old file inside a running
     # container. `make app` passes the file's SHA-256 here, so an edit recreates the API (and the
@@ -114,8 +143,10 @@ services:
       dev.huron.config-sha256: ${HURON_DEV_CONFIG_SHA256:-}
     volumes:
       - ${HURON_DEV_CONFIG:-./huron.dev.yaml}:/etc/huron/huron.yaml:ro
+      - ${HURON_LAKE_SOURCE:-/data1/huron}:${HURON_LAKE_PATH:-/data1/huron}
     depends_on:
       migrate: {condition: service_completed_successfully}
+      lake-init: {condition: service_completed_successfully}
       groups: {condition: service_healthy}
       keycloak: {condition: service_healthy}
     healthcheck:
@@ -126,10 +157,23 @@ services:
       start_period: 60s
       start_interval: 1s
 
+  # tusd and the upload proxy of docker-compose.uploads.yml, in the shared network namespace.
+  uploads:
+    extends: {file: docker-compose.uploads.yml, service: uploads}
+    network_mode: service:net
+    depends_on:
+      # lake-init makes .tus-uploads with its owner and mode before tusd starts.
+      lake-init: {condition: service_completed_successfully}
+
+  uploads-proxy:
+    extends: {file: docker-compose.uploads.yml, service: uploads-proxy}
+    network_mode: service:net
+
   seed:
     image: node:26.13.0-trixie-slim
     network_mode: service:net
     user: node
+    # The seed sends the bytes of its files with tus to the uploads_url of the API, the proxy.
     command: ["node", "/opt/huron/seed/run.mjs"]
     environment:
       HURON_SEED_API_URL: http://127.0.0.1:8080
@@ -142,6 +186,8 @@ services:
     depends_on:
       api: {condition: service_healthy}
       keycloak: {condition: service_healthy}
+      # The proxy's health check reaches tusd, so this waits for both.
+      uploads-proxy: {condition: service_healthy}
 
   web:
     # The documentation the web serves at /docs is built from docs/*.md: web/Containerfile.

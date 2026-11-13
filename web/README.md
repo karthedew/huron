@@ -134,8 +134,12 @@ variable instead.
 This is the real sign-in: PostgreSQL and Keycloak's `company` realm in Docker, the API and the
 web on the host. Unlike `make app`, which binds 127.0.0.1 only, this stack's PostgreSQL (user
 and password `huron`), Keycloak (admin console `admin` / `admin`) and group directory listen on
-every network interface: run it on a machine and network you trust. In the repository root, in
-two terminals:
+every network interface: run it on a machine and network you trust. The API of `make api` holds
+the lake `/data1/huron` and does not start without that directory: make it first, as the root
+README's [The CLI on the host](../README.md#the-cli-on-the-host) shows. This stack and `make app`
+keep separate databases over that lake, so the catalog directories of one stack stop the seed and
+the creates of the other: see [One lake, two databases](../README.md#one-lake-two-databases). In
+the repository root, in two terminals:
 
 ```bash
 # Terminal 1: PostgreSQL and Keycloak, the migrations, then the group directory (keep it running)
@@ -169,7 +173,10 @@ didn't complete." (`/login?error=idp_error`). The issuer is `http://127.0.0.1:80
 in `.env` and in `dev.env` alike; use `127.0.0.1` for Keycloak, never `localhost`.
 
 The stack's database starts empty, so the web has no organization to show. To browse the demo
-data of `make app` instead, load it once, with the API running, from the repository root:
+data of `make app` instead, load it once, with the API running, from the repository root. When the
+lake holds the catalog directories of a seed of `make app`, this seed stops at the first one with
+`STORAGE_FAILED`. Delete them first, or use a lake of its own, as
+[One lake, two databases](../README.md#one-lake-two-databases) describes.
 
 ```bash
 HURON_SEED_API_URL=http://127.0.0.1:8080 HURON_SEED_ISSUER=http://127.0.0.1:8081/realms/company \
@@ -177,9 +184,12 @@ HURON_SEED_API_URL=http://127.0.0.1:8080 HURON_SEED_ISSUER=http://127.0.0.1:8081
 ```
 
 The data stays in the volume `huron_postgres-data`, and running the seed again changes nothing.
-The API of `make api` has no lake unless its configuration sets `lake_path`, so the seed makes the
-collections without files. When the API has a lake, `HURON_SEED_LAKE_DIR=<the API's lake>` makes the
-seed also upload and commit their files.
+The seed reads `uploads_url` from the API. The API of `make api` reports one (`huron.dev.yaml`), so
+the seed sends the files of the collections through the upload proxy and tusd, then commits them.
+Before you run the seed, start `make uploads` and prepare the lake with `huron adm provision-orgs`
+(see [The CLI on the host](../README.md#the-cli-on-the-host)). Without the proxy, the seed stops at
+its first upload. Without the markers, the API refuses to make the directories of the seeded
+catalogs. When the API takes no uploads, the seed makes the collections without files.
 
 A `make up` Keycloak whose volume predates the `huron-web` client answers the sign-in with "Client
 not found"; recreate only its volume, as the root README's
@@ -191,7 +201,7 @@ their ports, so `make up` stops the `make app` stack first, and `make app` stops
 
 `make app`, in the repository root, builds and starts the whole application in Docker:
 PostgreSQL, the API, the group directory, Keycloak, this web app on http://localhost:3000 and the
-demo data. Its API has no lake, so the seeded collections have no files. The CLI on the host signs in to the same Keycloak, with the device or the loopback
+demo data. Its API holds the lake, and the seed uploads and commits the files of the collections. The CLI on the host signs in to the same Keycloak, with the device or the loopback
 flow, and writes through the same API, so what it creates shows here at once.
 [Run everything in Docker](../README.md#run-everything-in-docker) in the root README lists the
 accounts and covers the CLI's setup, stopping, resetting and troubleshooting. `make up` and
@@ -245,8 +255,8 @@ search runs without a documentation build. The pieces live in `e2e/support/`:
   user, and the fault proxy.
 - `fixture.mjs`: the users, groups, organizations, catalogs, namespaces, collections and schema
   the tests assert on; `seed.mjs` creates them through the real API, with the files uploaded
-  through the upload hooks into the API's lake, and `make app` seeds the same fixture without
-  files. One collection, `space-weather.alerts.storm-count-2024`, has a schema override
+  through the upload hooks into the API's lake (this stack has no tusd). `make app` seeds the same
+  fixture with `docker/seed/run.mjs`, which sends the files through the upload proxy and tusd. One collection, `space-weather.alerts.storm-count-2024`, has a schema override
   that no longer fits its catalog's schema, so it stays incomplete: the case of an incompatible
   override.
 - `stack.mjs`: the ports and the environment of every process.

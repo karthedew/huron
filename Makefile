@@ -1,12 +1,25 @@
-.PHONY: help up down migrate api app app-down app-logs app-reset demo-noaa test test-contract test-integration lint gate openapi docs-check
+.PHONY: help up down migrate api app app-down app-logs app-reset uploads uploads-down demo-noaa test test-contract test-integration lint gate openapi docs-check
 
 .DEFAULT_GOAL := help
 
 COMPOSE := $(shell command -v docker >/dev/null 2>&1 && echo "docker compose" || echo "podman-compose")
 ENV_FILE := dev.env
-# The two compose projects: `make up`'s "huron" (PostgreSQL and Keycloak) and `make app`'s "huron-app".
+# The three compose projects: `make up`'s "huron" (PostgreSQL and Keycloak), `make app`'s
+# "huron-app" and `make uploads`'s "huron-uploads" (nginx and tusd for `make api`).
+# The containers that write the lake run as you, and the lake is HURON_LAKE_SOURCE on the host,
+# bound at HURON_LAKE_PATH, the `lake_path` of the service configuration. The API reports
+# HURON_GROUP as its service group. The compose commands get these variables, `make api` gets
+# HURON_GROUP and `make demo-noaa` gets HURON_LAKE_PATH. They are not exported: in the environment
+# of the API or of the tests, HURON_LAKE_PATH would set `lake_path`.
+HURON_UID ?= $(shell id -u)
+HURON_GID ?= $(shell id -g)
+HURON_GROUP ?= $(shell id -gn)
+HURON_LAKE_SOURCE ?= /data1/huron
+HURON_LAKE_PATH ?= /data1/huron
+LAKE_ENV := HURON_UID=$(HURON_UID) HURON_GID=$(HURON_GID) HURON_GROUP=$(HURON_GROUP) HURON_LAKE_SOURCE=$(HURON_LAKE_SOURCE) HURON_LAKE_PATH=$(HURON_LAKE_PATH)
 DEV := $(COMPOSE) -f docker-compose.yml
-APP := $(COMPOSE) -f docker-compose.app.yml
+APP := $(LAKE_ENV) $(COMPOSE) -f docker-compose.app.yml
+UPLOADS := $(LAKE_ENV) $(COMPOSE) -f docker-compose.uploads.yml
 # The service configuration of both stacks: `make api` reads huron.dev.yaml through dev.env's
 # HURON_CONFIG_FILE; `make app` mounts it, or the file HURON_DEV_CONFIG names (the file it hashes is
 # always the file it mounts).
@@ -21,27 +34,29 @@ help: ## List available commands.
 	@grep -E '^[a-zA-Z_-]+:.*## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 # The two stacks share their ports, so each start stops the other one first, and `make down` stops
-# both; none of these deletes data (only `make app-reset` does).
+# all three projects; none of these deletes data (only `make app-reset` does).
 up: ## Stop the Docker application (data kept), start PostgreSQL and Keycloak, then probe them.
 	$(APP) down
 	$(DEV) up -d --wait postgres keycloak
 	./scripts/check-stack.sh
 
-down: ## Stop both stacks, `make up`'s and `make app`'s; their data stays.
+down: ## Stop the stacks of `make up`, `make app` and `make uploads`; their data stays.
 	$(DEV) down
 	$(APP) down
+	$(UPLOADS) down
 
 migrate: ## Apply Alembic migrations to the database in dev.env.
 	uv run --env-file $(ENV_FILE) alembic upgrade head
 
 api: ## Run the API on the host with autoreload, also when huron.dev.yaml changes.
-	uv run --env-file $(ENV_FILE) uvicorn huron.applications.api.main:app --reload --reload-include $(API_CONFIG) --port 8080
+	HURON_SERVICE_GROUP=$(HURON_GROUP) uv run --env-file $(ENV_FILE) uvicorn huron.applications.api.main:app --reload --reload-include $(API_CONFIG) --port 8080
 
-app: ## Stop the `make up` stack (data kept), then build and start the whole application in Docker, or apply an edited huron.dev.yaml; the web is http://localhost:3000.
+app: ## Stop the `make up` and `make uploads` stacks (data kept), then build and start the whole application in Docker, or apply an edited huron.dev.yaml; the web is http://localhost:3000.
 	@test -f $(DEV_CONFIG) || { echo "app: $(DEV_CONFIG) is missing" >&2; exit 1; }
 	$(DEV) down
+	$(UPLOADS) down
 	HURON_DEV_CONFIG=$(abspath $(DEV_CONFIG)) HURON_DEV_CONFIG_SHA256=$(DEV_CONFIG_SHA256) $(APP) up -d --build --wait
-	@echo "web: http://localhost:3000   API: http://127.0.0.1:8080   Keycloak: http://127.0.0.1:8081/realms/company"
+	@echo "web: http://localhost:3000   API: http://127.0.0.1:8080   Keycloak: http://127.0.0.1:8081/realms/company   uploads: http://127.0.0.1:1080/files/"
 
 app-down: ## Stop only the Docker application; its data stays.
 	$(APP) down
@@ -49,12 +64,20 @@ app-down: ## Stop only the Docker application; its data stays.
 app-logs: ## Follow the logs of the Docker application.
 	$(APP) logs -f
 
-app-reset: ## Stop the Docker application and delete its data.
+app-reset: ## Stop the Docker application and delete its database; the lake stays.
 	$(APP) down -v
 
+# `make app` runs its own tusd over the same lake, so `make uploads` stops that stack first.
+uploads: ## Stop the Docker application (data kept), then start the upload proxy on port 1080 and tusd for the API of `make api`.
+	$(APP) down
+	$(UPLOADS) up -d --wait
+
+uploads-down: ## Stop the upload proxy and tusd of `make uploads`.
+	$(UPLOADS) down
+
 # NOAA_RAW=<dir> loads an existing examples/noaa/fetch.py download; NOAA_REFRESH=1 fetches again.
-demo-noaa: ## Load the NOAA Planetary K-index demo (catalog planetary in org noaa) into a running stack whose API takes uploads (not `make app`); safe to re-run.
-	./scripts/demo-noaa.sh
+demo-noaa: ## Load the NOAA Planetary K-index demo (catalog planetary in org noaa) into a running stack whose API takes uploads; safe to re-run.
+	HURON_LAKE_PATH=$(HURON_LAKE_PATH) ./scripts/demo-noaa.sh
 
 test: ## Run the unit tier (no database needed).
 	uv run pytest -m "not contract and not integration"

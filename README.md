@@ -35,6 +35,18 @@ uv run huron config set issuer http://127.0.0.1:8081/realms/company
 uv run huron login
 ```
 
+The API of `make api` holds the lake at `/data1/huron` (`lake_path` in `huron.dev.yaml`). The API
+does not start when that directory does not exist, or when it cannot make `.tus-uploads` in it.
+So make the directory first, writable by you (see [The CLI on the host](#the-cli-on-the-host)). The
+API takes uploads only through the upload proxy and tusd. Start them in a fourth terminal with `make uploads`,
+and stop them with `make uploads-down`. They use host networking: nginx listens on port 1080 of
+each network interface of your machine, and tusd on `127.0.0.1:1081`. `make app` runs its own tusd
+over the same lake, so `make uploads` first stops the `make app` stack, and `make app` first stops
+the stack of `make uploads`. Before the first push, prepare the lake with `huron adm provision-orgs`
+(see [The CLI on the host](#the-cli-on-the-host)). This stack and `make app` keep separate
+databases over the same lake. Read [One lake, two databases](#one-lake-two-databases) before you
+change from one stack to the other.
+
 `make migrate` and `make api` read `dev.env`, which holds only the database URL, the API URL and
 `HURON_CONFIG_FILE`; through it the API reads every other setting from
 [the development configuration](#the-development-configuration) in `huron.dev.yaml`. `make api`
@@ -51,22 +63,28 @@ machine and network you trust. To run the web against this stack, follow
 
 `make app` builds and starts the whole application in Docker
 ([docker-compose.app.yml](docker-compose.app.yml)): PostgreSQL with its own volume, the migrations,
-the API, the development group directory, Keycloak as a stand-in for the company OIDC provider, the
-web app, and a one-shot seed that loads the demo data of the web's end-to-end fixture. The API reads
-its organizations from [`huron.dev.yaml`](#the-development-configuration). It returns once every
-service is healthy and the seed has run. The stack has no lake and no tusd: its API takes no upload
-and no commit, so the seeded collections have no files, and `huron push` and `make demo-noaa` do
-not work on it.
+the lake preparation, the API, tusd and the upload proxy, the development group directory, Keycloak
+as a stand-in for the company OIDC provider, the web app, and a one-shot seed that loads the demo
+data of the web's end-to-end fixture. The API reads its organizations from
+[`huron.dev.yaml`](#the-development-configuration). It returns once every service is healthy and
+the seed has run.
+
+The lake is the directory `/data1/huron` on your machine. `lake-init`, the API and tusd bind it at
+the same path. They run as you (`id -u` and `id -g`), so you own each file that they write on it. To use another
+directory, set `HURON_LAKE_SOURCE`, `HURON_LAKE_PATH` and `HURON_DEV_CONFIG` (see
+[The CLI on the host](#the-cli-on-the-host)). Before the API starts, the one-shot service
+`lake-init` runs [scripts/dev-provision.py](scripts/dev-provision.py). It prepares the lake and the
+declared organizations with `huron adm provision-orgs --config`.
 
 Prerequisites: Docker Engine 25 or newer with the Compose plugin on Linux, or Docker Desktop 4.27 or
-newer on macOS or Windows; ports 3000, 5432, 8080, 8081 and 8082 free on 127.0.0.1; `uv` for the
-CLI. The first run pulls the images and builds the API and web images, which takes a few minutes.
+newer on macOS or Windows; ports 1080, 3000, 5432, 8080, 8081 and 8082 free on 127.0.0.1; the
+directory `/data1/huron`, writable by you; `uv` for the CLI. The first run pulls the images and
+builds the API and web images, which takes a few minutes. The images `tusproject/tusd:v2.10.1`
+and `nginx:1.31.8` are not pulled: they must be in the local image cache.
 
 ```bash
 make app
 ```
-
-`make demo-noaa` needs a stack whose API takes uploads; see [The NOAA demo](#the-noaa-demo) below.
 
 | Service | Address |
 | --- | --- |
@@ -76,6 +94,7 @@ make app
 | Keycloak admin console | http://127.0.0.1:8081/admin/ |
 | Group directory | http://127.0.0.1:8082/users/admin/groups |
 | PostgreSQL (user, password and database `huron`) | 127.0.0.1:5432 |
+| Upload proxy, the `uploads_url` | http://127.0.0.1:1080/files/ |
 
 All containers share one network namespace and publish their ports on 127.0.0.1 only, so these
 addresses are the same inside the containers and on the host. That matters: Keycloak stamps its own
@@ -159,11 +178,17 @@ session and, once you confirm on Keycloak's page, the Keycloak session too.
 ### The CLI on the host
 
 The CLI signs in to the same Keycloak and uses the same API. Run it in the repository root, where
-`uv run` finds the project. Plain directories stand in for the NFS exports: the root that
-`huron.dev.yaml` names, `/data1/huron`, must exist and be writable by you, and
-`acl_backend none` applies modes without POSIX ACLs. Creating them needs root once; to avoid that,
-point the `root:` entries of `huron.dev.yaml` at absolute directories you own, such as
-`/home/you/huron/data1`, and run `make app` again.
+`uv run` finds the project. A plain directory stands in for the NFS export: the lake path and root
+that `huron.dev.yaml` names, `/data1/huron`, must exist and be writable by you. Creating it needs
+root once. To avoid that, use a directory that you own, such as `/home/you/huron/data1`. Write a
+copy of `huron.dev.yaml` with that directory as `lake_path` and as each `root`. Then start the
+stack with `HURON_LAKE_SOURCE`, `HURON_LAKE_PATH` and `HURON_DEV_CONFIG` set:
+`HURON_LAKE_SOURCE=<dir> HURON_LAKE_PATH=<dir> HURON_DEV_CONFIG=<copy> make app`. Then use that
+directory in place of `/data1/huron` below, also as `mount_prefix`. Each later `make app` needs the
+three variables again, and `make demo-noaa` needs `HURON_LAKE_PATH=<dir>`. Without them,
+`make app` uses `huron.dev.yaml` and the lake `/data1/huron` again, and `make demo-noaa` prepares
+`/data1/huron`. Set the variables on the command line of each command. Do not export them: in the
+environment of `make api` or of the tests, `HURON_LAKE_PATH` sets `lake_path`.
 
 ```bash
 uv sync
@@ -171,20 +196,19 @@ sudo mkdir -p /data1/huron
 sudo chown "$(id -un):$(id -gn)" /data1/huron
 uv run huron config set api_url http://127.0.0.1:8080
 uv run huron config set issuer http://127.0.0.1:8081/realms/company
-uv run huron config set acl_backend none
+uv run huron config set mount_prefix /data1/huron   # the lake path on this machine
 uv run huron login --device    # open the printed link, sign in as admin, then grant access
 uv run huron whoami
-uv run huron adm provision-orgs --dry-run   # what it would create
-uv run huron adm provision-orgs             # /data1/huron/helio and /data1/huron/geo, with markers
-uv run huron adm verify-mounts              # both organizations ok
+uv run huron adm provision-orgs --dry-run   # what it would change
+uv run huron adm provision-orgs             # the lake path and the organizations, with markers
+uv run huron adm verify-mounts              # every organization ok
 ```
 
-`provision-orgs` writes a marker `.huron` into each organization directory with the stack's
-instance id (`instance_id` in `huron.dev.yaml`, also at http://127.0.0.1:8080/healthz) and the
-organization's name; the CLI refuses to write under an organization whose marker does not match.
-An organization without a `root` lives under the CLI's `mount_prefix` instead (default
-`/projects/huron`, `huron config set mount_prefix <dir>`), marked once with
-`huron adm provision-orgs` when it is not declared.
+`provision-orgs` takes the lake path from `mount_prefix`. It writes a marker `.huron` at the lake
+path and into each organization directory, with the stack's instance id (`instance_id` in
+`huron.dev.yaml`, also at http://127.0.0.1:8080/healthz). The marker of an organization also names
+the organization. The API refuses to write under an organization whose marker does not match. On
+`make app`, `lake-init` did this already, and the command changes nothing.
 
 `huron login --browser` uses the loopback flow instead: it opens Keycloak in a browser on this
 machine and receives the answer on `http://127.0.0.1:<random port>/callback`. Plain `huron login`
@@ -214,32 +238,19 @@ schema; the fixture's organizations the file does not declare, `astro` and `plan
 with their catalogs. It runs on every `make app`, creates each fixture catalog that is still
 missing, and changes nothing once its data is there.
 
-A commit publishes uploads, and the API of `make app` has no lake. So the seed makes the collections
-without files, and its log says `seed: no HURON_SEED_LAKE_DIR, so the collections get no files`.
-`HURON_SEED_LAKE_DIR` names the lake of an API that has one, mounted into the seed: the seed then
-uploads the fixture's files through the API's upload hooks, writes their bytes into the lake's
-`.tus-uploads`, and commits them. On `make app`, the seed records catalog entries only, and no
-directory exists on your share. `uv run huron adm check --catalog geoscience` therefore reports the
-seeded namespaces and collections missing from your share (`namespace_dir_missing`,
-`collection_dir_missing`) and exits 1.
+A commit publishes uploads. The seed of `make app` reads `uploads_url` from the API and sends the
+bytes of the fixture's files with tus through the upload proxy and tusd, as the CLI does. Then it
+commits them. The API makes the directories of the seeded catalogs, namespaces and collections on
+the lake.
 
 On `heliophysics`, and without `--catalog`, `huron adm check` stops with `error: internal error
-[INTERNAL]` instead. That is a known API bug, not your setup: the metadata of the seeded collection
+[INTERNAL]`. That is a known API bug, not your setup: the metadata of the seeded collection
 `heliophysics.solar-wind.wind.swe-2023` holds the number `-1e31`, which the API reads back from
 PostgreSQL as an integer too large for its canonical JSON, so it cannot render that collection's
 `metadata.json`. The web's `metadata.json` page of that collection fails the same way.
 
-Before the CLI writes below a seeded namespace, a platform admin creates its directories on your
-share; re-running a create command repairs a missing directory. Signed in as `admin`, after
-`huron adm provision-orgs` (above):
-
-```bash
-uv run huron create catalog heliophysics --org helio
-uv run huron create namespace heliophysics.solar-wind.ace --parents
-```
-
-Then sign out of Keycloak as described above, sign the CLI in as `user`, and make a collection. It
-shows in the web at once, at
+Sign out of Keycloak as described above, sign the CLI in as `user`, and make a collection in a
+seeded namespace. It shows in the web at once, at
 http://localhost:3000/catalogs/heliophysics/collections/solar-wind.ace.my-run:
 
 ```bash
@@ -254,9 +265,9 @@ uv run huron add "$work/results.csv"
 uv run huron push -m "First results"
 ```
 
-`add` stages `results.csv`. `push` then stops with `error: the Huron service does not accept
-uploads`: the API of `make app` has no `lake_path` and no `uploads_url`. A push needs an API that
-holds the lake and a tusd behind an upload proxy.
+`add` stages `results.csv`. `push` uploads it through the upload proxy and tusd, and commits it.
+The file is then at
+`/data1/huron/helio/heliophysics/solar-wind/ace/my-run/results.csv`.
 
 ### The NOAA demo
 
@@ -272,17 +283,15 @@ raw files
    sign-in are left alone, and signs it in as `admin` without a browser;
 3. downloads the raw files from NOAA into `~/.cache/huron/demo-noaa/raw` the first time (about
    90 s) and reuses them afterwards;
-4. runs `huron adm provision-orgs`, then `examples/noaa/load.sh`, which creates the catalog, its
+4. sets the CLI's `mount_prefix` to the lake path (`HURON_LAKE_PATH`, default `/data1/huron`),
+   runs `huron adm provision-orgs`, then `examples/noaa/load.sh`, which creates the catalog, its
    namespaces and collections and pushes the files to `/data1/huron/noaa/planetary/…`; it grants
    nothing, since `noaa`'s `groups.reader` in `huron.dev.yaml` makes `noaa-readers` a reader of
    every `noaa` catalog;
 5. prints `huron --catalog planetary tree` and the files on disk.
 
-The API of `make app` has no lake and no tusd, so on that stack the pushes of step 4 stop with
-`error: the Huron service does not accept uploads`.
-
 It needs `/data1/huron` writable by you, like the rest of [the CLI on the host](#the-cli-on-the-host).
-Running it again changes nothing. `NOAA_REFRESH=1 make demo-noaa` downloads again and pushes only
+Running it again changes nothing: the second run uploads no file and makes no commit. `NOAA_REFRESH=1 make demo-noaa` downloads again and pushes only
 what changed (the current quarter, which NOAA reissues daily, and a new dated snapshot);
 `NOAA_RAW=<dir> make demo-noaa` loads an existing `examples/noaa/fetch.py --out <dir>` download
 instead. In the web, open http://localhost:3000/catalogs/planetary as `admin`, or as `user`, a
@@ -294,19 +303,72 @@ member of `noaa-readers`.
 make app-logs    # follow the logs
 make app-down    # stop; the database stays in the volume huron-app_postgres-data
 make app         # start again: the data is still there and the seed changes nothing
-make app-reset   # stop and delete the database; the next make app seeds again
-make down        # stop this stack and the make up stack; the data of both stays
+make app-reset   # stop and delete the database; the lake /data1/huron stays
+make down        # stop the stacks of make app, make up and make uploads; their data stays
 ```
 
-For a fresh database with the seed's demo data:
+### Start again with an empty database
 
-```bash
-make app-reset && make app
-```
+For a fresh database with the seed's demo data, do these steps:
 
-`make app-reset` deletes the database, not `/data1/huron`: the directories and files of an earlier
-`make demo-noaa` stay there, and the next `make demo-noaa` records them again, reusing the
-directories and replacing each file at its path. Nothing under `/data1/huron` is deleted.
+1. Run `make app-reset`. It stops the stack and deletes the database. It does not change the
+   lake `/data1/huron`.
+2. Delete the catalog directories in `/data1/huron/helio`, `/data1/huron/geo` and
+   `/data1/huron/noaa`. Keep each `.huron` marker and each `.huron-objects` directory. This
+   command deletes every other entry of the three organization directories:
+
+   ```bash
+   find /data1/huron/helio /data1/huron/geo /data1/huron/noaa -mindepth 1 -maxdepth 1 \
+     ! -name .huron ! -name .huron-objects -exec rm -rf {} +
+   ```
+
+3. Run `make app`. The seed loads the demo data again.
+
+Step 2 is necessary. The seed and `make demo-noaa` make catalog directories on the lake, and no
+row of the new database records them. A create command adopts an existing directory only when it
+is empty. Without step 2, the seed stops at its first catalog with `STORAGE_FAILED`, and
+`make app` fails.
+
+When `make app` already failed in this way, the database records that first catalog. A seed
+leaves out each catalog that exists, so a second seed leaves that catalog incomplete. Do the three
+steps again, from step 1.
+
+Step 2 also deletes the catalog directories that the stack of `make up` and `make api` made on the
+same lake. See [One lake, two databases](#one-lake-two-databases).
+
+### One lake, two databases
+
+`make app` and the stack of `make up` and `make api` keep separate databases, in the volumes
+`huron-app_postgres-data` and `huron_postgres-data`. Both stacks read `huron.dev.yaml`, so both use
+the lake `/data1/huron`. `make uploads` binds the same lake.
+
+On one stack, the seed, `make demo-noaa` and the create commands of the CLI make catalog
+directories on the lake. The database of the other stack does not record them. A create command
+adopts an existing directory only when it is empty. So on the other stack, the seed, the demo or
+a create of the same catalog stops at the first such directory with `STORAGE_FAILED` (`… exists
+and is not an empty directory`).
+
+Before you change to the other stack, do one of these:
+
+- Delete the catalog directories, as in step 2 of
+  [Start again with an empty database](#start-again-with-an-empty-database). Their files are then
+  lost. The database of the stack that made them still records them. On that stack,
+  `huron adm check` reports the missing directories. `huron adm repair <catalog> --recursive`
+  makes the directories again, but not the files: the check then reports each recorded file as
+  `file_missing`.
+- Give one stack a lake of its own. Write a copy of `huron.dev.yaml` with that directory as
+  `lake_path` and as each `root`, and make the directory, writable by you.
+  - For `make app`, set `HURON_LAKE_SOURCE`, `HURON_LAKE_PATH` and `HURON_DEV_CONFIG`, as
+    [The CLI on the host](#the-cli-on-the-host) shows.
+  - For the other stack, run `HURON_CONFIG_FILE=<copy> make api` and
+    `HURON_LAKE_SOURCE=<dir> HURON_LAKE_PATH=<dir> make uploads`.
+  - On both stacks, set the CLI's `mount_prefix` to the lake of the stack that you use, and run
+    `HURON_LAKE_PATH=<dir> make demo-noaa`.
+
+Each database holds its own signing keys. So a Huron token of one stack is not valid on the other
+stack: run `huron login` again after the change. The files that one stack leaves in `.tus-uploads`
+and `.huron-objects` stay on the lake, because the cleanup of the other stack selects by the rows
+of its own database.
 
 Keycloak keeps nothing between starts: it imports `scripts/keycloak/company-realm.json` whenever it
 starts, so realm edits apply after `make app-down` and `make app`, and every restart ends the Keycloak
@@ -316,8 +378,8 @@ memory, so restarting it signs everyone out of the web. The images `huron-app-ap
 
 ### Troubleshooting
 
-- **A port is in use.** When `make up` (5432, 8081), `make api` (8080), the group directory (8082)
-  or another program holds one of the stack's ports, `make app` stops with an error that names the
+- **A port is in use.** When `make up` (5432, 8081), `make api` (8080), the group directory (8082),
+  `make uploads` (1080) or another program holds one of the stack's ports, `make app` stops with an error that names the
   port, on Linux `failed to bind port 127.0.0.1:<port>/tcp: … bind: address already in use`.
   `make app` stops the `make up` stack itself; stop `make api` and the group directory with Ctrl-C
   in their terminals. When another Docker project publishes the port, such as a running `scripts/e2e.sh`,
@@ -344,7 +406,8 @@ memory, so restarting it signs everyone out of the web. The images `huron-app-ap
   `docker compose -f docker-compose.app.yml logs keycloak`, then run `make app-down` and
   `make app`, which restarts Keycloak. A seed that stopped later, part-way, creates
   the catalogs still missing on the next run but does not complete one it created only part-way: fix
-  the cause, then run `make app-reset`, which deletes the stack's database, and `make app`. Every user the fixture
+  the cause, then do the steps of
+  [Start again with an empty database](#start-again-with-an-empty-database). Every user the fixture
   names as a creator must be a realm user with the password `password`.
 - **The API does not start after an edit of `huron.dev.yaml`.** `make app` stops with the API
   unhealthy, or `make api` exits. Read the reason with `make app-logs` (or in the `make api`
@@ -358,7 +421,8 @@ memory, so restarting it signs everyone out of the web. The images `huron-app-ap
   database but not in `huron.dev.yaml`: removed from the file, or left from a seed of an older,
   unmanaged stack (such as `astro` and `planetary`). They do not fail `verify-mounts`, and
   `huron adm check` reports them as `org_undeclared` warnings. Declare them in the file again, or
-  run `make app-reset` and `make app` for a database with the declared organizations only.
+  do the steps of [Start again with an empty database](#start-again-with-an-empty-database) for a
+  database with the declared organizations only.
 - **The web says "That sign-in expired or was already used".** Open the web at
   http://localhost:3000, not http://127.0.0.1:3000, and sign in again.
 - **The web says "Huron didn't accept this sign-in", or the CLI says
@@ -377,7 +441,8 @@ memory, so restarting it signs everyone out of the web. The images `huron-app-ap
 - **Linux and Docker Desktop.** Both work the same way: ports published on 127.0.0.1 of the host reach
   the containers, and inside them 127.0.0.1 is the shared namespace. Docker Desktop must share the
   repository's folder for the bind mounts (`huron.dev.yaml`, `scripts/`, `docker/seed/`,
-  `web/e2e/support/`); its default shares your home directory. On Windows, clone the repository
+  `deploy/openshift/`, `web/e2e/support/`), and the lake directory (`/data1/huron`); its default
+  shares your home directory. On Windows, clone the repository
   inside WSL 2. With a Docker Engine older than 25, `make app` stops with `can't set healthcheck.start_interval as feature
   require Docker Engine v25 or later`: update Docker.
 

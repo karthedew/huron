@@ -9,14 +9,23 @@ which `huron.dev.yaml` declares.
 - `load.sh` creates the catalog, its namespaces and one collection per file group, then pushes
   the files.
 
-`make demo-noaa` does all of it in one command on a running stack whose API takes uploads (an API
-with a lake and a tusd behind an upload proxy). The API of `make app` has neither, so there the
-pushes stop with `error: the Huron service does not accept uploads`. The command signs a CLI of its own in as `admin` (configuration and state under
-`~/.cache/huron/demo-noaa/`, never your own), runs `fetch.py` into
-`~/.cache/huron/demo-noaa/raw` the first time, then `huron adm provision-orgs` and `load.sh`, and
-prints the tree and the files on disk. Running it again changes nothing. `NOAA_REFRESH=1` fetches
-again; `NOAA_RAW=<dir>` loads an existing download instead. The rest of this page is what it does,
-step by step, for running it by hand.
+`make demo-noaa` does all of it in one command on a running stack whose API takes uploads:
+`make app`, or `make api` with `make uploads`. In both stacks the API holds the lake, and tusd
+takes uploads behind the upload proxy on port 1080. The two stacks keep separate databases over
+the same lake. After a load on one stack, the load on the other stack stops at the catalog
+directory `planetary` with `STORAGE_FAILED`. The root README tells what to do before the change, in
+[One lake, two databases](../../README.md#one-lake-two-databases). The command does these steps:
+
+1. It signs a CLI of its own in as `admin`. The configuration and state of that CLI are under
+   `~/.cache/huron/demo-noaa/`, never your own.
+2. The first time, it runs `fetch.py` into `~/.cache/huron/demo-noaa/raw`.
+3. It sets the CLI's `mount_prefix` to the lake path (`HURON_LAKE_PATH`, default `/data1/huron`).
+   Then it runs `huron adm provision-orgs` and `load.sh`.
+4. It prints the tree and the files on disk.
+
+Running it again changes nothing: the second run uploads no file and makes no commit.
+`NOAA_REFRESH=1` fetches again. `NOAA_RAW=<dir>` loads an existing download instead. The rest of
+this page is what it does, step by step, for running it by hand.
 
 ## The data
 
@@ -145,16 +154,29 @@ skip the closing `huron tree`.
 
 ### After `make app-reset`
 
-`make app-reset` deletes the database but not the share, so `/data1/huron/noaa/planetary/…`
-still holds the directories, files and `metadata.json` sidecars of the earlier load, which the
-service no longer records. `load.sh` needs nothing special for that: the create commands accept
-an existing directory (and set its mode), `huron push` writes each file through a part file and
-renames it over the one at the same path, and activating a collection rewrites its
-`metadata.json`. A file that is byte-for-byte the same is simply written again; a newer copy
-(such as a reissued current quarter) replaces the old one. Nothing is deleted. Only a file the
-earlier load pushed that is no longer in the raw directory (an older dated snapshot, say) stays
-on disk unrecorded; `huron adm check --catalog planetary` reports it as `file_unrecorded`, and you
-may delete it by hand.
+`make app-reset` deletes the database but not the lake. So `/data1/huron/noaa/planetary` still
+holds the directories, files and `metadata.json` sidecars of the earlier load, and the service no
+longer records them. A create command adopts an existing directory only when it is empty. So the
+next `load.sh` stops when it creates the catalog `planetary`: the API answers `STORAGE_FAILED`,
+because the directory exists and is not empty. Nothing on the lake is deleted.
+
+Before the next load, delete the catalog directory `/data1/huron/noaa/planetary`. Keep
+`/data1/huron/noaa/.huron` and `/data1/huron/noaa/.huron-objects`. For the whole stack,
+[Start again with an empty database](../../README.md#start-again-with-an-empty-database) in the
+root README gives the steps.
+
+When a load already stopped in this way, the database records the catalog `planetary`. If you
+then delete its directory, the next load stops with
+`noaa/planetary/k-index does not exist [STORAGE_FAILED]` and a hint to run `huron adm repair`.
+The repair makes the missing directories again. Run it with the CLI of the demo, from the
+repository root, then run `make demo-noaa` again:
+
+```bash
+env -u HURON_ISSUER -u HURON_API_URL -u HURON_CLIENT_ID -u HURON_MOUNT_PREFIX \
+  XDG_CONFIG_HOME="$HOME/.cache/huron/demo-noaa/config" \
+  XDG_STATE_HOME="$HOME/.cache/huron/demo-noaa/state" \
+  .venv/bin/huron --catalog planetary adm repair planetary --recursive
+```
 
 ## Browse
 
@@ -178,8 +200,9 @@ first (a dry-run commit) and stops with `FORBIDDEN` before any byte reaches the 
 ## Where the bytes are
 
 `noaa` has the root `/data1/huron` in `huron.dev.yaml`, so its directory is `/data1/huron/noaa`.
-That directory is created and marked by `huron adm provision-orgs` and checked by
-`huron adm verify-mounts`. Each collection is a directory under it, holding the raw file as it
+`huron adm provision-orgs` creates and marks that directory and its object area `.huron-objects`.
+On `make app`, the service `lake-init` runs it before the API starts. `huron adm verify-mounts`
+checks the directory. Each collection is a directory under it, holding the raw file as it
 was fetched and the `metadata.json` sidecar that the service renders:
 
 ```text
