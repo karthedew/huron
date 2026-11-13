@@ -199,7 +199,373 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
   cluster context before this task starts.
 - Verification: the old task's entry.
 - Dependencies: D3.
-- Status: pending
+- Status: complete (2026-11-13). Verification 9 passed after 9 implementation passes; verifications
+  1 to 8 failed. The owner decided on 2026-11-13 that the cluster of this task is the kind cluster
+  `huron-local` with ingress-nginx on 127.0.0.1:18444, not `ocp-test`. The node of `ocp-test`
+  shows no directory of the host, and `ocp-test` holds port 18443. `ocp-test` stays read-only.
+  - Done: the base `deploy/openshift` (the API with one replica, `Recreate`, the lake claim, the
+    service user and group, the probes and a grace period of 90 s; `uploads.yaml` with the upload
+    pod, its Service, its Route and the claim `huron-lake`), the overlay `deploy/local` with
+    `kind.yaml.template`, `scripts/k8s-local.sh` with the targets `k8s-local-cluster`,
+    `k8s-local`, `k8s-local-smoke` and `k8s-local-down`, `tests/unit/test_deploy_manifests.py`,
+    a liveness test in `tests/unit/api/test_service.py`, `deploy/README.md`, and the deployment
+    text of `docs/operator.md` and `docs/architecture.md`. The readiness probe of plan 2 was in
+    the code already. The manifests now use it.
+  - The script gives `K8S_LOCAL_KUBECONFIG` (default `~/.kube/huron-local.config`) to each
+    kubectl and kind command, with the context `kind-huron-local`. It does not read the default
+    kubeconfig.
+  - Runs of the first implementation on `huron-local`:
+    1. `make k8s-local` three times. I stopped the first run: Keycloak got `OOMKilled` at
+       1536Mi. The second run exited 0, with one more `OOMKilled` at 2Gi. The third run, a
+       deploy again on the same namespace with a limit of 3Gi, exited 0 with no restart.
+    2. `make k8s-local-smoke` three times, each with exit code 0. Each push went through the Ingress, nginx and tusd
+       (3 `POST` and 2 `PATCH`), the host read the files, and `huron adm check --hash` from the
+       host mount reported no finding. The first run left its `kubectl port-forward` running.
+       The fix starts kubectl with no function between, so that the trap stops it.
+    3. `make k8s-local-down`, then `make k8s-local` and `make k8s-local-smoke` on the old lake,
+       each with exit code 0.
+    4. `K8S_LOCAL_PURGE=1 make k8s-local-down`, with exit code 0. The namespace `huron` and the PersistentVolume
+       are gone, the lake directory is empty, and `huron:local` is gone from the host and with
+       the other four images from the node. The cluster and ingress-nginx stay.
+  - Measured on 2026-11-13: ingress-nginx gives its default certificate ("Kubernetes Ingress
+    Controller Fake Certificate") to a request with no server name, also when an Ingress with
+    no host names the TLS Secret. With the server name `localhost`, it gives the certificate of
+    the Secret. So the Ingresses name the host `localhost`.
+  - The first implementation gave the Job `huron-migrate` of the overlay `backoffLimit: 6`,
+    because its first pod failed while PostgreSQL started. Fix pass 2 replaced this (below).
+  - For the first implementation, `make gate` exits 0: 4598 tests passed, 39 deselected, 0
+    skipped. 12332 statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+    `make docs-check` and
+    `uv run python scripts/ste_check.py` pass. `kubectl kustomize` renders both directories, and
+    the grep of the old task prints nothing.
+  - The implementation did not run `make k8s-local-cluster`, because `huron-local` existed. Its
+    configuration, which `scripts/k8s-local.sh kind-config` prints, equals the configuration that
+    made `huron-local`. The verifiers ran `make k8s-local-cluster` in verifications 1, 3 and 4,
+    each with exit code 0.
+  - Choices where the plan is silent: the longest seal that the settings allow is
+    `upload_hook_timeout`, because the CLI waits that long for a seal. The organizations of
+    `deploy/local/huron.yaml` have no root, so the host can mount the lake at another path. The
+    Job `huron-lake-init` runs as the service user, not as UID 0. The manifest tests fail, and do
+    not skip, when `kubectl` is missing.
+  - Verification 1 (2026-11-13): FAIL with six findings. The gate and the cluster cycle passed
+    for the verifier, and it made `huron-local` again with `make k8s-local-cluster` (exit 0).
+    1. A comment in `deploy/openshift/uploads.yaml` and in `docker-compose.uploads.yml` named a
+       plan file.
+    2. The Job `huron-lake-init` did not run before the API pod. The first API pod went into
+       BackOff, and `clean-locks` failed two times on an empty lake.
+    3. `kind-config` also changed the comment of the template, changed a `&` in the lake path
+       (bash 5.3), and wrote the path without quotes.
+    4. The message for an existing cluster gave `kind delete cluster` without `--kubeconfig`.
+    5. Tests read the text of the script and of the nginx template.
+    6. `down` deleted before it checked the cluster. With another kubeconfig and context it
+       would delete on that cluster.
+  - Fix pass 2:
+    1. The two comments describe the flags.
+    2. `make k8s-local` applies each object but the two Deployments, waits for the two Jobs, then
+       applies the Deployments. The Deployments carry the label `app.kubernetes.io/component`.
+       The Job `huron-migrate` of the overlay waits for PostgreSQL in an init container, and its
+       `backoffLimit: 6` patch is gone. The script starts the API pod again only on a deploy
+       again in the same namespace, so that the pod runs the imported image.
+    3. `kind-config` changes only the line `hostPath: @K8S_LOCAL_LAKE@`. It writes the path as a
+       single-quoted YAML string, and it refuses a relative path and a line break. A test uses
+       the path `a&b c'd \ "e" #f: g`.
+    4. The message gives the full command with `--kubeconfig`.
+    5. The verb `settings` prints the settings of the script. The tests read it, and they check
+       `/livez` and `/readyz` through the parsed nginx configuration.
+    6. Each verb that uses the cluster first checks that the node binds `K8S_LOCAL_LAKE` at
+       `/huron-lake`. `down` does this before a delete. This check also holds when the lake
+       directory is gone. A purge also compares the device, the inode and the modification time.
+       Tests with a fake `kubectl` and `docker` show no delete for another context, for a node
+       that does not bind the lake, and for a purge of a lake that is gone. No command ran
+       against `ocp-test`.
+  - Measured on `huron-local` after fix pass 2, each command with exit code 0:
+    1. `make k8s-local` on an empty lake: each container, init containers included, has 0
+       restarts, and there is no `BackOff` event. The other warnings are readiness probes before
+       the start and one `FailedScheduling` of the Job before its claim was bound.
+    2. `make k8s-local-smoke`: versions 2 to 3 and 3 to 4, and `huron adm check --hash` from the
+       host mount reports no finding.
+    3. `make k8s-local-down`, then `make k8s-local` on the kept lake: 0 restarts and no
+       `BackOff` event.
+    4. `make k8s-local` again in the same namespace: the API pod starts again with 0 restarts.
+    5. `make k8s-local-smoke`, then `K8S_LOCAL_PURGE=1 make k8s-local-down`. The namespace, the
+       PersistentVolume, the lake content and the five images in the node are gone. The cluster
+       and ingress-nginx stay, and port 8081 is free.
+  - After fix pass 2, `make gate` exits 0: 4609 tests passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+    `uv run pytest -m integration`: 39 passed. `make docs-check` and
+    `uv run python scripts/ste_check.py` pass.
+  - Verification 2 (2026-11-13): FAIL with four low findings. It confirmed the six fixes of fix
+    pass 2. Its runs: `make gate` with 4609 passed, 12332 statements, 0 missed, 68 clones in 25
+    groups; `uv run pytest -m integration` with 39 passed; the cluster cycle with exit code 0,
+    0 restarts and no `BackOff` event.
+    1. A test comment named a plan, and the help of `make gate` named a section.
+    2. `kind-config` refused a line break but not a carriage return, which YAML folds.
+    3. The purge test passed without `check_lake` on a host whose user is not 1000:1000.
+    4. The comment of `service_group` in `deploy/local/huron.yaml` and the rule in
+       `deploy/README.md` did not describe the local cluster.
+    The verifier also asked for two hardening items: a purge of `/` or of the home directory,
+    and the security context of the init container `wait-for-postgres`.
+  - Fix pass 3:
+    1. The two texts name no plan and no section. A grep of each file of the change set for
+       plan, phase, task and section references found no other.
+    2. The script refuses a line break and a carriage return in `K8S_LOCAL_LAKE`, with a test.
+    3. A fake `id` gives the UID and the GID of the overlay, which the verb `settings` prints.
+       Each refusal test asserts its message. New tests cover the refusal for another user, a
+       node that shows another directory, and a purge that empties the lake.
+    4. The texts say that GID 1000 has no name in the API image, so `service_group` is only the
+       name that `/healthz` reports. `/healthz` on the cluster reports `uid` 1000, `gid` 1000
+       and `group` `huron`.
+    5. `kind-config`, `cluster` and a purge refuse a lake that is `/` or the home directory, with
+       tests.
+    6. `wait-for-postgres` has a read-only root filesystem and the seccomp profile
+       `RuntimeDefault`. A test rule requires this of each init container of the overlay.
+  - Measured on `huron-local` after fix pass 3, each with exit code 0: `make k8s-local` on an
+    empty lake (each container 0 restarts, no `BackOff` event, `wait-for-postgres` ran with the
+    new security context), `make k8s-local-smoke`, and `K8S_LOCAL_PURGE=1 make k8s-local-down`.
+    The cluster stays with ingress-nginx, with no namespace `huron`, no PersistentVolume and an
+    empty lake directory.
+  - After fix pass 3, `make gate` exits 0: 4621 tests passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+    `make docs-check` and `uv run python scripts/ste_check.py` pass. The integration tier did not
+    run again: fix pass 3 changed no file that it uses.
+  - Verification 3 (2026-11-13): FAIL with three small findings. It confirmed the six items of
+    fix pass 3. Its runs: `make gate` with 4621 passed, 12332 statements, 0 missed, 68 clones in
+    25 groups; the cluster cycle with exit code 0 and 0 restarts. It made `huron-local` again
+    with `make k8s-local-cluster` (exit 0).
+    1. `check_lake_path` refused the home directory but not a directory above it, for example
+       `$HOME/..`. A purge then reached `find … -delete`.
+    2. Six refusal tests of `down` repeated one body.
+    3. The help of `make k8s-local-down` said that the lake directory stays unless
+       `K8S_LOCAL_PURGE=1`. A purge deletes only its content.
+    The verifier also asked that the README and the script header name the refusals of a purge.
+  - Fix pass 4:
+    1. `check_lake_path` compares resolved paths (`realpath -m`). It refuses the home directory
+       and each directory above it, also through `/.`, `..` and a symbolic link, and it takes a
+       directory beside the home directory. The refusal test of `kind-config` has cases for
+       each. The refusal test of `down` had cases for the home directory, `..` and `/` only.
+       Fix pass 5 added `/.` and a symbolic link.
+    2. The refusals of `down` are one parametrized test with 8 cases. Each case asserts its
+       message, exit code 1, and no call of a delete or of `find`. A fake `find` deletes
+       nothing. The negative tests of the writer rule and of the tusd rule are two
+       parametrized tests.
+    3. The help says that the lake content stays unless `K8S_LOCAL_PURGE=1`.
+    4. `deploy/README.md` and the header of `scripts/k8s-local.sh` name the refusals of a purge.
+  - Measured on `huron-local` after fix pass 4, each with exit code 0: `make k8s-local` on an
+    empty lake (each container 0 restarts, no `BackOff` event), `make k8s-local-smoke`, and
+    `K8S_LOCAL_PURGE=1 make k8s-local-down`. The cluster stays with ingress-nginx, with no
+    namespace `huron`, no PersistentVolume and an empty lake directory.
+  - After fix pass 4, `make gate` exits 0: 4629 tests passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+    `make docs-check` and `uv run python scripts/ste_check.py` pass. The integration tier did not
+    run again: fix pass 4 changed no file that it uses.
+  - Verification 4 (2026-11-13): FAIL with three small findings in the tests and in this
+    record. It confirmed the four items of fix pass 4 and found no defect in the behaviour of
+    the script. Its runs: `make gate` with 4629 passed, 12332 statements, 0 missed, 68 clones in
+    25 groups; the cluster cycle and a new `huron-local` from `make k8s-local-cluster`, each with
+    exit code 0 and 0 restarts.
+    1. Two mutants of `check_lake_path` passed all tests: `HOME` without `realpath`, and the
+       comparison without the slashes.
+    2. The test of the purge asserted the text of the `find` command, not the empty lake.
+    3. This record said that the refusal test of `down` had cases for `/.` and a symbolic link.
+  - Fix pass 5, tests and this record only:
+    1. New tests: `HOME` is a link to the home directory and the lake is the real home directory
+       (refused), and a directory beside the home directory whose name is a prefix of the home
+       name (taken). The refusal test of `down` has 18 cases. New cases cover `/.`, a link to the
+       home directory, another group, a lake that is a file, a node that cannot run `stat`, no
+       kubeconfig, two nodes, no node, a node that is not a container, and a bind whose path
+       ends with the lake path.
+    2. The test of the purge runs the real `find` on a lake in the temporary directory of the
+       test. It asserts that the lake directory exists and holds no entry. The refusal tests keep
+       the fake `find`.
+    3. This record is corrected where it was not true.
+    - Mutants: a script in the scratch directory applied 24 single mutants to `check_lake_path`,
+      `check_user`, `check_lake`, `preflight` and the purge of `down`, one at a time, and ran
+      `tests/unit/test_deploy_manifests.py`. Each mutant made a test fail. The script then
+      restored `scripts/k8s-local.sh`, and `cmp` found it equal to the copy. The checks
+      `command -v kubectl` and `command -v docker` have no test, because the fakes are on the
+      path.
+  - After fix pass 5, `make gate` exits 0: 4642 tests passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+    `make docs-check` and `uv run python scripts/ste_check.py` pass. Fix pass 5 changed no file
+    that the cluster or the integration tier uses, so neither ran again.
+  - Verification 5 (2026-11-13): FAIL with two small findings in the tests. It confirmed the
+    three fixes of fix pass 5 and found the script, the manifests, the gate, the cluster run and
+    this record correct. Its runs: `make gate` with 4642 passed, 12332 statements, 0 missed, 68
+    clones in 25 groups; up, smoke and a purging down on `huron-local` with exit code 0. The 24
+    mutants of fix pass 5 and 31 of its own 33 mutants made a test fail.
+    1. The mutant `grep -Fqx` to `grep -qx` of the mount check passed all tests: the lake path
+       became a pattern.
+    2. The tests gave the host's variables to the script. With `K8S_LOCAL_PURGE=1` or
+       `K8S_LOCAL_CONTEXT=other` exported, tests failed.
+    It also noted that the fake `docker` does not read the `--format` template, so a mutant that
+    removes the line break from that template passes.
+  - Fix pass 6, tests and this record only:
+    1. A new case of the refusal test of `down`: the lake `<dir>/l.ke` and a node that binds
+       `<dir>/lake`. The refusal test of `down` has 19 cases.
+    2. The tests run the script with no host variable that starts with `K8S_LOCAL_`, `KUBECONFIG`,
+       `FAKE_` or `CALLS`, and with a fixed `HOME` that does not exist, unless a test sets these.
+       With `K8S_LOCAL_PURGE=1`, `K8S_LOCAL_CONTEXT=other`, `K8S_LOCAL_LAKE=/`,
+       `K8S_LOCAL_KUBECONFIG=/nonexistent`, `KUBECONFIG=/nonexistent`, `FAKE_NODE="a b"`,
+       `CALLS=/dev/null` and `HOME` in the scratch directory exported, the 125 tests of the file
+       pass. Verification 6 found this sentence false, and fix pass 7 corrects it: the other
+       tests that start a process run programs that do not read these variables, so a host
+       value does not change their result. Some of them give the full host environment to the
+       program: `tests/support/crash.py` keeps each host variable but `HURON_*`,
+       `tests/support/state_child.py` removes only `HURON_*`, `COV_CORE_*` and `XDG_*`, and
+       `tests/unit/storage/test_organizations.py` and
+       `tests/unit/storage/test_provision_catalogs.py` run `sh` with the full host environment. `tests/support/devprovision.py` builds the
+       environment from nothing.
+    - Mutants ran in a copy of the tree in the scratch directory, with the virtual environment
+      of the work tree. The script of the work tree did not change: its SHA-256 before and after
+      is equal. The new mutant (`grep -qx`) and the 24 earlier mutants each made a test fail, 25
+      of 25.
+    - The fake `docker` still does not read the `--format` template. A test of that template
+      needs the real `docker`, so the mutant stays. With the real `docker` the mutant refuses each
+      cluster, so the check stays closed.
+  - After fix pass 6, `make gate` exits 0: 4643 tests passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+    `make docs-check` and `uv run python scripts/ste_check.py` pass. Fix pass 6 changed no file
+    that the cluster or the integration tier uses, so neither ran again.
+  - Verification 6 (2026-11-13): FAIL with one gap in a test of a safety check and one false
+    sentence in this record. It confirmed the two fixes of fix pass 6 and found the script, the
+    manifests, the gate and the cluster run correct. Its runs: `make gate` with 4643 passed,
+    12332 statements, 0 missed, 68 clones in 25 groups; up, smoke and a purging down with exit
+    code 0.
+    1. `down` tested `K8S_LOCAL_PURGE == 1` two times: before the checks and before the delete.
+       A mutant of the second test to `-n` or `== 1*` passed all tests. With
+       `K8S_LOCAL_PURGE=yes` that mutant skips the checks and runs `find … -delete`.
+    2. The sentence of fix pass 6 about the other tests that start a process was false.
+    It also found that the tests let bash startup variables (`SHELLOPTS`, `BASH_ENV`) through.
+  - Fix pass 7:
+    1. `down` decides the purge one time, in the variable `purge`, and the checks and the delete
+       read it. Only the value `1` purges. A new parametrized test runs `down` with
+       `K8S_LOCAL_PURGE` set to `0`, `yes`, `10` and the empty string: each exits 0, deletes the
+       namespace and the volume, and calls no `find` and no image removal. The header of the
+       script and `deploy/README.md` say that only the value `1` purges.
+    2. The sentence of fix pass 6 is corrected (above).
+    3. The tests run the script without `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS` and the
+       variables that start with `BASH_FUNC_`. With these exported (`SHELLOPTS=xtrace` and a
+       `BASH_ENV` file that exits 3, among others), and with the variables of fix pass 6, the
+       129 tests of the file pass.
+    - Mutants ran in a new copy of the tree in the scratch directory: the 25 earlier mutants
+      and 4 new ones on the purge decision (`-n`, `== 1*`, the delete drifting to `-n`, the
+      checks never running). Each of the 29 made a test fail. The script of the work tree did
+      not change during the mutant run.
+    - The SHA-256 of `scripts/k8s-local.sh` after fix pass 7 is
+      `8f250abede4ec33ffa78eaeee10ce854bac9e4a9e05fb9242997ec43d9697619`.
+  - Measured on `huron-local` after fix pass 7, each with exit code 0:
+    1. `make k8s-local` on an empty lake: each container 0 restarts, no `BackOff` event.
+    2. `make k8s-local-smoke`: versions 2 to 3 and 3 to 4, and the check reports no finding.
+    3. `make k8s-local-down`: the lake keeps `.huron`, `.tus-uploads` and the three organization
+       directories.
+    4. `make k8s-local` on the kept lake: each container 0 restarts, no `BackOff` event, and no
+       start again of the API pod.
+    5. `K8S_LOCAL_PURGE=1 make k8s-local-down`: the lake directory has no entry. The namespace,
+       the PersistentVolume and the images are gone. ingress-nginx runs, and port 8081 is free.
+  - After fix pass 7, `make gate` exits 0: 4647 tests passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+    `make docs-check` and `uv run python scripts/ste_check.py` pass. The integration tier did not
+    run again: fix pass 7 changed no file that it uses.
+  - Verification 7 (2026-11-13): FAIL with three groups of surviving comparison mutants in the
+    tests. It found the script, the manifests, the gate, the cluster cycle and this record
+    correct, and confirmed the three items of fix pass 7. Its runs: `make gate` with 4647
+    passed, 12332 statements, 0 missed, 68 clones in 25 groups; the cluster cycle with exit code
+    0, with a down with `K8S_LOCAL_PURGE=yes` that left the lake as it was.
+    1. The purge decision: `== *1`, `=~ 1$` and `== 1 || == true` passed all tests.
+    2. The context check: a prefix, a suffix and a regex match passed all tests.
+    3. The user check: a regex, a prefix and a suffix match passed all tests.
+  - Fix pass 8, tests and this record only. The script did not change: its SHA-256 is still
+    `8f250abede4ec33ffa78eaeee10ce854bac9e4a9e05fb9242997ec43d9697619`.
+    1. The comparisons of the safety checks:
+       - C1 `preflight`: `[[ -f "$kubeconfig" ]]`.
+       - C2 `preflight`: `[[ "$current" == "$context" ]]`.
+       - C3 `preflight`: `[[ -n "$nodes" && "$nodes" != *" "* ]]`.
+       - C4 `preflight`: the exit code of `docker inspect --type container`.
+       - C5 `preflight`: `grep -Fqx -- "$lake=$node_lake"`.
+       - C6 `check_lake_path`: `[[ "$lake" == /* ]]`.
+       - C7 `check_lake_path`: `[[ "$lake" != *[$'\n\r']* ]]`.
+       - C8 `check_lake_path`: `[[ "$home/" != "${real%/}/"* ]]`, with the two `realpath -m`.
+       - C9 `check_user`: `[[ "$(id -u):$(id -g)" == "$uid:$gid" ]]`.
+       - C10 `check_lake`: `[[ -d "$lake" ]]`.
+       - C11 `check_lake`: `[[ "$here" == "$there" ]]`, with the two `stat -c '%d %i %Y'`.
+       - C12 `down`: the purge decision `[[ "${K8S_LOCAL_PURGE:-}" == 1 ]]`.
+       - C13 and C14 `down`: the two readers `[[ "$purge" == yes ]]`, before the checks and
+         before the delete.
+    2. A driver in the scratch directory made the standard mutants of each comparison: `==` and
+       `!=` swapped, a prefix, a suffix, a substring and a regex match, each operand alone,
+       dropped `grep` flags (`-F`, `-x`, `-q`, all three, and `-v` added), `-d`, `-e`, `-f`, `-n`
+       and `-z` swapped, `fail` changed to `true` and to `say`, the check removed, and each part
+       of `uid:gid` and of the `stat` format dropped. The driver of fix pass 8 did not drop
+       `--`; fix pass 9 added that mutant (below). It ran each mutant in a copy of the tree in
+       the scratch directory: 137 mutants, 128 make a test fail. The 29 mutants of the earlier
+       passes ran again there: 29 of 29 make a test fail. The script of the work tree did not
+       change during the runs.
+    3. The new test cases: the values `01`, `1 `, ` 1` and `true` of `K8S_LOCAL_PURGE`, each also
+       with the lake directory gone; the contexts `kind-huron-local-2` and `x-kind-huron-local`;
+       the UID 11000 and the GID 10000; a kubeconfig that is a directory; a node that shows
+       another directory with the same time as the lake, so that only the inode differs; and a
+       lake at the root with the name of the home directory. The fake `docker` now runs the real
+       `stat`, with the format of the script, on the directory that the test gives the node.
+    4. The 9 mutants that passed all tests in fix pass 8: C5 `grep` without `-q`, C11 without
+       the device and C11 without the time on the two sides, and C13 and C14 with a prefix, a
+       substring and a regex match each. Fix pass 9 gives the full list of the survivors and
+       the reason for each one.
+    5. `BASH_FUNC_` moved from the group of the script variables to the group of the shell
+       variables.
+  - After fix pass 8, `make gate` exits 0: 4666 tests passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+    `make docs-check` and `uv run python scripts/ste_check.py` pass. Fix pass 8 changed no file
+    that the cluster or the integration tier uses, so neither ran again.
+  - Verification 8 (2026-11-13): FAIL with one surviving mutant. It confirmed the three fixes of
+    fix pass 8. Its runs: `make gate` with 4666 passed, 12332 statements, 0 missed, 68 clones in
+    25 groups; the 148 manifest tests in their normal order, in reverse order and with the hostile
+    environment; up, smoke and a purging down with exit code 0; its own 192 standard mutants, 176
+    of which make a test fail.
+    1. C5 without `--` (`grep -Fqx "$lake=$node_lake"`) passed all tests. With
+       `K8S_LOCAL_LAKE=-ve`, `grep` reads `-v -e "=/huron-lake"`, each bind line matches, and a
+       `down` with no purge deletes the namespace and the PersistentVolume on a node that does
+       not bind the lake.
+    It also found survivors that this record did not list: the suffix `*yes` of C13 and C14,
+    C3 and C7 as unanchored literal regexes, C8 as an anchored literal regex, and C11 with only
+    the inode on the two sides.
+  - Fix pass 9, one test case and this record. The script did not change: its SHA-256 is still
+    `8f250abede4ec33ffa78eaeee10ce854bac9e4a9e05fb9242997ec43d9697619`.
+    1. A new case of the refusal test of `down`: `K8S_LOCAL_LAKE=-ve`, with the message "does not
+       bind -ve at /huron-lake, so it is not the local cluster". The refusal test of `down` has
+       26 cases, and the file has 149 tests. In the copy of the tree, the original passes 149 of
+       149, and the mutant without `--` fails only this case.
+    2. The driver now also drops `--` from each command of the safety code that takes it: the
+       `grep` of C5 and the two `realpath -m --` of C8. It also makes the forms of verification
+       8: the suffix `*yes` of C13 and C14, C3 and C7 as unanchored regexes, C8 as an anchored
+       literal regex, and C11 with only the inode. It ran 146 mutants in a new copy of the tree:
+       129 make a test fail, and 17 pass all tests. The script of the work tree did not change.
+    3. The 17 mutants that pass all tests, and why each one is accepted:
+       - C3, the space as an unanchored regex (`! "$nodes" =~ " "`): the same test as the
+         pattern `*" "*`.
+       - C5 `grep` without `-q`: the exit code is the same. Only the bind line goes to the
+         output.
+       - C7 as an unanchored regex (`! "$lake" =~ [$'\n\r']`): the same test as the pattern.
+       - C8 as an anchored literal regex (`! "$home/" =~ ^"${real%/}/"`): the quoted part is
+         literal, so this is the same prefix test.
+       - C8, the `realpath` of the lake without `--`: the line before refuses a lake that does
+         not start with `/`, so no lake starts with `-`.
+       - C8, the `realpath` of `HOME` without `--`: the result changes only when `HOME` starts
+         with `-`. Such a `HOME` is not an absolute path, and a login does not set it.
+       - C11 without the device on the two sides: a test needs two filesystems with the same
+         inode number. The inode and the time stay compared.
+       - C11 without the time on the two sides: the same device and inode are the same
+         directory, which has one time.
+       - C11 with only the inode on the two sides: a different result needs the same inode
+         with another device or time, as above.
+       - C13 and C14, with a prefix, a suffix, a substring and a regex match each (8 mutants):
+         `purge` holds only `no` or `yes`, which the line before sets, so these mutants give the
+         same result.
+  - After fix pass 9, `make gate` exits 0: 4667 tests passed, 39 deselected, 0 skipped. 12332
+    statements, 0 missed. 68 clones in 25 groups against the baseline of 69 in 25.
+    `make docs-check` and `uv run python scripts/ste_check.py` pass. Fix pass 9 changed no file
+    that the cluster or the integration tier uses, so neither ran again.
+  - The nightly macOS job runs `pytest -m unit`. No test has the marker `unit`, so pytest stops
+    with exit code 4 before and after D4. That job does not run the manifest tests.
 
 ### D5 Measurements on the ONTAP export (part of old M11.13)
 

@@ -2,8 +2,15 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: huron
+  labels:
+    app.kubernetes.io/component: api
 spec:
-  replicas: 2
+  # The API is the one writer of the lake. Never run two API pods: one replica, and Recreate
+  # stops the old pod before the new pod starts. A second API process that finds the writer lock
+  # held serves reads only, but the lock is not a fence against a late disk call of a dead pod.
+  replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/component: api
@@ -12,6 +19,18 @@ spec:
       labels:
         app.kubernetes.io/component: api
     spec:
+      # Longer than upload_hook_timeout in huron.yaml (60 s): the CLI waits at most that time for
+      # a seal. The API stops its seals and its commit steps before it gives back the writer lock.
+      terminationGracePeriodSeconds: 90
+      # The service user U and the service group G. service_uid and service_group in huron.yaml
+      # name the same user and group. U is the first UID of the namespace's pinned range, and G
+      # is the gidNumber of the service group (docs/operator.md).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000700000
+        runAsGroup: 1000700000
+        supplementalGroups: [1000700000]
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: api
           image: huron
@@ -23,11 +42,19 @@ spec:
               value: /etc/huron/huron.yaml
           envFrom:
             - secretRef: {name: huron}
+          # /readyz checks the database, the key ring and the lake. On the lake, the writer
+          # writes a file in .tus-uploads and makes a hard link from the object area into each
+          # declared organization directory. The API waits at most 2 s for that probe.
           readinessProbe:
             httpGet: {path: /readyz, port: http}
-            periodSeconds: 10
+            timeoutSeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          # /healthz reads only the settings. It makes no call to the lake, so a hung NFS server
+          # makes the pod not ready, and Kubernetes does not restart it.
           livenessProbe:
             httpGet: {path: /healthz, port: http}
+            timeoutSeconds: 3
             periodSeconds: 20
           securityContext:
             allowPrivilegeEscalation: false
@@ -37,15 +64,19 @@ spec:
           resources:
             requests: {cpu: 200m, memory: 256Mi}
             limits: {cpu: "1", memory: 512Mi}
-          # The service mounts no share (D-18): only its configuration and a scratch /tmp.
           volumeMounts:
             - name: config
               mountPath: /etc/huron
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            # The lake, at lake_path of huron.yaml. The upload pod mounts it at the same path.
+            - name: lake
+              mountPath: /data1/huron
       volumes:
         - name: config
           configMap: {name: huron-config}
         - name: tmp
           emptyDir: {}
+        - name: lake
+          persistentVolumeClaim: {claimName: huron-lake}

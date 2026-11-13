@@ -32,8 +32,10 @@ services:
         cd "$$HURON_UPLOAD_DIR" && rm -f -- *.lock *.lock.* *.stop
         exec tusd "$$@"
       - tusd
-    # The flags of "Recommended tusd flags" in M11_PLAN_2_SAFE_PUBLICATION.md. -max-size=0 is no
-    # limit, the same as the default max_upload_bytes of the API.
+    # tusd listens on 127.0.0.1:1081 behind the proxy, keeps its uploads in .tus-uploads with
+    # private modes, and refuses download, termination and concatenation. It calls the API for the
+    # hooks pre-create and pre-finish, with the client's Authorization, and waits 60 s for a hook.
+    # -max-size=0 is no limit, the same as the default max_upload_bytes of the API.
     command:
       - -host=127.0.0.1
       - -port=1081

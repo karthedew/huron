@@ -1,0 +1,21 @@
+# The kind cluster huron-local of the local overlay. `scripts/k8s-local.sh cluster` writes this
+# file to .k8s-local/kind.yaml, with K8S_LOCAL_LAKE as a quoted string in the line of hostPath,
+# because kind needs an absolute host path. Then it makes the cluster and installs ingress-nginx.
+#
+# - The node shows the host directory of the lake at /huron-lake, the hostPath of the
+#   PersistentVolume huron-local-lake (lake.yaml).
+# - ingress-nginx listens on port 443 of the node, which kind publishes on 127.0.0.1:18444 of the
+#   host: the port of uploads_url in huron.yaml.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: huron-local
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.35.5@sha256:ce977ae6d65918d0b58a5f8b5e940429c2ce42fa3a5619ec2bbc60b949c0ac95
+    extraMounts:
+      - hostPath: @K8S_LOCAL_LAKE@
+        containerPath: /huron-lake
+    extraPortMappings:
+      - containerPort: 443
+        hostPort: 18444
+        listenAddress: 127.0.0.1

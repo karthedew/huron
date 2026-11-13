@@ -9,10 +9,14 @@ resources:
   - deployment.yaml
   - service.yaml
   - route.yaml
-# huron.yaml becomes the ConfigMap huron-config-<hash>: a change renames it, which rolls the API.
+  - uploads.yaml
 configMapGenerator:
+  # huron.yaml becomes the ConfigMap huron-config-<hash>: a change renames it, which rolls the API.
   - name: huron-config
     files: [huron.yaml]
+  # The nginx configuration of the upload proxy. A change renames it, which rolls the upload pod.
+  - name: huron-uploads-nginx
+    files: [nginx-uploads.conf.template]
 images:
   - name: huron
     newName: image-registry.openshift-image-registry.svc:5000/huron/huron

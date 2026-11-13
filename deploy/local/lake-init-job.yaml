@@ -1,0 +1,58 @@
+# Prepares the lake before the API pod and the upload pod start (scripts/k8s-local.sh applies
+# them after this Job ends): `scripts/dev-provision.py` of the API image runs
+# `huron adm provision-orgs --config` on the service configuration. That command sends no request
+# to the API. It gives lake_path its owner and mode, makes .tus-uploads and writes the marker,
+# then makes and marks each organization directory with its object area. The Job runs as the
+# service user, so the script gives that user and group as the owner. A second run changes
+# nothing.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: huron-lake-init
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        supplementalGroups: [1000]
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: lake-init
+          image: huron
+          imagePullPolicy: Never
+          command: ["python", "/app/scripts/dev-provision.py", "--config", "/etc/huron/huron.yaml"]
+          env:
+            # The API URL that the markers name.
+            - name: HURON_API_URL
+              value: https://localhost:18444
+            - name: XDG_CONFIG_HOME
+              value: /tmp/config
+            - name: XDG_STATE_HOME
+              value: /tmp/state
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/huron
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: lake
+              mountPath: /data1/huron
+      volumes:
+        - name: config
+          configMap: {name: huron-config}
+        - name: tmp
+          emptyDir: {}
+        - name: lake
+          persistentVolumeClaim: {claimName: huron-lake}

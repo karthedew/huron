@@ -1,0 +1,60 @@
+# PostgreSQL of the local cluster: one replica on the default storage class (local-path).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: huron-postgres
+spec:
+  serviceName: huron-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: database
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef: {name: huron-postgres}
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "huron", "-d", "huron"]
+            timeoutSeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: huron-postgres
+spec:
+  selector:
+    app.kubernetes.io/component: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

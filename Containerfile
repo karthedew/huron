@@ -13,6 +13,8 @@ RUN uv sync --frozen --no-dev
 FROM python:3.12-slim
 WORKDIR /app
 COPY --from=build /app /app
+# The lake preparation and the group directory of the local cluster (deploy/local).
+COPY scripts/dev-provision.py scripts/devgroups.py ./scripts/
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 RUN useradd --uid 10001 --no-create-home huron
 USER 10001

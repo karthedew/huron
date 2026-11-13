@@ -7,6 +7,8 @@
 !alembic.ini
 !src/
 !migrations/
+!scripts/dev-provision.py
+!scripts/devgroups.py
 
 # Never, not even inside the directories above.
 **/__pycache__

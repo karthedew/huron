@@ -1,5 +1,6 @@
 """Prepare the lake of a development stack: `lake-init` of docker-compose.app.yml runs it before
-the API starts.
+the API starts. The Job huron-lake-init of the local cluster (deploy/local) runs it from the API
+image.
 
     python scripts/dev-provision.py [--config <service configuration file>]
 

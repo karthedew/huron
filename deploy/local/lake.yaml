@@ -1,0 +1,20 @@
+# The lake of the local cluster: a directory of the node, bound to the claim huron-lake of the
+# base. The node must show a directory of the host at /huron-lake (a kind extraMount), so that the
+# CLI on the host reads the same files as the pods. scripts/k8s-local.sh refuses to deploy when
+# the node does not show the host directory there.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: huron-local-lake
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: huron
+    name: huron-lake
+  hostPath:
+    path: /huron-lake
+    type: Directory

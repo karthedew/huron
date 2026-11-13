@@ -3,6 +3,7 @@
 import os
 import stat
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -78,6 +79,23 @@ async def test_readiness_fails_when_the_lake_probe_does_not_answer_in_time() -> 
     assert ready.status_code == 503 and ready.json()["checks"]["lake"] is False
 
 
+async def test_liveness_answers_with_no_call_to_the_lake_while_the_lake_hangs() -> None:
+    clock = frozen()
+    watched = WatchedStorage()
+    try:
+        async with service(
+            storage=watched, probe_timeout=0.01, clock=clock, lake_path=LAKE
+        ) as running:
+            assert (await running.client.get("/readyz")).status_code == 503
+            calls = list(watched.calls)
+            live = await running.client.get("/healthz")
+            assert watched.calls == calls
+    finally:
+        watched.release.set()
+    assert "write_bytes" in calls
+    assert live.status_code == 200 and live.json()["status"] == "ok"
+
+
 async def test_a_lake_path_that_is_not_a_directory_stops_startup(tmp_path: Path) -> None:
     with pytest.raises(LakeUnavailable, match="does not open as a directory") as raised:
         async with service(lake_path=tmp_path / "unmounted"):
@@ -102,6 +120,20 @@ async def test_a_link_at_the_upload_directory_stops_startup_as_a_link(lake: Path
         async with service(lake_path=lake):
             pass
     assert raised.value.code == "SYMLINK_IN_LAKE"
+
+
+class WatchedStorage(StalledStorage):
+    """A lake whose writes block, and which records the name of each storage call."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        super().__init__()
+
+    def __getattribute__(self, name: str) -> Any:
+        found = super().__getattribute__(name)
+        if not name.startswith("_") and callable(found):
+            super().__getattribute__("calls").append(name)
+        return found
 
 
 class BrokenStorage(MemoryStorage):

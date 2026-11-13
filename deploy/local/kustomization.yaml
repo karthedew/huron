@@ -1,0 +1,93 @@
+# The local cluster: the base deploy/openshift on the kind cluster huron-local of the development
+# machine. scripts/k8s-local.sh applies it (make k8s-local). No generator reads a file outside
+# this directory.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: huron
+labels:
+  - pairs:
+      app.kubernetes.io/name: huron
+    includeSelectors: true
+resources:
+  - ../openshift
+  - namespace.yaml
+  - lake.yaml
+  - postgres.yaml
+  - lake-init-job.yaml
+  - ingress.yaml
+configMapGenerator:
+  - name: huron-config
+    behavior: replace
+    files: [huron.yaml]
+# Development passwords, as in dev.env.
+secretGenerator:
+  - name: huron
+    literals:
+      - HURON_DATABASE_URL=postgresql://huron:huron@huron-postgres:5432/huron
+  - name: huron-postgres
+    literals:
+      - POSTGRES_DB=huron
+      - POSTGRES_USER=huron
+      - POSTGRES_PASSWORD=huron
+# The API image that scripts/k8s-local.sh builds from this repository.
+images:
+  - name: huron
+    newName: huron
+    newTag: local
+  - name: image-registry.openshift-image-registry.svc:5000/huron/huron
+    newName: huron
+    newTag: local
+patches:
+  - path: api-patch.yaml
+  - path: uploads-patch.yaml
+  # No router serves a Route on this cluster: the Ingresses replace them.
+  - patch: |-
+      $patch: delete
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: huron
+  - patch: |-
+      $patch: delete
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: huron-uploads
+  # The claim of the base binds to the hostPath volume of lake.yaml.
+  - patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: huron-lake
+      spec:
+        volumeName: huron-local-lake
+        resources:
+          requests:
+            storage: 10Gi
+  - patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: huron-migrate
+      spec:
+        template:
+          spec:
+            # The Job and PostgreSQL start together: the migration waits until PostgreSQL answers.
+            initContainers:
+              - name: wait-for-postgres
+                image: postgres:16
+                imagePullPolicy: Never
+                command:
+                  - sh
+                  - -c
+                  - until pg_isready -q -h huron-postgres -U huron -d huron; do sleep 1; done
+                securityContext:
+                  runAsUser: 999
+                  runAsNonRoot: true
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  seccompProfile: {type: RuntimeDefault}
+                  capabilities: {drop: ["ALL"]}
+            containers:
+              - name: migrate
+                imagePullPolicy: Never

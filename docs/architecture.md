@@ -24,7 +24,8 @@ The web then reads the catalog through the API. Only the CLI touches the share.
 
 | Part | Runs on | Does |
 | --- | --- | --- |
-| `huron-api` | OpenShift, from the Helm chart or the kustomize base | Exchanges company ID tokens for Huron tokens. Records the catalog, the schema registry, the grants and the audit log. Has no access to the share. |
+| `huron-api` | OpenShift, from the Helm chart or the kustomize base | Exchanges company ID tokens for Huron tokens. Records the catalog, the schema registry, the grants and the audit log. From the kustomize base, it mounts the lake read-write as its one writer. From the Helm chart, it has no access to the share. |
+| `huron-uploads` | OpenShift, from the kustomize base | Runs nginx and tusd in one pod with one replica. nginx asks the API to authorize each upload request except `OPTIONS`, and tusd writes the upload into `.tus-uploads`. |
 | PostgreSQL | OpenShift or a managed server | Holds the schema `huron`, which is the catalog of record. |
 | `huron` CLI | The machines that mount the share | Signs the user in, browses, creates directories with their ACLs, copies files onto the share, commits them, and checks for drift. |
 | `huron-web` | A Node.js server, next to the API | Signs people in with the company OIDC provider and shows the catalog. It only reads. It also serves this documentation at `/docs`. |
@@ -372,16 +373,21 @@ describes the marker at the mount prefix.
 ## Deployment
 
 Huron supports two ways to deploy the service on OpenShift. Both use the API image from
-`Containerfile`, both put the service configuration in a ConfigMap at `/etc/huron/huron.yaml`, and
-in both the API pod mounts no share.
+`Containerfile`, and both put the service configuration in a ConfigMap at `/etc/huron/huron.yaml`.
 
 | | Helm chart `deploy/helm/huron` | Kustomize base `deploy/openshift` |
 | --- | --- | --- |
 | Service configuration | The value `config`, rendered as `huron.yaml` | `huron.yaml`, through a `configMapGenerator` |
 | Migrations | A Job that is a `pre-install,pre-upgrade` hook | The Job `huron-migrate`, which you apply and wait for |
-| A changed configuration | A `checksum/config` annotation restarts the API pods | A new ConfigMap name restarts the API pods |
-| Exposure | A Route or an Ingress | A Route |
+| A changed configuration | A `checksum/config` annotation restarts the API pods | A new ConfigMap name restarts the API pod |
+| The lake and the uploads | Not yet: the API pod mounts no share | The claim `huron-lake`, which the API mounts read-write, and the upload pod `huron-uploads` with nginx and tusd |
+| API replicas | The value `replicaCount` | One, with the strategy `Recreate` |
+| Exposure | A Route or an Ingress | A Route for the API and a Route for `/files` |
 | The web | Optional, off by default | Not included |
+
+The overlay `deploy/local` runs the kustomize base on the kind cluster `huron-local` of a
+development machine, with Ingresses in place of the Routes. `make k8s-local-cluster` makes that
+cluster. `make k8s-local`, `make k8s-local-smoke` and `make k8s-local-down` use the overlay.
 
 Both migration Jobs run `alembic upgrade head`. The revisions are in `migrations/versions/`:
 `0001_huron` is the first schema, and `0002_organization_catalog_roles` lets the three catalog

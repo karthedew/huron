@@ -27,6 +27,9 @@ htmlcov/
 /duplication-evidence/
 /roadmap/
 
+# The local certificate authority and certificate of scripts/k8s-local.sh.
+/.k8s-local/
+
 # macOS
 .DS_Store
 

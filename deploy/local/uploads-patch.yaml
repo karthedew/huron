@@ -1,0 +1,24 @@
+# The upload pod of the local cluster: the host user as the service user, the images that
+# scripts/k8s-local.sh imports into the node, and the public authority of uploads_url.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: huron-uploads
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        supplementalGroups: [1000]
+      initContainers:
+        - name: clean-locks
+          imagePullPolicy: Never
+      containers:
+        - name: proxy
+          imagePullPolicy: Never
+          env:
+            - name: HURON_UPLOADS_HOST
+              value: localhost:18444
+        - name: tusd
+          imagePullPolicy: Never

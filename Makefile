@@ -1,4 +1,4 @@
-.PHONY: help up down migrate api app app-down app-logs app-reset uploads uploads-down demo-noaa test test-contract test-integration lint gate openapi docs-check
+.PHONY: help up down migrate api app app-down app-logs app-reset uploads uploads-down demo-noaa k8s-local-cluster k8s-local k8s-local-smoke k8s-local-down test test-contract test-integration lint gate openapi docs-check
 
 .DEFAULT_GOAL := help
 
@@ -31,7 +31,7 @@ DEV_CONFIG_SHA256 = $(firstword $(shell sha256sum $(DEV_CONFIG) 2>/dev/null || s
 CHECKED_SCRIPTS := scripts/check_duplication.py scripts/cli_reference.py scripts/ste_check.py
 
 help: ## List available commands.
-	@grep -E '^[a-zA-Z_-]+:.*## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 # The two stacks share their ports, so each start stops the other one first, and `make down` stops
 # all three projects; none of these deletes data (only `make app-reset` does).
@@ -79,6 +79,21 @@ uploads-down: ## Stop the upload proxy and tusd of `make uploads`.
 demo-noaa: ## Load the NOAA Planetary K-index demo (catalog planetary in org noaa) into a running stack whose API takes uploads; safe to re-run.
 	HURON_LAKE_PATH=$(HURON_LAKE_PATH) ./scripts/demo-noaa.sh
 
+# The local cluster (deploy/local) on the kind cluster huron-local, through K8S_LOCAL_KUBECONFIG;
+# scripts/k8s-local.sh says what the node needs. The smoke uses port 8081, as Keycloak of `make app`
+# and `make up`.
+k8s-local-cluster: ## Make the kind cluster huron-local with the lake mount and port 18444, then install ingress-nginx.
+	./scripts/k8s-local.sh cluster
+
+k8s-local: ## Build the API image, import the images into the node of the local cluster, apply deploy/local and wait for it.
+	./scripts/k8s-local.sh up
+
+k8s-local-smoke: ## Push files to the local cluster from the host, then check its lake from the host; stop `make app` and `make up` first.
+	./scripts/k8s-local.sh smoke
+
+k8s-local-down: ## Delete the namespace huron and the lake volume of the local cluster; the lake content stays unless K8S_LOCAL_PURGE=1.
+	./scripts/k8s-local.sh down
+
 test: ## Run the unit tier (no database needed).
 	uv run pytest -m "not contract and not integration"
 
@@ -99,7 +114,7 @@ lint: ## Static checks only.
 	uv run python scripts/cli_reference.py --check
 	uv run python scripts/ste_check.py
 
-gate: lint ## The plan-wide gate (section 10); the contract tier needs Docker or HURON_TEST_DATABASE_URL.
+gate: lint ## Run every check of the gate; the contract tier needs Docker or HURON_TEST_DATABASE_URL.
 	uv run pytest -m "not integration" --cov=src/huron --cov-report=term-missing
 	@out="$$(uv run radon cc src --min C)"; if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
 	@out="$$(uv run radon mi src --min B)"; if [ -n "$$out" ]; then echo "$$out"; exit 1; fi

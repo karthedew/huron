@@ -3,8 +3,13 @@ kind: Route
 metadata:
   name: huron
   annotations:
-    haproxy.router.openshift.io/timeout: 60s
+    # Schema assignment, a recursive repair and a collection delete do their disk work in the
+    # request.
+    haproxy.router.openshift.io/timeout: 300s
 spec:
+  # The public host of the API: `issuer` in huron.yaml. The Route huron-uploads (uploads.yaml)
+  # takes the path /files of the same host.
+  host: huron.apps.example.org
   to:
     kind: Service
     name: huron

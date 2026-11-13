@@ -1,0 +1,55 @@
+# The Ingresses of the local cluster replace the Routes of the base: ingress-nginx of the cluster
+# serves https://localhost:18444. scripts/k8s-local.sh makes the TLS Secret huron-local-tls with
+# a local certificate authority.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: huron
+  annotations:
+    # No size limit on a request body, as on the Route huron of the base, and the timeout of that
+    # Route.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [localhost]
+      secretName: huron-local-tls
+  rules:
+    - host: localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: huron
+                port: {name: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: huron-uploads
+  annotations:
+    # ingress-nginx streams each body to the upload proxy with no size limit, and waits as long
+    # as the Route huron-uploads of the base.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [localhost]
+      secretName: huron-local-tls
+  rules:
+    - host: localhost
+      http:
+        paths:
+          - path: /files
+            pathType: Prefix
+            backend:
+              service:
+                name: huron-uploads
+                port: {name: http}

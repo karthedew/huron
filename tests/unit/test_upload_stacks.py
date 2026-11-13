@@ -2,14 +2,13 @@
 host user over the lake, and prepare the lake before the API starts."""
 
 import os
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from huron.core.storage import MARKER_FILE, OBJECT_DIR, UPLOAD_DIR
+from tests.support.devprovision import run_dev_provision
 
 ROOT = Path(__file__).resolve().parents[2]
 UPLOADS: dict[str, Any] = yaml.safe_load((ROOT / "docker-compose.uploads.yml").read_text())
@@ -18,7 +17,7 @@ DEV_CONFIG: dict[str, Any] = yaml.safe_load((ROOT / "huron.dev.yaml").read_text(
 TUSD_IMAGE, NGINX_IMAGE = "tusproject/tusd:v2.10.1", "nginx:1.31.8"
 LAKE = "${HURON_LAKE_SOURCE:-/data1/huron}:${HURON_LAKE_PATH:-/data1/huron}"
 HOST_USER = "${HURON_UID:-1000}:${HURON_GID:-1000}"
-#: "Recommended tusd flags" of plan 2, for the API at 127.0.0.1:8080 and max_upload_bytes 0.
+#: The flags of tusd in the development stacks, for the API at 127.0.0.1:8080 and no size limit.
 TUSD_FLAGS = [
     "-host=127.0.0.1",
     "-port=1081",
@@ -150,40 +149,23 @@ def test_dev_provision_prepares_the_lake_path_and_each_declared_organization(
             }
         )
     )
-    first = _provision(config)
+    first = run_dev_provision(config)
     assert first.returncode == 0, first.stderr
     for directory in (lake, lake / "helio", lake / "geo-root" / "geo"):
         assert (directory / MARKER_FILE).is_file()
     assert (lake / UPLOAD_DIR).stat().st_mode & 0o7777 == 0o700
     assert (lake / "helio" / OBJECT_DIR).stat().st_mode & 0o7777 == 0o700
     assert (lake / "helio").stat().st_uid == os.getuid()
-    again = _provision(config)
+    again = run_dev_provision(config)
     assert again.returncode == 0, again.stderr
 
 
 def test_dev_provision_refuses_a_configuration_without_a_lake_path(tmp_path: Path) -> None:
     config = tmp_path / "huron.yaml"
     config.write_text("instance_id: 0192b6a0-0000-7000-8000-000000000001\n")
-    refused = _provision(config)
+    refused = run_dev_provision(config)
     assert refused.returncode == 2
     assert refused.stderr == f"dev-provision: {config} sets no lake_path\n"
-
-
-def _provision(config: Path) -> subprocess.CompletedProcess[str]:
-    """Run scripts/dev-provision.py with the CLI of this environment on its PATH."""
-    environment = {
-        "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}",
-        "HOME": str(config.parent),
-        "XDG_CONFIG_HOME": str(config.parent / "config"),
-        "XDG_STATE_HOME": str(config.parent / "state"),
-    }
-    return subprocess.run(
-        [sys.executable, str(ROOT / "scripts/dev-provision.py"), "--config", str(config)],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=environment,
-    )
 
 
 def _resolved(services: dict[str, Any], name: str) -> dict[str, Any]:

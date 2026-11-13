@@ -1,0 +1,90 @@
+# The API pod of the local cluster: the host user as the service user, the images that
+# scripts/k8s-local.sh imports into the node, and the identity provider as two more containers.
+# Keycloak (the image of docker-compose.yml, the realm scripts/keycloak/company-realm.json)
+# listens on 8081 and the group directory (scripts/devgroups.py of the API image) on 8082, so
+# the API reaches both on 127.0.0.1. scripts/k8s-local.sh makes the ConfigMaps of the realm and
+# of the groups from the files in scripts/.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: huron
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        supplementalGroups: [1000]
+      containers:
+        - name: api
+          imagePullPolicy: Never
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.0
+          imagePullPolicy: Never
+          # The realm lives in memory and comes from the file at each start.
+          args: ["start-dev", "--import-realm", "--http-port=8081", "--db=dev-mem"]
+          env:
+            # The issuer of each company token, the same in the pod and on the host.
+            - name: KC_HOSTNAME
+              value: http://127.0.0.1:8081
+            - name: KC_DB_URL_PROPERTIES
+              value: ;DB_CLOSE_DELAY=-1
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              value: admin
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            # The JVM of Keycloak takes 70 % of the memory limit for its heap by default, and the
+            # container then goes over the limit. Half leaves room for the rest of the JVM.
+            - name: JAVA_OPTS_KC_HEAP
+              value: -XX:MaxRAMPercentage=50 -XX:InitialRAMPercentage=25
+          ports:
+            - name: keycloak
+              containerPort: 8081
+          readinessProbe:
+            httpGet: {path: /health/ready, port: 9000}
+            timeoutSeconds: 3
+            periodSeconds: 5
+          # Keycloak builds its server in its own directories when it starts, so its root
+          # filesystem stays writable.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 250m, memory: 1Gi}
+            # The start builds the server in a second JVM. With 2Gi the kernel stopped it once.
+            limits: {cpu: "2", memory: 3Gi}
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+        - name: groups
+          image: huron
+          imagePullPolicy: Never
+          # Python as process 1 ignores SIGTERM. The shell stops when it gets SIGTERM.
+          command:
+            - sh
+            - -c
+            - |
+              trap 'exit 0' TERM
+              python /app/scripts/devgroups.py /etc/huron-dev/dev-groups.yaml 8082 &
+              wait
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          volumeMounts:
+            - name: dev-groups
+              mountPath: /etc/huron-dev
+              readOnly: true
+      volumes:
+        - name: realm
+          configMap: {name: huron-keycloak-realm}
+        - name: dev-groups
+          configMap: {name: huron-dev-groups}

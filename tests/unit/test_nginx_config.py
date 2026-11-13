@@ -142,3 +142,14 @@ def test_a_request_without_an_upload_id_or_a_token_is_never_cached() -> None:
     assert maps["$huron_no_auth"].args[0] == "$http_authorization"
     for name in ("$huron_no_cache", "$huron_no_auth"):
         assert {(c.name, *c.args) for c in maps[name].children} == {('""', "1"), ("default", "0")}
+
+
+def test_liveness_answers_204_without_a_call_to_tusd_or_the_api() -> None:
+    liveness = SERVER.one("location", "=", "/livez")
+    assert [(child.name, child.args) for child in liveness.children] == [("return", ["204"])]
+
+
+def test_readiness_asks_tusd_for_its_options() -> None:
+    readiness = SERVER.one("location", "=", "/readyz")
+    assert readiness.values("proxy_method") == [["OPTIONS"]]
+    assert readiness.values("proxy_pass") == [["http://tusd/files/"]]

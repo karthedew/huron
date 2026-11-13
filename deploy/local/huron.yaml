@@ -1,0 +1,53 @@
+# The service configuration of the local cluster. It replaces the ConfigMap huron-config of the
+# base. The API and the Job huron-lake-init read it at /etc/huron/huron.yaml.
+#
+# The pods reach Keycloak and the group directory on 127.0.0.1, because both run as containers of
+# the API pod (kustomization.yaml). The CLI on the host reaches the API and the uploads through
+# the Ingresses at https://localhost:18444, and Keycloak through `kubectl port-forward` on
+# 127.0.0.1:8081. So company_issuer is the same URL in the pod and on the host.
+#
+# The organizations are those of huron.dev.yaml, with the same groups, but with no root: each
+# directory is <lake_path>/<name>. The host sees the lake at another path, and the CLI there finds
+# these organizations below its mount prefix.
+store: postgres
+instance_id: 65ca5615-53d2-4458-bff5-89913a42fb67
+issuer: https://localhost:18444
+audience: huron
+company_issuer: http://127.0.0.1:8081/realms/company
+company_audience: huron-cli
+group_directory_url: http://127.0.0.1:8082
+platform_admin_group: huron-platform-admins
+pool_size: 10
+log_level: INFO
+# The lake: the hostPath volume of lake.yaml, mounted at this path in the API pod and in the
+# upload pod. The pods run as the host user with UID 1000 and GID 1000 (runAsUser and runAsGroup),
+# who owns the lake directory on the host. service_uid is that UID. GID 1000 has no name in the
+# API image, so service_group is only the name that /healthz reports. The API takes the GID from
+# its process, which is runAsGroup.
+lake_path: /data1/huron
+uploads_url: https://localhost:18444/files/
+service_uid: 1000
+service_group: huron
+upload_hook_timeout: 60
+
+organizations:
+  - name: helio
+    display_name: Heliophysics Division
+    description: The Sun, the solar wind and the space environment.
+    groups:
+      org_admin: [helio-org-admins]
+      catalog_admin: [helio-catalog-admins]
+      contributor: [helio-contributors]
+      reader: [helio-readers]
+  - name: geo
+    display_name: Earth Science
+    description: Earth observation and ocean data.
+    groups:
+      org_admin: [geo-org-admins]
+      reader: [geo-readers]
+  - name: noaa
+    display_name: NOAA
+    description: "National Oceanic and Atmospheric Administration data: space weather indices."
+    groups:
+      org_admin: [noaa-org-admins]
+      reader: [noaa-readers]

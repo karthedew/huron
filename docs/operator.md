@@ -307,7 +307,12 @@ See [deploy/README.md](../deploy/README.md). Huron supports a Helm chart and a K
 - The Helm chart is `deploy/helm/huron`. The YAML configuration is in the value `config`.
 - The Kustomize base is `deploy/openshift`. The configuration is in `huron.yaml`.
 
-The API mounts no share in either one. On the first start, the service does these steps:
+With the Kustomize base, the API mounts the lake read-write and runs as one replica. The upload pod
+runs nginx and tusd. The Helm chart does not have the lake and the upload pod yet, and its API
+mounts no share. [deploy/README.md](../deploy/README.md) gives the rule of one writer, the probes
+and the install order. It also describes the local cluster `deploy/local`.
+
+On the first start, the service does these steps:
 
 1. It seeds the `huron-base` schema.
 2. It seeds a Platform Admin grant for `HURON_PLATFORM_ADMIN_GROUP`.
